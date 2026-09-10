@@ -1106,46 +1106,6 @@ fn decide(
     let remote_id_unverifiable =
         proposal.remote_id.is_some() && window.remote_id_evidence() == RemoteIdEvidence::NotRead;
 
-    // Rule one: identity first. A REMOTEID is a key Bridge itself wrote.
-    if let Some(remote_id) = proposal.remote_id.as_deref() {
-        let unique_here = proposal_remote_counts.get(remote_id).copied() == Some(1);
-        let empty = Vec::new();
-        let matches = index.by_remote_id.get(remote_id).unwrap_or(&empty);
-        // Proposal-side uniqueness is checked *before* the book lookup, the
-        // same way a duplicated manual number is. Two source rows claiming one
-        // identity are undecidable whether or not the book holds it, and
-        // falling through would report both as safe to import.
-        if !unique_here {
-            return shell(
-                PresenceStatus::PossiblyPresent(undecided(
-                    UndecidedReason::RemoteIdCollision,
-                    candidates_from(window, matches, CandidateRule::SharedRemoteId),
-                )),
-                matches.iter().copied().collect(),
-            );
-        }
-        if !matches.is_empty() {
-            if matches.len() == 1 && unique_here {
-                return shell(
-                    settled(
-                        proposal,
-                        party,
-                        &window.vouchers[matches[0]],
-                        PresenceBasis::RemoteId,
-                    ),
-                    BTreeSet::from([matches[0]]),
-                );
-            }
-            return shell(
-                PresenceStatus::PossiblyPresent(undecided(
-                    UndecidedReason::RemoteIdCollision,
-                    candidates_from(window, matches, CandidateRule::SharedRemoteId),
-                )),
-                matches.iter().copied().collect(),
-            );
-        }
-    }
-
     // Rule two: a voucher number is identity only where the numbering method
     // preserves it (§9.8), and only when it is unique on both sides.
     let number_matches: Vec<usize> = proposal
@@ -1168,6 +1128,72 @@ fn decide(
 
     // Manual numbering only decides within an observed voucher type: numbers
     // are a per-type series, so a cross-type number match is a resemblance.
+    // Rule one: identity first. A REMOTEID is a key Bridge itself wrote.
+    if let Some(remote_id) = proposal.remote_id.as_deref() {
+        let unique_here = proposal_remote_counts.get(remote_id).copied() == Some(1);
+        let empty = Vec::new();
+        let matches = index.by_remote_id.get(remote_id).unwrap_or(&empty);
+        // Proposal-side uniqueness is checked *before* the book lookup, the
+        // same way a duplicated manual number is. Two source rows claiming one
+        // identity are undecidable whether or not the book holds it, and
+        // falling through would report both as safe to import.
+        if !unique_here {
+            return shell(
+                PresenceStatus::PossiblyPresent(undecided(
+                    UndecidedReason::RemoteIdCollision,
+                    candidates_from(window, matches, CandidateRule::SharedRemoteId),
+                )),
+                matches.iter().copied().collect(),
+            );
+        }
+        if !matches.is_empty() {
+            if matches.len() == 1 && unique_here {
+                // Both identities are resolved before either settles. A
+                // REMOTEID selecting one voucher while the number selects
+                // another is two identity signals disagreeing, and ranking one
+                // of them is the move this contract refuses everywhere else.
+                let number_selects_another = method == NumberingMethod::Manual
+                    && type_observed
+                    && number_matches.len() == 1
+                    && number_matches[0] != matches[0];
+                if number_selects_another {
+                    let mut touched = BTreeSet::from([matches[0]]);
+                    touched.insert(number_matches[0]);
+                    let mut candidates =
+                        candidates_from(window, matches, CandidateRule::SharedRemoteId);
+                    candidates.extend(candidates_from(
+                        window,
+                        &number_matches,
+                        CandidateRule::SharedVoucherNumber,
+                    ));
+                    return shell(
+                        PresenceStatus::PossiblyPresent(undecided(
+                            UndecidedReason::IdentityConflict,
+                            candidates,
+                        )),
+                        touched,
+                    );
+                }
+                return shell(
+                    settled(
+                        proposal,
+                        party,
+                        &window.vouchers[matches[0]],
+                        PresenceBasis::RemoteId,
+                    ),
+                    BTreeSet::from([matches[0]]),
+                );
+            }
+            return shell(
+                PresenceStatus::PossiblyPresent(undecided(
+                    UndecidedReason::RemoteIdCollision,
+                    candidates_from(window, matches, CandidateRule::SharedRemoteId),
+                )),
+                matches.iter().copied().collect(),
+            );
+        }
+    }
+
     if method == NumberingMethod::Manual && type_observed {
         if let Some(number_key) = proposal.number_key.as_deref() {
             let proposed_twice = proposal_number_counts
@@ -1212,6 +1238,19 @@ fn decide(
                         (Some(proposed), Some(observed)) => proposed != observed,
                         _ => false,
                     };
+                if remote_id_unverifiable {
+                    return shell(
+                        PresenceStatus::PossiblyPresent(undecided(
+                            UndecidedReason::RemoteIdEvidenceUnavailable,
+                            candidates_from(
+                                window,
+                                &number_matches,
+                                CandidateRule::SharedVoucherNumber,
+                            ),
+                        )),
+                        touched,
+                    );
+                }
                 if contradicted {
                     return shell(
                         PresenceStatus::PossiblyPresent(undecided(

@@ -1665,3 +1665,106 @@ fn a_voucher_with_no_party_field_has_nothing_to_disagree_with() {
     };
     assert!(differences.is_empty());
 }
+
+/// `Present` carries the higher bar, so unobserved evidence that could
+/// *contradict* it must fail toward not-present. A number match while the
+/// proposal's own `REMOTEID` was never compared settles on one identity while
+/// the other is unknown — and a wrong `Present` suppresses a real invoice.
+#[test]
+fn a_number_match_cannot_settle_while_the_proposals_remote_id_is_unread() {
+    let unread = BookWindow::observed(
+        "20260801",
+        "20260831",
+        WindowRead::Complete,
+        RemoteIdEvidence::NotRead,
+        vec![BookRow::new("book-1", "20260812", "AA0118").build()],
+    )
+    .expect("window");
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .remote_id("tally-1")
+        .build()];
+    let report = run(
+        &unread,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert!(entry.present_book_key().is_none());
+    assert_eq!(reason(entry), UndecidedReason::RemoteIdEvidenceUnavailable);
+    // The number match is still shown, so the operator sees what it resembles.
+    assert_eq!(
+        entry.undecided().expect("undecided").candidates[0].book_key,
+        "book-1"
+    );
+}
+
+#[test]
+fn a_proposal_without_a_remote_id_still_settles_on_an_unread_window() {
+    let unread = BookWindow::observed(
+        "20260801",
+        "20260831",
+        WindowRead::Complete,
+        RemoteIdEvidence::NotRead,
+        vec![BookRow::new("book-1", "20260812", "AA0118").build()],
+    )
+    .expect("window");
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118").build()];
+    let report = run(
+        &unread,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    // Nothing was skipped: this proposal carries no REMOTEID to compare.
+    assert_eq!(only(&report).present_book_key(), Some("book-1"));
+}
+
+/// Both identity lookups are resolved before either settles. A `REMOTEID`
+/// selecting one voucher while the number selects another is a disagreement,
+/// and ranking the basis that happened to be checked first is the move this
+/// contract refuses everywhere else.
+#[test]
+fn a_remote_id_and_a_number_selecting_different_vouchers_do_not_settle() {
+    let window = window(&[
+        BookRow::new("book-1", "20260812", "AA0118").remote_id("tally-1"),
+        BookRow::new("book-2", "20260813", "AA0119").party("Bravo Industries"),
+    ]);
+    let proposals = [ProposalRow::new(0, "20260813", "AA0119")
+        .remote_id("tally-1")
+        .party("Bravo Industries")
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert!(entry.present_book_key().is_none());
+    assert_eq!(reason(entry), UndecidedReason::IdentityConflict);
+    // Both contradicting vouchers are shown, each labelled by its own rule.
+    let candidates = &entry.undecided().expect("undecided").candidates;
+    assert_eq!(candidates.len(), 2);
+    assert!(candidates
+        .iter()
+        .any(|c| c.book_key == "book-1" && c.rule == CandidateRule::SharedRemoteId));
+    assert!(candidates
+        .iter()
+        .any(|c| c.book_key == "book-2" && c.rule == CandidateRule::SharedVoucherNumber));
+}
+
+#[test]
+fn a_remote_id_and_a_number_agreeing_on_one_voucher_still_settle() {
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118").remote_id("tally-1")]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .remote_id("tally-1")
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    assert_eq!(only(&report).present_book_key(), Some("book-1"));
+}

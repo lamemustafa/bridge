@@ -213,11 +213,24 @@ leaves open:
   row and silently drop an invoice, which is the failure this contract exists
   to prevent. Every claimant of a contested voucher is demoted to
   `BookVoucherClaimedTwice`; choosing between them would be auto-resolution.
-- **Two identity signals that disagree are reported, not ranked.** Where a
-  number matches uniquely but the two sides carry *different* `REMOTEID`s, the
-  result is `IdentityConflict` rather than a `Present` settled in the number's
-  favour — the same rule ADR 0016 applies when an identifier contradicts an
-  exact name.
+- **Two identity signals that disagree are reported, not ranked.** Both
+  lookups are resolved *before* either settles, so a `REMOTEID` selecting one
+  voucher while the number selects another is `IdentityConflict` — as is a
+  number matching uniquely while the two sides carry different `REMOTEID`s.
+  Settling on whichever basis happened to be evaluated first would rank them,
+  which is the move ADR 0016 refuses when an identifier contradicts an exact
+  name.
+- **Evidence that was never gathered cannot settle a `Present` either.** The
+  rule that withholds `Absent` when a key was not compared applies with more
+  force to `Present`, because `Present` carries the higher bar and its error is
+  the silent one. So where a proposal supplies a `REMOTEID` and the window is
+  `RemoteIdEvidence::NotRead`, a unique number match returns
+  `RemoteIdEvidenceUnavailable` rather than `Present`: the number is decisive
+  on its own terms, but the evidence that could contradict it was skipped. A
+  proposal carrying no `REMOTEID` skipped nothing and still settles. An earlier
+  revision of this ADR allowed that `Present`, reasoning that withholding it
+  would make the tool less useful — which is the posture in §7 argued
+  backwards, and review caught it.
 
 Number comparison uses the same NFC / dash-and-quote / case / whitespace
 comparison key as master binding, so a long alphanumeric invoice number and its
