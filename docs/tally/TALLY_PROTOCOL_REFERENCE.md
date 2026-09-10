@@ -2,7 +2,7 @@
 
 > **Adding or renumbering a section? Claim the number in [`SECTION-REGISTER.md`](./SECTION-REGISTER.md) in the same PR.** Several branches extend this
 > file at once and a number is invisible to them until it merges. Two branches have already collided, and `1.2` is used twice below.
-> Editing this file also stales its compatibility-surface pin — the register carries the reseal procedure.
+> Editing this file also stales its compatibility-surface pin; the reseal procedure is in [`docs/release-process.md`](../release-process.md#compatibility-surface-reseal).
 
 
 **Purpose.** The single source of truth for how Tally's XML gateway actually behaves, as

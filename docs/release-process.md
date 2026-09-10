@@ -16,11 +16,20 @@ and macOS. A smoke bundle is not a production release.
 
 ### Compatibility-surface reseal
 
-Any dependency update that changes a pinned file (including `package.json`,
-`src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, or either workflow) requires a
-deliberate compatibility-surface reseal before the claim gate can pass. From
-`tools`, run these three commands in order. `--output` asks the compatibility
-tool to stage and replace the destination itself:
+Any change to a pinned file requires a deliberate compatibility-surface reseal
+before the claim gate can pass. That includes `package.json`,
+`src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` and either workflow — and it is
+not only dependency updates. **`docs/tally/TALLY_PROTOCOL_REFERENCE.md` is a
+pinned source too, so a documentation-only edit to it stales its digest and
+fails the gate.** Nothing in a docs diff suggests a compatibility gate is
+involved, and PRs have failed CI for exactly this.
+
+Run these from `tools`, in order, **with the pinned toolchain**: a Homebrew
+`rustc` earlier on `PATH` shadows rustup, and this project pins the version in
+`rust-toolchain.toml`, so check `rustc --version` first. `--output` asks the
+compatibility tool to stage and replace the destination itself, and it is
+required — without it each command prints to stdout and changes nothing on
+disk, which looks like success:
 
 ```bash
 cargo run --locked -p bridge-tally-compatibility -- rehash-surface \
