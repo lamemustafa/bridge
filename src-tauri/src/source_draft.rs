@@ -31,8 +31,8 @@ use self::{
     },
 };
 use catalog::{
-    require_current_catalog_binding, CatalogCapture, SourceDraftCatalogApplyRequest,
-    SourceDraftCatalogLoadRequest, SourceDraftCatalogTargets,
+    CatalogCapture, SourceDraftCatalogApplyRequest, SourceDraftCatalogLoadRequest,
+    SourceDraftCatalogTargets,
 };
 
 #[derive(Default)]
@@ -116,24 +116,7 @@ pub(crate) async fn desktop_load_source_draft_existing_ledger_targets(
     runtime: State<'_, crate::tally::TallyRuntime>,
     request: SourceDraftCatalogLoadRequest,
 ) -> CommandResult<SourceDraftCatalogTargets> {
-    let snapshot = store.catalog_load_snapshot(&request)?;
-    let endpoint = crate::tally::EndpointKey::from_config(&request.config)
-        .map_err(|_| error("source_draft_catalogue_scope_invalid"))?;
-    let identity = crate::commands::verify_observed_company_tuple(
-        &runtime,
-        &request.config,
-        &request.selected_company,
-    )
-    .await
-    .map_err(|_| error("source_draft_catalogue_scope_invalid"))?;
-    let read = crate::tally::standard_ledger_catalog::read_standard_ledger_catalog(
-        &runtime,
-        request.config,
-        &identity,
-    )
-    .await
-    .map_err(|_| error("source_draft_catalogue_read_failed"))?;
-    store.install_catalog(snapshot, endpoint, identity, read)
+    catalog::load_existing_ledger_targets(store.inner(), runtime.inner(), request).await
 }
 
 #[tauri::command]
@@ -142,35 +125,7 @@ pub(crate) async fn desktop_apply_source_draft_existing_ledger_target(
     runtime: State<'_, crate::tally::TallyRuntime>,
     request: SourceDraftCatalogApplyRequest,
 ) -> CommandResult<SourceDraftDto> {
-    let snapshot = store.catalog_apply_snapshot(&request)?;
-    let endpoint = crate::tally::EndpointKey::from_config(&request.config)
-        .map_err(|_| error("source_draft_catalogue_scope_invalid"))?;
-    if endpoint != snapshot.endpoint {
-        return Err(error("source_draft_catalogue_invalidated"));
-    }
-    let identity = crate::commands::verify_observed_company_tuple(
-        &runtime,
-        &request.config,
-        &request.selected_company,
-    )
-    .await
-    .map_err(|_| error("source_draft_catalogue_scope_invalid"))?;
-    if identity != snapshot.identity {
-        return Err(error("source_draft_catalogue_invalidated"));
-    }
-    let binding = snapshot
-        .catalog
-        .bind_selected([request.target_name.clone()])
-        .map_err(|_| error("source_draft_catalogue_target_invalid"))?;
-    let fresh = crate::tally::standard_ledger_catalog::read_standard_ledger_catalog(
-        &runtime,
-        request.config.clone(),
-        &identity,
-    )
-    .await
-    .map_err(|_| error("source_draft_catalogue_read_failed"))?;
-    require_current_catalog_binding(&binding, &fresh.body, &identity)?;
-    store.commit_catalog_target(snapshot, request, binding)
+    catalog::apply_existing_ledger_target(store.inner(), runtime.inner(), request).await
 }
 
 #[tauri::command]

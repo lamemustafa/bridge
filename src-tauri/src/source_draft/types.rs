@@ -145,6 +145,30 @@ pub(super) fn error(code: &'static str) -> SourceDraftCommandError {
             "Bridge could not read a complete current existing-ledger list.",
             "Check Tally and retry the read; no target was applied.",
         ),
+        "source_draft_catalogue_transport_failed" => (
+            "Bridge could not reach Tally for the current existing-ledger list.",
+            "Check Tally and retry the read; no target was applied.",
+        ),
+        "source_draft_catalogue_unstable" => (
+            "The existing-ledger list changed while Bridge was reading it.",
+            "Wait for Tally to settle, then load existing ledgers again; no target was applied.",
+        ),
+        "source_draft_catalogue_identity_mismatch" => (
+            "Tally did not confirm the selected company for the existing-ledger list.",
+            "Check Tally and select the intended current company, then load existing ledgers again.",
+        ),
+        "source_draft_catalogue_duplicate_identity" => (
+            "Tally returned an ambiguous existing-ledger identity.",
+            "Resolve the duplicate ledger identity in Tally, then load existing ledgers again.",
+        ),
+        "source_draft_catalogue_bounds_invalid" => (
+            "The existing-ledger list exceeded a safety limit.",
+            "Reduce the list or contact support; no target was applied.",
+        ),
+        "source_draft_catalogue_malformed_response" => (
+            "Tally returned an unusable existing-ledger list.",
+            "Check Tally and retry the read; no target was applied.",
+        ),
         "source_draft_catalogue_target_invalid" => (
             "The requested target was not a valid current existing ledger.",
             "Choose a listed target and try again.",

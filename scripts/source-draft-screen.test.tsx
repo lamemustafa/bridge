@@ -308,6 +308,31 @@ test("requires an explicit current-session re-read before treating a saved match
   root.unmount();
 });
 
+test("renders unusual ledger spaces visibly while binding the exact selected catalog target", async () => {
+  const whitespaceCatalog = { ...catalog, targets: ["Cash", " Cash "] };
+  mocks.invoke
+    .mockResolvedValueOnce(draft)
+    .mockResolvedValueOnce(whitespaceCatalog)
+    .mockResolvedValueOnce({ ...draft, revision: 2 });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  const target = host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!;
+  const options = [...target.options];
+  expect(options.find((option) => option.value === "Cash")?.text).toBe("Cash");
+  expect(options.find((option) => option.value === " Cash ")?.text).toBe("␠Cash␠");
+  expect(options.find((option) => option.value === "Cash")?.text).not.toBe(options.find((option) => option.value === " Cash ")?.text);
+
+  await act(async () => setValue(target, " Cash "));
+  expect(mocks.invoke).toHaveBeenNthCalledWith(3, "desktop_apply_source_draft_existing_ledger_target", {
+    request: expect.objectContaining({ target_name: " Cash " }),
+  });
+  root.unmount();
+});
+
 test("clears the visible catalogue and blocks a new read until the native company-scope invalidation completes", async () => {
   let resolveFirstInvalidation!: () => void;
   let resolveSecondInvalidation!: () => void;
@@ -340,6 +365,30 @@ test("clears the visible catalogue and blocks a new read until the native compan
   resolveSecondInvalidation();
   await act(async () => { await secondInvalidation; });
   expect(button(host, "Load existing ledgers").disabled).toBe(false);
+  root.unmount();
+});
+
+test("returns the editor and ledger read control to the current scope after native invalidation rejects", async () => {
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "desktop_pick_source_draft") return Promise.resolve(draft);
+    if (command === "desktop_invalidate_source_draft_existing_ledger_targets") {
+      return Promise.reject(new Error("native invalidation unavailable"));
+    }
+    return Promise.resolve();
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+
+  await act(async () => {
+    root.render(<SourceDraftScreen catalogScope={catalogScope} catalogScopeKey="company-two" />);
+    await Promise.resolve();
+  });
+
+  expect(host.textContent).toContain("native invalidation unavailable");
+  expect(button(host, "Load existing ledgers").disabled).toBe(false);
+  expect(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')?.disabled).toBe(false);
   root.unmount();
 });
 
