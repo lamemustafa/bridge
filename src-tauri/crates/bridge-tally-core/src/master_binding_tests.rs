@@ -516,6 +516,12 @@ fn a_fiscal_period_label_is_not_an_identity_bearing_code() {
         "SEPTEMBER2025",
         "2025QUARTER1",
         "DECEMBER2026",
+        // Ranges: operators write these with the very separators that
+        // canonicalization strips, so the test has to see the raw token.
+        "FY2025-26",
+        "FY2025/26",
+        "2025-2026",
+        "APR2025-MAR2026",
     ] {
         assert!(
             entity(&format!("Purchases {label}"))
@@ -587,6 +593,36 @@ fn a_token_carrying_letters_never_yields_a_standalone_number() {
     assert_eq!(bind_one_name(&catalog, "Part A12345678").bound_name(), None);
     // A bare digit run beside no letters is still an identifier.
     assert_eq!(entity("Party (5550001001)").identifiers().len(), 1);
+}
+
+#[test]
+fn conflicting_identifiers_outrank_a_byte_exact_name_but_a_shared_one_does_not() {
+    // Two hints selecting two other masters is conflicting evidence, and
+    // binding the name silently discarded it. A *shared* identifier is
+    // different: the ambiguous set still contains the master the name spells,
+    // so the name is what separates it from its siblings.
+    let catalog = ledgers(&["ACME", "BETA 11111111", "GAMMA 22222222"]);
+    let source =
+        SourceEntity::with_identifier_hints(0, "ACME", ["11111111", "22222222"]).expect("valid");
+    let report = bound(&catalog, &[source]);
+    let binding = &report.entities()[0];
+    assert_eq!(reason(binding), UnboundReason::IdentifierNameConflict);
+    // Every master the evidence reached is offered, so the operator sees the
+    // disagreement rather than one side of it.
+    assert_eq!(
+        candidate_names(binding),
+        ["BETA 11111111", "GAMMA 22222222", "ACME"]
+    );
+
+    // The shared-identifier case must keep binding.
+    let shared = ledgers(&[
+        "MB PARTY DELTA (5550001009)",
+        "MB PARTY EPSILON (5550001009)",
+    ]);
+    assert_eq!(
+        bind_one_name(&shared, "MB PARTY DELTA (5550001009)").bound_name(),
+        Some("MB PARTY DELTA (5550001009)")
+    );
 }
 
 #[test]
