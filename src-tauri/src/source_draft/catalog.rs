@@ -14,8 +14,8 @@ use bridge_tally_protocol::{StandardLedgerCatalog, StandardLedgerCatalogBinding}
 use crate::{
     commands::SelectedCompanyIdentity,
     tally::{
-        standard_ledger_catalog::{StandardLedgerCatalogRead, StandardLedgerCatalogReadError},
-        EndpointKey, TallyConfig, TallyRuntime, VerifiedCompanyIdentity,
+        standard_ledger_catalog::StandardLedgerCatalogRead, EndpointKey, TallyConfig, TallyRuntime,
+        VerifiedCompanyIdentity,
     },
 };
 
@@ -107,15 +107,14 @@ pub(super) struct CatalogApplySnapshot {
     pub(super) catalog: StandardLedgerCatalog,
 }
 
+/// The freshly read catalog must still contain the selected pair. The response
+/// is parsed once by the read itself, so this takes the parsed catalog rather
+/// than reparsing the body per binding.
 pub(super) fn require_current_catalog_binding(
     binding: &StandardLedgerCatalogBinding,
-    fresh_body: &str,
-    identity: &VerifiedCompanyIdentity,
+    fresh: &StandardLedgerCatalog,
 ) -> CommandResult<()> {
-    let still_current = binding
-        .matches(fresh_body, identity.display_name(), identity.company_guid())
-        .map_err(|cause| error(StandardLedgerCatalogReadError::from(cause).command_code()))?;
-    if still_current {
+    if binding.matches_catalog(fresh) {
         Ok(())
     } else {
         Err(error("source_draft_catalogue_target_changed"))
@@ -202,8 +201,11 @@ pub(super) async fn apply_existing_ledger_target(
     )
     .await
     .map_err(|cause| error(cause.command_code()))?;
-    require_current_catalog_binding(&binding, &fresh.body, &identity)?;
-    store.commit_catalog_target(snapshot, request, binding, &fresh.body)
+    // One response decides both questions, so the currency of every retained
+    // binding is settled even when this selection is refused. Deciding them
+    // separately would let a refusal leave older bindings claiming a currency
+    // this very read disproves.
+    store.commit_catalog_target(snapshot, request, binding, &fresh.catalog)
 }
 
 impl SourceDraftStore {
@@ -342,7 +344,7 @@ impl SourceDraftStore {
         snapshot: CatalogApplySnapshot,
         mut request: SourceDraftCatalogApplyRequest,
         binding: StandardLedgerCatalogBinding,
-        fresh_body: &str,
+        fresh: &StandardLedgerCatalog,
     ) -> CommandResult<SourceDraftDto> {
         let mut active = self
             .active
@@ -366,6 +368,11 @@ impl SourceDraftStore {
         if capture.id != snapshot.capture_id || capture.generation != generation {
             return Err(error("source_draft_catalogue_invalidated"));
         }
+        // Settle every retained binding against this response before deciding the
+        // requested target, so a refused selection cannot leave older bindings
+        // claiming a currency the same read disproves.
+        SourceDraftStore::revalidate_retained_bindings(current, fresh);
+        require_current_catalog_binding(&binding, fresh)?;
         let row = request.row_position - 1;
         let entry = request.entry_position - 1;
         request.proposals[row].entries[entry].ledger = Some(request.target_name.clone());
@@ -374,7 +381,6 @@ impl SourceDraftStore {
             .revision
             .checked_add(1)
             .ok_or_else(|| error("source_draft_revision_exhausted"))?;
-        SourceDraftStore::revalidate_retained_bindings(current, fresh_body);
         SourceDraftStore::remove_changed_bindings(current, &request.proposals);
         let capture = current
             .catalog
@@ -424,19 +430,14 @@ impl SourceDraftStore {
     }
 
     /// A retained binding can claim current-session status only when the same
-    /// fresh response still contains its exact observed name and GUID. A
-    /// malformed or otherwise doubtful match is not currency evidence.
-    fn revalidate_retained_bindings(active: &mut ActiveDraft, fresh_body: &str) {
+    /// fresh response still contains its exact observed name and GUID.
+    fn revalidate_retained_bindings(active: &mut ActiveDraft, fresh: &StandardLedgerCatalog) {
         let Some(capture) = active.catalog.as_mut() else {
             return;
         };
-        let identity = capture.identity.clone();
-        capture.bindings.retain(|_, selected| {
-            selected
-                .binding
-                .matches(fresh_body, identity.display_name(), identity.company_guid())
-                .unwrap_or(false)
-        });
+        capture
+            .bindings
+            .retain(|_, selected| selected.binding.matches_catalog(fresh));
     }
 }
 
@@ -447,7 +448,10 @@ mod tests {
         source_draft::{dto, empty_proposals, files::serialize_draft},
         source_draft_xml::parse_source_xml,
     };
-    use bridge_tally_protocol::parse_standard_ledger_catalog_with_identities;
+    use bridge_tally_protocol::{
+        decode_tally_xml_response_bytes_limited, parse_standard_ledger_catalog_with_identities,
+        ExpectedTallyTextEncoding,
+    };
     use tally_protocol_simulator::{
         Fixture, ProductStatus, ResponseFraming, ScenarioPlan, SequenceSimulator, WireEncoding,
     };
@@ -455,15 +459,28 @@ mod tests {
     const CAPTURED_COMPANY: &str = "WR2 Unicode Lab";
     const CAPTURED_GUID: &str = "61c6de69-1748-461c-ad3f-162cb949df9f";
 
+    /// Decode a captured response through the same reader production uses.
+    ///
+    /// The captures carry no BOM, because Tally declares the encoding in
+    /// `Content-Type` rather than in the body. Supplying it the way the
+    /// transport does keeps a fixture production would reject from quietly
+    /// passing a test: a bespoke UTF-16LE loop here would decode bytes the real
+    /// reader never accepts.
+    fn decode_captured_response(bytes: &[u8]) -> String {
+        decode_tally_xml_response_bytes_limited(
+            bytes,
+            "text/xml; charset=utf-16",
+            ExpectedTallyTextEncoding::Utf16Le,
+            bytes.len(),
+        )
+        .expect("captured catalogue decodes through the production reader")
+        .text
+    }
+
     fn captured_catalog_and_xml() -> (StandardLedgerCatalog, String) {
-        let bytes = include_bytes!(
+        let xml = decode_captured_response(include_bytes!(
             "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ledger-catalogue.utf16le.xml"
-        );
-        let words = bytes
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-            .collect::<Vec<_>>();
-        let xml = String::from_utf16(&words).expect("captured catalogue is UTF-16LE");
+        ));
         let catalog =
             parse_standard_ledger_catalog_with_identities(&xml, CAPTURED_COMPANY, CAPTURED_GUID)
                 .expect("captured catalogue remains parser-admitted");
@@ -489,14 +506,9 @@ mod tests {
     /// no other ledger's GUID moves. The book was restored afterwards. Neither
     /// response is hand-mutated.
     fn captured_renamed_catalog_xml() -> String {
-        let bytes = include_bytes!(
+        decode_captured_response(include_bytes!(
             "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ledger-catalogue-renamed.utf16le.xml"
-        );
-        let words = bytes
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-            .collect::<Vec<_>>();
-        String::from_utf16(&words).expect("captured renamed catalogue is UTF-16LE")
+        ))
     }
 
     fn source() -> crate::source_draft_xml::ParsedSource {
@@ -1032,6 +1044,120 @@ mod tests {
         assert_eq!(simulator.finish().expect("all requests observed").len(), 21);
     }
 
+    /// A refused selection must not leave older bindings claiming a currency the
+    /// same response disproves. Binding the renamed ledger a second time fails,
+    /// and that failure has to settle the first binding too.
+    #[tokio::test]
+    async fn a_refused_selection_still_settles_retained_bindings_without_tauri_state() {
+        let store = SourceDraftStore::default();
+        let draft_id = install_active_draft_without_catalog(&store);
+        let (_, catalog_xml) = captured_catalog_and_xml();
+        let renamed_catalog_xml = captured_renamed_catalog_xml();
+
+        let mut plans = vec![company_plan(CAPTURED_COMPANY, CAPTURED_GUID)];
+        append_catalog_read_plans(&mut plans, catalog_xml.clone());
+        plans.push(company_plan(CAPTURED_COMPANY, CAPTURED_GUID));
+        append_catalog_read_plans(&mut plans, catalog_xml);
+        plans.push(company_plan(CAPTURED_COMPANY, CAPTURED_GUID));
+        append_catalog_read_plans(&mut plans, renamed_catalog_xml);
+        let simulator = SequenceSimulator::spawn(plans).expect("catalog service simulator");
+        let config = TallyConfig {
+            host: simulator.address().ip().to_string(),
+            port: simulator.address().port(),
+        };
+        let runtime = TallyRuntime::default();
+
+        let loaded = load_existing_ledger_targets(
+            &store,
+            &runtime,
+            SourceDraftCatalogLoadRequest {
+                draft_id: draft_id.to_string(),
+                config: config.clone(),
+                selected_company: selected_company(),
+            },
+        )
+        .await
+        .expect("service load admits the captured catalog");
+        let renamed_target = loaded
+            .targets
+            .iter()
+            .find(|target| target.as_str() == RENAMED_FROM)
+            .expect("the renamed ledger is offered as a target")
+            .clone();
+        let proposals = store
+            .active
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .proposals
+            .clone();
+
+        let bound = apply_existing_ledger_target(
+            &store,
+            &runtime,
+            SourceDraftCatalogApplyRequest {
+                draft_id: draft_id.to_string(),
+                revision: 1,
+                capture_id: loaded.capture_id.clone(),
+                config: config.clone(),
+                selected_company: selected_company(),
+                row_position: 1,
+                entry_position: 1,
+                target_name: renamed_target.clone(),
+                proposals,
+            },
+        )
+        .await
+        .expect("the target applies while Tally still offers it");
+        assert_eq!(
+            bound
+                .current_catalog_bindings
+                .iter()
+                .map(|binding| (binding.row_position, binding.entry_position))
+                .collect::<Vec<_>>(),
+            vec![(1, 1)],
+            "row 1 is current after its own fresh read"
+        );
+
+        // Tally renames the ledger, then the operator binds it on another row.
+        let refused = apply_existing_ledger_target(
+            &store,
+            &runtime,
+            SourceDraftCatalogApplyRequest {
+                draft_id: draft_id.to_string(),
+                revision: bound.revision,
+                capture_id: loaded.capture_id,
+                config,
+                selected_company: selected_company(),
+                row_position: 2,
+                entry_position: 1,
+                target_name: renamed_target.clone(),
+                proposals: bound.rows.iter().map(|row| row.proposal.clone()).collect(),
+            },
+        )
+        .await
+        .expect_err("the renamed target is refused");
+        assert_eq!(refused.code, "source_draft_catalogue_target_changed");
+
+        let bindings = store
+            .active
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .catalog
+            .as_ref()
+            .expect("the capture survives a refused selection")
+            .current_binding_positions()
+            .collect::<Vec<_>>();
+        assert!(
+            bindings.is_empty(),
+            "the refusing read also settles row 1, which it disproves: {bindings:?}"
+        );
+        assert_eq!(simulator.finish().expect("all requests observed").len(), 21);
+    }
+
     #[tokio::test]
     async fn catalog_services_keep_identical_retained_bindings_current_without_tauri_state() {
         let store = SourceDraftStore::default();
@@ -1117,7 +1243,7 @@ mod tests {
     #[test]
     fn full_apply_prunes_another_changed_binding_but_keeps_the_new_binding() {
         let store = SourceDraftStore::default();
-        let (id, capture_id, names, xml) = install_active_catalog(&store);
+        let (id, capture_id, names, _) = install_active_catalog(&store);
         let (catalog, _) = captured_catalog_and_xml();
         let first_binding = catalog
             .bind_selected([names[0].clone()])
@@ -1152,7 +1278,7 @@ mod tests {
             .catalog_apply_snapshot(&request)
             .expect("full proposal vector is admissible before fresh read");
         store
-            .commit_catalog_target(snapshot, request, second_binding, &xml)
+            .commit_catalog_target(snapshot, request, second_binding, &catalog)
             .expect("target B commits after its fresh read");
 
         let active = store.active.lock().unwrap();
@@ -1186,10 +1312,9 @@ mod tests {
         };
         let snapshot = store.catalog_load_snapshot(&request).unwrap();
         store.invalidate_catalogue().unwrap();
-        let (catalog, body) = captured_catalog_and_xml();
+        let (catalog, _) = captured_catalog_and_xml();
         let read = StandardLedgerCatalogRead {
             catalog,
-            body,
             request_sha256: "request".into(),
             response_sha256: "response".into(),
             bytes: 2,
@@ -1222,7 +1347,7 @@ mod tests {
         };
         let expected = serde_json::to_vec(&replacement.proposals).unwrap();
         store.replace(replacement).unwrap();
-        let (catalog, body) = captured_catalog_and_xml();
+        let (catalog, _) = captured_catalog_and_xml();
         assert_eq!(
             store
                 .install_catalog(
@@ -1231,7 +1356,6 @@ mod tests {
                     VerifiedCompanyIdentity::test_fixture(CAPTURED_COMPANY, CAPTURED_GUID),
                     StandardLedgerCatalogRead {
                         catalog,
-                        body,
                         request_sha256: "request".into(),
                         response_sha256: "response".into(),
                         bytes: 2,
@@ -1280,12 +1404,14 @@ mod tests {
         let request = apply_request(id, 1, capture_id, names[0].clone(), proposals);
         let snapshot = store.catalog_apply_snapshot(&request).unwrap();
         let binding = snapshot.catalog.bind_selected([names[0].clone()]).unwrap();
+        // Rejected on the snapshot check before the fresh catalog is consulted.
+        let fresh = snapshot.catalog.clone();
         let before =
             serde_json::to_vec(&store.active.lock().unwrap().as_ref().unwrap().proposals).unwrap();
         store.invalidate_catalogue().unwrap();
         assert_eq!(
             store
-                .commit_catalog_target(snapshot, request, binding, "")
+                .commit_catalog_target(snapshot, request, binding, &fresh)
                 .unwrap_err()
                 .code,
             "source_draft_catalogue_invalidated"
@@ -1326,10 +1452,12 @@ mod tests {
             catalog: None,
         };
         let expected = serde_json::to_vec(&replacement.proposals).unwrap();
+        // Rejected on the snapshot check before the fresh catalog is consulted.
+        let fresh = snapshot.catalog.clone();
         store.replace(replacement).unwrap();
         assert_eq!(
             store
-                .commit_catalog_target(snapshot, request, binding, "")
+                .commit_catalog_target(snapshot, request, binding, &fresh)
                 .unwrap_err()
                 .code,
             "source_draft_catalogue_invalidated"
@@ -1381,23 +1509,22 @@ mod tests {
         }
     }
 
+    /// Both sides are captured responses either side of a real rename in Tally,
+    /// so this refuses on observed behaviour rather than on an edited string.
     #[test]
     fn changed_observed_catalogue_refuses_bound_target_before_commit() {
-        let (catalog, xml) = captured_catalog_and_xml();
-        let name = catalog.names().next().unwrap().to_owned();
-        let binding = catalog.bind_selected([name.clone()]).unwrap();
-        let identity = VerifiedCompanyIdentity::test_fixture(CAPTURED_COMPANY, CAPTURED_GUID);
-        assert!(require_current_catalog_binding(&binding, &xml, &identity).is_ok());
-        let expected = format!("NAME=\"{name}\"");
+        let (catalog, _) = captured_catalog_and_xml();
+        let binding = catalog.bind_selected([RENAMED_FROM.to_owned()]).unwrap();
+        assert!(require_current_catalog_binding(&binding, &catalog).is_ok());
+
+        let renamed = parse_standard_ledger_catalog_with_identities(
+            &captured_renamed_catalog_xml(),
+            CAPTURED_COMPANY,
+            CAPTURED_GUID,
+        )
+        .expect("captured renamed catalogue remains parser-admitted");
         assert_eq!(
-            xml.matches(&expected).count(),
-            1,
-            "captured target occurs once"
-        );
-        let changed = xml.replacen(&expected, "NAME=\"renamed before apply\"", 1);
-        assert_ne!(changed, xml, "control changes captured response in memory");
-        assert_eq!(
-            require_current_catalog_binding(&binding, &changed, &identity)
+            require_current_catalog_binding(&binding, &renamed)
                 .unwrap_err()
                 .code,
             "source_draft_catalogue_target_changed"
