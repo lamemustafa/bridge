@@ -101,6 +101,8 @@ pub fn run(make_context: fn() -> tauri::Context<tauri::Wry>) {
         .setup(|app| {
             let app_data_directory = app.path().app_data_dir()?;
             app.manage(LazyTallyMirror::new(app_data_directory));
+            #[cfg(target_os = "macos")]
+            install_macos_cocoa_termination_guard(app.handle())?;
             Ok(())
         });
 
@@ -243,6 +245,106 @@ fn emit_source_draft_lifecycle_request(
 }
 
 #[cfg(target_os = "macos")]
+static MACOS_COCOA_TERMINATION_APP: std::sync::OnceLock<tauri::AppHandle> =
+    std::sync::OnceLock::new();
+
+#[cfg(target_os = "macos")]
+fn install_macos_cocoa_termination_guard(app: &tauri::AppHandle) -> tauri::Result<()> {
+    use objc2::{runtime::AnyObject, MainThreadMarker};
+    use objc2_app_kit::NSApplication;
+
+    let main_thread = MainThreadMarker::new().ok_or_else(|| {
+        std::io::Error::other("refusing to install Cocoa termination guard outside the main thread")
+    })?;
+    let ns_app = NSApplication::sharedApplication(main_thread);
+    let delegate = ns_app
+        .delegate()
+        .ok_or_else(|| std::io::Error::other("Cocoa application delegate is unavailable"))?;
+    let delegate_object: &AnyObject = <objc2::runtime::ProtocolObject<
+        dyn objc2_app_kit::NSApplicationDelegate,
+    > as AsRef<AnyObject>>::as_ref(&delegate);
+    let delegate_class = delegate_object.class();
+    let selector = objc2::sel!(applicationShouldTerminate:);
+
+    if delegate_class.responds_to(selector) {
+        return Err(std::io::Error::other(
+            "refusing to replace existing Cocoa applicationShouldTerminate: implementation",
+        )
+        .into());
+    }
+    MACOS_COCOA_TERMINATION_APP.set(app.clone()).map_err(|_| {
+        std::io::Error::other("Cocoa termination guard was installed more than once")
+    })?;
+    // `Q@:@` is the macOS Objective-C encoding for an NSUInteger reply and
+    // one NSApplication object argument. The callback has that exact ABI.
+    let implementation: objc2::runtime::Imp = unsafe {
+        std::mem::transmute(
+            macos_application_should_terminate as unsafe extern "C-unwind" fn(_, _, _) -> _,
+        )
+    };
+    let added = unsafe {
+        objc2::ffi::class_addMethod(
+            delegate_class as *const _ as *mut _,
+            selector,
+            implementation,
+            c"Q@:@".as_ptr(),
+        )
+        .as_bool()
+    };
+    if !added {
+        return Err(std::io::Error::other(
+            "Cocoa application delegate refused applicationShouldTerminate: guard",
+        )
+        .into());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C-unwind" fn macos_application_should_terminate(
+    _delegate: &objc2::runtime::AnyObject,
+    _selector: objc2::runtime::Sel,
+    _sender: &objc2_app_kit::NSApplication,
+) -> objc2_app_kit::NSApplicationTerminateReply {
+    let Some(app) = MACOS_COCOA_TERMINATION_APP.get() else {
+        tracing::error!(
+            "Cocoa termination guard has no application context; cancelling termination"
+        );
+        return objc2_app_kit::NSApplicationTerminateReply::TerminateCancel;
+    };
+    let guard = app.state::<source_draft::SourceDraftLifecycleGuard>();
+    guarded_cocoa_termination_reply(&guard, |kind| {
+        emit_source_draft_lifecycle_request(app, &guard, kind);
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn guarded_cocoa_termination_reply(
+    guard: &source_draft::SourceDraftLifecycleGuard,
+    emit_lifecycle_request: impl FnOnce(source_draft::SourceDraftLifecycleKind),
+) -> objc2_app_kit::NSApplicationTerminateReply {
+    let requires_confirmation = guard.requires_confirmation();
+    let exit_permit = requires_confirmation && guard.take_exit_permit();
+    let reply = termination_reply(requires_confirmation, exit_permit);
+    if reply == objc2_app_kit::NSApplicationTerminateReply::TerminateCancel {
+        emit_lifecycle_request(source_draft::SourceDraftLifecycleKind::Exit);
+    }
+    reply
+}
+
+#[cfg(target_os = "macos")]
+const fn termination_reply(
+    requires_confirmation: bool,
+    exit_permit: bool,
+) -> objc2_app_kit::NSApplicationTerminateReply {
+    if requires_confirmation && !exit_permit {
+        objc2_app_kit::NSApplicationTerminateReply::TerminateCancel
+    } else {
+        objc2_app_kit::NSApplicationTerminateReply::TerminateNow
+    }
+}
+
+#[cfg(target_os = "macos")]
 const GUARDED_QUIT_MENU_ITEM_ID: &str = "source-draft-guarded-quit";
 
 #[cfg(target_os = "macos")]
@@ -311,6 +413,7 @@ fn guarded_macos_menu(
 #[cfg(all(test, target_os = "macos"))]
 mod source_draft_macos_menu_tests {
     use super::*;
+    use uuid::Uuid;
 
     #[test]
     fn guarded_quit_menu_item_routes_only_to_exit_lifecycle() {
@@ -320,6 +423,65 @@ mod source_draft_macos_menu_tests {
         );
         assert_eq!(lifecycle_kind_for_menu_item("quit"), None);
         assert_eq!(lifecycle_kind_for_menu_item("unrelated-menu-item"), None);
+    }
+
+    #[test]
+    fn cocoa_termination_with_confirmation_emits_an_exit_request_and_cancels() {
+        let guard = source_draft::SourceDraftLifecycleGuard::default();
+        guard.renderer_registered(Uuid::new_v4());
+        let mut emitted = None;
+
+        assert_eq!(
+            termination_reply(true, false),
+            objc2_app_kit::NSApplicationTerminateReply::TerminateCancel
+        );
+        let reply = guarded_cocoa_termination_reply(&guard, |kind| emitted = Some(kind));
+
+        assert_eq!(
+            reply,
+            objc2_app_kit::NSApplicationTerminateReply::TerminateCancel
+        );
+        assert_eq!(emitted, Some(source_draft::SourceDraftLifecycleKind::Exit));
+    }
+
+    #[test]
+    fn cocoa_termination_with_exit_permit_proceeds_without_another_request() {
+        let guard = source_draft::SourceDraftLifecycleGuard::default();
+        guard.renderer_registered(Uuid::new_v4());
+        let request = guard.request(source_draft::SourceDraftLifecycleKind::Exit);
+        assert!(guard.authorize(&request));
+        let mut emitted = false;
+
+        assert_eq!(
+            termination_reply(true, true),
+            objc2_app_kit::NSApplicationTerminateReply::TerminateNow
+        );
+        let reply = guarded_cocoa_termination_reply(&guard, |_| emitted = true);
+
+        assert_eq!(
+            reply,
+            objc2_app_kit::NSApplicationTerminateReply::TerminateNow
+        );
+        assert!(!emitted);
+        assert!(!guard.take_exit_permit());
+    }
+
+    #[test]
+    fn cocoa_termination_without_confirmation_proceeds() {
+        let guard = source_draft::SourceDraftLifecycleGuard::default();
+        let mut emitted = false;
+
+        let reply = guarded_cocoa_termination_reply(&guard, |_| emitted = true);
+
+        assert_eq!(
+            reply,
+            objc2_app_kit::NSApplicationTerminateReply::TerminateNow
+        );
+        assert!(!emitted);
+        assert_eq!(
+            termination_reply(false, false),
+            objc2_app_kit::NSApplicationTerminateReply::TerminateNow
+        );
     }
 }
 
