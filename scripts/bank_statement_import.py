@@ -34,11 +34,28 @@ section 9. The ones this module is built around:
   (9.3 in the protocol reference still says "no idempotency". It is stale —
   it was measured without a client-supplied REMOTEID. 3.3a supersedes it.)
 
+  **UNVERIFIED for the voucher types this tool emits.** 9.8 bounds that
+  evidence itself: it qualifies an exact-file repeat on the licensed *Journal*
+  path and "does not establish ... other request shapes or voucher types,
+  restart behavior, or universal REMOTEID semantics". This tool emits Payment,
+  Receipt and Contra. The REMOTEID is carried because it is the best available
+  key and because Delete-by-REMOTEID is the documented correction path (9.7,
+  9.12b) — NOT because upsert-on-repeat has been shown for these types.
+  Before relying on a re-import to correct a batch: import the corrected file
+  once, then count the vouchers in that date range. If the count doubled, the
+  upsert did not happen for this voucher type and the first batch must be
+  deleted by REMOTEID instead. `main` prints this.
+
+  The key is also not readable back. A Voucher collection read returns Tally's
+  own <company GUID>-<master id> in the REMOTEID attribute, not the value you
+  sent. Confirm a voucher by date, ledger entries and amount — never by
+  comparing REMOTEIDs, which rejects every legitimate import.
+
   Sign convention: a debit is ISDEEMEDPOSITIVE Yes with a NEGATIVE amount.
 
 WHAT THIS TOOL CANNOT CHECK, AND WHAT IT DOES INSTEAD
 
-It is offline, so it cannot ask Tally which company is open — and per 9.11c
+It is offline, so it cannot ask Tally which company is open — and per 9.11d
 `SVCURRENTCOMPANY` is *not* a write guard: a name matching no loaded company is
 ignored and the vouchers land in whichever company happens to be open. There is
 no offline fix for that, so `--confirm-open-company` makes it a deliberate
@@ -335,6 +352,37 @@ class HDFC(Bank):
     top_anchors = (("Narration",), ("Statement", "account"))
 
     @staticmethod
+    def _bounded_party(narr, prefix, is_boundary, skip=0, back=0):
+        """The name field of a hyphen-delimited narration, which may itself
+        contain hyphens.
+
+        HDFC delimits every field with `-`, so a counterparty called
+        `ACME-INDUSTRIES` occupies two fields and a non-greedy `(.+?)-` stops
+        at the first of them. That either misses a correct mapping or — worse —
+        hits an unrelated ledger that happens to be named `ACME`.
+
+        So the name runs from field `skip` up to the next *structured* field
+        found by `is_boundary`, less `back` fields for anything that sits
+        between the name and that marker.
+
+        `skip` matters as much as the boundary: an IFSC ahead of the name looks
+        exactly like the UTR that terminates it, so scanning from field 0 finds
+        the wrong marker and returns nothing. `is_boundary` must be a shape the
+        *name* cannot take — a masked account, a VPA, a 12-digit reference —
+        never a bare 4-letter code, which is also a plausible company name.
+
+        An empty result means the narration is not the shape this rule was
+        written for, and the caller must send it to suspense rather than guess.
+        """
+        parts = narr[len(prefix):].split("-")
+        for index, part in enumerate(parts):
+            if index < skip:
+                continue
+            if is_boundary(part):
+                return "-".join(parts[skip:max(index - back, skip)]).strip()
+        return ""
+
+    @staticmethod
     def _upi_party(narr):
         """Name field of a UPI narration, which may itself contain hyphens.
 
@@ -349,24 +397,35 @@ class HDFC(Bank):
         means the shape is not the one this rule was written for, and the
         caller must send it to suspense rather than guess.
         """
-        parts = narr.split("-")[1:]  # drop the "UPI" tag itself
-        for index, part in enumerate(parts):
-            if "@" in part:  # the VPA — the strongest boundary
-                return "-".join(parts[:index]).strip()
-        for index, part in enumerate(parts):
-            if re.fullmatch(r"\d{12,}", part):  # the transaction reference
-                # the field immediately before a reference is the bank code
-                return "-".join(parts[:max(index - 1, 0)]).strip()
-        return ""
+        # the VPA is the strongest boundary; the reference is the fallback,
+        # with the bank code sitting between it and the name
+        by_vpa = HDFC._bounded_party(narr, "UPI-", lambda p: "@" in p)
+        if by_vpa:
+            return by_vpa
+        return HDFC._bounded_party(
+            narr, "UPI-", lambda p: bool(re.fullmatch(r"\d{12,}", p)), back=1)
 
     def party(self, row):
         narr = row["narr"]
-        found = re.match(r"^IMPS-\d+-(.+?)-[A-Z]{4}\d?", narr)
-        if found:
-            return _squash(found.group(1))
-        found = re.match(r"^NEFT (?:CR|DR)-[A-Z0-9]+-(.+?)-", narr)
-        if found:
-            return _squash(found.group(1))
+        if re.match(r"^IMPS-\d+-", narr):
+            # IMPS-<ref>-<name…>-<bank code>-…; the name ends at the bank code
+            # the masked account is the marker: a name can be four capitals
+            # (ACME) and so can the bank code, but it cannot be XXXXXXXX1234
+            prefix = narr[:narr.index("-", 5) + 1]
+            name = self._bounded_party(
+                narr, prefix,
+                lambda p: bool(re.fullmatch(r"[Xx]{4,}\d*", p)), back=1)
+            return _squash(name) if name else "UNRESOLVED"
+        if re.match(r"^NEFT (?:CR|DR)-", narr):
+            # NEFT DR-<IFSC>-<name…>-<branch>-<UTR>-…; the UTR is the marker and
+            # the branch sits between it and the name
+            prefix = narr[:narr.index("-", 5) + 1]
+            name = self._bounded_party(
+                narr, prefix,
+                _looks_like_utr, skip=1, back=1)
+            if name:
+                return _squash(name)
+            return "UNRESOLVED"
         found = re.match(r"^\d{10,}-TPT-[^-]*-(.+)$", narr)
         if found:
             return _squash(found.group(1))
@@ -411,6 +470,18 @@ def _squash(text):
 
 def _strip(text):
     return re.sub(r"\s+", "", text)
+
+
+def _looks_like_utr(text):
+    """A bank reference: long, upper-case alphanumeric, and mostly digits.
+
+    The digit requirement is the whole point. `[A-Z]{2,}[A-Z0-9]{8,}` also
+    matches `INTERNATIONAL`, so a counterparty with one long all-capitals word
+    terminates its own name and the parser returns nothing. A reference always
+    carries digits; a company name may carry none.
+    """
+    return (len(text) >= 10 and text.isalnum() and text.isupper()
+            and sum(character.isdigit() for character in text) >= 4)
 
 
 def _key(text):
@@ -514,17 +585,52 @@ def parse(pdf, password, bank):
     return parse_pages(pages, bank), pages
 
 
-def digit_runs(pages):
-    """Every maximal run of digits printed anywhere in the document."""
+def _table_top(lines, bank):
+    """y of the line that starts this page's transaction table, or None."""
+    for anchor in bank.top_anchors:
+        found = next((y for y, group in lines
+                      if all(any(t == token for *_, t in group) for token in anchor)), None)
+        if found is not None:
+            return found
+    return None
+
+
+def header_digit_runs(pages, bank):
+    """Maximal digit runs printed in the statement header, above the table.
+
+    Deliberately not the whole document. Every transaction reference, UPI id,
+    IFSC fragment and cheque number lives *inside* the table, and any of them
+    can end in the same four digits as an account tail — so a whole-document
+    search will accept a statement for the wrong account about as readily as
+    the right one. The account number is printed in the header block, and
+    nothing that varies with a transaction is.
+    """
     runs = set()
     for page in pages:
-        for *_, text in WORD.findall(page):
-            for run in re.findall(r"\d+", _unescape(text)):
-                runs.add(run)
+        lines = _lines(page)
+        top = _table_top(lines, bank)
+        if top is None:
+            continue
+        for y, group in lines:
+            if y > top:
+                continue
+            for *_, text in group:
+                runs.update(re.findall(r"\d+", _unescape(text)))
+        break  # the first page carrying a table is the one with the header block
     return runs
 
 
-def require_account_match(pages, account_tail):
+def account_digits(account_tail):
+    """The canonical account identity: the digits of the operator's label.
+
+    `HDFC CA xx1234` and `HDFC xx1234` name one account and must reduce to one
+    value, because this feeds the REMOTEID — two spellings of a free-form label
+    must not turn one transaction into two vouchers on re-import.
+    """
+    return re.sub(r"\D", "", account_tail)
+
+
+def require_account_match(pages, bank, account_tail):
     """Refuse a statement that does not print the account being posted to.
 
     The running-balance proof validates the PDF's own arithmetic and nothing
@@ -534,22 +640,37 @@ def require_account_match(pages, account_tail):
     document in hand to the ledger it will be posted against, so it runs before
     any XML exists.
 
-    Matching is on a trailing digit run because banks mask the leading digits
-    (`XXXXXX4230`) and space them unpredictably.
+    Matching is on a trailing digit run, because banks mask the leading digits
+    (`XXXXXX4230`) and space them unpredictably, and only within the header
+    block (see `header_digit_runs`).
+
+    Residual weakness, stated so it is known rather than assumed: a four-digit
+    tail could still coincide with another number printed in the header, such
+    as a branch code or part of an IFSC. A bank profile with a confirmed
+    account-number label should narrow this to that field.
     """
-    digits = _strip(re.sub(r"\D", " ", account_tail))
+    digits = account_digits(account_tail)
     if len(digits) < 4:
         raise Refusal(
             "unbindable_account",
             f"--account-tail {account_tail!r} carries {len(digits)} digits; "
             "at least 4 are needed to bind the statement to the ledger",
         )
-    if not any(run.endswith(digits) for run in digit_runs(pages)):
+    runs = header_digit_runs(pages, bank)
+    if not runs:
+        raise Refusal(
+            "no_statement_header",
+            "found no header block above the transaction table, so the account "
+            "number could not be located. The layout has changed, or this is not "
+            f"a {bank.name.upper()} statement.",
+        )
+    if not any(run.endswith(digits) for run in runs):
         raise Refusal(
             "account_not_in_statement",
-            f"no number ending {digits} appears in this statement. Either the PDF "
-            "is not the account named by --bank-ledger/--account-tail, or the "
-            "account digits were mistyped. Refusing to post it anywhere.",
+            f"no number ending {digits} is printed in this statement's header. "
+            "Either the PDF is not the account named by --bank-ledger/"
+            "--account-tail, or the account digits were mistyped. Refusing to "
+            "post it anywhere.",
         )
 
 
@@ -580,6 +701,26 @@ def _decimal(text, pattern, field, row_number, kind):
     return D(text)
 
 
+def control_value(text, flag, signed=False):
+    """An operator-supplied control total, read off the printed statement.
+
+    Parsed through the same boundary as a statement cell, because it is
+    compared against one. Thousands separators are stripped first: the operator
+    is copying `1,00,000.00` off a page, and a bare `Decimal()` on that raises
+    `InvalidOperation` — an uncaught traceback where every other bad input to
+    this tool produces a category.
+    """
+    cleaned = (text or "").replace(",", "").strip()
+    pattern = _BALANCE if signed else _AMOUNT
+    if not pattern.fullmatch(cleaned):
+        raise Refusal(
+            "malformed_control_value",
+            f"{flag} {text!r} is not an amount with at most two decimal places"
+            + ("" if signed else " (a total of withdrawals or deposits is never negative)"),
+        )
+    return D(cleaned)
+
+
 def _money(text, field="amount", row_number=0):
     """A transaction amount: unsigned, at most two decimal places."""
     return _decimal(text, _AMOUNT, field, row_number, "malformed_amount")
@@ -601,9 +742,16 @@ def reconcile(rows, bank, opening, expect_closing):
     — it says nothing about whether they are all of them. A layout change, a
     missed page anchor or a false footer match truncates the parse after a
     perfectly self-consistent prefix, and an empty parse satisfies it
-    vacuously. `expect_closing` is the independent evidence that closes that
-    gap: the operator reads the statement's own printed closing balance, and
-    the replayed chain has to land on it. A truncated parse cannot.
+    vacuously. `expect_closing` is the first piece of independent evidence: the
+    operator reads the statement's own printed closing balance and the replayed
+    chain has to land on it.
+
+    **It is not sufficient on its own and must not be read as such.** The
+    closing balance is the *net* of the transactions, so a dropped suffix whose
+    debits and credits cancel — an omitted 50 debit followed by an omitted 50
+    credit — still closes on the printed figure. Two vouchers vanish and every
+    check here passes. That is why `main` also requires the printed debit and
+    credit totals: they are independent of the net and of each other.
     """
     if not rows:
         raise Refusal(
@@ -740,7 +888,12 @@ def load_mapping(path):
                 f"{','.join(MAPPING_COLUMNS)}",
             )
         origin = {}
-        for line, record in enumerate(reader, 2):
+        for line, raw in enumerate(reader, 2):
+            # the header check normalises; the records must be normalised too, or
+            # `Party,Ledger,Treatment` passes validation and then reads as empty
+            # on every row — the mapping is silently discarded and everything
+            # lands in suspense, which is the failure the check exists to stop
+            record = {(name or "").strip().lower(): value for name, value in raw.items()}
             party = _squash(record.get("party", ""))
             if not party:
                 continue
@@ -790,9 +943,15 @@ def _remote_id(account_tail, date, row, bank):
     date, both amount columns, the running balance and the narration. The
     balance in particular makes two genuinely identical same-day payments
     distinguishable, because the second lands on a different balance.
+
+    Nothing operator-controlled may enter this. `--account-tail` is a free-form
+    label, so `HDFC CA xx1234` and `HDFC xx1234` are the same account spelled
+    two ways; only its digits are used, in both the digest and the prefix.
+    Otherwise regenerating a file with a tidied-up label would give every
+    transaction a new key and duplicate the whole statement on re-import.
     """
     material = "\0".join((
-        _ledger_key(account_tail),
+        account_digits(account_tail),
         date.isoformat(),
         (row.get(bank.debit_column) or "").strip(),
         (row.get(bank.credit_column) or "").strip(),
@@ -800,7 +959,7 @@ def _remote_id(account_tail, date, row, bank):
         _squash(row.get(bank.narration_column, "")),
     ))
     digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:12].upper()
-    return f"{_strip(account_tail)}-{date.strftime('%Y%m%d')}-{digest}"
+    return f"AC{account_digits(account_tail)}-{date.strftime('%Y%m%d')}-{digest}"
 
 
 MANIFEST_COLUMNS = ("row", "date", "voucher_type", "amount", "dr_ledger", "cr_ledger",
@@ -811,7 +970,19 @@ def build(rows, bank, company, bank_ledger, suspense, mapping, account_tail,
           date_from=None, date_to=None):
     vouchers, manifest, seen = [], [], {}
     for index, row in enumerate(rows, 1):
-        date = bank.parse_date(f"{row[bank.date_column]}".strip())
+        raw_date = f"{row[bank.date_column]}".strip()
+        try:
+            date = bank.parse_date(raw_date)
+        except ValueError:
+            # matched the row-start shape but is not a real calendar date, e.g.
+            # 31/02/26 — a layout or extraction fault, and it must arrive as a
+            # category rather than a traceback
+            raise Refusal(
+                "unparseable_date",
+                f"row {index}: {raw_date!r} is not a date this statement layout "
+                f"can produce ({bank.date_format}). The columns have shifted or "
+                "the extraction is corrupt.",
+            )
         if (date_from and date < date_from) or (date_to and date > date_to):
             continue
         debit = _money(row[bank.debit_column], bank.debit_column, index)
@@ -824,9 +995,16 @@ def build(rows, bank, company, bank_ledger, suspense, mapping, account_tail,
         ledger, treatment = mapping.get(_key(party), (suspense, "auto"))
         ledger = ledger or suspense
         if treatment == "skip":
+            # the REMOTEID is recorded even though no voucher is emitted: if this
+            # statement was already imported before the mapping said `skip`, this
+            # is the key the operator needs to delete the voucher that is still
+            # sitting in the book. Omitting a voucher from a re-import does not
+            # remove it — a re-import upserts what is present and ignores what
+            # is not.
             manifest.append({"row": index, "date": date.isoformat(), "voucher_type": "SKIPPED",
                              "amount": f"{amount:.2f}", "dr_ledger": "", "cr_ledger": "",
-                             "suspense": "", "remoteid": "", "party": party,
+                             "suspense": "", "remoteid": _remote_id(account_tail, date, row, bank),
+                             "party": party,
                              "narration": "excluded: carried by the other account's contra"})
             continue
         kind = "Contra" if treatment == "contra" else ("Payment" if outward else "Receipt")
@@ -983,7 +1161,7 @@ def main(argv=None):
                         help="repeat the company name as it appears in the title bar of "
                              "the Tally window you are about to import into. Tally "
                              "ignores a company name that matches nothing and imports "
-                             "into whichever company is open (9.11c), so this tool "
+                             "into whichever company is open (9.11d), so this tool "
                              "cannot verify the target and neither can the XML. This "
                              "flag makes confirming it a deliberate act.")
     parser.add_argument("--bank-ledger", required=True)
@@ -994,14 +1172,19 @@ def main(argv=None):
     parser.add_argument("--opening", required=True, help="opening balance, to replay the statement")
     parser.add_argument("--expect-closing", required=True,
                         help="the closing balance the statement itself prints. The replayed "
-                             "chain must land on it; this is what proves the whole statement "
-                             "was read and not just a self-consistent prefix.")
+                             "chain must land on it.")
+    parser.add_argument("--expect-debits", required=True,
+                        help="the statement's own printed total of withdrawals")
+    parser.add_argument("--expect-credits", required=True,
+                        help="the statement's own printed total of deposits. Required with "
+                             "--expect-debits because the closing balance alone is the NET of "
+                             "the transactions: a dropped tail whose debits and credits cancel "
+                             "still lands on the printed closing figure. These two totals are "
+                             "independent of the net and of each other.")
     parser.add_argument("--mapping", help="CSV: " + ",".join(MAPPING_COLUMNS))
     parser.add_argument("--suspense", default="SUSPENSE ACC")
     parser.add_argument("--from", dest="date_from", help="YYYY-MM-DD")
     parser.add_argument("--to", dest="date_to", help="YYYY-MM-DD")
-    parser.add_argument("--expect-debits")
-    parser.add_argument("--expect-credits")
     parser.add_argument("--out")
     parser.add_argument("--manifest")
     parser.add_argument("--dry-run", action="store_true",
@@ -1032,24 +1215,32 @@ def main(argv=None):
             "excluded and the run would report a successful zero-voucher import",
         )
 
+    # a balance may be negative on an overdrawn account; a total of withdrawals
+    # or deposits may not
+    opening = control_value(args.opening, "--opening", signed=True)
+    expect_closing = control_value(args.expect_closing, "--expect-closing", signed=True)
+    expect_debits = control_value(args.expect_debits, "--expect-debits")
+    expect_credits = control_value(args.expect_credits, "--expect-credits")
+
     bank = BANKS[args.bank]()
     rows, pages = parse(pathlib.Path(args.pdf), read_password(), bank)
-    require_account_match(pages, args.account_tail)
-    closing = reconcile(rows, bank, args.opening, args.expect_closing)
+    require_account_match(pages, bank, args.account_tail)
+    closing = reconcile(rows, bank, opening, expect_closing)
     debits = sum(_money(r[bank.debit_column], bank.debit_column, i) or D(0)
                  for i, r in enumerate(rows, 1))
     credits = sum(_money(r[bank.credit_column], bank.credit_column, i) or D(0)
                   for i, r in enumerate(rows, 1))
     print(f"parsed {len(rows)} rows; running balance reproduced on every row")
     print(f"  debits {debits:,}  credits {credits:,}  closing {closing:,}")
-    print(f"  closing matches the statement's printed {args.expect_closing}")
-    for label, actual, expected in (("debits", debits, args.expect_debits),
-                                    ("credits", credits, args.expect_credits)):
-        if expected is not None:
-            if actual != D(expected):
-                raise Refusal("control_total_mismatch",
-                              f"{label} {actual} does not match the statement's {expected}")
-            print(f"  {label} match the statement's printed total")
+    for label, actual, printed in (("debits", debits, expect_debits),
+                                   ("credits", credits, expect_credits)):
+        if actual != printed:
+            raise Refusal(
+                "control_total_mismatch",
+                f"{label} total {actual} does not match the statement's printed "
+                f"{printed}. Rows are missing or misread — the closing balance alone "
+                "cannot see this, because it is the net of the two.")
+    print("  debits, credits and closing all match the statement's printed totals")
 
     vouchers, manifest = build(
         rows, bank, args.company, args.bank_ledger, args.suspense,
@@ -1083,7 +1274,17 @@ def main(argv=None):
         _write_private(args.manifest, buffer.getvalue())
         print(f"  wrote {args.manifest} (mode 0600)")
     print("\nBEFORE IMPORTING: confirm the open company in Tally is "
-          f"{args.company!r}. Tally will not check it for you (9.11c).")
+          f"{args.company!r}. Tally will not check it for you (9.11d).")
+    if skipped:
+        print("\nIF THIS STATEMENT WAS ALREADY IMPORTED: the "
+              f"{len(skipped)} skipped row(s) are omitted from this file, and omission "
+              "is not deletion — a re-import upserts what is present and leaves the "
+              "rest standing. Delete those vouchers by the REMOTEIDs in the manifest, "
+              "or the transfer they represent is counted twice.")
+    print("\nON RE-IMPORTING TO CORRECT THIS BATCH: upsert-by-REMOTEID is verified for "
+          "Journal only (9.8), and this file is Payment/Receipt/Contra. Import once, then "
+          "count the vouchers in this date range. If the count doubled, delete the first "
+          "batch by REMOTEID rather than re-importing again.")
     return 0
 
 

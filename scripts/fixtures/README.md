@@ -1,0 +1,40 @@
+# Parser fixtures
+
+`*-bbox-capture.xml` are `pdftotext -bbox-layout` output from **real** bank statements, sanitised.
+Every coordinate, word break, line break and entity encoding is the PDF producer's; every customer
+value is fabricated. They are the only fixtures in this repository that can catch a change in a
+bank's statement template or in poppler's serialisation, because they are the only ones this
+repository did not write.
+
+Read the banner comment at the top of each file for exactly what is real and what is not.
+
+## Re-deriving them
+
+`sanitise_bbox_capture.py` is the whole procedure and the fixtures reproduce from it byte for byte:
+
+```bash
+pdftotext -bbox-layout -opw "$PASSWORD" statement.pdf raw.xml
+python3 scripts/fixtures/sanitise_bbox_capture.py raw.xml \
+  scripts/fixtures/hdfc-bbox-capture.xml "HDFC current-account" \
+  0:0-800 2:200-330,700-800 3:200-300
+```
+
+```bash
+python3 scripts/fixtures/sanitise_bbox_capture.py raw.xml \
+  scripts/fixtures/sbi-bbox-capture.xml "State Bank of India current-account" \
+  0:90-741 1:0-165
+```
+
+The page ranges are chosen to keep each parser rule load-bearing: a full first page with its account
+header, a continuation page that repeats the column header while a row is in progress, the page that
+carries the end-of-statement marker, and — for HDFC — one page *after* that marker, so the marker
+cannot be removed without a test noticing.
+
+## Adding a capture for a new bank
+
+1. Sanitise, then **diff the result against the source** and scan for surviving tokens (the script's
+   `--help` prints the one-liner). Everything that survives should be bank vocabulary.
+2. If a customer value survives, do not add it to `TEMPLATE`. Work out why the rule matched it.
+3. Byte integrity is enforced: `scripts/fixtures/**` is `-text` in `.gitattributes` and the
+   directory is registered in `scripts/check-fixture-byte-integrity.mjs`. Line-ending normalisation
+   would rewrite the geometry these fixtures exist to preserve.
