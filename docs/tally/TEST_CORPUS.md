@@ -349,6 +349,50 @@ bytes, so it cannot support any claim about the exact bytes a real instance rece
 
 ---
 
+## 9. Master-binding ledgers in `BRIDGE CORPUS OPENING`
+
+**Added 2026-09-10.** Ten ledgers prefixed `MB `, seeded so the master-binding
+identifier rule has live coverage. Before this, **no book on either instance carried an
+embedded identifier**: across 470 live ledger names read from all 16 loaded companies,
+zero yielded a numeric identifier and exactly one yielded a code identifier. The rule that
+distinguishes `bridge_tally_core::master_binding` from fuzzy matching was qualified by
+fabricated data alone.
+
+| ledger | what it exercises |
+| --- | --- |
+| `MB PILOT ALPHA (5550001001)` | a unique embedded number |
+| `MB PARTY BETA (5550001002)`, `MB PARTY GAMMA (5550001003)` | the same, for name-vs-identifier cases |
+| `MB PARTY DELTA (5550001009)`, `MB PARTY EPSILON (5550001009)` | **two masters sharing one identifier** — must refuse, never bind |
+| `MB ITEM PH01AB00` | a code identifier, matched across punctuation |
+| `MB PURCHASES FY2025`, `MB SALES FY2025` | a shared fiscal-period label that must **not** be treated as an identifier |
+| `MB TRADING COMPANY`, `MB TRADING COMPANY LIMITED` | a truncation / near-duplicate pair |
+
+**Chosen company.** `BRIDGE CORPUS OPENING` (GUID `915d42f8-42ae-4b03-8291-55f596e3a2ea`),
+because it verifies as a single identity tuple and had only eight ledgers. **Not**
+`BRIDGE PROBE B SANDBOX`, despite that being where corpus manufacturing was first proven:
+it and `BRIDGE PROBE B SANDBOX - (from 1-Apr-26)` share one GUID, and Bridge's own read
+path refuses that company with `company_identity_ambiguous`. Do not write to it by name.
+
+**Blast radius, deliberately small.** All ten are parented to `Suspense A/c`, which is not
+a party group, so receivable/payable and ageing measurements on this book are unaffected.
+They carry no opening balance and no vouchers. Every name is prefixed `MB `, so they are
+trivially identifiable and removable. Master `AlterID` for this company did move; anything
+pinning `ALTMSTID` for `BRIDGE CORPUS OPENING` predates 2026-09-10.
+
+**Import method.** `REPORTNAME=All Masters`, `ACTION="Create"`, one pilot ledger sent and
+verified in the intended company *and confirmed absent from a guard company* before the
+remaining nine. Counters were `CREATED=10, ALTERED=0, ERRORS=0`, and every name was
+confirmed by a readback of the ledger list — counters alone prove nothing, since Tally
+rewrites imports silently. **Do not re-send the create file:** an identical `Create` is a
+silent `Alter` that overwrites.
+
+**What it found within minutes.** The `DELTA`/`EPSILON` pair exposed a defect no fabricated
+fixture had produced: a *byte-exact* request for `MB PARTY DELTA (5550001009)` was being
+refused as `IdentifierConflict`, because the number in its name is shared. That made the
+ledger permanently unimportable, since the write gate admits `exact` only. Byte equality is
+now decisive over an ambiguous identifier; only a *decisive* identifier pointing elsewhere
+outranks an exact name.
+
 ## 6. Changelog
 
 | Date | Change |

@@ -371,6 +371,46 @@ fn a_byte_exact_name_carrying_a_number_is_reported_exact_not_identifier() {
 }
 
 #[test]
+fn a_byte_exact_name_binds_even_when_its_identifier_is_shared() {
+    // Found by seeding two live ledgers that share an embedded number, which no
+    // fabricated fixture had combined. Refusing a name that exactly names one
+    // master makes that ledger permanently unimportable.
+    let catalog = ledgers(&[
+        "MB PARTY DELTA (5550001009)",
+        "MB PARTY EPSILON (5550001009)",
+        "Beta Supply",
+    ]);
+    let binding = bind_one_name(&catalog, "MB PARTY DELTA (5550001009)");
+    assert_eq!(
+        binding.status,
+        BindingStatus::Bound {
+            catalog_name: "MB PARTY DELTA (5550001009)".to_string(),
+            basis: BindingBasis::ExactName,
+        }
+    );
+    // The shared identifier alone, with no exact name, still refuses.
+    let source =
+        SourceEntity::with_identifier_hints(0, "SOME PARTY", ["5550001009"]).expect("valid");
+    let report = bound(&catalog, &[source]);
+    assert_eq!(
+        report.entities()[0].unresolved().expect("unbound").reason,
+        UnboundReason::IdentifierConflict
+    );
+}
+
+#[test]
+fn a_decisive_identifier_pointing_elsewhere_still_outranks_a_byte_exact_name() {
+    let catalog = ledgers(&["ALPHA (5550000001)", "BETA Supply"]);
+    let source =
+        SourceEntity::with_identifier_hints(0, "BETA Supply", ["5550000001"]).expect("valid");
+    let report = bound(&catalog, &[source]);
+    assert_eq!(
+        report.entities()[0].unresolved().expect("unbound").reason,
+        UnboundReason::IdentifierNameConflict
+    );
+}
+
+#[test]
 fn a_trailing_space_never_claims_byte_equality() {
     // `Bank ` against live `Bank` must not report exact: the import file would
     // still carry the trailing space. Normalized is the correct, loud outcome —

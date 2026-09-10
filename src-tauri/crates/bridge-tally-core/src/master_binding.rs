@@ -674,7 +674,36 @@ fn bind_one(catalog: &MasterCatalog, entity: &SourceEntity) -> EntityBinding {
     // An identifier shared by two masters, and an entity whose identifiers
     // reach two masters, are the same refusal: the operator has a naming
     // collision to see, and neither case licenses a choice.
-    let status = if identifier_conflict || identifier_matches.len() > 1 {
+    // Byte equality with an observed master name is the strongest evidence
+    // there is, and it names exactly one master. An identifier that happens to
+    // be ambiguous does not undermine it: refusing here would make a ledger
+    // whose embedded number is shared with another permanently unimportable —
+    // the same dead end that reporting `Identifier` for an exact name created.
+    // Only a *decisive* identifier pointing elsewhere outranks a byte-exact
+    // name, and that stays a reported conflict rather than a silent choice.
+    //
+    // Found by seeding two live ledgers that share an embedded number. No
+    // fabricated fixture had produced the combination.
+    let identifier_points_elsewhere = !identifier_conflict
+        && identifier_matches.len() == 1
+        && exact.is_some_and(|index| !identifier_matches.contains(&index));
+    let status = if identifier_points_elsewhere {
+        unresolved_status(
+            catalog,
+            entity,
+            UnboundReason::IdentifierNameConflict,
+            exact,
+            &identifier_matches,
+        )
+    } else if let Some(index) = exact {
+        BindingStatus::Bound {
+            catalog_name: catalog.entries[index].name.clone(),
+            basis: BindingBasis::ExactName,
+        }
+    } else if identifier_conflict || identifier_matches.len() > 1 {
+        // An identifier shared by two masters, and an entity whose identifiers
+        // reach two masters, are the same refusal: the operator has a naming
+        // collision to see, and neither case licenses a choice.
         unresolved_status(
             catalog,
             entity,
@@ -683,34 +712,11 @@ fn bind_one(catalog: &MasterCatalog, entity: &SourceEntity) -> EntityBinding {
             &identifier_matches,
         )
     } else if let Some(matched) = identifier_matches.iter().copied().next() {
-        // An identifier pointing at one master while the name exactly names
-        // another is a disagreement between two strong signals; it is shown,
-        // not silently decided in the identifier's favour.
-        match exact {
-            // Two strong signals disagreeing is shown, not settled.
-            Some(index) if index != matched => unresolved_status(
-                catalog,
-                entity,
-                UnboundReason::IdentifierNameConflict,
-                exact,
-                &identifier_matches,
-            ),
-            // They agree. Report the stronger, byte-level fact: the write gate
-            // admits `ExactName` only, and reporting `Identifier` here made
-            // every ledger carrying a number permanently unimportable.
-            Some(_) => BindingStatus::Bound {
-                catalog_name: catalog.entries[matched].name.clone(),
-                basis: BindingBasis::ExactName,
-            },
-            None => BindingStatus::Bound {
-                catalog_name: catalog.entries[matched].name.clone(),
-                basis: BindingBasis::Identifier,
-            },
-        }
-    } else if let Some(index) = exact {
+        // A decisive identifier, with no byte-exact name to outrank it. This is
+        // the rule that decided the case fuzzy matching got wrong.
         BindingStatus::Bound {
-            catalog_name: catalog.entries[index].name.clone(),
-            basis: BindingBasis::ExactName,
+            catalog_name: catalog.entries[matched].name.clone(),
+            basis: BindingBasis::Identifier,
         }
     } else {
         match catalog.by_key.get(&entity.key).map(Vec::as_slice) {
