@@ -44,3 +44,26 @@ Exact headings are authoritative in the file itself; this table is a map, not a 
    numbers. If two land on the same number, the *later* one moves.
 4. **Rebase before you finalise.** A number free when you branched may not be free now. Re-read
    this file, not just the reference.
+
+## The reference is a pinned source — editing it needs a reseal
+
+`TALLY_PROTOCOL_REFERENCE.md` is pinned in `compatibility-surface.json`, so **even a
+documentation-only edit stales its digest** and fails the `Tally portable core` job
+(`real_tree_has_complete_migration_and_report_surface_coverage`). This is not obvious: nothing in
+a docs diff suggests a compatibility gate is involved, and both PRs that added this register and
+the offline importer failed CI for exactly this reason.
+
+From `tools`, with the pinned toolchain (a Homebrew `rustc` on `PATH` will shadow rustup and the
+project pins 1.96 — check `rustc --version` first):
+
+```bash
+S=../docs/tally/compatibility/compatibility-surface.json
+M=../docs/tally/compatibility/compatibility-matrix.json
+cargo run --locked -p bridge-tally-compatibility -- rehash-surface "$S" .. --output "$S"
+cargo run --locked -p bridge-tally-compatibility -- seal-surface   "$S"    --output "$S"
+cargo run --locked -p bridge-tally-compatibility -- repoint-matrix "$M" "$S" --output "$M"
+```
+
+`--output` is required; without it the tool prints to stdout and changes nothing. Order matters —
+see `docs/release-process.md#compatibility-surface-reseal`. `rehash-surface` reports its changed
+count, so `rehash_surface_changed:1` after a single-file doc edit is the expected confirmation.
