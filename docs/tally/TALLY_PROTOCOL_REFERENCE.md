@@ -968,6 +968,16 @@ amount landed On Account, which is **not** established as correct for a book tha
 bills. This qualifies the three file shapes. It does not qualify a Bridge dispatch of them,
 which remains one unnumbered Journal (§9.8).
 
+**Which mixes are qualified.** One file may carry more than one voucher type — two of the
+measured files did, 61 Payments with 54 Receipts and 20 with 8, both importing clean. The three
+Contras and the ten reallocation Journals each went in on their own file, so:
+
+| file contents | basis |
+| --- | --- |
+| Payment + Receipt | **observed** |
+| Contra alongside either | **inferred** — Contra renders a strict subset of the Payment shape (same envelope and elements, minus the party), and a statement carrying a transfer line is the ordinary composition |
+| Journal alongside any of the three | **refused** — a Journal renders no `EFFECTIVEDATE`, names no party, may carry a number and a reference, and comes from §9.8's separate lineage. Holding both citations is not evidence for their union |
+
 **What Bridge builds from it.** `build_import_xml` renders exactly this shape for Payment,
 Receipt and Contra, and leaves the Journal shape byte-identical to the file §9.8's own
 measurement ran on. Each of the three is admitted only as two entries over two distinct ledgers,
