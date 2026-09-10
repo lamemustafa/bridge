@@ -98,11 +98,32 @@ reference, say):
   a rate, a house number and a masked last-four cannot qualify — a last-four
   written as digits falls through to near-miss rather than binding two accounts
   that share four digits.
-- **Code** — a token holding at least one letter and at least
-  `MIN_CODE_IDENTIFIER_DIGITS` (2) digits, of at least
-  `MIN_CODE_IDENTIFIER_CHARS` (4) alphanumeric characters. Canonical form is
-  uppercase alphanumerics, so a punctuated part number and an unpunctuated one
-  agree.
+- **Code** — a token holding at least two letters and at least
+  `MIN_CODE_IDENTIFIER_DIGITS` (3) digits, of at least
+  `MIN_CODE_IDENTIFIER_CHARS` (8) alphanumeric characters, and not a period
+  label. Canonical form is uppercase alphanumerics, so a punctuated part number
+  and an unpunctuated one agree.
+
+  These thresholds were raised twice under review, from 4/2/1. Enumerating the
+  period spellings that must not become identifiers — `FY25`, then `APR2025`,
+  then `SEPTEMBER2025` — kept losing to the next spelling, so length carries
+  what a list of prefixes could not: a registration code clears eight
+  alphanumerics with three digits, and a period label does not. **Measured
+  against 485 live ledger names, exactly one yields a code identifier at all**,
+  so the cost of the strictness is nothing observed.
+
+**A token carrying letters never yields a standalone numeric**, whether or not
+it qualified as a code. Otherwise `Part A12345678` reaches an unrelated
+`Bank 12345678` through the one-letter gap the code test rejects: a token
+identifies by its whole shape or not at all.
+
+**Period labels are recognized by their numbers, not their words.** A token is
+a period when every number in it reads as a year or a small ordinal — which
+catches `SEPTEMBER2025` and `2025QUARTER1` that no cap on the alphabetic run
+ever would, because a month name can be any length and a year cannot. A fiscal
+range (`2025-2026`, `2025/2026`) is excluded before its digits are fused, since
+stripping the separator produced an eight-digit run that no calendar reading
+rejects.
 
 One narrow exclusion applies to the numeric shape: an eight-digit run that reads
 as a calendar date in 1900–2199 is a date, not an identifier. Without it two

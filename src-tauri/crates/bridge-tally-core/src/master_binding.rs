@@ -117,7 +117,8 @@ pub enum MasterBindingError {
     TooManyIdentifiers,
     #[error("fallback master was not a current catalog entry")]
     FallbackNotInCatalog,
-    /// A catalog of the wrong class, or an entity from another report.
+    /// A catalog of the wrong class, a catalog the report was not produced
+    /// from, or an entity from another report.
     #[error("catalog did not match the report it is used with")]
     ClassMismatch,
 }
@@ -393,12 +394,18 @@ pub struct BindingTotals {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct BindingReport {
     class: MasterClass,
+    catalog: CatalogFingerprint,
     entities: Vec<EntityBinding>,
 }
 
 impl BindingReport {
     pub fn class(&self) -> MasterClass {
         self.class
+    }
+
+    /// The catalog this report was produced from.
+    pub fn catalog(&self) -> CatalogFingerprint {
+        self.catalog
     }
 
     pub fn entities(&self) -> &[EntityBinding] {
@@ -434,7 +441,10 @@ impl BindingReport {
         catalog: &MasterCatalog,
         fallback_name: &str,
     ) -> Result<FallbackBinding, MasterBindingError> {
-        if catalog.class != self.class {
+        // Class alone is not provenance: two ledger catalogs are both
+        // `Ledger`, and a fallback drawn from the one the report never saw
+        // would name a master that was never a candidate for this entity.
+        if catalog.class != self.class || catalog.fingerprint != self.catalog {
             return Err(MasterBindingError::ClassMismatch);
         }
         let entity = self
@@ -628,9 +638,18 @@ struct CatalogEntry {
 ///
 /// Valid by construction: `bind` cannot fail because everything that could fail
 /// was decided here.
+/// Which catalog a report was produced from.
+///
+/// Not a security property and not a Tally identity — it distinguishes two
+/// catalogs of the same class held in one process, which is the state that let
+/// a fallback be drawn from a book the report never saw.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+pub struct CatalogFingerprint(u64);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MasterCatalog {
     class: MasterClass,
+    fingerprint: CatalogFingerprint,
     entries: Vec<CatalogEntry>,
     by_name: BTreeMap<String, usize>,
     by_key: BTreeMap<String, Vec<usize>>,
@@ -703,8 +722,21 @@ impl MasterCatalog {
             BTreeSet::new()
         };
 
+        // Order-independent, so the same masters read twice fingerprint alike
+        // however the book returned them.
+        let fingerprint =
+            CatalogFingerprint(entries.iter().fold(class as u64 + 1, |accumulated, entry| {
+                accumulated
+                    ^ entry
+                        .name
+                        .bytes()
+                        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+                            (hash ^ u64::from(byte)).wrapping_mul(0x1000_0000_01b3)
+                        })
+            }));
         Ok(Self {
             class,
+            fingerprint,
             entries,
             by_name,
             by_key,
@@ -716,6 +748,12 @@ impl MasterCatalog {
 
     pub fn class(&self) -> MasterClass {
         self.class
+    }
+
+    /// Which catalog this is, for a caller that must prove a later value came
+    /// from the same one.
+    pub fn fingerprint(&self) -> CatalogFingerprint {
+        self.fingerprint
     }
 
     /// Masters in this catalog. Never zero: an empty catalog is refused at
@@ -752,6 +790,7 @@ pub fn bind(
     let mut budget = MAX_REPORT_CANDIDATE_BYTES;
     Ok(BindingReport {
         class: catalog.class,
+        catalog: catalog.fingerprint,
         entities: entities
             .iter()
             .map(|entity| bind_one(catalog, entity, &mut budget))
@@ -849,7 +888,7 @@ fn bind_one(catalog: &MasterCatalog, entity: &SourceEntity, budget: &mut usize) 
                 } else {
                     UnboundReason::NoCandidate
                 };
-                unresolved_from(entity, reason, candidates, masters_found, budget)
+                unresolved_from(catalog, entity, reason, candidates, masters_found, budget)
             }
         }
     };
@@ -871,27 +910,28 @@ fn unresolved_status(
 ) -> BindingStatus {
     let (mut candidates, masters_found) = collect_candidates(catalog, entity, identifier_matches);
     if let Some(index) = exact {
-        let name = catalog.entries[index].name.as_str();
-        if !candidates.iter().any(|(candidate, _)| candidate == name) {
-            candidates.push((name.to_string(), CandidateRule::NormalizedEqual));
+        if !candidates.iter().any(|(candidate, _)| *candidate == index) {
+            candidates.push((index, CandidateRule::NormalizedEqual));
         }
     }
-    unresolved_from(entity, reason, candidates, masters_found, budget)
+    unresolved_from(catalog, entity, reason, candidates, masters_found, budget)
 }
 
 fn unresolved_from(
+    catalog: &MasterCatalog,
     entity: &SourceEntity,
     reason: UnboundReason,
-    candidates: Vec<(String, CandidateRule)>,
+    candidates: Vec<(usize, CandidateRule)>,
     masters_found: usize,
     budget: &mut usize,
 ) -> BindingStatus {
     let mut ordered = candidates;
     ordered.sort_by(|left, right| {
-        left.1
-            .rank()
-            .cmp(&right.1.rank())
-            .then_with(|| left.0.cmp(&right.0))
+        left.1.rank().cmp(&right.1.rank()).then_with(|| {
+            catalog.entries[left.0]
+                .name
+                .cmp(&catalog.entries[right.0].name)
+        })
     });
     // The variant is derived here, in one place, from the same facts that chose
     // the reason — so "empty" can never mean something the variant does not say.
@@ -908,9 +948,13 @@ fn unresolved_from(
         let listed = ordered
             .into_iter()
             .take(MAX_CANDIDATES_PER_ENTITY)
-            .map_while(|(catalog_name, rule)| {
+            .map_while(|(index, rule)| {
+                let catalog_name = &catalog.entries[index].name;
                 *budget = budget.checked_sub(catalog_name.len())?;
-                Some(Candidate { catalog_name, rule })
+                Some(Candidate {
+                    catalog_name: catalog_name.clone(),
+                    rule,
+                })
             })
             .collect::<Vec<_>>();
         let found = masters_found.max(capped);
@@ -939,7 +983,7 @@ fn collect_candidates(
     catalog: &MasterCatalog,
     entity: &SourceEntity,
     identifier_matches: &BTreeSet<usize>,
-) -> (Vec<(String, CandidateRule)>, usize) {
+) -> (Vec<(usize, CandidateRule)>, usize) {
     let mut best: BTreeMap<usize, CandidateRule> = BTreeMap::new();
     let mut offer = |index: usize, rule: CandidateRule| {
         best.entry(index)
@@ -1015,12 +1059,10 @@ fn collect_candidates(
         .chain(suppressed_family)
         .collect::<BTreeSet<_>>()
         .len();
-    (
-        best.into_iter()
-            .map(|(index, rule)| (catalog.entries[index].name.clone(), rule))
-            .collect(),
-        found,
-    )
+    // Indices, not names. Cloning every match before the cap and the budget
+    // discarded most of the work for an entity whose identifier is shared by
+    // many rows, and an admitted draft repeats that per entry.
+    (best.into_iter().collect(), found)
 }
 
 /// A name is retained **verbatim**, on both sides.
@@ -1147,14 +1189,23 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
                 kind: IdentifierKind::Code,
                 value: canonical,
             });
-            // Its digits are part of this code, not an identifier of their own.
+        }
+        // Digits sitting beside letters belong to that token, whether or not it
+        // qualified as a code. Emitting them separately let `Part A12345678`
+        // reach an unrelated `Bank 12345678` through the one-letter gap that
+        // the code test rejects — a token either identifies by its whole shape
+        // or not at all.
+        if letters > 0 {
             continue;
         }
         for run in token.split(|character: char| {
             !(character.is_ascii_digit() || character == '-' || character == '/')
         }) {
             let digits = run.chars().filter(char::is_ascii_digit).collect::<String>();
-            if digits.len() >= MIN_NUMERIC_IDENTIFIER_DIGITS && !is_plausible_date(&digits) {
+            if digits.len() >= MIN_NUMERIC_IDENTIFIER_DIGITS
+                && !is_plausible_date(&digits)
+                && !is_year_range(run)
+            {
                 identifiers.insert(Identifier {
                     kind: IdentifierKind::Numeric,
                     value: digits,
@@ -1170,25 +1221,24 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
 
 /// A period label identifies a period, not a party or an item. Two unrelated
 /// ledgers routinely share one — `Purchases FY2025` and `Sales FY2025`,
-/// `Purchases APR2025` and `Sales APR2025` — and identifier-first matching
-/// would bind the source to whichever exists before it compared the names.
+/// `Purchases SEPTEMBER2025` and `Sales SEPTEMBER2025` — and identifier-first
+/// matching would bind the source to whichever exists before comparing names.
 ///
-/// Recognized by *shape* rather than by a vocabulary of prefixes, because a
-/// list of prefixes kept missing one more spelling: every run in the token is
-/// either a short alphabetic marker or a number that reads as a year or a
-/// small ordinal, and there are at most three runs. `FY2025`, `APR2025`,
-/// `2025Q1` and `Q3` all match; `PH01AB00` and `AB12345678` do not.
+/// The test is on the **numbers**, not on the words: a token is a period label
+/// when it carries at least one number and **every** number in it reads as a
+/// year or a small ordinal. Capping the length of the alphabetic run was the
+/// previous attempt and it kept losing to longer spellings — `APR2025` was
+/// caught while `SEPTEMBER2025` and `2025QUARTER1` walked through. A month name
+/// can be any length; a year cannot.
 ///
-/// Like every exclusion here it can only make a bind *less* likely.
+/// An identity-bearing code survives this because its digits do not read as
+/// periods: `PH01AB00` carries `00`, `AB12345678` carries an eight-digit run,
+/// and a registration number carries something no calendar would produce. Like
+/// every exclusion here it can only make a bind *less* likely.
 fn is_period_label(canonical: &str) -> bool {
-    let mut runs = 0_usize;
-    let mut has_period_number = false;
+    let mut has_number = false;
     let mut rest = canonical;
     while !rest.is_empty() {
-        runs += 1;
-        if runs > 3 {
-            return false;
-        }
         let alphabetic = rest.starts_with(|character: char| character.is_ascii_alphabetic());
         let split = rest
             .find(|character: char| character.is_ascii_alphabetic() != alphabetic)
@@ -1196,26 +1246,44 @@ fn is_period_label(canonical: &str) -> bool {
         let (run, tail) = rest.split_at(split);
         rest = tail;
         if alphabetic {
-            if run.len() > 4 {
-                return false;
-            }
-        } else {
-            let value = run.parse::<u32>().unwrap_or(u32::MAX);
-            let reads_as_period = match run.len() {
-                1 | 2 => (1..=99).contains(&value),
-                4 => (1900..=2199).contains(&value),
-                _ => false,
-            };
-            if !reads_as_period {
-                return false;
-            }
-            has_period_number = true;
+            continue;
         }
+        if !reads_as_period_number(run) {
+            return false;
+        }
+        has_number = true;
     }
-    has_period_number
+    has_number
 }
 
-/// An eight-digit run that reads as a calendar date in any order this project/// An eight-digit run that reads as a calendar date in any order this project
+/// A year, or a small ordinal such as a month or quarter.
+fn reads_as_period_number(run: &str) -> bool {
+    let value = run.parse::<u32>().unwrap_or(u32::MAX);
+    match run.len() {
+        1 | 2 => (1..=99).contains(&value),
+        4 => (1900..=2199).contains(&value),
+        _ => false,
+    }
+}
+
+/// `2025-2026` and `2025/2026` are fiscal years, which two unrelated ledgers
+/// share as routinely as they share a month. Stripping the separator turned
+/// them into an eight-digit run that no calendar-date reading rejects, so the
+/// range has to be recognized before the digits are fused.
+fn is_year_range(run: &str) -> bool {
+    let mut halves = run.split(['-', '/']);
+    match (halves.next(), halves.next(), halves.next()) {
+        (Some(first), Some(second), None) => [first, second].iter().all(|half| {
+            half.len() == 4
+                && half
+                    .parse::<u32>()
+                    .is_ok_and(|year| (1900..=2199).contains(&year))
+        }),
+        _ => false,
+    }
+}
+
+/// An eight-digit run that reads as a calendar date in any order this project/// An eight-digit run that reads as a calendar date in any order this project/// An eight-digit run that reads as a calendar date in any order this project
 /// admits is a date, not an identifier. Recognizing only `YYYYMMDD` left
 /// `01012026` binding a source to an unrelated master that shares its period
 /// label. Being generous here can only make a bind *less* likely, which is the

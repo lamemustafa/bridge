@@ -501,7 +501,21 @@ fn a_fiscal_period_label_is_not_an_identity_bearing_code() {
     // matching would otherwise bind the source to whichever one exists before
     // it ever compared the names.
     for label in [
-        "FY25", "FY2025", "AY2026", "Q3", "H2", "PER2026", "APR2025", "2025Q1", "MAR26", "H12026",
+        "FY25",
+        "FY2025",
+        "AY2026",
+        "Q3",
+        "H2",
+        "PER2026",
+        "APR2025",
+        "2025Q1",
+        "MAR26",
+        "H12026",
+        // A month name can be any length; a year cannot. Capping the
+        // alphabetic run kept losing to longer spellings.
+        "SEPTEMBER2025",
+        "2025QUARTER1",
+        "DECEMBER2026",
     ] {
         assert!(
             entity(&format!("Purchases {label}"))
@@ -561,6 +575,44 @@ fn a_report_bounds_its_own_candidate_allocation() {
     assert!(starved.iter().all(
         |unresolved| unresolved.candidates.found() > 0 && unresolved.candidates.is_incomplete()
     ));
+}
+
+#[test]
+fn a_token_carrying_letters_never_yields_a_standalone_number() {
+    // A one-letter token fails the code test, and its digits were then escaping
+    // as a numeric of their own — so `Part A12345678` could reach an unrelated
+    // `Bank 12345678`. A token identifies by its whole shape or not at all.
+    assert!(entity("Part A12345678").identifiers().is_empty());
+    let catalog = ledgers(&["Bank 12345678", "Beta Supply"]);
+    assert_eq!(bind_one_name(&catalog, "Part A12345678").bound_name(), None);
+    // A bare digit run beside no letters is still an identifier.
+    assert_eq!(entity("Party (5550001001)").identifiers().len(), 1);
+}
+
+#[test]
+fn a_fiscal_year_range_is_a_period_not_an_account_number() {
+    // `2025-2026` strips to an eight-digit run that no calendar reading
+    // rejects, and two unrelated ledgers share a fiscal year as routinely as
+    // they share a month.
+    for range in ["2025-2026", "2025/2026", "1999-2000"] {
+        assert!(
+            entity(&format!("Purchases {range}"))
+                .identifiers()
+                .is_empty(),
+            "{range} was treated as an identifier"
+        );
+    }
+    let catalog = ledgers(&["Sales 2025-2026", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&catalog, "Purchases 2025-2026").bound_name(),
+        None
+    );
+    // A punctuated account number that is not a year range still binds.
+    let accounts = ledgers(&["Party 5550001-002", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&accounts, "Other 5550001002").bound_name(),
+        Some("Party 5550001-002")
+    );
 }
 
 #[test]
@@ -854,10 +906,53 @@ fn a_fallback_cannot_be_drawn_from_another_catalog_class_or_another_report() {
         stock_report.assign_fallback(7, &stock, "Scrap Placeholder"),
         Err(MasterBindingError::ClassMismatch)
     );
+    // Nor may a *same-class* catalog the report was never produced from supply
+    // the fallback: class is not provenance, and the master would never have
+    // been a candidate for this entity.
+    let other_ledgers = ledgers(&["Alpha Traders", "Different Suspense"]);
+    let ledger_report = bound(&ledger, &[entity("Zeta Placeholder")]);
+    assert_eq!(
+        ledger_report.assign_fallback(0, &other_ledgers, "Different Suspense"),
+        Err(MasterBindingError::ClassMismatch)
+    );
+    assert_ne!(ledger.fingerprint(), other_ledgers.fingerprint());
+    // The same masters read twice fingerprint alike, whatever order they came
+    // back in — a re-read must not invalidate a report.
+    let reordered = ledgers(&["Suspense Placeholder", "Alpha Traders", "Beta Supply"]);
+    let forward = ledgers(&["Alpha Traders", "Beta Supply", "Suspense Placeholder"]);
+    assert_eq!(reordered.fingerprint(), forward.fingerprint());
     assert_eq!(
         MasterBindingError::ClassMismatch.safe_reason_code(),
         "master_class_mismatch"
     );
+}
+
+#[test]
+fn the_adr_quotes_the_thresholds_this_module_actually_uses() {
+    // ADR 0016 is the contract two surfaces integrate against, so a threshold
+    // that moves in code and not in the document sends a future integration
+    // the wrong rule. "Remember to update the record" is the kind of rule this
+    // project prefers to replace with something that fails.
+    const ADR: &str = include_str!("../../../../docs/adr/0016-master-binding-authority.md");
+    for (constant, value) in [
+        (
+            "MIN_NUMERIC_IDENTIFIER_DIGITS",
+            MIN_NUMERIC_IDENTIFIER_DIGITS,
+        ),
+        ("MIN_CODE_IDENTIFIER_DIGITS", MIN_CODE_IDENTIFIER_DIGITS),
+        ("MIN_CODE_IDENTIFIER_CHARS", MIN_CODE_IDENTIFIER_CHARS),
+        ("MAX_CANDIDATES_PER_ENTITY", MAX_CANDIDATES_PER_ENTITY),
+        ("COMMON_TOKEN_PERCENT", COMMON_TOKEN_PERCENT),
+    ] {
+        // A percentage reads naturally as `(10%)`; both spellings count, and
+        // neither lets a changed number pass.
+        let plain = format!("`{constant}` ({value})");
+        let percent = format!("`{constant}` ({value}%)");
+        assert!(
+            ADR.contains(&plain) || ADR.contains(&percent),
+            "ADR 0016 does not quote {constant} as {value}; it must read {plain:?}"
+        );
+    }
 }
 
 // --- the vocabulary is stable ----------------------------------------------
