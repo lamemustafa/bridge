@@ -696,12 +696,16 @@ fn one_misfiled_ledger_reports_once_however_many_vouchers_repeat_it() {
 }
 
 #[test]
-fn a_counterparty_that_cannot_be_classified_is_not_refused() {
-    // The two requirements are deliberately not mirror images. The money side
-    // needs a positive fact and refuses without it; the counterparty side only
-    // refuses on the positive fact that it *is* money. A party under a group
-    // the collection does not carry is unclassifiable, not wrong, and refusing
-    // it would cost a build with nothing wrong with it.
+fn a_counterparty_that_cannot_be_classified_is_refused() {
+    // Both legs need a positive fact; they differ only in which one. An
+    // unresolved counterparty is not evidence that it holds no money, and the
+    // failure it hides is the silent one — a misjudged money leg makes Tally
+    // reject the import, while a misjudged counterparty files a Contra into the
+    // Payment register and is found later, in the wrong place.
+    //
+    // The cost is small because an ordinary party never lands here: one under
+    // `Sundry Debtors` resolves directly, and one under a user-created group
+    // walks up to its reserved ancestor. Only anomalies reach this state.
     let mut ledgers = captured_demo_ledger_parents();
     ledgers.push(("Imported Party".into(), Some("Migrated Debtors".into())));
     let masters = observed(&ledgers, captured_demo_groups());
@@ -713,8 +717,70 @@ fn a_counterparty_that_cannot_be_classified_is_not_refused() {
         &demo_batch("Payment", "Imported Party", "HDFC Bank Current Account"),
         &masters,
     );
+    assert_eq!(refusals.ledgers.len(), 1);
+    assert_eq!(refusals.ledgers[0]["requires"], "not_cash_bank");
+    // The refusal distinguishes the two ways a counterparty fails, because the
+    // fixes differ: one is the wrong voucher type, the other an unresolvable
+    // group. Saying "book it as a Contra" here would be wrong advice.
+    let because = refusals.ledgers[0]["refused_because"].as_str().unwrap();
+    assert!(because.contains("could not be classified"));
+    assert!(!because.contains("Contra"));
+    // A party the walk *does* resolve to a non-money identity still passes.
+    let refusals = cash_bank_refusals(
+        &demo_batch(
+            "Payment",
+            "Gujarat Poly Industries",
+            "HDFC Bank Current Account",
+        ),
+        &masters,
+    );
     assert!(refusals.ledgers.is_empty());
     assert_eq!(refusals.legs, 0);
+}
+
+#[test]
+fn refusal_diagnostics_stay_inside_a_byte_budget() {
+    // Deduplication bounds the row count, not their size: a batch may name
+    // MAX_MASTER_NAMES ledgers of MAX_MASTER_NAME_CHARS each, which passes the
+    // response cap on names alone. Whole rows are dropped and counted rather
+    // than truncating a ledger name, because the exact live spelling is the
+    // one thing a caller needs to fix the batch.
+    let mut ledgers = captured_demo_ledger_parents();
+    let mut batch = demo_batch(
+        "Payment",
+        "Gujarat Poly Industries",
+        "HDFC Bank Current Account",
+    );
+    let template = batch.vouchers[0].clone();
+    batch.vouchers.clear();
+    for index in 0..MAX_MASTER_NAMES {
+        let ledger = format!("{index:03} {}", "N".repeat(MAX_MASTER_NAME_CHARS - 4));
+        ledgers.push((ledger.clone(), Some("Migrated Debtors".into())));
+        let mut voucher = template.clone();
+        voucher.bridge_txn_id = format!("txn-{index:03}");
+        voucher.entries[0].ledger = ledger;
+        batch.vouchers.push(voucher);
+    }
+    let masters = observed(&ledgers, captured_demo_groups());
+    let refusals = cash_bank_refusals(&batch, &masters);
+    assert_eq!(refusals.legs, MAX_MASTER_NAMES);
+    assert!(refusals.omitted > 0, "this batch does not fit");
+    assert_eq!(
+        refusals.ledgers.len() + refusals.omitted,
+        MAX_MASTER_NAMES,
+        "every distinct failure is either reported or counted"
+    );
+    assert!(!refusals.ledgers.is_empty(), "at least one is actionable");
+    let bytes = serde_json::to_string(&json!(refusals.ledgers))
+        .unwrap()
+        .len();
+    assert!(
+        bytes <= MAX_REFUSAL_DIAGNOSTIC_BYTES + MAX_MASTER_NAME_CHARS * 2,
+        "diagnostics stayed within budget, got {bytes}"
+    );
+    // A ledger name is reported whole, never trimmed to fit.
+    let reported = refusals.ledgers[0]["ledger"].to_string();
+    assert!(reported.contains(&"N".repeat(MAX_MASTER_NAME_CHARS - 4)));
 }
 
 #[tokio::test]

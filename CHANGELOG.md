@@ -40,9 +40,10 @@ current source.
   that must hold money is refused unless that ledger's live group ancestry
   reaches a reserved Bank Accounts or Cash-in-Hand identity — the two where a
   captured ledger is observed sitting under a captured group. The counterparty
-  side is refused if it reaches any money group at all, including the
-  Bank OD A/c and Bank OCC A/c the money side will not accept either, because
-  money on both sides is a Contra whatever the voucher says. A build that names a
+  side must be established as holding no money: any money group there means the
+  voucher is really a Contra, and a ledger whose group ancestry cannot be
+  resolved is refused as well, because neither leg is admitted on an absence of
+  evidence. A build that names a
   counterparty warns that its amount lands On Account. Native posting is
   unchanged and still accepts only one unnumbered Journal.
 - A local-first Tally Truth Layer with capability passports, explicit truth

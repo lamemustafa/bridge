@@ -130,15 +130,20 @@ enum LegRequirement {
     /// *established* as cash or bank. Anything else refuses, including "could
     /// not be established" — a positive fact is required and absent.
     Money,
-    /// The counterparty side, which is also what `PARTYLEDGERNAME` names. Only
-    /// a leg established as holding money refuses it — including a money group
-    /// Bridge declines to admit on the other side, which is money all the
-    /// same. Money on both sides of a Payment or Receipt is a Contra wearing
-    /// another type's name (§9.13),
-    /// and admitting it recreates exactly the wrong-register misfiling this
-    /// gate exists to prevent. A counterparty that cannot be classified is not
-    /// evidence of that, so it passes; refusing it would cost a build nothing
-    /// is wrong with.
+    /// The counterparty side, which is also what `PARTYLEDGERNAME` names. It
+    /// must be *established* as holding no money, so an unresolved ancestry
+    /// refuses just as a money one does.
+    ///
+    /// This was once the looser of the two, on the reasoning that an
+    /// unclassifiable counterparty is not evidence of a disguised Contra and
+    /// refusing it would cost a legitimate build. Both halves were weaker than
+    /// they sounded. An ordinary party never lands unclassified — one under
+    /// `Sundry Debtors` resolves directly and one under a user-created group
+    /// walks up to its reserved ancestor — so only anomalies reach that state.
+    /// And the consequences are not symmetric: a misjudged money leg makes
+    /// Tally reject the import, which is loud, while a misjudged counterparty
+    /// files a Contra into the Payment register, which is silent and found
+    /// later. The silent failure earns the stricter rule, not the looser one.
     Counterparty,
 }
 
@@ -340,7 +345,7 @@ impl Server {
                 "a Journal takes any balanced set of entries and may carry a voucher_number",
                 "Payment, Receipt and Contra take exactly two entries over two distinct ledgers, and neither voucher_number nor reference: neither element's fate on these types has been observed, and the bank's own reference belongs in the narration, which survives",
                 "a Payment credits, and a Receipt debits, a ledger whose live group ancestry reaches Bank Accounts or Cash-in-Hand; both Contra legs must name one, and a leg that cannot be established is refused",
-                "the other leg of a Payment or Receipt must hold no money at all, which is a wider test than the admitted two: a ledger under Bank OD A/c or Bank OCC A/c is refused there as well, because money on both sides is a Contra whatever the type says",
+                "the other leg of a Payment or Receipt must be established as holding no money: a ledger under any money group is refused there, because money on both sides is a Contra whatever the type says, and so is one whose group ancestry cannot be resolved at all",
                 "each voucher has at least two entries and exact debit total equals credit total",
                 "amounts are positive decimal strings with exactly two fractional digits",
                 "dates must be within the selected company's BOOKSFROM through today",
@@ -486,8 +491,9 @@ impl Server {
                         payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
                             "state":"refused", "reason":"cash_bank_ledger_not_established",
                             "refused_ledgers":refusals.ledgers, "refused_leg_count":refusals.legs,
+                            "refused_ledgers_omitted":refusals.omitted,
                             "group_evidence_sha256":evidence.response_sha256,
-                            "next_step":"A leg marked cash_bank must name a ledger whose group ancestry reaches Bank Accounts or Cash-in-Hand: the credit on a Payment, the debit on a Receipt, both legs on a Contra. The counterparty leg must hold no money at all, which also rules out Bank OD A/c and Bank OCC A/c — money on both sides is a Contra, whatever the type says. Bridge admits a money group only where a captured ledger sits under it, so an overdraft or cash-credit ledger is refused on either side for now. Correct the payload or the ledger's group in Tally, then build a new batch. No file was written."
+                            "next_step":"Each refused leg names its ledger and why. A leg marked cash_bank must reach Bank Accounts or Cash-in-Hand — the credit on a Payment, the debit on a Receipt, both legs on a Contra. A leg marked not_cash_bank must be established as holding no money: any money group there means the voucher is really a Contra, and an unresolvable group is refused too because it cannot be established either way. Bridge admits a money group only where a captured ledger sits under it, so an overdraft or cash-credit ledger is refused on either side for now. Correct the payload or the ledger's group in Tally, then build a new batch. No file was written."
                         }}),
                         evidence: accumulated.clone(),
                         company_guid: Some(payload.company_guid),
@@ -1325,7 +1331,22 @@ struct CashBankRefusals {
     /// Failing legs before deduplication, so a caller can tell one misfiled
     /// ledger from one that poisons the entire batch.
     legs: usize,
+    /// Distinct failures the byte budget left out. Deduplication bounds the
+    /// row *count*; it does not bound their size, and a ledger name may be
+    /// 1,024 characters.
+    omitted: usize,
 }
+
+/// How many serialized bytes the refusal diagnostics may occupy.
+///
+/// Row count alone is not a bound on size: a batch may carry
+/// `MAX_MASTER_NAMES` names of `MAX_MASTER_NAME_CHARS` each, which exceeds the
+/// default response cap on names alone before any detail text. The transport
+/// also repeats structured content as text, so the budget is set well under
+/// half the smallest expected cap. Names are never truncated — the exact live
+/// spelling is the one thing a caller needs to fix the batch — so a budget is
+/// spent on whole rows and the remainder is counted.
+const MAX_REFUSAL_DIAGNOSTIC_BYTES: usize = 32 * 1024;
 
 fn cash_bank_refusals(payload: &ImportPayload, observed: &ObservedMasters) -> CashBankRefusals {
     let mut classified = BTreeMap::<&str, CashBankState>::new();
@@ -1336,13 +1357,10 @@ fn cash_bank_refusals(payload: &ImportPayload, observed: &ObservedMasters) -> Ca
             .entry(ledger)
             .or_insert_with(|| observed.classify(ledger))
             .clone();
+        // Both legs need a positive fact; they differ only in which one.
         let admitted = match requirement {
             LegRequirement::Money => state.is_established(),
-            // The wider question: a group Bridge knows holds money but will
-            // not admit is still money on this side. Asking only whether it
-            // was *admitted* would wave through the very bank-to-bank Payment
-            // this leg exists to catch.
-            LegRequirement::Counterparty => !state.is_known_money(),
+            LegRequirement::Counterparty => state.is_established_non_money(),
         };
         if admitted {
             continue;
@@ -1360,8 +1378,16 @@ fn cash_bank_refusals(payload: &ImportPayload, observed: &ObservedMasters) -> Ca
                 "state": state.state(),
                 "refused_because": match requirement {
                     LegRequirement::Money => state.detail(),
-                    LegRequirement::Counterparty => format!(
+                    // Two different problems wear the same refusal, and the
+                    // fix differs: one is the wrong voucher type, the other a
+                    // ledger whose group Bridge could not resolve.
+                    LegRequirement::Counterparty if state.is_known_money() => format!(
                         "{} Money on both sides of a {} is a Contra; book it as one.",
+                        state.detail(),
+                        voucher.voucher_type.as_str()
+                    ),
+                    LegRequirement::Counterparty => format!(
+                        "{} A {} counterparty must be established as holding no money, and this one could not be classified either way.",
                         state.detail(),
                         voucher.voucher_type.as_str()
                     ),
@@ -1372,8 +1398,24 @@ fn cash_bank_refusals(payload: &ImportPayload, observed: &ObservedMasters) -> Ca
             })
         });
     }
+    let mut budget = MAX_REFUSAL_DIAGNOSTIC_BYTES;
+    let distinct = refused.len();
+    let ledgers = refused
+        .into_values()
+        .enumerate()
+        .take_while(|(index, row)| {
+            let cost = serde_json::to_string(row).map_or(usize::MAX, |text| text.len());
+            // The first row always goes out, however long its ledger name:
+            // one actionable failure beats a bare count.
+            let affordable = *index == 0 || cost <= budget;
+            budget = budget.saturating_sub(cost);
+            affordable
+        })
+        .map(|(_, row)| row)
+        .collect::<Vec<_>>();
     CashBankRefusals {
-        ledgers: refused.into_values().collect(),
+        omitted: distinct.saturating_sub(ledgers.len()),
+        ledgers,
         legs,
     }
 }

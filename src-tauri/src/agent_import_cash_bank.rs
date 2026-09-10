@@ -77,13 +77,23 @@ impl CashBankState {
         matches!(self, Self::Established { .. })
     }
 
-    /// Whether this ledger holds money at all — the question the counterparty
-    /// side asks, and a wider one than admission.
+    /// Whether this ledger holds money at all — a wider question than
+    /// admission, and the one a counterparty leg must answer "no" to.
     pub(super) fn is_known_money(&self) -> bool {
         matches!(
             self,
             Self::Established { .. } | Self::UnadmittedMoney { .. }
         )
+    }
+
+    /// Whether this ledger is *established* as holding no money. A counterparty
+    /// leg needs this positively, not merely the absence of money evidence.
+    ///
+    /// The distinction is the whole of it: `NotEstablished` means the walk ran
+    /// out, which is not the same as reaching a predefined identity that holds
+    /// no cash or bank balance.
+    pub(super) fn is_established_non_money(&self) -> bool {
+        matches!(self, Self::OtherReservedGroup { .. })
     }
 
     /// A stable machine-readable label for the tool result.

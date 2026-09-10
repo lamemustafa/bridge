@@ -971,12 +971,17 @@ Both legs are classified, not just the funding one:
 | leg | requirement | refused by |
 | --- | --- | --- |
 | Payment credit, Receipt debit, both Contra legs | must be a **admitted** money group | anything else, **including "could not be established"** — a positive fact is required and absent |
-| the counterparty leg of a Payment or Receipt | must not be **any known** money group | only a leg established as holding money |
+| the counterparty leg of a Payment or Receipt | must be **established as holding no money** | any known money group, **and "could not be established"** |
 
-The asymmetry is deliberate. Money on both sides of a Payment is a Contra wearing another
-type's name, and admitting it recreates the wrong-register misfiling this table exists to
-prevent; but a counterparty Bridge cannot classify is not evidence of that, and refusing it
-would cost a build with nothing wrong with it.
+Both legs need a positive fact; they differ only in which one. An earlier version made the
+counterparty rule the looser of the two — refusing only a leg established *as* money — on the
+reasoning that an unclassifiable counterparty is not evidence of a disguised Contra. Both halves
+of that were weaker than they sounded. An ordinary party never lands unclassified: one under
+`Sundry Debtors` resolves directly, and one under a user-created group walks up to its reserved
+ancestor, so only anomalies reach that state. And the consequences are not symmetric — a
+misjudged money leg makes Tally reject the import, which is loud, while a misjudged counterparty
+files a Contra into the Payment register, which is silent and found later. The silent failure
+earns the stricter rule.
 
 The two columns also ask different questions of the same group, and that gap matters.
 
