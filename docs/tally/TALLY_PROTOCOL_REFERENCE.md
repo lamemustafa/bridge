@@ -740,10 +740,20 @@ measured here carried **no** client `REMOTEID`, so Tally assigned its own and ev
 object — that was the uncontrolled variable, and the title generalised past it.
 
 Consequences, since a stale reading of this section is expensive in both directions: an integrator
-who believes there is no idempotency builds an outbox, a dedup table or a narration hack it does
-not need, and one who supplies a `REMOTEID` without knowing it upserts can silently **overwrite** an
-earlier voucher by reusing a key. §3.3a has the full table, including that `ACTION="Alter"` with a
-`REMOTEID` creates a duplicate — inverted from intuition — so the correction path is `Create`.
+who believes there is no idempotency builds a dedup table or a narration hack it does not need, and
+one who supplies a `REMOTEID` without knowing it upserts can silently **overwrite** an earlier
+voucher by reusing a key.
+
+**Not the outbox, though.** `REMOTEID` prevents a duplicate; it does not tell you, after a crash,
+*what you sent*. Tally does not return the client key on readback (below), so a resend is only safe
+while the exact key and payload are still on disk. The durable dispatch intent stays — see the
+`row fsynced before dispatch` invariant in `IMPROVEMENT_PLAN_2026H2.md` and the
+restart-reconciliation flow in `docs/agent/README.md`.
+
+§3.3a has the full table, including that `ACTION="Alter"` with a `REMOTEID` creates a duplicate —
+inverted from intuition. **That is a reason not to use `Alter`, not a reason to use `Create` as a
+correction path:** every correction sends a *different* payload, and changed-payload behaviour is
+UNVERIFIED (below). This section prescribes no correction path.
 
 **The `REMOTEID` *attribute* does not echo the client key on the one path where this was checked.**
 §3.3a records that Tally overwrites the attribute with its own value; what came back was a
@@ -761,9 +771,14 @@ field-specific: **the attribute is overwritten; a marker you place in a field Ta
 survives.** Stating it as "the client key appears nowhere" would contradict a byte-level check of
 the very capture cited.
 
-On that path, then, the client value is **stored, matched for upsert, and usable as a `Delete`
-key** while not being readable back *through that attribute*, and a readback comparing the returned
-`REMOTEID` against the one you sent rejects a legitimate import.
+On that path, then, the client value is **stored and matched for upsert** while not being readable
+back *through that attribute*, and a readback comparing the returned `REMOTEID` against the one you
+sent rejects a legitimate import.
+
+Whether the client key also works as a **`Delete`** selector is a separate question and is
+**UNVERIFIED here**: §9.7's Delete row was measured on this document's Edit Log 7.0 Educational
+baseline (§0), not on a licensed instance, and not by client key on these voucher types. Do not
+read "usable as a key" into it.
 
 **Scope: one Silver 7.1 Journal readback. PARTIAL.** Whether another voucher type, request shape or
 Tally version preserves the client value is **UNVERIFIED**. Do not generalise this into a rule that
