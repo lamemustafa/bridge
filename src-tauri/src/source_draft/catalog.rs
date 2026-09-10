@@ -470,6 +470,29 @@ mod tests {
         (catalog, xml)
     }
 
+    /// The ledger renamed between the two captured responses below.
+    const RENAMED_FROM: &str = "WR2 Sales";
+    const RENAMED_TO: &str = "WR2 Sales Renamed";
+
+    /// The same company's catalogue captured again after `WR2 Sales` was renamed
+    /// to `WR2 Sales Renamed` in Tally, through the same production read path.
+    ///
+    /// Measured across the pair on TallyPrime 7.1: the ledger keeps GUID
+    /// `…-000000d0` and only its name changes, the ledger count is unchanged, and
+    /// no other ledger's GUID moves. So a rename is observable by name alone,
+    /// which is exactly why a binding must carry the GUID as well. The book was
+    /// restored afterwards. Neither response is hand-mutated.
+    fn captured_renamed_catalog_xml() -> String {
+        let bytes = include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ledger-catalogue-renamed.utf16le.xml"
+        );
+        let words = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>();
+        String::from_utf16(&words).expect("captured renamed catalogue is UTF-16LE")
+    }
+
     fn source() -> crate::source_draft_xml::ParsedSource {
         parse_source_xml(
             br#"<ENVELOPE><BODY><IMPORTDATA><REQUESTDATA><TALLYMESSAGE><VOUCHER REMOTEID="one" VCHTYPE="Receipt"><DATE>20260901</DATE><ALLLEDGERENTRIES.LIST><LEDGERNAME>Source one</LEDGERNAME><AMOUNT>1</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER><VOUCHER REMOTEID="two" VCHTYPE="Receipt"><DATE>20260902</DATE><ALLLEDGERENTRIES.LIST><LEDGERNAME>Source two</LEDGERNAME><AMOUNT>2</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>"#,
@@ -853,20 +876,46 @@ mod tests {
             CAPTURED_GUID,
         )
         .expect("captured catalogue remains parser-admitted");
-        let names = catalog
-            .names()
-            .take(2)
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        assert_eq!(names.len(), 2, "captured catalogue has two bindable names");
-        let changed_catalog_xml = catalog_xml.replacen(
-            &format!("NAME=\"{}\"", names[0]),
-            "NAME=\"renamed after the first binding\"",
-            1,
+        // Target A is the ledger that a real rename in Tally moved between the two
+        // captured responses; target B is any other ledger, present in both.
+        let all = catalog.names().map(str::to_owned).collect::<Vec<_>>();
+        assert!(
+            all.iter().any(|name| name == RENAMED_FROM),
+            "captured catalogue still contains the ledger the rename capture moved"
         );
-        assert_ne!(
-            changed_catalog_xml, catalog_xml,
-            "control removes target A from Tally"
+        let other = all
+            .iter()
+            .find(|name| name.as_str() != RENAMED_FROM)
+            .expect("captured catalogue has a second bindable name")
+            .clone();
+        let names = [RENAMED_FROM.to_owned(), other];
+
+        let changed_catalog_xml = captured_renamed_catalog_xml();
+        let changed_catalog = parse_standard_ledger_catalog_with_identities(
+            &changed_catalog_xml,
+            CAPTURED_COMPANY,
+            CAPTURED_GUID,
+        )
+        .expect("captured renamed catalogue remains parser-admitted");
+        let changed_names = changed_catalog.names().collect::<Vec<_>>();
+        // The captured pair really is a rename, not a hand-edited string: A is gone
+        // under its old name, present under the new one, and the ledger count holds.
+        assert!(
+            !changed_names.contains(&names[0].as_str()),
+            "the live rename removed target A's old name"
+        );
+        assert!(
+            changed_names.contains(&RENAMED_TO),
+            "the live rename introduced target A's new name"
+        );
+        assert!(
+            changed_names.contains(&names[1].as_str()),
+            "target B survives the live rename untouched"
+        );
+        assert_eq!(
+            changed_names.len(),
+            all.len(),
+            "a rename changes no ledger count"
         );
         let mut plans = vec![company_plan(CAPTURED_COMPANY, CAPTURED_GUID)];
         append_catalog_read_plans(&mut plans, catalog_xml.clone());
@@ -891,8 +940,20 @@ mod tests {
         )
         .await
         .expect("service load admits the captured catalog");
-        let a = loaded.targets[0].clone();
-        let b = loaded.targets[1].clone();
+        // A must be the ledger the live rename actually moved, otherwise this
+        // exercises a target Tally never touched and proves nothing.
+        let a = loaded
+            .targets
+            .iter()
+            .find(|target| target.as_str() == names[0])
+            .expect("the renamed ledger is offered as a target")
+            .clone();
+        let b = loaded
+            .targets
+            .iter()
+            .find(|target| target.as_str() == names[1])
+            .expect("a second, untouched ledger is offered as a target")
+            .clone();
         let initial_proposals = store
             .active
             .lock()
