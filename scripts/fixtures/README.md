@@ -10,17 +10,17 @@ Read the banner comment at the top of each file for exactly what is real and wha
 
 ## Re-deriving them
 
-`sanitise_bbox_capture.py` is the whole procedure and the fixtures reproduce from it byte for byte:
+`../sanitise-bbox-capture.py` is the whole procedure and the fixtures reproduce from it byte for byte:
 
 ```bash
 pdftotext -bbox-layout -opw "$PASSWORD" statement.pdf raw.xml
-python3 scripts/fixtures/sanitise_bbox_capture.py raw.xml \
+python3 scripts/sanitise-bbox-capture.py raw.xml \
   scripts/fixtures/hdfc-bbox-capture.xml "HDFC current-account" \
   0:0-800 2:200-330,700-800 3:200-300
 ```
 
 ```bash
-python3 scripts/fixtures/sanitise_bbox_capture.py raw.xml \
+python3 scripts/sanitise-bbox-capture.py raw.xml \
   scripts/fixtures/sbi-bbox-capture.xml "State Bank of India current-account" \
   0:90-741 1:0-165
 ```
@@ -37,4 +37,6 @@ cannot be removed without a test noticing.
 2. If a customer value survives, do not add it to `TEMPLATE`. Work out why the rule matched it.
 3. Byte integrity is enforced: `scripts/fixtures/**` is `-text` in `.gitattributes` and the
    directory is registered in `scripts/check-fixture-byte-integrity.mjs`. Line-ending normalisation
-   would rewrite the geometry these fixtures exist to preserve.
+   would rewrite the geometry these fixtures exist to preserve. That is also why the sanitiser
+   itself lives in `scripts/`, not here — this directory holds evidence, and a tool whose bytes are
+   pinned as evidence is a category error.

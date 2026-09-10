@@ -13,7 +13,7 @@ Three levels of fixture, deliberately:
     customer value is fabricated. These are the only fixtures that can catch a
     change in the bank's template or in `pdftotext`'s serialisation, because
     they are the only ones this repository did not write. See the banner
-    comment in each file, and `fixtures/sanitise_bbox_capture.py` for how they
+    comment in each file, and `../sanitise-bbox-capture.py` for how they
     were made.
   * **Constructed pages** — `PAGE`-shaped fixtures built word by word at the
     same geometry. They exist for cases a capture happens not to contain and
@@ -91,8 +91,13 @@ def page(*lines):
 # edge 240), ref 280-358, value date 358-400, withdrawal 400-480, deposit
 # 480-560, balance 560+.
 HDFC_PAGE = page(
-    (60, [(70, 200, "Statement"), (205, 260, "of"), (265, 340, "account"),
-          (400, 500, "00000000001234")]),
+    (52, [(340, 380, "Account"), (382, 396, "No"), (397, 400, ":"),
+          (403, 470, "00000000001234")]),
+    # a second header number, to prove the binding does not accept just any of
+    # them: this is where a customer id or a phone number sits
+    (56, [(340, 380, "Cust"), (382, 396, "ID"), (397, 400, ":"),
+          (403, 470, "00000000004230")]),
+    (60, [(70, 200, "Statement"), (205, 260, "of"), (265, 340, "account")]),
     (100, [(5, 30, "Date"), (72, 120, "Narration"), (282, 340, "Chq./Ref.No."),
            (360, 380, "Value"), (382, 396, "Dt"), (402, 452, "Withdrawal"),
            (454, 474, "Amt."), (482, 522, "Deposit"), (524, 544, "Amt."),
@@ -229,7 +234,7 @@ def test_parse_real_hdfc_capture(m):
     # ... and its 12-digit reference survived the wrap intact
     assert bank.reference(rows[4]) == ("UPI", "666666666666")
     # and every other row's wrap decisions, which no readable assertion reaches
-    assert narration_digest(rows) == "9bc21b15b16b9caa", [r["narr"] for r in rows]
+    assert narration_digest(rows) == "af1efe3b11615e22", [r["narr"] for r in rows]
 
     # row-scoped columns land where the geometry says, not one column over
     assert rows[0]["ref"] == "3333333333333333"
@@ -250,9 +255,13 @@ def test_parse_real_hdfc_capture(m):
     assert m.parse_pages(pages[:2], bank) == rows, "page 3 must contribute nothing"
 
     # the account number is bound from the header block, not from the table
-    m.require_account_match(pages, bank, "HDFC CA xx7777")
-    refuses(m, "account_not_in_statement", m.require_account_match,
-            pages, bank, "HDFC CA xx9876")
+    m.require_account_match(pages, bank, "HDFC CA xx5555")
+    # every one of these is a real number printed in this capture's header —
+    # phone, customer id, IFSC digits, MICR, postcode — and every one passed
+    # before the binding was narrowed to the account-number line
+    for wrong in ("xx4444", "xx7777", "xx8888", "xx9999", "xx9876"):
+        refuses(m, "account_not_in_statement", m.require_account_match,
+                pages, bank, f"HDFC CA {wrong}")
 
 
 def test_parse_real_sbi_capture(m):
@@ -270,7 +279,7 @@ def test_parse_real_sbi_capture(m):
 
     for row in rows:
         # "31 Jul" over "2026" in one cell, concatenated without a separator
-        assert bank.parse_date(row["date"]) == datetime.date(2026, 7, 31)
+        assert bank.parse_date(row["date"]) == datetime.date(2026, 7, 1)
         # the repeated header did not land in the row in progress
         for furniture in ("Description", "No./Cheque", "Balance"):
             assert furniture not in row["narr_spaced"], furniture
@@ -279,7 +288,7 @@ def test_parse_real_sbi_capture(m):
     assert bank.reference(rows[0])[0] == "UPI"
     assert bank.reference(rows[0])[1].startswith("444466666666")
     assert narration_digest(rows) == "5f94f41973401703", [r["narr"] for r in rows]
-    assert rows[0]["ref"] == "TRANSFER TO 5555555555592 /"
+    assert rows[0]["ref"] == "TRANSFER TO 5555555555503 /"
     m.require_account_match(pages, bank, "SBI CA xx1111")
     refuses(m, "account_not_in_statement", m.require_account_match,
             pages, bank, "SBI CA xx9876")
@@ -334,20 +343,29 @@ def test_parse_sbi_page(m):
 
 def test_account_binding(m):
     """The running-balance proof is equally happy to certify the wrong account's
-    statement, so the account digits must appear in the statement header."""
+    statement, so the binding is the only thing tying the document to the ledger.
+
+    It reads the line the statement labels as its account number, and nothing
+    else. Reading the whole document lets a transaction reference stand in for
+    the account; reading the whole header block is barely better, because a
+    header prints a phone number, a customer id, an IFSC, a MICR code and a
+    postcode — on the real HDFC capture, four different wrong tails passed.
+    """
     hdfc = m.HDFC()
     m.require_account_match([HDFC_PAGE], hdfc, "HDFC CA xx1234")
     refuses(m, "account_not_in_statement", m.require_account_match,
             [HDFC_PAGE], hdfc, "HDFC CA xx9876")
     refuses(m, "unbindable_account", m.require_account_match, [HDFC_PAGE], hdfc, "HDFC CA")
 
-    # a transaction reference inside the table must NOT satisfy the binding:
-    # scanning the whole document accepts the wrong account's statement roughly
-    # as readily as the right one. 9012 ends the UPI reference on row 1.
+    # a transaction reference inside the table must not satisfy the binding —
+    # 9012 ends the UPI reference on row 1
     refuses(m, "account_not_in_statement", m.require_account_match,
             [HDFC_PAGE], hdfc, "HDFC CA xx9012")
-    # and a document with no recognisable header block fails closed
-    refuses(m, "no_statement_header", m.require_account_match,
+    # nor may any other number in the header: 4230 is the customer id
+    refuses(m, "account_not_in_statement", m.require_account_match,
+            [HDFC_PAGE], hdfc, "HDFC CA xx4230")
+    # and a document with no account-number line fails closed
+    refuses(m, "no_account_number_line", m.require_account_match,
             [page((10, [(2, 60, "nothing")]))], hdfc, "HDFC CA xx1234")
 
 
@@ -668,6 +686,52 @@ def test_remoteid_is_derived_from_the_transaction(m):
 # command line                                                                 #
 # --------------------------------------------------------------------------- #
 
+def test_hard_links_are_the_same_file(m):
+    """`--out` naming a second hard link to the input PDF destroys the statement
+    on the O_TRUNC, and two links to one inode keep different names, so a
+    lexical path compare passes."""
+    with tempfile.TemporaryDirectory() as directory:
+        source = pathlib.Path(directory) / "statement.pdf"
+        source.write_text("pdf", encoding="utf-8")
+        link = pathlib.Path(directory) / "other-name.pdf"
+        os.link(source, link)
+        args = m.build_parser().parse_args(
+            cli(m, **{"--pdf": str(source), "--dry-run": None, "--out": str(link)}))
+        refuses(m, "path_collision", m.preflight, args)
+
+
+def test_empty_selection_is_not_a_successful_import(m):
+    """An ordered window that does not overlap the statement selects nothing,
+    and every downstream check accepts an empty file."""
+    bank = m.HDFC()
+    rows = [{"date": "01/08/26", "narr": "UPI-A-9@x-ABCD0001-111111111111-P",
+             "ref": "1", "dr": "10.00", "cr": "", "bal": "990.00"}]
+    refuses(m, "empty_selection", m.build, rows, bank, "Co", "Bank", "SUSP", {}, "AC1234",
+            datetime.date(2025, 1, 1), datetime.date(2025, 12, 31))
+
+
+def test_a_transaction_naming_the_bank_is_not_the_footer(m):
+    """The footer anchor is a subset test, so a payment whose counterparty is
+    the bank itself carries HDFC BANK LIMITED — and would end the page, dropping
+    that row and every row after it."""
+    bank = m.HDFC()
+    tricky = page(
+        (100, [(5, 30, "Date"), (72, 120, "Narration"), (282, 340, "Chq./Ref.No."),
+               (402, 452, "Withdrawal"), (562, 600, "Closing")]),
+        (120, [(2, 60, "01/08/26"), (72, 200, "NEFT DR-ZZZZ1-HDFC BANK LIMITED-"),
+               (205, 230, "MUM-ZZZZZ00000000000-B"),
+               (282, 350, "0000000000000001"), (402, 460, "10.00"),
+               (562, 620, "990.00")]),
+        (140, [(2, 60, "02/08/26"), (72, 200, "UPI-BETA-b@z-ZZZZ1-222222222222-P"),
+               (282, 350, "0000000000000002"), (402, 460, "20.00"),
+               (562, 620, "970.00")]),
+        (170, [(100, 140, "HDFC"), (142, 175, "BANK"), (177, 220, "LIMITED")]),
+    )
+    rows = m.parse_pages([tricky], bank)
+    assert len(rows) == 2, [r["narr"] for r in rows]
+    assert bank.party(rows[0]) == "HDFC BANK LIMITED"
+
+
 def test_output_files_are_owner_only(m):
     """The XML and manifest carry counterparties, amounts and every narration;
     the default 022 umask would publish them as 0644 on a shared host."""
@@ -747,6 +811,13 @@ def test_cli_refuses_before_reading_anything(m):
     useful, wrote to the wrong place, or wrote an empty import."""
     refuses(m, "company_unconfirmed", m.main,
             cli(m, **{"--confirm-open-company": "Co Ltd"}))
+    # two unset shell variables agree with each other. An empty company name is
+    # the most dangerous value this flag can take, not the most harmless:
+    # 9.11d means Tally imports into whichever company is open.
+    refuses(m, "company_blank", m.main,
+            cli(m, **{"--company": "  ", "--confirm-open-company": "  "}))
+    refuses(m, "malformed_cli_date", m.main, cli(m, **{"--from": "2026-02-30"}))
+    refuses(m, "malformed_cli_date", m.main, cli(m, **{"--to": "not-a-date"}))
     refuses(m, "no_output_requested", m.main, cli(m, **{"--dry-run": None}))
     refuses(m, "reversed_date_window", m.main,
             cli(m, **{"--from": "2026-08-31", "--to": "2026-08-01"}))

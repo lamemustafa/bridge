@@ -1,6 +1,6 @@
 <!--
-  pdftotext -bbox-layout output from a real State Bank of India current-account statement,
-  with every customer value replaced and the geometry untouched.
+  pdftotext -bbox-layout output from a real State Bank of India current-account statement, with every
+  customer value replaced and the geometry untouched.
 
   What is real: the page size, every xMin/yMin/xMax/yMax, the word and line
   breaks, the entity encoding, and the bank's own template vocabulary (column
@@ -13,11 +13,21 @@
   customer; anything unanticipated is fabricated by default rather than kept by
   default. Distinct source tokens map to distinct fabricated ones in
   first-appearance order, so repeats and name/reference structure survive while
-  the substitution is not a cipher over the original text. Dates are remapped to
-  consecutive days of one synthetic month rather than digit-substituted, because
-  a digit substitution produces 11/22/33, which is not a calendar date.
+  the substitution is not a cipher over the original text. Character shape is
+  preserved — digits stay digits, a run of X stays a run of X — because the
+  parsers find the end of a counterparty name by recognising the shape of the
+  field after it.
 
-  The amounts are fabricated and therefore do NOT form a balance chain. This
+  Dates are remapped rather than digit-substituted, since a digit substitution
+  produces 11/22/33, which is not a calendar date. A whole date becomes a
+  consecutive day of one synthetic month. A date split across words — SBI
+  stacks "31" over "Jul" over "2026" in one cell — is remapped piecewise: the
+  month name is template vocabulary and stays, the day is remapped into 01..28
+  so it remains valid in any month, and every four-digit year becomes the same
+  fixed synthetic year — fixed, so it is the same for every capture and says
+  nothing about which statement this one came from.
+
+  Amounts are fabricated and therefore do NOT form a balance chain. This
   fixture proves parsing, which is what a layout regression breaks; reconcile()
   is proved separately against row fixtures.
 -->
@@ -81,18 +91,18 @@
 <word xMin="36.000000" yMin="373.384000" xMax="79.356000" yMax="384.484000">Balance</word>
 <word xMin="82.692000" yMin="373.384000" xMax="95.364000" yMax="384.484000">as</word>
 <word xMin="98.700000" yMin="373.384000" xMax="112.044000" yMax="384.484000">on</word>
-<word xMin="115.380000" yMin="373.384000" xMax="128.724000" yMax="384.484000">31</word>
+<word xMin="115.380000" yMin="373.384000" xMax="128.724000" yMax="384.484000">01</word>
 <word xMin="132.060000" yMin="373.384000" xMax="147.396000" yMax="384.484000">Jul</word>
 <word xMin="150.732000" yMin="373.384000" xMax="177.420000" yMax="384.484000">2026</word>
 <word xMin="184.092000" yMin="373.384000" xMax="240.804000" yMax="384.484000">:66,777.88</word>
 <word xMin="36.000000" yMin="409.384000" xMax="79.356000" yMax="420.484000">Account</word>
 <word xMin="82.692000" yMin="409.384000" xMax="137.388000" yMax="420.484000">Statement</word>
 <word xMin="140.724000" yMin="409.384000" xMax="164.724000" yMax="420.484000">from</word>
-<word xMin="168.060000" yMin="409.384000" xMax="181.404000" yMax="420.484000">31</word>
+<word xMin="168.060000" yMin="409.384000" xMax="181.404000" yMax="420.484000">01</word>
 <word xMin="184.740000" yMin="409.384000" xMax="200.076000" yMax="420.484000">Jul</word>
 <word xMin="203.412000" yMin="409.384000" xMax="230.100000" yMax="420.484000">2026</word>
 <word xMin="233.436000" yMin="409.384000" xMax="243.444000" yMax="420.484000">to</word>
-<word xMin="246.780000" yMin="409.384000" xMax="253.452000" yMax="420.484000">1</word>
+<word xMin="246.780000" yMin="409.384000" xMax="253.452000" yMax="420.484000">02</word>
 <word xMin="256.788000" yMin="409.384000" xMax="278.136000" yMax="420.484000">Sep</word>
 <word xMin="281.472000" yMin="409.384000" xMax="308.160000" yMax="420.484000">2026</word>
 <word xMin="39.336000" yMin="427.384000" xMax="76.020000" yMax="438.484000">Please</word>
@@ -138,10 +148,10 @@
 <word xMin="386.844000" yMin="481.384000" xMax="439.536000" yMax="492.484000">signature.</word>
 <word xMin="38.000000" yMin="513.384000" xMax="59.336000" yMax="524.484000">Txn</word>
 <word xMin="38.000000" yMin="525.384000" xMax="64.004000" yMax="536.484000">Date</word>
-<word xMin="54.810000" yMin="553.384000" xMax="68.154000" yMax="564.484000">31</word>
+<word xMin="54.810000" yMin="553.384000" xMax="68.154000" yMax="564.484000">01</word>
 <word xMin="71.490000" yMin="553.384000" xMax="86.826000" yMax="564.484000">Jul</word>
 <word xMin="60.140000" yMin="565.384000" xMax="86.828000" yMax="576.484000">2026</word>
-<word xMin="54.810000" yMin="653.384000" xMax="68.154000" yMax="664.484000">31</word>
+<word xMin="54.810000" yMin="653.384000" xMax="68.154000" yMax="664.484000">01</word>
 <word xMin="71.490000" yMin="653.384000" xMax="86.826000" yMax="664.484000">Jul</word>
 <word xMin="60.140000" yMin="665.384000" xMax="86.828000" yMax="676.484000">2026</word>
 <word xMin="90.830000" yMin="513.384000" xMax="122.846000" yMax="524.484000">Value</word>
@@ -152,7 +162,7 @@
 <word xMin="222.900000" yMin="525.384000" xMax="289.572000" yMax="536.484000">No./Cheque</word>
 <word xMin="302.140000" yMin="525.384000" xMax="332.140000" yMax="536.484000">Code</word>
 <word xMin="222.900000" yMin="537.384000" xMax="242.232000" yMax="548.484000">No.</word>
-<word xMin="107.640000" yMin="553.384000" xMax="120.984000" yMax="564.484000">31</word>
+<word xMin="107.640000" yMin="553.384000" xMax="120.984000" yMax="564.484000">01</word>
 <word xMin="124.320000" yMin="553.384000" xMax="139.656000" yMax="564.484000">Jul</word>
 <word xMin="153.668000" yMin="553.384000" xMax="170.336000" yMax="564.484000">TO</word>
 <word xMin="222.900000" yMin="553.384000" xMax="287.568000" yMax="564.484000">TRANSFER</word>
@@ -163,13 +173,13 @@
 <word xMin="143.660000" yMin="577.384000" xMax="214.352000" yMax="588.484000">UPI/DR/4444</word>
 <word xMin="222.900000" yMin="577.384000" xMax="296.292000" yMax="588.484000">55555555555</word>
 <word xMin="143.660000" yMin="589.384000" xMax="213.716000" yMax="600.484000">66666666/Zz</word>
-<word xMin="222.900000" yMin="589.384000" xMax="236.244000" yMax="600.484000">92</word>
+<word xMin="222.900000" yMin="589.384000" xMax="236.244000" yMax="600.484000">03</word>
 <word xMin="239.580000" yMin="589.384000" xMax="242.916000" yMax="600.484000">/</word>
 <word xMin="143.660000" yMin="601.384000" xMax="162.320000" yMax="612.484000">qqq</word>
 <word xMin="143.660000" yMin="613.384000" xMax="214.364000" yMax="624.484000">xx/VVVV/W22</word>
 <word xMin="143.660000" yMin="625.384000" xMax="214.376000" yMax="636.484000">3333333/Jjj</word>
 <word xMin="143.660000" yMin="637.384000" xMax="164.324000" yMax="648.484000">yy-</word>
-<word xMin="107.640000" yMin="653.384000" xMax="120.984000" yMax="664.484000">31</word>
+<word xMin="107.640000" yMin="653.384000" xMax="120.984000" yMax="664.484000">01</word>
 <word xMin="124.320000" yMin="653.384000" xMax="139.656000" yMax="664.484000">Jul</word>
 <word xMin="153.668000" yMin="653.384000" xMax="169.676000" yMax="664.484000">BY</word>
 <word xMin="222.900000" yMin="653.384000" xMax="287.568000" yMax="664.484000">TRANSFER</word>
@@ -180,7 +190,7 @@
 <word xMin="143.660000" yMin="677.384000" xMax="216.368000" yMax="688.484000">IMPS/777777</word>
 <word xMin="222.900000" yMin="677.384000" xMax="296.292000" yMax="688.484000">88888888888</word>
 <word xMin="143.660000" yMin="689.384000" xMax="218.360000" yMax="700.484000">999999/LLL-</word>
-<word xMin="222.900000" yMin="689.384000" xMax="236.244000" yMax="700.484000">97</word>
+<word xMin="222.900000" yMin="689.384000" xMax="236.244000" yMax="700.484000">04</word>
 <word xMin="239.580000" yMin="689.384000" xMax="242.916000" yMax="700.484000">/</word>
 <word xMin="143.660000" yMin="701.384000" xMax="183.680000" yMax="712.484000">XX222-</word>
 <word xMin="143.660000" yMin="713.384000" xMax="189.008000" yMax="724.484000">NNNNNN</word>
@@ -197,7 +207,7 @@
 <page width="595.000000" height="842.000000">
 <word xMin="38.000000" yMin="41.384000" xMax="59.336000" yMax="52.484000">Txn</word>
 <word xMin="38.000000" yMin="53.384000" xMax="64.004000" yMax="64.484000">Date</word>
-<word xMin="54.810000" yMin="81.384000" xMax="68.154000" yMax="92.484000">31</word>
+<word xMin="54.810000" yMin="81.384000" xMax="68.154000" yMax="92.484000">01</word>
 <word xMin="71.490000" yMin="81.384000" xMax="86.826000" yMax="92.484000">Jul</word>
 <word xMin="60.140000" yMin="93.384000" xMax="86.828000" yMax="104.484000">2026</word>
 <word xMin="90.830000" yMin="41.384000" xMax="122.846000" yMax="52.484000">Value</word>
@@ -210,7 +220,7 @@
 <word xMin="222.900000" yMin="53.384000" xMax="289.572000" yMax="64.484000">No./Cheque</word>
 <word xMin="302.140000" yMin="53.384000" xMax="332.140000" yMax="64.484000">Code</word>
 <word xMin="222.900000" yMin="65.384000" xMax="242.232000" yMax="76.484000">No.</word>
-<word xMin="107.640000" yMin="81.384000" xMax="120.984000" yMax="92.484000">31</word>
+<word xMin="107.640000" yMin="81.384000" xMax="120.984000" yMax="92.484000">01</word>
 <word xMin="124.320000" yMin="81.384000" xMax="139.656000" yMax="92.484000">Jul</word>
 <word xMin="153.668000" yMin="81.384000" xMax="169.676000" yMax="92.484000">BY</word>
 <word xMin="222.900000" yMin="81.384000" xMax="287.568000" yMax="92.484000">TRANSFER</word>
@@ -222,7 +232,7 @@
 <word xMin="143.660000" yMin="105.384000" xMax="214.352000" yMax="116.484000">UPI/CR/6666</word>
 <word xMin="222.900000" yMin="105.384000" xMax="296.292000" yMax="116.484000">77777777777</word>
 <word xMin="143.660000" yMin="117.384000" xMax="217.712000" yMax="128.484000">88888888/BBB</word>
-<word xMin="222.900000" yMin="117.384000" xMax="236.244000" yMax="128.484000">97</word>
+<word xMin="222.900000" yMin="117.384000" xMax="236.244000" yMax="128.484000">04</word>
 <word xMin="239.580000" yMin="117.384000" xMax="242.916000" yMax="128.484000">/</word>
 <word xMin="143.660000" yMin="129.384000" xMax="212.348000" yMax="140.484000">GGGGGGG/F</word>
 <word xMin="143.660000" yMin="141.384000" xMax="212.360000" yMax="152.484000">HHH/444444</word>

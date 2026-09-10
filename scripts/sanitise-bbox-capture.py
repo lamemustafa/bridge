@@ -34,7 +34,10 @@ TRANSFER TO FROM INB IMPS NEFT RTGS ATM WDL CASH INT TRF BY
 Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec India
 """.split())
 
-SMALL = re.compile(r"^\d{1,2}$|^(?:19|20)\d{2}$")
+DAY = re.compile(r"^\d{1,2}$")
+YEAR = re.compile(r"^(?:19|20)\d{2}$")
+SYNTHETIC_YEAR = "2026"
+_days = {}
 
 DATE = re.compile(r"^(\d{2})/(\d{2})/(\d{2}(?:\d{2})?)$")
 _dates = {}
@@ -93,11 +96,21 @@ def _fake_token(token):
 def scrub(text):
     if DATE.match(text):
         return _fake_date(text)
-    if SMALL.match(text):
-        # a day-of-month or a four-digit year: SBI stacks "31" over "Jul" over
-        # "2026" in one cell, so digit-substituting these produces a date the
-        # parser rightly rejects. Neither identifies anybody.
-        return text
+    if YEAR.match(text):
+        # one fixed synthetic year. SBI stacks "31" over "Jul" over "2026" in
+        # one cell, so a digit substitution here produces a date the parser
+        # rightly rejects.
+        return SYNTHETIC_YEAR
+    if DAY.match(text):
+        # A one- or two-digit number is *usually* a day-of-month in a split
+        # date cell, and occasionally part of an address. Both are replaced;
+        # only the shape is kept, remapped into 01..28 so it stays a valid day
+        # in any month. Preserving these verbatim — the previous behaviour —
+        # left the real transaction dates in the fixture and made the banner's
+        # claim false.
+        if text not in _days:
+            _days[text] = f"{len(_days) % 28 + 1:02d}"
+        return _days[text]
     out = []
     for piece in SEP.split(text):
         if not piece:
@@ -152,10 +165,14 @@ BANNER_TEMPLATE = """<!--
   parsers find the end of a counterparty name by recognising the shape of the
   field after it.
 
-  Dates are remapped to consecutive days of one synthetic month rather than
-  digit-substituted, since a digit substitution produces 11/22/33, which is not
-  a calendar date. Days of the month and four-digit years survive as printed;
-  neither identifies anybody.
+  Dates are remapped rather than digit-substituted, since a digit substitution
+  produces 11/22/33, which is not a calendar date. A whole date becomes a
+  consecutive day of one synthetic month. A date split across words — SBI
+  stacks "31" over "Jul" over "2026" in one cell — is remapped piecewise: the
+  month name is template vocabulary and stays, the day is remapped into 01..28
+  so it remains valid in any month, and every four-digit year becomes the same
+  fixed synthetic year — fixed, so it is the same for every capture and says
+  nothing about which statement this one came from.
 
   Amounts are fabricated and therefore do NOT form a balance chain. This
   fixture proves parsing, which is what a layout regression breaks; reconcile()
@@ -187,7 +204,7 @@ def main(source, destination, keep, bank):
           f"{sum(chunk.count('<word') for chunk in chunks)} words, {len(chunks)} pages")
 
 
-USAGE = """usage: sanitise_bbox_capture.py SOURCE DEST BANK PAGE:Y0-Y1[,Y0-Y1] ...
+USAGE = """usage: sanitise-bbox-capture.py SOURCE DEST BANK PAGE:Y0-Y1[,Y0-Y1] ...
 
   SOURCE  pdftotext -bbox-layout output from a real statement
   DEST    fixture to write

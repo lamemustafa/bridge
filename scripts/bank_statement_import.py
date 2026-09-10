@@ -39,14 +39,18 @@ section 9. The ones this module is built around:
   path and "does not establish ... other request shapes or voucher types,
   restart behavior, or universal REMOTEID semantics". This tool emits Payment,
   Receipt and Contra. The REMOTEID is carried because it is the best available
-  key and because Delete-by-REMOTEID is the documented correction path (9.7,
-  9.12b) — NOT because upsert-on-repeat has been shown for these types.
+  key and because Delete-by-REMOTEID (9.7) is the nearest thing to a documented
+  correction path — NOT because upsert-on-repeat has been shown for these types.
   A corrected re-import is a *different* payload, which is a further step
   again: 3.3a's own untested list includes "when the payload differs from the
   original (partial update semantics)". So re-importing a corrected file may
-  overwrite, may partially update, or may duplicate. Delete by REMOTEID and
-  create afresh (9.7, 9.12b) is the path with live confirmation behind it, and
-  it is what the manifest's REMOTEID column exists for.
+  overwrite, may partially update, or may duplicate.
+
+  Delete-by-REMOTEID is not qualified here either. 9.7's Delete row was
+  measured on an Education/Edit Log instance, not on a licensed Gold book, and
+  not with the client key on these voucher types. The manifest carries the
+  REMOTEIDs so that path is *available* to try on one voucher — not so it can
+  be run over a batch. Neither correction path is routine; `main` says so.
 
   Qualifying a voucher type takes the import summary, not a voucher count: a
   repeat that Tally rejected also leaves the count unchanged. Read the second
@@ -228,6 +232,12 @@ class Bank:
     end_anchors = ()
     #: a page's table starts below the first line containing all tokens of any group
     top_anchors = ()
+    #: the label the statement prints beside its account number. The binding
+    #: reads digits only from the line carrying every one of these words —
+    #: a header block also prints a phone number, a customer id, an IFSC, a
+    #: MICR code and a postcode, and a four-digit tail matches one of those
+    #: far more often than it matches the account.
+    account_anchors = ()
     #: a line whose every word is one of these is column furniture, not data.
     #: SBI's header wraps onto three lines and repeats on every page, so it sits
     #: *below* the anchor and would otherwise be appended to the row in progress.
@@ -265,6 +275,7 @@ class SBI(Bank):
     date_pattern = re.compile(r"^\d{1,2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)$")
     date_format = "%d%b%Y"
     top_anchors = (("Txn",),)
+    account_anchors = (("Account", "Number"),)
     header_words = frozenset({"Txn", "Date", "Value", "Description", "Ref",
                               "No./Cheque", "No.", "Branch", "Code", "Debit",
                               "Credit", "Balance"})
@@ -361,6 +372,9 @@ class HDFC(Bank):
     end_anchors = (("STATEMENT", "SUMMARY"),)
     # page 1 repeats the column header; later pages only repeat the period line
     top_anchors = (("Narration",), ("Statement", "account"))
+    # "Account No :50200000000000"; "Account Status" and "Account Type" print
+    # the same first word, which is why the anchor is both words
+    account_anchors = (("Account", "No"),)
 
     @staticmethod
     def _bounded_party(narr, prefix, is_boundary, skip=0, back=0):
@@ -573,14 +587,19 @@ def parse_pages(pages, bank):
         for y, group in lines:
             if y <= top:
                 continue
-            if bank.bottom_anchors and _matches(group, bank.bottom_anchors):
-                break
             if bank.header_words and all(t in bank.header_words for *_, t in group):
                 continue
             cells = {}
             for x0, _, x1, _, text in group:
                 cells.setdefault(bank.column_of(x0, x1), []).append((x0, x1, text))
             started = bank.is_row_start(cells)
+            # A footer anchor is a *subset* test, so a transaction whose
+            # counterparty is the bank itself carries "HDFC BANK LIMITED" and
+            # would end the page — dropping that row and every row after it. A
+            # line that opens a transaction is a transaction, whatever else it
+            # says, so the date decides and the anchor only breaks the ties.
+            if not started and bank.bottom_anchors and _matches(group, bank.bottom_anchors):
+                break
             if started:
                 current = {name: [] for _, _, name in bank.columns}
                 rows.append(current)
@@ -616,28 +635,27 @@ def parse(pdf, password, bank):
     return parse_pages(pages, bank), pages
 
 
-def header_digit_runs(pages, bank):
-    """Maximal digit runs printed in the statement header, above the table.
+def account_number_runs(pages, bank):
+    """Digit runs printed on the statement's own account-number line.
 
-    Deliberately not the whole document. Every transaction reference, UPI id,
-    IFSC fragment and cheque number lives *inside* the table, and any of them
-    can end in the same four digits as an account tail — so a whole-document
-    search will accept a statement for the wrong account about as readily as
-    the right one. The account number is printed in the header block, and
-    nothing that varies with a transaction is.
+    Narrowed twice, and the second narrowing was the one that mattered. Reading
+    the whole document lets any transaction reference stand in for the account.
+    Reading the whole header block is barely better: a header prints a phone
+    number, a customer id, an IFSC, a MICR code and a postcode, and on a real
+    statement four different wrong tails all matched. Only the line the bank
+    labels as the account number identifies the account.
     """
+    if not bank.account_anchors:
+        return set()
     runs = set()
     for page in pages:
-        lines = _lines(page)
-        top = _table_top(lines, bank)
-        if top is None:
-            continue
-        for y, group in lines:
-            if y > top:
+        for _, group in _lines(page):
+            if not _matches(group, bank.account_anchors):
                 continue
             for *_, text in group:
                 runs.update(re.findall(r"\d+", _unescape(text)))
-        break  # the first page carrying a table is the one with the header block
+        if runs:
+            break
     return runs
 
 
@@ -662,13 +680,13 @@ def require_account_match(pages, bank, account_tail):
     any XML exists.
 
     Matching is on a trailing digit run, because banks mask the leading digits
-    (`XXXXXX4230`) and space them unpredictably, and only within the header
-    block (see `header_digit_runs`).
+    (`XXXXXX4230`) and space them unpredictably, and only against the line the
+    statement labels as its account number (see `account_number_runs`).
 
-    Residual weakness, stated so it is known rather than assumed: a four-digit
-    tail could still coincide with another number printed in the header, such
-    as a branch code or part of an IFSC. A bank profile with a confirmed
-    account-number label should narrow this to that field.
+    Residual, stated so it is known rather than assumed: the label line can
+    carry a second number — HDFC prints a product code beside it — so a tail
+    that happens to end that number would also pass. Four digits against one
+    line is a far weaker coincidence than four digits against a page.
     """
     digits = account_digits(account_tail)
     if len(digits) < 4:
@@ -677,19 +695,20 @@ def require_account_match(pages, bank, account_tail):
             f"--account-tail {account_tail!r} carries {len(digits)} digits; "
             "at least 4 are needed to bind the statement to the ledger",
         )
-    runs = header_digit_runs(pages, bank)
+    runs = account_number_runs(pages, bank)
     if not runs:
         raise Refusal(
-            "no_statement_header",
-            "found no header block above the transaction table, so the account "
-            "number could not be located. The layout has changed, or this is not "
-            f"a {bank.name.upper()} statement.",
+            "no_account_number_line",
+            "this statement prints no line matching "
+            f"{' / '.join(' '.join(a) for a in bank.account_anchors)!r}, so the "
+            "account number could not be located. The layout has changed, or this "
+            f"is not a {bank.name.upper()} statement.",
         )
     if not any(run.endswith(digits) for run in runs):
         raise Refusal(
             "account_not_in_statement",
-            f"no number ending {digits} is printed in this statement's header. "
-            "Either the PDF is not the account named by --bank-ledger/"
+            f"no number ending {digits} appears on this statement's account-number "
+            "line. Either the PDF is not the account named by --bank-ledger/"
             "--account-tail, or the account digits were mistyped. Refusing to "
             "post it anywhere.",
         )
@@ -1080,6 +1099,14 @@ def build(rows, bank, company, bank_ledger, suspense, mapping, account_tail,
             amount=f"{amount:.2f}", dr_ledger=debit_ledger, cr_ledger=credit_ledger,
             suspense="YES" if unidentified else "", remoteid=remote_id,
             party=party, narration=narration))
+    if not manifest:
+        raise Refusal(
+            "empty_selection",
+            f"no statement row falls between {date_from or 'the first row'} and "
+            f"{date_to or 'the last'}. The window is ordered but does not overlap the "
+            "statement — the run would otherwise write an empty file and report a "
+            "successful zero-voucher import.",
+        )
     return vouchers, manifest
 
 
@@ -1175,19 +1202,41 @@ def _check_paths(args):
     `--out` and `--manifest` sharing a path leaves whichever was written second,
     with both success lines printed.
     """
-    named = [("--pdf", args.pdf), ("--mapping", args.mapping),
-             ("--out", args.out), ("--manifest", args.manifest)]
-    resolved = {}
-    for flag, value in named:
-        if not value:
-            continue
-        real = pathlib.Path(value).expanduser().resolve()
-        if real in resolved:
-            raise Refusal(
-                "path_collision",
-                f"{flag} and {resolved[real]} both resolve to {real}",
-            )
-        resolved[real] = flag
+    named = [(flag, pathlib.Path(value).expanduser().resolve())
+             for flag, value in (("--pdf", args.pdf), ("--mapping", args.mapping),
+                                 ("--out", args.out), ("--manifest", args.manifest))
+             if value]
+    for index, (flag, path) in enumerate(named):
+        for other_flag, other in named[:index]:
+            # `resolve()` follows symlinks but two hard links to one inode keep
+            # different names, and `--out` naming a second link to the input PDF
+            # destroys the statement on the O_TRUNC. `samefile` asks the
+            # filesystem; it needs both paths to exist, so the lexical compare
+            # stays for the output that does not yet.
+            same = path == other
+            if not same and path.exists() and other.exists():
+                same = path.samefile(other)
+            if same:
+                raise Refusal(
+                    "path_collision",
+                    f"{flag} ({path}) and {other_flag} ({other}) are the same file",
+                )
+
+
+def _cli_date(text, flag):
+    """An ISO date from the command line, or a typed refusal.
+
+    `2026-02-30` has the right shape and is not a date, so `fromisoformat`
+    raises `ValueError` — a traceback where every other malformed input to this
+    tool produces a category.
+    """
+    if not text:
+        return None
+    try:
+        return datetime.date.fromisoformat(text)
+    except ValueError:
+        raise Refusal("malformed_cli_date",
+                      f"{flag} {text!r} is not a calendar date in YYYY-MM-DD form")
 
 
 def preflight(args):
@@ -1197,6 +1246,14 @@ def preflight(args):
     nothing, and none of these checks needs the statement. Returns the parsed
     control values so `main` never re-parses a string it has already validated.
     """
+    if not args.company.strip():
+        raise Refusal(
+            "company_blank",
+            "--company is empty. An empty SVCURRENTCOMPANY matches no company, and "
+            "9.11d means Tally imports into whichever company is open rather than "
+            "refusing — so a blank name is the most dangerous value this flag can "
+            "take, not the most harmless.",
+        )
     if args.confirm_open_company != args.company:
         raise Refusal(
             "company_unconfirmed",
@@ -1212,8 +1269,8 @@ def preflight(args):
         )
     _check_paths(args)
 
-    as_date = lambda text: datetime.date.fromisoformat(text) if text else None
-    window = (as_date(args.date_from), as_date(args.date_to))
+    window = tuple(_cli_date(value, flag) for value, flag in
+                   ((args.date_from, "--from"), (args.date_to, "--to")))
     if all(window) and window[0] > window[1]:
         raise Refusal(
             "reversed_date_window",
@@ -1287,12 +1344,16 @@ def _print_operator_notes(company, skipped):
               "is not deletion — a re-import upserts what is present and leaves the "
               "rest standing. Delete those vouchers by the REMOTEIDs in the manifest, "
               "or the transfer they represent is counted twice.")
-    print("\nTO CORRECT A BATCH ALREADY IMPORTED: delete by the REMOTEIDs in the manifest, "
-          "then import the corrected file. Do NOT rely on re-importing over the top — "
-          "upsert-by-REMOTEID is verified for Journal only (9.8), this file is "
-          "Payment/Receipt/Contra, and a re-import carrying CORRECTED values is a further "
-          "untested case again (3.3a). If you do test it, read the import summary rather "
-          "than the voucher count: a rejected repeat also leaves the count unchanged.")
+    print("\nTO CORRECT A BATCH ALREADY IMPORTED: neither available path is qualified for "
+          "these voucher types, so do not treat either as routine.\n"
+          "  * Re-importing over the top relies on upsert-by-REMOTEID, verified for Journal "
+          "only (9.8), and a corrected file is a DIFFERENT payload — 3.3a lists that as "
+          "untested, and it may overwrite, partially update, or duplicate.\n"
+          "  * Deleting by the manifest's REMOTEIDs relies on 9.7's Delete row, measured on "
+          "an Education/Edit Log instance, not on a licensed Gold book.\n"
+          "Try one on a SINGLE voucher first and read it back. Judge by the import summary "
+          "and the voucher, never by a count: a rejected repeat leaves the count unchanged "
+          "too. Until then, correct by hand or with a journal.")
 
 
 def build_parser():

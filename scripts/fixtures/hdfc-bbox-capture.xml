@@ -1,6 +1,6 @@
 <!--
-  pdftotext -bbox-layout output from a real HDFC current-account statement,
-  with every customer value replaced and the geometry untouched.
+  pdftotext -bbox-layout output from a real HDFC current-account statement, with every
+  customer value replaced and the geometry untouched.
 
   What is real: the page size, every xMin/yMin/xMax/yMax, the word and line
   breaks, the entity encoding, and the bank's own template vocabulary (column
@@ -13,11 +13,21 @@
   customer; anything unanticipated is fabricated by default rather than kept by
   default. Distinct source tokens map to distinct fabricated ones in
   first-appearance order, so repeats and name/reference structure survive while
-  the substitution is not a cipher over the original text. Dates are remapped to
-  consecutive days of one synthetic month rather than digit-substituted, because
-  a digit substitution produces 11/22/33, which is not a calendar date.
+  the substitution is not a cipher over the original text. Character shape is
+  preserved — digits stay digits, a run of X stays a run of X — because the
+  parsers find the end of a counterparty name by recognising the shape of the
+  field after it.
 
-  The amounts are fabricated and therefore do NOT form a balance chain. This
+  Dates are remapped rather than digit-substituted, since a digit substitution
+  produces 11/22/33, which is not a calendar date. A whole date becomes a
+  consecutive day of one synthetic month. A date split across words — SBI
+  stacks "31" over "Jul" over "2026" in one cell — is remapped piecewise: the
+  month name is template vocabulary and stays, the day is remapped into 01..28
+  so it remains valid in any month, and every four-digit year becomes the same
+  fixed synthetic year — fixed, so it is the same for every capture and says
+  nothing about which statement this one came from.
+
+  Amounts are fabricated and therefore do NOT form a balance chain. This
   fixture proves parsing, which is what a layout regression breaks; reconcile()
   is proved separately against row fixtures.
 -->
@@ -25,7 +35,7 @@
 <word xMin="292.034000" yMin="19.953000" xMax="307.586000" yMax="27.153000">Page</word>
 <word xMin="309.586000" yMin="19.953000" xMax="319.362000" yMax="27.153000">No</word>
 <word xMin="321.362000" yMin="19.953000" xMax="325.586000" yMax="27.153000">.:</word>
-<word xMin="327.586000" yMin="19.953000" xMax="331.586000" yMax="27.153000">1</word>
+<word xMin="327.586000" yMin="19.953000" xMax="331.586000" yMax="27.153000">01</word>
 <word xMin="340.157000" yMin="53.301000" xMax="367.261000" yMax="60.501000">Account</word>
 <word xMin="369.261000" yMin="53.301000" xMax="392.365000" yMax="60.501000">Branch</word>
 <word xMin="396.849000" yMin="53.301000" xMax="399.073000" yMax="60.501000">:</word>
@@ -36,7 +46,7 @@
 <word xMin="500.278000" yMin="53.301000" xMax="528.726000" yMax="60.501000">VVVVVV</word>
 <word xMin="340.157000" yMin="62.001000" xMax="366.373000" yMax="69.201000">Address</word>
 <word xMin="396.849000" yMin="62.001000" xMax="399.073000" yMax="69.201000">:</word>
-<word xMin="402.518000" yMin="62.001000" xMax="410.518000" yMax="69.201000">21</word>
+<word xMin="402.518000" yMin="62.001000" xMax="410.518000" yMax="69.201000">02</word>
 <word xMin="412.518000" yMin="62.001000" xMax="447.622000" yMax="69.201000">WWWWWWW</word>
 <word xMin="449.622000" yMin="62.001000" xMax="484.950000" yMax="69.201000">KKKKKK,</word>
 <word xMin="402.518000" yMin="70.701000" xMax="425.182000" yMax="77.901000">JJJJ</word>
@@ -314,7 +324,7 @@
 <word xMin="516.187000" yMin="301.247000" xMax="548.187000" yMax="308.447000">44,111.99</word>
 <word xMin="594.705000" yMin="301.247000" xMax="626.705000" yMax="308.447000">11,222.44</word>
 <word xMin="72.031000" yMin="318.447000" xMax="173.335000" yMax="325.647000">-XXXXXXXX9999-LLLLLL</word>
-<word xMin="72.031000" yMin="714.047000" xMax="76.031000" yMax="721.247000">1</word>
+<word xMin="72.031000" yMin="714.047000" xMax="76.031000" yMax="721.247000">01</word>
 <word xMin="68.031000" yMin="746.943000" xMax="130.821000" yMax="755.943000">STATEMENT</word>
 <word xMin="133.321000" yMin="746.943000" xMax="186.641000" yMax="755.943000">SUMMARY</word>
 <word xMin="191.641000" yMin="746.943000" xMax="198.301000" yMax="755.943000">:-</word>
@@ -353,11 +363,11 @@
 <word xMin="121.122000" yMin="287.791000" xMax="134.458000" yMax="294.991000">On:</word>
 <word xMin="138.458000" yMin="287.791000" xMax="180.234000" yMax="294.991000">88-Sep-9999</word>
 <word xMin="182.234000" yMin="287.791000" xMax="200.898000" yMax="294.991000">11:22</word>
-<word xMin="302.140000" yMin="229.447000" xMax="310.140000" yMax="236.647000">23</word>
+<word xMin="302.140000" yMin="229.447000" xMax="310.140000" yMax="236.647000">03</word>
 <word xMin="262.427000" yMin="287.791000" xMax="298.419000" yMax="294.991000">Generated</word>
 <word xMin="300.419000" yMin="287.791000" xMax="312.419000" yMax="294.991000">By:</word>
 <word xMin="314.419000" yMin="287.791000" xMax="350.419000" yMax="294.991000">333333333</word>
-<word xMin="375.005996" yMin="229.447000" xMax="379.005996" yMax="236.647000">9</word>
+<word xMin="375.005996" yMin="229.447000" xMax="379.005996" yMax="236.647000">04</word>
 <word xMin="417.824996" yMin="229.447000" xMax="453.824996" yMax="236.647000">444,555.66</word>
 <word xMin="495.776996" yMin="229.447000" xMax="531.776996" yMax="236.647000">777,888.99</word>
 <word xMin="575.728996" yMin="229.447000" xMax="607.728996" yMax="236.647000">99,111.44</word>
