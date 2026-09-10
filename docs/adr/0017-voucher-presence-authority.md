@@ -229,6 +229,27 @@ voucher number still matched perfectly. Under this contract that invoice comes
 back `Present` with an amount difference — precisely the report the client
 needed and nobody had asked for.
 
+**Say plainly what a caller may do about it, because the obvious move is a
+trap.** A difference is a finding for a person, not a work item for code. On
+the observed instance §9.7 verified that voucher `Alter` returns
+`CREATED=1, ALTERED=0` and **makes a duplicate while leaving the target
+untouched** — tested against four different keys, all four duplicating — and
+that `Cancel` behaves the same way (§9.6). Only `Delete` works, keyed by
+`REMOTEID`. So a caller that reads "amount differs" and reaches for an `Alter`
+to correct it would create the very duplicate this whole contract exists to
+prevent, and Tally's counters would report success.
+
+The correction that does exist is re-import under the same client `REMOTEID`
+(§3.3a), and it reaches **only vouchers Bridge itself wrote**. For a
+hand-keyed voucher — the case that produced the ₹36.13 finding, and the case
+this contract is for — Bridge holds no client key and the `vouchers` profile
+does not even fetch the Tally-assigned one, so there is **no programmatic
+correction path at all**. The operator fixes it in Tally. A report that names a
+disagreement it cannot act on must say so, or the next person writes the
+`Alter`. (§9.7's Alter and Cancel results carry their own "unverified whether
+this is SKU-specific" caveat; that widens the uncertainty, it does not narrow
+the advice.)
+
 ### 7. The error posture, stated
 
 The two errors are not symmetric, and the asymmetry is **detectability**, not
