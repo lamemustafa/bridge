@@ -360,6 +360,10 @@ def test_hyphenated_counterparties_survive_every_narration_shape(m):
         # a long all-capitals name is not a reference: the UTR test requires
         # digits, or INTERNATIONAL terminates its own name
         ("NEFT CR-ZZZZ0000000-INTERNATIONAL-MUM-ZZZZZ00000000000-B", "INTERNATIONAL"),
+        # the cell wrap lands inside the UTR itself, so the marker arrives
+        # split. Found against a real statement, where a two-character payee
+        # name absorbed the branch field because the boundary went unrecognised.
+        ("NEFT DR-ZZZZ0ZZZZZZ-GST-MUM-ZZZ ZZ00000000000-BB0", "GST"),
         # shapes the rules were not written for go to suspense, never to a guess
         ("UPI-NOSTRUCTURE-HERE", "UNRESOLVED"),
         ("IMPS-1-WEIRD", "UNRESOLVED"),

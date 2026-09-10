@@ -389,7 +389,13 @@ class HDFC(Bank):
         for index, part in enumerate(parts):
             if index < skip:
                 continue
-            if is_boundary(part):
+            # the boundary test runs on the field with whitespace removed. The
+            # cell wrap that this module exists to undo also lands *inside* a
+            # reference — a real UTR arrives as "HDF CH01206262147" when the
+            # fragment before it stopped short of the cell edge — and a marker
+            # that is only recognisable when unbroken is not a marker. Names
+            # keep their spaces; only the test strips.
+            if is_boundary(_strip(part)):
                 return "-".join(parts[skip:max(index - back, skip)]).strip()
         return ""
 
