@@ -98,17 +98,49 @@ reference, say):
   a rate, a house number and a masked last-four cannot qualify — a last-four
   written as digits falls through to near-miss rather than binding two accounts
   that share four digits.
-- **Code** — a token holding at least one letter and at least
-  `MIN_CODE_IDENTIFIER_DIGITS` (2) digits, of at least
-  `MIN_CODE_IDENTIFIER_CHARS` (4) alphanumeric characters. Canonical form is
-  uppercase alphanumerics, so a punctuated part number and an unpunctuated one
-  agree.
+- **Code** — a token holding at least two letters and at least
+  `MIN_CODE_IDENTIFIER_DIGITS` (3) digits, of at least
+  `MIN_CODE_IDENTIFIER_CHARS` (8) alphanumeric characters, and not a period
+  label. Canonical form is uppercase alphanumerics, so a punctuated part number
+  and an unpunctuated one agree.
+
+  These thresholds were raised twice under review, from 4/2/1. Enumerating the
+  period spellings that must not become identifiers — `FY25`, then `APR2025`,
+  then `SEPTEMBER2025` — kept losing to the next spelling, so length carries
+  what a list of prefixes could not: a registration code clears eight
+  alphanumerics with three digits, and a period label does not. **Measured
+  against 485 live ledger names, exactly one yields a code identifier at all**,
+  so the cost of the strictness is nothing observed.
+
+**A token carrying letters never yields a standalone numeric**, whether or not
+it qualified as a code. Otherwise `Part A12345678` reaches an unrelated
+`Bank 12345678` through the one-letter gap the code test rejects: a token
+identifies by its whole shape or not at all.
+
+**Period labels are recognized by their numbers, not their words.** A token is
+a period when every number in it reads as a year or a small ordinal — which
+catches `SEPTEMBER2025` and `2025QUARTER1` that no cap on the alphabetic run
+ever would, because a month name can be any length and a year cannot. A fiscal
+range (`2025-2026`, `2025/2026`) is excluded before its digits are fused, since
+stripping the separator produced an eight-digit run that no calendar reading
+rejects.
 
 One narrow exclusion applies to the numeric shape: an eight-digit run that reads
 as a calendar date in 1900–2199 is a date, not an identifier. Without it two
 unrelated period-labelled masters fuse on their period. The exclusion can only
 make a bind less likely, never more, which is the safe direction for a rule
 whose failure mode is posting against the wrong party.
+
+**Coverage is a property of the client's naming habit, not of the problem.**
+Measured across four catalogues: a retail motorcycle dealership carries an
+embedded identifier in 91 of 214 ledgers (42%), because it literally names
+customers that way; a B2B minerals trader, 0 of 105; a third catalogue, 0 of
+470; and Bridge's own synthetic books, 0 of 470 until ten were seeded to give
+the rule any live coverage at all. So this rule is a **first-pass check that is
+decisive when it fires and absent more often than not** — it resolved a customer
+three fuzzy name matches got wrong, and it can never be the primary key. The
+binder must work with it absent, and does: name matching is not a fallback here
+but the ordinary path.
 
 An identifier binds only when it is **unique on both sides**: exactly one
 master in the catalog carries it, and the entity's identifiers select exactly
@@ -125,9 +157,27 @@ favour.
 ### 3. Name matching binds only on an exact or normalized-exact unique hit
 
 `Exact` is byte equality with the observed master name. `Normalized` is equality
-under a comparison key that applies NFC, folds Unicode dash and quote variants
-to ASCII, lowercases, and collapses whitespace — and only when exactly one
-master shares that key. Nothing else binds. There is no edit distance, no
+under **Tally's own rule for when two master names are the same**, and only when
+exactly one master shares it.
+
+That rule is measured, not chosen: `IMPLEMENTATION_GUIDE.md` §3.3b found Tally's
+master-name matching to be case-insensitive **and separator-insensitive — a
+hyphen matches a space** — and otherwise exact on letters. `AND` for `&`, a
+missing suffix word, and a singular for a plural were all rejected. So the fold
+lowercases, collapses whitespace, folds Unicode dash and quote variants to
+ASCII, and treats `-` as a space; and it stops exactly where Tally stops.
+
+**Being stricter than the authority is not the safe direction it appears to
+be.** It refuses names Tally would accept, and `X - Y` is a common ledger
+convention — six of the seventeen hyphenated names in the observed books take
+that shape. A binder that reports a near-miss for a name the book would have
+matched has invented work, not prevented an error.
+
+This fold is deliberately **separate from the general comparison key**, which is
+shared with other contracts for voucher numbers and voucher-type names. §3.3b
+says nothing about those, and widening the shared fold to serve masters would be
+the "never to make one caller's case pass" this ADR warns against. One fold per
+notion of sameness, each named for the question it answers. Nothing else binds. There is no edit distance, no
 phonetic key, no token stemming, and no similarity threshold anywhere in the
 implementation.
 
@@ -154,6 +204,58 @@ which keeps it free of language and domain assumptions.
 Candidates are capped at `MAX_CANDIDATES_PER_ENTITY` (25) with the true
 `candidate_count` and an explicit `candidates_truncated` flag retained, so a
 truncated list is never mistaken for a short one.
+
+### 4a. An empty candidate list is three different facts, and the producer says which
+
+`candidates` can be empty for three unrelated reasons, and they mean opposite
+things to anyone deciding what to do next:
+
+| `reason` | what empty means |
+| --- | --- |
+| `NoCandidate` | no master resembles this name at all |
+| `NoDiscriminatingCandidate` | `candidate_count` masters resemble it and none is separable — **many exist**, none is worth showing |
+| any, with `candidates_truncated` | the list was cut, by the per-entity cap or by the report's aggregate byte budget |
+
+So `candidates.is_empty()` alone answers nothing. The disambiguators are
+`reason`, `candidate_count` and `candidates_truncated`, and a consumer that
+reads the empty vector as "nothing exists" is wrong in two cases out of three.
+
+This is stated here, in the producer's contract, rather than left to each
+consumer to rediscover, because **it has already been got wrong twice by
+different lanes**: the preparation screen rendered "0 possible ledgers are
+listed first" over a family of 120, and the voucher-presence contract had to
+add a paired test to stop its own rule collapsing into "no candidates means
+unknown" — a reading that is right for the truncated case and wrong for
+`NoCandidate`.
+
+It is the same defect class this ADR was written against: a refusal whose
+neighbouring value reads as an answer. The vocabulary is deliberately explicit
+so that "nothing survived to be shown" and "nothing exists" cannot be confused
+by reading one field.
+
+**This is now a type as well as a doc.** `Candidates` is
+`None | Listed | Truncated { found } | Withheld { found }`, so a consumer
+matching it exhaustively is made to decide each case, and the wrong reading does
+not compile rather than failing a test someone remembered to write. `listed()`,
+`found()` and `is_incomplete()` cover the callers that do not need to match.
+`is_incomplete()` is the predicate that matters: **true means the absence of a
+listing is not the absence of a master**, and no consumer may report "nothing
+like this is present" over it.
+
+It was taken before merge deliberately. The contract had not shipped, so this is
+the cheapest the change would ever be; afterwards it would be a breaking change
+to a published contract with three consumers behind it. The consumer who paid
+for it measured its own cost at about thirty lines and reported that the change
+made its code better rather than merely compatible — a hand-assembled
+disjunction became an exhaustive match.
+
+**The fix stops at the crate boundary, and says so.** The MCP result carries an
+explicit `listing` discriminator, because a model is precisely the caller that
+would read an empty array as "no such ledger exists". The desktop DTO stays
+flat: its screen already distinguishes the three cases and is tested on each, so
+flattening there is a projection with a tested consumer rather than an
+ambiguity. Neither boundary has the compiler behind it — this protects Rust
+consumers, and the projections are the two places where that protection ends.
 
 ### 5. Status vocabulary
 

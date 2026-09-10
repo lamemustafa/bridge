@@ -189,13 +189,18 @@ fn source_entry_bindings(
                         bound_target: None,
                         bound_basis: None,
                         unbound_reason: Some(unresolved.reason.safe_reason_code()),
-                        candidates_truncated: unresolved.candidates_truncated,
+                        // The screen distinguishes the three cases from
+                        // `candidate_count` against an empty list and is tested
+                        // on each, so the DTO stays flat and this projection is
+                        // the only place the typed shape is flattened.
+                        candidates_truncated: unresolved.candidates.is_incomplete(),
                         candidates: unresolved
                             .candidates
+                            .listed()
                             .iter()
                             .map(|candidate| candidate.catalog_name.clone())
                             .collect(),
-                        candidate_count: unresolved.candidate_count,
+                        candidate_count: unresolved.candidates.found(),
                     }
                 }
             },

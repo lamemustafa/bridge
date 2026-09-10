@@ -117,7 +117,8 @@ pub enum MasterBindingError {
     TooManyIdentifiers,
     #[error("fallback master was not a current catalog entry")]
     FallbackNotInCatalog,
-    /// A catalog of the wrong class, or an entity from another report.
+    /// A catalog of the wrong class, a catalog the report was not produced
+    /// from, or an entity from another report.
     #[error("catalog did not match the report it is used with")]
     ClassMismatch,
 }
@@ -246,6 +247,64 @@ pub enum BindingBasis {
     NormalizedName,
 }
 
+/// The masters worth showing, and — in the variant itself — what an absence of
+/// them means.
+///
+/// Replaces a `Vec` plus two flags, where empty was three different facts and a
+/// consumer reading `is_empty()` was wrong in two of them. That shape had
+/// already been got wrong twice by different lanes; here the compiler makes
+/// each case an explicit decision instead.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", tag = "listing")]
+pub enum Candidates {
+    /// Nothing resembles this name. An absence of masters, not of information.
+    None,
+    /// Every master found, listed.
+    ///
+    /// A struct variant, not a newtype: under Serde's internally tagged
+    /// representation a tag cannot be merged into a sequence, and a newtype
+    /// here failed to serialize at runtime — on the most common unresolved
+    /// result, while the other three variants succeeded.
+    Listed { listed: Vec<Candidate> },
+    /// More were found than could be listed — the per-entity cap, or the
+    /// report's aggregate byte budget.
+    Truncated {
+        listed: Vec<Candidate>,
+        found: usize,
+    },
+    /// A family this name reaches and separates none of: counted, and
+    /// deliberately not listed, because an arbitrary slice of it put the right
+    /// master out of view about a third of the time against live books.
+    Withheld { found: usize },
+}
+
+impl Candidates {
+    /// The masters actually listed. Empty for `None` and `Withheld` alike, so
+    /// never decide anything from this alone.
+    pub fn listed(&self) -> &[Candidate] {
+        match self {
+            Self::None | Self::Withheld { .. } => &[],
+            Self::Listed { listed } | Self::Truncated { listed, .. } => listed,
+        }
+    }
+
+    /// Masters found before any truncation or withholding.
+    pub fn found(&self) -> usize {
+        match self {
+            Self::None => 0,
+            Self::Listed { listed } => listed.len(),
+            Self::Truncated { found, .. } | Self::Withheld { found } => *found,
+        }
+    }
+
+    /// Whether masters exist that are not in `listed()`. The predicate a
+    /// consumer needs before it may report "nothing like this is present":
+    /// true here means the absence of a listing is not the absence of a master.
+    pub fn is_incomplete(&self) -> bool {
+        matches!(self, Self::Truncated { .. } | Self::Withheld { .. })
+    }
+}
+
 /// What could not be bound, and why. This is the operator's work item, not an
 /// error path.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -254,14 +313,36 @@ pub struct Unresolved {
     /// Identifiers extracted from the source name and from caller hints,
     /// retained so a fallback posting can be reallocated later without
     /// re-reading the source document.
+    ///
+    /// **This must travel in a channel that survives a read back — the
+    /// narration.** A client-supplied `REMOTEID` is not it: Tally overwrites
+    /// the attribute with its own value, so a key written there cannot be
+    /// observed afterwards and cannot identify what to reallocate
+    /// (`docs/tally/IMPLEMENTATION_GUIDE.md` §3.3a, fourth property, verified).
+    /// A parked amount whose identity went into a write-only field is
+    /// unreallocatable, and nothing about the write would say so.
     pub unresolved_identity: Vec<Identifier>,
-    pub candidates: Vec<Candidate>,
-    /// Candidates found before truncation.
-    pub candidate_count: usize,
-    pub candidates_truncated: bool,
+    pub candidates: Candidates,
 }
 
 /// Exactly one outcome per source entity.
+///
+/// **What a `Bound` does not establish**, written here because a computed check
+/// gets read for more than it covers, and the caller cannot see the gap from
+/// the value alone:
+///
+/// - **Not that the master still exists.** The catalog is a snapshot. A caller
+///   acting on a binding re-reads and revalidates through the admission path
+///   that owns identity; nothing here is a lease on the book.
+/// - **Not that the name may be written as given.** Only `ExactName` is byte
+///   equality. A `NormalizedName` or `Identifier` bind means the payload and
+///   the live name *differ*, and Bridge's write gate admits `exact` only — use
+///   `catalog_name`, not what was requested.
+/// - **Not that this is the right master in business terms.** It establishes
+///   that one deterministic rule selected one master uniquely. Whether that
+///   party is the one the document meant is a judgement the rules cannot make.
+/// - **Not any authority.** A binding is a proposal: it approves nothing,
+///   creates nothing, and dispatches nothing.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "status")]
 pub enum BindingStatus {
@@ -318,12 +399,18 @@ pub struct BindingTotals {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct BindingReport {
     class: MasterClass,
+    catalog: CatalogFingerprint,
     entities: Vec<EntityBinding>,
 }
 
 impl BindingReport {
     pub fn class(&self) -> MasterClass {
         self.class
+    }
+
+    /// The catalog this report was produced from.
+    pub fn catalog(&self) -> CatalogFingerprint {
+        self.catalog
     }
 
     pub fn entities(&self) -> &[EntityBinding] {
@@ -359,7 +446,10 @@ impl BindingReport {
         catalog: &MasterCatalog,
         fallback_name: &str,
     ) -> Result<FallbackBinding, MasterBindingError> {
-        if catalog.class != self.class {
+        // Class alone is not provenance: two ledger catalogs are both
+        // `Ledger`, and a fallback drawn from the one the report never saw
+        // would name a master that was never a candidate for this entity.
+        if catalog.class != self.class || catalog.fingerprint != self.catalog {
             return Err(MasterBindingError::ClassMismatch);
         }
         let entity = self
@@ -412,6 +502,20 @@ impl BindingReport {
 ///
 /// Constructed only from an entity that did not bind, so rebinding something
 /// that already matched is not a representable state.
+///
+/// **Reallocate with a Journal moving the amount off the fallback ledger.
+/// Never with `Alter`, and never with `Cancel`.** `TALLY_PROTOCOL_REFERENCE.md`
+/// §9.7 measured voucher `Alter` returning `CREATED=1, ALTERED=0` and creating
+/// a **duplicate with the target untouched** — four keys tested, all four
+/// duplicating — and §9.6 the same for `Cancel`. The counters report success
+/// either way, so the obvious correction produces exactly the double-posting a
+/// parked entry exists to avoid, and says it worked.
+///
+/// Re-import under the same client `REMOTEID` (§3.3a) is a real correction
+/// path, but reaches only vouchers Bridge itself wrote; a hand-keyed voucher
+/// has no client key. This is why the retained identity travels in the
+/// narration: the Journal that reallocates it is written by a human or a later
+/// batch, and the narration is what either can still read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FallbackBinding {
     class: MasterClass,
@@ -508,7 +612,7 @@ impl SourceEntity {
         }
         Ok(Self {
             position,
-            key: comparison_key(&name),
+            key: master_identity_key(&name),
             name,
             identifiers,
         })
@@ -539,9 +643,18 @@ struct CatalogEntry {
 ///
 /// Valid by construction: `bind` cannot fail because everything that could fail
 /// was decided here.
+/// Which catalog a report was produced from.
+///
+/// Not a security property and not a Tally identity — it distinguishes two
+/// catalogs of the same class held in one process, which is the state that let
+/// a fallback be drawn from a book the report never saw.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+pub struct CatalogFingerprint(u64);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MasterCatalog {
     class: MasterClass,
+    fingerprint: CatalogFingerprint,
     entries: Vec<CatalogEntry>,
     by_name: BTreeMap<String, usize>,
     by_key: BTreeMap<String, Vec<usize>>,
@@ -571,7 +684,7 @@ impl MasterCatalog {
                 return Err(MasterBindingError::CatalogDuplicateName);
             }
             by_name.insert(name.clone(), entries.len());
-            let key = comparison_key(&name);
+            let key = master_identity_key(&name);
             entries.push(CatalogEntry {
                 identifiers: extract_identifiers(&name)?,
                 tokens: tokens_of(&key),
@@ -614,8 +727,21 @@ impl MasterCatalog {
             BTreeSet::new()
         };
 
+        // Order-independent, so the same masters read twice fingerprint alike
+        // however the book returned them.
+        let fingerprint =
+            CatalogFingerprint(entries.iter().fold(class as u64 + 1, |accumulated, entry| {
+                accumulated
+                    ^ entry
+                        .name
+                        .bytes()
+                        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+                            (hash ^ u64::from(byte)).wrapping_mul(0x1000_0000_01b3)
+                        })
+            }));
         Ok(Self {
             class,
+            fingerprint,
             entries,
             by_name,
             by_key,
@@ -627,6 +753,12 @@ impl MasterCatalog {
 
     pub fn class(&self) -> MasterClass {
         self.class
+    }
+
+    /// Which catalog this is, for a caller that must prove a later value came
+    /// from the same one.
+    pub fn fingerprint(&self) -> CatalogFingerprint {
+        self.fingerprint
     }
 
     /// Masters in this catalog. Never zero: an empty catalog is refused at
@@ -663,6 +795,7 @@ pub fn bind(
     let mut budget = MAX_REPORT_CANDIDATE_BYTES;
     Ok(BindingReport {
         class: catalog.class,
+        catalog: catalog.fingerprint,
         entities: entities
             .iter()
             .map(|entity| bind_one(catalog, entity, &mut budget))
@@ -760,7 +893,7 @@ fn bind_one(catalog: &MasterCatalog, entity: &SourceEntity, budget: &mut usize) 
                 } else {
                     UnboundReason::NoCandidate
                 };
-                unresolved_from(entity, reason, candidates, masters_found, budget)
+                unresolved_from(catalog, entity, reason, candidates, masters_found, budget)
             }
         }
     };
@@ -782,45 +915,63 @@ fn unresolved_status(
 ) -> BindingStatus {
     let (mut candidates, masters_found) = collect_candidates(catalog, entity, identifier_matches);
     if let Some(index) = exact {
-        let name = catalog.entries[index].name.as_str();
-        if !candidates.iter().any(|(candidate, _)| candidate == name) {
-            candidates.push((name.to_string(), CandidateRule::NormalizedEqual));
+        if !candidates.iter().any(|(candidate, _)| *candidate == index) {
+            candidates.push((index, CandidateRule::NormalizedEqual));
         }
     }
-    unresolved_from(entity, reason, candidates, masters_found, budget)
+    unresolved_from(catalog, entity, reason, candidates, masters_found, budget)
 }
 
 fn unresolved_from(
+    catalog: &MasterCatalog,
     entity: &SourceEntity,
     reason: UnboundReason,
-    candidates: Vec<(String, CandidateRule)>,
+    candidates: Vec<(usize, CandidateRule)>,
     masters_found: usize,
     budget: &mut usize,
 ) -> BindingStatus {
     let mut ordered = candidates;
     ordered.sort_by(|left, right| {
-        left.1
-            .rank()
-            .cmp(&right.1.rank())
-            .then_with(|| left.0.cmp(&right.0))
-    });
-    // A suppressed family is still counted. The operator is told how many
-    // masters the name reaches even when none of them is worth listing.
-    let candidate_count = ordered.len().max(masters_found);
-    let listed = ordered.len().min(MAX_CANDIDATES_PER_ENTITY);
-    let candidates = ordered
-        .into_iter()
-        .take(MAX_CANDIDATES_PER_ENTITY)
-        .map_while(|(catalog_name, rule)| {
-            *budget = budget.checked_sub(catalog_name.len())?;
-            Some(Candidate { catalog_name, rule })
+        left.1.rank().cmp(&right.1.rank()).then_with(|| {
+            catalog.entries[left.0]
+                .name
+                .cmp(&catalog.entries[right.0].name)
         })
-        .collect::<Vec<_>>();
+    });
+    // The variant is derived here, in one place, from the same facts that chose
+    // the reason — so "empty" can never mean something the variant does not say.
+    let candidates = if ordered.is_empty() {
+        if masters_found > 0 {
+            Candidates::Withheld {
+                found: masters_found,
+            }
+        } else {
+            Candidates::None
+        }
+    } else {
+        let capped = ordered.len().min(MAX_CANDIDATES_PER_ENTITY);
+        let listed = ordered
+            .into_iter()
+            .take(MAX_CANDIDATES_PER_ENTITY)
+            .map_while(|(index, rule)| {
+                let catalog_name = &catalog.entries[index].name;
+                *budget = budget.checked_sub(catalog_name.len())?;
+                Some(Candidate {
+                    catalog_name: catalog_name.clone(),
+                    rule,
+                })
+            })
+            .collect::<Vec<_>>();
+        let found = masters_found.max(capped);
+        if listed.len() < found {
+            Candidates::Truncated { listed, found }
+        } else {
+            Candidates::Listed { listed }
+        }
+    };
     let unresolved = Unresolved {
         reason,
         unresolved_identity: entity.identifiers.clone(),
-        candidate_count,
-        candidates_truncated: candidate_count > listed || candidates.len() < listed,
         candidates,
     };
     if matches!(reason, UnboundReason::NoCandidate) {
@@ -837,7 +988,29 @@ fn collect_candidates(
     catalog: &MasterCatalog,
     entity: &SourceEntity,
     identifier_matches: &BTreeSet<usize>,
-) -> (Vec<(String, CandidateRule)>, usize) {
+) -> (Vec<(usize, CandidateRule)>, usize) {
+    // Masters this name reaches by prefix. The key index is ordered, so this is
+    // a range walk rather than a scan of the catalog per entity.
+    let extending = if entity.key.chars().count() >= MIN_PREFIX_KEY_CHARS {
+        catalog
+            .by_key
+            .range(entity.key.clone()..)
+            .take_while(|(key, _)| key.starts_with(&entity.key))
+            .filter(|(key, _)| *key != &entity.key)
+            .flat_map(|(_, holders)| holders.iter().copied())
+            .collect::<BTreeSet<_>>()
+    } else {
+        BTreeSet::new()
+    };
+    // Beyond the bound they are a family this name does not separate, and an
+    // arbitrary capped slice of one omitted the right master about a third of
+    // the time against live books. Counted, and withheld rather than listed.
+    let withheld = if extending.len() > MAX_PREFIX_FAMILY {
+        extending.clone()
+    } else {
+        BTreeSet::new()
+    };
+
     let mut best: BTreeMap<usize, CandidateRule> = BTreeMap::new();
     let mut offer = |index: usize, rule: CandidateRule| {
         best.entry(index)
@@ -849,46 +1022,41 @@ fn collect_candidates(
             .or_insert(rule);
     };
 
+    // A decisive rule reaches a master on its own evidence, so it still applies
+    // to a member of a withheld family: the identifier, or the whole key, is
+    // exactly what separates that one from its siblings.
     for index in identifier_matches {
         offer(*index, CandidateRule::SharedIdentifier);
     }
-    if let Some(holders) = catalog.by_key.get(&entity.key) {
-        for index in holders {
-            offer(*index, CandidateRule::NormalizedEqual);
+    for index in catalog.by_key.get(&entity.key).into_iter().flatten() {
+        offer(*index, CandidateRule::NormalizedEqual);
+    }
+    if withheld.is_empty() {
+        for index in &extending {
+            offer(*index, CandidateRule::CatalogPrefix);
         }
     }
-    let mut suppressed_family: BTreeSet<usize> = BTreeSet::new();
-    if entity.key.chars().count() >= MIN_PREFIX_KEY_CHARS {
-        // The key index is ordered, so both prefix directions are range or
-        // point lookups rather than a scan of the whole catalog per entity.
-        let extending = catalog
-            .by_key
-            .range(entity.key.clone()..)
-            .take_while(|(key, _)| key.starts_with(&entity.key))
-            .filter(|(key, _)| *key != &entity.key)
-            .flat_map(|(_, holders)| holders.iter().copied())
-            .collect::<Vec<_>>();
-        // A prefix matching a whole family distinguishes nothing inside it, and
-        // an arbitrary capped slice is worse than none: measured against live
-        // books, that slice omitted the right master about a third of the time.
-        if extending.len() <= MAX_PREFIX_FAMILY {
-            for index in extending {
-                offer(index, CandidateRule::CatalogPrefix);
-            }
-        } else {
-            suppressed_family.extend(extending);
-        }
-        // One pass, carrying the character count forward. Recomputing
-        // `chars().count()` per prefix made this quadratic in the name length,
-        // and the source parser admits 4 KiB fields.
+
+    // Weaker rules must not reinstate what the prefix pass withheld. A token
+    // shared across a family *is* the family, and re-listing 25 of them is the
+    // arbitrary slice the withholding exists to prevent — reachable whenever
+    // the family stays under the common-token threshold, as 30 rows in a
+    // 330-master catalog do.
+    if !entity.key.is_empty() {
+        // One pass over character boundaries; recomputing a prefix length per
+        // split made this quadratic in a field the source parser admits at 4 KiB.
         for (characters, (split, _)) in entity.key.char_indices().enumerate() {
             if characters < MIN_PREFIX_KEY_CHARS {
                 continue;
             }
-            if let Some(holders) = catalog.by_key.get(&entity.key[..split]) {
-                for index in holders {
-                    offer(*index, CandidateRule::SourcePrefix);
-                }
+            for index in catalog
+                .by_key
+                .get(&entity.key[..split])
+                .into_iter()
+                .flatten()
+                .filter(|index| !withheld.contains(index))
+            {
+                offer(*index, CandidateRule::SourcePrefix);
             }
         }
     }
@@ -896,29 +1064,29 @@ fn collect_candidates(
         if catalog.common_tokens.contains(&token) {
             continue;
         }
-        if let Some(holders) = catalog.by_token.get(&token) {
-            for index in holders {
-                offer(*index, CandidateRule::SharedToken);
-            }
+        for index in catalog
+            .by_token
+            .get(&token)
+            .into_iter()
+            .flatten()
+            .filter(|index| !withheld.contains(index))
+        {
+            offer(*index, CandidateRule::SharedToken);
         }
     }
 
-    // The reported total is the union: a suppressed family and the candidates
-    // still worth listing are not necessarily the same masters, so taking the
-    // larger of the two counts would under-report what the name actually
-    // reaches.
+    // The total is the union: a withheld family and the candidates still worth
+    // listing are not necessarily the same masters, so the larger of the two
+    // counts would under-report what the name reaches.
     let found = best
         .keys()
         .copied()
-        .chain(suppressed_family)
+        .chain(withheld)
         .collect::<BTreeSet<_>>()
         .len();
-    (
-        best.into_iter()
-            .map(|(index, rule)| (catalog.entries[index].name.clone(), rule))
-            .collect(),
-        found,
-    )
+    // Indices, not names — cloning every match before the cap and the budget
+    // discarded most of the work, once per entry of an admitted draft.
+    (best.into_iter().collect(), found)
 }
 
 /// A name is retained **verbatim**, on both sides.
@@ -980,6 +1148,33 @@ pub(crate) fn comparison_key(value: &str) -> String {
         .join(" ")
 }
 
+/// Whether Tally itself would consider two master names the same.
+///
+/// This is not `comparison_key`, and the difference is not cosmetic.
+/// `IMPLEMENTATION_GUIDE.md` §3.3b measured Tally's own master-name matching:
+/// case-insensitive **and separator-insensitive — a hyphen matches a space** —
+/// and otherwise exact on letters. `BRIDGE PROBE LEDGER A` matched a live
+/// `BRIDGE-PROBE-LEDGER-A`; `AND` for `&`, a missing suffix word and a singular
+/// for a plural were all rejected.
+///
+/// Tally is the authority on what counts as the same master, so this fold
+/// follows it. Being *stricter* than the authority is not the safe direction it
+/// looks like: it refuses names Tally would accept, and `X - Y` is a common
+/// ledger convention — six of seventeen hyphenated names in the observed books
+/// take that shape.
+///
+/// It is a **separate** function rather than a widening of `comparison_key`
+/// precisely because that one is shared: voucher numbers and voucher-type names
+/// fold through it too, and §3.3b says nothing about those. One fold per notion
+/// of sameness, each named for the question it answers.
+fn master_identity_key(value: &str) -> String {
+    comparison_key(value)
+        .replace('-', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn tokens_of(key: &str) -> BTreeSet<String> {
     key.split(|character: char| !character.is_alphanumeric())
         .filter(|token| token.chars().count() >= MIN_TOKEN_CHARS)
@@ -1018,14 +1213,23 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
                 kind: IdentifierKind::Code,
                 value: canonical,
             });
-            // Its digits are part of this code, not an identifier of their own.
+        }
+        // Digits sitting beside letters belong to that token, whether or not it
+        // qualified as a code. Emitting them separately let `Part A12345678`
+        // reach an unrelated `Bank 12345678` through the one-letter gap that
+        // the code test rejects — a token either identifies by its whole shape
+        // or not at all.
+        if letters > 0 {
             continue;
         }
         for run in token.split(|character: char| {
             !(character.is_ascii_digit() || character == '-' || character == '/')
         }) {
             let digits = run.chars().filter(char::is_ascii_digit).collect::<String>();
-            if digits.len() >= MIN_NUMERIC_IDENTIFIER_DIGITS && !is_plausible_date(&digits) {
+            if digits.len() >= MIN_NUMERIC_IDENTIFIER_DIGITS
+                && !is_plausible_date(&digits)
+                && !is_year_range(run)
+            {
                 identifiers.insert(Identifier {
                     kind: IdentifierKind::Numeric,
                     value: digits,
@@ -1041,25 +1245,24 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
 
 /// A period label identifies a period, not a party or an item. Two unrelated
 /// ledgers routinely share one — `Purchases FY2025` and `Sales FY2025`,
-/// `Purchases APR2025` and `Sales APR2025` — and identifier-first matching
-/// would bind the source to whichever exists before it compared the names.
+/// `Purchases SEPTEMBER2025` and `Sales SEPTEMBER2025` — and identifier-first
+/// matching would bind the source to whichever exists before comparing names.
 ///
-/// Recognized by *shape* rather than by a vocabulary of prefixes, because a
-/// list of prefixes kept missing one more spelling: every run in the token is
-/// either a short alphabetic marker or a number that reads as a year or a
-/// small ordinal, and there are at most three runs. `FY2025`, `APR2025`,
-/// `2025Q1` and `Q3` all match; `PH01AB00` and `AB12345678` do not.
+/// The test is on the **numbers**, not on the words: a token is a period label
+/// when it carries at least one number and **every** number in it reads as a
+/// year or a small ordinal. Capping the length of the alphabetic run was the
+/// previous attempt and it kept losing to longer spellings — `APR2025` was
+/// caught while `SEPTEMBER2025` and `2025QUARTER1` walked through. A month name
+/// can be any length; a year cannot.
 ///
-/// Like every exclusion here it can only make a bind *less* likely.
+/// An identity-bearing code survives this because its digits do not read as
+/// periods: `PH01AB00` carries `00`, `AB12345678` carries an eight-digit run,
+/// and a registration number carries something no calendar would produce. Like
+/// every exclusion here it can only make a bind *less* likely.
 fn is_period_label(canonical: &str) -> bool {
-    let mut runs = 0_usize;
-    let mut has_period_number = false;
+    let mut has_number = false;
     let mut rest = canonical;
     while !rest.is_empty() {
-        runs += 1;
-        if runs > 3 {
-            return false;
-        }
         let alphabetic = rest.starts_with(|character: char| character.is_ascii_alphabetic());
         let split = rest
             .find(|character: char| character.is_ascii_alphabetic() != alphabetic)
@@ -1067,26 +1270,44 @@ fn is_period_label(canonical: &str) -> bool {
         let (run, tail) = rest.split_at(split);
         rest = tail;
         if alphabetic {
-            if run.len() > 4 {
-                return false;
-            }
-        } else {
-            let value = run.parse::<u32>().unwrap_or(u32::MAX);
-            let reads_as_period = match run.len() {
-                1 | 2 => (1..=99).contains(&value),
-                4 => (1900..=2199).contains(&value),
-                _ => false,
-            };
-            if !reads_as_period {
-                return false;
-            }
-            has_period_number = true;
+            continue;
         }
+        if !reads_as_period_number(run) {
+            return false;
+        }
+        has_number = true;
     }
-    has_period_number
+    has_number
 }
 
-/// An eight-digit run that reads as a calendar date in any order this project/// An eight-digit run that reads as a calendar date in any order this project
+/// A year, or a small ordinal such as a month or quarter.
+fn reads_as_period_number(run: &str) -> bool {
+    let value = run.parse::<u32>().unwrap_or(u32::MAX);
+    match run.len() {
+        1 | 2 => (1..=99).contains(&value),
+        4 => (1900..=2199).contains(&value),
+        _ => false,
+    }
+}
+
+/// `2025-2026` and `2025/2026` are fiscal years, which two unrelated ledgers
+/// share as routinely as they share a month. Stripping the separator turned
+/// them into an eight-digit run that no calendar-date reading rejects, so the
+/// range has to be recognized before the digits are fused.
+fn is_year_range(run: &str) -> bool {
+    let mut halves = run.split(['-', '/']);
+    match (halves.next(), halves.next(), halves.next()) {
+        (Some(first), Some(second), None) => [first, second].iter().all(|half| {
+            half.len() == 4
+                && half
+                    .parse::<u32>()
+                    .is_ok_and(|year| (1900..=2199).contains(&year))
+        }),
+        _ => false,
+    }
+}
+
+/// An eight-digit run that reads as a calendar date in any order this project/// An eight-digit run that reads as a calendar date in any order this project/// An eight-digit run that reads as a calendar date in any order this project
 /// admits is a date, not an identifier. Recognizing only `YYYYMMDD` left
 /// `01012026` binding a source to an unrelated master that shares its period
 /// label. Being generous here can only make a bind *less* likely, which is the

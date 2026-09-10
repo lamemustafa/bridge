@@ -9,7 +9,8 @@ use crate::tally::standard_ledger_catalog::{
     render_standard_ledger_catalog_request,
 };
 use bridge_tally_core::master_binding::{
-    self, BindingBasis, BindingStatus, EntityBinding, MasterCatalog, MasterClass, SourceEntity,
+    self, BindingBasis, BindingStatus, Candidates, EntityBinding, MasterCatalog, MasterClass,
+    SourceEntity,
 };
 use bridge_tally_core::ExactDecimal;
 use bridge_tally_protocol::outstandings_shared::DateBoundaryProfile;
@@ -1188,6 +1189,7 @@ fn master_match_json(binding: &EntityBinding) -> Value {
             let mut bytes = 0_usize;
             let candidates = unresolved
                 .candidates
+                .listed()
                 .iter()
                 .take_while(|candidate| {
                     bytes = bytes.saturating_add(candidate.catalog_name.len());
@@ -1200,6 +1202,18 @@ fn master_match_json(binding: &EntityBinding) -> Value {
                     })
                 })
                 .collect::<Vec<_>>();
+            // The listing state is carried explicitly rather than left to be
+            // inferred from an empty array. A model is exactly the caller that
+            // would read "no candidates" as "no such ledger exists", and for
+            // `withheld` that is false: masters were found and deliberately not
+            // listed because none of them separates the requested name.
+            let found = unresolved.candidates.found();
+            let listing = match unresolved.candidates {
+                Candidates::None => "none",
+                Candidates::Withheld { .. } => "withheld",
+                _ if candidates.len() < found => "truncated",
+                _ => "listed",
+            };
             // No `exact_live_spelling`. Naming one candidate as the live
             // spelling is the auto-resolution that rejected a batch once.
             json!({
@@ -1209,8 +1223,9 @@ fn master_match_json(binding: &EntityBinding) -> Value {
                     _ => "near_miss",
                 },
                 "reason": unresolved.reason.safe_reason_code(),
-                "candidate_count": unresolved.candidate_count,
-                "candidates_truncated": candidates.len() < unresolved.candidate_count,
+                "listing": listing,
+                "candidate_count": found,
+                "candidates_truncated": listing != "listed" && listing != "none",
                 "candidates": candidates,
                 "unresolved_identity": unresolved
                     .unresolved_identity
