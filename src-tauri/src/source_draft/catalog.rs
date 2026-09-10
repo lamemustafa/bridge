@@ -115,6 +115,19 @@ pub(super) fn require_current_catalog_binding(
     }
 }
 
+/// Preserve the runtime's typed availability result when company verification
+/// never completed. Every other verification refusal remains a scope refusal:
+/// this service cannot safely infer a more specific source-draft result.
+fn company_verification_error_code(error: &crate::commands::TallyCommandError) -> &'static str {
+    match error.code {
+        "endpoint_unreachable"
+        | "request_cancelled"
+        | "tally_request_deadline_exceeded"
+        | "tally_runtime_temporarily_unavailable" => "source_draft_catalogue_transport_failed",
+        _ => "source_draft_catalogue_scope_invalid",
+    }
+}
+
 /// Loads a company-scoped catalog into the current source-draft capture.
 ///
 /// This application service owns the complete admission sequence; callers
@@ -133,7 +146,7 @@ pub(super) async fn load_existing_ledger_targets(
         &request.selected_company,
     )
     .await
-    .map_err(|_| error("source_draft_catalogue_scope_invalid"))?;
+    .map_err(|cause| error(company_verification_error_code(&cause)))?;
     let read = crate::tally::standard_ledger_catalog::read_standard_ledger_catalog(
         runtime,
         request.config,
@@ -165,7 +178,7 @@ pub(super) async fn apply_existing_ledger_target(
         &request.selected_company,
     )
     .await
-    .map_err(|_| error("source_draft_catalogue_scope_invalid"))?;
+    .map_err(|cause| error(company_verification_error_code(&cause)))?;
     if identity != snapshot.identity {
         return Err(error("source_draft_catalogue_invalidated"));
     }
@@ -518,6 +531,193 @@ mod tests {
             target_name,
             proposals,
         }
+    }
+
+    fn install_active_draft_without_catalog(store: &SourceDraftStore) -> Uuid {
+        let parsed_source = source();
+        let draft_id = Uuid::new_v4();
+        store
+            .replace(ActiveDraft {
+                id: draft_id,
+                revision: 1,
+                proposals: empty_proposals(&parsed_source),
+                source: parsed_source,
+                catalog_generation: 0,
+                catalog: None,
+            })
+            .expect("active source draft");
+        draft_id
+    }
+
+    fn set_active_catalog_endpoint(store: &SourceDraftStore, config: &TallyConfig) {
+        store
+            .active
+            .lock()
+            .expect("active store")
+            .as_mut()
+            .expect("active source draft")
+            .catalog
+            .as_mut()
+            .expect("active catalog")
+            .endpoint = EndpointKey::from_config(config).expect("loopback test endpoint");
+    }
+
+    fn unreachable_config() -> TallyConfig {
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("reserve a loopback test port");
+        let port = listener
+            .local_addr()
+            .expect("read reserved test port")
+            .port();
+        drop(listener);
+        TallyConfig {
+            host: "127.0.0.1".into(),
+            port,
+        }
+    }
+
+    #[test]
+    fn catalogue_company_verification_preserves_only_typed_transport_codes() {
+        for code in [
+            "endpoint_unreachable",
+            "request_cancelled",
+            "tally_request_deadline_exceeded",
+            "tally_runtime_temporarily_unavailable",
+        ] {
+            let error = crate::commands::TallyCommandError {
+                code,
+                category: "Operation",
+                message: String::new(),
+                retry: "safe",
+                local_state_changed: false,
+                tally_state_may_have_changed: false,
+                remediation: "Retry.",
+            };
+            assert_eq!(
+                company_verification_error_code(&error),
+                "source_draft_catalogue_transport_failed"
+            );
+        }
+
+        let scope_error = crate::commands::TallyCommandError {
+            code: "reviewed_company_scope_changed",
+            category: "Tally application",
+            message: String::new(),
+            retry: "safe",
+            local_state_changed: false,
+            tally_state_may_have_changed: false,
+            remediation: "Probe again.",
+        };
+        assert_eq!(
+            company_verification_error_code(&scope_error),
+            "source_draft_catalogue_scope_invalid"
+        );
+    }
+
+    #[tokio::test]
+    async fn catalogue_services_classify_unreachable_company_verification_as_transport_failure() {
+        let config = unreachable_config();
+
+        let load_store = SourceDraftStore::default();
+        let load_draft_id = install_active_draft_without_catalog(&load_store);
+        let load_error = load_existing_ledger_targets(
+            &load_store,
+            &TallyRuntime::default(),
+            SourceDraftCatalogLoadRequest {
+                draft_id: load_draft_id.to_string(),
+                config: config.clone(),
+                selected_company: selected_company(),
+            },
+        )
+        .await
+        .expect_err("an unreachable company list must not become a scope refusal");
+        assert_eq!(load_error.code, "source_draft_catalogue_transport_failed");
+
+        let apply_store = SourceDraftStore::default();
+        let (draft_id, capture_id, names, _) = install_active_catalog(&apply_store);
+        set_active_catalog_endpoint(&apply_store, &config);
+        let proposals = apply_store
+            .active
+            .lock()
+            .expect("active store")
+            .as_ref()
+            .expect("active source draft")
+            .proposals
+            .clone();
+        let mut request = apply_request(draft_id, 1, capture_id, names[0].clone(), proposals);
+        request.config = config;
+        let apply_error =
+            apply_existing_ledger_target(&apply_store, &TallyRuntime::default(), request)
+                .await
+                .expect_err("an unreachable company list must not become a scope refusal");
+        assert_eq!(apply_error.code, "source_draft_catalogue_transport_failed");
+    }
+
+    #[tokio::test]
+    async fn catalogue_services_classify_observed_company_mismatch_as_scope_invalid() {
+        let alternate_guid = "11111111-1111-4111-8111-111111111111";
+
+        let load_store = SourceDraftStore::default();
+        let load_draft_id = install_active_draft_without_catalog(&load_store);
+        let load_simulator =
+            SequenceSimulator::spawn(vec![company_plan("WR3 Separate Lab", alternate_guid)])
+                .expect("load scope simulator");
+        let load_config = TallyConfig {
+            host: load_simulator.address().ip().to_string(),
+            port: load_simulator.address().port(),
+        };
+        let load_error = load_existing_ledger_targets(
+            &load_store,
+            &TallyRuntime::default(),
+            SourceDraftCatalogLoadRequest {
+                draft_id: load_draft_id.to_string(),
+                config: load_config,
+                selected_company: selected_company(),
+            },
+        )
+        .await
+        .expect_err("a returned company list that lacks the tuple must refuse scope");
+        assert_eq!(load_error.code, "source_draft_catalogue_scope_invalid");
+        assert_eq!(
+            load_simulator
+                .finish()
+                .expect("load company request observed")
+                .len(),
+            1
+        );
+
+        let apply_store = SourceDraftStore::default();
+        let (draft_id, capture_id, names, _) = install_active_catalog(&apply_store);
+        let apply_simulator =
+            SequenceSimulator::spawn(vec![company_plan("WR3 Separate Lab", alternate_guid)])
+                .expect("apply scope simulator");
+        let apply_config = TallyConfig {
+            host: apply_simulator.address().ip().to_string(),
+            port: apply_simulator.address().port(),
+        };
+        set_active_catalog_endpoint(&apply_store, &apply_config);
+        let proposals = apply_store
+            .active
+            .lock()
+            .expect("active store")
+            .as_ref()
+            .expect("active source draft")
+            .proposals
+            .clone();
+        let mut request = apply_request(draft_id, 1, capture_id, names[0].clone(), proposals);
+        request.config = apply_config;
+        let apply_error =
+            apply_existing_ledger_target(&apply_store, &TallyRuntime::default(), request)
+                .await
+                .expect_err("a returned company list that lacks the tuple must refuse scope");
+        assert_eq!(apply_error.code, "source_draft_catalogue_scope_invalid");
+        assert_eq!(
+            apply_simulator
+                .finish()
+                .expect("apply company request observed")
+                .len(),
+            1
+        );
     }
 
     #[tokio::test]
