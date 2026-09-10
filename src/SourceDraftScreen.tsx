@@ -68,6 +68,23 @@ function hasStartedProposal(row: SourceDraftRow) {
   return Boolean(proposal.date || proposal.voucher_type || proposal.narration !== null || proposal.notes.trim() || proposal.entries.some((entry) => entry.ledger !== null || entry.side !== null || entry.amount !== null));
 }
 
+function isUnenteredOperatorChoice(value: string | null) {
+  return value === null || value === "";
+}
+
+function unenteredOperatorChoices(row: SourceDraftRow) {
+  const choices: string[] = [];
+  if (isUnenteredOperatorChoice(row.proposal.date)) choices.push("date");
+  if (row.proposal.voucher_type === null) choices.push("voucher type");
+  row.proposal.entries.forEach((entry, index) => {
+    const entryNumber = index + 1;
+    if (isUnenteredOperatorChoice(entry.ledger)) choices.push(`entry ${entryNumber} target ledger`);
+    if (entry.side === null) choices.push(`entry ${entryNumber} side`);
+    if (isUnenteredOperatorChoice(entry.amount)) choices.push(`entry ${entryNumber} amount`);
+  });
+  return choices;
+}
+
 function emptyToNull(value: string) {
   return value === "" ? null : value;
 }
@@ -424,6 +441,7 @@ export function SourceDraftScreen({
 
 function SourceDraftEditor({ row, disabled, catalog, catalogSelections, onSelectExistingLedger, onClearExistingLedger, onUpdateProposal, onUpdateEntry, onClose }: { row: SourceDraftRow; disabled: boolean; catalog: SourceDraftCatalogTargets | null; catalogSelections: Record<string, string>; onSelectExistingLedger: (rowPosition: number, entryPosition: number, targetName: string) => void; onClearExistingLedger: (rowPosition: number, entryPosition: number) => void; onUpdateProposal: (change: (proposal: SourceDraftProposal) => SourceDraftProposal) => void; onUpdateEntry: (position: number, change: (entry: SourceDraftProposedEntry) => SourceDraftProposedEntry) => void; onClose: () => void }) {
   const proposal = row.proposal;
+  const choices = unenteredOperatorChoices(row);
   const fieldId = (name: string) => `source-draft-${row.position}-${name}`;
   return (
     <section className="source-draft-editor" aria-labelledby="source-draft-editor-heading">
@@ -440,6 +458,7 @@ function SourceDraftEditor({ row, disabled, catalog, catalogSelections, onSelect
       {row.source_omitted_fields.length > 0 && <details className="source-draft-omitted"><summary>Other source fields retained in original XML ({row.source_omitted_fields.length})</summary><p>{row.source_omitted_fields.join(", ")}</p></details>}
       <div className="source-draft-proposal">
         <h4>Unverified proposal</h4>
+        {choices.length > 0 && <p className="source-draft-catalogue-state">Still to choose: {choices.join(", ")}.</p>}
         <div className="source-draft-field"><label htmlFor={fieldId("date")}>Proposed date</label><input id={fieldId("date")} type="date" value={proposal.date ? displayDate(proposal.date) : ""} onChange={(event) => onUpdateProposal((current) => ({ ...current, date: dateForBackend(event.target.value) }))} disabled={disabled} /></div>
         <div className="source-draft-field"><label htmlFor={fieldId("type")}>Proposed voucher type</label><select id={fieldId("type")} value={proposal.voucher_type ?? ""} onChange={(event) => onUpdateProposal((current) => ({ ...current, voucher_type: event.target.value ? event.target.value as SourceDraftVoucherType : null }))} disabled={disabled}><option value="">Choose type</option>{VOUCHER_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</select></div>
         <div className="source-draft-field"><label htmlFor={fieldId("narration")}>Proposed narration</label><textarea id={fieldId("narration")} value={proposal.narration ?? ""} onChange={(event) => onUpdateProposal((current) => ({ ...current, narration: emptyToNull(event.target.value) }))} rows={2} disabled={disabled} /></div>
