@@ -38,8 +38,10 @@ pub const MAX_IDENTIFIERS_PER_NAME: usize = 32;
 /// an account number and a customer code all clear it.
 pub const MIN_NUMERIC_IDENTIFIER_DIGITS: usize = 8;
 /// Alphanumeric characters a mixed letter-and-digit token needs before it is
-/// treated as a code identifier.
-pub const MIN_CODE_IDENTIFIER_CHARS: usize = 4;
+/// treated as a code identifier. Six rather than four: a four-character mixed
+/// token is weak evidence of identity, and the failure mode of a wrong
+/// identifier is money against the wrong party.
+pub const MIN_CODE_IDENTIFIER_CHARS: usize = 6;
 /// Digits a code identifier needs alongside at least one letter.
 pub const MIN_CODE_IDENTIFIER_DIGITS: usize = 2;
 /// Shortest comparison key that may take part in a prefix near-miss.
@@ -846,15 +848,14 @@ fn collect_candidates(
         } else {
             suppressed_family.extend(extending);
         }
-        for split in MIN_PREFIX_KEY_CHARS..entity.key.len() {
-            if !entity.key.is_char_boundary(split) {
+        // One pass, carrying the character count forward. Recomputing
+        // `chars().count()` per prefix made this quadratic in the name length,
+        // and the source parser admits 4 KiB fields.
+        for (characters, (split, _)) in entity.key.char_indices().enumerate() {
+            if characters < MIN_PREFIX_KEY_CHARS {
                 continue;
             }
-            let prefix = &entity.key[..split];
-            if prefix.chars().count() < MIN_PREFIX_KEY_CHARS {
-                continue;
-            }
-            if let Some(holders) = catalog.by_key.get(prefix) {
+            if let Some(holders) = catalog.by_key.get(&entity.key[..split]) {
                 for index in holders {
                     offer(*index, CandidateRule::SourcePrefix);
                 }
@@ -969,6 +970,7 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
         if canonical.len() >= MIN_CODE_IDENTIFIER_CHARS
             && digits >= MIN_CODE_IDENTIFIER_DIGITS
             && letters >= 1
+            && !is_period_label(&canonical)
         {
             identifiers.insert(Identifier {
                 kind: IdentifierKind::Code,
@@ -993,6 +995,27 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
         return Err(MasterBindingError::TooManyIdentifiers);
     }
     Ok(identifiers.into_iter().collect())
+}
+
+/// A fiscal-period label identifies a period, not a party or an item. Two
+/// unrelated ledgers routinely share one — `Purchases FY2025` and
+/// `Sales FY2025` — and identifier-first matching would bind the source to
+/// whichever exists before it ever compared the names.
+///
+/// This is a shape rule, not a vocabulary: it recognizes a short alphabetic
+/// period marker followed only by digits, and like every other exclusion here
+/// it can only make a bind *less* likely.
+fn is_period_label(canonical: &str) -> bool {
+    let letters = canonical
+        .chars()
+        .take_while(|character| character.is_ascii_alphabetic())
+        .collect::<String>();
+    let rest = &canonical[letters.len()..];
+    matches!(
+        letters.as_str(),
+        "FY" | "AY" | "CY" | "Q" | "H" | "P" | "PER" | "FYE"
+    ) && !rest.is_empty()
+        && rest.chars().all(|character| character.is_ascii_digit())
 }
 
 /// An eight-digit run that reads as a calendar date in any order this project

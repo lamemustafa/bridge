@@ -411,6 +411,30 @@ fn digits_inside_a_mixed_code_are_not_also_a_standalone_identifier() {
 }
 
 #[test]
+fn a_fiscal_period_label_is_not_an_identity_bearing_code() {
+    // Two unrelated ledgers routinely share a period label. Identifier-first
+    // matching would otherwise bind the source to whichever one exists before
+    // it ever compared the names.
+    for label in ["FY25", "FY2025", "AY2026", "Q3", "H2", "PER2026"] {
+        assert!(
+            entity(&format!("Purchases {label}"))
+                .identifiers()
+                .is_empty(),
+            "{label} was treated as a code identifier"
+        );
+    }
+    let catalog = ledgers(&["Sales FY2025", "Beta Supply"]);
+    let binding = bind_one_name(&catalog, "Purchases FY2025");
+    assert_eq!(
+        binding.bound_name(),
+        None,
+        "a shared period label must not bind two unrelated ledgers"
+    );
+    // A genuine identity-bearing code still is one.
+    assert_eq!(entity("Item PH01AB00").identifiers().len(), 1);
+}
+
+#[test]
 fn an_eight_digit_date_in_any_admitted_order_is_not_an_identifier() {
     for date in ["20260910", "01012026", "31122026", "12312026"] {
         assert!(
