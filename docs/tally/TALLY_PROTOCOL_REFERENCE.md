@@ -745,17 +745,25 @@ not need, and one who supplies a `REMOTEID` without knowing it upserts can silen
 earlier voucher by reusing a key. §3.3a has the full table, including that `ACTION="Alter"` with a
 `REMOTEID` creates a duplicate — inverted from intuition — so the correction path is `Create`.
 
-**The key was not readable back on the one path where this was checked.** §3.3a records that Tally
-overwrites the attribute with its own value; what came back was a *company-GUID + master-id* pair,
-not a mangled version of what was sent. The committed capture
+**The `REMOTEID` *attribute* does not echo the client key on the one path where this was checked.**
+§3.3a records that Tally overwrites the attribute with its own value; what came back was a
+*company-GUID + master-id* pair. The committed capture
 `src-tauri/crates/bridge-tally-protocol/tests/fixtures/agent/native-namespaced-journal.utf16le.xml`
 shows a voucher Bridge imported returning
-`REMOTEID="61c6de69-1748-461c-ad3f-162cb949df9f-00000005"`, with the value Bridge sent appearing
-nowhere in the response.
+`REMOTEID="61c6de69-1748-461c-ad3f-162cb949df9f-00000005"` where the client key was
+`9c8d8de4-…`.
 
-So on that path the client value is **stored, matched for upsert, and usable as a `Delete` key**
-while not being visible through a `Voucher` collection read, and a readback that compares the
-returned `REMOTEID` against the one you sent rejects a legitimate import.
+**Be precise about which field.** The client key is *not* absent from that response — the same
+capture returns
+`<NARRATION>… [BRIDGE:9c8d8de4-c06c-847b-8309-60ba702bf663]</NARRATION>`, and §9.8 records that the
+`REMOTEID` and the narration marker were the same batch-derived UUID. So the observation is
+field-specific: **the attribute is overwritten; a marker you place in a field Tally does not own
+survives.** Stating it as "the client key appears nowhere" would contradict a byte-level check of
+the very capture cited.
+
+On that path, then, the client value is **stored, matched for upsert, and usable as a `Delete`
+key** while not being readable back *through that attribute*, and a readback comparing the returned
+`REMOTEID` against the one you sent rejects a legitimate import.
 
 **Scope: one Silver 7.1 Journal readback. PARTIAL.** Whether another voucher type, request shape or
 Tally version preserves the client value is **UNVERIFIED**. Do not generalise this into a rule that
@@ -768,7 +776,10 @@ recurring or duplicate same-day payment already contains a voucher with that tup
 pre-existing voucher can stand in for a write that never happened. Bridge's own verifier treats a
 fingerprint-only match as `matching_content_observed` and reaches `posted_verified` only through a
 narration-tagged match, with pre-import boundary and identity checks around it
-(`src-tauri/src/agent_import.rs`). Carry an independent marker you control.
+(`src-tauri/src/agent_import.rs`).
+
+**Carry a marker in a field Tally does not rewrite** — which is what the capture above shows
+working, and why Bridge's verifier is built on the narration tag rather than on the attribute.
 
 **§9.8's scope limit still applies to all of the above.** The exact-file repeat was measured on the
 licensed **Journal** path; §9.8 says explicitly that it does not establish other request shapes,
@@ -786,8 +797,12 @@ and master ID), and only then record the type as qualified.
 `IMPLEMENTATION_GUIDE.md` §3.3a's own untested list includes "when the payload differs from the
 original (partial update semantics)". So a corrected voucher re-sent under the same `REMOTEID` may
 overwrite, may partially update, or may duplicate: **UNVERIFIED**. Do not prescribe re-import as a
-correction path on that basis. Delete by `REMOTEID` and create afresh (§9.7, §9.12b) is the path
-with live confirmation behind it.
+correction path on that basis. Delete by `REMOTEID` and create afresh is the path with the
+better evidence, but read §9.7's boundary before treating it as settled: the Delete row in that
+matrix belongs to this document's **Edit Log 7.0 Educational** baseline (§0), and licensed standard
+TallyPrime is not qualified there. So Delete + Create is the *least* unverified correction path on
+this profile, not a confirmed one. Qualify the delete on the SKU you are writing to before using it
+on a live book, and prefer a hand correction until you have.
 
 ### 9.4 Master re-create is a silent Alter
 
