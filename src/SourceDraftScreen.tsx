@@ -5,6 +5,7 @@ import "./source-draft.css";
 import {
   SourceDraft,
   SourceDraftAction,
+  SourceDraftCatalogBinding,
   SourceDraftCatalogTargets,
   SourceDraftProposedEntry,
   SourceDraftProposal,
@@ -61,6 +62,39 @@ function displayObserved(value: string | null, emptyLabel = "Empty field returne
 
 function displayCatalogTarget(target: string) {
   return target.replace(/(^ +| +$| {2,})/g, (spaces) => "␠".repeat(spaces.length));
+}
+
+function catalogBindingFor(catalog: SourceDraftCatalogTargets | null, rowPosition: number, entryPosition: number) {
+  return catalog?.bindings?.find((binding) => binding.row_position === rowPosition && binding.entry_position === entryPosition) ?? null;
+}
+
+/// The ledgers Bridge could defend for this source name, most defensible first.
+/// A bound target leads only because binding decided it; a candidate list is
+/// ordered by the rule that surfaced it and carries no ranking of its own.
+function narrowedTargets(binding: SourceDraftCatalogBinding | null) {
+  if (!binding) return [];
+  return binding.bound_target ? [binding.bound_target] : binding.candidates;
+}
+
+/// States what binding did, in the operator's terms. It never says "best",
+/// "recommended" or "suggested match": nothing here is chosen for anyone, and a
+/// listed ledger is a shortcut through the list, not an answer.
+function catalogBindingSummary(binding: SourceDraftCatalogBinding | null, total: number) {
+  if (!binding) return null;
+  if (binding.bound_target) {
+    const how = binding.bound_basis === "identifier"
+      ? "a number inside the ledger name"
+      : binding.bound_basis === "exact_name"
+        ? "the exact ledger name"
+        : "the same ledger name, differently written";
+    return `Listed first because ${how} matches this source line. Nothing is selected for you, and choosing it stays an unapproved proposal.`;
+  }
+  if (binding.candidate_count === 0) {
+    return `No existing ledger matched this source line. All ${total} are listed.`;
+  }
+  const shown = binding.candidates.length;
+  const listed = binding.candidates_truncated ? `${shown} of ${binding.candidate_count}` : `${shown}`;
+  return `No single ledger matched this source line, so nothing is chosen. ${listed} possible ${shown === 1 ? "ledger is" : "ledgers are"} listed first; the full list of ${total} follows.`;
 }
 
 function hasStartedProposal(row: SourceDraftRow) {
@@ -467,6 +501,9 @@ function SourceDraftEditor({ row, disabled, catalog, catalogSelections, onSelect
         <div className="source-draft-entry-list">
           {proposal.entries.map((entry, index) => {
             const entryId = (name: string) => fieldId(`entry-${index}-${name}`);
+            const binding = catalogBindingFor(catalog, row.position, index + 1);
+            const narrowed = narrowedTargets(binding);
+            const bindingSummary = catalog ? catalogBindingSummary(binding, catalog.targets.length) : null;
             return <div className="source-draft-entry" key={`${row.position}-${index}`}>
               <p><span>Source line {index + 1}</span>{sourceEntryLabel(row.entries[index] ?? { position: index, source_ledger: "", source_amount: "", source_polarity: "" })}</p>
               <div className="source-draft-field">
@@ -474,10 +511,17 @@ function SourceDraftEditor({ row, disabled, catalog, catalogSelections, onSelect
                 {catalog ? <>
                   <select id={entryId("ledger")} value={catalogSelections[catalogSelectionKey(row.position, index + 1)] === entry.ledger ? entry.ledger ?? "" : ""} onChange={(event) => event.target.value && onSelectExistingLedger(row.position, index + 1, event.target.value)} disabled={disabled}>
                     <option value="">Choose existing ledger</option>
-                    {catalog.targets.map((target) => <option key={target} value={target}>{displayCatalogTarget(target)}</option>)}
+                    {narrowed.length > 0 && <optgroup label={binding?.bound_target ? "Matched to this source line" : "Possible for this source line"}>
+                      {narrowed.map((target) => <option key={`narrowed-${target}`} value={target}>{displayCatalogTarget(target)}</option>)}
+                    </optgroup>}
+                    {/* The whole catalogue always remains reachable. Narrowing is a shortcut through the list, never a restriction on it. */}
+                    <optgroup label={narrowed.length > 0 ? `All ${catalog.targets.length} existing ledgers` : "Existing ledgers"}>
+                      {catalog.targets.map((target) => <option key={target} value={target}>{displayCatalogTarget(target)}</option>)}
+                    </optgroup>
                   </select>
                   {entry.ledger && <button className="secondary-action source-draft-clear-target" type="button" onClick={() => onClearExistingLedger(row.position, index + 1)} disabled={disabled}>Clear target</button>}
                   <p className="source-draft-catalogue-state">{catalogSelections[catalogSelectionKey(row.position, index + 1)] === entry.ledger ? "This current-session target was re-read and bound. It remains an unapproved proposal." : entry.ledger ? `Saved unverified target: ${entry.ledger}. Select it to check it against this current capture.` : "Choose a current existing ledger to make an unapproved proposal."}</p>
+                  {bindingSummary && <p className="source-draft-catalogue-state">{bindingSummary}</p>}
                 </> : <>
                   <input id={entryId("ledger")} placeholder="Unverified ledger name" value={entry.ledger ?? ""} onChange={(event) => onUpdateEntry(index, (current) => ({ ...current, ledger: emptyToNull(event.target.value) }))} disabled={disabled} />
                   <p className="source-draft-catalogue-state">{entry.ledger ? `Saved unverified target: ${entry.ledger}` : "Load existing ledgers to choose a target."}</p>

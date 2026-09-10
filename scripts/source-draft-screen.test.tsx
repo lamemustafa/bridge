@@ -308,6 +308,118 @@ test("requires an explicit current-session re-read before treating a saved match
   root.unmount();
 });
 
+test("lists the bound ledger first without selecting it, and keeps the whole catalogue reachable", async () => {
+  const boundCatalog = {
+    ...catalog,
+    targets: ["Alpha placeholder", "Beta placeholder", "Gamma placeholder"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: "Beta placeholder",
+      bound_basis: "identifier" as const,
+      unbound_reason: null,
+      candidates: [],
+      candidate_count: 0,
+      candidates_truncated: false,
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(boundCatalog);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  const target = host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!;
+  // Narrowing must never choose. A pre-selected value is an auto-resolution.
+  expect(target.value).toBe("");
+  const groups = Array.from(target.querySelectorAll("optgroup")).map((group) => group.label);
+  expect(groups).toEqual(["Matched to this source line", "All 3 existing ledgers"]);
+  const matched = Array.from(target.querySelectorAll("optgroup")[0].querySelectorAll("option")).map((option) => option.value);
+  expect(matched).toEqual(["Beta placeholder"]);
+  // The full catalogue stays reachable; narrowing is a shortcut, not a filter.
+  const all = Array.from(target.querySelectorAll("optgroup")[1].querySelectorAll("option")).map((option) => option.value);
+  expect(all).toEqual(["Alpha placeholder", "Beta placeholder", "Gamma placeholder"]);
+  expect(host.textContent).toContain("Listed first because a number inside the ledger name matches this source line.");
+  expect(host.textContent).not.toContain("recommended");
+  root.unmount();
+});
+
+test("lists candidates first for a near miss and states that nothing was chosen", async () => {
+  const nearMissCatalog = {
+    ...catalog,
+    targets: ["Alpha placeholder", "Beta placeholder", "Gamma placeholder"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: null,
+      bound_basis: null,
+      unbound_reason: "master_binding_near_miss",
+      candidates: ["Alpha placeholder", "Gamma placeholder"],
+      candidate_count: 2,
+      candidates_truncated: false,
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(nearMissCatalog);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  const target = host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!;
+  expect(target.value).toBe("");
+  const groups = Array.from(target.querySelectorAll("optgroup")).map((group) => group.label);
+  expect(groups).toEqual(["Possible for this source line", "All 3 existing ledgers"]);
+  const possible = Array.from(target.querySelectorAll("optgroup")[0].querySelectorAll("option")).map((option) => option.value);
+  expect(possible).toEqual(["Alpha placeholder", "Gamma placeholder"]);
+  expect(host.textContent).toContain("No single ledger matched this source line, so nothing is chosen. 2 possible ledgers are listed first; the full list of 3 follows.");
+  root.unmount();
+});
+
+test("reports a truncated candidate list truthfully and falls back to the flat catalogue without bindings", async () => {
+  const truncatedCatalog = {
+    ...catalog,
+    targets: ["Alpha placeholder", "Beta placeholder"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: null,
+      bound_basis: null,
+      unbound_reason: "master_binding_near_miss",
+      candidates: ["Alpha placeholder"],
+      candidate_count: 40,
+      candidates_truncated: true,
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(truncatedCatalog);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  expect(host.textContent).toContain("1 of 40 possible ledger is listed first");
+  root.unmount();
+});
+
+test("a capture without bindings still renders the whole catalogue and claims nothing", async () => {
+  // An older capture, or one the backend could not narrow, must not lose the
+  // list the operator came for.
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(catalog);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  const target = host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!;
+  const groups = Array.from(target.querySelectorAll("optgroup")).map((group) => group.label);
+  expect(groups).toEqual(["Existing ledgers"]);
+  expect(Array.from(target.querySelectorAll("option")).map((option) => option.value)).toEqual(["", "Existing target"]);
+  expect(host.textContent).not.toContain("listed first");
+  root.unmount();
+});
+
 test("renders unusual ledger spaces visibly while binding the exact selected catalog target", async () => {
   const whitespaceCatalog = { ...catalog, targets: ["Cash", " Cash "] };
   mocks.invoke
