@@ -745,25 +745,49 @@ not need, and one who supplies a `REMOTEID` without knowing it upserts can silen
 earlier voucher by reusing a key. §3.3a has the full table, including that `ACTION="Alter"` with a
 `REMOTEID` creates a duplicate — inverted from intuition — so the correction path is `Create`.
 
-**The key works but is not readable back — do not build a comparison on it.** §3.3a records that
-Tally overwrites the attribute with its own value; what it returns is a *company-GUID + master-id*
-pair, not a mangled version of what you sent. The committed capture
+**The key was not readable back on the one path where this was checked.** §3.3a records that Tally
+overwrites the attribute with its own value; what came back was a *company-GUID + master-id* pair,
+not a mangled version of what was sent. The committed capture
 `src-tauri/crates/bridge-tally-protocol/tests/fixtures/agent/native-namespaced-journal.utf16le.xml`
-shows a voucher Bridge imported coming back as
-`REMOTEID="61c6de69-1748-461c-ad3f-162cb949df9f-00000005"`, and the value Bridge sent appears
+shows a voucher Bridge imported returning
+`REMOTEID="61c6de69-1748-461c-ad3f-162cb949df9f-00000005"`, with the value Bridge sent appearing
 nowhere in the response.
 
-So the client value is **stored, matched for upsert, and usable as a `Delete` key** — it is simply
-not visible through a `Voucher` collection read. **Any readback check that compares the returned
-`REMOTEID` against the one you sent will reject every legitimate import.** Confirm a voucher by its
-date, ledger entries and amounts instead. (Evidence and the decision not to add such a check are on
-PR #289.)
+So on that path the client value is **stored, matched for upsert, and usable as a `Delete` key**
+while not being visible through a `Voucher` collection read, and a readback that compares the
+returned `REMOTEID` against the one you sent rejects a legitimate import.
+
+**Scope: one Silver 7.1 Journal readback. PARTIAL.** Whether another voucher type, request shape or
+Tally version preserves the client value is **UNVERIFIED**. Do not generalise this into a rule that
+the attribute is never useful — on a release that did preserve it, that rule would discard real
+identity evidence. Check what your own readback returns before relying on it either way.
+
+**Do not replace attribution with a content fingerprint.** The obvious substitute — confirm the
+voucher by date, ledger entries and amount — is not an attribution key: a company holding a
+recurring or duplicate same-day payment already contains a voucher with that tuple, so a
+pre-existing voucher can stand in for a write that never happened. Bridge's own verifier treats a
+fingerprint-only match as `matching_content_observed` and reaches `posted_verified` only through a
+narration-tagged match, with pre-import boundary and identity checks around it
+(`src-tauri/src/agent_import.rs`). Carry an independent marker you control.
 
 **§9.8's scope limit still applies to all of the above.** The exact-file repeat was measured on the
 licensed **Journal** path; §9.8 says explicitly that it does not establish other request shapes,
 other voucher types, or universal `REMOTEID` semantics. Treat upsert-on-repeat as verified for
-Journal and **UNVERIFIED elsewhere** until the type you are emitting has been re-imported once and
-the voucher count checked.
+Journal and **UNVERIFIED elsewhere**.
+
+**Qualifying another voucher type takes a captured response, not a count.** A repeat that was
+rejected, or whose transport failed before Tally processed it, also leaves the voucher count at
+one — so "re-import and check the count" can promote semantics that were never exercised. Match
+what §9.8 required of the Journal evidence: a captured response showing `CREATED=0, ALTERED=1`
+with every failure counter zero, plus a readback proving it is the **same object** (unchanged GUID
+and master ID), and only then record the type as qualified.
+
+**Changed payloads are a separate, untested case.** Everything above is a *byte-identical* repeat.
+`IMPLEMENTATION_GUIDE.md` §3.3a's own untested list includes "when the payload differs from the
+original (partial update semantics)". So a corrected voucher re-sent under the same `REMOTEID` may
+overwrite, may partially update, or may duplicate: **UNVERIFIED**. Do not prescribe re-import as a
+correction path on that basis. Delete by `REMOTEID` and create afresh (§9.7, §9.12b) is the path
+with live confirmation behind it.
 
 ### 9.4 Master re-create is a silent Alter
 
