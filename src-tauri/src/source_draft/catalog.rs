@@ -477,11 +477,17 @@ mod tests {
     /// The same company's catalogue captured again after `WR2 Sales` was renamed
     /// to `WR2 Sales Renamed` in Tally, through the same production read path.
     ///
+    /// This is the captured evidence for the behaviour already decided in
+    /// `docs/tally/TALLY_PROTOCOL_REFERENCE.md` §12a.9 — Tally can retain a GUID
+    /// while changing a visible ledger name — which is why
+    /// `StandardLedgerCatalogBinding::matches` binds the selected pair rather
+    /// than a name. The reference remains the decision; this fixture only shows
+    /// it observed.
+    ///
     /// Measured across the pair on TallyPrime 7.1: the ledger keeps GUID
     /// `…-000000d0` and only its name changes, the ledger count is unchanged, and
-    /// no other ledger's GUID moves. So a rename is observable by name alone,
-    /// which is exactly why a binding must carry the GUID as well. The book was
-    /// restored afterwards. Neither response is hand-mutated.
+    /// no other ledger's GUID moves. The book was restored afterwards. Neither
+    /// response is hand-mutated.
     fn captured_renamed_catalog_xml() -> String {
         let bytes = include_bytes!(
             "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ledger-catalogue-renamed.utf16le.xml"
