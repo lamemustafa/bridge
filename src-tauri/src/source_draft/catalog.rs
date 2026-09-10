@@ -1,7 +1,8 @@
 //! Ephemeral existing-ledger selections for one open source draft.
 //!
-//! A capture and its selected master bindings are never serialized. They are
-//! invalidated when the source draft or selected company scope changes.
+//! Opaque catalog identities and selected master bindings are never serialized.
+//! Only binding coordinates justified by the latest capture reach the desktop,
+//! so it can avoid claiming that a saved proposal is current.
 
 use std::collections::BTreeMap;
 
@@ -79,6 +80,12 @@ struct SelectedLedgerBinding {
     name: String,
     #[allow(dead_code)]
     binding: StandardLedgerCatalogBinding,
+}
+
+impl CatalogCapture {
+    pub(super) fn current_binding_positions(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        self.bindings.keys().copied()
+    }
 }
 
 #[derive(Clone)]
@@ -196,7 +203,7 @@ pub(super) async fn apply_existing_ledger_target(
     .await
     .map_err(|cause| error(cause.command_code()))?;
     require_current_catalog_binding(&binding, &fresh.body, &identity)?;
-    store.commit_catalog_target(snapshot, request, binding)
+    store.commit_catalog_target(snapshot, request, binding, &fresh.body)
 }
 
 impl SourceDraftStore {
@@ -335,6 +342,7 @@ impl SourceDraftStore {
         snapshot: CatalogApplySnapshot,
         mut request: SourceDraftCatalogApplyRequest,
         binding: StandardLedgerCatalogBinding,
+        fresh_body: &str,
     ) -> CommandResult<SourceDraftDto> {
         let mut active = self
             .active
@@ -366,6 +374,7 @@ impl SourceDraftStore {
             .revision
             .checked_add(1)
             .ok_or_else(|| error("source_draft_revision_exhausted"))?;
+        SourceDraftStore::revalidate_retained_bindings(current, fresh_body);
         SourceDraftStore::remove_changed_bindings(current, &request.proposals);
         let capture = current
             .catalog
@@ -411,6 +420,22 @@ impl SourceDraftStore {
                 .and_then(|proposal| proposal.entries.get(entry.saturating_sub(1)))
                 .and_then(|entry| entry.ledger.as_deref())
                 == Some(binding.name.as_str())
+        });
+    }
+
+    /// A retained binding can claim current-session status only when the same
+    /// fresh response still contains its exact observed name and GUID. A
+    /// malformed or otherwise doubtful match is not currency evidence.
+    fn revalidate_retained_bindings(active: &mut ActiveDraft, fresh_body: &str) {
+        let Some(capture) = active.catalog.as_mut() else {
+            return;
+        };
+        let identity = capture.identity.clone();
+        capture.bindings.retain(|_, selected| {
+            selected
+                .binding
+                .matches(fresh_body, identity.display_name(), identity.company_guid())
+                .unwrap_or(false)
         });
     }
 }
@@ -479,6 +504,15 @@ mod tests {
     fn status_plan() -> ScenarioPlan {
         ScenarioPlan::new(Fixture::ProductStatus(ProductStatus::TallyPrime))
             .with_framing(ResponseFraming::ContentLength)
+    }
+
+    fn append_catalog_read_plans(plans: &mut Vec<ScenarioPlan>, xml: String) {
+        plans.push(company_plan(CAPTURED_COMPANY, CAPTURED_GUID));
+        plans.push(catalog_plan(xml.clone()));
+        plans.push(status_plan());
+        plans.push(catalog_plan(xml));
+        plans.push(status_plan());
+        plans.push(company_plan(CAPTURED_COMPANY, CAPTURED_GUID));
     }
 
     fn install_active_catalog(store: &SourceDraftStore) -> (Uuid, Uuid, Vec<String>, String) {
@@ -807,10 +841,216 @@ mod tests {
         assert_eq!(simulator.finish().expect("all requests observed").len(), 8);
     }
 
+    #[tokio::test]
+    async fn catalog_services_revalidate_retained_binding_after_catalogue_change_without_tauri_state(
+    ) {
+        let store = SourceDraftStore::default();
+        let draft_id = install_active_draft_without_catalog(&store);
+        let (_, catalog_xml) = captured_catalog_and_xml();
+        let catalog = parse_standard_ledger_catalog_with_identities(
+            &catalog_xml,
+            CAPTURED_COMPANY,
+            CAPTURED_GUID,
+        )
+        .expect("captured catalogue remains parser-admitted");
+        let names = catalog
+            .names()
+            .take(2)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        assert_eq!(names.len(), 2, "captured catalogue has two bindable names");
+        let changed_catalog_xml = catalog_xml.replacen(
+            &format!("NAME=\"{}\"", names[0]),
+            "NAME=\"renamed after the first binding\"",
+            1,
+        );
+        assert_ne!(
+            changed_catalog_xml, catalog_xml,
+            "control removes target A from Tally"
+        );
+        let mut plans = vec![company_plan(CAPTURED_COMPANY, CAPTURED_GUID)];
+        append_catalog_read_plans(&mut plans, catalog_xml.clone());
+        plans.push(company_plan(CAPTURED_COMPANY, CAPTURED_GUID));
+        append_catalog_read_plans(&mut plans, catalog_xml);
+        plans.push(company_plan(CAPTURED_COMPANY, CAPTURED_GUID));
+        append_catalog_read_plans(&mut plans, changed_catalog_xml);
+        let simulator = SequenceSimulator::spawn(plans).expect("catalog service simulator");
+        let config = TallyConfig {
+            host: simulator.address().ip().to_string(),
+            port: simulator.address().port(),
+        };
+        let runtime = TallyRuntime::default();
+        let loaded = load_existing_ledger_targets(
+            &store,
+            &runtime,
+            SourceDraftCatalogLoadRequest {
+                draft_id: draft_id.to_string(),
+                config: config.clone(),
+                selected_company: selected_company(),
+            },
+        )
+        .await
+        .expect("service load admits the captured catalog");
+        let a = loaded.targets[0].clone();
+        let b = loaded.targets[1].clone();
+        let initial_proposals = store
+            .active
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .proposals
+            .clone();
+        let first = apply_existing_ledger_target(
+            &store,
+            &runtime,
+            SourceDraftCatalogApplyRequest {
+                draft_id: draft_id.to_string(),
+                revision: 1,
+                capture_id: loaded.capture_id.clone(),
+                config: config.clone(),
+                selected_company: selected_company(),
+                row_position: 1,
+                entry_position: 1,
+                target_name: a.clone(),
+                proposals: initial_proposals,
+            },
+        )
+        .await
+        .expect("target A applies after its fresh read");
+        assert_eq!(
+            first
+                .current_catalog_bindings
+                .iter()
+                .map(|binding| (binding.row_position, binding.entry_position))
+                .collect::<Vec<_>>(),
+            vec![(1, 1)],
+            "A is current after its own fresh read"
+        );
+        let second = apply_existing_ledger_target(
+            &store,
+            &runtime,
+            SourceDraftCatalogApplyRequest {
+                draft_id: draft_id.to_string(),
+                revision: first.revision,
+                capture_id: loaded.capture_id,
+                config,
+                selected_company: selected_company(),
+                row_position: 2,
+                entry_position: 1,
+                target_name: b.clone(),
+                proposals: first.rows.iter().map(|row| row.proposal.clone()).collect(),
+            },
+        )
+        .await
+        .expect("target B applies after its fresh read");
+        assert_eq!(
+            second
+                .current_catalog_bindings
+                .iter()
+                .map(|binding| (binding.row_position, binding.entry_position))
+                .collect::<Vec<_>>(),
+            vec![(2, 1)],
+            "only B is current after Tally removed A"
+        );
+        assert_eq!(
+            second.rows[0].proposal.entries[0].ledger.as_deref(),
+            Some(a.as_str()),
+            "A's operator proposal text survives without a currency claim"
+        );
+        assert_eq!(
+            second.rows[1].proposal.entries[0].ledger.as_deref(),
+            Some(b.as_str())
+        );
+        assert_eq!(simulator.finish().expect("all requests observed").len(), 21);
+    }
+
+    #[tokio::test]
+    async fn catalog_services_keep_identical_retained_bindings_current_without_tauri_state() {
+        let store = SourceDraftStore::default();
+        let draft_id = install_active_draft_without_catalog(&store);
+        let (_, catalog_xml) = captured_catalog_and_xml();
+        let mut plans = vec![company_plan(CAPTURED_COMPANY, CAPTURED_GUID)];
+        append_catalog_read_plans(&mut plans, catalog_xml.clone());
+        plans.push(company_plan(CAPTURED_COMPANY, CAPTURED_GUID));
+        append_catalog_read_plans(&mut plans, catalog_xml.clone());
+        plans.push(company_plan(CAPTURED_COMPANY, CAPTURED_GUID));
+        append_catalog_read_plans(&mut plans, catalog_xml);
+        let simulator = SequenceSimulator::spawn(plans).expect("catalog service simulator");
+        let config = TallyConfig {
+            host: simulator.address().ip().to_string(),
+            port: simulator.address().port(),
+        };
+        let runtime = TallyRuntime::default();
+        let loaded = load_existing_ledger_targets(
+            &store,
+            &runtime,
+            SourceDraftCatalogLoadRequest {
+                draft_id: draft_id.to_string(),
+                config: config.clone(),
+                selected_company: selected_company(),
+            },
+        )
+        .await
+        .expect("service load admits the captured catalog");
+        let initial_proposals = store
+            .active
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .proposals
+            .clone();
+        let first = apply_existing_ledger_target(
+            &store,
+            &runtime,
+            SourceDraftCatalogApplyRequest {
+                draft_id: draft_id.to_string(),
+                revision: 1,
+                capture_id: loaded.capture_id.clone(),
+                config: config.clone(),
+                selected_company: selected_company(),
+                row_position: 1,
+                entry_position: 1,
+                target_name: loaded.targets[0].clone(),
+                proposals: initial_proposals,
+            },
+        )
+        .await
+        .expect("target A applies after its fresh read");
+        let second = apply_existing_ledger_target(
+            &store,
+            &runtime,
+            SourceDraftCatalogApplyRequest {
+                draft_id: draft_id.to_string(),
+                revision: first.revision,
+                capture_id: loaded.capture_id,
+                config,
+                selected_company: selected_company(),
+                row_position: 2,
+                entry_position: 1,
+                target_name: loaded.targets[1].clone(),
+                proposals: first.rows.iter().map(|row| row.proposal.clone()).collect(),
+            },
+        )
+        .await
+        .expect("target B applies after its fresh read");
+        assert_eq!(
+            second
+                .current_catalog_bindings
+                .iter()
+                .map(|binding| (binding.row_position, binding.entry_position))
+                .collect::<Vec<_>>(),
+            vec![(1, 1), (2, 1)],
+            "an unchanged A remains current alongside B"
+        );
+        assert_eq!(simulator.finish().expect("all requests observed").len(), 21);
+    }
+
     #[test]
     fn full_apply_prunes_another_changed_binding_but_keeps_the_new_binding() {
         let store = SourceDraftStore::default();
-        let (id, capture_id, names, _) = install_active_catalog(&store);
+        let (id, capture_id, names, xml) = install_active_catalog(&store);
         let (catalog, _) = captured_catalog_and_xml();
         let first_binding = catalog
             .bind_selected([names[0].clone()])
@@ -845,7 +1085,7 @@ mod tests {
             .catalog_apply_snapshot(&request)
             .expect("full proposal vector is admissible before fresh read");
         store
-            .commit_catalog_target(snapshot, request, second_binding)
+            .commit_catalog_target(snapshot, request, second_binding, &xml)
             .expect("target B commits after its fresh read");
 
         let active = store.active.lock().unwrap();
@@ -978,7 +1218,7 @@ mod tests {
         store.invalidate_catalogue().unwrap();
         assert_eq!(
             store
-                .commit_catalog_target(snapshot, request, binding)
+                .commit_catalog_target(snapshot, request, binding, "")
                 .unwrap_err()
                 .code,
             "source_draft_catalogue_invalidated"
@@ -1022,7 +1262,7 @@ mod tests {
         store.replace(replacement).unwrap();
         assert_eq!(
             store
-                .commit_catalog_target(snapshot, request, binding)
+                .commit_catalog_target(snapshot, request, binding, "")
                 .unwrap_err()
                 .code,
             "source_draft_catalogue_invalidated"
@@ -1033,7 +1273,7 @@ mod tests {
     }
 
     #[test]
-    fn catalog_bindings_are_not_serialized_in_dto_or_saved_draft() {
+    fn catalog_binding_identities_are_not_serialized_in_dto_or_saved_draft() {
         let store = SourceDraftStore::default();
         let (_, _, names, _) = install_active_catalog(&store);
         let (catalog, _) = captured_catalog_and_xml();
@@ -1060,6 +1300,11 @@ mod tests {
         let saved: serde_json::Value =
             serde_json::from_slice(&serialize_draft(&active.source, &active.proposals).unwrap())
                 .unwrap();
+        assert_eq!(
+            response["current_catalog_bindings"],
+            serde_json::json!([{"row_position": 1, "entry_position": 1}]),
+            "the desktop receives only the current binding coordinate"
+        );
         for value in [&response, &saved] {
             let object = value.as_object().unwrap();
             assert!(!object.contains_key("catalog"));

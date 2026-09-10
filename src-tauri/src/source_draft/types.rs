@@ -23,6 +23,16 @@ pub(crate) struct SourceDraftDto {
     pub(crate) source_sha256: String,
     pub(crate) source_notices: Vec<SourceDraftSourceNotice>,
     pub(crate) rows: Vec<SourceDraftRow>,
+    /// Ephemeral coordinates whose proposed targets are justified by the most
+    /// recent catalog read. This carries no catalog identity or GUID and is
+    /// deliberately absent from saved drafts.
+    pub(crate) current_catalog_bindings: Vec<SourceDraftCurrentCatalogBinding>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SourceDraftCurrentCatalogBinding {
+    pub(crate) row_position: usize,
+    pub(crate) entry_position: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]

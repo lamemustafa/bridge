@@ -25,9 +25,9 @@ use crate::source_draft_xml::{parse_source_xml, ParsedSource, MAX_SOURCE_BYTES};
 use self::{
     files::{open_saved_draft, pick_file, save_path, serialize_draft, write_private_file},
     types::{
-        command_error, error, CommandResult, SourceDraftDto, SourceDraftEntry,
-        SourceDraftEntryProposal, SourceDraftProposal, SourceDraftRow, SourceDraftSaveRequest,
-        SourceDraftSourceNotice, MAX_PROPOSAL_BYTES, MAX_TEXT_BYTES,
+        command_error, error, CommandResult, SourceDraftCurrentCatalogBinding, SourceDraftDto,
+        SourceDraftEntry, SourceDraftEntryProposal, SourceDraftProposal, SourceDraftRow,
+        SourceDraftSaveRequest, SourceDraftSourceNotice, MAX_PROPOSAL_BYTES, MAX_TEXT_BYTES,
     },
 };
 use catalog::{
@@ -283,6 +283,21 @@ fn dto(active: &ActiveDraft) -> SourceDraftDto {
                 proposal: proposal.clone(),
             })
             .collect(),
+        current_catalog_bindings: active
+            .catalog
+            .as_ref()
+            .map(|capture| {
+                capture
+                    .current_binding_positions()
+                    .map(
+                        |(row_position, entry_position)| SourceDraftCurrentCatalogBinding {
+                            row_position,
+                            entry_position,
+                        },
+                    )
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 
