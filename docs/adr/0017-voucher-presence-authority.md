@@ -82,15 +82,28 @@ Two binding outcomes withhold `Absent` outright: `NoDiscriminatingCandidate`
 In both, names that might have matched were never compared, and reporting
 "absent" off an incomplete comparison is the failure this ADR exists to prevent.
 
+That withholding is not a precaution reasoned from the contract alone. Measured
+over 470 ledger names from sixteen loaded synthetic companies and 2,257
+mutation cases: where binding lists candidates the right master is present in
+403 of 403 rows, and where a source name reaches a family it cannot distinguish
+an alphabetically capped slice of that family **omitted the right master about
+a third of the time** — which is why the family is counted and not listed. On a
+book with systematic party naming `NoDiscriminatingCandidate` is expected to be
+common, and a third of the `Absent` verdicts it would otherwise license would
+have been wrong.
+
 ### 2. A window is a *claim about a window*, and it must be complete
 
 `BookWindow::observed` is a boundary parse. It refuses, rather than degrades,
 on:
 
-- **a read that was not complete** — `WindowIncomplete`. A window too dense to
-  read, or one whose emptiness was only partially corroborated, is not "no
-  match found". This is the single most dangerous confusion available here and
-  it is a typed error, not a flag a caller may overlook;
+- **a read that was not complete** — `WindowIncomplete`. A window whose
+  emptiness was only partially corroborated is not "no match found". This is
+  the single most dangerous confusion available here, so it is a typed error
+  rather than a flag a caller may overlook. A window that could not be read at
+  all never reaches this constructor: the read fails, and the tool fails with
+  it. What this does **not** cover is named in the Consequences — a response
+  Tally answers short without saying so;
 - a window that does not **cover** every proposed date — `WindowDoesNotCover`.
   A voucher outside the window is invisible, so a verdict over it would be
   fiction;
@@ -284,6 +297,32 @@ human-approved batch — this ADR does not move.
 - The window is read in full before any comparison; `vouchers`' own pagination
   bounds output, not Tally's work. A window past `MAX_WINDOW_VOUCHERS` is
   refused with a narrow-the-range error rather than silently truncated.
+- **The completeness guarantee is exactly as strong as the window read, and no
+  stronger.** Three ways a window read can go wrong are closed: a transport or
+  source-limit failure never produces a window because the read itself fails; a
+  malformed or short body fails the strict parse; and the paired read refuses a
+  pair whose two responses differ. The case that remains open is a
+  **well-formed response that is silently short** — Tally answering a dense
+  window with fewer vouchers than it holds and saying nothing. No layer beneath
+  this contract detects that, and a deterministic short answer agrees with
+  itself across the pair, so pairing does not catch it either. `BookWindow`
+  therefore inherits the `vouchers` profile's own qualification, which states
+  that dense windows are unqualified. Closing it needs a source-side control
+  total — a count the window read asserts about itself — and that is a separate
+  read contract with its own live evidence. Until then, prefer several narrow
+  windows to one dense one, and read `Absent` as scoped to a window that was
+  read narrow enough to trust.
+- **The identifier rule that binds a party across spellings has no live
+  coverage.** Measured against sixteen loaded synthetic companies, zero of 470
+  real ledger names yield a numeric identifier and exactly one yields a code
+  identifier, so that rule is qualified by fabricated data alone. It is load
+  bearing for `master_binding`'s own consumers; it is deliberately **not** load
+  bearing here, because a party binding can never produce `Present` — it only
+  selects which names the resemblance rules compare, which widens the net. A
+  wrong bind can therefore cost a `SamePartyAmount` candidate and turn a
+  `PossiblyPresent` into an `Absent` — a visible, deletable duplicate — and can
+  never turn an `Absent` into a `Present`, which is the silent direction. That
+  is the asymmetry of §7 holding under a rule that is not yet proven.
 - Presence is pure computation over already-observed data, so P1's live-evidence
   requirement is satisfied upstream by the two reads that produce its input. Its
   own tests are fabricated from a placeholder alphabet: they establish the
