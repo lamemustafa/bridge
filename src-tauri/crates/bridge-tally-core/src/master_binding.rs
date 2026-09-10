@@ -254,6 +254,14 @@ pub struct Unresolved {
     /// Identifiers extracted from the source name and from caller hints,
     /// retained so a fallback posting can be reallocated later without
     /// re-reading the source document.
+    ///
+    /// **This must travel in a channel that survives a read back — the
+    /// narration.** A client-supplied `REMOTEID` is not it: Tally overwrites
+    /// the attribute with its own value, so a key written there cannot be
+    /// observed afterwards and cannot identify what to reallocate
+    /// (`docs/tally/IMPLEMENTATION_GUIDE.md` §3.3a, fourth property, verified).
+    /// A parked amount whose identity went into a write-only field is
+    /// unreallocatable, and nothing about the write would say so.
     pub unresolved_identity: Vec<Identifier>,
     pub candidates: Vec<Candidate>,
     /// Candidates found before truncation.
