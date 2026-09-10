@@ -1206,12 +1206,15 @@ fn an_aggregately_truncated_candidate_list_withholds_absent() {
         position: 0,
         source_name: "Delta Trading".to_string(),
         status: BindingStatus::Ambiguous(master_binding::Unresolved {
-            reason: UnboundReason::NearMiss,
+            reason: master_binding::UnboundReason::NearMiss,
             unresolved_identity: Vec::new(),
-            // Empty, yet seven candidates were found before the budget ran out.
-            candidates: Vec::new(),
-            candidate_count: 7,
-            candidates_truncated: true,
+            // Empty, yet seven candidates were found before the budget ran
+            // out. Under the typed listing this is `Truncated` with nothing
+            // listed, which is now a state the compiler makes me handle.
+            candidates: master_binding::Candidates::Truncated {
+                listed: Vec::new(),
+                found: 7,
+            },
         }),
     };
     let resolution = resolution_of(&binding);
@@ -1234,11 +1237,9 @@ fn an_untruncated_empty_candidate_list_still_permits_absent() {
         position: 0,
         source_name: "Zulu Enterprises".to_string(),
         status: BindingStatus::Unmatched(master_binding::Unresolved {
-            reason: UnboundReason::NoCandidate,
+            reason: master_binding::UnboundReason::NoCandidate,
             unresolved_identity: Vec::new(),
-            candidates: Vec::new(),
-            candidate_count: 0,
-            candidates_truncated: false,
+            candidates: master_binding::Candidates::None,
         }),
     };
     let resolution = resolution_of(&binding);

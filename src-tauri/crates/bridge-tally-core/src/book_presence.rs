@@ -23,8 +23,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::exact_arithmetic::ExactDecimalAccumulator;
 use crate::master_binding::{
-    self, comparison_key, BindingStatus, MasterBindingError, MasterCatalog, MasterClass,
-    SourceEntity, UnboundReason,
+    self, comparison_key, BindingStatus, Candidates, MasterBindingError, MasterCatalog,
+    MasterClass, SourceEntity,
 };
 use crate::{ExactDecimal, TallyDate};
 
@@ -879,6 +879,28 @@ fn bind_parties(
 }
 
 fn resolution_of(binding: &master_binding::EntityBinding) -> PartyResolution {
+    // Matched exhaustively rather than read through accessors: these four
+    // cases are the reason ADR 0016 replaced a vector plus two flags with a
+    // type, and a new one must not compile until this decides what it means.
+    // `listed` is empty for `None` and `Withheld` alike, so the difference
+    // between "nothing resembles this party" and "a family we refuse to slice"
+    // lives only here.
+    fn from(unresolved: &master_binding::Unresolved) -> (BTreeSet<String>, bool) {
+        let keys = |listed: &[master_binding::Candidate]| {
+            listed
+                .iter()
+                .map(|candidate| comparison_key(&candidate.catalog_name))
+                .collect::<BTreeSet<_>>()
+        };
+        match &unresolved.candidates {
+            // Nothing resembles the party, and that is information.
+            Candidates::None => (BTreeSet::new(), false),
+            Candidates::Listed(listed) => (keys(listed), false),
+            // Names exist that were never compared, either way.
+            Candidates::Truncated { listed, .. } => (keys(listed), true),
+            Candidates::Withheld { .. } => (BTreeSet::new(), true),
+        }
+    }
     match &binding.status {
         BindingStatus::Bound { catalog_name, .. } => PartyResolution {
             outcome: PartyOutcome::Bound {
@@ -889,32 +911,29 @@ fn resolution_of(binding: &master_binding::EntityBinding) -> PartyResolution {
         },
         // Every candidate is compared, never one of them. Widening the net can
         // only produce more resemblance, which is the safe direction here.
-        BindingStatus::Ambiguous(unresolved) => PartyResolution {
-            outcome: PartyOutcome::Ambiguous {
-                reason: unresolved.reason.safe_reason_code().to_string(),
-                candidate_count: unresolved.candidate_count,
-            },
-            compare_keys: unresolved
-                .candidates
-                .iter()
-                .map(|candidate| comparison_key(&candidate.catalog_name))
-                .collect(),
-            // A name family is deliberately not listed, and a truncated list
-            // leaves names uncompared. Either way `Absent` would rest on a
-            // comparison that never ran.
-            incomplete: unresolved.reason == UnboundReason::NoDiscriminatingCandidate
-                || unresolved.candidates_truncated,
-        },
+        BindingStatus::Ambiguous(unresolved) => {
+            let (compare_keys, incomplete) = from(unresolved);
+            PartyResolution {
+                outcome: PartyOutcome::Ambiguous {
+                    reason: unresolved.reason.safe_reason_code().to_string(),
+                    candidate_count: unresolved.candidates.found(),
+                },
+                compare_keys,
+                incomplete,
+            }
+        }
         // Nothing in this book resembles the party, so no posted voucher can
         // be carrying it. Party rules simply do not run.
-        BindingStatus::Unmatched(unresolved) => PartyResolution {
-            outcome: PartyOutcome::Unmatched {
-                reason: unresolved.reason.safe_reason_code().to_string(),
-            },
-            compare_keys: BTreeSet::new(),
-            incomplete: unresolved.reason == UnboundReason::NoDiscriminatingCandidate
-                || unresolved.candidates_truncated,
-        },
+        BindingStatus::Unmatched(unresolved) => {
+            let (compare_keys, incomplete) = from(unresolved);
+            PartyResolution {
+                outcome: PartyOutcome::Unmatched {
+                    reason: unresolved.reason.safe_reason_code().to_string(),
+                },
+                compare_keys,
+                incomplete,
+            }
+        }
     }
 }
 
