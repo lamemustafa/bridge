@@ -31,6 +31,7 @@ fn candidate_names(binding: &EntityBinding) -> Vec<&str> {
         .unresolved()
         .expect("binding did not resolve")
         .candidates
+        .listed()
         .iter()
         .map(|candidate| candidate.catalog_name.as_str())
         .collect()
@@ -255,6 +256,7 @@ fn near_duplicate_masters_produce_candidates_and_choose_none() {
     assert_eq!(
         unresolved
             .candidates
+            .listed()
             .iter()
             .map(|candidate| candidate.rule)
             .collect::<Vec<_>>(),
@@ -264,8 +266,8 @@ fn near_duplicate_masters_produce_candidates_and_choose_none() {
             CandidateRule::SharedToken
         ]
     );
-    assert_eq!(unresolved.candidate_count, 3);
-    assert!(!unresolved.candidates_truncated);
+    assert_eq!(unresolved.candidates.found(), 3);
+    assert!(!unresolved.candidates.is_incomplete());
 }
 
 #[test]
@@ -288,6 +290,7 @@ fn a_truncated_source_name_surfaces_the_longer_master() {
             .unresolved()
             .expect("unbound")
             .candidates
+            .listed()
             .first()
             .map(|candidate| candidate.rule),
         Some(CandidateRule::CatalogPrefix)
@@ -301,6 +304,7 @@ fn a_source_name_extending_a_master_surfaces_the_shorter_master() {
     let unresolved = binding.unresolved().expect("unbound");
     assert!(unresolved
         .candidates
+        .listed()
         .iter()
         .any(|candidate| candidate.rule == CandidateRule::SourcePrefix
             && candidate.catalog_name == "DELTA WHOLESALE"));
@@ -411,6 +415,47 @@ fn a_decisive_identifier_pointing_elsewhere_still_outranks_a_byte_exact_name() {
 }
 
 #[test]
+fn a_hyphen_matches_a_space_because_tally_says_so() {
+    // IMPLEMENTATION_GUIDE.md §3.3b, measured: Tally's own master-name matching
+    // treats a hyphen as a space. Being stricter than the authority refuses
+    // names Tally would accept, and `X - Y` is a common ledger convention.
+    let catalog = ledgers(&["Bank - HDFC Current", "Beta Supply"]);
+    let binding = bind_one_name(&catalog, "Bank HDFC Current");
+    assert_eq!(
+        binding.status,
+        BindingStatus::Bound {
+            catalog_name: "Bank - HDFC Current".to_string(),
+            basis: BindingBasis::NormalizedName,
+        }
+    );
+    // And the reverse direction.
+    let hyphenated = ledgers(&["BRIDGE PROBE LEDGER A", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&hyphenated, "BRIDGE-PROBE-LEDGER-A").bound_name(),
+        Some("BRIDGE PROBE LEDGER A")
+    );
+}
+
+#[test]
+fn the_master_fold_stops_where_tally_stops() {
+    // §3.3b also measured what Tally does NOT normalise: `AND` for `&`, a
+    // missing suffix word, and a singular for a plural were all rejected.
+    // Folding further than the authority would bind names Tally refuses.
+    let catalog = ledgers(&["ZZ Ram & Sons Pvt Ltd", "Beta Supply"]);
+    for wrong in [
+        "ZZ Ram AND Sons Pvt Ltd",
+        "ZZ Ram & Sons",
+        "ZZ Ram & Son Pvt Ltd",
+    ] {
+        assert_eq!(
+            bind_one_name(&catalog, wrong).bound_name(),
+            None,
+            "{wrong:?} bound, but Tally rejects it"
+        );
+    }
+}
+
+#[test]
 fn a_trailing_space_never_claims_byte_equality() {
     // `Bank ` against live `Bank` must not report exact: the import file would
     // still carry the trailing space. Normalized is the correct, loud outcome —
@@ -497,6 +542,7 @@ fn a_report_bounds_its_own_candidate_allocation() {
         .map(|unresolved| {
             unresolved
                 .candidates
+                .listed()
                 .iter()
                 .map(|candidate| candidate.catalog_name.len())
                 .sum::<usize>()
@@ -509,12 +555,12 @@ fn a_report_bounds_its_own_candidate_allocation() {
     let starved = report
         .unbound()
         .filter_map(|entity| entity.unresolved())
-        .filter(|unresolved| unresolved.candidates.is_empty())
+        .filter(|unresolved| unresolved.candidates.listed().is_empty())
         .collect::<Vec<_>>();
     assert!(!starved.is_empty(), "the budget must actually bite here");
-    assert!(starved
-        .iter()
-        .all(|unresolved| unresolved.candidate_count > 0 && unresolved.candidates_truncated));
+    assert!(starved.iter().all(
+        |unresolved| unresolved.candidates.found() > 0 && unresolved.candidates.is_incomplete()
+    ));
 }
 
 #[test]
@@ -547,6 +593,59 @@ fn more_identifiers_than_the_bound_is_refused_not_truncated() {
     );
 }
 
+#[test]
+fn the_listing_variant_says_what_an_absent_candidate_means() {
+    // The three facts that used to share one empty vector, now told apart by
+    // the type. A consumer matching exhaustively is made to decide each.
+    let catalog = ledgers(&["Alpha Traders", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&catalog, "Zeta Placeholder")
+            .unresolved()
+            .expect("unbound")
+            .candidates,
+        Candidates::None,
+        "nothing resembles it"
+    );
+
+    let family = (0..MAX_PREFIX_FAMILY + 5)
+        .map(|index| format!("ALPHAGROUP UNIT {index:02}"))
+        .collect::<Vec<_>>();
+    let family = MasterCatalog::new(MasterClass::Ledger, &family).expect("valid");
+    assert_eq!(
+        bind_one_name(&family, "ALPHAGROUP")
+            .unresolved()
+            .expect("unbound")
+            .candidates,
+        Candidates::Withheld {
+            found: MAX_PREFIX_FAMILY + 5
+        },
+        "many exist and none separates them"
+    );
+
+    let listed = ledgers(&["ALPHA SALE", "ALPHA SALES", "SALES - ALPHA", "Beta Supply"]);
+    let binding = bind_one_name(&listed, "ALPHA");
+    let candidates = &binding.unresolved().expect("unbound").candidates;
+    assert!(matches!(candidates, Candidates::Listed(_)));
+    assert_eq!(candidates.found(), 3);
+}
+
+#[test]
+fn only_an_incomplete_listing_may_withhold_an_absence() {
+    // The predicate a consumer needs before reporting "nothing like this is
+    // present". `None` permits that conclusion; the other two forbid it.
+    assert!(!Candidates::None.is_incomplete());
+    assert!(!Candidates::Listed(Vec::new()).is_incomplete());
+    assert!(Candidates::Withheld { found: 30 }.is_incomplete());
+    assert!(Candidates::Truncated {
+        listed: Vec::new(),
+        found: 9
+    }
+    .is_incomplete());
+    // `found` is the total, never the listed length, wherever it is known.
+    assert_eq!(Candidates::Withheld { found: 30 }.found(), 30);
+    assert!(Candidates::Withheld { found: 30 }.listed().is_empty());
+}
+
 // --- candidate discipline --------------------------------------------------
 
 #[test]
@@ -558,7 +657,7 @@ fn a_catalog_wide_token_stops_discriminating() {
     let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
     // "placeholder" is carried by every entry, so it may not pull all 41 in.
     let binding = bind_one_name(&catalog, "PLACEHOLDER ZETA");
-    assert!(binding.unresolved().expect("unbound").candidate_count <= 1);
+    assert!(binding.unresolved().expect("unbound").candidates.found() <= 1);
 }
 
 #[test]
@@ -575,9 +674,9 @@ fn a_prefix_matching_a_whole_family_is_counted_and_deliberately_not_listed() {
     let binding = bind_one_name(&catalog, "ALPHAGROUP");
     let unresolved = binding.unresolved().expect("unbound");
     assert_eq!(reason(&binding), UnboundReason::NoDiscriminatingCandidate);
-    assert!(unresolved.candidates.is_empty());
-    assert_eq!(unresolved.candidate_count, MAX_PREFIX_FAMILY + 5);
-    assert!(unresolved.candidates_truncated);
+    assert!(unresolved.candidates.listed().is_empty());
+    assert_eq!(unresolved.candidates.found(), MAX_PREFIX_FAMILY + 5);
+    assert!(unresolved.candidates.is_incomplete());
 }
 
 #[test]
@@ -589,8 +688,8 @@ fn a_family_within_the_bound_is_still_listed_in_full() {
     let binding = bind_one_name(&catalog, "ALPHAGROUP");
     let unresolved = binding.unresolved().expect("unbound");
     assert_eq!(reason(&binding), UnboundReason::NearMiss);
-    assert_eq!(unresolved.candidates.len(), MAX_PREFIX_FAMILY);
-    assert!(!unresolved.candidates_truncated);
+    assert_eq!(unresolved.candidates.listed().len(), MAX_PREFIX_FAMILY);
+    assert!(!unresolved.candidates.is_incomplete());
 }
 
 #[test]
@@ -609,8 +708,8 @@ fn the_reported_count_is_the_union_of_suppressed_and_listed_candidates() {
     let unresolved = binding.unresolved().expect("unbound");
     // The shorter master is still listed; the family behind it is not.
     assert_eq!(candidate_names(&binding), ["Alpha"]);
-    assert_eq!(unresolved.candidate_count, MAX_PREFIX_FAMILY + 6);
-    assert!(unresolved.candidates_truncated);
+    assert_eq!(unresolved.candidates.found(), MAX_PREFIX_FAMILY + 6);
+    assert!(unresolved.candidates.is_incomplete());
 }
 
 #[test]
@@ -637,6 +736,7 @@ fn candidate_order_is_rule_then_name_and_never_a_ranking() {
     assert_eq!(
         unresolved
             .candidates
+            .listed()
             .iter()
             .map(|candidate| (candidate.catalog_name.as_str(), candidate.rule))
             .collect::<Vec<_>>(),
@@ -1005,9 +1105,9 @@ fn a_firm_wide_word_does_not_drag_the_whole_book_into_every_candidate_list() {
     let binding = bind_one_name(&catalog, "OMEGA PLACEHOLDER");
     let unresolved = binding.unresolved().expect("unbound");
     assert!(
-        unresolved.candidate_count <= MAX_CANDIDATES_PER_ENTITY,
+        unresolved.candidates.found() <= MAX_CANDIDATES_PER_ENTITY,
         "a firm-wide word pulled in {} candidates",
-        unresolved.candidate_count
+        unresolved.candidates.found()
     );
 }
 

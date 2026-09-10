@@ -110,6 +110,17 @@ unrelated period-labelled masters fuse on their period. The exclusion can only
 make a bind less likely, never more, which is the safe direction for a rule
 whose failure mode is posting against the wrong party.
 
+**Coverage is a property of the client's naming habit, not of the problem.**
+Measured across four catalogues: a retail motorcycle dealership carries an
+embedded identifier in 91 of 214 ledgers (42%), because it literally names
+customers that way; a B2B minerals trader, 0 of 105; a third catalogue, 0 of
+470; and Bridge's own synthetic books, 0 of 470 until ten were seeded to give
+the rule any live coverage at all. So this rule is a **first-pass check that is
+decisive when it fires and absent more often than not** — it resolved a customer
+three fuzzy name matches got wrong, and it can never be the primary key. The
+binder must work with it absent, and does: name matching is not a fallback here
+but the ordinary path.
+
 An identifier binds only when it is **unique on both sides**: exactly one
 master in the catalog carries it, and the entity's identifiers select exactly
 one master overall. Any conflict is `Ambiguous`, never a bind. This keeps the
@@ -125,9 +136,27 @@ favour.
 ### 3. Name matching binds only on an exact or normalized-exact unique hit
 
 `Exact` is byte equality with the observed master name. `Normalized` is equality
-under a comparison key that applies NFC, folds Unicode dash and quote variants
-to ASCII, lowercases, and collapses whitespace — and only when exactly one
-master shares that key. Nothing else binds. There is no edit distance, no
+under **Tally's own rule for when two master names are the same**, and only when
+exactly one master shares it.
+
+That rule is measured, not chosen: `IMPLEMENTATION_GUIDE.md` §3.3b found Tally's
+master-name matching to be case-insensitive **and separator-insensitive — a
+hyphen matches a space** — and otherwise exact on letters. `AND` for `&`, a
+missing suffix word, and a singular for a plural were all rejected. So the fold
+lowercases, collapses whitespace, folds Unicode dash and quote variants to
+ASCII, and treats `-` as a space; and it stops exactly where Tally stops.
+
+**Being stricter than the authority is not the safe direction it appears to
+be.** It refuses names Tally would accept, and `X - Y` is a common ledger
+convention — six of the seventeen hyphenated names in the observed books take
+that shape. A binder that reports a near-miss for a name the book would have
+matched has invented work, not prevented an error.
+
+This fold is deliberately **separate from the general comparison key**, which is
+shared with other contracts for voucher numbers and voucher-type names. §3.3b
+says nothing about those, and widening the shared fold to serve masters would be
+the "never to make one caller's case pass" this ADR warns against. One fold per
+notion of sameness, each named for the question it answers. Nothing else binds. There is no edit distance, no
 phonetic key, no token stemming, and no similarity threshold anywhere in the
 implementation.
 
@@ -183,14 +212,29 @@ neighbouring value reads as an answer. The vocabulary is deliberately explicit
 so that "nothing survived to be shown" and "nothing exists" cannot be confused
 by reading one field.
 
-**Why this is a doc and not a type.** Making the four cases unrepresentable —
-an enum of `Listed` / `Truncated` / `Withheld` / `None` rather than a vector
-plus two flags — would be the stronger fix and is the one P2 asks for. It is
-deliberately deferred: the change is breaking, a stacked consumer already
-depends on `candidates_truncated` as a predicate and holds the boundary with
-tests, and forcing that rework while this contract is under review trades a
-real improvement for a real regression risk. It should be revisited once this
-and its dependent have merged.
+**This is now a type as well as a doc.** `Candidates` is
+`None | Listed | Truncated { found } | Withheld { found }`, so a consumer
+matching it exhaustively is made to decide each case, and the wrong reading does
+not compile rather than failing a test someone remembered to write. `listed()`,
+`found()` and `is_incomplete()` cover the callers that do not need to match.
+`is_incomplete()` is the predicate that matters: **true means the absence of a
+listing is not the absence of a master**, and no consumer may report "nothing
+like this is present" over it.
+
+It was taken before merge deliberately. The contract had not shipped, so this is
+the cheapest the change would ever be; afterwards it would be a breaking change
+to a published contract with three consumers behind it. The consumer who paid
+for it measured its own cost at about thirty lines and reported that the change
+made its code better rather than merely compatible — a hand-assembled
+disjunction became an exhaustive match.
+
+**The fix stops at the crate boundary, and says so.** The MCP result carries an
+explicit `listing` discriminator, because a model is precisely the caller that
+would read an empty array as "no such ledger exists". The desktop DTO stays
+flat: its screen already distinguishes the three cases and is tested on each, so
+flattening there is a projection with a tested consumer rather than an
+ambiguity. Neither boundary has the compiler behind it — this protects Rust
+consumers, and the projections are the two places where that protection ends.
 
 ### 5. Status vocabulary
 

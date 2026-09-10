@@ -246,6 +246,59 @@ pub enum BindingBasis {
     NormalizedName,
 }
 
+/// The masters worth showing, and — in the variant itself — what an absence of
+/// them means.
+///
+/// Replaces a `Vec` plus two flags, where empty was three different facts and a
+/// consumer reading `is_empty()` was wrong in two of them. That shape had
+/// already been got wrong twice by different lanes; here the compiler makes
+/// each case an explicit decision instead.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", tag = "listing")]
+pub enum Candidates {
+    /// Nothing resembles this name. An absence of masters, not of information.
+    None,
+    /// Every master found, listed.
+    Listed(Vec<Candidate>),
+    /// More were found than could be listed — the per-entity cap, or the
+    /// report's aggregate byte budget.
+    Truncated {
+        listed: Vec<Candidate>,
+        found: usize,
+    },
+    /// A family this name reaches and separates none of: counted, and
+    /// deliberately not listed, because an arbitrary slice of it put the right
+    /// master out of view about a third of the time against live books.
+    Withheld { found: usize },
+}
+
+impl Candidates {
+    /// The masters actually listed. Empty for `None` and `Withheld` alike, so
+    /// never decide anything from this alone.
+    pub fn listed(&self) -> &[Candidate] {
+        match self {
+            Self::None | Self::Withheld { .. } => &[],
+            Self::Listed(listed) | Self::Truncated { listed, .. } => listed,
+        }
+    }
+
+    /// Masters found before any truncation or withholding.
+    pub fn found(&self) -> usize {
+        match self {
+            Self::None => 0,
+            Self::Listed(listed) => listed.len(),
+            Self::Truncated { found, .. } | Self::Withheld { found } => *found,
+        }
+    }
+
+    /// Whether masters exist that are not in `listed()`. The predicate a
+    /// consumer needs before it may report "nothing like this is present":
+    /// true here means the absence of a listing is not the absence of a master.
+    pub fn is_incomplete(&self) -> bool {
+        matches!(self, Self::Truncated { .. } | Self::Withheld { .. })
+    }
+}
+
 /// What could not be bound, and why. This is the operator's work item, not an
 /// error path.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -263,23 +316,27 @@ pub struct Unresolved {
     /// A parked amount whose identity went into a write-only field is
     /// unreallocatable, and nothing about the write would say so.
     pub unresolved_identity: Vec<Identifier>,
-    /// The masters worth showing, most defensible first.
-    ///
-    /// **Empty is three different facts.** With `NoCandidate` it means nothing
-    /// resembles this name; with `NoDiscriminatingCandidate` it means
-    /// `candidate_count` masters resemble it and none is separable; with
-    /// `candidates_truncated` it means the list was cut, by the per-entity cap
-    /// or the report's aggregate byte budget. Reading the empty vector as
-    /// "nothing exists" is wrong in two of the three. Disambiguate on `reason`
-    /// and `candidates_truncated` — see ADR 0016 §4a.
-    pub candidates: Vec<Candidate>,
-    /// Masters found before any truncation, including a family that was
-    /// counted and deliberately not listed.
-    pub candidate_count: usize,
-    pub candidates_truncated: bool,
+    pub candidates: Candidates,
 }
 
 /// Exactly one outcome per source entity.
+///
+/// **What a `Bound` does not establish**, written here because a computed check
+/// gets read for more than it covers, and the caller cannot see the gap from
+/// the value alone:
+///
+/// - **Not that the master still exists.** The catalog is a snapshot. A caller
+///   acting on a binding re-reads and revalidates through the admission path
+///   that owns identity; nothing here is a lease on the book.
+/// - **Not that the name may be written as given.** Only `ExactName` is byte
+///   equality. A `NormalizedName` or `Identifier` bind means the payload and
+///   the live name *differ*, and Bridge's write gate admits `exact` only — use
+///   `catalog_name`, not what was requested.
+/// - **Not that this is the right master in business terms.** It establishes
+///   that one deterministic rule selected one master uniquely. Whether that
+///   party is the one the document meant is a judgement the rules cannot make.
+/// - **Not any authority.** A binding is a proposal: it approves nothing,
+///   creates nothing, and dispatches nothing.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "status")]
 pub enum BindingStatus {
@@ -430,6 +487,20 @@ impl BindingReport {
 ///
 /// Constructed only from an entity that did not bind, so rebinding something
 /// that already matched is not a representable state.
+///
+/// **Reallocate with a Journal moving the amount off the fallback ledger.
+/// Never with `Alter`, and never with `Cancel`.** `TALLY_PROTOCOL_REFERENCE.md`
+/// §9.7 measured voucher `Alter` returning `CREATED=1, ALTERED=0` and creating
+/// a **duplicate with the target untouched** — four keys tested, all four
+/// duplicating — and §9.6 the same for `Cancel`. The counters report success
+/// either way, so the obvious correction produces exactly the double-posting a
+/// parked entry exists to avoid, and says it worked.
+///
+/// Re-import under the same client `REMOTEID` (§3.3a) is a real correction
+/// path, but reaches only vouchers Bridge itself wrote; a hand-keyed voucher
+/// has no client key. This is why the retained identity travels in the
+/// narration: the Journal that reallocates it is written by a human or a later
+/// batch, and the narration is what either can still read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FallbackBinding {
     class: MasterClass,
@@ -526,7 +597,7 @@ impl SourceEntity {
         }
         Ok(Self {
             position,
-            key: comparison_key(&name),
+            key: master_identity_key(&name),
             name,
             identifiers,
         })
@@ -589,7 +660,7 @@ impl MasterCatalog {
                 return Err(MasterBindingError::CatalogDuplicateName);
             }
             by_name.insert(name.clone(), entries.len());
-            let key = comparison_key(&name);
+            let key = master_identity_key(&name);
             entries.push(CatalogEntry {
                 identifiers: extract_identifiers(&name)?,
                 tokens: tokens_of(&key),
@@ -822,23 +893,36 @@ fn unresolved_from(
             .cmp(&right.1.rank())
             .then_with(|| left.0.cmp(&right.0))
     });
-    // A suppressed family is still counted. The operator is told how many
-    // masters the name reaches even when none of them is worth listing.
-    let candidate_count = ordered.len().max(masters_found);
-    let listed = ordered.len().min(MAX_CANDIDATES_PER_ENTITY);
-    let candidates = ordered
-        .into_iter()
-        .take(MAX_CANDIDATES_PER_ENTITY)
-        .map_while(|(catalog_name, rule)| {
-            *budget = budget.checked_sub(catalog_name.len())?;
-            Some(Candidate { catalog_name, rule })
-        })
-        .collect::<Vec<_>>();
+    // The variant is derived here, in one place, from the same facts that chose
+    // the reason — so "empty" can never mean something the variant does not say.
+    let candidates = if ordered.is_empty() {
+        if masters_found > 0 {
+            Candidates::Withheld {
+                found: masters_found,
+            }
+        } else {
+            Candidates::None
+        }
+    } else {
+        let capped = ordered.len().min(MAX_CANDIDATES_PER_ENTITY);
+        let listed = ordered
+            .into_iter()
+            .take(MAX_CANDIDATES_PER_ENTITY)
+            .map_while(|(catalog_name, rule)| {
+                *budget = budget.checked_sub(catalog_name.len())?;
+                Some(Candidate { catalog_name, rule })
+            })
+            .collect::<Vec<_>>();
+        let found = masters_found.max(capped);
+        if listed.len() < found {
+            Candidates::Truncated { listed, found }
+        } else {
+            Candidates::Listed(listed)
+        }
+    };
     let unresolved = Unresolved {
         reason,
         unresolved_identity: entity.identifiers.clone(),
-        candidate_count,
-        candidates_truncated: candidate_count > listed || candidates.len() < listed,
         candidates,
     };
     if matches!(reason, UnboundReason::NoCandidate) {
@@ -993,6 +1077,33 @@ pub(crate) fn comparison_key(value: &str) -> String {
             other => other.to_lowercase().collect(),
         })
         .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Whether Tally itself would consider two master names the same.
+///
+/// This is not `comparison_key`, and the difference is not cosmetic.
+/// `IMPLEMENTATION_GUIDE.md` §3.3b measured Tally's own master-name matching:
+/// case-insensitive **and separator-insensitive — a hyphen matches a space** —
+/// and otherwise exact on letters. `BRIDGE PROBE LEDGER A` matched a live
+/// `BRIDGE-PROBE-LEDGER-A`; `AND` for `&`, a missing suffix word and a singular
+/// for a plural were all rejected.
+///
+/// Tally is the authority on what counts as the same master, so this fold
+/// follows it. Being *stricter* than the authority is not the safe direction it
+/// looks like: it refuses names Tally would accept, and `X - Y` is a common
+/// ledger convention — six of seventeen hyphenated names in the observed books
+/// take that shape.
+///
+/// It is a **separate** function rather than a widening of `comparison_key`
+/// precisely because that one is shared: voucher numbers and voucher-type names
+/// fold through it too, and §3.3b says nothing about those. One fold per notion
+/// of sameness, each named for the question it answers.
+fn master_identity_key(value: &str) -> String {
+    comparison_key(value)
+        .replace('-', " ")
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
