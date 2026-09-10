@@ -1412,10 +1412,16 @@ Either way the §9.2 rule covers it: read the voucher back.
 > accepted, not refused.**
 
 **Scope.** One sales invoice, one company, one Gold instance. The other `ISINVOICE=Yes` shapes —
-purchase, debit note, credit note — are **UNVERIFIED**: they plausibly behave the same way, since
-the element belongs to the invoice view rather than to the voucher type, but that has not been
-tested. Treat `LEDGERENTRIES.LIST` as the safe default for any invoice voucher and confirm on the
-first write of each new type by reading the voucher back.
+purchase, debit note, credit note — are **UNVERIFIED** and this section prescribes nothing for
+them. There is a reason to expect them to match (the element belongs to the invoice *view*, not to
+the voucher type) and that is a hypothesis, not a default.
+
+**Procedure for the first write of an untested invoice type**, which costs one voucher and settles
+it: send a single voucher, then read it back. If the party and tax ledgers are missing and the
+stored total is the inventory lines alone, the element was discarded — check `Import Exceptions`
+for *"Mismatch in total amount between Credit and Debit entries"*, remove the voucher with
+`ACTION="Delete"` by `REMOTEID` (§9.12b) and re-send with the other element. Record the answer
+here. Do not send a batch of a new invoice type before that single voucher has been read back.
 
 **`Import Exceptions` accumulates across imports.** The same report also listed 25 unrelated
 `Duplicate Voucher No.` entries from that book's earlier history, and the Gateway was already
@@ -1460,7 +1466,14 @@ Four further observations, each measured:
    the party ledger first — it is mandatory, not advisory.** §12a.4 row 5 records that an
    allocation on a ledger with `ISBILLWISEON=No` is *silently discarded* and the entry stores with
    no allocations at all. Sending `New Ref` does not by itself prevent an unaged amount: on a
-   non-bill-wise party the invoice posts, the counters report success, and the reference is gone.
+   non-bill-wise party the invoice posts and the reference is gone.
+
+   Two boundaries on that. The discard is 12a.4's measurement on an **accounting** voucher, not on
+   this invoice shape — it is the reason the preflight is mandatory, and it is not a measurement of
+   invoice behaviour. And 12a.4's "every one reported `CREATED=1, ERRORS=0, EXCEPTIONS=0`" is a
+   **gateway** observation about accounting vouchers; what the counters say for a non-bill-wise
+   *invoice*, through either path, is **UNVERIFIED**. Preflight the ledger; do not rely on any
+   counter to tell you afterwards.
 4. **Tax rounds per line, then sums.** An invoice with 7,165.07 taxable at 9% stores **644.84**, not
    the 644.86 that 9% of the total gives — 644.84 being the sum of per-line rounded tax. **Compute
    tax per line and sum; do not tax the invoice total.**
