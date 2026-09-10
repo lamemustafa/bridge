@@ -952,7 +952,19 @@ fn validate_name_bounds(value: &str) -> Result<(), MasterBindingError> {
 /// Folds the punctuation an operator happened to type: NFC-equivalent dash and
 /// quote variants become ASCII, case is lowered, whitespace runs collapse.
 /// Nothing else is folded — no stemming, no transliteration, no vowel removal.
-fn comparison_key(value: &str) -> String {
+///
+/// **This is a contract, not an implementation detail.** Anything in this crate
+/// that decides whether two operator-typed strings are "the same" — master
+/// names here, and voucher numbers or voucher-type names elsewhere — must fold
+/// through this one function. A second, subtly different normaliser is exactly
+/// the divergence ADR 0016 exists to end, and it would diverge silently:
+/// the two agree on every name anyone tests by hand and disagree on the
+/// punctuation nobody thinks to try.
+///
+/// The corollary is that changing what this folds changes every consumer's
+/// notion of sameness at once. Widen it only with the same care as a wire
+/// format, and never to make one caller's case pass.
+pub(crate) fn comparison_key(value: &str) -> String {
     value
         .nfc()
         .flat_map(|character| match character {
