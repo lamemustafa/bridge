@@ -351,6 +351,16 @@ bytes, so it cannot support any claim about the exact bytes a real instance rece
 
 ## 9. Master-binding ledgers in `BRIDGE CORPUS OPENING`
 
+**VERIFIED 2026-09-10** for the seeding and the coverage counts; the binding behaviour built on
+them is **PARTIAL**. Scope of each, so neither is read for more than it covers:
+
+| claim | confidence | what establishes it |
+| --- | --- | --- |
+| The ten ledgers exist in that company and nowhere else | **VERIFIED** | `CREATED=10, ALTERED=0, ERRORS=0`, then a readback of the ledger list naming all ten, plus a readback of a guard company showing none |
+| No book carried an embedded identifier before this | **VERIFIED** | all 16 loaded companies read through the `StandardLedgerCatalogV1` request, responses written to files and parsed from the files; 470 names, 0 numeric and 1 code identifier |
+| The identifier rule behaves correctly against live-read names | **PARTIAL** | exercised against these ten seeded names only, on one instance, one licence tier, one Tally build. Fabricated *source* names against live *catalogue* names — no real source document has been bound end to end |
+| Binding is safe on catalogues generally | **UNVERIFIED** | no engagement has run through this code path; the mutation sweep is fabricated mutations of live names, not observed operator input |
+
 **Added 2026-09-10.** Ten ledgers prefixed `MB `, seeded so the master-binding
 identifier rule has live coverage. Before this, **no book on either instance carried an
 embedded identifier**: across 470 live ledger names read from all 16 loaded companies,

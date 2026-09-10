@@ -1212,6 +1212,7 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
             && digits >= MIN_CODE_IDENTIFIER_DIGITS
             && letters >= 2
             && !is_period(token)
+            && !is_masked(&canonical)
         {
             identifiers.insert(Identifier {
                 kind: IdentifierKind::Code,
@@ -1223,7 +1224,12 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
         // reach an unrelated `Bank 12345678` through the one-letter gap that
         // the code test rejects — a token either identifies by its whole shape
         // or not at all.
-        if letters > 0 {
+        //
+        // The test is **Unicode alphabetic**, not ASCII. The books observed
+        // here carry Devanagari, Tamil and Bengali ledger names, and an
+        // ASCII-only guard read `पार्टी12345678` as digits standing alone,
+        // binding a party to an unrelated `Bank 12345678`.
+        if token.chars().any(char::is_alphabetic) {
             continue;
         }
         for run in token.split(|character: char| {
@@ -1245,6 +1251,24 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
         return Err(MasterBindingError::TooManyIdentifiers);
     }
     Ok(identifiers.into_iter().collect())
+}
+
+/// A masked value exposes a non-unique suffix and identifies nothing.
+///
+/// `XXXXX1234X` clears every length and composition test — ten characters, six
+/// letters, four digits, no period — while the only information in it is a last
+/// four that any number of parties share. Two unrelated ledgers carrying the
+/// same mask would bind to each other.
+///
+/// Recognized by its letters being a single repeated character, which is what a
+/// mask is and what an identity-bearing code never is: `PH01AB00` and a
+/// registration number both carry distinct letters.
+fn is_masked(canonical: &str) -> bool {
+    let mut letters = canonical.chars().filter(char::is_ascii_alphabetic);
+    match letters.next() {
+        Some(first) => letters.all(|letter| letter == first),
+        None => false,
+    }
 }
 
 /// A period label identifies a period, not a party or an item. Two unrelated

@@ -626,6 +626,31 @@ fn conflicting_identifiers_outrank_a_byte_exact_name_but_a_shared_one_does_not()
 }
 
 #[test]
+fn a_non_ascii_name_beside_digits_is_still_a_name() {
+    // The observed books carry Devanagari, Tamil and Bengali ledger names. An
+    // ASCII-only letter guard read `पार्टी12345678` as digits standing alone
+    // and bound a party to an unrelated bank ledger.
+    let party = "\u{92a}\u{93e}\u{930}\u{94d}\u{91f}\u{940}12345678";
+    assert!(entity(party).identifiers().is_empty());
+    let catalog = ledgers(&["Bank 12345678", "Beta Supply"]);
+    assert_eq!(bind_one_name(&catalog, party).bound_name(), None);
+}
+
+#[test]
+fn a_masked_value_identifies_nothing() {
+    // `XXXXX1234X` clears every length and composition test while carrying only
+    // a last four that any number of parties share.
+    assert!(entity("Purchases XXXXX1234X").identifiers().is_empty());
+    let catalog = ledgers(&["Sales XXXXX1234X", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&catalog, "Purchases XXXXX1234X").bound_name(),
+        None
+    );
+    // Distinct letters are what an identity-bearing code has and a mask does not.
+    assert_eq!(entity("Item PH01AB00").identifiers().len(), 1);
+}
+
+#[test]
 fn a_fiscal_year_range_is_a_period_not_an_account_number() {
     // `2025-2026` strips to an eight-digit run that no calendar reading
     // rejects, and two unrelated ledgers share a fiscal year as routinely as
