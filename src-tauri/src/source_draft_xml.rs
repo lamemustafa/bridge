@@ -516,6 +516,65 @@ mod tests {
         );
     }
     #[test]
+    fn accepts_the_structure_of_a_real_voucher_import_candidate() {
+        // Provenance, stated exactly: this fixture is a structural derivative of
+        // a real user-authored Tally voucher-import file. Its envelope nesting,
+        // element set and order, attribute set, per-voucher field presence,
+        // entry cardinality, balanced +/- pair invariant and value FORMATS are
+        // transcribed from that document. Every value is synthetic; no original
+        // name, date, amount, narration, transaction id, company or party
+        // survives. See the fixture README for the derivation and its limits.
+        //
+        // What it establishes: the supported shape is not an assumption this
+        // suite invented, unlike the hand-authored XML constant above.
+        // What it does NOT establish: that Tally accepted an import of this
+        // document. The source file's own import outcome is unknown, so this is
+        // format evidence, never acceptance evidence.
+        let derived = include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/voucher_import_candidate_structure_derived.xml"
+        );
+        let parsed = parse_source_xml(derived, "voucher-import-candidate.xml".into())
+            .expect("the real import candidate shape must parse");
+
+        assert_eq!(parsed.vouchers.len(), 77);
+        assert!(parsed
+            .vouchers
+            .iter()
+            .all(|voucher| voucher.entries.len() == 2));
+
+        // Fields this format carries that local preparation does not interpret
+        // must be reported as omissions rather than silently dropped.
+        for voucher in &parsed.vouchers {
+            assert_eq!(
+                voucher.omitted_fields,
+                [
+                    "VOUCHER/@ACTION",
+                    "VOUCHER/EFFECTIVEDATE",
+                    "VOUCHER/PARTYLEDGERNAME",
+                    "VOUCHER/VOUCHERNUMBER",
+                ]
+            );
+        }
+
+        // Entries carry no ISDEEMEDPOSITIVE, so polarity stays unanswered and is
+        // never inferred from the amount sign.
+        assert!(parsed
+            .vouchers
+            .iter()
+            .flat_map(|voucher| &voucher.entries)
+            .all(|entry| entry.polarity.is_none()));
+
+        // Amounts are retained as exact source text, not reparsed into a number.
+        let first = &parsed.vouchers[0];
+        assert_eq!(first.voucher_type, "Receipt");
+        assert_eq!(first.date, "20010101");
+        assert_eq!(first.entries[0].amount, "-7.50");
+        assert_eq!(first.entries[1].amount, "7.50");
+
+        // The source bytes survive parsing untouched.
+        assert_eq!(parsed.utf8.as_bytes(), derived.as_slice());
+    }
+    #[test]
     fn preserves_raw_source_and_marks_omitted_fields() {
         let parsed = parse_source_xml(XML.as_bytes(), "source.xml".into()).unwrap();
         assert_eq!(parsed.vouchers[0].remote_id, "id&1");

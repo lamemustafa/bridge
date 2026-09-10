@@ -591,7 +591,7 @@
     },
     {
       "path": "src-tauri/src/source_draft_xml.rs",
-      "sha256": "8c54f2fc59da5f7b64aa7b68f969b223bd65de914e92cb9350a7c714e6e48b4e"
+      "sha256": "5fbffdb7d3a25093af3b8d3434bf87f35355cda1232e17d1170274ecce8e64d1"
     },
     {
       "path": "src-tauri/src/sync/coordinator.rs",
@@ -842,5 +842,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "9196677eb5a3f403650548e5c5a578f8c3a0a43af6dec9a8518701cc1cab7367"
+  "manifest_sha256": "39dc0ccac8c58b4b4be59afbdf573463c278e9e1077305d26b7203f77e640f70"
 }

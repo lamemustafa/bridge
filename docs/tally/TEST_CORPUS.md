@@ -309,9 +309,50 @@ the data. That is the right setup for closing the open Alter/Cancel question (re
 
 ---
 
+## 8. Derived voucher-import candidate fixture
+
+`src-tauri/crates/bridge-tally-protocol/tests/fixtures/voucher_import_candidate_structure_derived.xml`
+
+**What it is.** A structural derivative of a **real, user-authored Tally voucher-import file**
+supplied by an operator who had attempted that import by hand. It exists because every parser
+success case for the source-draft feature previously derived from a hand-authored `IMPORTDATA`
+string, and a hand-written fixture encodes an assumption and then defends it (§P1 of AGENTS.md).
+
+**What is transcribed from the real document** — envelope nesting and element order; the element
+set (`ENVELOPE/HEADER/TALLYREQUEST`, `BODY/IMPORTDATA/REQUESTDESC{REPORTNAME,STATICVARIABLES/
+SVCURRENTCOMPANY}/REQUESTDATA/TALLYMESSAGE/VOUCHER`); the attribute set `REMOTEID`, `VCHTYPE`
+and **`ACTION`**; per-voucher presence of `DATE`, `EFFECTIVEDATE`, `VOUCHERNUMBER`, `NARRATION`,
+`PARTYLEDGERNAME`; exactly two `ALLLEDGERENTRIES.LIST` per voucher, each with `LEDGERNAME` and
+`AMOUNT` and **no `ISDEEMEDPOSITIVE`**; the balanced +/- amount pair; value formats (`YYYYMMDD`
+dates with `DATE == EFFECTIVEDATE`, 2-decimal amounts, `BNK-<date>-<txnid>` voucher numbers in
+all three observed shapes); distinct-ledger cardinality and reuse pattern; UTF-8 without BOM and
+no entity escapes. A structural diff against the original reports **no** difference.
+
+**What is synthetic.** Every value. Names, dates, amounts, narrations, transaction ids, the
+company and the party are all generated. The generator picks its vocabulary by checking it
+against the source's own token set, and emits dates in a year outside the source's range, so no
+word of ≥4 characters and no digit run of ≥6 from the original can appear. An adversarial leak
+check against **both** private source revisions reports zero value, token and numeric leaks.
+
+**What it is good for.** Proving the supported shape is a real observed format rather than an
+invented one, and that fields the preparation screen does not interpret (`VOUCHER/@ACTION`,
+`VOUCHER/EFFECTIVEDATE`, `VOUCHER/PARTYLEDGERNAME`, `VOUCHER/VOUCHERNUMBER`) are surfaced as
+omissions instead of being silently dropped.
+
+**What it is NOT good for — read this before citing it.** It is **not** proof that Tally
+accepted an import. The operator's original attempt reportedly produced errors, partial imports
+or incorrect data, and the actual import outcome of that file **remains unknown**. This fixture
+is *format* evidence, never *acceptance* evidence. Establishing acceptance still requires a
+captured, byte-retained import into a licensed lab company with the returned counters and a
+readback — none of which this file provides. It is also a derivative, not captured original
+bytes, so it cannot support any claim about the exact bytes a real instance received.
+
+---
+
 ## 6. Changelog
 
 | Date | Change |
 | --- | --- |
 | 2026-07-30 | Created. Records the missing-bill-reference defect and the verified fix. |
+| 2026-09-10 | Added §8: the derived voucher-import candidate fixture, its transcribed structure, its synthetic values, the leak and shape checks, and the explicit limit that it is format evidence and not proof of an accepted import. |
 | 2026-07-31 | `Bridge Billwise Lab` created and historically reconciled: GUID, extents, reconciliation target, and locality measurement. It is now explicitly unqualified pending paired partitions, opening coverage, and extent-bound proof. Added §0 (which corpus for what) and §7 (three traps found while validating). Recorded that the first acceptance script used the wrong criterion and would have condemned a good corpus. |

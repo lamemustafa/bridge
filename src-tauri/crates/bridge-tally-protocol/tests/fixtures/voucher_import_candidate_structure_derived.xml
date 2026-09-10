@@ -1,0 +1,1175 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ENVELOPE>
+  <HEADER>
+    <TALLYREQUEST>Import Data</TALLYREQUEST>
+  </HEADER>
+  <BODY>
+    <IMPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>Vouchers</REPORTNAME>
+        <STATICVARIABLES>
+          <SVCURRENTCOMPANY>Synthetic Ledger Set</SVCURRENTCOMPANY>
+        </STATICVARIABLES>
+      </REQUESTDESC>
+      <REQUESTDATA>
+        <TALLYMESSAGE>
+        <VOUCHER REMOTEID="fixture-001" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010101</DATE>
+            <EFFECTIVEDATE>20010101</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010101-S0000010</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 001</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Alpha</LEDGERNAME>
+              <AMOUNT>-7.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>7.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-002" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010604</DATE>
+            <EFFECTIVEDATE>20010604</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010604-T6540010</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 002</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Alpha</LEDGERNAME>
+              <AMOUNT>-95.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>95.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-003" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20011107</DATE>
+            <EFFECTIVEDATE>20011107</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20011107-U3190010</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 003</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Alpha</LEDGERNAME>
+              <AMOUNT>-814.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>814.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-004" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010410</DATE>
+            <EFFECTIVEDATE>20010410</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010410-V0731010</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 004</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Alpha</LEDGERNAME>
+              <AMOUNT>-4510.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>4510.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-005" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010913</DATE>
+            <EFFECTIVEDATE>20010913</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010913-W6281010</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 005</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Bravo</LEDGERNAME>
+              <AMOUNT>31644.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-31644.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-006" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010216</DATE>
+            <EFFECTIVEDATE>20010216</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010216-X3822010</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 006</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>-12.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>12.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-007" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010719</DATE>
+            <EFFECTIVEDATE>20010719</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010719-Y0472010</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 007</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>100.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-100.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-008" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20011222</DATE>
+            <EFFECTIVEDATE>20011222</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20011222-Z6913010</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 008</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>-819.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>819.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-009" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010525</DATE>
+            <EFFECTIVEDATE>20010525</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010525-S3563010</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 009</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>-4515.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>4515.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-010" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20011028</DATE>
+            <EFFECTIVEDATE>20011028</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20011028-T0114010</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 010</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>-31649.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>31649.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-011" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010303</DATE>
+            <EFFECTIVEDATE>20010303</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010303-U7654010</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 011</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>-17.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>17.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-012" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010806</DATE>
+            <EFFECTIVEDATE>20010806</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010806-V3205010</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 012</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>105.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-105.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-013" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010109</DATE>
+            <EFFECTIVEDATE>20010109</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010109-W0845010</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 013</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>-824.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>824.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-014" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010612</DATE>
+            <EFFECTIVEDATE>20010612</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010612-X7395010</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 014</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>4520.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-4520.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-015" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20011115</DATE>
+            <EFFECTIVEDATE>20011115</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20011115-Y3936010</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 015</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>-31654.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>31654.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-016" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010418</DATE>
+            <EFFECTIVEDATE>20010418</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010418-Z0586010</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 016</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>-22.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>22.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-017" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010921</DATE>
+            <EFFECTIVEDATE>20010921</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010921-S7037010</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 017</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>-110.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>110.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-018" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010224</DATE>
+            <EFFECTIVEDATE>20010224</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010224-T3677010</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 018</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>829.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-829.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-019" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010727</DATE>
+            <EFFECTIVEDATE>20010727</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010727-U0228010</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 019</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>4525.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-4525.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-020" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20011202</DATE>
+            <EFFECTIVEDATE>20011202</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20011202-V7768010</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 020</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>31659.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-31659.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-021" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010505</DATE>
+            <EFFECTIVEDATE>20010505</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010505-W4319010</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 021</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>27.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-27.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-022" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20011008</DATE>
+            <EFFECTIVEDATE>20011008</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20011008-X0959010</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 022</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>-115.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>115.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-023" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010311</DATE>
+            <EFFECTIVEDATE>20010311</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010311-Y7400110</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 023</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>-834.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>834.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-024" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010814</DATE>
+            <EFFECTIVEDATE>20010814</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010814-Z4050110</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 024</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>-4530.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>4530.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-025" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010117</DATE>
+            <EFFECTIVEDATE>20010117</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010117-S0690110</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 025</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>-31664.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>31664.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-026" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010620</DATE>
+            <EFFECTIVEDATE>20010620</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010620-T7141110</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 026</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>32.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-32.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-027" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20011123</DATE>
+            <EFFECTIVEDATE>20011123</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20011123-U4781110</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 027</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>120.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-120.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-028" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010426</DATE>
+            <EFFECTIVEDATE>20010426</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010426-V033211</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 028</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>839.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-839.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-029" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010901</DATE>
+            <EFFECTIVEDATE>20010901</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010901-W7872110</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 029</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>-4535.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>4535.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-030" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010204</DATE>
+            <EFFECTIVEDATE>20010204</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010204-X442311</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 030</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>-31669.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>31669.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-031" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010707</DATE>
+            <EFFECTIVEDATE>20010707</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010707-Y1073110</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 031</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>37.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-37.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-032" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20011210</DATE>
+            <EFFECTIVEDATE>20011210</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20011210-Z751411</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 032</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>125.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-125.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-033" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010513</DATE>
+            <EFFECTIVEDATE>20010513</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010513-S416411</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 033</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>-844.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>844.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-034" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20011016</DATE>
+            <EFFECTIVEDATE>20011016</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20011016-T1705110</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 034</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>-4540.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>4540.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-035" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010319</DATE>
+            <EFFECTIVEDATE>20010319</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010319-U7255110</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 035</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>31674.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-31674.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-036" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010822</DATE>
+            <EFFECTIVEDATE>20010822</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010822-V4895110</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 036</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>42.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-42.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-037" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010125</DATE>
+            <EFFECTIVEDATE>20010125</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010125-W1446110</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 037</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>-130.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>130.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-038" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010628</DATE>
+            <EFFECTIVEDATE>20010628</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010628-X7986110</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 038</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Echo</LEDGERNAME>
+              <AMOUNT>849.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-849.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-039" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20011103</DATE>
+            <EFFECTIVEDATE>20011103</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20011103-Y4537110</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 039</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Kilo</LEDGERNAME>
+              <AMOUNT>-4545.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>4545.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-040" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010406</DATE>
+            <EFFECTIVEDATE>20010406</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010406-Z1187110</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 040</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Echo</LEDGERNAME>
+              <AMOUNT>31679.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-31679.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-041" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010909</DATE>
+            <EFFECTIVEDATE>20010909</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010909-S8628110</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 041</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Lima</LEDGERNAME>
+              <AMOUNT>-47.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>47.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-042" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010212</DATE>
+            <EFFECTIVEDATE>20010212</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010212-T4278110</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 042</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Bravo</LEDGERNAME>
+              <AMOUNT>135.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-135.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-043" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010715</DATE>
+            <EFFECTIVEDATE>20010715</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010715-U1819110</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 043</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Mike</LEDGERNAME>
+              <AMOUNT>-854.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>854.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-044" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20011218</DATE>
+            <EFFECTIVEDATE>20011218</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20011218-V8369110</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 044</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>-4550.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>4550.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-045" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010521</DATE>
+            <EFFECTIVEDATE>20010521</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010521-W4900210</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 045</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Lima</LEDGERNAME>
+              <AMOUNT>-31684.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>31684.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-046" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20011024</DATE>
+            <EFFECTIVEDATE>20011024</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20011024-X1550210</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 046</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>-52.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>52.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-047" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010327</DATE>
+            <EFFECTIVEDATE>20010327</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010327-Y8001210</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 047</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Oscar</LEDGERNAME>
+              <AMOUNT>-140.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>140.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-048" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010802</DATE>
+            <EFFECTIVEDATE>20010802</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010802-Z4641WX</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 048</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Bravo</LEDGERNAME>
+              <AMOUNT>859.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-859.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-049" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010105</DATE>
+            <EFFECTIVEDATE>20010105</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010105-S1291210</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 049</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Alpha</LEDGERNAME>
+              <AMOUNT>4555.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-4555.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-050" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010608</DATE>
+            <EFFECTIVEDATE>20010608</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010608-T8732210</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 050</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Kilo</LEDGERNAME>
+              <AMOUNT>-31689.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>31689.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-051" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20011111</DATE>
+            <EFFECTIVEDATE>20011111</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20011111-U5382210</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 051</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Alpha</LEDGERNAME>
+              <AMOUNT>57.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-57.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-052" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010414</DATE>
+            <EFFECTIVEDATE>20010414</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010414-V1923210</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 052</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Alpha</LEDGERNAME>
+              <AMOUNT>-145.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>145.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-053" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010917</DATE>
+            <EFFECTIVEDATE>20010917</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010917-W8473210</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 053</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Bravo</LEDGERNAME>
+              <AMOUNT>864.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-864.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-054" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010220</DATE>
+            <EFFECTIVEDATE>20010220</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010220-X5024210</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 054</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Alpha</LEDGERNAME>
+              <AMOUNT>-4560.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>4560.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-055" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010723</DATE>
+            <EFFECTIVEDATE>20010723</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010723-Y1664210</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 055</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Echo</LEDGERNAME>
+              <AMOUNT>31694.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-31694.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-056" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20011226</DATE>
+            <EFFECTIVEDATE>20011226</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20011226-Z8115210</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 056</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Papa</LEDGERNAME>
+              <AMOUNT>-62.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>62.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-057" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010501</DATE>
+            <EFFECTIVEDATE>20010501</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010501-S5755210</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 057</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Oscar</LEDGERNAME>
+              <AMOUNT>-150.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>150.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-058" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20011004</DATE>
+            <EFFECTIVEDATE>20011004</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20011004-T1306210</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 058</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Echo</LEDGERNAME>
+              <AMOUNT>869.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-869.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-059" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010307</DATE>
+            <EFFECTIVEDATE>20010307</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010307-U8846210</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 059</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Mike</LEDGERNAME>
+              <AMOUNT>-4565.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>4565.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-060" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010810</DATE>
+            <EFFECTIVEDATE>20010810</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010810-V5496210</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 060</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Alpha</LEDGERNAME>
+              <AMOUNT>31699.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-31699.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-061" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010113</DATE>
+            <EFFECTIVEDATE>20010113</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010113-W2047210</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 061</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Alpha</LEDGERNAME>
+              <AMOUNT>-67.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>67.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-062" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010616</DATE>
+            <EFFECTIVEDATE>20010616</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010616-X858721</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 062</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Delta</LEDGERNAME>
+              <AMOUNT>155.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-155.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-063" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20011119</DATE>
+            <EFFECTIVEDATE>20011119</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20011119-Y5138210</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 063</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Mike</LEDGERNAME>
+              <AMOUNT>-874.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>874.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-064" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010422</DATE>
+            <EFFECTIVEDATE>20010422</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010422-Z2778210</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 064</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Alpha</LEDGERNAME>
+              <AMOUNT>-4570.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>4570.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-065" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010925</DATE>
+            <EFFECTIVEDATE>20010925</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010925-S8229210</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 065</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Alpha</LEDGERNAME>
+              <AMOUNT>31704.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-31704.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-066" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010228</DATE>
+            <EFFECTIVEDATE>20010228</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010228-T5869210</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 066</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Bravo</LEDGERNAME>
+              <AMOUNT>72.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-72.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-067" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010703</DATE>
+            <EFFECTIVEDATE>20010703</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010703-U241031</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 067</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Quebec</LEDGERNAME>
+              <AMOUNT>-160.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>160.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-068" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20011206</DATE>
+            <EFFECTIVEDATE>20011206</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20011206-V8950310</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 068</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Romeo</LEDGERNAME>
+              <AMOUNT>-879.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>879.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-069" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010509</DATE>
+            <EFFECTIVEDATE>20010509</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010509-W5501310</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 069</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Sierra</LEDGERNAME>
+              <AMOUNT>-4575.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>4575.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-070" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20011012</DATE>
+            <EFFECTIVEDATE>20011012</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20011012-X2151310</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 070</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Tango</LEDGERNAME>
+              <AMOUNT>-31709.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>31709.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-071" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010315</DATE>
+            <EFFECTIVEDATE>20010315</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010315-Y9691310</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 071</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Kilo</LEDGERNAME>
+              <AMOUNT>-77.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>77.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-072" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010818</DATE>
+            <EFFECTIVEDATE>20010818</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010818-Z5242310</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 072</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Bravo</LEDGERNAME>
+              <AMOUNT>165.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-165.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-073" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010121</DATE>
+            <EFFECTIVEDATE>20010121</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010121-S288231</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 073</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Quebec</LEDGERNAME>
+              <AMOUNT>-884.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>884.00</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-074" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010624</DATE>
+            <EFFECTIVEDATE>20010624</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010624-T9333310</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 074</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Echo</LEDGERNAME>
+              <AMOUNT>4580.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-4580.75</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-075" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20011127</DATE>
+            <EFFECTIVEDATE>20011127</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20011127-U5973310</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 075</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Alpha</LEDGERNAME>
+              <AMOUNT>-31714.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>31714.10</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-076" VCHTYPE="Receipt" ACTION="Create">
+            <DATE>20010402</DATE>
+            <EFFECTIVEDATE>20010402</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010402-V2524310</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 076</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Mike</LEDGERNAME>
+              <AMOUNT>-82.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>82.50</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        <VOUCHER REMOTEID="fixture-077" VCHTYPE="Payment" ACTION="Create">
+            <DATE>20010905</DATE>
+            <EFFECTIVEDATE>20010905</EFFECTIVEDATE>
+            <VOUCHERNUMBER>BNK-20010905-W9074310</VOUCHERNUMBER>
+            <NARRATION>Synthetic narration 077</NARRATION>
+            <PARTYLEDGERNAME>Ledger Zero</PARTYLEDGERNAME>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Bravo</LEDGERNAME>
+              <AMOUNT>170.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Ledger Zero</LEDGERNAME>
+              <AMOUNT>-170.25</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        </TALLYMESSAGE>
+      </REQUESTDATA>
+    </IMPORTDATA>
+  </BODY>
+</ENVELOPE>
