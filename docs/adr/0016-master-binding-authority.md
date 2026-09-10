@@ -155,6 +155,43 @@ Candidates are capped at `MAX_CANDIDATES_PER_ENTITY` (25) with the true
 `candidate_count` and an explicit `candidates_truncated` flag retained, so a
 truncated list is never mistaken for a short one.
 
+### 4a. An empty candidate list is three different facts, and the producer says which
+
+`candidates` can be empty for three unrelated reasons, and they mean opposite
+things to anyone deciding what to do next:
+
+| `reason` | what empty means |
+| --- | --- |
+| `NoCandidate` | no master resembles this name at all |
+| `NoDiscriminatingCandidate` | `candidate_count` masters resemble it and none is separable — **many exist**, none is worth showing |
+| any, with `candidates_truncated` | the list was cut, by the per-entity cap or by the report's aggregate byte budget |
+
+So `candidates.is_empty()` alone answers nothing. The disambiguators are
+`reason`, `candidate_count` and `candidates_truncated`, and a consumer that
+reads the empty vector as "nothing exists" is wrong in two cases out of three.
+
+This is stated here, in the producer's contract, rather than left to each
+consumer to rediscover, because **it has already been got wrong twice by
+different lanes**: the preparation screen rendered "0 possible ledgers are
+listed first" over a family of 120, and the voucher-presence contract had to
+add a paired test to stop its own rule collapsing into "no candidates means
+unknown" — a reading that is right for the truncated case and wrong for
+`NoCandidate`.
+
+It is the same defect class this ADR was written against: a refusal whose
+neighbouring value reads as an answer. The vocabulary is deliberately explicit
+so that "nothing survived to be shown" and "nothing exists" cannot be confused
+by reading one field.
+
+**Why this is a doc and not a type.** Making the four cases unrepresentable —
+an enum of `Listed` / `Truncated` / `Withheld` / `None` rather than a vector
+plus two flags — would be the stronger fix and is the one P2 asks for. It is
+deliberately deferred: the change is breaking, a stacked consumer already
+depends on `candidates_truncated` as a predicate and holds the boundary with
+tests, and forcing that rework while this contract is under review trades a
+real improvement for a real regression risk. It should be revisited once this
+and its dependent have merged.
+
 ### 5. Status vocabulary
 
 Per entity, exactly one of:

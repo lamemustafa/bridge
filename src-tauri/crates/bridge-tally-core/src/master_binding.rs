@@ -263,8 +263,18 @@ pub struct Unresolved {
     /// A parked amount whose identity went into a write-only field is
     /// unreallocatable, and nothing about the write would say so.
     pub unresolved_identity: Vec<Identifier>,
+    /// The masters worth showing, most defensible first.
+    ///
+    /// **Empty is three different facts.** With `NoCandidate` it means nothing
+    /// resembles this name; with `NoDiscriminatingCandidate` it means
+    /// `candidate_count` masters resemble it and none is separable; with
+    /// `candidates_truncated` it means the list was cut, by the per-entity cap
+    /// or the report's aggregate byte budget. Reading the empty vector as
+    /// "nothing exists" is wrong in two of the three. Disambiguate on `reason`
+    /// and `candidates_truncated` — see ADR 0016 §4a.
     pub candidates: Vec<Candidate>,
-    /// Candidates found before truncation.
+    /// Masters found before any truncation, including a family that was
+    /// counted and deliberately not listed.
     pub candidate_count: usize,
     pub candidates_truncated: bool,
 }
