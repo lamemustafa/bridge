@@ -18,6 +18,29 @@
 //! Every outcome that is not a reserved cash/bank identity is a refusal,
 //! including "could not be established". An unclassifiable ledger is never
 //! admitted onto a side that requires one.
+//!
+//! # What this does not see
+//!
+//! A verdict here is easy to read for more than it covers, so the limits are
+//! written beside it rather than inferred from the absence of a check.
+//!
+//! * **It is a group check, not a ledger-suitability check.** The question
+//!   answered is "does this ledger's group ancestry reach a money identity",
+//!   not "can Tally use this ledger in this voucher". A bill-wise party
+//!   (§9.13), a foreign-currency bank account, a ledger requiring cost-centre
+//!   allocation — all classify exactly the same as one that needs none of it.
+//! * **It is true as of the read, and nothing re-checks it.** The build reads
+//!   the masters twice and refuses if they moved, which proves stability
+//!   *across the build* and says nothing about afterwards. The file is then
+//!   imported by hand, and Bridge never observes that import. Regrouping a
+//!   ledger is an ordinary Tally operation; do it between build and import and
+//!   the verdict is stale, with no later gate to catch it. `verify_import`
+//!   compares entries and would not notice a party that has since become a
+//!   bank ledger.
+//! * **An incomplete read cannot admit, only refuse.** A group missing from a
+//!   truncated collection presents as unresolvable ancestry, which refuses. So
+//!   the failure mode of a partial read is a wrongly rejected batch, never a
+//!   wrongly accepted one.
 
 use bridge_tally_protocol::TallyNamedMaster;
 use std::collections::{BTreeMap, BTreeSet};

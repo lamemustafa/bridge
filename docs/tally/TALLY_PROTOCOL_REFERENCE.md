@@ -1018,6 +1018,21 @@ Classification walks the ledger's group ancestry through `RESERVEDNAME` per §8.
 predefined group still classifies. A book whose money ledger sits under a group the Group
 collection does not carry at all is refused the same way.
 
+**What that check does not cover**, written here because a passing verdict invites being read
+for more than it proves:
+
+- It is a **group** check, not a ledger-suitability check. A bill-wise party, a foreign-currency
+  bank account and a ledger requiring cost-centre allocation all classify identically to one
+  needing none of that. It answers where the ledger sits, not whether Tally can use it here.
+- It is true **as of the read**. The build reads the masters twice and refuses if they moved,
+  which establishes stability across the build and nothing after it. The file is imported by
+  hand later and Bridge never observes that import, so a ledger regrouped in between — an
+  ordinary operation — leaves a stale verdict with no later gate. `verify_import` compares
+  entries and would not notice a party that has since become a bank ledger.
+- An **incomplete read refuses rather than admits**: a group missing from a truncated collection
+  reads as unresolvable ancestry. The failure mode of a partial read is a rejected batch, never
+  an accepted one.
+
 **What it still does not do.** Two gaps, both stated here rather than left to be discovered.
 
 Nothing detects a party ledger configured for bill-wise accounting: the catalogue Bridge reads
