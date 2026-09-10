@@ -1159,3 +1159,57 @@ fn every_undecided_reason_carries_a_distinct_stable_code() {
     .collect::<BTreeSet<_>>();
     assert_eq!(codes.len(), 8);
 }
+
+// --- the aggregate candidate budget is a second source of "incomplete" ------
+
+/// `master_binding` spends an aggregate candidate-byte budget in entity order
+/// while the report is built, so an entity's candidate list can arrive **empty
+/// with `candidates_truncated`** for a reason that has nothing to do with its
+/// own name — pressure from earlier entities in the same report. That is a new
+/// source of a signal this contract already acts on, and the danger is reading
+/// "no candidates" as "nothing in this book resembles this party".
+#[test]
+fn an_aggregately_truncated_candidate_list_withholds_absent() {
+    let binding = master_binding::EntityBinding {
+        position: 0,
+        source_name: "Delta Trading".to_string(),
+        status: BindingStatus::Ambiguous(master_binding::Unresolved {
+            reason: UnboundReason::NearMiss,
+            unresolved_identity: Vec::new(),
+            // Empty, yet seven candidates were found before the budget ran out.
+            candidates: Vec::new(),
+            candidate_count: 7,
+            candidates_truncated: true,
+        }),
+    };
+    let resolution = resolution_of(&binding);
+    assert!(
+        resolution.compare_keys.is_empty(),
+        "no name survived to be compared"
+    );
+    assert!(
+        resolution.incomplete,
+        "names that were never compared cannot license an absence"
+    );
+}
+
+/// The contrast that keeps the rule honest: a party with no candidates and no
+/// truncation genuinely has nothing resembling it in the catalog, so no posted
+/// voucher can be carrying it and `Absent` stays available.
+#[test]
+fn an_untruncated_empty_candidate_list_still_permits_absent() {
+    let binding = master_binding::EntityBinding {
+        position: 0,
+        source_name: "Zulu Enterprises".to_string(),
+        status: BindingStatus::Unmatched(master_binding::Unresolved {
+            reason: UnboundReason::NoCandidate,
+            unresolved_identity: Vec::new(),
+            candidates: Vec::new(),
+            candidate_count: 0,
+            candidates_truncated: false,
+        }),
+    };
+    let resolution = resolution_of(&binding);
+    assert!(resolution.compare_keys.is_empty());
+    assert!(!resolution.incomplete);
+}

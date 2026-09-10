@@ -11,20 +11,32 @@ rejected without separate evidence.
 
 ## Context
 
-**Tally has no idempotency.** Re-sending an identical voucher payload with the
-same `VOUCHERNUMBER` creates a second voucher — verified, and recorded in
-[`TALLY_PROTOCOL_REFERENCE.md` §9.3](../tally/TALLY_PROTOCOL_REFERENCE.md).
-Nothing in the protocol dedupes on the client's behalf. Duplicated invoices
-inside a filed GST period are a return problem, not a cosmetic one.
+**Tally dedupes on one key and no other.** Re-sending an identical voucher
+payload with the same `VOUCHERNUMBER` creates a second voucher — verified, and
+recorded in [`TALLY_PROTOCOL_REFERENCE.md`
+§9.3](../tally/TALLY_PROTOCOL_REFERENCE.md). A *client-supplied* `REMOTEID` is
+the exception and the only one:
+[`IMPLEMENTATION_GUIDE.md`
+§3.3a](../tally/IMPLEMENTATION_GUIDE.md#33a-remoteid-is-the-idempotency-key--supersedes-34s-conclusion)
+verified that re-importing the same payload under the same client `REMOTEID`
+**upserts** — `CREATED=0, ALTERED=1`, one voucher, not two — and §9.8's scope
+clarification records the same result on the licensed Journal path.
+
+Read §9.3's heading alone and you get "no idempotency", flat; that heading is
+narrower than it reads and does not point at the exception. **Neither fact
+rescues this contract, because both are about a voucher the *client* keyed.**
+A voucher an operator typed into Tally by hand carries no client `REMOTEID` to
+dedupe against, and duplicated invoices inside a filed GST period are a return
+problem, not a cosmetic one.
 
 So before any generated batch can be imported, one question has to be answered
 and Bridge cannot answer it:
 
-- A dealership's August sales: twenty invoices in the source report, **fifteen
+- One engagement's month of sales: twenty invoices in the source report, **fifteen
   already keyed in by hand.** That was discovered only because the operator
   happened to send a Day Book screenshot. Without it the run would have posted
   twenty and duplicated fifteen.
-- A trading firm's August sales: **forty-nine vouchers generated, validated,
+- Another engagement's month of sales: **forty-nine vouchers generated, validated,
   arithmetic-checked, and un-importable at the end of the day**, waiting for a
   Day Book to arrive by hand the next morning.
 
@@ -45,7 +57,7 @@ the contract that says what a comparison is allowed to conclude.
 
 | Candidate key | Where it holds | Where it fails |
 | --- | --- | --- |
-| `REMOTEID` | Vouchers Bridge imported. Reliable. | Absent from every hand-keyed voucher — which is both blocked engagements. |
+| `REMOTEID` | A voucher whose Tally-assigned value the caller has already observed. | The **client** key is not readable back at all: §3.3a verified that Tally overwrites the attribute with its own value, so a key Bridge wrote can never be matched against a later read. Whether a voucher keyed by hand in the Tally UI carries a Tally-assigned value is **untested in either direction** — assuming it does not would be as unfounded as assuming it does. |
 | `VOUCHERNUMBER` | Voucher types numbered **Manual**. One book preserved a long alphanumeric invoice series verbatim, another a plain three-digit bill number. | Under **Automatic** numbering Tally *discards* the supplied number (§9.8), so a number-based key is silently ineffective. And a book that does not set `PREVENTDUPLICATES` can hold the same number twice — one did, twenty-five times. |
 | date + party + amount | Needs neither of the above. | Collides. In one month of real data `141,600`, `177,000` and `16,992` each recurred across *unrelated* parties. |
 
@@ -163,7 +175,11 @@ variant that can carry one.
 Two bases, and nothing else:
 
 - **`RemoteId`** — the proposal and exactly one book voucher carry the same
-  `REMOTEID`, and no other proposal carries it.
+  `REMOTEID`, and no other proposal carries it. Note carefully what a caller
+  may put there: **not** the client key it wrote on a previous import, which
+  §3.3a verified is overwritten and unreadable, but a Tally-assigned value it
+  has previously read back. A caller that supplies its own write key here will
+  match nothing and be told `absent` — correctly, and uselessly.
 - **`ManualVoucherNumber`** — the voucher type is declared `Manual`, and the
   (voucher type, normalized number) pair selects **exactly one book voucher and
   exactly one proposal**. Uniqueness on both sides is ADR 0016's rule 2, and it
@@ -213,17 +229,34 @@ severity:
 - A false `Present` silently drops an invoice. Nothing records it. It is not in
   Tally, not in the return, not in Bridge, and not in any exceptions report.
   There is no artifact to find later.
-- A false `Absent` creates a duplicate. Tally's own `Duplicate Voucher No.`
-  exceptions report surfaces it, and because Bridge wrote it, it carries
-  Bridge's `REMOTEID` — which is the key for the **only** correction path Tally
-  offers, since vouchers cannot be modified and deletion is by `REMOTEID`
-  (§9.7). A duplicate Bridge created is a duplicate Bridge can delete.
+- A false `Absent` on a voucher **Bridge previously imported** creates nothing
+  at all: the same client `REMOTEID` upserts (§3.3a). The duplicate risk is
+  confined to vouchers an operator keyed by hand — which is the real residual,
+  and was both blocked engagements, but it is a smaller set than "everything".
+- A false `Absent` on a hand-keyed voucher does create a duplicate, and that
+  duplicate is **visible and correctable**: Tally's own `Duplicate Voucher No.`
+  exceptions report surfaces it, and re-importing under the same client
+  `REMOTEID` overwrites the earlier row (§3.3a's correction path), which is the
+  only correction Tally offers since vouchers cannot be modified (§9.7). Note
+  the mechanism precisely — correction works by *re-import*, not by reading the
+  key back, because §3.3a verified the client key is not readable at all.
 
 **Therefore the bar for `Present` is set higher than the bar for `Absent`, and
 both are set higher than a resemblance.** `Present` requires identity;
 `Absent` requires that no rule produced any candidate at all. Doubt in either
 direction lands in `PossiblyPresent`, which authorises nothing and is handed to
 a person.
+
+**This asymmetry has one dependency, and it is outside this contract.** It
+holds only while the import writer derives a `REMOTEID` that is stable for a
+business event and distinct between different ones. A key that collides across
+two distinct events — a row ordinal within a re-downloaded window, say — turns
+`REMOTEID`'s upsert from a safety property into a **silent overwrite of a
+different voucher**, which lands on the same side of the ledger as a false
+`Present`: no duplicate to see, no exception raised, nothing to find later. A
+consumer acting on `Absent` inherits that risk from the writer, not from this
+report. Any key proposed for that writer should be tested against both the
+re-download case and the overlapping-window case before it is trusted.
 
 The cost of this posture is operator review time. That is the intended cost:
 the middle is where a human is genuinely faster than any rule, and the
@@ -312,11 +345,16 @@ human-approved batch — this ADR does not move.
   read contract with its own live evidence. Until then, prefer several narrow
   windows to one dense one, and read `Absent` as scoped to a window that was
   read narrow enough to trust.
-- **The identifier rule that binds a party across spellings has no live
-  coverage.** Measured against sixteen loaded synthetic companies, zero of 470
-  real ledger names yield a numeric identifier and exactly one yields a code
-  identifier, so that rule is qualified by fabricated data alone. It is load
-  bearing for `master_binding`'s own consumers; it is deliberately **not** load
+- **The identifier rule that binds a party across spellings is bimodal, not
+  general.** Measured across three catalogs: zero of 470 names across sixteen
+  loaded synthetic companies, zero of 105 on one real book, and **91 of 214 —
+  about two in five — on another real book** whose operator embeds a contact
+  number in each customer's ledger name. So the rule has near-total coverage or
+  none at all depending on one operator's naming habit, and it is a bonus
+  signal a binder must work without rather than a key it may rely on. It is
+  decisive where it does fire: on that third book it resolved a customer that
+  the three closest name matches all got wrong. It is load bearing for
+  `master_binding`'s own consumers; it is deliberately **not** load
   bearing here, because a party binding can never produce `Present` — it only
   selects which names the resemblance rules compare, which widens the net. A
   wrong bind can therefore cost a `SamePartyAmount` candidate and turn a
