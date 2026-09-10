@@ -1,5 +1,10 @@
 # Tally XML gateway — protocol reference
 
+> **Adding or renumbering a section? Claim the number in [`SECTION-REGISTER.md`](./SECTION-REGISTER.md) in the same PR.** Several branches extend this
+> file at once and a number is invisible to them until it merges. Two branches have already collided, and `1.2` is used twice below.
+> Editing this file also stales its compatibility-surface pin — the register carries the reseal procedure.
+
+
 **Purpose.** The single source of truth for how Tally's XML gateway actually behaves, as
 observed against a live instance. Everything here is either **VERIFIED** against a real
 Tally or explicitly marked otherwise. Plan documents state intent; this document states
@@ -645,10 +650,6 @@ modes, or Group shapes emit the field; Bridge must continue to fail closed when
 the response lacks or mismatches the selected company GUID.
 
 ---
-
-> **Adding a section here? Claim the number in [`SECTION-REGISTER.md`](./SECTION-REGISTER.md) in the same PR.** Several branches extend this
-> file at once and a number is invisible to them until it merges; two branches have already
-> claimed the same one.
 
 ## 9. Writes (import)
 
