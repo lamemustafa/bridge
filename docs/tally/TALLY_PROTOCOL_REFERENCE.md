@@ -1020,29 +1020,44 @@ Three findings:
 **Required:** Bridge must verify company identity *in the response* — via the company GUID —
 rather than trusting that the request was honoured. Tally reports success either way.
 
-### 9.11c `SVCURRENTCOMPANY` is not a guard — a wrong name still imports — **TRAP**
+### 9.11c `SVCURRENTCOMPANY` cannot be trusted as a write guard — **TRAP**
 
-**VERIFIED 2026-09-10 (licensed TallyPrime 7.1 Gold, operator machine).** A `Vouchers`
-import carried an `<SVCURRENTCOMPANY>` whose value had two letters of the company name
-transposed, matching no company on the instance. The voucher was created anyway, in the
-loaded company: `CREATED=1, ERRORS=0, EXCEPTIONS=0`, no `LINEERROR`.
+**VERIFIED 2026-09-10 (licensed TallyPrime 7.1 Gold, hand import through the UI).** A
+`Vouchers` import carried an `<SVCURRENTCOMPANY>` whose value had two letters of the company
+name transposed. It did not match the loaded company. The voucher was **created in the loaded
+company** — `CREATED=1`, `ERRORS=0`, `EXCEPTIONS=0`, no `LINEERROR` — and confirmed present in
+the day book. 147 further vouchers imported the same way.
 
-The name is a *selector with a fallback*, not an assertion. A name that matches nothing does
-not fail the request; Tally binds to whichever company happens to be open — the same
-binding behaviour §9.10d documents for a `COMPANY` object, reached here through the report
-scope instead.
+**This does not generalise to every mismatched name, and the difference matters.** A separate
+measurement (2026-08-19, TallyPrime 7.1, port 9001) sent a voucher import naming a company that
+**existed but was not loaded**, and it **failed closed** with
+`LINEERROR: Could not set 'SVCurrentCompany' to '<name>'`. Two distinct cases:
 
-**Consequences:**
+| the name refers to | observed |
+|---|---|
+| a company that exists but is not loaded | fails closed, names the problem |
+| a company that matches nothing | imports into the loaded company |
 
-1. **Pinning `SVCURRENTCOMPANY` buys no safety.** It cannot be used to prove a write landed
-   where it was aimed, and a typo in it is invisible: the import succeeds and looks correct.
-   Bridge's own import header carries this element, so this applies to Bridge, not only to
-   hand-built files.
-2. **Company identity must be established before the write, not asserted during it.** Read
-   the company back (§9.11a) and compare the GUID, or read the posted voucher back and
-   confirm which company holds it.
-3. This is the fifth silent-failure mode caught by "the *intended* thing must be observed
-   afterwards" rather than by inspecting the response.
+A plausible reading is that Tally refuses when it can see a company it is being asked to switch
+to and cannot, and ignores a name resolving to nothing. **That is a hypothesis.** The 2026-09-10
+box's company list was never enumerated, so "matches nothing" is inferred from the transposition,
+not established. Settling it needs one session: enumerate the companies, then import twice —
+once naming an existing-but-unloaded company, once naming a string known to match nothing.
+
+**What is established, and it is enough to design against:**
+
+1. **`SVCURRENTCOMPANY` is not a guard.** There is a verified case where a name that did not
+   match the loaded company still posted into it. It cannot prove a write landed where it was
+   aimed, and the failure is invisible — the import succeeds and looks correct.
+2. **The dangerous case is the likely one.** A typo, a renamed company or a year-suffixed name
+   is the ordinary operator error, and that is the shape that passed. The shape that fails
+   closed is the rarer, more deliberate one.
+3. **Establish identity before the write and confirm after it.** Read the company and compare
+   the GUID (§9.11a), then read the posted voucher back. This is what the read path already
+   does via GUID binding; the write path needs the same discipline.
+
+Bridge's own import header carries this element, so none of this is specific to hand-built
+files.
 
 ### 9.11a How to read the company GUID — **VERIFIED, and this closes §9.11's requirement**
 
