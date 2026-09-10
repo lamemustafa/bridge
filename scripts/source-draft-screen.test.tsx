@@ -175,6 +175,72 @@ test("allows an untouched new source draft to be saved locally", async () => {
   root.unmount();
 });
 
+test("lists only unentered required operator choices without treating a filled proposal as approved", async () => {
+  const partiallyEntered = {
+    ...draft,
+    rows: [{
+      ...draft.rows[0],
+      entries: [
+        ...draft.rows[0].entries,
+        { position: 2, source_ledger: "Second source ledger", source_amount: "12.50", source_polarity: "Cr" },
+      ],
+      proposal: {
+        date: "",
+        voucher_type: null,
+        narration: "",
+        notes: "",
+        entries: [
+          { ledger: "Unverified first target", side: "Dr" as const, amount: "12.50" },
+          { ledger: "", side: null, amount: "" },
+        ],
+      },
+    }],
+  };
+  const fullyEntered = {
+    ...partiallyEntered,
+    rows: [{
+      ...partiallyEntered.rows[0],
+      proposal: {
+        date: "20260902",
+        voucher_type: "Payment" as const,
+        narration: null,
+        notes: "",
+        entries: [
+          { ledger: "Unverified first target", side: "Dr" as const, amount: "12.50" },
+          { ledger: "Unverified second target", side: "Cr" as const, amount: "12.50" },
+        ],
+      },
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(partiallyEntered).mockResolvedValueOnce(fullyEntered);
+  const partialHost = document.createElement("div");
+  document.body.append(partialHost);
+  const partialRoot = await mount(partialHost);
+  await act(async () => button(partialHost, "Choose source XML").click());
+  expect(partialHost.textContent).toContain("2026-09-01");
+  const pendingChoices = [...partialHost.querySelectorAll(".source-draft-catalogue-state")]
+    .map((element) => element.textContent)
+    .find((value) => value?.startsWith("Still to choose:"));
+  expect(pendingChoices).toBe(
+    "Still to choose: date, voucher type, entry 2 target ledger, entry 2 side, entry 2 amount.",
+  );
+  expect(pendingChoices).not.toContain("narration");
+  expect(pendingChoices).not.toContain("notes");
+  expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  partialRoot.unmount();
+
+  const filledHost = document.createElement("div");
+  document.body.append(filledHost);
+  const filledRoot = await mount(filledHost);
+  await act(async () => button(filledHost, "Choose source XML").click());
+  expect(filledHost.textContent).not.toContain("Still to choose:");
+  expect(filledHost.textContent).toContain("Unverified proposal");
+  expect(filledHost.textContent).toContain("Saved unverified target: Unverified first target");
+  expect(filledHost.textContent).not.toContain("Ready");
+  expect(mocks.invoke).toHaveBeenCalledTimes(2);
+  filledRoot.unmount();
+});
+
 test("clears saved status when a proposal changes after saving", async () => {
   mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce({ ...draft, revision: 2 });
   const host = document.createElement("div");
