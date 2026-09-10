@@ -67,6 +67,9 @@ pub enum MasterBindingError {
     #[error("master catalog was empty")]
     CatalogEmpty,
     /// Two masters carry byte-identical names, so a name cannot identify one.
+    /// Names differing only in surrounding whitespace are *not* duplicates —
+    /// they are retained verbatim and collide on the comparison key instead,
+    /// which surfaces them as an ambiguity rather than failing the read.
     #[error("master catalog carried a duplicate name")]
     CatalogDuplicateName,
     #[error("master catalog exceeded its bound")]
@@ -426,7 +429,7 @@ impl SourceEntity {
         name: &str,
         hints: impl IntoIterator<Item = &'a str>,
     ) -> Result<Self, MasterBindingError> {
-        let name = validated_name(name)?;
+        let name = validated_source_name(name)?;
         let mut identifiers = extract_identifiers(&name);
         for hint in hints {
             let extracted = extract_identifiers(hint);
@@ -498,7 +501,7 @@ impl MasterCatalog {
             if entries.len() >= MAX_CATALOG_ENTRIES {
                 return Err(MasterBindingError::CatalogTooLarge);
             }
-            let name = validated_name(name.as_ref())?;
+            let name = validated_catalog_name(name.as_ref())?;
             if by_name.contains_key(&name) {
                 return Err(MasterBindingError::CatalogDuplicateName);
             }
@@ -806,9 +809,26 @@ fn collect_candidates(
         .collect()
 }
 
-fn validated_name(value: &str) -> Result<String, MasterBindingError> {
-    let value = value.trim();
-    if value.is_empty() {
+/// An observed master name is retained **verbatim**. Surrounding whitespace is
+/// part of what the book returned, and a caller that acts on a binding writes
+/// this string back to Tally byte for byte; trimming it here would report a
+/// spelling that does not exist and refuse at the write gate with no
+/// explanation. The comparison key collapses whitespace anyway, so a source
+/// name still matches across the difference.
+fn validated_catalog_name(value: &str) -> Result<String, MasterBindingError> {
+    validate_name_bounds(value)?;
+    Ok(value.to_string())
+}
+
+/// A source name is trimmed: leading and trailing whitespace is document noise
+/// rather than an observation, and nothing is ever written back from it.
+fn validated_source_name(value: &str) -> Result<String, MasterBindingError> {
+    validate_name_bounds(value)?;
+    Ok(value.trim().to_string())
+}
+
+fn validate_name_bounds(value: &str) -> Result<(), MasterBindingError> {
+    if value.trim().is_empty() {
         return Err(MasterBindingError::NameBlank);
     }
     if value.chars().any(char::is_control) {
@@ -817,7 +837,7 @@ fn validated_name(value: &str) -> Result<String, MasterBindingError> {
     if value.chars().count() > MAX_NAME_CHARS {
         return Err(MasterBindingError::NameTooLong);
     }
-    Ok(value.to_string())
+    Ok(())
 }
 
 /// Folds the punctuation an operator happened to type: NFC-equivalent dash and

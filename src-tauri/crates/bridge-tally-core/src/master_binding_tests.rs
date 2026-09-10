@@ -83,6 +83,30 @@ fn unusable_names_are_refused_at_the_boundary() {
 }
 
 #[test]
+fn an_observed_master_name_is_retained_verbatim_while_a_source_name_is_trimmed() {
+    // A caller writes the bound name back to Tally byte for byte. Trimming an
+    // observed name here would report a spelling that does not exist and
+    // refuse at the write gate with no explanation.
+    let catalog = ledgers(&["  Alpha Traders  ", "Beta Supply"]);
+    assert_eq!(catalog.names().next(), Some("  Alpha Traders  "));
+    let binding = bind_one_name(&catalog, "Alpha Traders");
+    assert_eq!(binding.bound_name(), Some("  Alpha Traders  "));
+    assert_eq!(binding.source_name, "Alpha Traders");
+}
+
+#[test]
+fn names_differing_only_in_surrounding_whitespace_are_an_ambiguity_not_a_refused_catalog() {
+    let catalog = ledgers(&["Alpha Traders", "Alpha Traders "]);
+    let binding = bind_one_name(&catalog, "Alpha Traders");
+    // Byte equality still picks the exact one; the near-identical sibling is
+    // not a reason to fail the whole read.
+    assert_eq!(binding.bound_name(), Some("Alpha Traders"));
+    let other = bind_one_name(&catalog, "alpha traders");
+    assert_eq!(reason(&other), UnboundReason::NameAmbiguous);
+    assert_eq!(candidate_names(&other), ["Alpha Traders", "Alpha Traders "]);
+}
+
+#[test]
 fn an_identifier_hint_that_yields_nothing_is_refused_rather_than_ignored() {
     assert_eq!(
         SourceEntity::with_identifier_hints(0, "Alpha Traders", ["not-an-identifier"]),
@@ -504,4 +528,331 @@ fn a_bound_status_serializes_without_a_score_field() {
     assert_eq!(json["basis"], "exact_name");
     assert!(json.get("score").is_none());
     assert!(json.get("confidence").is_none());
+}
+
+// ---------------------------------------------------------------------------
+// Characterization against a realistically shaped book
+//
+// Every rule above is tested in isolation on a handful of names. Three of the
+// rules only engage at scale — common-token suppression needs 20+ entries,
+// candidate capping needs 25+, and the prefix ranges only matter when many
+// keys share a head — so their interaction is untested by any of it.
+//
+// This section fabricates one 200-master catalog carrying the naming
+// pathologies actually recorded (a firm word on most ledgers, numbers typed
+// into party names, a near-duplicate sales trio, a masked bank last-four) and
+// pins the *outcome* for a document-sized set of source names.
+//
+// The assertion that matters is not the count. It is that **no entity binds to
+// a master a human would not have chosen**: a wrong bind puts money against the
+// wrong party, and is strictly worse than an unbound row. The counts are pinned
+// underneath it so that loosening a threshold has to move a number in a diff.
+//
+// This is fabricated input. It characterizes the rules and is not evidence
+// about any Tally instance or any real book's bindability.
+// ---------------------------------------------------------------------------
+
+const GREEK: [&str; 20] = [
+    "ALPHA", "BETA", "GAMMA", "DELTA", "EPSILON", "ZETA", "ETA", "THETA", "IOTA", "KAPPA",
+    "LAMBDA", "MU", "NU", "XI", "OMICRON", "PI", "RHO", "SIGMA", "TAU", "UPSILON",
+];
+
+/// One fabricated book: 200 ledgers, shaped like a small trading firm's.
+fn fabricated_book() -> Vec<String> {
+    let mut names = Vec::new();
+    // 20 party ledgers with a number typed into the name, as operators do.
+    for (index, greek) in GREEK.iter().enumerate() {
+        names.push(format!(
+            "{greek} PLACEHOLDER ({})",
+            5_550_001_001_u64 + index as u64
+        ));
+    }
+    // 20 party ledgers without one.
+    for greek in GREEK {
+        names.push(format!("{greek} PLACEHOLDER TRADING CO"));
+    }
+    // The near-duplicate trio that one engagement actually met.
+    names.push("ALPHA SALE".to_string());
+    names.push("ALPHA SALES".to_string());
+    names.push("SALES - ALPHA".to_string());
+    // Tax heads, which share heavy word overlap with each other.
+    for head in ["CGST", "SGST", "IGST"] {
+        for side in ["OUTPUT", "INPUT"] {
+            for rate in ["9%", "18%"] {
+                names.push(format!("{head} {side} {rate}"));
+            }
+        }
+    }
+    // Banks, carrying a masked last-four rather than a full account number.
+    names.push("PLACEHOLDER BANK CA 2129".to_string());
+    names.push("PLACEHOLDER BANK OD 7745".to_string());
+    // The accounts every book has.
+    for name in [
+        "Cash",
+        "Suspense Placeholder",
+        "Round Off",
+        "Profit & Loss A/c",
+    ] {
+        names.push(name.to_string());
+    }
+    // Filler carrying one firm-wide word, to the size of a real small book.
+    let mut index = 0;
+    while names.len() < 200 {
+        names.push(format!("PLACEHOLDER UNIT {index:03}"));
+        index += 1;
+    }
+    names
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Expected {
+    /// The master a human reading the source would have chosen.
+    Bound(&'static str),
+    Unbound(UnboundReason),
+}
+
+/// What one document names, and what a human would do with each.
+fn fabricated_document() -> Vec<(&'static str, Option<&'static str>, Expected)> {
+    vec![
+        // Named exactly as the book spells it.
+        ("Cash", None, Expected::Bound("Cash")),
+        ("CGST OUTPUT 9%", None, Expected::Bound("CGST OUTPUT 9%")),
+        // Case and spacing noise from the source system.
+        (
+            "  cgst   output 9%  ",
+            None,
+            Expected::Bound("CGST OUTPUT 9%"),
+        ),
+        (
+            "beta placeholder trading co",
+            None,
+            Expected::Bound("BETA PLACEHOLDER TRADING CO"),
+        ),
+        // The engagement case: the source names the party its own way and
+        // carries the number in a separate column. Name matching would offer
+        // twenty wrong parties; the number decides.
+        (
+            "GAMMA. K.",
+            Some("5550001003"),
+            Expected::Bound("GAMMA PLACEHOLDER (5550001003)"),
+        ),
+        // Same, with the number inside the name rather than a hint.
+        (
+            "DELTA K 5550001004",
+            None,
+            Expected::Bound("DELTA PLACEHOLDER (5550001004)"),
+        ),
+        // A truncated party name: one candidate, and one candidate is still
+        // not a decision.
+        (
+            "EPSILON PLACEHOLDER TRADING",
+            None,
+            Expected::Unbound(UnboundReason::NearMiss),
+        ),
+        // The near-duplicate trio. Nothing here may resolve.
+        ("ALPHA SALE", None, Expected::Bound("ALPHA SALE")),
+        ("ALPHA", None, Expected::Unbound(UnboundReason::NearMiss)),
+        // A masked bank last-four must not bind on four digits.
+        (
+            "PLACEHOLDER BANK 2129",
+            None,
+            Expected::Unbound(UnboundReason::NearMiss),
+        ),
+        // A party the book simply does not have.
+        (
+            "OMEGA WHOLESALE",
+            None,
+            Expected::Unbound(UnboundReason::NoCandidate),
+        ),
+        // A number the book does not carry: the hint finds nothing, and the
+        // name is left to answer on its own.
+        (
+            "PSI SUPPLY",
+            Some("5559999999"),
+            Expected::Unbound(UnboundReason::NoCandidate),
+        ),
+    ]
+}
+
+#[test]
+fn a_document_against_a_realistic_book_binds_only_where_a_human_would() {
+    let names = fabricated_book();
+    assert_eq!(names.len(), 200);
+    let catalog =
+        MasterCatalog::new(MasterClass::Ledger, &names).expect("the fabricated book is valid");
+    assert_eq!(catalog.master_count(), 200);
+
+    let document = fabricated_document();
+    let entities = document
+        .iter()
+        .enumerate()
+        .map(|(position, (name, hint, _))| match hint {
+            Some(hint) => SourceEntity::with_identifier_hints(position, name, [*hint]),
+            None => SourceEntity::new(position, name),
+        })
+        .map(|entity| entity.expect("fabricated source names are valid"))
+        .collect::<Vec<_>>();
+    let report = bound(&catalog, &entities);
+
+    for ((source, _, expected), binding) in document.iter().zip(report.entities()) {
+        match (&binding.status, expected) {
+            (BindingStatus::Bound { catalog_name, .. }, Expected::Bound(intended)) => assert_eq!(
+                catalog_name, intended,
+                "{source:?} bound to a master a human would not have chosen"
+            ),
+            (
+                BindingStatus::Ambiguous(unresolved) | BindingStatus::Unmatched(unresolved),
+                Expected::Unbound(intended),
+            ) => assert_eq!(
+                unresolved.reason, *intended,
+                "{source:?} was unbound for an unintended reason"
+            ),
+            (status, expected) => {
+                panic!("{source:?}: expected {expected:?}, got {status:?}")
+            }
+        }
+    }
+
+    // The shape of the answer, pinned so a loosened threshold moves a number.
+    let totals = report.totals();
+    assert_eq!(totals.requested, 12);
+    assert_eq!(totals.bound, 7);
+    assert_eq!(totals.ambiguous, 3);
+    assert_eq!(totals.unmatched, 2);
+    assert_eq!(totals.requested, totals.bound + totals.unbound);
+}
+
+#[test]
+fn a_firm_wide_word_does_not_drag_the_whole_book_into_every_candidate_list() {
+    // "placeholder" is carried by most of this book. Without suppression the
+    // unbound list stops being a work item and becomes a second data-entry job.
+    let names = fabricated_book();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let carriers = names
+        .iter()
+        .filter(|name| name.to_lowercase().contains("placeholder"))
+        .count();
+    assert!(carriers > 100, "the fabricated book must exercise this");
+
+    let binding = bind_one_name(&catalog, "OMEGA PLACEHOLDER");
+    let unresolved = binding.unresolved().expect("unbound");
+    assert!(
+        unresolved.candidate_count <= MAX_CANDIDATES_PER_ENTITY,
+        "a firm-wide word pulled in {} candidates",
+        unresolved.candidate_count
+    );
+}
+
+/// The mutations a source document actually applies to a name it copied from
+/// somewhere else: case, spacing, a dropped tail, a dropped last word.
+fn source_mutations(name: &str) -> Vec<String> {
+    let mut mutations = vec![name.to_uppercase(), name.to_lowercase()];
+    mutations.push(format!(
+        "  {}  ",
+        name.split_whitespace().collect::<Vec<_>>().join("  ")
+    ));
+    let characters = name.chars().collect::<Vec<_>>();
+    let kept = characters.len() * 4 / 5;
+    if kept >= MIN_PREFIX_KEY_CHARS {
+        mutations.push(characters[..kept].iter().collect());
+    }
+    let words = name.split_whitespace().collect::<Vec<_>>();
+    if words.len() > 2 {
+        mutations.push(words[..words.len() - 1].join(" "));
+    }
+    mutations
+}
+
+#[test]
+fn no_mutation_of_a_master_name_ever_binds_to_a_different_master() {
+    // The safety property, stated over a whole book rather than three chosen
+    // names: a wrong bind puts money against the wrong party, and is strictly
+    // worse than an unbound row. Roughly a thousand cases.
+    //
+    // Mutations that collide with *another* master under the comparison key
+    // are excluded, and deliberately so: truncating `ALPHA SALES` by one
+    // character yields `ALPHA SALE`, which is a real and different ledger. No
+    // rule can distinguish a truncation of one name from an exact spelling of
+    // another, and binding it to the name it actually spells is correct.
+    //
+    // **This sweep was checked against two positive controls**, because an
+    // assertion that has never failed is not yet known to be an instrument:
+    //
+    // - Resolving a near-miss to its first-ordered candidate — precisely what
+    //   the deleted MCP helper did through `exact_live_spelling` — trips it on
+    //   a truncated party name. So it does report presence.
+    // - Binding a *lone* candidate does **not** trip it, because in this book a
+    //   lone candidate is nearly always the master the mutation came from. That
+    //   regression is caught by `a_single_candidate_still_does_not_bind` and by
+    //   the two prefix tests instead.
+    //
+    // Read this test as "no mutation reaches the wrong master", never as "no
+    // rule change can loosen binding".
+    let names = fabricated_book();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let keys = names
+        .iter()
+        .map(|name| (comparison_key(name), name.as_str()))
+        .collect::<BTreeMap<_, _>>();
+
+    let mut checked = 0_usize;
+    let mut self_bound = 0_usize;
+    for name in &names {
+        for mutation in source_mutations(name) {
+            let key = comparison_key(&mutation);
+            if keys.get(&key).is_some_and(|owner| owner != name) {
+                continue; // the mutation spells a different real ledger
+            }
+            checked += 1;
+            let binding = bind_one_name(&catalog, &mutation);
+            match binding.bound_name() {
+                None => {}
+                Some(bound_to) => {
+                    assert_eq!(
+                        bound_to, name,
+                        "mutation {mutation:?} of {name:?} bound to a different master"
+                    );
+                    self_bound += 1;
+                }
+            }
+        }
+    }
+    assert!(
+        checked > 900,
+        "the sweep must actually cover the book: {checked}"
+    );
+    // Most mutations are case and spacing noise, which must still bind.
+    assert!(
+        self_bound * 2 > checked,
+        "only {self_bound} of {checked} mutations bound at all"
+    );
+}
+
+#[test]
+fn a_number_typed_into_a_master_name_finds_it_from_any_source_name() {
+    // The rule that decided the case fuzzy matching got wrong, exercised
+    // against every party ledger in the book rather than one.
+    let names = fabricated_book();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let numbered = names
+        .iter()
+        .filter(|name| name.contains("PLACEHOLDER ("))
+        .collect::<Vec<_>>();
+    assert_eq!(numbered.len(), 20);
+
+    for name in numbered {
+        let number = name
+            .rsplit_once('(')
+            .and_then(|(_, tail)| tail.strip_suffix(')'))
+            .expect("fabricated party names carry a number");
+        // A source name sharing nothing with the ledger name at all.
+        let entity = SourceEntity::with_identifier_hints(0, "UNRELATED SOURCE PARTY", [number])
+            .expect("valid");
+        let report = bound(&catalog, &[entity]);
+        assert_eq!(
+            report.entities()[0].bound_name(),
+            Some(name.as_str()),
+            "the number typed into {name:?} did not find it"
+        );
+    }
 }
