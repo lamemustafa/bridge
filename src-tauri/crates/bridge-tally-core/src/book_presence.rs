@@ -273,24 +273,12 @@ impl BookVoucher {
         self.date.as_str()
     }
 
-    pub fn voucher_type(&self) -> &str {
-        &self.voucher_type
-    }
-
-    pub fn voucher_number(&self) -> Option<&str> {
-        self.voucher_number.as_deref()
-    }
-
     pub fn party(&self) -> Option<&str> {
         self.party.as_deref()
     }
 
     pub fn magnitude(&self) -> &ExactDecimal {
         &self.magnitude
-    }
-
-    pub fn posting(&self) -> PostingState {
-        self.posting
     }
 
     /// Whether the observed entries summed to zero. An unbalanced voucher is
@@ -310,7 +298,6 @@ pub struct ProposedVoucher {
     remote_id: Option<String>,
     party: Option<String>,
     magnitude: ExactDecimal,
-    balanced: bool,
     type_key: String,
     number_key: Option<String>,
 }
@@ -323,7 +310,7 @@ impl ProposedVoucher {
         let voucher_number = input.voucher_number.map(validated_text).transpose()?;
         let remote_id = input.remote_id.map(validated_text).transpose()?;
         let party = input.party.map(validated_text).transpose()?;
-        let (magnitude, balanced, _) = magnitude_of(input.entries)?;
+        let (magnitude, _, _) = magnitude_of(input.entries)?;
         let type_key = comparison_key(&voucher_type);
         let number_key = voucher_number.as_deref().map(comparison_key);
         Ok(Self {
@@ -334,30 +321,20 @@ impl ProposedVoucher {
             remote_id,
             party,
             magnitude,
-            balanced,
             type_key,
             number_key,
         })
-    }
-
-    pub fn position(&self) -> usize {
-        self.position
     }
 
     pub fn date(&self) -> &str {
         self.date.as_str()
     }
 
+    /// The type as the source document spelled it. A consumer validating its
+    /// own arguments against a `NumberingDeclaration` needs this; nothing else
+    /// does.
     pub fn voucher_type(&self) -> &str {
         &self.voucher_type
-    }
-
-    pub fn magnitude(&self) -> &ExactDecimal {
-        &self.magnitude
-    }
-
-    pub fn balanced(&self) -> bool {
-        self.balanced
     }
 }
 

@@ -22,49 +22,35 @@ pub(super) const MAX_PRESENCE_VOUCHERS: usize = 500;
 pub(super) const MAX_PRESENCE_VOUCHER_TYPES: usize = 50;
 /// Most ledger entries one proposed voucher may carry.
 pub(super) const MAX_PRESENCE_ENTRIES: usize = 200;
-/// Longest accepted amount lexeme, matching the published schema.
-const MAX_PRESENCE_AMOUNT_CHARS: usize = 64;
 /// Candidates this response may carry in total, across every proposal.
 ///
-/// The per-proposal cap alone does not bound the response: 500 proposals at 25
-/// candidates each is 12,500 objects, and this result shape is deliberately
-/// **not** pageable — `page_shape` cannot trim it, so an over-large report is
-/// replaced wholesale by `agent_response_too_large` *after* every Tally read
-/// has been paid for. An aggregate budget keeps an admitted request
-/// retrievable. Spending it in proposal order, and marking what it cut, is the
-/// same discipline `master_binding` applies to its own report.
+/// The per-proposal cap alone does not bound the response, and this result
+/// shape is deliberately **not** pageable — `page_shape` cannot trim it, so an
+/// over-large report is replaced wholesale by `agent_response_too_large`
+/// *after* every Tally read has been paid for. An aggregate budget keeps an
+/// admitted request retrievable. Spending it in proposal order, and marking
+/// what it cut, is the same discipline `master_binding` applies to its own
+/// report.
 const MAX_PRESENCE_RESPONSE_CANDIDATES: usize = 1_000;
 
-/// The shared argument validator bounds only the outer arrays, and the core
-/// crate's own limits are far wider than what this tool advertises. So every
-/// nested string is bounded here against the published `inputSchema`, and an
-/// unknown nested property is refused rather than ignored — a schema that
-/// promises `additionalProperties: false` and then accepts them is a claim the
-/// boundary does not keep.
-fn nested_text(
-    object: &Value,
-    key: &str,
-    argument: &str,
-    max_chars: usize,
-) -> Result<Option<String>, String> {
-    let Some(value) = object.get(key) else {
-        return Ok(None);
-    };
-    let text = value
-        .as_str()
-        .ok_or_else(|| format!("argument_invalid:{argument}"))?;
-    if text.trim().is_empty() || text.chars().count() > max_chars {
-        return Err(format!("argument_invalid:{argument}"));
-    }
-    Ok(Some(text.to_string()))
-}
-
-fn only_known_keys(object: &Value, known: &[&str], argument: &str) -> Result<(), String> {
-    let map = object
-        .as_object()
-        .ok_or_else(|| format!("argument_invalid:{argument}"))?;
-    if map.keys().any(|key| !known.contains(&key.as_str())) {
-        return Err(format!("argument_invalid:{argument}"));
+/// Enforces the published `inputSchema` on this tool's nested arrays.
+///
+/// The shared argument validator stops at the outer selectors, and the core
+/// crate's own limits are far wider than this tool advertises, so the gap has
+/// to be closed somewhere. Closing it by restating the bounds in this parser
+/// would put two copies of every limit in the tree; driving it from the schema
+/// itself keeps one.
+fn enforce_published_schema(args: &Value) -> Result<(), String> {
+    let definitions = catalog::registered_tool_definitions(true, true);
+    let schema = definitions
+        .as_array()
+        .and_then(|tools| tools.iter().find(|tool| tool["name"] == "voucher_presence"))
+        .map(|tool| tool["inputSchema"].clone())
+        .ok_or_else(|| "tool_not_found".to_string())?;
+    for key in ["numbering", "vouchers"] {
+        if let Some(value) = args.get(key) {
+            catalog::validate_against_schema(value, &schema["properties"][key], key)?;
+        }
     }
     Ok(())
 }
@@ -79,6 +65,7 @@ impl Server {
         }
         // Parse the caller's own input before any Tally read: a malformed
         // proposal set should never cost a read.
+        enforce_published_schema(args)?;
         let numbering = parse_numbering(args)?;
         let proposals = parse_proposals(args)?;
         // Both remaining cross-input refusals depend only on the arguments, so
@@ -245,25 +232,19 @@ fn parse_numbering(args: &Value) -> Result<NumberingDeclaration, String> {
         .get("numbering")
         .and_then(Value::as_array)
         .ok_or_else(|| "numbering_required".to_string())?;
-    if declared.is_empty() || declared.len() > MAX_PRESENCE_VOUCHER_TYPES {
-        return Err("argument_invalid:numbering".to_string());
-    }
     let entries = declared
         .iter()
         .map(|entry| {
-            only_known_keys(entry, &["voucher_type", "numbering_method"], "numbering")?;
-            let voucher_type = nested_text(
-                entry,
-                "voucher_type",
-                "numbering",
-                agent_import::MAX_MASTER_NAME_CHARS,
-            )?
-            .ok_or_else(|| "argument_invalid:numbering".to_string())?;
-            let method = match entry.get("numbering_method").and_then(Value::as_str) {
+            let voucher_type = entry["voucher_type"]
+                .as_str()
+                .ok_or_else(|| "argument_invalid:numbering".to_string())?
+                .to_string();
+            let method = match entry["numbering_method"].as_str() {
                 Some("manual") => NumberingMethod::Manual,
                 Some("automatic") => NumberingMethod::Automatic,
-                Some("unknown") => NumberingMethod::Unknown,
-                _ => return Err("argument_invalid:numbering".to_string()),
+                // The schema admits exactly these three, so anything else was
+                // already refused above.
+                _ => NumberingMethod::Unknown,
             };
             Ok((voucher_type, method))
         })
@@ -276,66 +257,28 @@ fn parse_proposals(args: &Value) -> Result<Vec<ProposedVoucher>, String> {
         .get("vouchers")
         .and_then(Value::as_array)
         .ok_or_else(|| "vouchers_required".to_string())?;
-    if proposed.is_empty() || proposed.len() > MAX_PRESENCE_VOUCHERS {
-        return Err("argument_invalid:vouchers".to_string());
-    }
+    let invalid = || "argument_invalid:vouchers".to_string();
     let mut parsed = Vec::with_capacity(proposed.len());
     for (position, voucher) in proposed.iter().enumerate() {
-        only_known_keys(
-            voucher,
-            &[
-                "date",
-                "voucher_type",
-                "voucher_number",
-                "remote_id",
-                "party",
-                "entries",
-            ],
-            "vouchers",
-        )?;
-        let date = normalized_date(
-            voucher
-                .get("date")
-                .and_then(Value::as_str)
-                .ok_or_else(|| "argument_invalid:vouchers".to_string())?,
-        )?;
-        let name_limit = agent_import::MAX_MASTER_NAME_CHARS;
-        let voucher_type = nested_text(voucher, "voucher_type", "vouchers", name_limit)?
-            .ok_or_else(|| "argument_invalid:vouchers".to_string())?;
-        let voucher_number = nested_text(voucher, "voucher_number", "vouchers", name_limit)?;
-        let remote_id = nested_text(voucher, "remote_id", "vouchers", name_limit)?;
-        let party = nested_text(voucher, "party", "vouchers", name_limit)?;
-        let rows = voucher
-            .get("entries")
-            .and_then(Value::as_array)
-            .filter(|entries| !entries.is_empty() && entries.len() <= MAX_PRESENCE_ENTRIES)
-            .ok_or_else(|| "argument_invalid:vouchers".to_string())?;
-        let bounded = rows
+        let date = normalized_date(voucher["date"].as_str().ok_or_else(invalid)?)?;
+        let rows = voucher["entries"].as_array().ok_or_else(invalid)?;
+        let entries = rows
             .iter()
             .map(|entry| {
-                only_known_keys(entry, &["ledger", "amount"], "vouchers")?;
-                let ledger = nested_text(entry, "ledger", "vouchers", name_limit)?
-                    .ok_or_else(|| "argument_invalid:vouchers".to_string())?;
-                let amount = nested_text(entry, "amount", "vouchers", MAX_PRESENCE_AMOUNT_CHARS)?
-                    .ok_or_else(|| "argument_invalid:vouchers".to_string())?;
-                Ok((ledger, amount))
+                Ok(ObservedEntry {
+                    ledger: entry["ledger"].as_str().ok_or_else(invalid)?,
+                    amount: entry["amount"].as_str().ok_or_else(invalid)?,
+                })
             })
             .collect::<Result<Vec<_>, String>>()?;
-        let entries = bounded
-            .iter()
-            .map(|(ledger, amount)| ObservedEntry {
-                ledger: ledger.as_str(),
-                amount: amount.as_str(),
-            })
-            .collect::<Vec<_>>();
         parsed.push(
             ProposedVoucher::new(ProposedVoucherInput {
                 position,
                 date: &date,
-                voucher_type: &voucher_type,
-                voucher_number: voucher_number.as_deref(),
-                remote_id: remote_id.as_deref(),
-                party: party.as_deref(),
+                voucher_type: voucher["voucher_type"].as_str().ok_or_else(invalid)?,
+                voucher_number: voucher["voucher_number"].as_str(),
+                remote_id: voucher["remote_id"].as_str(),
+                party: voucher["party"].as_str(),
                 entries: &entries,
             })
             .map_err(|error| error.safe_reason_code().to_string())?,

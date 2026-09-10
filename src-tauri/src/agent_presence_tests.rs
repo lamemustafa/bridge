@@ -201,6 +201,45 @@ async fn cross_input_refusals_also_cost_no_tally_read() {
     }
 }
 
+/// The bound is not restated anywhere, so the test must not restate it either:
+/// it reads `maxLength` out of the published schema and proves the boundary
+/// tracks it. If the schema moves, this moves with it; if the enforcement stops
+/// following the schema, this fails.
+#[tokio::test]
+async fn nested_bounds_are_read_from_the_schema_rather_than_duplicated() {
+    let definitions = tool_definitions(true, false);
+    let schema = definitions
+        .as_array()
+        .and_then(|tools| tools.iter().find(|tool| tool["name"] == "voucher_presence"))
+        .map(|tool| tool["inputSchema"].clone())
+        .expect("voucher_presence schema");
+    let limit = schema["properties"]["vouchers"]["items"]["properties"]["voucher_number"]
+        ["maxLength"]
+        .as_u64()
+        .expect("a published maxLength") as usize;
+    let entries = json!([{"ledger":"Cash","amount":"-1.00"},{"ledger":"WR2 Sales","amount":"1.00"}]);
+    let numbering = json!([{"voucher_type":"Journal","numbering_method":"manual"}]);
+    let directory = tempfile::tempdir().expect("directory");
+    let server = offline_server(directory.path());
+    for (length, refused) in [(limit, false), (limit + 1, true)] {
+        let response = server
+            .call_tool_response(
+                "voucher_presence",
+                json!({"company_guid":GUID,"from":"20260901","to":"20260930","numbering":numbering,
+                    "vouchers":[{"date":"20260901","voucher_type":"Journal",
+                        "voucher_number":"x".repeat(length),"entries":entries}]}),
+            )
+            .await;
+        let code = &response.value["structuredContent"]["result"]["error"]["code"];
+        assert_eq!(
+            code == "argument_invalid:vouchers",
+            refused,
+            "length {length} against a published limit of {limit}"
+        );
+        assert_eq!(response.value["structuredContent"]["evidence"]["bytes"], 0);
+    }
+}
+
 #[tokio::test]
 async fn nested_arguments_are_bounded_to_the_published_schema() {
     let directory = tempfile::tempdir().expect("directory");

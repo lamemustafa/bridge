@@ -382,12 +382,17 @@ human-approved batch — this ADR does not move.
   enforces them again at its own boundary; the adapter check exists so a
   request that was always going to be refused does not first spend a company
   probe, a catalogue read and a full window read.
-- **The published `inputSchema` is enforced to its leaves.** The shared
-  argument validator bounds only outer arrays and the crate's own limits are far
-  wider than this tool advertises, so nested names, numbers, identifiers and
-  amounts are bounded at the adapter and an undeclared nested property is
-  refused. A schema promising `additionalProperties: false` that then accepts
-  them is a claim the boundary does not keep.
+- **The published `inputSchema` is enforced to its leaves, and by the schema
+  itself.** The shared argument validator bounds only outer arrays — every tool
+  predating nested inputs owns a typed boundary below that line, so tightening
+  the shared path would change their refusal codes — and the crate's own limits
+  are far wider than this tool advertises. The gap is closed by
+  `validate_against_schema`, a small recursive check that reads `type`, `enum`,
+  string and array bounds, `required` and `additionalProperties` straight from
+  the published fragment. Restating those limits in the parser would put two
+  copies of every bound in the tree, and the copy that drifts is the one nobody
+  is looking at. The helper lives beside the existing validator so the next
+  tool with a nested schema reuses it rather than restating anything.
 - Voucher numbers and voucher-type names fold through
   `master_binding::comparison_key` — the *same* key master names use, now an
   explicit crate-wide contract point owned by ADR 0016 rather than a private

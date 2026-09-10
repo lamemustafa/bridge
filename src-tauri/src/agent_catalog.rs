@@ -90,6 +90,84 @@ pub(super) fn validate_tool_arguments(name: &str, args: &Value) -> Result<(), St
     Ok(())
 }
 
+/// Validates a value against a published schema fragment, recursively.
+///
+/// [`validate_tool_arguments`] deliberately stops at the outer selectors,
+/// because every tool that predates nested inputs owns its own typed boundary
+/// below that line and tightening the shared path would change their refusal
+/// codes. A tool whose `inputSchema` *does* describe nested objects calls this
+/// instead of restating those bounds in its parser: two copies of one bound
+/// drift, and the copy that drifts is the one nobody is looking at.
+///
+/// It enforces exactly what the fragment states — `type`, `enum`, string
+/// bounds, array bounds, `required`, and `additionalProperties: false` — and
+/// nothing it does not, so a schema remains the single description of what a
+/// caller may send.
+pub(super) fn validate_against_schema(
+    value: &Value,
+    schema: &Value,
+    key: &str,
+) -> Result<(), String> {
+    let invalid = || format!("argument_invalid:{key}");
+    if schema["enum"]
+        .as_array()
+        .is_some_and(|allowed| !allowed.contains(value))
+    {
+        return Err(invalid());
+    }
+    match schema["type"].as_str() {
+        Some("string") => {
+            let text = value.as_str().ok_or_else(invalid)?;
+            validate_string_bounds(text, schema, key)?;
+        }
+        Some("integer") => {
+            let number = value.as_u64().ok_or_else(invalid)?;
+            if schema["minimum"].as_u64().is_some_and(|min| number < min) {
+                return Err(invalid());
+            }
+        }
+        Some("array") => {
+            let items = value.as_array().ok_or_else(invalid)?;
+            if schema["minItems"]
+                .as_u64()
+                .is_some_and(|min| items.len() < min as usize)
+                || schema["maxItems"]
+                    .as_u64()
+                    .is_some_and(|max| items.len() > max as usize)
+            {
+                return Err(invalid());
+            }
+            for item in items {
+                validate_against_schema(item, &schema["items"], key)?;
+            }
+        }
+        Some("object") => {
+            let object = value.as_object().ok_or_else(invalid)?;
+            let properties = schema["properties"].as_object();
+            if schema["additionalProperties"] == Value::Bool(false)
+                && object
+                    .keys()
+                    .any(|name| !properties.is_some_and(|properties| properties.contains_key(name)))
+            {
+                return Err(invalid());
+            }
+            for required in schema["required"].as_array().into_iter().flatten() {
+                let name = required.as_str().ok_or_else(invalid)?;
+                if !object.contains_key(name) {
+                    return Err(invalid());
+                }
+            }
+            for (name, member) in object {
+                if let Some(fragment) = properties.and_then(|properties| properties.get(name)) {
+                    validate_against_schema(member, fragment, key)?;
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn validate_string_bounds(text: &str, schema: &Value, key: &str) -> Result<(), String> {
     let length = text.chars().count();
     if schema["minLength"]
