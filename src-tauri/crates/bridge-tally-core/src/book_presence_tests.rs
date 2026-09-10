@@ -83,6 +83,13 @@ impl BookRow {
         self
     }
 
+    /// Sets PARTYLEDGERNAME alone, leaving the entry ledgers untouched, so a
+    /// voucher whose party field and entries name different ledgers can exist.
+    fn party_field(mut self, party: &'static str) -> Self {
+        self.party = Some(party);
+        self
+    }
+
     fn cancelled(mut self) -> Self {
         self.cancelled = true;
         self
@@ -179,6 +186,7 @@ fn window(rows: &[BookRow]) -> BookWindow {
         "20260801",
         "20260831",
         WindowRead::Complete,
+        RemoteIdEvidence::Observed,
         rows.iter().map(BookRow::build).collect(),
     )
     .expect("window")
@@ -211,8 +219,14 @@ fn reason(entry: &VoucherPresence) -> UndecidedReason {
 
 #[test]
 fn a_partial_read_can_never_become_a_window() {
-    let error = BookWindow::observed("20260801", "20260831", WindowRead::Partial, Vec::new())
-        .expect_err("a partial read is not a window");
+    let error = BookWindow::observed(
+        "20260801",
+        "20260831",
+        WindowRead::Partial,
+        RemoteIdEvidence::Observed,
+        Vec::new(),
+    )
+    .expect_err("a partial read is not a window");
     assert_eq!(error, PresenceError::WindowIncomplete);
     assert_eq!(error.safe_reason_code(), "presence_window_incomplete");
 }
@@ -235,8 +249,14 @@ fn an_empty_complete_window_is_legal_and_reports_everything_absent() {
 fn a_window_refuses_a_voucher_dated_outside_its_own_range() {
     let outside = BookRow::new("book-1", "20260901", "AA0118").build();
     assert_eq!(
-        BookWindow::observed("20260801", "20260831", WindowRead::Complete, vec![outside])
-            .expect_err("outside"),
+        BookWindow::observed(
+            "20260801",
+            "20260831",
+            WindowRead::Complete,
+            RemoteIdEvidence::Observed,
+            vec![outside]
+        )
+        .expect_err("outside"),
         PresenceError::WindowVoucherOutsideRange
     );
 }
@@ -248,8 +268,14 @@ fn a_window_refuses_the_same_voucher_key_twice() {
         BookRow::new("book-1", "20260813", "AA0119").build(),
     ];
     assert_eq!(
-        BookWindow::observed("20260801", "20260831", WindowRead::Complete, rows)
-            .expect_err("duplicate"),
+        BookWindow::observed(
+            "20260801",
+            "20260831",
+            WindowRead::Complete,
+            RemoteIdEvidence::Observed,
+            rows
+        )
+        .expect_err("duplicate"),
         PresenceError::WindowDuplicateVoucherKey
     );
 }
@@ -257,8 +283,14 @@ fn a_window_refuses_the_same_voucher_key_twice() {
 #[test]
 fn a_window_refuses_an_inverted_range() {
     assert_eq!(
-        BookWindow::observed("20260831", "20260801", WindowRead::Complete, Vec::new())
-            .expect_err("inverted"),
+        BookWindow::observed(
+            "20260831",
+            "20260801",
+            WindowRead::Complete,
+            RemoteIdEvidence::Observed,
+            Vec::new()
+        )
+        .expect_err("inverted"),
         PresenceError::WindowRangeInvalid
     );
 }
@@ -1286,4 +1318,219 @@ fn an_empty_candidate_list_means_exactly_one_thing_in_this_contract() {
         totals.present + totals.possibly_present + totals.absent,
         totals.requested
     );
+}
+
+// --- one book voucher satisfies at most one proposal --------------------
+
+#[test]
+fn two_proposals_reaching_one_book_voucher_are_both_demoted() {
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118").remote_id("bridge-txn-1")]);
+    let proposals = [
+        // Reaches book-1 by REMOTEID.
+        ProposalRow::new(0, "20260812", "AA9999")
+            .remote_id("bridge-txn-1")
+            .build(),
+        // Reaches the same voucher by its manual number.
+        ProposalRow::new(1, "20260812", "AA0118").build(),
+    ];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    // Neither may be excluded from an import: only one voucher exists.
+    assert_eq!(report.totals().present, 0);
+    for entry in report.vouchers() {
+        assert_eq!(reason(entry), UndecidedReason::BookVoucherClaimedTwice);
+        assert_eq!(
+            entry.undecided().expect("undecided").candidates[0].book_key,
+            "book-1"
+        );
+    }
+}
+
+#[test]
+fn distinct_proposals_reaching_distinct_vouchers_both_stay_present() {
+    let window = window(&[
+        BookRow::new("book-1", "20260812", "AA0118").remote_id("bridge-txn-1"),
+        BookRow::new("book-2", "20260813", "AA0119").party("Bravo Industries"),
+    ]);
+    let proposals = [
+        ProposalRow::new(0, "20260812", "AA0118").build(),
+        ProposalRow::new(1, "20260813", "AA0119")
+            .party("Bravo Industries")
+            .build(),
+    ];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    assert_eq!(report.totals().present, 2);
+}
+
+// --- two identity signals that disagree ---------------------------------
+
+#[test]
+fn a_number_match_contradicted_by_a_different_remote_id_does_not_settle() {
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118").remote_id("tally-1")]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .remote_id("tally-2")
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert!(entry.present_book_key().is_none());
+    assert_eq!(reason(entry), UndecidedReason::IdentityConflict);
+}
+
+#[test]
+fn a_number_match_agreeing_with_the_remote_id_still_settles() {
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118").remote_id("tally-1")]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .remote_id("tally-1")
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    // The REMOTEID decides it first; either basis is an identity.
+    assert!(only(&report).present_book_key().is_some());
+}
+
+// --- a key that was never read is not a key that found nothing ----------
+
+#[test]
+fn a_remote_id_the_window_never_read_withholds_absent() {
+    let unread = BookWindow::observed(
+        "20260801",
+        "20260831",
+        WindowRead::Complete,
+        RemoteIdEvidence::NotRead,
+        vec![BookRow::new("book-1", "20260819", "AA0130")
+            .party("Bravo Industries")
+            .build()],
+    )
+    .expect("window");
+    let proposals = [ProposalRow::new(0, "20260812", "AA0777")
+        .remote_id("tally-1")
+        .party("Charlie Minerals")
+        .rows(vec![
+            ["Charlie Minerals", "-55.00"],
+            ["Sales Account", "55.00"],
+        ])
+        .build()];
+    let report = run(
+        &unread,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert!(
+        !entry.is_absent(),
+        "the proposal's strongest key was never compared"
+    );
+    assert_eq!(reason(entry), UndecidedReason::RemoteIdEvidenceUnavailable);
+}
+
+#[test]
+fn the_same_proposal_is_absent_when_the_window_did_read_remote_ids() {
+    let window = window(&[BookRow::new("book-1", "20260819", "AA0130").party("Bravo Industries")]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0777")
+        .remote_id("tally-1")
+        .party("Charlie Minerals")
+        .rows(vec![
+            ["Charlie Minerals", "-55.00"],
+            ["Sales Account", "55.00"],
+        ])
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    assert!(only(&report).is_absent());
+}
+
+// --- the response cap must not distort the observations -----------------
+
+#[test]
+fn candidates_dropped_by_the_response_cap_still_count_as_reached() {
+    let rows: Vec<BookRow> = (1..=30)
+        .map(|index| {
+            BookRow::new(
+                Box::leak(format!("book-{index:02}").into_boxed_str()),
+                "20260812",
+                Box::leak(format!("BB{index:04}").into_boxed_str()),
+            )
+        })
+        .collect();
+    let window = window(&rows);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0777").build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let undecided = only(&report).undecided().expect("undecided");
+    assert_eq!(undecided.candidate_count, 30);
+    assert!(undecided.candidates_truncated);
+    assert_eq!(undecided.candidates.len(), MAX_CANDIDATES_PER_PROPOSAL);
+    // All thirty were reached; none may be reported as untouched merely
+    // because the response could not carry it.
+    assert_eq!(report.observations().unmatched_book_vouchers, 0);
+}
+
+// --- the party diagnostic reads the party field -------------------------
+
+#[test]
+fn a_party_difference_compares_the_observed_party_field_not_every_ledger() {
+    // PARTYLEDGERNAME is Bravo while the entries still name Alpha.
+    let window =
+        window(&[BookRow::new("book-1", "20260812", "AA0118").party_field("Bravo Industries")]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118").build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let PresenceStatus::Present { differences, .. } = &only(&report).status else {
+        panic!("expected Present");
+    };
+    let party = differences
+        .iter()
+        .find(|difference| difference.field == DifferenceField::Party)
+        .expect("the party field disagrees and must be reported");
+    assert_eq!(party.proposed.as_deref(), Some("Alpha Traders"));
+    assert_eq!(party.observed.as_deref(), Some("Bravo Industries"));
+}
+
+#[test]
+fn a_voucher_with_no_party_field_has_nothing_to_disagree_with() {
+    let mut row = BookRow::new("book-1", "20260812", "AA0118");
+    row.party = None;
+    let window = window(&[row]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118").build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let PresenceStatus::Present { differences, .. } = &only(&report).status else {
+        panic!("expected Present");
+    };
+    assert!(differences.is_empty());
 }

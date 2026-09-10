@@ -117,6 +117,15 @@ readings are one word apart in the output.
 `BookWindow::observed` is a boundary parse. It refuses, rather than degrades,
 on:
 
+- **a `REMOTEID` column that was never read.** A window declares
+  `RemoteIdEvidence::Observed` or `NotRead`, because "no voucher carried one"
+  and "the profile never fetched it" are different facts and only the first is
+  evidence. Where a proposal carries a `REMOTEID` and the window is `NotRead`,
+  that proposal's strongest key was never compared, so it **cannot be
+  `Absent`** — it becomes `RemoteIdEvidenceUnavailable`. A report-level marker
+  would not have done: a status field does not neutralise the per-voucher
+  verdict printed beside it, which is the defect this contract cites elsewhere
+  and had reproduced here.
 - **a read that was not complete** — `WindowIncomplete`. A window whose
   emptiness was only partially corroborated is not "no match found". This is
   the single most dangerous confusion available here, so it is a typed error
@@ -193,6 +202,22 @@ Two bases, and nothing else:
   exactly one proposal**. Uniqueness on both sides is ADR 0016's rule 2, and it
   is what makes the twenty-five-duplicates book safe: those numbers select more
   than one voucher, so they decide nothing and surface as an ambiguity instead.
+
+Uniqueness within a basis is not enough, and two further rules close what it
+leaves open:
+
+- **One book voucher satisfies at most one proposal, across bases.** Each basis
+  enforced its own uniqueness while nothing stopped two proposals reaching the
+  *same* voucher by *different* bases — one by `REMOTEID`, another by a manual
+  number. A consumer would then exclude two source vouchers against one book
+  row and silently drop an invoice, which is the failure this contract exists
+  to prevent. Every claimant of a contested voucher is demoted to
+  `BookVoucherClaimedTwice`; choosing between them would be auto-resolution.
+- **Two identity signals that disagree are reported, not ranked.** Where a
+  number matches uniquely but the two sides carry *different* `REMOTEID`s, the
+  result is `IdentityConflict` rather than a `Present` settled in the number's
+  favour — the same rule ADR 0016 applies when an identifier contradicts an
+  exact name.
 
 Number comparison uses the same NFC / dash-and-quote / case / whitespace
 comparison key as master binding, so a long alphanumeric invoice number and its
@@ -332,6 +357,24 @@ human-approved batch — this ADR does not move.
   qualified ledger-catalogue and `vouchers` window reads, refuses to build a
   window from a partial read, and shapes the report through the same party-name
   marking and egress redaction as every other read result.
+- **The verdict is built from two independently timed reads, so the catalogue
+  is corroborated after the window.** A ledger renamed between them would let a
+  proposal bind the old name while the rows carry the new one, removing the
+  only resemblance and manufacturing an `Absent`. The adapter re-reads the
+  catalogue and refuses on drift, the same paired-snapshot rule the
+  selected-voucher read already applies.
+- **Every refusal that depends only on the arguments happens before any Tally
+  request** — including the two cross-input ones, a proposal dated outside the
+  window and a voucher type absent from the numbering declaration. The crate
+  enforces them again at its own boundary; the adapter check exists so a
+  request that was always going to be refused does not first spend a company
+  probe, a catalogue read and a full window read.
+- **The published `inputSchema` is enforced to its leaves.** The shared
+  argument validator bounds only outer arrays and the crate's own limits are far
+  wider than this tool advertises, so nested names, numbers, identifiers and
+  amounts are bounded at the adapter and an undeclared nested property is
+  refused. A schema promising `additionalProperties: false` that then accepts
+  them is a claim the boundary does not keep.
 - Voucher numbers and voucher-type names fold through
   `master_binding::comparison_key` — the *same* key master names use, now an
   explicit crate-wide contract point owned by ADR 0016 rather than a private
@@ -352,9 +395,10 @@ human-approved batch — this ADR does not move.
 - **`RemoteId` is contract-complete and not reachable from the shipped read.**
   `render_agent_vouchers` does not `FETCH` `REMOTEID`; only the AlterID change
   feed does. Adding it changes a qualified read profile and needs its own live
-  evidence, so it is not done here. Until then the report states
-  `remote_id_observed: false`, so an absence of remote-id matches can never be
-  read as evidence that none exist. Both motivating engagements were hand-keyed
+  evidence, so it is not done here. The shipped adapter therefore declares
+  `RemoteIdEvidence::NotRead`, which makes the gap structural rather than
+  advisory: a proposal that supplies a `REMOTEID` is withheld from `Absent`
+  instead of being judged on the keys that happen to remain. Both motivating engagements were hand-keyed
   and would not have had one regardless.
 - The window is read in full before any comparison; `vouchers`' own pagination
   bounds output, not Tally's work. A window past `MAX_WINDOW_VOUCHERS` is

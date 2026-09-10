@@ -125,6 +125,19 @@ impl PresenceError {
     }
 }
 
+/// Whether the window's read gathered `REMOTEID` at all. A read profile that
+/// does not fetch the field yields `NotRead`, which is a different fact from
+/// "no voucher carried one" and must not be confused with it: a proposal whose
+/// own `REMOTEID` was never compared cannot be reported `Absent`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteIdEvidence {
+    /// The read fetched `REMOTEID`; an absent value means the voucher has none.
+    Observed,
+    /// The read did not fetch `REMOTEID`; absence means nothing at all.
+    NotRead,
+}
+
 /// How completely the window's source read observed its range. Only a complete
 /// read may become a `BookWindow`; the other value exists so a caller must
 /// state which it has rather than omit the question.
@@ -355,6 +368,7 @@ impl ProposedVoucher {
 pub struct BookWindow {
     from: TallyDate,
     to: TallyDate,
+    remote_id_evidence: RemoteIdEvidence,
     vouchers: Vec<BookVoucher>,
 }
 
@@ -363,6 +377,7 @@ impl BookWindow {
         from: &str,
         to: &str,
         read: WindowRead,
+        remote_id_evidence: RemoteIdEvidence,
         vouchers: Vec<BookVoucher>,
     ) -> Result<Self, PresenceError> {
         if read != WindowRead::Complete {
@@ -385,7 +400,12 @@ impl BookWindow {
                 return Err(PresenceError::WindowDuplicateVoucherKey);
             }
         }
-        Ok(Self { from, to, vouchers })
+        Ok(Self {
+            from,
+            to,
+            remote_id_evidence,
+            vouchers,
+        })
     }
 
     pub fn from(&self) -> &str {
@@ -398,6 +418,10 @@ impl BookWindow {
 
     pub fn vouchers(&self) -> &[BookVoucher] {
         &self.vouchers
+    }
+
+    pub fn remote_id_evidence(&self) -> RemoteIdEvidence {
+        self.remote_id_evidence
     }
 
     fn covers(&self, date: &str) -> bool {
@@ -430,6 +454,13 @@ impl NumberingDeclaration {
             }
         }
         Ok(Self { methods })
+    }
+
+    /// Whether a voucher type has a declared method, without needing the
+    /// caller to reproduce this crate's comparison key. A consumer validating
+    /// its own arguments before performing a read uses this.
+    pub fn declares(&self, voucher_type: &str) -> bool {
+        self.methods.contains_key(&comparison_key(voucher_type))
     }
 
     fn method(&self, type_key: &str) -> Option<NumberingMethod> {
@@ -528,6 +559,18 @@ pub enum UndecidedReason {
     /// The party comparison could not be completed, so no rule that needs a
     /// party actually ran and `Absent` is not available.
     PartyNotDecidable,
+    /// Two proposals both resolved to the same book voucher, possibly by
+    /// different identity bases. One book voucher can satisfy at most one
+    /// proposal, so every claimant is demoted rather than one being chosen.
+    BookVoucherClaimedTwice,
+    /// A number matched uniquely while the two sides carried *different*
+    /// `REMOTEID`s. Two identity signals disagree, and a disagreement is
+    /// reported rather than settled in the number's favour.
+    IdentityConflict,
+    /// The proposal carries a `REMOTEID` the window never read, so the
+    /// strongest key available to this proposal was never compared. An
+    /// `Absent` here would rest on evidence that was not gathered.
+    RemoteIdEvidenceUnavailable,
 }
 
 impl UndecidedReason {
@@ -542,6 +585,9 @@ impl UndecidedReason {
             Self::VoucherTypeNotObserved => "presence_voucher_type_not_observed",
             Self::ResemblesBookVoucher => "presence_resembles_book_voucher",
             Self::PartyNotDecidable => "presence_party_not_decidable",
+            Self::BookVoucherClaimedTwice => "presence_book_voucher_claimed_twice",
+            Self::IdentityConflict => "presence_identity_conflict",
+            Self::RemoteIdEvidenceUnavailable => "presence_remote_id_evidence_unavailable",
         }
     }
 }
@@ -967,30 +1013,49 @@ pub fn assess(request: &PresenceRequest<'_>) -> PresenceReport {
             &proposal_remote_counts,
             &proposal_number_counts,
         );
-        match &decided.status {
-            PresenceStatus::Present { book_key, .. } => {
-                if let Some(position) = window
-                    .vouchers
-                    .iter()
-                    .position(|voucher| voucher.key() == book_key)
-                {
-                    touched_book.insert(position);
-                }
-            }
-            PresenceStatus::PossiblyPresent(undecided) => {
-                for candidate in &undecided.candidates {
-                    if let Some(position) = window
-                        .vouchers
-                        .iter()
-                        .position(|voucher| voucher.key() == candidate.book_key)
-                    {
-                        touched_book.insert(position);
-                    }
-                }
-            }
-            PresenceStatus::Absent => {}
+        touched_book.extend(decided.touched);
+        vouchers.push(decided.presence);
+    }
+
+    // One book voucher satisfies at most one proposal. Uniqueness was enforced
+    // within each identity basis; nothing yet stopped two proposals reaching
+    // the same voucher by *different* bases — one by `REMOTEID`, another by a
+    // manual number — and a consumer would then exclude two source vouchers
+    // against one book row, silently dropping an invoice. Every claimant is
+    // demoted; choosing between them would be the auto-resolution this whole
+    // contract refuses.
+    let mut claims: BTreeMap<String, usize> = BTreeMap::new();
+    for entry in &vouchers {
+        if let Some(book_key) = entry.present_book_key() {
+            *claims.entry(book_key.to_string()).or_default() += 1;
         }
-        vouchers.push(decided);
+    }
+    let contested = claims
+        .into_iter()
+        .filter(|(_, count)| *count > 1)
+        .map(|(book_key, _)| book_key)
+        .collect::<BTreeSet<_>>();
+    if !contested.is_empty() {
+        for entry in &mut vouchers {
+            let Some(book_key) = entry.present_book_key() else {
+                continue;
+            };
+            if !contested.contains(book_key) {
+                continue;
+            }
+            let book_key = book_key.to_string();
+            let rule = match &entry.status {
+                PresenceStatus::Present {
+                    basis: PresenceBasis::RemoteId,
+                    ..
+                } => CandidateRule::SharedRemoteId,
+                _ => CandidateRule::SharedVoucherNumber,
+            };
+            entry.status = PresenceStatus::PossiblyPresent(undecided(
+                UndecidedReason::BookVoucherClaimedTwice,
+                vec![PresenceCandidate { book_key, rule }],
+            ));
+        }
     }
 
     let observations = observe(window, &index, &proposed_type_keys, &touched_book);
@@ -1002,6 +1067,15 @@ pub fn assess(request: &PresenceRequest<'_>) -> PresenceReport {
     }
 }
 
+/// One proposal's verdict, plus every book voucher it reached *before* the
+/// response candidate cap. The observations need the full set: a candidate
+/// dropped by the cap was still resembled, and counting it as untouched would
+/// report it as a voucher no proposal came near.
+struct Decided {
+    presence: VoucherPresence,
+    touched: BTreeSet<usize>,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn decide(
     proposal: &ProposedVoucher,
@@ -1011,36 +1085,49 @@ fn decide(
     numbering: &NumberingDeclaration,
     proposal_remote_counts: &BTreeMap<&str, usize>,
     proposal_number_counts: &BTreeMap<(&str, &str), usize>,
-) -> VoucherPresence {
+) -> Decided {
     let method = numbering
         .method(&proposal.type_key)
         .expect("PresenceRequest refused an undeclared numbering method");
     let type_observed = index.type_keys.contains(proposal.type_key.as_str());
-    let shell = |status: PresenceStatus| VoucherPresence {
-        position: proposal.position,
-        voucher_number: proposal.voucher_number.clone(),
-        numbering_method: method,
-        voucher_type_observed: type_observed,
-        party: party.outcome.clone(),
-        status,
+    let shell = |status: PresenceStatus, touched: BTreeSet<usize>| Decided {
+        presence: VoucherPresence {
+            position: proposal.position,
+            voucher_number: proposal.voucher_number.clone(),
+            numbering_method: method,
+            voucher_type_observed: type_observed,
+            party: party.outcome.clone(),
+            status,
+        },
+        touched,
     };
+    // A proposal carrying a `REMOTEID` the window never fetched has had its
+    // strongest key silently skipped. That cannot license an absence.
+    let remote_id_unverifiable =
+        proposal.remote_id.is_some() && window.remote_id_evidence() == RemoteIdEvidence::NotRead;
 
     // Rule one: identity first. A REMOTEID is a key Bridge itself wrote.
     if let Some(remote_id) = proposal.remote_id.as_deref() {
         if let Some(matches) = index.by_remote_id.get(remote_id) {
             let unique_here = proposal_remote_counts.get(remote_id).copied() == Some(1);
             if matches.len() == 1 && unique_here {
-                return shell(settled(
-                    proposal,
-                    party,
-                    &window.vouchers[matches[0]],
-                    PresenceBasis::RemoteId,
-                ));
+                return shell(
+                    settled(
+                        proposal,
+                        party,
+                        &window.vouchers[matches[0]],
+                        PresenceBasis::RemoteId,
+                    ),
+                    BTreeSet::from([matches[0]]),
+                );
             }
-            return shell(PresenceStatus::PossiblyPresent(undecided(
-                UndecidedReason::RemoteIdCollision,
-                candidates_from(window, matches, CandidateRule::SharedRemoteId),
-            )));
+            return shell(
+                PresenceStatus::PossiblyPresent(undecided(
+                    UndecidedReason::RemoteIdCollision,
+                    candidates_from(window, matches, CandidateRule::SharedRemoteId),
+                )),
+                matches.iter().copied().collect(),
+            );
         }
     }
 
@@ -1073,25 +1160,60 @@ fn decide(
                 .copied()
                 .unwrap_or_default()
                 > 1;
+            let touched = number_matches.iter().copied().collect::<BTreeSet<_>>();
             if proposed_twice {
-                return shell(PresenceStatus::PossiblyPresent(undecided(
-                    UndecidedReason::ProposalNumberCollision,
-                    candidates_from(window, &number_matches, CandidateRule::SharedVoucherNumber),
-                )));
+                return shell(
+                    PresenceStatus::PossiblyPresent(undecided(
+                        UndecidedReason::ProposalNumberCollision,
+                        candidates_from(
+                            window,
+                            &number_matches,
+                            CandidateRule::SharedVoucherNumber,
+                        ),
+                    )),
+                    touched,
+                );
             }
             if number_matches.len() > 1 {
-                return shell(PresenceStatus::PossiblyPresent(undecided(
-                    UndecidedReason::BookNumberCollision,
-                    candidates_from(window, &number_matches, CandidateRule::SharedVoucherNumber),
-                )));
+                return shell(
+                    PresenceStatus::PossiblyPresent(undecided(
+                        UndecidedReason::BookNumberCollision,
+                        candidates_from(
+                            window,
+                            &number_matches,
+                            CandidateRule::SharedVoucherNumber,
+                        ),
+                    )),
+                    touched,
+                );
             }
             if number_matches.len() == 1 {
-                return shell(settled(
-                    proposal,
-                    party,
-                    &window.vouchers[number_matches[0]],
-                    PresenceBasis::ManualVoucherNumber,
-                ));
+                let matched = &window.vouchers[number_matches[0]];
+                // Two identity signals that disagree are reported, never
+                // settled in the number's favour — the same rule ADR 0016
+                // applies to an identifier contradicting an exact name.
+                let contradicted =
+                    match (proposal.remote_id.as_deref(), matched.remote_id.as_deref()) {
+                        (Some(proposed), Some(observed)) => proposed != observed,
+                        _ => false,
+                    };
+                if contradicted {
+                    return shell(
+                        PresenceStatus::PossiblyPresent(undecided(
+                            UndecidedReason::IdentityConflict,
+                            candidates_from(
+                                window,
+                                &number_matches,
+                                CandidateRule::SharedVoucherNumber,
+                            ),
+                        )),
+                        touched,
+                    );
+                }
+                return shell(
+                    settled(proposal, party, matched, PresenceBasis::ManualVoucherNumber),
+                    touched,
+                );
             }
         }
     }
@@ -1130,15 +1252,27 @@ fn decide(
     }
 
     if found.is_empty() {
-        // Nothing resembled it — but if the party comparison never ran to
-        // completion, that absence is not evidence.
-        if party.incomplete {
-            return shell(PresenceStatus::PossiblyPresent(undecided(
-                UndecidedReason::PartyNotDecidable,
-                Vec::new(),
-            )));
+        // Nothing resembled it — but an absence is only evidence when every
+        // key this proposal carries was actually compared.
+        if remote_id_unverifiable {
+            return shell(
+                PresenceStatus::PossiblyPresent(undecided(
+                    UndecidedReason::RemoteIdEvidenceUnavailable,
+                    Vec::new(),
+                )),
+                BTreeSet::new(),
+            );
         }
-        return shell(PresenceStatus::Absent);
+        if party.incomplete {
+            return shell(
+                PresenceStatus::PossiblyPresent(undecided(
+                    UndecidedReason::PartyNotDecidable,
+                    Vec::new(),
+                )),
+                BTreeSet::new(),
+            );
+        }
+        return shell(PresenceStatus::Absent, BTreeSet::new());
     }
 
     let reason = match (
@@ -1150,6 +1284,7 @@ fn decide(
         (false, true, false) => UndecidedReason::NumberNotDecisive,
         _ => UndecidedReason::ResemblesBookVoucher,
     };
+    let touched = found.keys().copied().collect::<BTreeSet<_>>();
     let mut candidates = found
         .into_iter()
         .map(|(position, rule)| PresenceCandidate {
@@ -1163,9 +1298,10 @@ fn decide(
             .cmp(&right.rule.rank())
             .then_with(|| left.book_key.cmp(&right.book_key))
     });
-    shell(PresenceStatus::PossiblyPresent(undecided(
-        reason, candidates,
-    )))
+    shell(
+        PresenceStatus::PossiblyPresent(undecided(reason, candidates)),
+        touched,
+    )
 }
 
 /// Turns an identity match into a status. A cancelled or optional voucher
@@ -1220,12 +1356,20 @@ fn differences(
     // Only a bound party can disagree. An ambiguous one has no single name to
     // disagree with, and asserting a difference from a candidate would be the
     // same guess by another route.
-    if let PartyOutcome::Bound { catalog_name } = &party.outcome {
-        if !voucher.ledger_keys.contains(&comparison_key(catalog_name)) {
+    // The diagnostic compares against the *observed party field*, not against
+    // every ledger the voucher touches. Widening to all entry ledgers is right
+    // for finding a candidate and wrong for reporting a disagreement: a
+    // voucher whose party is one name while an entry names another would
+    // otherwise report no difference while serializing the other name as
+    // `observed`. A voucher with no party field has nothing to disagree with.
+    if let (PartyOutcome::Bound { catalog_name }, Some(observed)) =
+        (&party.outcome, voucher.party.as_deref())
+    {
+        if comparison_key(observed) != comparison_key(catalog_name) {
             differences.push(Difference {
                 field: DifferenceField::Party,
                 proposed: Some(catalog_name.clone()),
-                observed: voucher.party.clone(),
+                observed: Some(observed.to_string()),
             });
         }
     }

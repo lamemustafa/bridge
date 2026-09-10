@@ -167,6 +167,102 @@ fn an_unknown_numbering_method_is_refused_at_the_published_schema() {
     );
 }
 
+#[tokio::test]
+async fn cross_input_refusals_also_cost_no_tally_read() {
+    // A date outside the window and an undeclared voucher type depend only on
+    // the arguments. Deferring them to the crate boundary would spend a
+    // company probe, a catalogue read and a full voucher window first.
+    let directory = tempfile::tempdir().expect("directory");
+    let server = offline_server(directory.path());
+    for (arguments, code) in [
+        (
+            json!({"company_guid":GUID,"from":"20260901","to":"20260930",
+                "numbering":[{"voucher_type":"Journal","numbering_method":"manual"}],
+                "vouchers":[{"date":"20261015","voucher_type":"Journal",
+                    "entries":[{"ledger":"Cash","amount":"-1.00"},{"ledger":"WR2 Sales","amount":"1.00"}]}]}),
+            "presence_window_does_not_cover",
+        ),
+        (
+            json!({"company_guid":GUID,"from":"20260901","to":"20260930",
+                "numbering":[{"voucher_type":"Journal","numbering_method":"manual"}],
+                "vouchers":[{"date":"20260901","voucher_type":"Part and Labour Sale",
+                    "entries":[{"ledger":"Cash","amount":"-1.00"},{"ledger":"WR2 Sales","amount":"1.00"}]}]}),
+            "presence_numbering_method_undeclared",
+        ),
+    ] {
+        let response = server
+            .call_tool_response("voucher_presence", arguments)
+            .await;
+        assert_eq!(
+            response.value["structuredContent"]["result"]["error"]["code"], code,
+            "{code}"
+        );
+        assert_eq!(response.value["structuredContent"]["evidence"]["bytes"], 0);
+    }
+}
+
+#[tokio::test]
+async fn nested_arguments_are_bounded_to_the_published_schema() {
+    let directory = tempfile::tempdir().expect("directory");
+    let server = offline_server(directory.path());
+    let long = "x".repeat(agent_import::MAX_MASTER_NAME_CHARS + 1);
+    let entries =
+        json!([{"ledger":"Cash","amount":"-1.00"},{"ledger":"WR2 Sales","amount":"1.00"}]);
+    for (vouchers, numbering, code) in [
+        // A voucher number past the advertised 1024 characters.
+        (
+            json!([{"date":"20260901","voucher_type":"Journal","voucher_number":long,"entries":entries}]),
+            json!([{"voucher_type":"Journal","numbering_method":"manual"}]),
+            "argument_invalid:vouchers",
+        ),
+        // A ledger name past the advertised limit.
+        (
+            json!([{"date":"20260901","voucher_type":"Journal",
+                "entries":[{"ledger":long,"amount":"-1.00"},{"ledger":"WR2 Sales","amount":"1.00"}]}]),
+            json!([{"voucher_type":"Journal","numbering_method":"manual"}]),
+            "argument_invalid:vouchers",
+        ),
+        // An amount past the advertised 64 characters.
+        (
+            json!([{"date":"20260901","voucher_type":"Journal",
+                "entries":[{"ledger":"Cash","amount":"1".repeat(65)},{"ledger":"WR2 Sales","amount":"1.00"}]}]),
+            json!([{"voucher_type":"Journal","numbering_method":"manual"}]),
+            "argument_invalid:vouchers",
+        ),
+        // A nested property the schema does not declare.
+        (
+            json!([{"date":"20260901","voucher_type":"Journal","narration":"hello","entries":entries}]),
+            json!([{"voucher_type":"Journal","numbering_method":"manual"}]),
+            "argument_invalid:vouchers",
+        ),
+        // A blank nested string.
+        (
+            json!([{"date":"20260901","voucher_type":"Journal","party":"   ","entries":entries}]),
+            json!([{"voucher_type":"Journal","numbering_method":"manual"}]),
+            "argument_invalid:vouchers",
+        ),
+        // The same discipline on the numbering declaration.
+        (
+            json!([{"date":"20260901","voucher_type":"Journal","entries":entries}]),
+            json!([{"voucher_type":"Journal","numbering_method":"manual","note":"x"}]),
+            "argument_invalid:numbering",
+        ),
+    ] {
+        let response = server
+            .call_tool_response(
+                "voucher_presence",
+                json!({"company_guid":GUID,"from":"20260901","to":"20260930",
+                    "numbering":numbering,"vouchers":vouchers}),
+            )
+            .await;
+        assert_eq!(
+            response.value["structuredContent"]["result"]["error"]["code"], code,
+            "{code}"
+        );
+        assert_eq!(response.value["structuredContent"]["evidence"]["bytes"], 0);
+    }
+}
+
 // --- typed parses -------------------------------------------------------
 
 #[test]
@@ -280,44 +376,51 @@ fn window_xml() -> String {
     )
 }
 
-fn presence_plans() -> Vec<ScenarioPlan> {
-    let company = company_xml();
-    let status = "<RESPONSE>TallyPrime Server is Running</RESPONSE>".to_string();
-    let catalogue = catalogue_xml();
-    let window = window_xml();
+/// The shapes the runtime actually issues: an identity pair, then one block
+/// per paired native read. Built rather than hand-indexed, because this tool
+/// performs three reads and an off-by-one in a literal list is a debugging
+/// session, not a test failure.
+enum Step {
+    Company,
+    Status,
+    Payload(String),
+}
+
+fn paired_read(payload: &str) -> Vec<Step> {
     vec![
-        company.clone(),
-        status.clone(),
-        company.clone(),
-        status.clone(),
-        company.clone(),
-        catalogue.clone(),
-        status.clone(),
-        catalogue,
-        status.clone(),
-        company.clone(),
-        company.clone(),
-        window.clone(),
-        status.clone(),
-        window,
-        status,
-        company,
+        Step::Company,
+        Step::Payload(payload.to_string()),
+        Step::Status,
+        Step::Payload(payload.to_string()),
+        Step::Status,
+        Step::Company,
     ]
-    .into_iter()
-    .enumerate()
-    .map(|(index, body)| {
-        if matches!(index, 1 | 3 | 6 | 8 | 12 | 14) {
-            ScenarioPlan::new(Fixture::ProductStatus(
+}
+
+fn presence_plans() -> Vec<ScenarioPlan> {
+    let catalogue = catalogue_xml();
+    let mut steps = vec![Step::Company, Step::Status, Step::Company, Step::Status];
+    // Catalogue, then the voucher window, then the catalogue again: the
+    // verdict is built from two observations and the second read proves the
+    // first still holds.
+    steps.extend(paired_read(&catalogue));
+    steps.extend(paired_read(&window_xml()));
+    steps.extend(paired_read(&catalogue));
+    steps
+        .into_iter()
+        .map(|step| match step {
+            Step::Status => ScenarioPlan::new(Fixture::ProductStatus(
                 tally_protocol_simulator::ProductStatus::TallyPrime,
             ))
-            .with_framing(ResponseFraming::ContentLength)
-        } else {
-            ScenarioPlan::new(Fixture::SyntheticXml(body))
+            .with_framing(ResponseFraming::ContentLength),
+            Step::Company => ScenarioPlan::new(Fixture::SyntheticXml(company_xml()))
                 .with_encoding(WireEncoding::Utf16Le)
-                .with_framing(ResponseFraming::ContentLength)
-        }
-    })
-    .collect()
+                .with_framing(ResponseFraming::ContentLength),
+            Step::Payload(body) => ScenarioPlan::new(Fixture::SyntheticXml(body))
+                .with_encoding(WireEncoding::Utf16Le)
+                .with_framing(ResponseFraming::ContentLength),
+        })
+        .collect()
 }
 
 #[tokio::test]
@@ -400,5 +503,5 @@ async fn a_live_shaped_cycle_separates_present_undecided_and_absent() {
         "complete"
     );
     let observed = simulator.finish().expect("requests");
-    assert_eq!(observed.len(), 16);
+    assert_eq!(observed.len(), 22);
 }

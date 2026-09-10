@@ -6,11 +6,12 @@
 //! qualified reads that produce the evidence, the typed parse of the caller's
 //! proposals, and the response shape.
 use super::*;
+use std::collections::BTreeSet;
 
 use bridge_tally_core::book_presence::{
     self, BookVoucher, BookWindow, NumberingDeclaration, NumberingMethod, ObservedEntry,
     ObservedVoucher, PresenceError, PresenceReport, PresenceRequest, ProposedVoucher,
-    ProposedVoucherInput, WindowRead,
+    ProposedVoucherInput, RemoteIdEvidence, WindowRead,
 };
 use bridge_tally_core::master_binding::{MasterCatalog, MasterClass};
 
@@ -21,6 +22,42 @@ pub(super) const MAX_PRESENCE_VOUCHERS: usize = 500;
 pub(super) const MAX_PRESENCE_VOUCHER_TYPES: usize = 50;
 /// Most ledger entries one proposed voucher may carry.
 pub(super) const MAX_PRESENCE_ENTRIES: usize = 200;
+/// Longest accepted amount lexeme, matching the published schema.
+const MAX_PRESENCE_AMOUNT_CHARS: usize = 64;
+
+/// The shared argument validator bounds only the outer arrays, and the core
+/// crate's own limits are far wider than what this tool advertises. So every
+/// nested string is bounded here against the published `inputSchema`, and an
+/// unknown nested property is refused rather than ignored — a schema that
+/// promises `additionalProperties: false` and then accepts them is a claim the
+/// boundary does not keep.
+fn nested_text(
+    object: &Value,
+    key: &str,
+    argument: &str,
+    max_chars: usize,
+) -> Result<Option<String>, String> {
+    let Some(value) = object.get(key) else {
+        return Ok(None);
+    };
+    let text = value
+        .as_str()
+        .ok_or_else(|| format!("argument_invalid:{argument}"))?;
+    if text.trim().is_empty() || text.chars().count() > max_chars {
+        return Err(format!("argument_invalid:{argument}"));
+    }
+    Ok(Some(text.to_string()))
+}
+
+fn only_known_keys(object: &Value, known: &[&str], argument: &str) -> Result<(), String> {
+    let map = object
+        .as_object()
+        .ok_or_else(|| format!("argument_invalid:{argument}"))?;
+    if map.keys().any(|key| !known.contains(&key.as_str())) {
+        return Err(format!("argument_invalid:{argument}"));
+    }
+    Ok(())
+}
 
 impl Server {
     pub(super) async fn voucher_presence(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
@@ -34,6 +71,24 @@ impl Server {
         // proposal set should never cost a read.
         let numbering = parse_numbering(args)?;
         let proposals = parse_proposals(args)?;
+        // Both remaining cross-input refusals depend only on the arguments, so
+        // they are settled here rather than after three Tally reads. The crate
+        // enforces them again at its own boundary; this only stops a request
+        // that was always going to be refused from exercising the endpoint.
+        for proposal in &proposals {
+            if proposal.date() < from.as_str() || proposal.date() > to.as_str() {
+                return Err(PresenceError::WindowDoesNotCover
+                    .safe_reason_code()
+                    .to_string()
+                    .into());
+            }
+            if !numbering.declares(proposal.voucher_type()) {
+                return Err(PresenceError::NumberingMethodUndeclared
+                    .safe_reason_code()
+                    .to_string()
+                    .into());
+            }
+        }
 
         let (company, identity, accumulated) = self.verified_company(guid).await?;
         let mut accumulated = Some(accumulated);
@@ -74,12 +129,42 @@ impl Server {
                 }
             }
 
+            // The verdict is built from two independently timed observations,
+            // so the catalogue must still be the one the parties bound
+            // against. A ledger renamed between the reads would otherwise let
+            // a proposal bind an old name while the rows carry the new one,
+            // removing the only resemblance and manufacturing an `absent`.
+            // Same paired-snapshot rule the selected-voucher read applies.
+            let (corroboration, corroboration_evidence) =
+                self.read_ledger_catalogue(&identity, &company.name).await?;
+            accumulate(&mut accumulated, corroboration_evidence);
+            let before = catalogue
+                .iter()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>();
+            let after = corroboration
+                .iter()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>();
+            if before.len() != catalogue.len()
+                || after.len() != corroboration.len()
+                || before != after
+            {
+                return Err("ledger_snapshot_drifted".to_string().into());
+            }
+
             let observed = rows
                 .iter()
                 .map(book_voucher)
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(presence_code)?;
-            let window = BookWindow::observed(&from, &to, read, observed).map_err(presence_code)?;
+            // The qualified `vouchers` profile does not FETCH REMOTEID, so an
+            // absent value here means "never read", not "the voucher has
+            // none". Declaring that keeps a proposal whose own REMOTEID was
+            // never compared out of `absent`.
+            let window =
+                BookWindow::observed(&from, &to, read, RemoteIdEvidence::NotRead, observed)
+                    .map_err(presence_code)?;
             let request = PresenceRequest::new(&window, &catalog, &numbering, &proposals)
                 .map_err(presence_code)?;
             let report = book_presence::assess(&request);
@@ -156,17 +241,21 @@ fn parse_numbering(args: &Value) -> Result<NumberingDeclaration, String> {
     let entries = declared
         .iter()
         .map(|entry| {
-            let voucher_type = entry
-                .get("voucher_type")
-                .and_then(Value::as_str)
-                .ok_or_else(|| "argument_invalid:numbering".to_string())?;
+            only_known_keys(entry, &["voucher_type", "numbering_method"], "numbering")?;
+            let voucher_type = nested_text(
+                entry,
+                "voucher_type",
+                "numbering",
+                agent_import::MAX_MASTER_NAME_CHARS,
+            )?
+            .ok_or_else(|| "argument_invalid:numbering".to_string())?;
             let method = match entry.get("numbering_method").and_then(Value::as_str) {
                 Some("manual") => NumberingMethod::Manual,
                 Some("automatic") => NumberingMethod::Automatic,
                 Some("unknown") => NumberingMethod::Unknown,
                 _ => return Err("argument_invalid:numbering".to_string()),
             };
-            Ok((voucher_type.to_string(), method))
+            Ok((voucher_type, method))
         })
         .collect::<Result<Vec<_>, String>>()?;
     NumberingDeclaration::new(entries).map_err(|error| error.safe_reason_code().to_string())
@@ -182,44 +271,61 @@ fn parse_proposals(args: &Value) -> Result<Vec<ProposedVoucher>, String> {
     }
     let mut parsed = Vec::with_capacity(proposed.len());
     for (position, voucher) in proposed.iter().enumerate() {
+        only_known_keys(
+            voucher,
+            &[
+                "date",
+                "voucher_type",
+                "voucher_number",
+                "remote_id",
+                "party",
+                "entries",
+            ],
+            "vouchers",
+        )?;
         let date = normalized_date(
             voucher
                 .get("date")
                 .and_then(Value::as_str)
                 .ok_or_else(|| "argument_invalid:vouchers".to_string())?,
         )?;
-        let voucher_type = voucher
-            .get("voucher_type")
-            .and_then(Value::as_str)
+        let name_limit = agent_import::MAX_MASTER_NAME_CHARS;
+        let voucher_type = nested_text(voucher, "voucher_type", "vouchers", name_limit)?
             .ok_or_else(|| "argument_invalid:vouchers".to_string())?;
+        let voucher_number = nested_text(voucher, "voucher_number", "vouchers", name_limit)?;
+        let remote_id = nested_text(voucher, "remote_id", "vouchers", name_limit)?;
+        let party = nested_text(voucher, "party", "vouchers", name_limit)?;
         let rows = voucher
             .get("entries")
             .and_then(Value::as_array)
             .filter(|entries| !entries.is_empty() && entries.len() <= MAX_PRESENCE_ENTRIES)
             .ok_or_else(|| "argument_invalid:vouchers".to_string())?;
-        let entries = rows
+        let bounded = rows
             .iter()
             .map(|entry| {
-                Ok(ObservedEntry {
-                    ledger: entry
-                        .get("ledger")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| "argument_invalid:vouchers".to_string())?,
-                    amount: entry
-                        .get("amount")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| "argument_invalid:vouchers".to_string())?,
-                })
+                only_known_keys(entry, &["ledger", "amount"], "vouchers")?;
+                let ledger = nested_text(entry, "ledger", "vouchers", name_limit)?
+                    .ok_or_else(|| "argument_invalid:vouchers".to_string())?;
+                let amount = nested_text(entry, "amount", "vouchers", MAX_PRESENCE_AMOUNT_CHARS)?
+                    .ok_or_else(|| "argument_invalid:vouchers".to_string())?;
+                Ok((ledger, amount))
             })
             .collect::<Result<Vec<_>, String>>()?;
+        let entries = bounded
+            .iter()
+            .map(|(ledger, amount)| ObservedEntry {
+                ledger: ledger.as_str(),
+                amount: amount.as_str(),
+            })
+            .collect::<Vec<_>>();
         parsed.push(
             ProposedVoucher::new(ProposedVoucherInput {
                 position,
                 date: &date,
-                voucher_type,
-                voucher_number: voucher.get("voucher_number").and_then(Value::as_str),
-                remote_id: voucher.get("remote_id").and_then(Value::as_str),
-                party: voucher.get("party").and_then(Value::as_str),
+                voucher_type: &voucher_type,
+                voucher_number: voucher_number.as_deref(),
+                remote_id: remote_id.as_deref(),
+                party: party.as_deref(),
                 entries: &entries,
             })
             .map_err(|error| error.safe_reason_code().to_string())?,
