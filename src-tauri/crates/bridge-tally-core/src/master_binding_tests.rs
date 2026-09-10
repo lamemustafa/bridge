@@ -569,21 +569,23 @@ fn an_ambiguous_entity_parks_against_a_verified_fallback() {
         "BETA (5550000001)",
         "Suspense Placeholder",
     ]);
-    let binding = bind_one_name(&catalog, "PARTY 5550000001");
-    let fallback = FallbackBinding::assign(&binding, &catalog, "Suspense Placeholder")
+    let report = bound(&catalog, &[entity("PARTY 5550000001")]);
+    let fallback = report
+        .assign_fallback(0, &catalog, "Suspense Placeholder")
         .expect("an unbound entity may be parked");
     assert_eq!(fallback.fallback_name(), "Suspense Placeholder");
     assert_eq!(fallback.source_name(), "PARTY 5550000001");
     assert_eq!(fallback.reason(), UnboundReason::IdentifierConflict);
     assert_eq!(fallback.retained_tag(), "numeric:5550000001");
+    assert_eq!(fallback.class(), MasterClass::Ledger);
 }
 
 #[test]
 fn a_bound_entity_cannot_be_parked() {
     let catalog = ledgers(&["Alpha Traders", "Suspense Placeholder"]);
-    let binding = bind_one_name(&catalog, "Alpha Traders");
+    let report = bound(&catalog, &[entity("Alpha Traders")]);
     assert_eq!(
-        FallbackBinding::assign(&binding, &catalog, "Suspense Placeholder"),
+        report.assign_fallback(0, &catalog, "Suspense Placeholder"),
         Err(MasterBindingError::FallbackNotInCatalog)
     );
 }
@@ -592,10 +594,33 @@ fn a_bound_entity_cannot_be_parked() {
 fn a_fallback_master_that_does_not_exist_is_refused() {
     // A suspense ledger that was never created is how one batch was lost.
     let catalog = ledgers(&["Alpha Traders", "Beta Supply"]);
-    let binding = bind_one_name(&catalog, "Zeta Placeholder");
+    let report = bound(&catalog, &[entity("Zeta Placeholder")]);
     assert_eq!(
-        FallbackBinding::assign(&binding, &catalog, "Suspense Placeholder"),
+        report.assign_fallback(0, &catalog, "Suspense Placeholder"),
         Err(MasterBindingError::FallbackNotInCatalog)
+    );
+}
+
+#[test]
+fn a_fallback_cannot_be_drawn_from_another_catalog_class_or_another_report() {
+    // A stock-item binding parked against a ledger catalog was a representable
+    // state that nothing downstream could detect.
+    let stock = MasterCatalog::new(MasterClass::StockItem, ["PH-01A-B00", "Scrap Placeholder"])
+        .expect("valid");
+    let ledger = ledgers(&["Alpha Traders", "Suspense Placeholder"]);
+    let stock_report = bound(&stock, &[entity("Zeta Placeholder")]);
+    assert_eq!(
+        stock_report.assign_fallback(0, &ledger, "Suspense Placeholder"),
+        Err(MasterBindingError::ClassMismatch)
+    );
+    // An index outside this report cannot name another report's entity.
+    assert_eq!(
+        stock_report.assign_fallback(7, &stock, "Scrap Placeholder"),
+        Err(MasterBindingError::ClassMismatch)
+    );
+    assert_eq!(
+        MasterBindingError::ClassMismatch.safe_reason_code(),
+        "master_class_mismatch"
     );
 }
 

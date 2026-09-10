@@ -100,6 +100,9 @@ pub enum MasterBindingError {
     TooManyIdentifiers,
     #[error("fallback master was not a current catalog entry")]
     FallbackNotInCatalog,
+    /// A catalog of the wrong class, or an entity from another report.
+    #[error("catalog did not match the report it is used with")]
+    ClassMismatch,
 }
 
 impl MasterBindingError {
@@ -116,6 +119,7 @@ impl MasterBindingError {
             Self::IdentifierHintUnusable => "master_identifier_hint_unusable",
             Self::TooManyIdentifiers => "master_identifiers_too_many",
             Self::FallbackNotInCatalog => "master_fallback_not_in_catalog",
+            Self::ClassMismatch => "master_class_mismatch",
         }
     }
 }
@@ -323,6 +327,44 @@ impl BindingReport {
             .filter(|entity| !matches!(entity.status, BindingStatus::Bound { .. }))
     }
 
+    /// Parks one of *this report's* unbound entities against a fallback master
+    /// drawn from a catalog of the same class.
+    ///
+    /// Taking an index rather than an `EntityBinding` is the point: an entity
+    /// from another report — a stock-item binding, say — cannot be handed to a
+    /// ledger catalog, because it cannot be named here at all. The class is
+    /// then checked as well, so a same-shaped catalog of the wrong class is
+    /// refused rather than silently accepted, and the result carries the class
+    /// forward for anything downstream that needs to prove it.
+    pub fn assign_fallback(
+        &self,
+        entity_index: usize,
+        catalog: &MasterCatalog,
+        fallback_name: &str,
+    ) -> Result<FallbackBinding, MasterBindingError> {
+        if catalog.class != self.class {
+            return Err(MasterBindingError::ClassMismatch);
+        }
+        let entity = self
+            .entities
+            .get(entity_index)
+            .ok_or(MasterBindingError::ClassMismatch)?;
+        let unresolved = entity
+            .unresolved()
+            .ok_or(MasterBindingError::FallbackNotInCatalog)?;
+        let fallback = catalog
+            .exact(fallback_name)
+            .ok_or(MasterBindingError::FallbackNotInCatalog)?;
+        Ok(FallbackBinding {
+            class: self.class,
+            position: entity.position,
+            source_name: entity.source_name.clone(),
+            fallback_name: fallback.to_string(),
+            retained: unresolved.unresolved_identity.clone(),
+            reason: unresolved.reason,
+        })
+    }
+
     pub fn totals(&self) -> BindingTotals {
         let mut totals = BindingTotals {
             requested: self.entities.len(),
@@ -355,6 +397,7 @@ impl BindingReport {
 /// that already matched is not a representable state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FallbackBinding {
+    class: MasterClass,
     position: usize,
     source_name: String,
     fallback_name: String,
@@ -363,29 +406,9 @@ pub struct FallbackBinding {
 }
 
 impl FallbackBinding {
-    /// Parks one unbound entity against a catalog-verified fallback master.
-    ///
-    /// Refuses a bound entity and refuses a fallback name that is not a current
-    /// catalog entry — a suspense ledger that does not exist is how one
-    /// engagement lost a batch.
-    pub fn assign(
-        entity: &EntityBinding,
-        catalog: &MasterCatalog,
-        fallback_name: &str,
-    ) -> Result<Self, MasterBindingError> {
-        let unresolved = entity
-            .unresolved()
-            .ok_or(MasterBindingError::FallbackNotInCatalog)?;
-        let fallback = catalog
-            .exact(fallback_name)
-            .ok_or(MasterBindingError::FallbackNotInCatalog)?;
-        Ok(Self {
-            position: entity.position,
-            source_name: entity.source_name.clone(),
-            fallback_name: fallback.to_string(),
-            retained: unresolved.unresolved_identity.clone(),
-            reason: unresolved.reason,
-        })
+    /// The class of the catalog this fallback was drawn from.
+    pub fn class(&self) -> MasterClass {
+        self.class
     }
 
     pub fn position(&self) -> usize {
