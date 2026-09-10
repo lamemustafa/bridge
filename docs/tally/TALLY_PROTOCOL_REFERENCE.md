@@ -1020,6 +1020,30 @@ Three findings:
 **Required:** Bridge must verify company identity *in the response* — via the company GUID —
 rather than trusting that the request was honoured. Tally reports success either way.
 
+### 9.11c `SVCURRENTCOMPANY` is not a guard — a wrong name still imports — **TRAP**
+
+**VERIFIED 2026-09-10 (licensed TallyPrime 7.1 Gold, operator machine).** A `Vouchers`
+import carried an `<SVCURRENTCOMPANY>` whose value had two letters of the company name
+transposed, matching no company on the instance. The voucher was created anyway, in the
+loaded company: `CREATED=1, ERRORS=0, EXCEPTIONS=0`, no `LINEERROR`.
+
+The name is a *selector with a fallback*, not an assertion. A name that matches nothing does
+not fail the request; Tally binds to whichever company happens to be open — the same
+binding behaviour §9.10d documents for a `COMPANY` object, reached here through the report
+scope instead.
+
+**Consequences:**
+
+1. **Pinning `SVCURRENTCOMPANY` buys no safety.** It cannot be used to prove a write landed
+   where it was aimed, and a typo in it is invisible: the import succeeds and looks correct.
+   Bridge's own import header carries this element, so this applies to Bridge, not only to
+   hand-built files.
+2. **Company identity must be established before the write, not asserted during it.** Read
+   the company back (§9.11a) and compare the GUID, or read the posted voucher back and
+   confirm which company holds it.
+3. This is the fifth silent-failure mode caught by "the *intended* thing must be observed
+   afterwards" rather than by inspecting the response.
+
 ### 9.11a How to read the company GUID — **VERIFIED, and this closes §9.11's requirement**
 
 **VERIFIED 2026-07-30.** A single-object export returns the full company definition,

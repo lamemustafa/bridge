@@ -26,6 +26,21 @@ capability from assumption, and a completed request from a verified snapshot.
   contains the original source research, product model, threat analysis, and
   staged implementation plan (superseded in part — see its header note).
 
+## Operator tools
+
+- [`scripts/bank_statement_import.py`](../../scripts/bank_statement_import.py) turns a
+  password-protected bank-statement PDF into TallyPrime import XML (Payment / Receipt /
+  Contra), for hand-import through Gateway of Tally > Import > Vouchers. Offline; it never
+  contacts Tally. SBI and HDFC statement layouts are supported. It refuses to emit rows
+  whose running balance does not reproduce every printed closing balance, and re-parses its
+  own output before writing. Contract tests:
+  `python3 scripts/bank_statement_import.test.py`.
+
+  It exists because Bridge's own writer qualifies **Journal only**, which cannot express a
+  bank statement: money out is a Payment, money in a Receipt, and an own-account or ATM
+  movement a Contra. No statement, password, ledger name or account number lives in this
+  repository — all are supplied at run time.
+
 The architectural decisions are recorded in:
 
 - [Transport negotiation](../adr/0001-tally-transport-negotiation.md)
