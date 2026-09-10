@@ -41,15 +41,26 @@ section 9. The ones this module is built around:
   Receipt and Contra. The REMOTEID is carried because it is the best available
   key and because Delete-by-REMOTEID is the documented correction path (9.7,
   9.12b) — NOT because upsert-on-repeat has been shown for these types.
-  Before relying on a re-import to correct a batch: import the corrected file
-  once, then count the vouchers in that date range. If the count doubled, the
-  upsert did not happen for this voucher type and the first batch must be
-  deleted by REMOTEID instead. `main` prints this.
+  A corrected re-import is a *different* payload, which is a further step
+  again: 3.3a's own untested list includes "when the payload differs from the
+  original (partial update semantics)". So re-importing a corrected file may
+  overwrite, may partially update, or may duplicate. Delete by REMOTEID and
+  create afresh (9.7, 9.12b) is the path with live confirmation behind it, and
+  it is what the manifest's REMOTEID column exists for.
 
-  The key is also not readable back. A Voucher collection read returns Tally's
-  own <company GUID>-<master id> in the REMOTEID attribute, not the value you
-  sent. Confirm a voucher by date, ledger entries and amount — never by
-  comparing REMOTEIDs, which rejects every legitimate import.
+  Qualifying a voucher type takes the import summary, not a voucher count: a
+  repeat that Tally rejected also leaves the count unchanged. Read the second
+  import's counters — ALTERED, with CREATED and the failure counters zero —
+  and then read the voucher back.
+
+  Attribution: on the one path where it was checked, a Voucher read returned
+  Tally's own <company GUID>-<master id> in the REMOTEID attribute rather than
+  the value sent, so the key may not be readable back. Do not substitute a
+  date/ledger/amount fingerprint for it — a book with a recurring same-day
+  payment already contains a voucher with that tuple, and a pre-existing one
+  would stand in for a write that never happened. The narration this tool
+  writes carries the bank's own transaction reference, which is the
+  independent marker to match on.
 
   Sign convention: a debit is ISDEEMEDPOSITIVE Yes with a NEGATIVE amount.
 
@@ -1281,10 +1292,12 @@ def main(argv=None):
               "is not deletion — a re-import upserts what is present and leaves the "
               "rest standing. Delete those vouchers by the REMOTEIDs in the manifest, "
               "or the transfer they represent is counted twice.")
-    print("\nON RE-IMPORTING TO CORRECT THIS BATCH: upsert-by-REMOTEID is verified for "
-          "Journal only (9.8), and this file is Payment/Receipt/Contra. Import once, then "
-          "count the vouchers in this date range. If the count doubled, delete the first "
-          "batch by REMOTEID rather than re-importing again.")
+    print("\nTO CORRECT A BATCH ALREADY IMPORTED: delete by the REMOTEIDs in the manifest, "
+          "then import the corrected file. Do NOT rely on re-importing over the top — "
+          "upsert-by-REMOTEID is verified for Journal only (9.8), this file is "
+          "Payment/Receipt/Contra, and a re-import carrying CORRECTED values is a further "
+          "untested case again (3.3a). If you do test it, read the import summary rather "
+          "than the voucher count: a rejected repeat also leaves the count unchanged.")
     return 0
 
 
