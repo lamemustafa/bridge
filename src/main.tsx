@@ -35,9 +35,11 @@ import { DscScreen } from "./DscScreen";
 import { createDocumentsWorkspaceState, DocumentsScreen } from "./DocumentsScreen";
 import { AxalScreen } from "./AxalScreen";
 import { MirrorProofScreen } from "./MirrorProofScreen";
-import { ErrorBoundary } from "./ErrorBoundary";
+import { ErrorBoundary, ReloadGuardContext } from "./ErrorBoundary";
 import { ClientSwitcher, type ClientSwitcherClient } from "./ClientSwitcher";
 import { JournalPostingScreen } from "./JournalPostingScreen";
+import { SourceDraftScreen } from "./SourceDraftScreen";
+import { NativeLifecycleController, hasNativeWindowRuntime, type NativeLifecycleRequest } from "./NativeLifecycleController";
 import { TrialBalanceScreen } from "./TrialBalanceScreen";
 import { LedgerEntriesScreen } from "./LedgerEntriesScreen";
 import { createDrawerFocusLifecycle, ensureDrawerFocus, shouldFocusMainContentAfterViewTransition, trapDrawerTabKeydown } from "./evidence-drawer-focus";
@@ -282,7 +284,7 @@ type AxalConnectionStatus = {
   };
 };
 
-type View = "dashboard" | "clients" | "outstandings" | "trial_balance" | "ledger_entries" | "companies" | "settings" | "journal" | "gst" | "dsc" | "documents" | "axal";
+type View = "dashboard" | "clients" | "outstandings" | "trial_balance" | "ledger_entries" | "companies" | "settings" | "journal" | "source_draft" | "gst" | "dsc" | "documents" | "axal";
 type TallyAction = "probe" | "discover" | "bootstrap" | "save" | "fixture_enroll" | "fixture_revoke" | "evidence" | "explorer" | "start" | "resume" | "cancel";
 
 const TABLE_PREVIEW_LIMIT = 100;
@@ -300,6 +302,7 @@ const VIEW_TITLES: Record<View, string> = {
   companies: "Companies",
   settings: "Settings",
   journal: "Review Journal",
+  source_draft: "Prepare file",
   gst: "GST return readiness",
   dsc: "DSC token",
   documents: "Documents",
@@ -497,6 +500,30 @@ function App() {
   const [tallyAction, setTallyAction] = React.useState<TallyAction | null>(null);
   const snapshotTransitionPending = tallyAction === "start" || tallyAction === "resume";
   const [journalActionBusy, setJournalActionBusy] = React.useState(false);
+  const [sourceDraftBusy, setSourceDraftBusy] = React.useState(false);
+  const [sourceDraftLifecycleOpen, setSourceDraftLifecycleOpen] = React.useState(false);
+  const [sourceDraftLifecycleFocusRestore, setSourceDraftLifecycleFocusRestore] = React.useState<(() => void) | null>(null);
+  const [sourceDraftLifecycleReady, setSourceDraftLifecycleReady] = React.useState(() => !hasNativeWindowRuntime());
+  const [sourceDraftLifecycleProtectionError, setSourceDraftLifecycleProtectionError] = React.useState<string | null>(null);
+  const journalActionBusyRef = React.useRef(false);
+  const sourceDraftDirtyRef = React.useRef(false);
+  const sourceDraftActionBusyRef = React.useRef(false);
+  const sourceDraftLifecyclePendingRef = React.useRef(false);
+  const sourceDraftReloadAdmissionRef = React.useRef<string | null>(null);
+  const sourceDraftAuthorizedReloadRef = React.useRef(false);
+  const inspectNativeLifecyclePending = React.useCallback(async () => {
+    if (!hasNativeWindowRuntime()) return false;
+    return (await invoke<NativeLifecycleRequest | null>("desktop_pending_source_draft_lifecycle_request")) !== null;
+  }, []);
+  const sourceDraftReloadGuard = React.useMemo(() => ({
+    sourceDraftDirtyRef,
+    sourceDraftActionBusyRef,
+    journalActionBusyRef,
+    lifecyclePendingRef: sourceDraftLifecyclePendingRef,
+    reloadAdmissionRef: sourceDraftReloadAdmissionRef,
+    authorizedReloadRef: sourceDraftAuthorizedReloadRef,
+    inspectNativeLifecyclePending,
+  }), [inspectNativeLifecyclePending]);
   const tallyResultsVersion = React.useRef(0);
   const persistedCompanyProfileLoadVersion = React.useRef(0);
   const proofPreviewRequestVersion = React.useRef(0);
@@ -571,6 +598,35 @@ function App() {
   const changeChildTallyReadActivity = React.useCallback((delta: 1 | -1) => {
     setChildTallyReadCount((current) => Math.max(0, current + delta));
   }, []);
+
+  const changeJournalActionBusy = React.useCallback((next: boolean) => {
+    journalActionBusyRef.current = next;
+    setJournalActionBusy(next);
+  }, []);
+
+  const changeSourceDraftBusy = React.useCallback((next: boolean) => {
+    sourceDraftActionBusyRef.current = next;
+    setSourceDraftBusy(next);
+  }, []);
+
+  const changeSourceDraftDirty = React.useCallback((next: boolean) => {
+    sourceDraftDirtyRef.current = next;
+  }, []);
+
+  const changeSourceDraftLifecycleProtection = React.useCallback((ready: boolean, error: string | null) => {
+    setSourceDraftLifecycleReady(ready);
+    setSourceDraftLifecycleProtectionError(error);
+  }, []);
+
+  const restoreSourceDraftLifecycleFocus = React.useCallback((restoreFocus: () => void) => {
+    setSourceDraftLifecycleFocusRestore(() => restoreFocus);
+  }, []);
+
+  React.useEffect(() => {
+    if (sourceDraftLifecycleOpen || !sourceDraftLifecycleFocusRestore) return;
+    sourceDraftLifecycleFocusRestore();
+    setSourceDraftLifecycleFocusRestore(null);
+  }, [sourceDraftLifecycleOpen, sourceDraftLifecycleFocusRestore]);
 
   // Both of these are backed by the encrypted mirror, and touching the mirror
   // resolves its key from the OS keychain -- which prompts. Running them on
@@ -659,8 +715,10 @@ function App() {
     : childTallyReadCount > 0
     ? "Endpoint settings are locked while a Tally read is in progress."
     : null;
-  const shellNavigationLocked = childTallyReadCount > 0 || journalActionBusy;
-  const shellNavigationDescription = journalActionBusy
+  const shellNavigationLocked = childTallyReadCount > 0 || journalActionBusy || sourceDraftBusy;
+  const shellNavigationDescription = sourceDraftBusy
+    ? "source-draft-busy-note"
+    : journalActionBusy
     ? "journal-action-busy-note"
     : childTallyReadCount > 0
       ? "active-tally-read-note"
@@ -1550,7 +1608,19 @@ function App() {
                   : "Run a read-only Core Accounting evidence read";
 
   return (
-    <div className="shell" inert={evidenceDrawerOpen || undefined} aria-hidden={evidenceDrawerOpen || undefined}>
+    <ReloadGuardContext.Provider value={sourceDraftReloadGuard}>
+    <>
+      <NativeLifecycleController
+        sourceDraftDirtyRef={sourceDraftDirtyRef}
+        sourceDraftActionBusyRef={sourceDraftActionBusyRef}
+        journalActionBusyRef={journalActionBusyRef}
+        lifecyclePendingRef={sourceDraftLifecyclePendingRef}
+        authorizedReloadRef={sourceDraftAuthorizedReloadRef}
+        onProtectionChange={changeSourceDraftLifecycleProtection}
+        onModalChange={setSourceDraftLifecycleOpen}
+        onModalClosed={restoreSourceDraftLifecycleFocus}
+      />
+    <div className="shell" inert={evidenceDrawerOpen || sourceDraftLifecycleOpen || undefined} aria-hidden={evidenceDrawerOpen || sourceDraftLifecycleOpen || undefined}>
       <a className="skip-link" href="#main-content">Skip to active view</a>
       <aside className="sidebar">
         <div className="brand">
@@ -1579,6 +1649,9 @@ function App() {
           >
             <FileText size={18} /> Trial Balance
           </button>
+          <button aria-current={view === "source_draft" ? "page" : undefined} className={view === "source_draft" ? "active" : ""} disabled={shellNavigationLocked} aria-describedby={shellNavigationDescription} onClick={() => setView("source_draft")}>
+            <FileText size={18} /> Prepare file
+          </button>
           <button aria-current={view === "companies" ? "page" : undefined} className={view === "companies" ? "active" : ""} disabled={shellNavigationLocked} aria-describedby={shellNavigationDescription} onClick={() => setView("companies")}>
             <Building2 size={18} /> Companies
           </button>
@@ -1589,8 +1662,14 @@ function App() {
         {childTallyReadCount > 0 && (
           <p className="future-sections-note" id="active-tally-read-note" role="status">A Tally read is still in progress. Wait before opening another live read.</p>
         )}
+        {sourceDraftBusy && (
+          <p className="future-sections-note" id="source-draft-busy-note" role="status">A local draft file action is in progress. Wait for it to finish before leaving.</p>
+        )}
         {journalActionBusy && (
           <p className="future-sections-note" id="journal-action-busy-note" role="status">A Journal action is still in progress. Wait for Bridge to finish before leaving this review.</p>
+        )}
+        {!sourceDraftLifecycleReady && sourceDraftLifecycleProtectionError && (
+          <p className="future-sections-note" id="native-lifecycle-protection-note" role="status">Native close protection is unavailable. Reopen Bridge before preparing a source draft or reviewing a Journal.</p>
         )}
       </aside>
 
@@ -1605,7 +1684,7 @@ function App() {
           clients={clientSwitcherClients}
           selectedClientKey={selectedCompany}
           activeView={view}
-          selectionLocked={savedCompanySelectionLocked || journalActionBusy}
+          selectionLocked={savedCompanySelectionLocked || journalActionBusy || sourceDraftBusy}
           endpoint={currentProbeCanonicalOrigin ?? `${config.host}:${config.port}`}
           endpointStatus={status?.reachable && passport ? "checked" : "not_checked"}
           loadError={persistedCompanyProfileError ? toErrorMessage(persistedCompanyProfileError) : null}
@@ -1618,7 +1697,7 @@ function App() {
         />
         <header>
           <div>
-            {view !== "companies" && view !== "settings" && view !== "journal" && (
+            {view !== "companies" && view !== "settings" && view !== "journal" && view !== "source_draft" && (
               <p className="eyebrow">
                 {view === "outstandings"
                   ? "Receivables and payables"
@@ -1638,7 +1717,7 @@ function App() {
               {view === "outstandings" && <button className="secondary-action" type="button" disabled={shellNavigationLocked} onClick={() => setView("ledger_entries")}>
                 <Search size={18} aria-hidden="true" /> Investigate ledger
               </button>}
-              <button className="secondary-action" type="button" disabled={shellNavigationLocked || snapshotPostingBlocked} onClick={() => setView("journal")}>
+              <button className="secondary-action" type="button" disabled={shellNavigationLocked || snapshotPostingBlocked || !sourceDraftLifecycleReady} aria-describedby={!sourceDraftLifecycleReady ? "native-lifecycle-protection-note" : undefined} onClick={() => setView("journal")}>
                 <FileText size={18} aria-hidden="true" /> Review Journal file
               </button>
             </div>
@@ -1891,9 +1970,31 @@ function App() {
           </ErrorBoundary>
         )}
 
+        {/* Keep local proposals mounted when navigating; switching views must not discard edits. */}
+        <div hidden={view !== "source_draft"}>
+          <ErrorBoundary key="source_draft" label="Prepare file">
+            <SourceDraftScreen
+              onBusyChange={changeSourceDraftBusy}
+              onDirtyChange={changeSourceDraftDirty}
+              editingEnabled={sourceDraftLifecycleReady}
+              lifecycleInteractionBlocked={sourceDraftLifecycleOpen}
+              isLifecycleInteractionBlocked={() => sourceDraftLifecyclePendingRef.current || sourceDraftReloadAdmissionRef.current !== null}
+              protectionError={sourceDraftLifecycleProtectionError}
+            />
+          </ErrorBoundary>
+        </div>
+
         {view === "journal" && (
           <ErrorBoundary key="journal" label="Review Journal">
-            <JournalPostingScreen config={config} postingBlocked={snapshotPostingBlocked} onBusyChange={setJournalActionBusy} />
+            <JournalPostingScreen
+              config={config}
+              postingBlocked={snapshotPostingBlocked}
+              onBusyChange={changeJournalActionBusy}
+              lifecycleAdmissionReady={sourceDraftLifecycleReady}
+              lifecycleInteractionBlocked={sourceDraftLifecycleOpen}
+              isLifecycleInteractionBlocked={() => sourceDraftLifecyclePendingRef.current || sourceDraftReloadAdmissionRef.current !== null}
+              lifecycleAdmissionError={sourceDraftLifecycleProtectionError}
+            />
           </ErrorBoundary>
         )}
 
@@ -2136,7 +2237,11 @@ function App() {
 
         {evidenceDrawerOpen && (
           createPortal(
-            <div className="evidence-drawer-backdrop">
+            <div
+              className="evidence-drawer-backdrop"
+              inert={sourceDraftLifecycleOpen || undefined}
+              aria-hidden={sourceDraftLifecycleOpen || undefined}
+            >
             <aside
               className="evidence-drawer"
               role="dialog"
@@ -2319,6 +2424,8 @@ function App() {
         )}
       </main>
     </div>
+    </>
+    </ReloadGuardContext.Provider>
   );
 }
 

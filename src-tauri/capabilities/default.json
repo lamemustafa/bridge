@@ -3,5 +3,8 @@
   "identifier": "default",
   "description": "Default desktop permissions for Bridge",
   "windows": ["main"],
-  "permissions": []
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
 }
