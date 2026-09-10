@@ -646,6 +646,10 @@ the response lacks or mismatches the selected company GUID.
 
 ---
 
+> **Adding a section here? Claim the number in [`SECTION-REGISTER.md`](./SECTION-REGISTER.md) in the same PR.** Several branches extend this
+> file at once and a number is invisible to them until it merges; two branches have already
+> claimed the same one.
+
 ## 9. Writes (import)
 
 **VERIFIED.** Writes succeed on **Education mode** — the restriction is on the *voucher date*
