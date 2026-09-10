@@ -944,6 +944,15 @@ Four properties of it are not guessable, and each was measured:
    and Delete by `REMOTEID` is the only working correction path, so a batch imported without
    one cannot be cleanly withdrawn.
 
+   **But the readback does not echo it, and that is a trap.** A `Voucher` collection returns a
+   `REMOTEID` attribute holding *Tally's own* `<company GUID>-<master id>` identifier, not the
+   value the client sent — visible in the committed live capture
+   `fixtures/agent/native-namespaced-journal.utf16le.xml`, whose batch-derived client value
+   appears nowhere in the response. Verification therefore cannot use `REMOTEID` to confirm a
+   voucher is the one it wrote, and a builder that compares the two refuses every legitimate
+   readback. Bridge attributes by its narration marker instead. The client value is still
+   *stored* and still deletes (§9.7); it is only unreadable through this collection.
+
 §9.1b applies unchanged and bites hardest here: a single unescaped `&` in a counterparty name
 rejects the whole file with no field hint.
 

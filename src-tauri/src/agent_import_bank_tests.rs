@@ -552,9 +552,16 @@ fn a_captured_money_group_with_no_captured_ledger_is_not_admitted() {
     assert_eq!(
         masters.classify("Overdraft Account"),
         CashBankState::UnadmittedMoney {
-            reserved_group: "Bank OD A/c"
+            reserved_group: "Bank OD A/c",
+            gap: "that group is captured, but no captured ledger sits under it, and the ledger-to-parent edge is what this classification reads",
         }
     );
+    // The refusal names the gap that actually exists. Saying "never appeared in
+    // a captured group set" here would send an operator looking for a group
+    // capture this tree already has.
+    let detail = masters.classify("Overdraft Account").detail();
+    assert!(detail.contains("no captured ledger sits under it"));
+    assert!(!detail.contains("never appeared"));
     // Refused as funding, and refused as a counterparty, exactly as any other
     // money group Bridge will not admit.
     for (voucher_type, dr, cr) in [
@@ -589,7 +596,8 @@ fn a_money_group_bridge_will_not_admit_is_still_money_on_the_counterparty_side()
     assert_eq!(
         masters.classify("Cash Credit Account"),
         CashBankState::UnadmittedMoney {
-            reserved_group: "Bank OCC A/c"
+            reserved_group: "Bank OCC A/c",
+            gap: "that identity has never appeared in a captured group set",
         }
     );
     // Refused on the money leg: the identity has never been observed.

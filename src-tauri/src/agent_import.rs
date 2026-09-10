@@ -609,6 +609,9 @@ impl Server {
             let (warnings, next_step) = build_import_guidance(
                 self.settings.writes_enabled,
                 native_post_eligible,
+                line.vouchers
+                    .iter()
+                    .any(|voucher| voucher.voucher_type.bank_shape().is_some()),
                 line.vouchers.iter().any(|voucher| {
                     voucher
                         .voucher_type
@@ -1074,6 +1077,7 @@ fn nonempty_company_field(value: &str) -> Result<String, String> {
 fn build_import_guidance(
     writes_enabled: bool,
     native_post_eligible: bool,
+    bank_types: bool,
     names_a_counterparty: bool,
 ) -> (Value, &'static str) {
     let preflight_warning =
@@ -1083,12 +1087,19 @@ fn build_import_guidance(
     // bills. Bridge cannot yet tell the two kinds of book apart — the ledger
     // catalogue it reads carries no bill-wise flag — so the limit is stated
     // rather than silently accepted on the operator's behalf.
+    // §9.8 qualified exact-file repeat on the Journal path only, and §9.13
+    // imported each bank file exactly once. A caller recovering an uncertain
+    // outcome must not reach for the same remedy on both.
+    let repeat_warning = bank_types.then_some(
+        "Do not re-import this file if the outcome is uncertain. Exact-file repeat is qualified for Journal only; for Payment, Receipt and Contra a second import may create a second set of vouchers. Call verify_import, which reads the window back without writing.",
+    );
     let allocation_warning = names_a_counterparty.then_some(
         "This batch names a counterparty on a Payment or Receipt and carries no bill allocation, so each amount lands On Account. If that ledger is configured for bill-wise accounting, the entry will need allocating in Tally afterwards; Bridge does not read that configuration and cannot warn per ledger.",
     );
     let warnings = |first: &str| {
         json!(std::iter::once(first)
             .chain(std::iter::once(preflight_warning))
+            .chain(repeat_warning)
             .chain(allocation_warning)
             .collect::<Vec<_>>())
     };

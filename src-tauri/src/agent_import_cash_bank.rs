@@ -47,12 +47,34 @@ use std::collections::{BTreeMap, BTreeSet};
 ///
 /// Held in Tally's own spelling and normalized at comparison time, so the
 /// matched entry is directly reportable.
-const MONEY_RESERVED_GROUPS: &[(&str, bool)] = &[
-    ("Bank Accounts", true),
-    ("Cash-in-Hand", true),
-    ("Bank OD A/c", false),
-    ("Bank OCC A/c", false),
+const MONEY_RESERVED_GROUPS: &[(&str, Admission)] = &[
+    ("Bank Accounts", Admission::Admitted),
+    ("Cash-in-Hand", Admission::Admitted),
+    ("Bank OD A/c", Admission::NoCapturedLedger),
+    ("Bank OCC A/c", Admission::NoCapturedGroup),
 ];
+
+/// Why a money group is or is not admitted. The two refusals are not the same
+/// gap, and an operator told the wrong one goes looking for a capture that
+/// already exists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Admission {
+    Admitted,
+    /// The group was captured; no captured ledger sits under it.
+    NoCapturedLedger,
+    /// The identity has never appeared in a captured group set at all.
+    NoCapturedGroup,
+}
+
+impl Admission {
+    fn gap(self) -> &'static str {
+        match self {
+            Self::Admitted => "",
+            Self::NoCapturedLedger => "that group is captured, but no captured ledger sits under it, and the ledger-to-parent edge is what this classification reads",
+            Self::NoCapturedGroup => "that identity has never appeared in a captured group set",
+        }
+    }
+}
 
 /// A ledger's cash/bank standing, as established by observed masters.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,9 +82,12 @@ pub(super) enum CashBankState {
     /// Ancestry reached a reserved money identity Bridge admits.
     Established { reserved_group: &'static str },
     /// Ancestry reached a reserved identity that holds money but that Bridge
-    /// has never observed in a captured group set. Known money, and admitted
-    /// on neither side.
-    UnadmittedMoney { reserved_group: &'static str },
+    /// does not admit. Known money, and admitted on neither side; `gap` names
+    /// the evidence actually missing, which differs per group.
+    UnadmittedMoney {
+        reserved_group: &'static str,
+        gap: &'static str,
+    },
     /// Ancestry reached a different predefined group identity. The ledger is
     /// established, and established as something other than cash or bank.
     OtherReservedGroup { reserved_group: String },
@@ -111,8 +136,11 @@ impl CashBankState {
             Self::Established { reserved_group } => format!(
                 "The ledger's group ancestry reaches the reserved {reserved_group} identity."
             ),
-            Self::UnadmittedMoney { reserved_group } => format!(
-                "The ledger's group ancestry reaches the reserved {reserved_group} identity, which holds money but has never been observed in a captured group set. Bridge admits it on neither side of a voucher."
+            Self::UnadmittedMoney {
+                reserved_group,
+                gap,
+            } => format!(
+                "The ledger's group ancestry reaches the reserved {reserved_group} identity, which holds money — but {gap}. Bridge admits it on neither side of a voucher."
             ),
             Self::OtherReservedGroup { reserved_group } => format!(
                 "The ledger's group ancestry reaches the reserved {reserved_group} identity, which holds no cash or bank balance."
@@ -205,10 +233,13 @@ impl ObservedMasters {
                     .find(|(candidate, _)| normalize(candidate) == reserved)
                 {
                     // The reserved identity, not the book's spelling of it.
-                    Some((reserved_group, true)) => CashBankState::Established { reserved_group },
-                    Some((reserved_group, false)) => {
-                        CashBankState::UnadmittedMoney { reserved_group }
+                    Some((reserved_group, Admission::Admitted)) => {
+                        CashBankState::Established { reserved_group }
                     }
+                    Some((reserved_group, admission)) => CashBankState::UnadmittedMoney {
+                        reserved_group,
+                        gap: admission.gap(),
+                    },
                     None => CashBankState::OtherReservedGroup {
                         reserved_group: reserved_name.to_string(),
                     },
