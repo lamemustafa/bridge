@@ -1,0 +1,255 @@
+//! Walking a ledger to the predefined group identity that classifies it.
+//!
+//! Two things in this repository need the same walk — a Schedule III head and
+//! a cash/bank leg — and they need it for different answers, so what is shared
+//! is the traversal and its refusals, never the verdict.
+//!
+//! Every rule below is a measured property of Tally's group model, recorded in
+//! `docs/tally/TALLY_PROTOCOL_REFERENCE.md` §8.2a:
+//!
+//! * **Classify by `RESERVEDNAME`, never by `NAME`.** A predefined group can be
+//!   renamed over XML while its reserved identity survives, so a rule written
+//!   against the visible name silently stops matching in a renamed book.
+//! * **An empty `RESERVEDNAME` is a positive signal**, not a missing value: it
+//!   is Tally stating the group is user-created, so the walk climbs through it.
+//!   A `None` is a third thing — a reader that never captured the attribute —
+//!   and carries no claim either way, so it refuses.
+//! * **A ledger exposes `PARENT` and no `PARENTSTRUCTURE`**, so ancestry is one
+//!   hop at a time through the group collection rather than read off the row.
+//! * **The reserved root is control-marked**, and arrives through the tolerant
+//!   reader as a replacement marker rather than the bare word. That spelling is
+//!   already the crate's [`is_tally_reserved_root`], which this reuses rather
+//!   than re-deriving — a second copy would be a second thing to get wrong.
+//!
+//! Every outcome that is not a reserved identity is an [`AncestryGap`]. A
+//! caller decides what each gap means for its own question; none of them is an
+//! answer, and an incomplete group collection therefore refuses rather than
+//! misclassifies.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::{is_tally_reserved_root, TallyNamedMaster};
+
+/// Why a ledger has no reserved group identity.
+///
+/// Kept as distinct variants rather than one message because the two callers
+/// word them differently, and because the difference is operationally real: a
+/// group absent from the collection is a different problem from a group whose
+/// name repeats.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AncestryGap {
+    /// Tally returned no parent group for the ledger.
+    NoParent,
+    /// The walk reached the reserved account root, which is not a group row.
+    ReachedRoot,
+    /// A group in the chain is not in the collection that was read.
+    GroupAbsent,
+    /// Two rows share a name, so the hop has no single answer.
+    GroupNameRepeated,
+    /// A group in the chain omitted `RESERVEDNAME` entirely, so nothing about
+    /// its identity survives a rename.
+    ReservedNameMissing,
+    /// The observed ancestry loops.
+    Cycle,
+    /// The chain outran the collection, which a cycle check should already
+    /// have caught; retained so a pathological index cannot spin.
+    Exhausted,
+}
+
+/// One group collection, indexed for repeated ancestry walks.
+///
+/// Owns its rows so a caller can hold it across many classifications without
+/// threading a borrow of the response it came from.
+#[derive(Debug, Clone, Default)]
+pub struct GroupIndex {
+    by_name: BTreeMap<String, Vec<TallyNamedMaster>>,
+}
+
+impl GroupIndex {
+    pub fn build(groups: impl IntoIterator<Item = TallyNamedMaster>) -> Self {
+        let mut by_name: BTreeMap<String, Vec<TallyNamedMaster>> = BTreeMap::new();
+        for group in groups {
+            let key = normalize(&group.name);
+            if !key.is_empty() {
+                by_name.entry(key).or_default().push(group);
+            }
+        }
+        Self { by_name }
+    }
+
+    pub fn len(&self) -> usize {
+        self.by_name.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.by_name.is_empty()
+    }
+
+    /// Climbs from a ledger's `PARENT` to the first predefined group identity,
+    /// returning that group's `RESERVEDNAME` in Tally's own spelling.
+    ///
+    /// `parent` is the ledger's observed parent, `None` when Tally returned
+    /// none. The returned name is a Tally predefined identity and never the
+    /// book's own naming: a user-created group has an empty `RESERVEDNAME` and
+    /// the walk passes through it, so a caller may repeat this value back to a
+    /// user without redacting it.
+    pub fn reserved_ancestor(&self, parent: Option<&str>) -> Result<&str, AncestryGap> {
+        let mut current = normalize(parent.ok_or(AncestryGap::NoParent)?);
+        let mut visited = BTreeSet::new();
+        // Each hop consumes one distinct group; the visited set bounds the walk
+        // independently, so this only guards a pathological index.
+        for _ in 0..=self.by_name.len() {
+            if current.is_empty() || is_tally_reserved_root(&current) {
+                return Err(AncestryGap::ReachedRoot);
+            }
+            if !visited.insert(current.clone()) {
+                return Err(AncestryGap::Cycle);
+            }
+            let [group] = self
+                .by_name
+                .get(&current)
+                .ok_or(AncestryGap::GroupAbsent)?
+                .as_slice()
+            else {
+                return Err(AncestryGap::GroupNameRepeated);
+            };
+            let reserved = group
+                .reserved_name
+                .as_deref()
+                .ok_or(AncestryGap::ReservedNameMissing)?;
+            if !reserved.is_empty() {
+                return Ok(reserved);
+            }
+            current = group
+                .parent
+                .nonempty_returned_text()
+                .map(normalize)
+                .unwrap_or_default();
+        }
+        Err(AncestryGap::Exhausted)
+    }
+}
+
+fn normalize(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::PartyLedgerMasterFieldObservation as Observed;
+
+    fn group(name: &str, parent: &str, reserved: Option<&str>) -> TallyNamedMaster {
+        TallyNamedMaster {
+            name: name.into(),
+            parent: Observed::Returned(parent.into()),
+            reserved_name: reserved.map(str::to_string),
+        }
+    }
+
+    fn tree() -> GroupIndex {
+        GroupIndex::build([
+            group("Bank Accounts", "Current Assets", Some("Bank Accounts")),
+            group(
+                "Current Assets",
+                "\u{fffd}#4; Primary",
+                Some("Current Assets"),
+            ),
+            group("Sundry Debtors", "Current Assets", Some("Sundry Debtors")),
+            // Tally's own signal that a group is user-created.
+            group("House Debtors", "Sundry Debtors", Some("")),
+        ])
+    }
+
+    #[test]
+    fn a_user_created_group_is_climbed_through_to_its_predefined_ancestor() {
+        assert_eq!(
+            tree().reserved_ancestor(Some("Bank Accounts")),
+            Ok("Bank Accounts")
+        );
+        assert_eq!(
+            tree().reserved_ancestor(Some("House Debtors")),
+            Ok("Sundry Debtors")
+        );
+    }
+
+    #[test]
+    fn a_renamed_predefined_group_answers_with_its_reserved_identity() {
+        let renamed = GroupIndex::build([group(
+            "Current Account",
+            "Current Assets",
+            Some("Bank Accounts"),
+        )]);
+        assert_eq!(
+            renamed.reserved_ancestor(Some("Current Account")),
+            Ok("Bank Accounts")
+        );
+        // The old name now belongs to nobody, and resolves to nothing.
+        assert_eq!(
+            renamed.reserved_ancestor(Some("Bank Accounts")),
+            Err(AncestryGap::GroupAbsent)
+        );
+    }
+
+    #[test]
+    fn every_refusal_is_distinguishable_and_none_is_an_answer() {
+        let tree = tree();
+        assert_eq!(tree.reserved_ancestor(None), Err(AncestryGap::NoParent));
+        assert_eq!(
+            tree.reserved_ancestor(Some("Nowhere")),
+            Err(AncestryGap::GroupAbsent)
+        );
+        // The repaired form the tolerant reader actually produces, and the
+        // bare word a report rendering leaves behind.
+        for root in ["\u{fffd}#4; Primary", "Primary"] {
+            assert_eq!(
+                tree.reserved_ancestor(Some(root)),
+                Err(AncestryGap::ReachedRoot),
+                "{root:?}"
+            );
+        }
+        // A raw `U+0004` prefix is deliberately *not* a spelling this
+        // recognises: the observed PARENT carries the character reference, and
+        // `is_tally_reserved_root` is defined against that. Should a raw one
+        // ever arrive it resolves as an absent group, which still refuses —
+        // pinned here so the narrower definition is a decision, not a gap.
+        assert_eq!(
+            tree.reserved_ancestor(Some("\u{4} Primary")),
+            Err(AncestryGap::GroupAbsent)
+        );
+        let repeated = GroupIndex::build([
+            group("Bank Accounts", "Current Assets", Some("Bank Accounts")),
+            group("Bank Accounts", "Current Assets", Some("Bank Accounts")),
+        ]);
+        assert_eq!(
+            repeated.reserved_ancestor(Some("Bank Accounts")),
+            Err(AncestryGap::GroupNameRepeated)
+        );
+        let unattributed = GroupIndex::build([group("Bank Accounts", "Current Assets", None)]);
+        assert_eq!(
+            unattributed.reserved_ancestor(Some("Bank Accounts")),
+            Err(AncestryGap::ReservedNameMissing)
+        );
+        let looping = GroupIndex::build([group("Loop", "Loop", Some(""))]);
+        assert_eq!(
+            looping.reserved_ancestor(Some("Loop")),
+            Err(AncestryGap::Cycle)
+        );
+    }
+
+    #[test]
+    fn an_empty_reserved_name_is_not_an_absent_one() {
+        // The two look alike and mean opposite things: empty is Tally saying
+        // "user-created, keep climbing", absent is a reader that never asked.
+        let user_created = GroupIndex::build([group("Custom", "\u{fffd}#4; Primary", Some(""))]);
+        assert_eq!(
+            user_created.reserved_ancestor(Some("Custom")),
+            Err(AncestryGap::ReachedRoot)
+        );
+        let never_captured = GroupIndex::build([group("Custom", "\u{fffd}#4; Primary", None)]);
+        assert_eq!(
+            never_captured.reserved_ancestor(Some("Custom")),
+            Err(AncestryGap::ReservedNameMissing)
+        );
+    }
+}

@@ -42,8 +42,9 @@
 //!   the failure mode of a partial read is a wrongly rejected batch, never a
 //!   wrongly accepted one.
 
+use bridge_tally_protocol::group_ancestry::{AncestryGap, GroupIndex};
 use bridge_tally_protocol::TallyNamedMaster;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 /// Every reserved Tally group identity that holds money, and whether Bridge
 /// admits a ledger under it onto a leg that must hold money.
@@ -239,9 +240,7 @@ pub(super) struct ObservedMasters {
     /// returned for it. Requested ledgers reach this map only after the exact
     /// spelling gate, so the key is compared exactly.
     ledger_parents: BTreeMap<String, Option<String>>,
-    /// Normalized group name to its rows. A repeated normalized name keeps
-    /// every row so an ambiguous hop can be refused rather than guessed.
-    groups: BTreeMap<String, Vec<TallyNamedMaster>>,
+    groups: GroupIndex,
 }
 
 impl ObservedMasters {
@@ -249,115 +248,82 @@ impl ObservedMasters {
         ledger_parents: impl IntoIterator<Item = (&'a str, Option<&'a str>)>,
         groups: impl IntoIterator<Item = TallyNamedMaster>,
     ) -> Self {
-        let mut indexed_groups: BTreeMap<String, Vec<TallyNamedMaster>> = BTreeMap::new();
-        for group in groups {
-            let key = normalize(&group.name);
-            if !key.is_empty() {
-                indexed_groups.entry(key).or_default().push(group);
-            }
-        }
         Self {
             ledger_parents: ledger_parents
                 .into_iter()
                 .map(|(name, parent)| (name.to_string(), parent.map(str::to_string)))
                 .collect(),
-            groups: indexed_groups,
+            groups: GroupIndex::build(groups),
         }
     }
 
-    /// Walks one ledger's ancestry to the first predefined group identity.
+    /// Walks one ledger's ancestry to the first predefined group identity, and
+    /// asks only this module's question of the answer.
+    ///
+    /// The traversal itself is shared with the Schedule III classifier, which
+    /// needs the same climb for a different verdict — see
+    /// [`bridge_tally_protocol::group_ancestry`]. What stays here is the
+    /// mapping from a reserved identity to whether it holds money, and from a
+    /// refusal to a sentence this caller can act on.
     pub(super) fn classify(&self, ledger: &str) -> CashBankState {
         let Some(parent) = self.ledger_parents.get(ledger) else {
             return CashBankState::NotEstablished {
                 reason: "The observed ledger catalogue does not carry this ledger.",
             };
         };
-        let Some(parent) = parent.as_deref() else {
-            return CashBankState::NotEstablished {
-                reason: "Tally returned no parent group for this ledger.",
-            };
+        let reserved = match self.groups.reserved_ancestor(parent.as_deref()) {
+            Ok(reserved) => reserved,
+            Err(gap) => {
+                return CashBankState::NotEstablished {
+                    reason: reason(gap),
+                }
+            }
         };
-        let mut current = normalize(parent);
-        let mut visited = BTreeSet::new();
-        // Each hop consumes one distinct group; the visited set bounds the walk
-        // independently, so this only guards a pathological index.
-        for _ in 0..=self.groups.len() {
-            if current.is_empty() || is_reserved_root(&current) {
-                return CashBankState::NotEstablished {
-                    reason:
-                        "The ledger's group ancestry reaches the account root without a predefined group identity.",
-                };
+        let normalized = normalize(reserved);
+        match MONEY_RESERVED_GROUPS
+            .iter()
+            .find(|(candidate, _)| normalize(candidate) == normalized)
+        {
+            // The reserved identity, not the book's spelling of it.
+            Some((reserved_group, Admission::Admitted)) => {
+                CashBankState::Established { reserved_group }
             }
-            if !visited.insert(current.clone()) {
-                return CashBankState::NotEstablished {
-                    reason: "The observed group ancestry contains a cycle.",
-                };
-            }
-            let Some(rows) = self.groups.get(&current) else {
-                return CashBankState::NotEstablished {
-                    reason: "A group in the ledger's ancestry is absent from the observed group collection.",
-                };
-            };
-            let [group] = rows.as_slice() else {
-                return CashBankState::NotEstablished {
-                    reason: "The observed group collection repeated a group name in this ancestry.",
-                };
-            };
-            let Some(reserved_name) = group.reserved_name.as_deref() else {
-                return CashBankState::NotEstablished {
-                    reason: "A group in the ledger's ancestry omitted RESERVEDNAME, so its identity survives no rename.",
-                };
-            };
-            if !reserved_name.is_empty() {
-                let reserved = normalize(reserved_name);
-                return match MONEY_RESERVED_GROUPS
-                    .iter()
-                    .find(|(candidate, _)| normalize(candidate) == reserved)
-                {
-                    // The reserved identity, not the book's spelling of it.
-                    Some((reserved_group, Admission::Admitted)) => {
-                        CashBankState::Established { reserved_group }
-                    }
-                    Some((reserved_group, admission)) => CashBankState::UnadmittedMoney {
-                        reserved_group,
-                        gap: admission.gap(),
-                    },
-                    None => CashBankState::OtherReservedGroup {
-                        reserved_group: reserved_name.to_string(),
-                    },
-                };
-            }
-            // An empty RESERVEDNAME is Tally's own statement that the group is
-            // user-created, so keep climbing towards a predefined ancestor.
-            current = group
-                .parent
-                .nonempty_returned_text()
-                .map(normalize)
-                .unwrap_or_default();
-        }
-        CashBankState::NotEstablished {
-            reason: "The ledger's group ancestry exceeded the observed group collection.",
+            Some((reserved_group, admission)) => CashBankState::UnadmittedMoney {
+                reserved_group,
+                gap: admission.gap(),
+            },
+            None => CashBankState::OtherReservedGroup {
+                reserved_group: reserved.to_string(),
+            },
         }
     }
 }
 
-/// Tally marks the reserved account root with `U+0004` before `" Primary"`
-/// rather than the bare word (§1.1), so none of its spellings is a group row
-/// and reaching one ends the walk.
+/// What each shared refusal means to a caller building a bank voucher.
 ///
-/// The marker arrives as the character reference `&#4;`, which is illegal in
-/// XML 1.0, so the tolerant reader replaces its `&` and the value reaches this
-/// module as `U+FFFD` `#4; Primary` — that is the form the captured Group
-/// collections actually produce, and it is the one a naive control-character
-/// test misses. The raw `U+0004` form and the bare word are accepted too: a
-/// report rendering of the same value drops the marker entirely (§12a.1).
-fn is_reserved_root(normalized: &str) -> bool {
-    const ROOT_MARKERS: &[&str] = &["\u{fffd}#4;", "\u{4}"];
-    let bare = ROOT_MARKERS
-        .iter()
-        .find_map(|marker| normalized.strip_prefix(marker))
-        .unwrap_or(normalized);
-    bare.trim() == "primary"
+/// The gaps are one enum so the traversal can stay verdict-free; the wording
+/// is here because a Schedule III exclusion says something different about the
+/// same fact.
+fn reason(gap: AncestryGap) -> &'static str {
+    match gap {
+        AncestryGap::NoParent => "Tally returned no parent group for this ledger.",
+        AncestryGap::ReachedRoot => {
+            "The ledger's group ancestry reaches the account root without a predefined group identity."
+        }
+        AncestryGap::GroupAbsent => {
+            "A group in the ledger's ancestry is absent from the observed group collection."
+        }
+        AncestryGap::GroupNameRepeated => {
+            "The observed group collection repeated a group name in this ancestry."
+        }
+        AncestryGap::ReservedNameMissing => {
+            "A group in the ledger's ancestry omitted RESERVEDNAME, so its identity survives no rename."
+        }
+        AncestryGap::Cycle => "The observed group ancestry contains a cycle.",
+        AncestryGap::Exhausted => {
+            "The ledger's group ancestry exceeded the observed group collection."
+        }
+    }
 }
 
 fn normalize(value: &str) -> String {

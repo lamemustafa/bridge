@@ -239,7 +239,12 @@ fn a_user_created_group_at_the_account_root_ends_the_walk_as_the_root() {
         .and_then(|group| group.parent.nonempty_returned_text().map(str::to_string))
         .expect("a captured top-level group names the reserved root");
     assert!(captured_root.contains("Primary") && captured_root != "Primary");
-    for spelling in [captured_root.as_str(), "\u{4} Primary", "Primary"] {
+    // The raw `U+0004` form is deliberately not recognised — the observed
+    // PARENT carries the character reference, and the crate's root test is
+    // defined against that. It still refuses, as an absent group.
+    let raw = observed(&under("\u{4} Primary"), captured_demo_groups()).classify("Probe Ledger");
+    assert_eq!(raw.state(), "not_established");
+    for spelling in [captured_root.as_str(), "Primary"] {
         let mut rows = captured_groups();
         rows.push(TallyNamedMaster {
             name: "House Accounts".into(),

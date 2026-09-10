@@ -363,8 +363,7 @@ mod tests {
 
     use super::*;
     use crate::reports::party_ledger_master::{
-        build_party_ledger_master_workbook, PartyLedgerMasterGroup, PartyLedgerMasterRow,
-        PartyLedgerMasterSource,
+        build_party_ledger_master_workbook, PartyLedgerMasterRow, PartyLedgerMasterSource,
     };
     use bridge_tally_protocol::{PartyLedgerMasterFieldObservation, PartyLedgerMasterFields};
 
@@ -520,7 +519,7 @@ mod tests {
             master_response_bytes: 100,
             balance_response_bytes: 200,
             group_response_bytes: 300,
-            groups: vec![PartyLedgerMasterGroup {
+            groups: vec![bridge_tally_protocol::TallyNamedMaster {
                 name: "Sundry Debtors".to_string(),
                 parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
                 reserved_name: Some("Sundry Debtors".to_string()),

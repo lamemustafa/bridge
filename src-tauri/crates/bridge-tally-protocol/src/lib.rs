@@ -19,6 +19,7 @@ use sha2::{Digest, Sha256};
 pub mod bills_native_outstandings_probe;
 #[cfg(feature = "bills-payments-observation-parser")]
 pub mod bills_payments_observation;
+pub mod group_ancestry;
 #[cfg(feature = "india-tax-observation-parser")]
 pub mod india_tax_observation;
 #[cfg(feature = "jsonex-parser")]

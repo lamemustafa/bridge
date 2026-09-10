@@ -1,13 +1,14 @@
 //! A deliberately partial, traceable Schedule III view over an already read
 //! party/ledger master source. No Tally I/O belongs in this module.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use bridge_tally_core::ExactDecimal;
+use bridge_tally_protocol::group_ancestry::{AncestryGap, GroupIndex};
+#[cfg(test)]
+use bridge_tally_protocol::TallyNamedMaster;
 
-use super::party_ledger_master::{
-    PartyLedgerMasterGroup, PartyLedgerMasterRow, PartyLedgerMasterSource,
-};
+use super::party_ledger_master::{PartyLedgerMasterRow, PartyLedgerMasterSource};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ScheduleIIIView {
@@ -49,7 +50,7 @@ pub(crate) enum ScheduleIIIError {
 pub(crate) fn build_schedule_iii_view(
     source: &PartyLedgerMasterSource,
 ) -> Result<ScheduleIIIView, ScheduleIIIError> {
-    let groups = group_index(&source.groups);
+    let groups = GroupIndex::build(source.groups.iter().cloned());
     let mut line_rows = BTreeMap::<(&'static str, &'static str), Vec<usize>>::new();
     let mut exclusions = Vec::new();
     let mut debit_total = ExactDecimal::zero();
@@ -111,110 +112,89 @@ pub(crate) fn build_schedule_iii_view(
     })
 }
 
-fn group_index(
-    groups: &[PartyLedgerMasterGroup],
-) -> BTreeMap<String, Vec<&PartyLedgerMasterGroup>> {
-    let mut result = BTreeMap::new();
-    for group in groups {
-        let key = normalize(&group.name);
-        if !key.is_empty() {
-            result.entry(key).or_insert_with(Vec::new).push(group);
-        }
-    }
-    result
-}
-
+/// Decides a Schedule III head from a ledger's predefined group ancestry.
+///
+/// The climb itself is shared with the bank-voucher classifier, which needs
+/// the same traversal for a different verdict — see
+/// [`bridge_tally_protocol::group_ancestry`]. What is Schedule III's own is
+/// which reserved identities map to a head, the polarity gate below, and how
+/// each refusal reads to someone holding a trial balance.
 fn classify(
     row: &PartyLedgerMasterRow,
     closing_balance: &ExactDecimal,
-    groups: &BTreeMap<String, Vec<&PartyLedgerMasterGroup>>,
+    groups: &GroupIndex,
 ) -> ScheduleIIIClassification {
-    let Some(parent) = row.parent.nonempty_returned_text() else {
-        return ScheduleIIIClassification::excluded(
-            "Ledger has no parent group; its Schedule III head is not determined.",
-        );
+    let reserved = match groups.reserved_ancestor(row.parent.nonempty_returned_text()) {
+        Ok(reserved) => reserved,
+        Err(gap) => return ScheduleIIIClassification::excluded(exclusion(gap)),
     };
-    let mut current = normalize(parent);
-    let mut visited = BTreeSet::new();
-    for _ in 0..=groups.len() {
-        if current.is_empty() || current == "primary" {
-            return ScheduleIIIClassification::excluded(
-                "Group hierarchy does not determine a Schedule III head; client mapping decision required.",
-            );
+    match normalize(reserved).as_str() {
+        "sundry debtors" => admit_group_subtotal(
+            subtotal::Candidate::debit(
+                "Debit-balance group subtotals",
+                "Sundry Debtors group subtotal",
+                "A credit-balance Sundry Debtors ledger has the opposite polarity; its Schedule III head is not determined by the group and was excluded.",
+            ),
+            closing_balance,
+        ),
+        "sundry creditors" => admit_group_subtotal(
+            subtotal::Candidate::credit(
+                "Credit-balance group subtotals",
+                "Sundry Creditors group subtotal",
+                "A debit-balance Sundry Creditors ledger has the opposite polarity; its Schedule III head is not determined by the group and was excluded.",
+            ),
+            closing_balance,
+        ),
+        "cash-in-hand" => admit_group_subtotal(
+            subtotal::Candidate::debit(
+                "Debit-balance group subtotals",
+                "Cash-in-Hand group subtotal",
+                "A credit-balance Cash-in-Hand ledger has the opposite polarity; its Schedule III head is not determined by the group and was excluded.",
+            ),
+            closing_balance,
+        ),
+        "bank accounts" => admit_group_subtotal(
+            subtotal::Candidate::debit(
+                "Debit-balance group subtotals",
+                "Bank Accounts group subtotal",
+                "A credit-balance Bank Accounts ledger has the opposite polarity; its Schedule III head is not determined by the group and was excluded.",
+            ),
+            closing_balance,
+        ),
+        // A predefined identity Schedule III does not map. The ancestry is
+        // established; it simply does not name a head this view can fill.
+        _ => ScheduleIIIClassification::excluded(
+            "Group hierarchy does not determine a Schedule III head; client mapping decision required.",
+        ),
+    }
+}
+
+/// What each shared refusal means to someone reading a Schedule III view.
+fn exclusion(gap: AncestryGap) -> &'static str {
+    match gap {
+        AncestryGap::NoParent => {
+            "Ledger has no parent group; its Schedule III head is not determined."
         }
-        if !visited.insert(current.clone()) {
-            return ScheduleIIIClassification::excluded(
-                "Group hierarchy contains a cycle; classification withheld.",
-            );
+        // Reaching the account root without a predefined identity is the same
+        // outcome as a predefined group this view does not map: nothing here
+        // determines a head, and a client decides.
+        AncestryGap::ReachedRoot => {
+            "Group hierarchy does not determine a Schedule III head; client mapping decision required."
         }
-        let Some(matches) = groups.get(&current) else {
-            return ScheduleIIIClassification::excluded(
-                "Ledger parent is absent from the captured group hierarchy; classification withheld.",
-            );
-        };
-        let [group] = matches.as_slice() else {
-            return ScheduleIIIClassification::excluded(
-                "Captured group hierarchy repeated a group name; classification withheld.",
-            );
-        };
-        let Some(reserved_name) = group.reserved_name.as_deref() else {
-            return ScheduleIIIClassification::excluded(
-                "Group omitted Tally RESERVEDNAME; immutable classification evidence is unavailable.",
-            );
-        };
-        if reserved_name.is_empty() {
-            current = group
-                .parent
-                .nonempty_returned_text()
-                .map(normalize)
-                .unwrap_or_default();
-            continue;
+        AncestryGap::GroupAbsent => {
+            "Ledger parent is absent from the captured group hierarchy; classification withheld."
         }
-        match normalize(reserved_name).as_str() {
-            "sundry debtors" => return admit_group_subtotal(
-                subtotal::Candidate::debit(
-                    "Debit-balance group subtotals",
-                    "Sundry Debtors group subtotal",
-                    "A credit-balance Sundry Debtors ledger has the opposite polarity; its Schedule III head is not determined by the group and was excluded.",
-                ),
-                closing_balance,
-            ),
-            "sundry creditors" => return admit_group_subtotal(
-                subtotal::Candidate::credit(
-                    "Credit-balance group subtotals",
-                    "Sundry Creditors group subtotal",
-                    "A debit-balance Sundry Creditors ledger has the opposite polarity; its Schedule III head is not determined by the group and was excluded.",
-                ),
-                closing_balance,
-            ),
-            "cash-in-hand" => return admit_group_subtotal(
-                subtotal::Candidate::debit(
-                    "Debit-balance group subtotals",
-                    "Cash-in-Hand group subtotal",
-                    "A credit-balance Cash-in-Hand ledger has the opposite polarity; its Schedule III head is not determined by the group and was excluded.",
-                ),
-                closing_balance,
-            ),
-            "bank accounts" => return admit_group_subtotal(
-                subtotal::Candidate::debit(
-                    "Debit-balance group subtotals",
-                    "Bank Accounts group subtotal",
-                    "A credit-balance Bank Accounts ledger has the opposite polarity; its Schedule III head is not determined by the group and was excluded.",
-                ),
-                closing_balance,
-            ),
-            _ => {
-                current = group
-                    .parent
-                    .nonempty_returned_text()
-                    .map(normalize)
-                    .unwrap_or_default()
-            }
+        AncestryGap::GroupNameRepeated => {
+            "Captured group hierarchy repeated a group name; classification withheld."
+        }
+        AncestryGap::ReservedNameMissing => {
+            "Group omitted Tally RESERVEDNAME; immutable classification evidence is unavailable."
+        }
+        AncestryGap::Cycle => "Group hierarchy contains a cycle; classification withheld.",
+        AncestryGap::Exhausted => {
+            "Group hierarchy exceeded its captured length; classification withheld."
         }
     }
-    ScheduleIIIClassification::excluded(
-        "Group hierarchy exceeded its captured length; classification withheld.",
-    )
 }
 
 /// A classifier result is always either an evidence-backed group subtotal or
@@ -387,19 +367,19 @@ mod tests {
             balance_response_bytes: 1,
             group_response_bytes: 1,
             groups: vec![
-                PartyLedgerMasterGroup {
+                TallyNamedMaster {
                     name: "Regional customers".to_string(),
                     parent: PartyLedgerMasterFieldObservation::Returned(
                         "Renamed debtor root".to_string(),
                     ),
                     reserved_name: Some("".to_string()),
                 },
-                PartyLedgerMasterGroup {
+                TallyNamedMaster {
                     name: "Renamed debtor root".to_string(),
                     parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
                     reserved_name: Some("Sundry Debtors".to_string()),
                 },
-                PartyLedgerMasterGroup {
+                TallyNamedMaster {
                     name: "Custom".to_string(),
                     parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
                     reserved_name: Some("".to_string()),
@@ -434,7 +414,7 @@ mod tests {
             master_response_bytes: 1,
             balance_response_bytes: 1,
             group_response_bytes: 1,
-            groups: vec![PartyLedgerMasterGroup {
+            groups: vec![TallyNamedMaster {
                 name: "Sundry Debtors".to_string(),
                 parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
                 reserved_name: Some("Sundry Debtors".to_string()),
@@ -471,7 +451,7 @@ mod tests {
             master_response_bytes: 1,
             balance_response_bytes: 1,
             group_response_bytes: 1,
-            groups: vec![PartyLedgerMasterGroup {
+            groups: vec![TallyNamedMaster {
                 name: "Sundry Creditors".to_string(),
                 parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
                 reserved_name: Some("Sundry Creditors".to_string()),
@@ -509,12 +489,12 @@ mod tests {
             balance_response_bytes: 1,
             group_response_bytes: 1,
             groups: vec![
-                PartyLedgerMasterGroup {
+                TallyNamedMaster {
                     name: "Bank Accounts".to_string(),
                     parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
                     reserved_name: Some("Bank Accounts".to_string()),
                 },
-                PartyLedgerMasterGroup {
+                TallyNamedMaster {
                     name: "Cash-in-Hand".to_string(),
                     parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
                     reserved_name: Some("Cash-in-Hand".to_string()),
@@ -560,12 +540,12 @@ mod tests {
             balance_response_bytes: 1,
             group_response_bytes: 1,
             groups: vec![
-                PartyLedgerMasterGroup {
+                TallyNamedMaster {
                     name: "Bank Accounts".to_string(),
                     parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
                     reserved_name: Some("Bank Accounts".to_string()),
                 },
-                PartyLedgerMasterGroup {
+                TallyNamedMaster {
                     name: "Cash-in-Hand".to_string(),
                     parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
                     reserved_name: Some("Cash-in-Hand".to_string()),
