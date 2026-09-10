@@ -24,9 +24,21 @@ pinned source too, so a documentation-only edit to it stales its digest and
 fails the gate.** Nothing in a docs diff suggests a compatibility gate is
 involved, and PRs have failed CI for exactly this.
 
-Run these from `tools`, in order, **with the pinned toolchain**: a Homebrew
+Run these from `tools`, in order, **with the pinned toolchain**. A Homebrew
 `rustc` earlier on `PATH` shadows rustup, and this project pins the version in
-`rust-toolchain.toml`, so check `rustc --version` first. `--output` asks the
+`rust-toolchain.toml`, so check `rustc --version` first. Setting `RUSTC` alone
+is **not** enough to escape the shadow: `cargo clippy` still resolves the wrong
+`rustc` unless the toolchain's `bin` is prepended to `PATH`, and doctests need
+`RUSTDOC` set or they fail with `E0514`, which reads like a source error and is
+not one. Prepending the toolchain's `bin` to `PATH` covers all three:
+
+```bash
+export PATH="$(rustup which --toolchain "$(sed -n 's/^channel *= *"\(.*\)"/\1/p' \
+  ../rust-toolchain.toml)" rustc | xargs dirname):$PATH"
+rustc --version   # must match rust-toolchain.toml before you continue
+```
+
+`--output` asks the
 compatibility tool to stage and replace the destination itself, and it is
 required — without it each command prints to stdout and changes nothing on
 disk, which looks like success:
