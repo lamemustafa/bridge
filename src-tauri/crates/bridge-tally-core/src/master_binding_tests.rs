@@ -455,7 +455,9 @@ fn a_fiscal_period_label_is_not_an_identity_bearing_code() {
     // Two unrelated ledgers routinely share a period label. Identifier-first
     // matching would otherwise bind the source to whichever one exists before
     // it ever compared the names.
-    for label in ["FY25", "FY2025", "AY2026", "Q3", "H2", "PER2026"] {
+    for label in [
+        "FY25", "FY2025", "AY2026", "Q3", "H2", "PER2026", "APR2025", "2025Q1", "MAR26", "H12026",
+    ] {
         assert!(
             entity(&format!("Purchases {label}"))
                 .identifiers()
@@ -472,6 +474,47 @@ fn a_fiscal_period_label_is_not_an_identity_bearing_code() {
     );
     // A genuine identity-bearing code still is one.
     assert_eq!(entity("Item PH01AB00").identifiers().len(), 1);
+}
+
+#[test]
+fn a_report_bounds_its_own_candidate_allocation() {
+    // A per-entity cap does not bound a report: the clones exist the moment it
+    // is built, and a consumer capping its own copy afterwards bounds only the
+    // copy. The budget is spent in entity order; entities past it keep their
+    // true count and flag truncation.
+    let long = "Z".repeat(400);
+    let names = (0..30)
+        .map(|index| format!("SHARED PREFIX {index:03} {long}"))
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let entities = (0..2_000)
+        .map(|position| SourceEntity::new(position, "SHARED PREFIX 001").expect("valid"))
+        .collect::<Vec<_>>();
+    let report = bound(&catalog, &entities);
+    let listed: usize = report
+        .unbound()
+        .filter_map(|entity| entity.unresolved())
+        .map(|unresolved| {
+            unresolved
+                .candidates
+                .iter()
+                .map(|candidate| candidate.catalog_name.len())
+                .sum::<usize>()
+        })
+        .sum();
+    assert!(
+        listed <= MAX_REPORT_CANDIDATE_BYTES,
+        "report allocated {listed} candidate bytes"
+    );
+    let starved = report
+        .unbound()
+        .filter_map(|entity| entity.unresolved())
+        .filter(|unresolved| unresolved.candidates.is_empty())
+        .collect::<Vec<_>>();
+    assert!(!starved.is_empty(), "the budget must actually bite here");
+    assert!(starved
+        .iter()
+        .all(|unresolved| unresolved.candidate_count > 0 && unresolved.candidates_truncated));
 }
 
 #[test]

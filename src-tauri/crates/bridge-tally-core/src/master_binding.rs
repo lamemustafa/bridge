@@ -30,6 +30,15 @@ pub const MAX_SOURCE_ENTITIES: usize = 40_000;
 pub const MAX_NAME_CHARS: usize = 16_384;
 /// Most candidates retained per unbound entity.
 pub const MAX_CANDIDATES_PER_ENTITY: usize = 25;
+/// Total candidate-name bytes one report may allocate, across all entities.
+///
+/// A per-entity cap does not bound a report: a draft the source parser admits
+/// can carry tens of thousands of entries that each list 25 long names, and the
+/// clones exist the moment the report is built. A consumer capping its own copy
+/// afterwards bounds only the second copy. This is spent in entity order;
+/// entities past it report their true `candidate_count` with no candidates
+/// listed and truncation flagged.
+pub const MAX_REPORT_CANDIDATE_BYTES: usize = 256 * 1024;
 /// Most identifiers one name may carry. Exceeding it is refused, never
 /// truncated.
 pub const MAX_IDENTIFIERS_PER_NAME: usize = 32;
@@ -38,12 +47,18 @@ pub const MAX_IDENTIFIERS_PER_NAME: usize = 32;
 /// an account number and a customer code all clear it.
 pub const MIN_NUMERIC_IDENTIFIER_DIGITS: usize = 8;
 /// Alphanumeric characters a mixed letter-and-digit token needs before it is
-/// treated as a code identifier. Six rather than four: a four-character mixed
-/// token is weak evidence of identity, and the failure mode of a wrong
-/// identifier is money against the wrong party.
-pub const MIN_CODE_IDENTIFIER_CHARS: usize = 6;
-/// Digits a code identifier needs alongside at least one letter.
-pub const MIN_CODE_IDENTIFIER_DIGITS: usize = 2;
+/// treated as a code identifier.
+///
+/// Eight, raised twice under review. Enumerating the period shapes that must
+/// not be identifiers — `FY25`, then `APR2025`, then `2025Q1` — is a losing
+/// game, and each miss binds two unrelated ledgers that merely share a period.
+/// Requiring real length is the rule that does not depend on having thought of
+/// every label: a part number or registration code clears it, and a period
+/// label does not. Measured against 485 live ledger names, exactly one yields a
+/// code identifier at all, so this costs nothing observed.
+pub const MIN_CODE_IDENTIFIER_CHARS: usize = 8;
+/// Digits a code identifier needs alongside at least two letters.
+pub const MIN_CODE_IDENTIFIER_DIGITS: usize = 3;
 /// Shortest comparison key that may take part in a prefix near-miss.
 pub const MIN_PREFIX_KEY_CHARS: usize = 3;
 /// Shortest token that may take part in a shared-token near-miss.
@@ -645,16 +660,17 @@ pub fn bind(
     if entities.len() > MAX_SOURCE_ENTITIES {
         return Err(MasterBindingError::TooManySourceEntities);
     }
+    let mut budget = MAX_REPORT_CANDIDATE_BYTES;
     Ok(BindingReport {
         class: catalog.class,
         entities: entities
             .iter()
-            .map(|entity| bind_one(catalog, entity))
+            .map(|entity| bind_one(catalog, entity, &mut budget))
             .collect(),
     })
 }
 
-fn bind_one(catalog: &MasterCatalog, entity: &SourceEntity) -> EntityBinding {
+fn bind_one(catalog: &MasterCatalog, entity: &SourceEntity, budget: &mut usize) -> EntityBinding {
     let exact = catalog.by_name.get(&entity.name).copied();
 
     // Rule one: the identifier is the key, the name is a hint. A name
@@ -694,6 +710,7 @@ fn bind_one(catalog: &MasterCatalog, entity: &SourceEntity) -> EntityBinding {
             UnboundReason::IdentifierNameConflict,
             exact,
             &identifier_matches,
+            budget,
         )
     } else if let Some(index) = exact {
         BindingStatus::Bound {
@@ -710,6 +727,7 @@ fn bind_one(catalog: &MasterCatalog, entity: &SourceEntity) -> EntityBinding {
             UnboundReason::IdentifierConflict,
             exact,
             &identifier_matches,
+            budget,
         )
     } else if let Some(matched) = identifier_matches.iter().copied().next() {
         // A decisive identifier, with no byte-exact name to outrank it. This is
@@ -730,6 +748,7 @@ fn bind_one(catalog: &MasterCatalog, entity: &SourceEntity) -> EntityBinding {
                 UnboundReason::NameAmbiguous,
                 exact,
                 &identifier_matches,
+                budget,
             ),
             None => {
                 let (candidates, masters_found) =
@@ -741,7 +760,7 @@ fn bind_one(catalog: &MasterCatalog, entity: &SourceEntity) -> EntityBinding {
                 } else {
                     UnboundReason::NoCandidate
                 };
-                unresolved_from(entity, reason, candidates, masters_found)
+                unresolved_from(entity, reason, candidates, masters_found, budget)
             }
         }
     };
@@ -759,6 +778,7 @@ fn unresolved_status(
     reason: UnboundReason,
     exact: Option<usize>,
     identifier_matches: &BTreeSet<usize>,
+    budget: &mut usize,
 ) -> BindingStatus {
     let (mut candidates, masters_found) = collect_candidates(catalog, entity, identifier_matches);
     if let Some(index) = exact {
@@ -767,7 +787,7 @@ fn unresolved_status(
             candidates.push((name.to_string(), CandidateRule::NormalizedEqual));
         }
     }
-    unresolved_from(entity, reason, candidates, masters_found)
+    unresolved_from(entity, reason, candidates, masters_found, budget)
 }
 
 fn unresolved_from(
@@ -775,6 +795,7 @@ fn unresolved_from(
     reason: UnboundReason,
     candidates: Vec<(String, CandidateRule)>,
     masters_found: usize,
+    budget: &mut usize,
 ) -> BindingStatus {
     let mut ordered = candidates;
     ordered.sort_by(|left, right| {
@@ -786,18 +807,21 @@ fn unresolved_from(
     // A suppressed family is still counted. The operator is told how many
     // masters the name reaches even when none of them is worth listing.
     let candidate_count = ordered.len().max(masters_found);
-    let candidates_truncated = candidate_count > ordered.len().min(MAX_CANDIDATES_PER_ENTITY);
+    let listed = ordered.len().min(MAX_CANDIDATES_PER_ENTITY);
     let candidates = ordered
         .into_iter()
         .take(MAX_CANDIDATES_PER_ENTITY)
-        .map(|(catalog_name, rule)| Candidate { catalog_name, rule })
-        .collect();
+        .map_while(|(catalog_name, rule)| {
+            *budget = budget.checked_sub(catalog_name.len())?;
+            Some(Candidate { catalog_name, rule })
+        })
+        .collect::<Vec<_>>();
     let unresolved = Unresolved {
         reason,
         unresolved_identity: entity.identifiers.clone(),
-        candidates,
         candidate_count,
-        candidates_truncated,
+        candidates_truncated: candidate_count > listed || candidates.len() < listed,
+        candidates,
     };
     if matches!(reason, UnboundReason::NoCandidate) {
         BindingStatus::Unmatched(unresolved)
@@ -975,7 +999,7 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
         let letters = canonical.chars().filter(char::is_ascii_alphabetic).count();
         if canonical.len() >= MIN_CODE_IDENTIFIER_CHARS
             && digits >= MIN_CODE_IDENTIFIER_DIGITS
-            && letters >= 1
+            && letters >= 2
             && !is_period_label(&canonical)
         {
             identifiers.insert(Identifier {
@@ -1003,28 +1027,54 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
     Ok(identifiers.into_iter().collect())
 }
 
-/// A fiscal-period label identifies a period, not a party or an item. Two
-/// unrelated ledgers routinely share one — `Purchases FY2025` and
-/// `Sales FY2025` — and identifier-first matching would bind the source to
-/// whichever exists before it ever compared the names.
+/// A period label identifies a period, not a party or an item. Two unrelated
+/// ledgers routinely share one — `Purchases FY2025` and `Sales FY2025`,
+/// `Purchases APR2025` and `Sales APR2025` — and identifier-first matching
+/// would bind the source to whichever exists before it compared the names.
 ///
-/// This is a shape rule, not a vocabulary: it recognizes a short alphabetic
-/// period marker followed only by digits, and like every other exclusion here
-/// it can only make a bind *less* likely.
+/// Recognized by *shape* rather than by a vocabulary of prefixes, because a
+/// list of prefixes kept missing one more spelling: every run in the token is
+/// either a short alphabetic marker or a number that reads as a year or a
+/// small ordinal, and there are at most three runs. `FY2025`, `APR2025`,
+/// `2025Q1` and `Q3` all match; `PH01AB00` and `AB12345678` do not.
+///
+/// Like every exclusion here it can only make a bind *less* likely.
 fn is_period_label(canonical: &str) -> bool {
-    let letters = canonical
-        .chars()
-        .take_while(|character| character.is_ascii_alphabetic())
-        .collect::<String>();
-    let rest = &canonical[letters.len()..];
-    matches!(
-        letters.as_str(),
-        "FY" | "AY" | "CY" | "Q" | "H" | "P" | "PER" | "FYE"
-    ) && !rest.is_empty()
-        && rest.chars().all(|character| character.is_ascii_digit())
+    let mut runs = 0_usize;
+    let mut has_period_number = false;
+    let mut rest = canonical;
+    while !rest.is_empty() {
+        runs += 1;
+        if runs > 3 {
+            return false;
+        }
+        let alphabetic = rest.starts_with(|character: char| character.is_ascii_alphabetic());
+        let split = rest
+            .find(|character: char| character.is_ascii_alphabetic() != alphabetic)
+            .unwrap_or(rest.len());
+        let (run, tail) = rest.split_at(split);
+        rest = tail;
+        if alphabetic {
+            if run.len() > 4 {
+                return false;
+            }
+        } else {
+            let value = run.parse::<u32>().unwrap_or(u32::MAX);
+            let reads_as_period = match run.len() {
+                1 | 2 => (1..=99).contains(&value),
+                4 => (1900..=2199).contains(&value),
+                _ => false,
+            };
+            if !reads_as_period {
+                return false;
+            }
+            has_period_number = true;
+        }
+    }
+    has_period_number
 }
 
-/// An eight-digit run that reads as a calendar date in any order this project
+/// An eight-digit run that reads as a calendar date in any order this project/// An eight-digit run that reads as a calendar date in any order this project
 /// admits is a date, not an identifier. Recognizing only `YYYYMMDD` left
 /// `01012026` binding a source to an unrelated master that shares its period
 /// label. Being generous here can only make a bind *less* likely, which is the

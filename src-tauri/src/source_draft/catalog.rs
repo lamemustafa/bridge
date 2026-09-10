@@ -130,9 +130,6 @@ pub(super) struct CatalogApplySnapshot {
     pub(super) catalog: StandardLedgerCatalog,
 }
 
-/// Total candidate-name bytes one catalogue-load response may carry.
-const MAX_BINDING_CANDIDATE_BYTES: usize = 256 * 1024;
-
 /// Binds every source entry's observed ledger name against the captured
 /// catalog. Advisory only: an empty or unusable capture narrows nothing rather
 /// than failing the read the operator just performed, and every returned name
@@ -163,11 +160,9 @@ fn source_entry_bindings(
         // a failed pass read exactly like a source that narrowed to nothing.
         return (Vec::new(), "unavailable");
     };
-    // Candidate names are cloned per entry, so a large draft whose entries all
-    // share a prefix could otherwise build tens of megabytes of duplicate text
-    // before serialization. The budget is spent in source order and every entry
-    // still reports its true count.
-    let mut budget = MAX_BINDING_CANDIDATE_BYTES;
+    // The report itself is bounded by `MAX_REPORT_CANDIDATE_BYTES`, so this
+    // path no longer needs a second budget of its own: capping the copy left
+    // the original allocation unbounded, which was the actual stall risk.
     let bindings = report
         .entities()
         .iter()
@@ -188,24 +183,18 @@ fn source_entry_bindings(
                     candidates_truncated: false,
                 },
                 BindingStatus::Ambiguous(unresolved) | BindingStatus::Unmatched(unresolved) => {
-                    let mut candidates = Vec::new();
-                    for candidate in &unresolved.candidates {
-                        let Some(remaining) = budget.checked_sub(candidate.catalog_name.len())
-                        else {
-                            break;
-                        };
-                        budget = remaining;
-                        candidates.push(candidate.catalog_name.clone());
-                    }
                     SourceDraftCatalogBinding {
                         row_position,
                         entry_position,
                         bound_target: None,
                         bound_basis: None,
                         unbound_reason: Some(unresolved.reason.safe_reason_code()),
-                        candidates_truncated: unresolved.candidates_truncated
-                            || candidates.len() < unresolved.candidates.len(),
-                        candidates,
+                        candidates_truncated: unresolved.candidates_truncated,
+                        candidates: unresolved
+                            .candidates
+                            .iter()
+                            .map(|candidate| candidate.catalog_name.clone())
+                            .collect(),
                         candidate_count: unresolved.candidate_count,
                     }
                 }
