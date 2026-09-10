@@ -38,11 +38,11 @@ pub const MAX_ENTRIES_PER_VOUCHER: usize = 2_000;
 /// Most candidates retained per undecided proposal.
 pub const MAX_CANDIDATES_PER_PROPOSAL: usize = 25;
 /// Most duplicate-number groups listed in the book observations.
-pub const MAX_DUPLICATE_NUMBER_GROUPS: usize = 100;
+pub const MAX_DUPLICATE_NUMBER_GROUPS: usize = 25;
 /// Most book keys listed inside one duplicate-number group.
-pub const MAX_KEYS_PER_DUPLICATE_GROUP: usize = 25;
+pub const MAX_KEYS_PER_DUPLICATE_GROUP: usize = 10;
 /// Most unbalanced book vouchers listed in the book observations.
-pub const MAX_UNBALANCED_LISTED: usize = 100;
+pub const MAX_UNBALANCED_LISTED: usize = 25;
 /// Longest accepted text field, in characters. This bounds pathological input;
 /// it is not a claim about what Tally accepts.
 pub const MAX_TEXT_CHARS: usize = 16_384;
@@ -1108,8 +1108,23 @@ fn decide(
 
     // Rule one: identity first. A REMOTEID is a key Bridge itself wrote.
     if let Some(remote_id) = proposal.remote_id.as_deref() {
-        if let Some(matches) = index.by_remote_id.get(remote_id) {
-            let unique_here = proposal_remote_counts.get(remote_id).copied() == Some(1);
+        let unique_here = proposal_remote_counts.get(remote_id).copied() == Some(1);
+        let empty = Vec::new();
+        let matches = index.by_remote_id.get(remote_id).unwrap_or(&empty);
+        // Proposal-side uniqueness is checked *before* the book lookup, the
+        // same way a duplicated manual number is. Two source rows claiming one
+        // identity are undecidable whether or not the book holds it, and
+        // falling through would report both as safe to import.
+        if !unique_here {
+            return shell(
+                PresenceStatus::PossiblyPresent(undecided(
+                    UndecidedReason::RemoteIdCollision,
+                    candidates_from(window, matches, CandidateRule::SharedRemoteId),
+                )),
+                matches.iter().copied().collect(),
+            );
+        }
+        if !matches.is_empty() {
             if matches.len() == 1 && unique_here {
                 return shell(
                     settled(

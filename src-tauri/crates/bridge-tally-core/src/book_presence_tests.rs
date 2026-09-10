@@ -1246,6 +1246,137 @@ fn an_untruncated_empty_candidate_list_still_permits_absent() {
     assert!(!resolution.incomplete);
 }
 
+/// The overloaded-empty-vector shape has been got wrong twice in two surfaces,
+/// so this contract states what its own empty list means — and the honest
+/// statement is not "one thing". An empty list is always a *proposal-side*
+/// condition: the book was never consulted, or was consulted about something
+/// undecidable before it could point anywhere. What it never means is
+/// "nothing in the book resembles this" — only `Absent` means that, and
+/// `Absent` carries no list at all.
+///
+/// An earlier version of this test asserted the stronger claim that empty
+/// implies `PartyNotDecidable`. That was false the moment a second empty-list
+/// reason existed, and it passed only because no case exercised one. The
+/// allow-list below is the real rule and fails closed: a new reason that can
+/// arrive empty must be added here deliberately.
+const EMPTY_LIST_REASONS: [UndecidedReason; 4] = [
+    UndecidedReason::PartyNotDecidable,
+    UndecidedReason::RemoteIdEvidenceUnavailable,
+    UndecidedReason::ProposalNumberCollision,
+    UndecidedReason::RemoteIdCollision,
+];
+
+#[test]
+fn an_empty_candidate_list_is_always_a_proposal_side_condition() {
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118")]);
+    let mut names: Vec<String> = (1..=30)
+        .map(|index| format!("Echo Party {index:03}"))
+        .collect();
+    names.extend(LEDGERS.iter().map(|name| (*name).to_string()));
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("catalog");
+    let money = |ledger: &'static str| vec![[ledger, "-99.00"], ["Sales Account", "99.00"]];
+    let proposals = [
+        // Party family that cannot be distinguished.
+        ProposalRow::new(0, "20260812", "AA0501")
+            .party("Echo Party 0")
+            .rows(money("Echo Party 0"))
+            .build(),
+        // Two proposals sharing a manual number the book does not hold.
+        ProposalRow::new(1, "20260812", "AA0502")
+            .party("Charlie Minerals")
+            .rows(money("Charlie Minerals"))
+            .build(),
+        ProposalRow::new(2, "20260812", "AA0502")
+            .party("Charlie Minerals")
+            .rows(money("Charlie Minerals"))
+            .build(),
+        // Two proposals sharing a REMOTEID the book does not hold.
+        ProposalRow::new(3, "20260812", "AA0503")
+            .remote_id("tally-9")
+            .party("Charlie Minerals")
+            .rows(money("Charlie Minerals"))
+            .build(),
+        ProposalRow::new(4, "20260812", "AA0504")
+            .remote_id("tally-9")
+            .party("Charlie Minerals")
+            .rows(money("Charlie Minerals"))
+            .build(),
+    ];
+    let report = run(
+        &window,
+        &catalog,
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let mut empties = 0;
+    for entry in report.vouchers() {
+        let Some(undecided) = entry.undecided() else {
+            continue;
+        };
+        if undecided.candidates.is_empty() {
+            empties += 1;
+            assert!(
+                EMPTY_LIST_REASONS.contains(&undecided.reason),
+                "{:?} may not arrive with an empty candidate list",
+                undecided.reason
+            );
+            assert!(!undecided.candidates_truncated);
+        } else {
+            assert_eq!(
+                undecided.candidates_truncated,
+                undecided.candidates.len() < undecided.candidate_count
+            );
+        }
+    }
+    assert_eq!(empties, 5, "every empty-list reason must be exercised here");
+    let totals = report.totals();
+    assert_eq!(
+        totals.present + totals.possibly_present + totals.absent,
+        totals.requested
+    );
+}
+
+/// Two source rows claiming one identity are undecidable whether or not the
+/// book holds that identity. Consulting the book first let both fall through
+/// to a resemblance verdict, or to `Absent` — reporting colliding rows as safe
+/// to import.
+#[test]
+fn proposals_sharing_a_remote_id_collide_even_when_the_book_has_none() {
+    let window = window(&[BookRow::new("book-1", "20260819", "AA0130").party("Bravo Industries")]);
+    let proposals = [
+        ProposalRow::new(0, "20260812", "AA0601")
+            .remote_id("tally-9")
+            .party("Charlie Minerals")
+            .rows(vec![
+                ["Charlie Minerals", "-42.00"],
+                ["Sales Account", "42.00"],
+            ])
+            .build(),
+        ProposalRow::new(1, "20260812", "AA0602")
+            .remote_id("tally-9")
+            .party("Charlie Minerals")
+            .rows(vec![
+                ["Charlie Minerals", "-43.00"],
+                ["Sales Account", "43.00"],
+            ])
+            .build(),
+    ];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    assert_eq!(
+        report.totals().absent,
+        0,
+        "colliding rows are not safe to import"
+    );
+    for entry in report.vouchers() {
+        assert_eq!(reason(entry), UndecidedReason::RemoteIdCollision);
+    }
+}
+
 /// The overloaded-empty-vector shape has now been got wrong twice in two
 /// surfaces, so this contract's *own* output must not repeat it. Here an empty
 /// candidate list is one fact and not three: it happens only when the party

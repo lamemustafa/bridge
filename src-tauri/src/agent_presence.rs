@@ -24,6 +24,16 @@ pub(super) const MAX_PRESENCE_VOUCHER_TYPES: usize = 50;
 pub(super) const MAX_PRESENCE_ENTRIES: usize = 200;
 /// Longest accepted amount lexeme, matching the published schema.
 const MAX_PRESENCE_AMOUNT_CHARS: usize = 64;
+/// Candidates this response may carry in total, across every proposal.
+///
+/// The per-proposal cap alone does not bound the response: 500 proposals at 25
+/// candidates each is 12,500 objects, and this result shape is deliberately
+/// **not** pageable — `page_shape` cannot trim it, so an over-large report is
+/// replaced wholesale by `agent_response_too_large` *after* every Tally read
+/// has been paid for. An aggregate budget keeps an admitted request
+/// retrievable. Spending it in proposal order, and marking what it cut, is the
+/// same discipline `master_binding` applies to its own report.
+const MAX_PRESENCE_RESPONSE_CANDIDATES: usize = 1_000;
 
 /// The shared argument validator bounds only the outer arrays, and the core
 /// crate's own limits are far wider than what this tool advertises. So every
@@ -340,17 +350,37 @@ fn presence_result(
     corroboration_reason: Option<&'static str>,
 ) -> Value {
     let (from, to) = report.window();
+    let mut budget = MAX_PRESENCE_RESPONSE_CANDIDATES;
     let vouchers = report
         .vouchers()
         .iter()
-        .map(|entry| mark_presence_party_names(serde_json::to_value(entry).unwrap_or_default()))
+        .map(|entry| {
+            let mut value =
+                mark_presence_party_names(serde_json::to_value(entry).unwrap_or_default());
+            // A trimmed list keeps its true count and says it was cut, so an
+            // empty list here still never reads as "nothing resembles this".
+            if let Some(candidates) = value.get_mut("candidates").and_then(Value::as_array_mut) {
+                if candidates.len() > budget {
+                    candidates.truncate(budget);
+                    value["candidates_truncated"] = Value::Bool(true);
+                }
+                let spent = value["candidates"]
+                    .as_array()
+                    .map(Vec::len)
+                    .unwrap_or_default();
+                budget = budget.saturating_sub(spent);
+            }
+            value
+        })
         .collect::<Vec<_>>();
+    let candidate_budget_exhausted = budget == 0;
     json!({
         "profile": "agent_voucher_presence_v1",
         // Every verdict is relative to this window. `absent` means absent from
         // this range and never absent from the book.
         "window": {"from": from, "to": to, "read": "complete", "reason": corroboration_reason},
         "vouchers": vouchers,
+        "candidate_budget_exhausted": candidate_budget_exhausted,
         "totals": report.totals(),
         "book": report.observations(),
         "catalogue_evidence_sha256": sha256_json(&catalogue.to_vec()),
