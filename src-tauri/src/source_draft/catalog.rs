@@ -115,8 +115,8 @@ pub(super) fn require_current_catalog_binding(
     }
 }
 
-/// Preserve the runtime's typed availability result when company verification
-/// never completed. Every other verification refusal remains a scope refusal:
+/// Preserve company-verification failures that have an existing source-draft
+/// catalog result. Every other verification refusal remains a scope refusal:
 /// this service cannot safely infer a more specific source-draft result.
 fn company_verification_error_code(error: &crate::commands::TallyCommandError) -> &'static str {
     match error.code {
@@ -124,6 +124,8 @@ fn company_verification_error_code(error: &crate::commands::TallyCommandError) -
         | "request_cancelled"
         | "tally_request_deadline_exceeded"
         | "tally_runtime_temporarily_unavailable" => "source_draft_catalogue_transport_failed",
+        "response_validation_failed" => "source_draft_catalogue_malformed_response",
+        "untrusted_discovery_limit_exceeded" => "source_draft_catalogue_bounds_invalid",
         _ => "source_draft_catalogue_scope_invalid",
     }
 }
@@ -577,39 +579,45 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_company_verification_preserves_only_typed_transport_codes() {
+    fn catalogue_company_verification_preserves_typed_error_codes() {
+        let command_error = |code| crate::commands::TallyCommandError {
+            code,
+            category: "Operation",
+            message: String::new(),
+            retry: "after_change",
+            local_state_changed: false,
+            tally_state_may_have_changed: false,
+            remediation: "Retry.",
+        };
         for code in [
             "endpoint_unreachable",
             "request_cancelled",
             "tally_request_deadline_exceeded",
             "tally_runtime_temporarily_unavailable",
         ] {
-            let error = crate::commands::TallyCommandError {
-                code,
-                category: "Operation",
-                message: String::new(),
-                retry: "safe",
-                local_state_changed: false,
-                tally_state_may_have_changed: false,
-                remediation: "Retry.",
-            };
             assert_eq!(
-                company_verification_error_code(&error),
+                company_verification_error_code(&command_error(code)),
                 "source_draft_catalogue_transport_failed"
             );
         }
 
-        let scope_error = crate::commands::TallyCommandError {
-            code: "reviewed_company_scope_changed",
-            category: "Tally application",
-            message: String::new(),
-            retry: "safe",
-            local_state_changed: false,
-            tally_state_may_have_changed: false,
-            remediation: "Probe again.",
-        };
         assert_eq!(
-            company_verification_error_code(&scope_error),
+            company_verification_error_code(&command_error("response_validation_failed")),
+            "source_draft_catalogue_malformed_response"
+        );
+
+        assert_eq!(
+            company_verification_error_code(&command_error("untrusted_discovery_limit_exceeded")),
+            "source_draft_catalogue_bounds_invalid"
+        );
+
+        assert_eq!(
+            company_verification_error_code(&command_error("reviewed_company_scope_changed")),
+            "source_draft_catalogue_scope_invalid"
+        );
+
+        assert_eq!(
+            company_verification_error_code(&command_error("endpoint_configuration_invalid")),
             "source_draft_catalogue_scope_invalid"
         );
     }

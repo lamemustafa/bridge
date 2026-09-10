@@ -59,6 +59,10 @@ function displayObserved(value: string | null, emptyLabel = "Empty field returne
   return value === "" ? emptyLabel : value;
 }
 
+function displayCatalogTarget(target: string) {
+  return target.replace(/(^ +| +$| {2,})/g, (spaces) => "␠".repeat(spaces.length));
+}
+
 function hasStartedProposal(row: SourceDraftRow) {
   const proposal = row.proposal;
   return Boolean(proposal.date || proposal.voucher_type || proposal.narration !== null || proposal.notes.trim() || proposal.entries.some((entry) => entry.ledger !== null || entry.side !== null || entry.amount !== null));
@@ -451,7 +455,7 @@ function SourceDraftEditor({ row, disabled, catalog, catalogSelections, onSelect
                 {catalog ? <>
                   <select id={entryId("ledger")} value={catalogSelections[catalogSelectionKey(row.position, index + 1)] === entry.ledger ? entry.ledger ?? "" : ""} onChange={(event) => event.target.value && onSelectExistingLedger(row.position, index + 1, event.target.value)} disabled={disabled}>
                     <option value="">Choose existing ledger</option>
-                    {catalog.targets.map((target) => <option key={target} value={target}>{target}</option>)}
+                    {catalog.targets.map((target) => <option key={target} value={target}>{displayCatalogTarget(target)}</option>)}
                   </select>
                   {entry.ledger && <button className="secondary-action source-draft-clear-target" type="button" onClick={() => onClearExistingLedger(row.position, index + 1)} disabled={disabled}>Clear target</button>}
                   <p className="source-draft-catalogue-state">{catalogSelections[catalogSelectionKey(row.position, index + 1)] === entry.ledger ? "This current-session target was re-read and bound. It remains an unapproved proposal." : entry.ledger ? `Saved unverified target: ${entry.ledger}. Select it to check it against this current capture.` : "Choose a current existing ledger to make an unapproved proposal."}</p>

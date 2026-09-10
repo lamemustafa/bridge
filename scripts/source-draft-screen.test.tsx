@@ -242,6 +242,31 @@ test("requires an explicit current-session re-read before treating a saved match
   root.unmount();
 });
 
+test("renders unusual ledger spaces visibly while binding the exact selected catalog target", async () => {
+  const whitespaceCatalog = { ...catalog, targets: ["Cash", " Cash "] };
+  mocks.invoke
+    .mockResolvedValueOnce(draft)
+    .mockResolvedValueOnce(whitespaceCatalog)
+    .mockResolvedValueOnce({ ...draft, revision: 2 });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  const target = host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!;
+  const options = [...target.options];
+  expect(options.find((option) => option.value === "Cash")?.text).toBe("Cash");
+  expect(options.find((option) => option.value === " Cash ")?.text).toBe("␠Cash␠");
+  expect(options.find((option) => option.value === "Cash")?.text).not.toBe(options.find((option) => option.value === " Cash ")?.text);
+
+  await act(async () => setValue(target, " Cash "));
+  expect(mocks.invoke).toHaveBeenNthCalledWith(3, "desktop_apply_source_draft_existing_ledger_target", {
+    request: expect.objectContaining({ target_name: " Cash " }),
+  });
+  root.unmount();
+});
+
 test("clears the visible catalogue and blocks a new read until the native company-scope invalidation completes", async () => {
   let resolveFirstInvalidation!: () => void;
   let resolveSecondInvalidation!: () => void;
