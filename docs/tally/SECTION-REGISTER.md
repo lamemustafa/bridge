@@ -1,4 +1,4 @@
-# Protocol-reference section register
+# Protocol-reference section numbers
 
 `TALLY_PROTOCOL_REFERENCE.md` numbers its sections sequentially and several branches extend it at
 once. A number is not visible to another branch until it merges, so two branches can claim the same
@@ -7,56 +7,55 @@ one and neither notices until the second rebases.
 **This is not hypothetical.** A branch cut from an older master added a `9.11c` while master gained
 a different `9.11c` underneath it. Separately, `1.2` is *already* used twice on master today.
 
-**Claim a number by adding `section-claims/<number>.md` in the same PR that uses it.** One file per
-number, named for the number. Nothing else in this directory changes.
+**The check is `scripts/check-protocol-section-numbers.mjs`, and it runs in CI.** It reads the
+numbered headings out of the reference and fails on a duplicate. There is nothing to remember and
+nothing to keep in step.
 
 ```bash
-ls docs/tally/section-claims/                 # every number claimed on this branch
-printf '%s\n' "PR #NNN — proposed, unmerged" > docs/tally/section-claims/9.14.md
+node scripts/check-protocol-section-numbers.mjs   # before you push, if you like
 ```
 
-## Why a file per number, and what it does not do
+## Why the numbers are read from the document
 
-The mechanism is chosen for how Git merges it, not for tidiness.
+An earlier version of this file asked authors to record a claim — first as a line appended to a
+list, then as a file per number. Both were worse than they looked, and the review that took them
+apart is worth summarising, because the reasoning generalises:
 
-*Two PRs claiming different numbers add different paths.* They never touch the same file, so they
-never conflict. An earlier draft of this register kept a list and asked authors to append at the
-end; that does not work, because two branches appending different last lines to one file produce a
-content conflict at that line — distinct claims collided anyway.
+1. **Appending at the end of one file conflicts even for *distinct* claims.** Git merges by line;
+   "the end of the file" is one line, and both branches wrote it.
+2. **A file per number fixes that** — different numbers are different paths — **and the same number
+   is the same path**, which is an add/add conflict a human has to resolve. That collision is the
+   enforcement, not a defect; a scheme that merged both silently would be conflict-free and useless.
+3. **But it only covered the numbers people remembered to claim.** Six files against seventy
+   headings already in the document. An author could take an existing number, add the
+   previously-absent claim file for it, hit no conflict at all, and merge a duplicate heading — the
+   exact failure the mechanism existed to prevent, now reached *through* it.
 
-*Two PRs claiming the **same** number add the **same** path.* Git reports an add/add conflict and
-neither can merge without a human looking at it. **This is the point.** A representation that
-merged both silently — a claims directory keyed on the PR number, say — would be conflict-free and
-useless, because the duplicate would reach master unnoticed, which is the failure this register
-exists to prevent.
+The headings **are** the allocation. Anything that keeps a second copy of them drifts from them, and
+a copy that is only sometimes updated drifts silently. So the gate reads the document.
 
-**What it cannot do.** It is not a reservation system. Two open PRs can both choose `9.14`, and
-until one of them merges neither branch can see the other's file: rebasing shows only merged
-claims. What is guaranteed is narrower and still worth having — **the duplicate cannot reach master
-silently.** The second PR hits the conflict before it merges, at which point rule 3 decides who
-moves. If duplicate numbers keep costing rebases despite this, the real fix is a CI check that
-reads the claim files across *open* PRs; that is not built.
+## What the gate does and does not guarantee
 
-Before claiming, and again when you rebase, it is worth one command:
+It **cannot** stop two open PRs from choosing the same number: nothing in the repository can see
+across unmerged branches, and rebasing shows only merged headings. Wanting that is reasonable, and
+it needs a check that reads open PRs — a CI job with repository access, not a file. That is not
+built.
 
-```bash
-gh pr list --state open --json number,files --jq \
-  '.[] | select(.files[].path | startswith("docs/tally/section-claims/")) | .number'
-```
+What it does guarantee is narrower and sufficient: **a duplicate cannot reach master.** Whichever
+PR rebases second picks up the first one's heading and fails the gate before merging, at which
+point rule 3 below says who moves.
 
 ## Rules
 
-1. **Claim before you write.** Add the claim file in the PR that adds the section.
-2. **A letter suffix means "belongs with its parent"** (`9.12a` elaborates `9.12`), not "came
-   later". Do not use a suffix to dodge claiming a number.
-3. **Never renumber a merged section.** Other documents and commit messages cite these numbers; if
-   two land on the same one, the *later* arrival moves.
-4. **Re-read the directory when you rebase.** A number free when you branched may not be free now.
-5. **A claim is not a claim about Tally.** These files allocate numbers. Whether the behaviour a
-   section describes is verified, and to what scope, is settled in the reference itself and in its
-   evidence blocks — never here. A claim file records the number, the PR, and whether it has
-   merged; it must not describe gateway behaviour, because an unqualified claim read here would
-   carry none of the reference's VERIFIED / PARTIAL / UNVERIFIED marking.
+1. **A letter suffix means "belongs with its parent"** (`9.12a` elaborates `9.12`), not "came
+   later". Do not use a suffix to dodge a number.
+2. **Never renumber a merged section.** Other documents and commit messages cite these numbers; if
+   two land on the same one, the *later* arrival moves. `KNOWN_DUPLICATES` in the gate exists for
+   collisions that predate it, and nothing may be added there to get a new one through.
+3. **Claiming a number says nothing about Tally.** Whether the behaviour a section describes is
+   verified, and to what scope, is settled in the reference itself and in its evidence blocks. The
+   confidence markers are the reference's job and cannot be summarised anywhere else without
+   losing them.
 
 This file deliberately does **not** summarise what each existing section says. The reference is the
 authority for that, and a copy here would drift; an earlier draft of this register already
