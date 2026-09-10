@@ -123,11 +123,11 @@
     },
     {
       "path": "src-tauri/Cargo.lock",
-      "sha256": "90bdf59857b8e18631e4d7ae98f7536c8fd8c73c24db8dbd1e1d72dfc5cdc57e"
+      "sha256": "929a359a24c809dff87405f8103fe648ae60dba0aaba3229911ec694683708d7"
     },
     {
       "path": "src-tauri/Cargo.toml",
-      "sha256": "06869bacd8081cc8d61024b3a81aadfbf567cf985bdf34622a5143e13bc294b4"
+      "sha256": "5cfe6c1fba7b20dd7d7a65ffc96039f41be9d7d55129abe071f470d0b10baf5a"
     },
     {
       "path": "src-tauri/crates/bridge-tally-core/Cargo.toml",
@@ -503,7 +503,7 @@
     },
     {
       "path": "src-tauri/src/lib.rs",
-      "sha256": "c60e6d6e5106b20de69c9dfa6f5b300a05cf844dd6ef106d912c4c14f1c7c5fe"
+      "sha256": "8c3793926ee69c1a885eb392c8b56aa193a1d16a3c82958f80799636197f2fea"
     },
     {
       "path": "src-tauri/src/local_files/file.rs",
@@ -834,5 +834,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "1498daff236b549aa7f7498be66d2fe6bd2cfe92b295ea690e6cd616237ea3d9"
+  "manifest_sha256": "f243ba6ee867a7995986a3bdd57a9f946196be9b7da54aa33242d45a5e79ba0d"
 }
