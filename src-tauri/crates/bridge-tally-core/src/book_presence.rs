@@ -1068,7 +1068,7 @@ pub fn assess(request: &PresenceRequest<'_>) -> PresenceReport {
             };
             entry.status = PresenceStatus::PossiblyPresent(undecided(
                 UndecidedReason::BookVoucherClaimedTwice,
-                vec![PresenceCandidate { book_key, rule }],
+                (vec![PresenceCandidate { book_key, rule }], 1),
             ));
         }
     }
@@ -1174,17 +1174,20 @@ fn decide(
                 if number_selects_another {
                     let mut touched = BTreeSet::from([matches[0]]);
                     touched.insert(number_matches[0]);
-                    let mut candidates =
+                    let (mut candidates, mut found) =
                         candidates_from(window, matches, CandidateRule::SharedRemoteId);
-                    candidates.extend(candidates_from(
+                    let (by_number, number_found) = candidates_from(
                         window,
                         &number_matches,
                         CandidateRule::SharedVoucherNumber,
-                    ));
+                    );
+                    candidates.extend(by_number);
+                    candidates.truncate(MAX_CANDIDATES_PER_PROPOSAL);
+                    found += number_found;
                     return shell(
                         PresenceStatus::PossiblyPresent(undecided(
                             UndecidedReason::IdentityConflict,
-                            candidates,
+                            (candidates, found),
                         )),
                         touched,
                     );
@@ -1330,7 +1333,7 @@ fn decide(
             return shell(
                 PresenceStatus::PossiblyPresent(undecided(
                     UndecidedReason::RemoteIdEvidenceUnavailable,
-                    Vec::new(),
+                    (Vec::new(), 0),
                 )),
                 BTreeSet::new(),
             );
@@ -1341,7 +1344,7 @@ fn decide(
                 _ => UndecidedReason::PartyNotDecidable,
             };
             return shell(
-                PresenceStatus::PossiblyPresent(undecided(reason, Vec::new())),
+                PresenceStatus::PossiblyPresent(undecided(reason, (Vec::new(), 0))),
                 BTreeSet::new(),
             );
         }
@@ -1358,21 +1361,27 @@ fn decide(
         _ => UndecidedReason::ResemblesBookVoucher,
     };
     let touched = found.keys().copied().collect::<BTreeSet<_>>();
-    let mut candidates = found
+    // Ordered as (position, rule) pairs before anything is cloned: the order is
+    // rule-then-key and only the retained prefix needs a key at all.
+    let mut ordered = found.into_iter().collect::<Vec<_>>();
+    ordered.sort_by(|(left_position, left_rule), (right_position, right_rule)| {
+        left_rule.rank().cmp(&right_rule.rank()).then_with(|| {
+            window.vouchers[*left_position]
+                .key()
+                .cmp(window.vouchers[*right_position].key())
+        })
+    });
+    let total = ordered.len();
+    let candidates = ordered
         .into_iter()
+        .take(MAX_CANDIDATES_PER_PROPOSAL)
         .map(|(position, rule)| PresenceCandidate {
             book_key: window.vouchers[position].key().to_string(),
             rule,
         })
         .collect::<Vec<_>>();
-    candidates.sort_by(|left, right| {
-        left.rule
-            .rank()
-            .cmp(&right.rule.rank())
-            .then_with(|| left.book_key.cmp(&right.book_key))
-    });
     shell(
-        PresenceStatus::PossiblyPresent(undecided(reason, candidates)),
+        PresenceStatus::PossiblyPresent(undecided(reason, (candidates, total))),
         touched,
     )
 }
@@ -1388,13 +1397,16 @@ fn settled(
     if voucher.posting != PostingState::Posted {
         return PresenceStatus::PossiblyPresent(undecided(
             UndecidedReason::MatchedVoucherNotPosted,
-            vec![PresenceCandidate {
-                book_key: voucher.key().to_string(),
-                rule: match basis {
-                    PresenceBasis::RemoteId => CandidateRule::SharedRemoteId,
-                    PresenceBasis::ManualVoucherNumber => CandidateRule::SharedVoucherNumber,
-                },
-            }],
+            (
+                vec![PresenceCandidate {
+                    book_key: voucher.key().to_string(),
+                    rule: match basis {
+                        PresenceBasis::RemoteId => CandidateRule::SharedRemoteId,
+                        PresenceBasis::ManualVoucherNumber => CandidateRule::SharedVoucherNumber,
+                    },
+                }],
+                1,
+            ),
         ));
     }
     PresenceStatus::Present {
@@ -1524,30 +1536,39 @@ fn keep_strongest(
         .or_insert(rule);
 }
 
+/// Builds the *retained* candidates and reports how many there were.
+///
+/// A dense window can hold thousands of vouchers sharing one manual number, and
+/// every one of them used to be cloned into a `PresenceCandidate` before the
+/// response cap discarded all but twenty-five. At the admitted bounds that is
+/// millions of string clones to produce a bounded answer, so the cap is applied
+/// **before** the clone and the true count is carried alongside it rather than
+/// recovered from the vector's length.
 fn candidates_from(
     window: &BookWindow,
     positions: &[usize],
     rule: CandidateRule,
-) -> Vec<PresenceCandidate> {
-    positions
+) -> (Vec<PresenceCandidate>, usize) {
+    let retained = positions
         .iter()
+        .take(MAX_CANDIDATES_PER_PROPOSAL)
         .map(|position| PresenceCandidate {
             book_key: window.vouchers[*position].key().to_string(),
             rule,
         })
-        .collect()
+        .collect();
+    (retained, positions.len())
 }
 
-fn undecided(reason: UndecidedReason, candidates: Vec<PresenceCandidate>) -> Undecided {
-    let candidate_count = candidates.len();
-    let truncated = candidate_count > MAX_CANDIDATES_PER_PROPOSAL;
-    let mut candidates = candidates;
-    candidates.truncate(MAX_CANDIDATES_PER_PROPOSAL);
+fn undecided(
+    reason: UndecidedReason,
+    (candidates, found): (Vec<PresenceCandidate>, usize),
+) -> Undecided {
     Undecided {
         reason,
+        candidates_truncated: candidates.len() < found,
         candidates,
-        candidate_count,
-        candidates_truncated: truncated,
+        candidate_count: found,
     }
 }
 

@@ -1888,3 +1888,40 @@ fn a_window_declaring_remote_ids_unread_refuses_to_carry_one() {
     )
     .is_ok());
 }
+
+/// A dense window can hold thousands of vouchers sharing one manual number.
+/// The response keeps twenty-five of them, so twenty-five is what may be
+/// cloned — the count is carried alongside rather than recovered from the
+/// vector's length, which is what let the old code allocate the whole set and
+/// then throw it away.
+#[test]
+fn a_large_number_collision_reports_its_true_size_without_listing_it() {
+    let rows: Vec<BookRow> = (1..=200)
+        .map(|index| {
+            BookRow::new(
+                Box::leak(format!("book-{index:03}").into_boxed_str()),
+                "20260812",
+                "AA0118",
+            )
+        })
+        .collect();
+    let window = window(&rows);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118").build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert_eq!(reason(entry), UndecidedReason::BookNumberCollision);
+    let undecided = entry.undecided().expect("undecided");
+    assert_eq!(undecided.candidate_count, 200, "the true size is reported");
+    assert_eq!(undecided.candidates.len(), MAX_CANDIDATES_PER_PROPOSAL);
+    assert!(undecided.candidates_truncated);
+    // Every one of them was still reached, so none is reported as a voucher no
+    // proposal came near.
+    assert_eq!(report.observations().unmatched_book_vouchers, 0);
+    // And the book-side diagnostic sees the collision it is there to find.
+    assert_eq!(report.observations().duplicate_number_group_count, 1);
+}
