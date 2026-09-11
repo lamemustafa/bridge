@@ -168,7 +168,12 @@ fn amount_only_bill_allocation_placeholder_is_ignored_not_refused() {
     );
     // The rest of the read must be intact: skipping the row has to fall through
     // to the scope bookkeeping, or every later element is mis-attributed.
-    assert_eq!(rows.len(), parse_agent_rows(&captured, CAPTURED_BILL_ALLOCATION_COMPANY_GUID).unwrap().len());
+    assert_eq!(
+        rows.len(),
+        parse_agent_rows(&captured, CAPTURED_BILL_ALLOCATION_COMPANY_GUID)
+            .unwrap()
+            .len()
+    );
     assert_eq!(rows[0]["amounts"][1]["bill_allocations"], json!([]));
 }
 

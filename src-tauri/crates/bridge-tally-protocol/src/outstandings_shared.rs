@@ -50,7 +50,7 @@ use crate::xml_read_profiles::ValidatedCompanyName;
 /// read with `bill_allocation_field_missing` instead of being skipped. Both
 /// boundaries now call this.
 pub fn bill_allocation_without_type_is_placeholder(name: Option<&str>) -> bool {
-    !name.is_some_and(|value| !value.trim().is_empty())
+    name.is_none_or(|value| value.trim().is_empty())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

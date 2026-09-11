@@ -332,9 +332,8 @@ fn convert_bill_allocation(
         .name
         .and_then(|value| trimmed_optional(Some(value.text)));
     let Some(bill_type) = raw.bill_type else {
-        if crate::outstandings_shared::bill_allocation_without_type_is_placeholder(
-            name.as_deref(),
-        ) {
+        if crate::outstandings_shared::bill_allocation_without_type_is_placeholder(name.as_deref())
+        {
             return Ok(None);
         }
         return Err(OutstandingsError::InvalidResponse("bill_type_missing"));

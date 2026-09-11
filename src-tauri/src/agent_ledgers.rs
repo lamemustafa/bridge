@@ -247,7 +247,10 @@ mod tests {
         // and whose value drives a classification, must fail at the boundary on an
         // unexpected shape rather than become compliance data.
         for (field, nested) in [
-            ("GSTDUTYHEAD", "<GSTDUTYHEAD><VALUE>CGST</VALUE></GSTDUTYHEAD>"),
+            (
+                "GSTDUTYHEAD",
+                "<GSTDUTYHEAD><VALUE>CGST</VALUE></GSTDUTYHEAD>",
+            ),
             ("TAXTYPE", "<TAXTYPE><VALUE>GST</VALUE></TAXTYPE>"),
         ] {
             let response = format!(
@@ -356,13 +359,10 @@ mod tests {
         // captured_empty_duty_head_uses_tax_type_classification.
         assert!(!capture.contains("<GSTDUTYHEAD/>"));
         assert!(
-            parsed
-                .records
-                .iter()
-                .any(|row| matches!(
-                    row.record.fields.gst_duty_head,
-                    GstDutyHeadObservation::NotTaxLedger { .. }
-                )),
+            parsed.records.iter().any(|row| matches!(
+                row.record.fields.gst_duty_head,
+                GstDutyHeadObservation::NotTaxLedger { .. }
+            )),
             "the same capture must also carry ordinary non-tax ledgers"
         );
     }

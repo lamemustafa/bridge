@@ -212,17 +212,27 @@ pub struct PartyLedgerMasterFields {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "observation", rename_all = "snake_case")]
 pub enum GstDutyHeadObservation {
-    Recognized { raw: String, head: GstDutyHead },
-    Unrecognized { raw: String },
+    Recognized {
+        raw: String,
+        head: GstDutyHead,
+    },
+    Unrecognized {
+        raw: String,
+    },
     /// `TAXTYPE` was observed and is not the literal GST tax type; this is
     /// distinct from a GST ledger whose duty-head field was absent.
-    NotTaxLedger { tax_type: String },
+    NotTaxLedger {
+        tax_type: String,
+    },
     /// A duty head arrived on a ledger whose observed `TAXTYPE` is NOT GST --
     /// for example `<TAXTYPE>Others</TAXTYPE><GSTDUTYHEAD>CGST</GSTDUTYHEAD>`.
     /// The two fields contradict each other, so neither is asserted: the head is
     /// not recognised and the ledger is not reported as a tax ledger. Both raw
     /// values are retained so a reviewer can see what was actually returned.
-    Contradictory { tax_type: String, raw: String },
+    Contradictory {
+        tax_type: String,
+        raw: String,
+    },
     #[default]
     Absent,
 }
@@ -3235,10 +3245,8 @@ fn parse_native_ledger_collection_row_with_master_fields(
     if !parent_seen {
         anyhow::bail!("native ledger row omitted PARENT");
     }
-    master_fields.gst_duty_head = GstDutyHeadObservation::from_observations(
-        &master_fields.tax_type,
-        &gst_duty_head,
-    );
+    master_fields.gst_duty_head =
+        GstDutyHeadObservation::from_observations(&master_fields.tax_type, &gst_duty_head);
     Ok(ParsedNativeLedgerCollectionRow {
         ledger,
         fields: master_fields,
@@ -3278,9 +3286,7 @@ fn read_scalar_rejecting_nested_markup(
         match reader.read_event()? {
             Event::Start(child) | Event::Empty(child) => {
                 let child = String::from_utf8_lossy(child.name().as_ref()).to_ascii_uppercase();
-                anyhow::bail!(
-                    "party/ledger master scalar contained nested markup <{child}>"
-                );
+                anyhow::bail!("party/ledger master scalar contained nested markup <{child}>");
             }
             Event::Text(text) => {
                 let decoded = text.decode()?;
