@@ -1120,7 +1120,10 @@ accepts(candidate, tally_name):
     # `tally_name` is the spelling Tally holds. Each line is one measured
     # result. Do not compose them; do not add a line without a capture.
     return candidate == tally_name                                 # exact — VERIFIED
-        or ascii_lower(candidate) == ascii_lower(tally_name)       # ASCII case — VERIFIED, see below
+        or candidate == ascii_lower(tally_name)                    # candidate is the master lowercased — VERIFIED
+        # NOT included: ascii_lower(candidate) == ascii_lower(tally_name).
+        # That also accepts an UPPERCASE candidate against a lowercase master,
+        # a direction never sent. See the third note below.
         or drop_one_trailing_space(candidate) == tally_name        # ONE trailing space — VERIFIED
         or candidate == tally_name.replace("-", " ")               # space for Tally's hyphen — VERIFIED
 ```
@@ -1133,10 +1136,13 @@ Three things this spelling is careful about, each of which was wrong in an earli
 - **The separator substitution is applied to `tally_name` only.** `tally_name="A-B"` accepts
   `candidate="A B"`; `tally_name="A B"` does **not** accept `candidate="A-B"`. That asymmetry is
   the entire point of the clause and is what a canonical form cannot express.
-- **The case clause folds both sides, and that is broader than the capture.** The measurement sent
-  a lowercase name against a master carrying uppercase; the reverse was not sent. It is written
-  symmetrically because "Tally folds ASCII case" is the claim the capture supports, but a consumer
-  relying on the *uppercase-candidate* direction is relying on an inference. Qualify it before
+- **The case clause is directional, because the capture was.** The measurement sent a **lowercase**
+  candidate against a master carrying uppercase. `ascii_lower(candidate) == ascii_lower(tally_name)`
+  also accepts an **uppercase** candidate against a lowercase master, which was never sent — so the
+  symmetric form asserts a second experiment, exactly as a canonical form does for the separator.
+  An earlier draft admitted that in this note and left the symmetric clause in the predicate
+  anyway; a qualification in the prose does not qualify the code beside it. Written as
+  `candidate == ascii_lower(tally_name)`, the predicate now says only what was sent. Qualify it before
   building on it.
 
 If a further direction is later measured, one clause is added and the table row changes. Until
