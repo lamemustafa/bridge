@@ -825,3 +825,347 @@ async fn a_party_with_too_many_identifiers_costs_no_read() {
         "an input that was always going to be refused must cost no read"
     );
 }
+/// The observations can outgrow the byte cap on their own, and `fit_response`
+/// cannot reach them - it trims `items`, and `book` is a sibling. Worse, the
+/// final framing serializes the payload twice, so the real cost is doubled.
+///
+/// The premise is asserted first: a `book` at the crate's documented maxima
+/// really does exceed the budget. Without that, the degradation below would be
+/// a control whose branch never fires.
+#[test]
+fn a_maximal_book_degrades_to_its_counts_rather_than_costing_the_report() {
+    // Both bounds count *characters*, so the widest value they admit is a
+    // four-byte one. A real Tally GUID is 36 ASCII bytes and nowhere near
+    // this; the guard exists because the contract permits this, not because
+    // the common case needs it.
+    let key = "\u{1f600}".repeat(book_presence::MAX_BOOK_KEY_CHARS);
+    let label = "\u{1f600}".repeat(book_presence::MAX_OBSERVATION_LABEL_CHARS);
+    let groups = (0..book_presence::MAX_DUPLICATE_NUMBER_GROUPS)
+        .map(|_| {
+            json!({
+                "voucher_type": label, "voucher_number": label,
+                "book_keys": (0..book_presence::MAX_KEYS_PER_DUPLICATE_GROUP)
+                    .map(|_| key.clone()).collect::<Vec<_>>(),
+                "book_voucher_count": 10,
+            })
+        })
+        .collect::<Vec<_>>();
+    let book = json!({
+        "duplicate_numbers": groups,
+        "duplicate_number_group_count": book_presence::MAX_DUPLICATE_NUMBER_GROUPS,
+        "duplicate_numbers_truncated": false,
+        "unbalanced_vouchers": (0..book_presence::MAX_UNBALANCED_LISTED)
+            .map(|_| key.clone()).collect::<Vec<_>>(),
+        "unbalanced_voucher_count": book_presence::MAX_UNBALANCED_LISTED,
+        "unmatched_book_vouchers": 0, "window_voucher_count": 20_000,
+        "remote_id_observed": false,
+    });
+    let budget = 200_000 / OBSERVATION_BUDGET_DIVISOR;
+    let full = book.to_string().len();
+    assert!(
+        full > budget,
+        "the premise fails: a maximal book is {full} bytes against a budget of {budget}"
+    );
+    assert!(
+        full * 2 > 200_000,
+        "the doubled envelope should clear the default cap on observations alone"
+    );
+
+    let bounded = bounded_observations(book, budget);
+    assert!(bounded.to_string().len() <= budget);
+    // Every count survives, and the listing keeps as many rows as fit rather
+    // than emptying: dropping the lot would satisfy a laxer assertion than
+    // this one, so the retained count is bounded on both sides.
+    let listed = bounded["duplicate_numbers"]
+        .as_array()
+        .expect("listed")
+        .len();
+    assert!(
+        listed < book_presence::MAX_DUPLICATE_NUMBER_GROUPS,
+        "nothing was trimmed"
+    );
+    assert!(
+        listed > 0,
+        "the whole listing was dropped rather than trimmed"
+    );
+    assert_eq!(bounded["listings_withheld_for_size"], json!(true));
+    assert_eq!(bounded["duplicate_numbers_truncated"], json!(true));
+    assert_eq!(
+        bounded["duplicate_number_group_count"],
+        json!(book_presence::MAX_DUPLICATE_NUMBER_GROUPS)
+    );
+    assert_eq!(bounded["window_voucher_count"], json!(20_000));
+
+    // A book that fits comes back untouched, with no marker added.
+    let small = json!({"duplicate_numbers": [], "window_voucher_count": 3});
+    assert_eq!(bounded_observations(small.clone(), budget), small);
+
+    // And a book that is over by a little keeps most of its listing rather
+    // than losing all of it -- the row-by-row part, which a wholesale drop
+    // would pass the assertions above without ever doing.
+    let rows = (0..40).map(|_| json!(key)).collect::<Vec<_>>();
+    let large = json!({"duplicate_numbers": [], "unbalanced_vouchers": rows,
+        "unbalanced_voucher_count": 40, "window_voucher_count": 40});
+    let kept = bounded_observations(large, 12_000);
+    let listed = kept["unbalanced_vouchers"]
+        .as_array()
+        .expect("listed")
+        .len();
+    assert!(
+        (1..40).contains(&listed),
+        "expected a partial listing, kept {listed} of 40"
+    );
+    assert_eq!(kept["unbalanced_voucher_count"], json!(40));
+    assert_eq!(kept["listings_withheld_for_size"], json!(true));
+}
+
+// ---------------------------------------------------------------------------
+// Live replay — manual, owner-authorized, and read-only.
+//
+// The synthetic cycle above verifies the rules against data this repository
+// invented. This replays the shape of the engagement that motivated the
+// capability against a real book: twenty proposed invoices, most of which the
+// book already holds, one of them differing in amount.
+//
+// Two properties make it safe to keep in a public repository:
+//
+//   * It **never writes.** The proposals are built from the book's own rows,
+//     so the "already present" ones are present by construction and no voucher
+//     is posted to produce them. That inverts one detail of the original
+//     engagement and the assertion says so.
+//   * It **emits no book content** — counts, bases and reason codes only. A
+//     failure prints what went wrong, never a party name, number or amount.
+// ---------------------------------------------------------------------------
+
+/// How many faithful copies to propose, how many to perturb, how many to invent.
+const REPLAY_PRESENT: usize = 15;
+const REPLAY_DIFFERING: usize = 1;
+const REPLAY_ABSENT: usize = 4;
+/// The engagement's invoice was posted 36.13 short of its source document.
+const SHORT_BY_PAISE: i64 = 3_613;
+/// A party the book has never seen, so nothing it proposes can resemble a row
+/// by party. Fabricated, and it must stay that way.
+const REPLAY_UNKNOWN_PARTY: &str = "Bridge Replay Unknown Party";
+
+fn live_env(key: &str) -> String {
+    std::env::var(key).unwrap_or_else(|_| panic!("{key} must be set for the live replay"))
+}
+
+/// Replays the twenty-invoice engagement against the live lab.
+///
+/// ```text
+/// BRIDGE_TALLY_LIVE_PORT=9001 \
+/// BRIDGE_TALLY_LIVE_COMPANY_GUID=<guid> \
+/// BRIDGE_PRESENCE_LIVE_FROM=YYYYMMDD BRIDGE_PRESENCE_LIVE_TO=YYYYMMDD \
+/// cargo test -p bridge --lib replay_the_twenty_invoice_engagement -- --ignored --nocapture
+/// ```
+#[tokio::test]
+#[ignore = "manual owner-authorized live read; needs the lab reachable on the given port"]
+async fn replay_the_twenty_invoice_engagement() {
+    let port = live_env("BRIDGE_TALLY_LIVE_PORT")
+        .parse::<u16>()
+        .expect("numeric port");
+    let guid = live_env("BRIDGE_TALLY_LIVE_COMPANY_GUID");
+    let from = live_env("BRIDGE_PRESENCE_LIVE_FROM");
+    let to = live_env("BRIDGE_PRESENCE_LIVE_TO");
+    let directory = tempfile::tempdir().expect("directory");
+    let server = Server::new(Settings {
+        endpoint: TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port,
+        },
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 500,
+        max_bytes: 4_000_000,
+        redaction: Redaction::None,
+        import_enabled: false,
+        // Read-only, and stated in the settings rather than only in a comment.
+        writes_enabled: false,
+    });
+
+    let read = server
+        .call_tool(
+            "vouchers",
+            json!({"company_guid": guid, "from": from, "to": to}),
+        )
+        .await;
+    assert_eq!(read["isError"], false, "the window read failed");
+    let rows = read["structuredContent"]["result"]["items"]
+        .as_array()
+        .expect("items")
+        .clone();
+    let posted = rows
+        .iter()
+        .filter(|row| {
+            row["cancelled"] != json!(true)
+                && row["optional"] != json!(true)
+                && row["voucher_number"].is_string()
+                && row["party"].is_string()
+                && row["amounts"].as_array().is_some_and(|rows| rows.len() > 1)
+        })
+        .collect::<Vec<_>>();
+    let needed = REPLAY_PRESENT + REPLAY_DIFFERING;
+    assert!(
+        posted.len() >= needed,
+        "the window holds {} usable vouchers and the replay needs {needed}; widen the dates",
+        posted.len()
+    );
+
+    // Paise, so the shortfall is exact. The read carries `bill_allocations`
+    // and `is_deemed_positive` that the proposal schema does not declare, so
+    // each entry is projected down to what a source document actually offers.
+    let paise = |amount: &str| -> i64 {
+        let (sign, digits) = match amount.strip_prefix('-') {
+            Some(rest) => (-1, rest),
+            None => (1, amount),
+        };
+        let (whole, fraction) = digits.split_once('.').unwrap_or((digits, "0"));
+        let fraction = format!("{fraction:0<2}");
+        sign * (whole.parse::<i64>().expect("whole") * 100
+            + fraction[..2].parse::<i64>().expect("fraction"))
+    };
+    let rupees = |value: i64| {
+        format!(
+            "{}{}.{:02}",
+            if value < 0 { "-" } else { "" },
+            value.abs() / 100,
+            value.abs() % 100
+        )
+    };
+
+    let proposal_from = |row: &Value, short_by: i64| {
+        let mut shortfall = short_by;
+        let entries = row["amounts"]
+            .as_array()
+            .expect("amounts")
+            .iter()
+            .map(|entry| {
+                let value = paise(entry["amount"].as_str().expect("amount"));
+                // Magnitude is the sum of the non-negative entries, so the
+                // shortfall has to come off that side to be a difference at
+                // all. This is the engagement's shortfall, applied to the one
+                // line that carries the invoice value.
+                let adjusted = if shortfall > 0 && value > 0 {
+                    shortfall = 0;
+                    value - short_by
+                } else {
+                    value
+                };
+                json!({"ledger": entry["ledger"], "amount": rupees(adjusted)})
+            })
+            .collect::<Vec<_>>();
+        json!({
+            "date": row["date"],
+            "voucher_type": row["voucher_type"],
+            "voucher_number": row["voucher_number"],
+            "party": row["party"],
+            "entries": entries,
+        })
+    };
+
+    let mut proposals = posted
+        .iter()
+        .take(REPLAY_PRESENT)
+        .map(|row| proposal_from(row, 0))
+        .collect::<Vec<_>>();
+    // The engagement's short-posted invoice was short in the *book*. This
+    // harness may not write, so the shortfall is introduced on the proposal
+    // side instead. The difference the report must find is the same one; only
+    // which side is missing the GST head is reversed.
+    proposals.push(proposal_from(posted[REPLAY_PRESENT], SHORT_BY_PAISE));
+    // A new customer's invoice, which the engagement also had. It must differ
+    // from every book row in *party and amount*, not just in number: in a
+    // one-day window every row shares the date, so a known party alone would
+    // resemble something on date-and-party and withhold `absent` -- correctly,
+    // and that is a property of the window rather than of the proposal.
+    for index in 0..REPLAY_ABSENT {
+        let mut invented = proposal_from(posted[0], (index as i64 + 1) * 7_777);
+        invented["voucher_number"] = json!(format!("BRIDGE-REPLAY-ABSENT-{index:02}"));
+        invented["party"] = json!(REPLAY_UNKNOWN_PARTY);
+        invented["entries"][0]["ledger"] = json!(REPLAY_UNKNOWN_PARTY);
+        proposals.push(invented);
+    }
+
+    let mut types = posted
+        .iter()
+        .take(needed)
+        .filter_map(|row| row["voucher_type"].as_str())
+        .collect::<Vec<_>>();
+    types.sort_unstable();
+    types.dedup();
+    let numbering = types
+        .iter()
+        .map(|kind| json!({"voucher_type": kind, "numbering_method": "manual"}))
+        .collect::<Vec<_>>();
+
+    let response = server
+        .call_tool(
+            "voucher_presence",
+            json!({"company_guid": guid, "from": from, "to": to,
+                "numbering": numbering, "vouchers": proposals}),
+        )
+        .await;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        response["isError"], false,
+        "presence refused the replay: {}",
+        result["error"]["code"]
+    );
+
+    let items = result["items"].as_array().expect("items");
+    // Counts, bases and reason codes only: never a name, number or amount.
+    let summarise = |entry: &Value| {
+        format!(
+            "{}/{}/{}",
+            entry["presence"].as_str().unwrap_or("?"),
+            entry["basis"].as_str().unwrap_or("-"),
+            entry["reason"].as_str().unwrap_or("-")
+        )
+    };
+    println!(
+        "replay totals: {} | verdicts: {:?}",
+        result["totals"],
+        items.iter().map(summarise).collect::<Vec<_>>()
+    );
+    println!("book observations: {}", result["book"]);
+
+    for (index, entry) in items.iter().take(REPLAY_PRESENT).enumerate() {
+        assert_eq!(
+            entry["presence"],
+            "present",
+            "faithful copy {index} came back {}",
+            summarise(entry)
+        );
+        assert!(
+            entry["differences"]
+                .as_array()
+                .is_some_and(|rows| rows.is_empty()),
+            "a faithful copy reported a difference at {index}"
+        );
+    }
+    let differing = &items[REPLAY_PRESENT];
+    assert_eq!(
+        differing["presence"],
+        "present",
+        "the short proposal came back {}",
+        summarise(differing)
+    );
+    let fields = differing["differences"]
+        .as_array()
+        .expect("differences")
+        .iter()
+        .filter_map(|difference| difference["field"].as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        fields.contains(&"amount"),
+        "the short proposal reported {fields:?} rather than an amount difference"
+    );
+    for (index, entry) in items.iter().skip(needed).enumerate() {
+        assert_eq!(
+            entry["presence"],
+            "absent",
+            "invented voucher {index} came back {}",
+            summarise(entry)
+        );
+    }
+}

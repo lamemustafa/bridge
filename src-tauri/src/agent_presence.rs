@@ -20,6 +20,19 @@ use bridge_tally_core::master_binding::{MasterCatalog, MasterClass, SourceEntity
 pub(super) const MAX_PRESENCE_VOUCHERS: usize = 500;
 /// Most voucher types one numbering declaration may name.
 pub(super) const MAX_PRESENCE_VOUCHER_TYPES: usize = 50;
+/// Share of the byte cap the fixed observations may occupy.
+///
+/// `fit_response` can trim only `items`; `book` is a sibling it cannot reach,
+/// and the final framing serializes the whole payload **twice** -- once as
+/// `structuredContent` and again as text for clients that read only that. So a
+/// maximal `book` (twenty-five duplicate-number groups of ten 128-character
+/// keys, twenty-five unbalanced keys, labels at their bound) runs to six
+/// figures on its own, and the doubled envelope clears the default cap without
+/// a single large item. The report would then be discarded wholesale *after*
+/// all three Tally reads were paid for.
+///
+/// An eighth leaves the doubled observations at a quarter of the cap.
+const OBSERVATION_BUDGET_DIVISOR: usize = 8;
 /// Most ledger entries one proposed voucher may carry.
 pub(super) const MAX_PRESENCE_ENTRIES: usize = 200;
 /// Enforces the published `inputSchema` on this tool's nested arrays.
@@ -189,7 +202,14 @@ impl Server {
             let request = PresenceRequest::new(&window, &catalog, &numbering, &proposals)
                 .map_err(presence_code)?;
             let report = book_presence::assess(&request);
-            let (result, truncated) = presence_result(&report, &catalogue, reason, offset, limit);
+            let (result, truncated) = presence_result(
+                &report,
+                &catalogue,
+                reason,
+                offset,
+                limit,
+                self.settings.max_bytes,
+            );
 
             Ok(ToolOutcome {
                 payload: json!({
@@ -315,12 +335,47 @@ fn parse_proposals(args: &Value) -> Result<Vec<ProposedVoucher>, String> {
     Ok(parsed)
 }
 
+/// Bounds the fixed observations, so a diagnostic can never cost the answer.
+///
+/// The counts are what a person acts on; the listed keys are a convenience for
+/// finding the rows again. When the listing will not fit, the listing goes and
+/// every count stays -- and the report says so, because a list that is shorter
+/// than it claims is the defect this contract keeps finding elsewhere.
+fn bounded_observations(mut book: Value, budget: usize) -> Value {
+    // Drop one listed row at a time rather than the whole listing. Twenty of
+    // twenty-five duplicate groups is worth more to the person reading this
+    // than none of them, and the counts beside them stay exact either way.
+    let mut withheld = false;
+    while book.to_string().len() > budget {
+        let dropped = book["duplicate_numbers"]
+            .as_array_mut()
+            .and_then(Vec::pop)
+            .inspect(|_| book["duplicate_numbers_truncated"] = json!(true))
+            .or_else(|| {
+                book["unbalanced_vouchers"]
+                    .as_array_mut()
+                    .and_then(Vec::pop)
+            });
+        if dropped.is_none() {
+            // Only counts and flags are left; they are the part a reader
+            // reconciles against, so they are never dropped.
+            break;
+        }
+        withheld = true;
+    }
+    if withheld {
+        book["listings_withheld_for_size"] = json!(true);
+    }
+    book
+}
+
 fn presence_result(
     report: &PresenceReport,
     catalogue: &[String],
     corroboration_reason: Option<&'static str>,
     offset: usize,
     limit: usize,
+    max_bytes: usize,
 ) -> (Value, bool) {
     let (from, to) = report.window();
     let total = report.vouchers().len();
@@ -346,7 +401,10 @@ fn presence_result(
         "offset": offset,
         "total": total,
         "totals": report.totals(),
-        "book": report.observations(),
+        "book": bounded_observations(
+            serde_json::to_value(report.observations()).unwrap_or_default(),
+            max_bytes / OBSERVATION_BUDGET_DIVISOR,
+        ),
         "catalogue_evidence_sha256": sha256_json(&catalogue.to_vec()),
     });
     (result, truncated)
