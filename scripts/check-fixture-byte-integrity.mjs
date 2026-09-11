@@ -10,6 +10,7 @@ const fixtureDirectories = [
   "src-tauri/crates/bridge-tally-protocol/tests/fixtures",
   "src-tauri/crates/tally-protocol-simulator/fixtures",
   "docs/tally/compatibility/fixtures",
+  "scripts/fixtures",
 ];
 const discoveredFixtureDirectories = discoverDirectories(repositoryRoot)
   .filter((directory) => directory.endsWith("/fixture") || directory.endsWith("/fixtures"))
