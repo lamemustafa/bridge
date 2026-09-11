@@ -223,16 +223,28 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                                 .ok_or_else(|| "bill_allocation_field_missing".to_string())?;
                             bridge_tally_core::ExactDecimal::parse(amount.clone())
                                 .map_err(|_| "bill_allocation_amount_invalid".to_string())?;
+                            let name = allocation_row
+                                .get("NAME")
+                                .filter(|value| !value.trim().is_empty());
                             let reference = if bill_type.trim() == "On Account" {
                                 // On Account is the one bill type with no bill identity.
                                 // Keep that absence explicit instead of representing it
                                 // as an empty name.
+                                //
+                                // A NAME here is a contradiction, not a value to drop.
+                                // Silently discarding it loses a supplier reference that
+                                // a malformed response -- or a request-shape regression
+                                // -- is trying to tell us about. The typed boundary in
+                                // outstandings/parser.rs refuses the same state as
+                                // `bill_reference_forbidden`; refuse it here too.
+                                if name.is_some() {
+                                    return Err("bill_reference_forbidden".to_string());
+                                }
                                 json!({"kind": "on_account"})
                             } else {
-                                let name = allocation_row
-                                    .get("NAME")
-                                    .filter(|value| !value.trim().is_empty())
-                                    .ok_or_else(|| "bill_allocation_field_missing".to_string())?;
+                                let name = name.ok_or_else(|| {
+                                    "bill_allocation_field_missing".to_string()
+                                })?;
                                 json!({"kind": "named", "name": name})
                             };
                             allocations.push(json!({

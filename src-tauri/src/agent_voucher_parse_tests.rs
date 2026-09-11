@@ -173,6 +173,24 @@ fn amount_only_bill_allocation_placeholder_is_ignored_not_refused() {
 }
 
 #[test]
+fn on_account_carrying_a_name_is_refused_not_silently_unnamed() {
+    // On Account cannot carry a bill identity. A NAME alongside it is a
+    // contradiction, and dropping it loses a supplier reference that a malformed
+    // response -- or a request-shape regression -- is trying to report. The typed
+    // outstandings boundary refuses the same state; this one did not.
+    let captured = captured_bill_allocation_vouchers().replacen(
+        "<BILLTYPE>New Ref</BILLTYPE>",
+        "<BILLTYPE>On Account</BILLTYPE>",
+        1,
+    );
+    assert!(captured.contains("<NAME>SET-INV-001</NAME>"));
+    assert_eq!(
+        parse_agent_rows(&captured, CAPTURED_BILL_ALLOCATION_COMPANY_GUID),
+        Err("bill_reference_forbidden".into())
+    );
+}
+
+#[test]
 fn named_bill_allocation_without_a_type_still_fails_closed() {
     // The other half of the admission rule: a name without a type is partially
     // populated, not a placeholder. Guessing the type would invent an allocation
