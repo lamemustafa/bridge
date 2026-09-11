@@ -486,7 +486,20 @@ class HDFC(Bank):
         # resolved to `STUDIO` — and a mapping for `STUDIO` then silently posts
         # an unrelated counterparty's transaction to that ledger. A name
         # containing a hyphenated number is ordinary (`STUDIO-54`, `UNIT-7`).
-        found = re.match(r"^ACH D-\s*TP ACH (.+)-\d+$", narr)
+        #
+        # The reference may carry **internal spaces**, so it is `\d[\d\s]*`
+        # rather than `\d+`. This branch reads `narr_spaced`, the form that
+        # keeps the PDF's spacing, and a cell wrap lands wherever the column
+        # edge falls — inside the reference as readily as between fields. It is
+        # the same phenomenon as `HDF CH01206262147` in the UTR branch. A `\d+$`
+        # anchor turned `ACME TRADERS-12345 67890` into UNRESOLVED, which the
+        # earlier unanchored pattern had resolved correctly: fixing the
+        # over-greedy boundary had quietly traded one failure for another.
+        #
+        # Greedy still binds the name to the *last* qualifying reference:
+        # `(.+)` prefers the longest match, and `ACME TRADERS-12345` fails
+        # because the character after it is a space rather than a hyphen.
+        found = re.match(r"^ACH D-\s*TP ACH (.+)-(\d[\d\s]*)$", narr)
         if found:
             return _squash(found.group(1))
         for prefix, label in (("EMI ", "EMI"), ("DEBIT CARD", "DEBIT CARD FEE")):
@@ -1298,6 +1311,20 @@ def _write_private(path, text, accept_inherited=False):
     label and every narration in the statement. On a shared host the default
     022 umask would publish all of it as mode 0644.
     """
+    if os.name == "nt" and accept_inherited and os.path.exists(path):
+        # The acknowledgement covers the *directory* the operator checked with
+        # `icacls`. It does not cover a file that is already there: `O_TRUNC`
+        # keeps that file's existing DACL rather than inheriting the
+        # directory's, and `os.chmod` cannot restrict it. So an operator can
+        # follow the instruction exactly and still overwrite a file readable by
+        # other principals — with the tool reporting success.
+        raise Refusal(
+            "existing_target_on_windows",
+            f"{path} already exists. On Windows an overwrite keeps the file's "
+            "own ACL, not the directory's, so checking the directory says "
+            "nothing about this file. Delete it (or choose a new name) and "
+            "re-run, so the new file inherits the ACL you checked.",
+        )
     if os.name == "nt" and not accept_inherited:
         # On Windows `os.chmod` toggles the read-only attribute and the mode
         # argument to `os.open` is ignored; the file inherits the directory's

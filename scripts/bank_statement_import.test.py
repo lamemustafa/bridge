@@ -940,6 +940,16 @@ def test_ach_party_ends_at_the_final_bank_reference(m):
     # The reference is still the delimiter, not part of the name.
     assert "1234567890" not in party("ACH D- TP ACH UNIT-7 METALS-1234567890")
 
+    # This branch reads `narr_spaced`, which keeps the PDF's spacing, and a cell
+    # wrap lands wherever the column edge falls — inside the reference as
+    # readily as between fields, the same way `HDF CH01206262147` wraps in the
+    # UTR branch. Anchoring on `\d+$` made every wrapped reference UNRESOLVED,
+    # which the earlier over-greedy pattern had handled: the first fix for the
+    # boundary traded one failure for another.
+    assert party("ACH D- TP ACH ACME TRADERS-12345 67890") == "ACME TRADERS"
+    assert party("ACH D- TP ACH STUDIO-54 INDUSTRIES-12345 67890") == "STUDIO-54 INDUSTRIES"
+    assert party("ACH D- TP ACH UNIT-7 METALS-12 345 6789") == "UNIT-7 METALS"
+
 
 def test_a_zero_in_one_amount_column_is_still_two_sided(m):
     """`if debit and credit` asked whether both were **non-zero**. A row filling
