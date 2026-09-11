@@ -96,8 +96,17 @@ const KNOWN_DUPLICATES = new Map([
 
 // Compare heading text, not the whole line: the level (`##` vs `###`) is
 // formatting and may legitimately change, while the words identify the section.
+//
+// Both markers are optional because a **Setext** heading has no `#` at all — it
+// is underlined by the line below it. Stripping only an ATX prefix left the
+// number inside the "title" of every Setext heading, so a comparison meant to be
+// title-against-title was silently number+title against number+title.
 function titleOf(line) {
-  return line.trim().replace(/^#+\s+\S+\s*/, "").trim();
+  return line
+    .trim()
+    .replace(/^#+\s+/, "")
+    .replace(/^(?:\d+[a-z]?)(?:\.\d+[a-z]?)*(?=[\s.:\u2014-]|$)\s*/, "")
+    .trim();
 }
 
 // Scanning one document's lines into number -> occurrences. A function rather
@@ -267,49 +276,93 @@ for (const [number, { headings, reason }] of KNOWN_DUPLICATES) {
   );
 }
 
-// Rule 2: a number already allocated on the base may not move. Uniqueness cannot
-// see this — renumbering a unique heading leaves it unique — and code cites these
-// numbers (`src-tauri/src/agent_import.rs` cites 9.8).
+// Rule 2: a number already allocated on the base must still be there. Uniqueness
+// cannot see this — renumbering a unique heading leaves it unique — and code
+// cites these numbers (`src-tauri/src/agent_import.rs` cites 9.8).
 const base = baseNumbers();
 if (base) {
-  // What rule 2 forbids is a section's *number* moving, because citations point
-  // at numbers. So the test is: a heading that existed on the base now appears
-  // under a **different** number.
+  // The test is **presence of the number**, not identity of the heading.
   //
-  // Not "a number no longer carries the heading it had" — that also fires on a
-  // **retitle**, which breaks no citation and is sometimes the whole point of a
-  // change. PR #296 exists to retitle 9.3, whose old wording stated a narrow
-  // case in general-sounding words; the gate blocked it, which is a false
-  // positive, not the rule working.
+  // An earlier version asked "does the heading that had this number still have
+  // it?", which needs a section to have an identity independent of its number,
+  // and the only candidate was its title. Title-as-identity has three holes and
+  // review found all three: a Setext heading's title still contained its number,
+  // so renumbering one read as a deletion; renumbering *and* retitling in one
+  // change made the old title vanish, which also read as a deletion; and two
+  // sections sharing a title made retitling either one look like a move.
   //
-  // A swap is still caught, because a swap is two renumberings: each heading
-  // turns up under the other's number.
-  const numbersNow = new Map();
-  for (const [number, found] of occurrences) {
-    for (const one of found) {
-      if (!numbersNow.has(titleOf(one.text))) numbersNow.set(titleOf(one.text), []);
-      numbersNow.get(titleOf(one.text)).push(number);
-    }
+  // Numbers need no such proxy. They are what citations point at, they are
+  // already parsed, and "9.7 is gone" is exactly the harm the rule exists to
+  // prevent — whether it left by being renumbered, retitled into a different
+  // number, or deleted outright. All three break `see §9.7` identically.
+  //
+  // Retitling stays free, which is what PR #296 needed: the number is still
+  // there, so nothing fires. A swap is caught, because a swap is two moves and
+  // both destinations are new numbers while neither source survives.
+  const missing = [...base.numbers.keys()].filter((number) => !occurrences.has(number));
+  if (missing.length) {
+    failures.push(
+      `section number(s) present on ${base.ref} and absent here. A merged ` +
+        "section number is never reused for something else, moved, or removed — " +
+        "other documents and code cite it. Retitling is fine; renumbering is " +
+        "not. Give new material a free number and leave the existing one " +
+        "alone. If a section genuinely must go, leave its number in place with " +
+        "a line saying where its content went, so the citation still lands:\n" +
+        missing
+          .slice(0, MAX_REPORTED_NUMBERS)
+          .map((number) => `    ${short(number)}`)
+          .join("\n") +
+        (missing.length > MAX_REPORTED_NUMBERS
+          ? `\n    ... and ${missing.length - MAX_REPORTED_NUMBERS} more`
+          : ""),
+    );
   }
-  const moved = [];
-  for (const [number, found] of base.numbers) {
-    for (const one of found) {
-      const title = titleOf(one.text);
-      const now = numbersNow.get(title) ?? [];
-      // gone entirely: a retitle or a deletion, neither of which moves a number
-      if (!now.length || now.includes(number)) continue;
-      moved.push({ number, title, now });
+
+  // Presence alone cannot see a **swap**: exchange two numbers and both are
+  // still there, while every citation to either now lands on the other's
+  // content. That needs a section to be recognisable independently of its
+  // number, and the only available handle is its title — so use it, but only
+  // where it is actually a handle.
+  //
+  // A title identifies a section only when it is unique on **both** revisions.
+  // Restricting the check to that is what makes it safe: two sections sharing a
+  // title can no longer make retitling one of them look like a move, which was
+  // the third review finding here. The other two are already answered — a
+  // Setext heading's number is stripped by `titleOf` now, and a renumber that
+  // also retitles is caught by the presence check above, which needs no title
+  // at all.
+  //
+  // Because both sides are unique, the destination is exactly one number, so
+  // the diagnostic cannot grow with its input the way `now.join(", ")` could.
+  const soleNumberOf = (scanned) => {
+    const byTitle = new Map();
+    for (const [number, found] of scanned) {
+      for (const one of found) {
+        const title = titleOf(one.text);
+        byTitle.set(title, byTitle.has(title) ? null : number);
+      }
     }
+    return byTitle;
+  };
+  const wasAt = soleNumberOf(base.numbers);
+  const isAt = soleNumberOf(occurrences);
+  const moved = [];
+  for (const [title, number] of wasAt) {
+    if (number === null) continue;
+    const now = isAt.get(title);
+    if (now === undefined || now === null || now === number) continue;
+    moved.push({ title, number, now });
   }
   if (moved.length) {
     failures.push(
-      `section(s) renumbered against ${base.ref}. A merged section is never ` +
-        "renumbered — other documents and code cite these numbers. Give the new " +
-        "section a free number and leave the existing one alone:\n" +
+      `section(s) whose heading moved to a different number against ${base.ref}. ` +
+        "Both numbers still exist, so this is a swap or a re-use: a citation to " +
+        "either one now lands on the other's content. Leave merged numbers where " +
+        "they are and give new material a free one:\n" +
         moved
           .slice(0, MAX_REPORTED_NUMBERS)
-          .map(({ number, title, now }) =>
-            `    ${short(title)}: was ${short(number)}, now ${now.map(short).join(", ")}`)
+          .map(({ title, number, now }) =>
+            `    ${short(title)}: was ${short(number)}, now ${short(now)}`)
           .join("\n"),
     );
   }
@@ -323,10 +376,14 @@ if (base) {
 }
 
 if (failures.length) {
+  // Not "duplicate section numbers": this gate enforces three rules and reports
+  // them through one list, so naming the first one mislabels the other two. A
+  // renumber failure read as a duplicate sends the author looking for a
+  // collision that is not there.
   throw new Error(
-    "duplicate protocol-reference section numbers:\n" +
+    `protocol-reference section numbering (${failures.length} problem(s)):\n` +
       failures.join("\n") +
-      "\n\nThe later arrival moves — see docs/tally/SECTION-REGISTER.md.",
+      "\n\nSee docs/tally/SECTION-REGISTER.md.",
   );
 }
 
