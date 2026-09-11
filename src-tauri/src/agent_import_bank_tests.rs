@@ -928,6 +928,24 @@ fn refusal_diagnostics_stay_inside_a_byte_budget() {
             "no row is exempt from the budget"
         );
     }
+    // One oversized row does not discard the shorter refusals behind it. The
+    // rows are sorted by ledger, so a long name early in the order would
+    // otherwise take every later one down with it.
+    let mut mixed = batch.clone();
+    let short = "AA Bank";
+    ledgers.push((short.to_string(), Some("Migrated Debtors".into())));
+    let mut voucher = template.clone();
+    voucher.bridge_txn_id = "txn-short".into();
+    voucher.entries[0].ledger = short.into();
+    mixed.vouchers.push(voucher);
+    let refusals = cash_bank_refusals(&mixed, &observed(&ledgers, captured_demo_groups()), 2_048);
+    assert!(
+        refusals
+            .ledgers
+            .iter()
+            .any(|row| row["ledger"] == serde_json::to_value(party_name(short)).unwrap()),
+        "the short row survives a budget the long ones exhaust"
+    );
 }
 
 #[tokio::test]

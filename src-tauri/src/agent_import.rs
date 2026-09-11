@@ -1416,10 +1416,16 @@ fn cash_bank_refusals(
     let distinct = refused.len();
     let ledgers = refused
         .into_values()
-        .take_while(|row| {
+        // Filter rather than stop at the first row that will not fit: an
+        // oversized row is one long ledger name, not a reason to discard every
+        // shorter refusal behind it. Budget is only spent on rows that are
+        // kept, so the remainder stays available.
+        .filter(|row| {
             let cost = serde_json::to_string(row).map_or(usize::MAX, |text| text.len());
             let affordable = cost <= budget;
-            budget = budget.saturating_sub(cost);
+            if affordable {
+                budget -= cost;
+            }
             affordable
         })
         .collect::<Vec<_>>();
