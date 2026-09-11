@@ -342,7 +342,7 @@ impl SourceDraftStore {
     pub(super) fn commit_catalog_target(
         &self,
         snapshot: CatalogApplySnapshot,
-        mut request: SourceDraftCatalogApplyRequest,
+        request: SourceDraftCatalogApplyRequest,
         binding: StandardLedgerCatalogBinding,
         fresh: &StandardLedgerCatalog,
     ) -> CommandResult<SourceDraftDto> {
@@ -372,13 +372,30 @@ impl SourceDraftStore {
         // requested target, so a refused selection cannot leave older bindings
         // claiming a currency the same read disproves.
         SourceDraftStore::revalidate_retained_bindings(current, fresh);
-        // A refusal carries the survivors with it. The renderer has no other way
-        // to learn what this read settled -- the refusal returns no draft -- and
-        // guessing either way is wrong: clearing every label discards bindings
-        // this read upholds, keeping them asserts a currency it disproved.
-        require_current_catalog_binding(&binding, fresh).map_err(|refusal| {
-            refusal.with_current_catalog_bindings(current_catalog_bindings(current))
-        })?;
+        // Past this point the store has already been changed by that settle, so
+        // *every* way of failing owes the renderer the survivors -- not just the
+        // refusal. Attaching them here rather than at each `?` makes that a
+        // property of the boundary instead of something each new error path has
+        // to remember, which is how the validation paths below were missed once
+        // already.
+        match Self::commit_settled_target(current, request, binding, fresh) {
+            Ok(draft) => Ok(draft),
+            Err(cause) => {
+                Err(cause.with_current_catalog_bindings(current_catalog_bindings(current)))
+            }
+        }
+    }
+
+    /// The half of the commit that runs after the retained bindings have been
+    /// settled. Split out so the caller can attach the survivors to anything
+    /// this returns; it must not be called from anywhere else.
+    fn commit_settled_target(
+        current: &mut ActiveDraft,
+        mut request: SourceDraftCatalogApplyRequest,
+        binding: StandardLedgerCatalogBinding,
+        fresh: &StandardLedgerCatalog,
+    ) -> CommandResult<SourceDraftDto> {
+        require_current_catalog_binding(&binding, fresh)?;
         let row = request.row_position - 1;
         let entry = request.entry_position - 1;
         request.proposals[row].entries[entry].ledger = Some(request.target_name.clone());
@@ -1189,6 +1206,109 @@ mod tests {
             "the refusal carries the survivors, so the renderer need not guess"
         );
         assert_eq!(simulator.finish().expect("all requests observed").len(), 28);
+    }
+
+    /// The refusal is not the only way to fail after the bindings have been
+    /// settled: the commit still validates the *completed* proposal and still
+    /// bumps the revision. Any of those reaches the renderer with the store
+    /// already changed, so it owes the same evidence.
+    ///
+    /// This drives the revision path because it is the one reachable from a
+    /// small fixture. The proposal-size path needs a source large enough for the
+    /// inserted target name to cross `MAX_PROPOSAL_BYTES`, which the per-field
+    /// `MAX_TEXT_BYTES` bound puts several megabytes out of reach here. Both are
+    /// covered by the same boundary rather than individually, which is the point
+    /// of attaching the survivors once.
+    #[tokio::test]
+    async fn a_post_settle_failure_other_than_refusal_also_reports_the_surviving_bindings() {
+        let store = SourceDraftStore::default();
+        let draft_id = install_active_draft_without_catalog(&store);
+        let (_, catalog_xml) = captured_catalog_and_xml();
+
+        let mut plans = vec![company_plan(CAPTURED_COMPANY, CAPTURED_GUID)];
+        append_catalog_read_plans(&mut plans, catalog_xml.clone());
+        plans.push(company_plan(CAPTURED_COMPANY, CAPTURED_GUID));
+        append_catalog_read_plans(&mut plans, catalog_xml.clone());
+        plans.push(company_plan(CAPTURED_COMPANY, CAPTURED_GUID));
+        append_catalog_read_plans(&mut plans, catalog_xml);
+        let simulator = SequenceSimulator::spawn(plans).expect("catalog service simulator");
+        let config = TallyConfig {
+            host: simulator.address().ip().to_string(),
+            port: simulator.address().port(),
+        };
+        let runtime = TallyRuntime::default();
+
+        let loaded = load_existing_ledger_targets(
+            &store,
+            &runtime,
+            SourceDraftCatalogLoadRequest {
+                draft_id: draft_id.to_string(),
+                config: config.clone(),
+                selected_company: selected_company(),
+            },
+        )
+        .await
+        .expect("service load admits the captured catalog");
+        let proposals = store
+            .active
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .proposals
+            .clone();
+
+        let bound = apply_existing_ledger_target(
+            &store,
+            &runtime,
+            SourceDraftCatalogApplyRequest {
+                draft_id: draft_id.to_string(),
+                revision: 1,
+                capture_id: loaded.capture_id.clone(),
+                config: config.clone(),
+                selected_company: selected_company(),
+                row_position: 1,
+                entry_position: 1,
+                target_name: SURVIVES_RENAME.to_owned(),
+                proposals,
+            },
+        )
+        .await
+        .expect("the surviving target applies");
+
+        // Exhaust the revision so the commit fails after the settle, on a path
+        // that is not the refusal.
+        store.active.lock().unwrap().as_mut().unwrap().revision = u64::MAX;
+        let rejected = apply_existing_ledger_target(
+            &store,
+            &runtime,
+            SourceDraftCatalogApplyRequest {
+                draft_id: draft_id.to_string(),
+                revision: u64::MAX,
+                capture_id: loaded.capture_id,
+                config,
+                selected_company: selected_company(),
+                row_position: 2,
+                entry_position: 1,
+                target_name: SURVIVES_RENAME.to_owned(),
+                proposals: bound.rows.iter().map(|row| row.proposal.clone()).collect(),
+            },
+        )
+        .await
+        .expect_err("the revision cannot advance");
+        assert_eq!(rejected.code, "source_draft_revision_exhausted");
+        assert_eq!(
+            rejected
+                .current_catalog_bindings
+                .as_deref()
+                .expect("a failure after the settle reports what survived")
+                .iter()
+                .map(|binding| (binding.row_position, binding.entry_position))
+                .collect::<Vec<_>>(),
+            vec![(1, 1)],
+            "row 1 is still current, and the renderer is told so despite the failure"
+        );
+        assert_eq!(simulator.finish().expect("all requests observed").len(), 21);
     }
 
     #[tokio::test]
