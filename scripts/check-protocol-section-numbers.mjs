@@ -53,6 +53,11 @@ const SETEXT_NUMBER = /^ {0,3}((?:\d+[a-z]?)(?:\.\d+[a-z]?)*)(?=[\s.:—-]|$)/;
 // an ordered-list marker (`1. `) and not a section number (`9.14 `), because in
 // the latter the dot is followed by a digit.
 const NOT_A_PARAGRAPH = /^ {0,3}(?:[-*+]\s|\d{1,9}[.)]\s|>|\||#)/;
+// A paragraph also ends at an *unnumbered* ATX heading, a fence, or a thematic
+// break. `HEADING` only matches numbered ones, so walking back past a
+// `## Unnumbered context` line and then rejecting it as not-a-paragraph lost the
+// numbered Setext heading underneath it entirely.
+const BLOCK_BOUNDARY = /^ {0,3}(?:#{1,6}\s|`{3,}|~{3,}|(?:[-*_]\s*){3,}$)/;
 
 // Diagnostics are bounded. A malformed or generated reference can carry very
 // many duplicates, or one very long heading, and CI evidence that does not fit
@@ -134,13 +139,18 @@ function scan(lines) {
     // line immediately above the underline.
     if (SETEXT_UNDERLINE.test(line) && index > 0) {
       let first = index - 1;
-      while (first > 0 && lines[first - 1].trim() && !HEADING.test(lines[first - 1])) {
+      while (
+        first > 0 &&
+        lines[first - 1].trim() &&
+        !BLOCK_BOUNDARY.test(lines[first - 1]) &&
+        !NOT_A_PARAGRAPH.test(lines[first - 1])
+      ) {
         first -= 1;
       }
       const heading = lines[first];
       // An ATX heading above is a heading in its own right, and `---` under it
       // is a thematic break. A blank line is not a heading at all.
-      if (heading.trim() && !HEADING.test(heading) && !NOT_A_PARAGRAPH.test(heading)) {
+      if (heading.trim() && !BLOCK_BOUNDARY.test(heading) && !NOT_A_PARAGRAPH.test(heading)) {
         // Matched against the raw line, not a trimmed copy: SETEXT_NUMBER's own
         // {0,3} indentation limit is what rejects a four-space-indented code
         // line beginning with a number, and trimming first threw that away.
@@ -253,13 +263,29 @@ for (const [number, { headings, reason }] of KNOWN_DUPLICATES) {
 // numbers (`src-tauri/src/agent_import.rs` cites 9.8).
 const base = baseNumbers();
 if (base) {
-  const removed = [...base.numbers.keys()].filter((number) => !occurrences.has(number));
-  if (removed.length) {
+  // Compare number -> heading, not the two number sets. Two merged sections that
+  // *exchange* numbers leave both sets identical, so a set comparison passes
+  // while every citation to either now resolves to the wrong section.
+  const moved = [];
+  for (const [number, found] of base.numbers) {
+    const before = found.map((one) => titleOf(one.text)).sort();
+    const after = (occurrences.get(number) ?? []).map((one) => titleOf(one.text)).sort();
+    // A number may gain headings (that is the duplicate check's job) but the
+    // headings it already carried must still be under it.
+    const lost = before.filter((title) => !after.includes(title));
+    if (lost.length) moved.push({ number, lost });
+  }
+  if (moved.length) {
     failures.push(
-      `section number(s) ${removed.slice(0, MAX_REPORTED_NUMBERS).join(", ")} exist on ` +
-        `${base.ref} and not here. A merged section is never renumbered — other ` +
-        "documents and code cite these numbers. Give the new section a free number " +
-        "and leave the existing one alone.",
+      `section number(s) changed against ${base.ref}. A merged section is never ` +
+        "renumbered — other documents and code cite these numbers. Give the new " +
+        "section a free number and leave the existing one alone:\n" +
+        moved
+          .slice(0, MAX_REPORTED_NUMBERS)
+          .map(({ number, lost }) =>
+            `    ${number} no longer carries: ` +
+            lost.map((title) => title.slice(0, MAX_HEADING_CHARS)).join("; "))
+          .join("\n"),
     );
   }
 } else {
