@@ -267,7 +267,7 @@ Four persona proposals (CA operator, product strategist, protocol engineer, UX d
 
 ### 3.1 Consensus (adopt)
 1. **Full-fidelity reads first** — narration, party GSTIN/address, bill allocations, GST/inventory lines; quarantine-on-unknown for custom TDL/UDF; encoding/name-normalization hardening (non-English fixtures). Everything else depends on this.
-2. **The write substrate** — outbox state machine (WAL-durable before dispatch), **batch-size-1** (counters are unattributable at N>1; the current `MAX_LEDGER_WRITE_BATCH=10` is wrong), UDF-embedded BridgeTxnID + **date/amount/ledger-set fingerprint** as mandatory secondary dedupe, readback-confirmed-only ("posted" = re-read from Tally, never counters), LASTVCHID cross-checked against the idempotency key (foreign-writer race), OutcomeUnknown recovery with pre-image AlterID checks, single-writer actor, fail-closed company pinning, **Cancel (not Delete) as the compensation primitive**, no fictional rollback.
+2. **The write substrate** — outbox state machine (WAL-durable before dispatch), **batch-size-1** (counters are unattributable at N>1; the current `MAX_LEDGER_WRITE_BATCH=10` is wrong), UDF-embedded BridgeTxnID + **date/amount/ledger-set fingerprint** as mandatory secondary dedupe (**see §8.19 — the fingerprint flags for a human; it may not suppress automatically**), readback-confirmed-only ("posted" = re-read from Tally, never counters), LASTVCHID cross-checked against the idempotency key (foreign-writer race), OutcomeUnknown recovery with pre-image AlterID checks, single-writer actor, fail-closed company pinning, **Cancel (not Delete) as the compensation primitive**, no fictional rollback.
 3. **Maker-checker + Proof-of-Post** — review-before-post is the only path from file to Tally; approval identity recorded; exportable per-batch evidence pack. Marketed as *supplementary* workpaper evidence, never MCA-Edit-Log equivalence (gateway writes appear in Tally's log as the logged-in Tally user).
 4. **Excel/CSV → review grid → post pipeline** with saved per-client column mappings — the expansion product.
 5. **Drift Sentinel** — checkpoint → "changed/new/deleted/back-dated since sign-off" with before/after diffs. Firm-maintained books only in v1; calm "backup restored, re-baselining" state distinct from tamper alarm.
@@ -326,7 +326,7 @@ Candidate one-liners (validate before external use): *"Bridge makes the evidence
 | # | Work | Exit criterion |
 |---|---|---|
 | 5 | **Write core**: outbox + batch-1 + readback verification + LASTVCHID cross-check + crash-mid-dispatch recovery; ledger create/alter | `Verified` on the licensed box, kill-test passes |
-| 6 | **Voucher Create** (payment/receipt/journal/contra): UDF+fingerprint idempotency qualified per version; **Cancel** qualified as compensation; Alter-by-GUID qualified per version with Cancel+Create fallback saga | Voucher CRUD `Verified` (licensed); Edu restriction honestly surfaced |
+| 6 | **Voucher Create** (payment/receipt/journal/contra): UDF+fingerprint idempotency qualified per version (fingerprint as a review flag only — §8.19); **Cancel** qualified as compensation; Alter-by-GUID qualified per version with Cancel+Create fallback saga | Voucher CRUD `Verified` (licensed); Edu restriction honestly surfaced |
 | 7 | **The thin product loop**: Excel/CSV import → saved per-client mappings → Review grid (confidence *words* + inspectable rationale + per-row errors in accountant language) → Post Queue stepper (Draft→Validated→Previewed→Approved→Posting→Posted→**Verified**) → Proof-of-Post PDF. Single company. History-seeded ledger suggestions | — |
 | 8 | **One design-partner firm**: scratch company on their licensed Tally first, then one real client | **Definition of done:** one article posts one client's weekly register for four consecutive weeks with zero unexplained, duplicated, or missing vouchers, and the partner files one Proof-of-Post pack |
 
@@ -400,6 +400,10 @@ Import responses have a bare `<RESPONSE>` root — no `ENVELOPE`, no `HEADER`, n
 Re-sending the identical voucher payload, same `VOUCHERNUMBER`, produced `CREATED=1, LASTVCHID=296` — **a second voucher**. Tally does not dedupe on voucher number.
 
 **Confirms §3.1.2 as load-bearing rather than defensive:** the UDF `BridgeTxnID` + `(date, amount, ledger-set, voucher-type)` fingerprint is the *only* thing standing between a crash-retry and a duplicated client voucher.
+
+> **Superseded 2026-09-11 — do not build the fingerprint on the strength of this.** The measurement holds: without a client `REMOTEID`, a repeated payload creates a second voucher. But it is not the *only* thing available, because the vouchers measured here carried no client `REMOTEID` and Tally therefore assigned its own. `IMPLEMENTATION_GUIDE.md` §3.3a measures the controlled case: with a client-supplied `REMOTEID`, a byte-identical re-import returns `CREATED=0, ALTERED=1` and leaves **one** voucher. So a duplicate-prevention scheme does not need a TDL plugin or a UDF fingerprint **on the path that was measured**, which is a byte-identical Journal repeat on one licensed instance. §9.8 states its own exclusions: not other voucher types, and **not restart behaviour**. Recovery code must not read this as a general licence to redispatch — a retry after a Tally restart, or on a voucher type nobody has qualified, is exactly where a categorical reading of `REMOTEID` would recreate the client-data duplication §8.4 exists to prevent. Qualify each context live before retrying in it. See also `TALLY_PROTOCOL_REFERENCE.md` §9.3, whose title carried the same overgeneralisation until it was corrected.
+>
+> **This narrows §3.1.2's fingerprint; it does not remove the outbox.** `REMOTEID` prevents a duplicate. It does not tell you, after a crash, *what you sent* — the returned `REMOTEID` **attribute** is Tally's own value, not yours, so the dispatch intent has to survive locally or the write is neither provable nor safely reconstructible. Be precise about which field: the key itself does survive in anything Tally does not own, and the committed capture returns it inside `NARRATION` as `[BRIDGE:…]`. A categorical "Tally does not return the key" would send recovery work to discard the one attribution channel that works. The `row fsynced before dispatch` invariant in this plan and the restart-reconciliation flow in `docs/agent/README.md` both still stand, and a resend is only safe while the exact key and payload are still on disk.
 
 ### 8.5 Re-creating an existing master silently becomes an Alter
 
@@ -714,3 +718,33 @@ Two direct collection exports, one requesting `20260401`–`20260401` and one re
 If confirmed, this contradicts **ADR 0015**, which asserts `bridge.tally.vouchers/3` is exact-scope evidence bound to "an echoed exact `FROMDATE`/`TODATE` window", and it means the 31-day selected-read bound has never held.
 
 **Not yet confirmed:** the probes used `TYPE=Collection` (direct collection export); Bridge uses `TYPE=Data` with a `REPORT`, whose period context may behave differently. One decisive test — send Bridge's exact V2 request and count distinct dates — settles it. **Until settled, no read-window claim in the matrix, UI, or ADR 0015 is supportable.**
+
+### 8.19 Owner deviation (2026-09-11) — the fingerprint is a flag for a human, never an automatic suppressor
+
+**Supersedes:** §3.1 consensus item 2 ("**date/amount/ledger-set fingerprint** as mandatory
+secondary dedupe") and §5 NEXT item 6 ("UDF+fingerprint idempotency"), to the extent either reads
+as *automatic suppression*. The idempotency work itself is unchanged; what changes is what the
+fingerprint is allowed to decide on its own.
+
+A `(date, amount, ledger-set, voucher-type)` tuple **cannot distinguish a retry from a legitimate
+second payment.** A recurring standing instruction, or two invoices settled to one supplier on one
+day, produce the identical tuple. Mandating it as dedupe "regardless of which carrier wins"
+therefore suppresses real vouchers — a silent under-write, where the money moved and the book does
+not say so. That is the failure this plan is least able to detect, because nothing is written and
+no counter is wrong.
+
+The correction, with the full table of what each signal does support, is in
+[`IMPLEMENTATION_GUIDE.md`](./IMPLEMENTATION_GUIDE.md) §6.2, and
+`TALLY_PROTOCOL_REFERENCE.md` §3.3a states the same rule from the other side:
+
+| Signal | What it supports |
+| --- | --- |
+| `REMOTEID` upsert | duplicate prevention, on the byte-identical Journal path only |
+| narration marker | attribution — which client write produced which voucher |
+| date/amount/ledger tuple | "these look alike, a human should check" — **not** a dedupe decision |
+
+**Consequence for the qualification work:** the regression in
+[`PROMPT_PLAYBOOK.md`](./PROMPT_PLAYBOOK.md) §6 — "duplicate re-dispatch with edited narration is
+still caught by the fingerprint check" — is still a *useful* case, but its exit criterion is that
+the pair is **flagged for review**, not that the second dispatch is suppressed. A qualification
+that passes by suppressing it is qualifying the defect.

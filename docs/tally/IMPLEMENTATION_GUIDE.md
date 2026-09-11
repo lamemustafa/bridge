@@ -569,24 +569,43 @@ This is the mechanism the UDF experiments (§3.4a) were looking for and missed. 
 "no natural idempotency" finding (§3.4) used vouchers with **no** client `REMOTEID`, where
 Tally assigns its own — that was the uncontrolled variable.
 
-**Four properties, all verified:**
+**Three properties verified, one inferred and since withdrawn:**
 
-| Property | Behaviour |
-| --- | --- |
-| `ACTION="Create"` + existing `REMOTEID` | **Upsert** — `ALTERED=1`, no duplicate |
-| `ACTION="Alter"` + `REMOTEID` | **Creates a duplicate** — inverted from intuition; use `Create` |
-| Client `REMOTEID` readable afterwards | **No.** Tally overwrites the attribute with its own value (`bb8ad19e-…-00018c44`) |
-| Correction path | Re-import a corrected file with the same `REMOTEID`s and the earlier rows are **overwritten** |
+| Property | Behaviour | State |
+| --- | --- | --- |
+| `ACTION="Create"` + existing `REMOTEID`, **byte-identical** payload | **Upsert** — `ALTERED=1`, no duplicate | VERIFIED |
+| `ACTION="Alter"` + `REMOTEID` | **Creates a duplicate** — inverted from intuition | VERIFIED |
+| Client `REMOTEID` echoed in the returned **attribute** | **No.** Tally overwrites it with its own value (`bb8ad19e-…-00018c44`) | VERIFIED |
+| Re-importing a **corrected** file overwrites the earlier rows | — | **UNVERIFIED — see below** |
+
+**The correction row was never measured.** It was inferred from the byte-identical repeat, and a
+corrected file is by definition a *different* payload — which is the case the Untested list below
+has always named. It may overwrite, may partially update, or may duplicate. `TALLY_PROTOCOL_REFERENCE.md`
+§9.3 carries the same correction, and neither document now prescribes a correction path.
 
 **Consequences.**
 
-*Positive:* this gives real idempotency and a real correction path without a TDL plugin, without
-narration hacks, and without an outbox. For a generate-a-file-the-human-imports design it means
-re-running the same file is safe, and fixing a mistake is a re-import.
+*Positive:* this gives real duplicate prevention without a TDL plugin and without a UDF
+fingerprint. For a generate-a-file-the-human-imports design, **re-running the same file is safe.**
 
-*Negative:* because the client key is **not readable back**, you cannot audit which client
-identifier produced which voucher, and you cannot verify from a read that your key was honoured.
-Any proof-of-post claim must account for that — Tally's dedupe is trustworthy but opaque.
+*Not the outbox, and not the narration marker.* Both of those were listed here as unnecessary and
+neither is:
+
+- **The durable dispatch intent stays.** `REMOTEID` prevents a duplicate; it does not tell you,
+  after a crash, *what you sent*. A resend is only safe while the exact key and payload are still
+  on disk, which is what the `row fsynced before dispatch` invariant and the restart-reconciliation
+  flow in `docs/agent/README.md` are for.
+- **An independent attribution marker stays.** The returned *attribute* does not echo the client
+  key — but the key itself survives in any field Tally does not own. The committed capture
+  `src-tauri/crates/bridge-tally-protocol/tests/fixtures/agent/native-namespaced-journal.utf16le.xml` returns it inside `NARRATION` as
+  `[BRIDGE:9c8d8de4-…]`, which is why Bridge's verifier reaches `posted_verified` only through a
+  narration-tagged match. A date/ledger/amount fingerprint is **not** a substitute: a recurring or
+  duplicate same-day payment already gives that tuple, so a pre-existing voucher stands in for a
+  write that never happened.
+
+*Negative:* because the attribute is not echoed, you cannot audit from that field which client
+identifier produced which voucher, and you cannot verify from it that your key was honoured. Any
+proof-of-post claim must account for that — carry your own marker in a field Tally leaves alone.
 
 **Untested:** whether `REMOTEID` dedupe holds across company boundaries, across a Tally restart,
 or when the payload differs from the original (partial update semantics). Also untested on
@@ -609,6 +628,10 @@ licensed or standard TallyPrime.
 | entirely different name | **rejected** |
 
 So Tally normalises **case and separators** and is otherwise **exact on letters**.
+
+> **Promoted to `TALLY_PROTOCOL_REFERENCE.md` §9.4b**, which is where observed gateway behaviour
+> belongs and which carries the consequences for a writer. This entry stays as the measurement
+> record; the reference is authoritative if they ever disagree.
 
 **A missing ledger rejects the voucher and does NOT auto-create the master.** Verified: ledger
 count unchanged at 87 across every test, with `LINEERROR: Ledger 'X' does not exist`.
@@ -643,9 +666,19 @@ yields `On Account`, which carries no bill identity.
 
 ### 3.4 There is no natural voucher idempotency — **narrowed by §3.3a**
 
-Re-sending an identical payload with the same voucher number created a **second voucher**.
-Combined with §3.3, the fingerprint + embedded-key dedupe is the only thing standing between
-a crash-retry and a duplicated client voucher.
+Re-sending an identical payload with the same voucher number created a **second voucher**. There
+is no natural idempotency: voucher number is not a key.
+
+**What the heading's "narrowed" means.** §3.3a since established that a byte-identical repeat under
+the same `REMOTEID` is an **upsert** on the qualified Journal path — `CREATED=0, ALTERED=1`, no
+duplicate. So on that path a crash-retry of the *same file* is safe on its own, and the sentence
+that used to stand here — that the fingerprint plus an embedded key is "the only thing" preventing a
+duplicate — is no longer true where §3.3a applies.
+
+It is still true everywhere §3.3a does not reach, and that is most places: a **different** payload
+under the same key is untested (it may overwrite, partially update or duplicate), as is any
+non-Journal voucher type, any other SKU, and a retry across a Tally restart or a company boundary.
+Name which case you are in before relying on either mechanism.
 
 ### 3.4a Undefined UDF fields are silently discarded — **the plan's primary idempotency key does not work as written**
 
@@ -684,9 +717,25 @@ Unicode and punctuation cases). The plan already names a narration-suffix fallba
 evidence that fallback is the *primary* option until a UDF-with-inline-TDL request is
 demonstrated end to end.
 
-**Caveat:** narration is user-editable, so it can never be trusted alone. The
-`(date, amount, ledger-set, voucher-type)` fingerprint remains mandatory secondary dedupe
-regardless of which carrier wins.
+**Caveat:** narration is user-editable, so it can never be trusted alone.
+
+**But the fingerprint is not the answer to that, and this paragraph used to say it was.** A
+`(date, amount, ledger-set, voucher-type)` tuple cannot distinguish a retry from a *legitimate
+second payment* — a recurring standing instruction, or two invoices settled to one supplier on one
+day, produce the identical tuple. Mandating it as dedupe "regardless of which carrier wins"
+therefore suppresses real vouchers, which is a silent under-write: the money moved and the book
+does not say so. §3.3a states the same thing from the other side, and this section contradicted it.
+
+Use it as a **flag for a human**, never as an automatic suppressor:
+
+| Signal | What it supports |
+| --- | --- |
+| `REMOTEID` upsert (§3.3a) | duplicate prevention, on the byte-identical Journal path only |
+| narration marker (§6.2) | attribution — which client write produced which voucher |
+| date/amount/ledger tuple | "these look alike, a human should check" — **not** a dedupe decision |
+
+None of the three is sufficient alone, and they do different jobs. Adding them together does not
+produce a safe automatic rule; it produces a pipeline whose failures are harder to attribute.
 
 **Eight forms tested — all discarded.** The reserved-index hypothesis (UDF numbers 1–29 are
 reserved for Default TDL) was tested and disproven:
@@ -717,9 +766,18 @@ a thorough negative across every documented shape found.
 > the same document had already discarded.
 
 **Therefore, for Phase 4 as currently scoped:** `NARRATION` is the only proven carrier for a
-client-generated key, and the `(date, amount, ledger-set, voucher-type)` fingerprint is not a
-secondary safeguard but a **co-primary** mechanism, because narration is user-editable and can
-be destroyed between write and readback.
+client-generated key, and it is user-editable, so it can be destroyed between write and readback.
+
+The conclusion drawn from that here used to be that the `(date, amount, ledger-set, voucher-type)`
+fingerprint is **co-primary** rather than secondary. Withdrawn: promoting it does not make it able
+to do the job. The tuple is identical for a legitimate recurring or same-day repeat payment, so as
+an automatic dedupe it suppresses real vouchers no matter which tier it is placed in — see §3.4a.
+
+What follows instead is narrower and less comfortable: **there is no proven automatic
+write-confirmation mechanism for Phase 4.** `REMOTEID` upsert covers a byte-identical repeat on the
+Journal path (§3.3a) and nothing beyond it; a destroyed narration marker leaves a write
+unattributable, and the honest response to that is to stop and ask a human, not to substitute a
+signal that cannot tell the two cases apart.
 
 ### 3.5 Identity after write
 
@@ -1057,7 +1115,7 @@ zero; fail closed or quarantine.
 | Abandoned request | Gateway blocked for minutes | I7 |
 | Modal dialog | Gateway blocked until a human clicks | §5.1 |
 | `ClosingBalance` read as a period figure | Wrong balance, presented as correct | §6.4 |
-| `ACTION="Alter"` + `REMOTEID` | Creates a duplicate — use `Create` | §3.3a |
+| `ACTION="Alter"` + `REMOTEID` | Creates a duplicate. `Create` upserts a **byte-identical** repeat; a *corrected* payload is UNVERIFIED and may overwrite, partially update or duplicate | §3.3a |
 | Master name differing by more than case/separators | Voucher rejected, master NOT auto-created | §3.3b |
 | Omitting `BILLALLOCATIONS.LIST` | Allocation becomes `On Account` with no bill identity | §3.3c |
 | Self-referential `$$NumItems` in a collection | Gateway hangs, empty reply | §5.3b |
@@ -1089,6 +1147,42 @@ Use a stable, isolated checkout for verification. Keep the normal development
 checkout and its persistent Cargo target separate from release and evidence
 builds. Record a commit or tree identity with each result; a passing check on a
 moving checkout is not a reproducible result.
+
+### Editing `TALLY_PROTOCOL_REFERENCE.md` — two gates fire
+
+Both are build rules and both fail CI in ways a docs diff gives no hint about.
+
+**1. Section numbers are gated.** `scripts/check-protocol-section-numbers.mjs`
+reads the numbered headings out of the reference and fails on:
+
+- a **duplicate** number;
+- a number **present on the base revision and absent here** — which covers
+  renumbering, retitling into a different number, and **deleting a section**.
+  All three break `see §9.7` identically, so all three are refused.
+
+**Retitling is allowed**, including retitling to a title another section
+already uses. Identity is the number, because that is what other documents and
+code cite (`src-tauri/src/agent_import.rs` cites 9.8).
+
+If a section genuinely must go, **leave its number with a line saying where the
+content went**. A redirect heading keeps the citation landing; deleting the
+heading strands every reader who follows one.
+
+The gate does **not** detect a pure exchange of two numbers, and deliberately
+does not try — see `SECTION-REGISTER.md` for why three attempts each produced a
+false positive on legitimate edits, and for the other residuals.
+
+**2. The reference is pinned in the compatibility surface**, so even a
+documentation-only edit stales its digest and fails the `Tally portable core`
+job. The reseal procedure is in
+[`docs/release-process.md`](../release-process.md#compatibility-surface-reseal).
+
+Run before pushing:
+
+```bash
+node scripts/check-protocol-section-numbers.mjs
+node scripts/check-protocol-section-numbers.test.mjs
+```
 
 ### Local iteration
 

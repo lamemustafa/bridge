@@ -38,6 +38,11 @@ export type SourceDraftSourceNotice = {
   count: number;
 };
 
+export type SourceDraftCurrentCatalogBinding = {
+  row_position: number;
+  entry_position: number;
+};
+
 export type SourceDraft = {
   draft_id: string;
   revision: number;
@@ -45,6 +50,7 @@ export type SourceDraft = {
   source_sha256: string;
   source_notices: SourceDraftSourceNotice[];
   rows: SourceDraftRow[];
+  current_catalog_bindings: SourceDraftCurrentCatalogBinding[];
 };
 
 export type SourceDraftAction = "choose" | "open" | "save" | "catalog_load" | "catalog_apply" | "catalog_clear" | null;

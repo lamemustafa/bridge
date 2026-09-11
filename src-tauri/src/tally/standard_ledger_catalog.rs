@@ -55,8 +55,9 @@ impl From<StandardLedgerCatalogError> for StandardLedgerCatalogReadError {
 
 #[derive(Debug, Clone)]
 pub(crate) struct StandardLedgerCatalogRead {
+    /// The parsed catalogue. The unparsed body is deliberately not retained:
+    /// holding both invites a caller to reparse what this read already parsed.
     pub(crate) catalog: StandardLedgerCatalog,
-    pub(crate) body: String,
     pub(crate) request_sha256: String,
     pub(crate) response_sha256: String,
     /// Both accepted, byte-identical paired catalogue bodies. Identity and
@@ -108,7 +109,6 @@ pub(crate) async fn read_standard_ledger_catalog(
     .map_err(StandardLedgerCatalogReadError::from)?;
     Ok(StandardLedgerCatalogRead {
         catalog,
-        body: response.body,
         request_sha256: sha256(&bridge_tally_protocol::encode_tally_xml_request_utf16le(
             &request_xml,
         )),
