@@ -93,7 +93,16 @@ def _split_tokens(text):
     return [(kind, "".join(run)) for kind, run in runs]
 
 
-ALPHA = "ZQXVWKJYBGFHLMNPRSTDC"
+# No X. X is the masking convention — it is held fixed wherever the *source*
+# had one — so it must never also be a letter the fabricator can emit. While it
+# was one, a token shaped `AAX` could be replaced by `?XX` and eat a slot the
+# genuinely `?XX`-shaped tokens need, and the output space of one mask shape was
+# no longer reserved for it. Measured on a fresh sanitiser: feeding `AAX, ABX,
+# ...` exhausted all 21 `?XX` replacements at the 76th token and exited, because
+# 19 of them had been issued to sources with no mask in that position at all.
+# Excluding X makes an X in a replacement mean exactly one thing — the source
+# was masked there — so the shapes no longer compete.
+ALPHA = "ZQVWKJYBGFHLMNPRSTDC"
 ENTITY = re.compile(r"&(?:amp|lt|gt|quot|apos|#\d+|#x[0-9A-Fa-f]+);")
 _seen = {}
 _taken = set()
@@ -150,16 +159,20 @@ def _fake_token(token):
             # reference, and the boundary parsers this fixture exists to
             # exercise read exactly that distinction.
             #
-            # Vary the last character that is *not* an X, not simply the last.
-            # An X is held fixed because it is a masking convention rather than
-            # data — and when that met "vary the tail" on a token ending in X,
-            # the two rules cancelled: the tail was pinned, the only freedom
-            # left was the 21 letters of ALPHA, and the 22nd such token reused a
+            # Vary the last character the *source* did not mask, not simply the
+            # last. An X is held fixed because it is a masking convention rather
+            # than data — and when that met "vary the tail" on a token ending in
+            # X, the two rules cancelled: the tail was pinned, the only freedom
+            # left was the letters of ALPHA, and the 22nd such token reused a
             # replacement. Measured: 5 collisions in 200 three-letter tokens,
             # which merges two counterparties in the fixture and makes a
             # mapping-identity regression pass.
+            #
+            # Read the mask off `token`, not off `candidate`: only the source
+            # says where a mask was. Asking the candidate conflated a pinned X
+            # with a fabricated one and skipped a position that was free.
             at = next(
-                (i for i in range(len(candidate) - 1, -1, -1) if candidate[i] != "X"),
+                (i for i in range(len(token) - 1, -1, -1) if token[i] != "X"),
                 None,
             )
             if at is not None:

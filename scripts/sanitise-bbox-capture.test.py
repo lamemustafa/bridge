@@ -43,6 +43,24 @@ def check(name, condition, detail=""):
         print(f"FAIL {name}{(': ' + detail) if detail else ''}")
 
 
+def scrub_all(module, words):
+    """Replace every word, returning exhaustion as a value instead of exiting.
+
+    The allocator raises SystemExit when it runs out of distinct replacements.
+    The crowding cases below assert it does *not* run out, so that exit is a
+    failed contract — but letting it propagate would abandon the suite mid-run
+    and read on the terminal exactly like the sanitiser refusing by design.
+    Returns (values, reason_it_stopped_or_None).
+    """
+    values = []
+    try:
+        for word in words:
+            values.append(module._scrub_plain(word))
+    except SystemExit as stop:
+        return values, f"exhausted after {len(values)} of {len(words)}: {stop}"
+    return values, None
+
+
 def leaked(source, output):
     """Evidence of the source surviving into the output, at the right unit.
 
@@ -129,38 +147,75 @@ check(
 # Measured with the guard removed: 91 collisions in 500 three-letter tokens, and
 # zero in 30 tokens shaped like `PARTYNAMEnn`. A weaker case here passes against
 # a sanitiser that silently merges two counterparties into one.
+#
+# Every crowding case below gets its **own freshly loaded module**. The allocator
+# is module-global, and a case that inherits `_seen`/`_taken` from the cases
+# above it is not the run anybody performs: the CLI starts empty. These three
+# checks all passed on shared state while a fresh sanitiser exited on the 76th
+# token, so sharing state here hid a real defect rather than saving time.
 crowd = ["".join(t) for t in itertools.product(string.ascii_uppercase, repeat=3)][:200]
-replaced = [m._scrub_plain(word) for word in crowd]
+replaced, stopped = scrub_all(load(), crowd)
 check(
     "200 short same-shape tokens still get 200 distinct replacements",
-    len(set(replaced)) == len(replaced),
-    f"{len(replaced) - len(set(replaced))} collision(s) — two counterparties would merge",
+    stopped is None and len(set(replaced)) == len(replaced),
+    stopped or f"{len(replaced) - len(set(replaced))} collision(s) — two counterparties would merge",
 )
 
-# The shape that actually broke: a token ending in X. The X is held fixed as a
-# masking convention, which used to collide with "vary the tail" — the tail was
-# the X, so it could not vary, and the only freedom left was the 21 letters of
-# ALPHA. The 22nd such token silently reused a replacement.
+# The shape that actually broke twice. The X is held fixed as a masking
+# convention, which first collided with "vary the tail" — the tail was the X, so
+# it could not vary and the 22nd such token reused a replacement.
+#
+# The second break needed a *fresh* allocator to see. `X` was itself a letter in
+# ALPHA, so an `AAX` source could be replaced by `?XX` and spend a slot that only
+# a genuinely `?XX`-shaped source can use. Feeding `AAX, ABX, ...` from empty
+# exhausted all 21 `?XX` replacements and exited at the 76th token, `CXX`, with
+# 19 of the 21 issued to sources carrying no mask in that position. On the shared
+# state this file used to run, the earlier cases had already moved the allocator
+# past the collision and it passed.
 x_tokens = [f"{a}{b}X" for a in string.ascii_uppercase for b in string.ascii_uppercase][:100]
-x_out = [m._scrub_plain(word) for word in x_tokens]
+x_out, stopped = scrub_all(load(), x_tokens)
 check(
-    "100 tokens ending in X get 100 distinct replacements",
-    len(set(x_out)) == len(x_out),
-    f"{len(x_out) - len(set(x_out))} collision(s)",
+    "100 tokens ending in X get 100 distinct replacements, from empty",
+    stopped is None and len(set(x_out)) == len(x_out),
+    stopped or f"{len(x_out) - len(set(x_out))} collision(s)",
 )
 check(
     "and the trailing X is still preserved in every one",
-    all(value.endswith("X") for value in x_out),
+    len(x_out) == len(x_tokens) and all(value.endswith("X") for value in x_out),
 )
 
-# Exhaustion must be loud. A three-character token has 21 letters x 21 tails of
+# The invariant the case above turns on, asserted directly so it cannot be
+# undone by editing one string. A replacement character that is an X must mean
+# "the source was masked here" and nothing else; the moment X is also a letter
+# the fabricator can emit, mask shapes start competing for each other's space.
+check(
+    "the fabricator never emits an X of its own",
+    "X" not in m.ALPHA and "x" not in m.ALPHA,
+    f"ALPHA={m.ALPHA!r}",
+)
+
+# ...and that the reservation actually holds: a mask shape must keep its space
+# even after a flood of same-length tokens masked somewhere else.
+fresh = load()
+flood = [f"{a}{b}X" for a in string.ascii_uppercase for b in string.ascii_uppercase][:60]
+masked = [f"{c}XX" for c in string.ascii_uppercase[:10]]
+values, stopped = scrub_all(fresh, flood + masked)
+tail = values[len(flood):]
+check(
+    "a ?XX source keeps its own replacement space after 60 ??X sources",
+    stopped is None and len(set(tail)) == len(masked) and all(v.endswith("XX") for v in tail),
+    stopped or f"{tail}",
+)
+
+# Exhaustion must be loud. A three-character token has 20 letters x 20 tails of
 # room, so 2,000 of them genuinely cannot be told apart — and the only safe
 # answer is to stop. Previously the search fell out of its loop and reused the
 # last candidate, so running out looked exactly like succeeding.
 many = ["".join(t) for t in itertools.product(string.ascii_uppercase, repeat=3)][:2000]
+fresh = load()
 try:
     for word in many:
-        m._scrub_plain(word)
+        fresh._scrub_plain(word)
     check("exhausting the replacement space refuses", False, "it returned instead")
 except SystemExit as stop:
     check("exhausting the replacement space refuses", "no distinct replacement" in str(stop), str(stop))
