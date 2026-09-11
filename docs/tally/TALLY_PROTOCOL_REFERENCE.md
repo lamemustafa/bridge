@@ -1120,6 +1120,45 @@ same message: `CURRENCYFORMALNAME`, `FORMALNAME`, `MAILINGNAME`, `EXPANDEDSYMBOL
 `CURRENCYMAILINGNAME`, and a combination with `DECIMALPLACES`/`DECIMALSYMBOL`/`ISSUFFIX`/
 `HASSPACE`.
 
+### 9.11d `SVCURRENTCOMPANY` cannot be trusted as a write guard — **TRAP**
+
+**VERIFIED 2026-09-10 (licensed TallyPrime 7.1 Gold, hand import through the UI).** A
+`Vouchers` import carried an `<SVCURRENTCOMPANY>` whose value had two letters of the company
+name transposed. It did not match the loaded company. The voucher was **created in the loaded
+company** — `CREATED=1`, `ERRORS=0`, `EXCEPTIONS=0`, no `LINEERROR` — and confirmed present in
+the day book. 147 further vouchers imported the same way.
+
+**This does not generalise to every mismatched name, and the difference matters.** A separate
+measurement (2026-08-19, TallyPrime 7.1, port 9001) sent a voucher import naming a company that
+**existed but was not loaded**, and it **failed closed** with
+`LINEERROR: Could not set 'SVCurrentCompany' to '<name>'`. Two distinct cases:
+
+| the name refers to | observed |
+|---|---|
+| a company that exists but is not loaded | fails closed, names the problem |
+| a company that matches nothing | imports into the loaded company |
+
+A plausible reading is that Tally refuses when it can see a company it is being asked to switch
+to and cannot, and ignores a name resolving to nothing. **That is a hypothesis.** The 2026-09-10
+box's company list was never enumerated, so "matches nothing" is inferred from the transposition,
+not established. Settling it needs one session: enumerate the companies, then import twice —
+once naming an existing-but-unloaded company, once naming a string known to match nothing.
+
+**What is established, and it is enough to design against:**
+
+1. **`SVCURRENTCOMPANY` is not a guard.** There is a verified case where a name that did not
+   match the loaded company still posted into it. It cannot prove a write landed where it was
+   aimed, and the failure is invisible — the import succeeds and looks correct.
+2. **The dangerous case is the likely one.** A typo, a renamed company or a year-suffixed name
+   is the ordinary operator error, and that is the shape that passed. The shape that fails
+   closed is the rarer, more deliberate one.
+3. **Establish identity before the write and confirm after it.** Read the company and compare
+   the GUID (§9.11a), then read the posted voucher back. This is what the read path already
+   does via GUID binding; the write path needs the same discipline.
+
+Bridge's own import header carries this element, so none of this is specific to hand-built
+files.
+
 ### 9.10a Second pass 2026-07-30 — path and financial year solved, currency formal name still open
 
 **Two of the three unknowns are now VERIFIED**, and the failure mode moved from

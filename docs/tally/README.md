@@ -26,6 +26,38 @@ capability from assumption, and a completed request from a verified snapshot.
   contains the original source research, product model, threat analysis, and
   staged implementation plan (superseded in part — see its header note).
 
+## Operator tools
+
+- [`scripts/bank_statement_import.py`](../../scripts/bank_statement_import.py) turns a
+  password-protected bank-statement PDF into TallyPrime import XML (Payment / Receipt /
+  Contra), for hand-import through Gateway of Tally > Import > Vouchers. Offline; it never
+  contacts Tally. SBI and HDFC statement layouts are supported.
+
+  What it proves before it writes anything: every row reproduces its printed running
+  balance; the chain lands on the closing balance the statement prints **and** reproduces
+  its printed debit and credit totals (the closing balance alone is the net, so a dropped
+  tail whose two sides cancel would still pass); and the account's own digits appear in the
+  statement header, so the wrong statement cannot be posted to the ledger you named. It then
+  re-parses its own output.
+
+  What it *cannot* prove is which company Tally has open — see §9.11d — so
+  `--confirm-open-company` makes that an explicit operator step rather than a silent one.
+  Contract tests run in CI: `python3 scripts/bank_statement_import.test.py`.
+
+  It was written because Bridge's own writer could not express a bank statement at all: it
+  qualified **Journal only** (`LIVE_QUALIFIED_VOUCHER_TYPES` in `src-tauri/src/agent_import.rs`),
+  while money out is a Payment, money in a Receipt, and an own-account or ATM movement a
+  Contra. **That is still the case on master**; qualifying the three types is in flight and
+  not landed, so nothing here should be read as a plan of record.
+
+  Even once it lands, this tool covers a part Bridge does not: it reads the **statement
+  PDF**, whereas `build_import_xml` takes an already-structured payload. It also covers books
+  the writer refuses, such as one whose bank ledger sits under a money group Bridge has not
+  yet observed a captured ledger beneath.
+
+  No statement, password, ledger name or account number lives in this repository — all are
+  supplied at run time.
+
 The architectural decisions are recorded in:
 
 - [Transport negotiation](../adr/0001-tally-transport-negotiation.md)
