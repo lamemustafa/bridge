@@ -945,8 +945,23 @@ skimming implementer folds underscores, slashes and en dashes together — bindi
 wrong ledger. One separator was measured, in one direction. The table below marks every row.
 
 > **RULE: wherever the question is "will Tally treat these as the same master?", ask an
-> asymmetric predicate `accepts(supplied, stored)` — never string equality, never a looser fold,
-> and never a canonical form.**
+> asymmetric predicate `accepts(candidate, tally_name)` — never string equality, never a looser
+> fold, and never a canonical form.**
+
+**Name the sides by where the name lives, not by which way it is travelling.** `tally_name` is the
+spelling **Tally holds**; `candidate` is the other one, whatever its provenance. The substitution
+below belongs on the `tally_name` side because *that is the side the measurement placed it on* —
+not because that side happened to be "stored".
+
+The distinction is load-bearing for every offline consumer. A binder holds a document name and a
+catalogue name and asks which master the operator meant; it then writes the **catalogue's**
+spelling, so Tally is never asked to match the document name at all. Nothing is supplied, and
+nothing travels. Parameters named for the direction of travel give such a caller the right answer
+for a reason that misrepresents why — and the next reader, with no travel direction to reason
+from, swaps the arguments to whatever reads naturally and lands on the UNVERIFIED direction with
+nothing to catch it. A rule that is accidentally correct for a class of consumer will eventually
+be wrong for one of them. Named this way, the import case and the binder case are the same rule
+rather than a rule and an analogy.
 
 **Why not a canonical form.** `canon(x) == canon(y)` is symmetric by construction: it cannot hold
 in one direction and not the other. The one separator result here *is* directional — a space was
@@ -955,28 +970,46 @@ expressing it also asserts the direction that was not measured, and binds `A-B` 
 `A B` on no evidence. The table below marks that row UNVERIFIED and a canonical form quietly
 overrides it.
 
-The predicate that says exactly what was measured, and nothing more:
+**One measured transformation per alternative — never two at once.** The captures tested case,
+one trailing space, and the hyphen separator in *separate* requests. A predicate that applies all
+three and then compares once asserts their **combinations**, which were never sent: a lowercased,
+space-substituted name with trailing whitespace is three untested steps deep. So each alternative
+below transforms an otherwise untouched pair:
 
 ```text
-accepts(supplied, stored):
-    s = ascii_casefold(supplied).rstrip(" ")      # one trailing space, VERIFIED
-    m = ascii_casefold(stored)
-    return s == m                                 # exact, VERIFIED
-        or s == m.replace("-", " ")               # space supplied for stored hyphen, VERIFIED
+accepts(candidate, tally_name):
+    # `tally_name` is the spelling Tally holds. Each line is one measured
+    # result. Do not compose them; do not add a line without a capture.
+    return candidate == tally_name                                 # exact — VERIFIED
+        or ascii_lower(candidate) == ascii_lower(tally_name)       # ASCII case — VERIFIED, see below
+        or drop_one_trailing_space(candidate) == tally_name        # ONE trailing space — VERIFIED
+        or candidate == tally_name.replace("-", " ")               # space for Tally's hyphen — VERIFIED
 ```
 
-The asymmetry is the whole point of the second clause: the substitution is applied to the **stored**
-name, so `stored="A-B"` accepts `supplied="A B"`, while `stored="A B"` does **not** accept
-`supplied="A-B"`. Exact matching survives because the first clause runs unchanged.
+Three things this spelling is careful about, each of which was wrong in an earlier draft:
 
-If the reverse direction is later measured, one clause is added and the table row changes. Until
+- **`drop_one_trailing_space`, not `rstrip(" ")`.** One trailing space was measured. `rstrip`
+  removes every trailing space, so `accepts("A  ", "A")` becomes true on no evidence, and could
+  bind a voucher to a master Tally would not have selected. Remove at most one.
+- **The separator substitution is applied to `tally_name` only.** `tally_name="A-B"` accepts
+  `candidate="A B"`; `tally_name="A B"` does **not** accept `candidate="A-B"`. That asymmetry is
+  the entire point of the clause and is what a canonical form cannot express.
+- **The case clause folds both sides, and that is broader than the capture.** The measurement sent
+  a lowercase name against a master carrying uppercase; the reverse was not sent. It is written
+  symmetrically because "Tally folds ASCII case" is the claim the capture supports, but a consumer
+  relying on the *uppercase-candidate* direction is relying on an inference. Qualify it before
+  building on it.
+
+If a further direction is later measured, one clause is added and the table row changes. Until
 then a directional predicate fails the way this section wants — it may refuse a pair Tally would
 have accepted, which a human sees, rather than binding one Tally would reject.
 
-**What that canonical form may safely contain, and what it may not.** Only three transformations
-were measured: ASCII case folding, **one** trailing space, and a hyphen matching a single space.
-A fold is only as safe as its least-verified step, and every step beyond those three can merge
-names Tally keeps apart — which posts to the wrong account, silently.
+**What a resolving fold may contain, and what it may not.** Only three transformations were
+measured: ASCII case folding, **one** trailing space, and a hyphen matching a single space. A fold
+is only as safe as its least-verified step, and every step beyond those three can merge names Tally
+keeps apart — which posts to the wrong account, silently. Express them as the alternatives above
+rather than as a canonical form: a fold that normalises first and compares once is symmetric, and
+symmetry is exactly the property the separator result does not have.
 
 | Transformation | State |
 | --- | --- |
@@ -984,16 +1017,43 @@ names Tally keeps apart — which posts to the wrong account, silently.
 | supplying a **space** where the master has a **hyphen** | **VERIFIED** — `BRIDGE PROBE LEDGER A` matched `BRIDGE-PROBE-LEDGER-A` |
 | supplying a **hyphen** where the master has a **space** | **UNVERIFIED** — the reverse direction was never sent |
 | one trailing space ignored | **VERIFIED** |
+| **two or more** trailing spaces ignored | **UNVERIFIED** — only one was sent |
 | *leading* whitespace ignored | **UNVERIFIED** |
 | runs of internal whitespace collapsed to one | **UNVERIFIED** — only a single space was tested |
 | non-ASCII case folding (Devanagari, Tamil, Bengali, Turkish dotted I) | **UNVERIFIED** |
+| **Unicode canonical equivalence (NFC/NFD)** | **MEASURED — folding it is wrong.** See below. |
 | any other separator (underscore, en dash, `/`) treated as a space | **UNVERIFIED** |
 
-A fold implementing only the verified three is safe in the direction that matters: it may *fail to
-match* a pair Tally would accept, which surfaces as a refusal a human sees. Adding the unverified
-ones risks the opposite — a silent match onto a different ledger. Qualify each independently
-before folding it in, and note that the demo company this project reads carries ledgers in three
-non-Latin scripts, so the case-folding row is reachable rather than theoretical.
+**The NFC/NFD row is the only one with evidence pointing the wrong way**, rather than no evidence
+at all, and it is the one most likely to be folded in by accident.
+
+`tally-matches-master-names-by-exact-codepoint` recorded it on 2026-08-19, TallyPrime 7.1, port
+9001: a voucher naming a UI-created NFC ledger in its **canonically equivalent NFD** spelling was
+rejected — `EXCEPTIONS=1`, `LINEERROR` saying the ledger does not exist — while the NFC spelling
+created it. A create with a programmatically-constructed NFD name returned `CREATED=1` and read
+back with identical NFD codepoints, so storage is verbatim too. **Tally matches on exact
+codepoints.** A fold that normalises before comparing therefore resolves a name onto a master Tally
+itself keeps apart — the precise failure this section exists to prevent.
+
+**Why it needs saying twice.** This bug shipped, and the fold was then audited against this section
+**twice** without anyone seeing it — `.nfc()` sat in the same expression both times. Canonical
+equivalence reads as *decoding* rather than folding: the same characters, spelled two ways, nothing
+an operator could type differently on purpose. So it never entered the audit as a row to check, and
+every other row in this table is a **judgement** step — case, whitespace, separators. A reader
+auditing a canonical form against a table of judgements finds nothing saying that normalising first
+is a decision at all, concludes it is fine, and ships it.
+
+> **A step that reads like decoding deserves the same evidence as a step that reads like folding.**
+> Enumerate **every** operation in the comparison — normalisation, trimming, encoding conversion,
+> case — not only the ones that look like judgements. The ones that look automatic are the ones
+> that get audited by eye and missed.
+
+Implementing only the verified rows fails in the direction that matters: it may *fail to match* a
+pair Tally would accept, which surfaces as a refusal a human sees. Adding an UNVERIFIED row risks
+the opposite — a silent match onto a different ledger — and adding the MEASURED row is known to
+produce one. Qualify each independently, and note that the demo company this project reads carries
+ledgers in three non-Latin scripts, so the non-ASCII case-folding row and the NFC/NFD row are both
+reachable rather than theoretical.
 
 > **RULE: prefer an exact spelling, and refuse an ambiguous fold. Never pick one.** The fold tells
 > you which masters are *candidates*; it does not tell you which one Tally would choose, and one
