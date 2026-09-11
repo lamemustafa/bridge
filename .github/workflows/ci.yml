@@ -120,6 +120,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+          # check-protocol-section-numbers.mjs compares the reference against its
+          # base to enforce never-renumber; a shallow clone has no base to read,
+          # and the check says so and skips rather than passing quietly.
+          fetch-depth: 0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version-file: .node-version
@@ -127,9 +131,11 @@ jobs:
         with:
           toolchain: 1.96.0
       - run: node scripts/check-ci-workflow-consistency.mjs
+      - run: node scripts/check-protocol-section-numbers.mjs
       - run: node --test scripts/prune-package-compiler-cache.test.mjs
       - run: python3 scripts/collect-macos-test-crashes.test.py
       - run: python3 scripts/retain-macos-test-binaries.test.py
+      - run: python3 scripts/bank_statement_import.test.py
 
   tally-portable:
     name: Tally portable core

@@ -1,0 +1,942 @@
+"""Offline contract tests for the bank-statement importer.
+
+No PDF, no network, no client data. Every fixture is synthetic: the counterparty
+names, references, account digits and amounts are invented, and the only thing
+carried over from a real statement is the *column geometry*, which is a property
+of the bank's template rather than of any customer.
+
+Three levels of fixture, deliberately:
+
+  * **Captures** — `fixtures/*-bbox-capture.xml` are real `pdftotext
+    -bbox-layout` output from real statements, sanitised. Every coordinate,
+    word break, line break and entity encoding is the producer's; every
+    customer value is fabricated. These are the only fixtures that can catch a
+    change in the bank's template or in `pdftotext`'s serialisation, because
+    they are the only ones this repository did not write. See the banner
+    comment in each file, and `../sanitise-bbox-capture.py` for how they
+    were made.
+  * **Constructed pages** — `PAGE`-shaped fixtures built word by word at the
+    same geometry. They exist for cases a capture happens not to contain and
+    cannot be made to contain on demand: a row printed below the page footer, a
+    stray fragment in a row-scoped column. Losing these would lose the negative
+    cases; keeping them alone would prove only that the parser agrees with
+    itself.
+  * **Row dicts** — for the pure functions downstream of parsing.
+
+Refusals are asserted by *category*, never by "some SystemExit was raised": a
+test that only proves an error occurred passes just as happily when an unrelated
+error starts firing first, which is exactly how a regression hides.
+"""
+
+import contextlib
+import datetime
+import decimal
+import hashlib
+import io
+import importlib.util
+import os
+import pathlib
+import stat
+import sys
+import tempfile
+
+SCRIPT = pathlib.Path(__file__).resolve().parent / "bank_statement_import.py"
+#: never a credential — only ever compared for identity, or fed to an
+#: argument the parser is expected to reject
+SENTINEL = "<placeholder-not-a-credential>"
+D = decimal.Decimal
+
+
+def load():
+    # No .pyc, ever. A mutation that keeps the file's size — swapping one
+    # column bound for another of the same width, say — can leave the mtime
+    # granular enough that Python reuses a cached module, and the suite then
+    # tests the code you did not write. Several mutations read as "not caught"
+    # for exactly that reason before this line existed.
+    sys.dont_write_bytecode = True
+    spec = importlib.util.spec_from_file_location("bank_statement_import", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# --------------------------------------------------------------------------- #
+# helpers                                                                      #
+# --------------------------------------------------------------------------- #
+
+def refuses(m, category, call, *args, **kwargs):
+    """Assert `call` refuses with exactly `category`."""
+    try:
+        call(*args, **kwargs)
+    except m.Refusal as refusal:
+        assert refusal.category == category, \
+            f"expected refusal {category!r}, got {refusal.category!r} ({refusal})"
+        return refusal
+    raise AssertionError(f"expected refusal {category!r}, call succeeded")
+
+
+def word(x0, y, x1, text, height=9.0):
+    return (f'<word xMin="{x0}" yMin="{y}" xMax="{x1}" yMax="{y + height}">'
+            f'{text}</word>')
+
+
+def page(*lines):
+    """One `pdftotext -bbox-layout` page. `lines` are (y, [(x0, x1, text), ...])."""
+    body = "".join(word(x0, y, x1, text)
+                   for y, cells in lines for x0, x1, text in cells)
+    return f'width="595" height="842">{body}</page>'
+
+
+# An HDFC page in the real column geometry: date 0-70, narration 70-280 (wrap
+# edge 240), ref 280-358, value date 358-400, withdrawal 400-480, deposit
+# 480-560, balance 560+.
+HDFC_PAGE = page(
+    (52, [(340, 380, "Account"), (382, 396, "No"), (397, 400, ":"),
+          (403, 470, "00000000001234")]),
+    # a second header number, to prove the binding does not accept just any of
+    # them: this is where a customer id or a phone number sits
+    (56, [(340, 380, "Cust"), (382, 396, "ID"), (397, 400, ":"),
+          (403, 470, "00000000004230")]),
+    (60, [(70, 200, "Statement"), (205, 260, "of"), (265, 340, "account")]),
+    (100, [(5, 30, "Date"), (72, 120, "Narration"), (282, 340, "Chq./Ref.No."),
+           (360, 380, "Value"), (382, 396, "Dt"), (402, 452, "Withdrawal"),
+           (454, 474, "Amt."), (482, 522, "Deposit"), (524, 544, "Amt."),
+           (562, 600, "Closing"), (602, 640, "Balance")]),
+    # row 1: the narration is hard-wrapped mid-reference at the cell edge
+    (120, [(2, 60, "01/08/26"), (72, 238, "UPI-NORTH-WIND-north@zzz-ZZZZ0001-1234"),
+           (282, 350, "0000123456789012"), (360, 398, "01/08/26"),
+           (482, 540, "10,000.00"), (562, 620, "11,000.00")]),
+    # the continuation line carries a narration fragment AND a stray fragment
+    # in the reference column, which is why those columns are row-scoped
+    (132, [(72, 200, "56789012-PAYMENT"), (282, 330, "CONTINUED")]),
+    # row 2: single-line narration, several words in the same cell
+    (150, [(2, 60, "02/08/26"), (72, 110, "NEFT"), (112, 190, "DR-ZZZZ0000001-ACME"),
+           (192, 230, "EXPORTS-MUM-ZZZZZ00000000000-BB"),
+           (282, 350, "ZZZZZ00000000000"), (360, 398, "02/08/26"),
+           (402, 460, "2,500.50"), (562, 620, "8,499.50")]),
+    (170, [(28, 60, "HDFC"), (62, 95, "BANK"), (97, 140, "LIMITED")]),
+    # below the footer: must not be read
+    (190, [(2, 60, "03/08/26"), (72, 200, "UPI-GHOST-g@z-ZZZZ0001-999999999999-X"),
+           (402, 460, "1.00"), (562, 620, "8,498.50")]),
+)
+
+# An SBI page: date 0-85, value date 85-140, narration 140-220 (wrap edge 220),
+# ref 220-299 (wrap edge 299), branch 299-356, debit 356-441, credit 441-506.
+# SBI stacks the date over the year and repeats a three-line column header on
+# every page, *below* the anchor.
+SBI_PAGE = page(
+    (60, [(2, 40, "Account"), (45, 90, "Number:"), (95, 200, "00000000007777")]),
+    (90, [(2, 20, "Txn"), (22, 45, "Date")]),
+    (100, [(88, 110, "Value"), (112, 135, "Date"), (142, 190, "Description"),
+           (222, 235, "Ref"), (237, 250, "No."), (300, 330, "Branch"),
+           (332, 350, "Code"), (400, 430, "Debit"), (460, 490, "Credit"),
+           (510, 545, "Balance")]),
+    (115, [(2, 8, "1"), (10, 30, "Aug"), (88, 130, "1 Aug 2026"),
+           (142, 218, "TO TRANSFER- INB NEFT UTR NO: ZZZZ1111"),
+           (222, 296, "NEFT INB: ZZZZZZZZZ9 TRANSFER TO 000"),
+           (360, 430, "5000.00"), (510, 570, "95000.00")]),
+    (127, [(2, 25, "2026"), (142, 200, "11111- NORTH WIND TRADERS"),
+           (222, 280, "0000000 / NORTH WIND TRADERS")]),
+)
+
+# Page 2 repeats the whole three-line column header below its own anchor, while
+# the last row of page 1 is still the row in progress. Without header
+# suppression those words are appended to that row's narration.
+SBI_PAGE_2 = page(
+    (90, [(2, 20, "Txn"), (22, 45, "Date")]),
+    (100, [(88, 110, "Value"), (112, 135, "Date"), (142, 190, "Description"),
+           (222, 235, "Ref"), (237, 250, "No."), (300, 330, "Branch"),
+           (332, 350, "Code"), (400, 430, "Debit"), (460, 490, "Credit"),
+           (510, 545, "Balance")]),
+    (115, [(2, 8, "2"), (10, 30, "Aug"), (142, 200, "BY TRANSFER- ZEPHYR LTD"),
+           (222, 280, "TRANSFER FROM 0000000 / ZEPHYR LTD"),
+           (460, 500, "1000.00"), (510, 570, "96000.00")]),
+    (127, [(2, 25, "2026")]),
+)
+
+
+# --------------------------------------------------------------------------- #
+# end-to-end parsing, from bbox-layout output                                  #
+# --------------------------------------------------------------------------- #
+
+def digest(values):
+    """A tripwire over every row, not a spot check on the ones I thought to name.
+
+    Both of the defects a capture is here to catch were *in* the capture and
+    passed anyway, because the assertions named specific rows or a property too
+    weak to separate right from wrong. The wrap heuristic decides per printed
+    line whether to insert a space; the party extractor decides where a name
+    ends. Neither is checkable one row at a time.
+
+    In particular "no row is UNRESOLVED" is not enough: a name that has run on
+    into the next field is resolved, just wrong. Only pinning the values
+    catches that.
+
+    When this fails, print the list and read the diff — the digest says
+    something changed, never what.
+    """
+    return hashlib.sha256("\n".join(values).encode("utf-8")).hexdigest()[:16]
+
+
+def narration_digest(rows):
+    return digest(row["narr"] for row in rows)
+
+
+def party_digest(rows, bank):
+    return digest(bank.party(row) for row in rows)
+
+
+def reference_digest(rows, bank):
+    return digest(f"{mode}:{value}" for mode, value in
+                  (bank.reference(row) for row in rows))
+
+
+def capture(name):
+    return (pathlib.Path(__file__).resolve().parent / "fixtures" / name
+            ).read_text(encoding="utf-8").split("<page ")[1:]
+
+
+def test_parse_real_hdfc_capture(m):
+    """Real geometry, real template, fabricated customer.
+
+    This is the fixture that fails when HDFC changes its statement or poppler
+    changes its serialisation. Nothing here was written by this repository
+    except the substituted text.
+    """
+    bank = m.HDFC()
+    pages = capture("hdfc-bbox-capture.xml")
+    rows = m.parse_pages(pages, bank)
+    assert len(rows) == 14, len(rows)
+
+    # every row resolves to a counterparty. On the unsanitised capture this is
+    # 32 of 32 with no UNRESOLVED, which is the property that matters: a
+    # narration shape the parsers do not recognise silently becomes a suspense
+    # voucher, and nothing downstream can tell that apart from a genuinely
+    # unidentifiable payer.
+    unresolved = [r["narr"] for r in rows if bank.party(r) == "UNRESOLVED"]
+    assert not unresolved, unresolved
+    # ... and the resolved names are pinned, because a name that has run on into
+    # the following field is resolved too. That defect was in this very capture
+    # and survived the assertion above; it took running the tool against the
+    # unsanitised statement to see it.
+    assert party_digest(rows, bank) == "2f42f460caf687fd", [bank.party(r) for r in rows]
+    assert reference_digest(rows, bank) == "b94b21c1acb8665c", \
+        [bank.reference(r) for r in rows]
+
+    # a narration wrapped across four printed lines, rejoined in full. Asserted
+    # whole rather than by prefix: the wrap heuristic decides, per line, whether
+    # to insert a space, and only the complete string pins every one of those
+    # decisions.
+    assert rows[4]["narr"] == (
+        "UPI-HHHHQ LLLLLQ PPPPPPW-RRRRRW.LLLLLQ@S TW-DDDD5555555-"
+        "666666666665-FFFFFFW FROMHHHHW")
+    assert bank.party(rows[4]) == "HHHHQ LLLLLQ PPPPPPW"
+    # ... and its 12-digit reference survived the wrap intact
+    assert bank.reference(rows[4]) == ("UPI", "666666666665")
+    # and every other row's wrap decisions, which no readable assertion reaches
+    assert narration_digest(rows) == "69baa6880aa21374", [r["narr"] for r in rows]
+
+    # row-scoped columns land where the geometry says, not one column over
+    assert rows[0]["ref"] == "3333333333333333"
+    assert rows[0]["vdt"] == "04/08/26"
+
+    # row-scoped columns: every row has exactly one amount side and a balance
+    for index, row in enumerate(rows, 1):
+        assert bool(row["dr"]) != bool(row["cr"]), (index, row["dr"], row["cr"])
+        assert row["bal"], index
+        assert bank.parse_date(row["date"]).year == 2026, index
+
+    # page 2 ends at STATEMENT SUMMARY and page 3 is never read. Page 3 carries a
+    # summary line below its own top anchor with amounts and no date, so without
+    # the end anchor it is appended to the last row as a phantom narration.
+    assert len(pages) == 3
+    assert all("SUMMARY" not in r["narr"] for r in rows)
+    assert not rows[-1]["narr"].endswith(" "), rows[-1]["narr"]
+    assert m.parse_pages(pages[:2], bank) == rows, "page 3 must contribute nothing"
+
+    # the account number is bound from the header block, not from the table
+    m.require_account_match(pages, bank, "HDFC CA xx5552")
+    # every one of these is a real number printed in this capture's header —
+    # phone, customer id, IFSC digits, MICR, postcode — and every one passed
+    # before the binding was narrowed to the account-number line
+    for wrong in ("xx4444", "xx7777", "xx8888", "xx9999", "xx9876"):
+        refuses(m, "account_not_in_statement", m.require_account_match,
+                pages, bank, f"HDFC CA {wrong}")
+
+
+def test_parse_real_sbi_capture(m):
+    """SBI stacks the date over the year, repeats a three-line column header on
+    every page, and wraps the narration mid-token across five lines. All three
+    are here as the producer emitted them."""
+    bank = m.SBI()
+    pages = capture("sbi-bbox-capture.xml")
+    rows = m.parse_pages(pages, bank)
+    assert len(rows) == 3, len(rows)
+    assert not [r for r in rows if bank.party(r) == "UNRESOLVED"]
+    assert party_digest(rows, bank) == "4fca5c5f6aae3a32", [bank.party(r) for r in rows]
+    assert reference_digest(rows, bank) == "d182b3e4a6c42fcd", \
+        [bank.reference(r) for r in rows]
+
+    for row in rows:
+        # "31 Jul" over "2026" in one cell, concatenated without a separator
+        assert bank.parse_date(row["date"]) == datetime.date(2026, 7, 1)
+        # the repeated header did not land in the row in progress
+        for furniture in ("Description", "No./Cheque", "Balance"):
+            assert furniture not in row["narr_spaced"], furniture
+
+    # the reference is space-tolerant because the producer breaks it mid-token
+    assert bank.reference(rows[0])[0] == "UPI"
+    assert bank.reference(rows[0])[1].startswith("444266666662")
+    assert narration_digest(rows) == "e1e4b49bb2624060", [r["narr"] for r in rows]
+    assert rows[0]["ref"] == "TRANSFER TO 5555555555203 /"
+    m.require_account_match(pages, bank, "SBI CA xx1111")
+    refuses(m, "account_not_in_statement", m.require_account_match,
+            pages, bank, "SBI CA xx9876")
+
+
+def test_parse_hdfc_page(m):
+    """Anchors, column bounds, footer, row-scoped columns and the wrap heuristic,
+    all through the real code path."""
+    rows = m.parse_pages([HDFC_PAGE], m.HDFC())
+    assert len(rows) == 2, [r["narr"] for r in rows]  # the post-footer row is not a row
+
+    first = rows[0]
+    # the 12-digit reference was split across two printed lines at the cell edge
+    # and must rejoin with no space, or it is a different reference
+    assert first["narr"] == "UPI-NORTH-WIND-north@zzz-ZZZZ0001-123456789012-PAYMENT"
+    assert first["date"] == "01/08/26"
+    assert first["dr"] == "" and first["cr"] == "10000.00" and first["bal"] == "11000.00"
+    assert m.HDFC().party(first) == "NORTH-WIND"
+    assert m.HDFC().reference(first) == ("UPI", "123456789012")
+
+    second = rows[1]
+    # words inside one cell on one line are space-joined, not welded
+    assert second["narr"] == "NEFT DR-ZZZZ0000001-ACME EXPORTS-MUM-ZZZZZ00000000000-BB"
+    assert second["dr"] == "2500.50" and second["cr"] == ""
+    assert m.HDFC().party(second) == "ACME EXPORTS"
+
+    # row-scoped columns are read only from the line carrying the date, so a
+    # stray fragment on a continuation line cannot corrupt the reference
+    assert first["ref"] == "0000123456789012"
+
+
+def test_parse_sbi_page(m):
+    """SBI's repeated three-line header sits below the anchor and must not be
+    appended to the row in progress; the date is stacked over the year."""
+    rows = m.parse_pages([SBI_PAGE, SBI_PAGE_2], m.SBI())
+    assert len(rows) == 2
+    row = rows[0]
+    assert "Description" not in row["narr"] and "Balance" not in row["bal"]
+    assert m.SBI().parse_date(row["date"]) == datetime.date(2026, 8, 1)
+    assert row["dr"] == "5000.00" and row["bal"] == "95000.00"
+    # de-wrapped: the UTR is intact because the first fragment reached the edge
+    assert "ZZZZ111111111" in row["narr"]
+    # space-joined: the counterparty name is not welded to the reference
+    assert "NORTH WIND TRADERS" in row["narr_spaced"]
+    assert m.SBI().party(row) == "NORTH WIND TRADERS"
+    # page 2's repeated header must not land in page 1's last row, nor become a row
+    for furniture in ("Description", "Branch", "Credit", "Balance"):
+        assert furniture not in row["narr_spaced"], furniture
+    assert m.SBI().parse_date(rows[1]["date"]) == datetime.date(2026, 8, 2)
+    assert rows[1]["cr"] == "1000.00"
+
+
+def test_account_binding(m):
+    """The running-balance proof is equally happy to certify the wrong account's
+    statement, so the binding is the only thing tying the document to the ledger.
+
+    It reads the line the statement labels as its account number, and nothing
+    else. Reading the whole document lets a transaction reference stand in for
+    the account; reading the whole header block is barely better, because a
+    header prints a phone number, a customer id, an IFSC, a MICR code and a
+    postcode — on the real HDFC capture, four different wrong tails passed.
+    """
+    hdfc = m.HDFC()
+    m.require_account_match([HDFC_PAGE], hdfc, "HDFC CA xx1234")
+    refuses(m, "account_not_in_statement", m.require_account_match,
+            [HDFC_PAGE], hdfc, "HDFC CA xx9876")
+    refuses(m, "unbindable_account", m.require_account_match, [HDFC_PAGE], hdfc, "HDFC CA")
+
+    # a transaction reference inside the table must not satisfy the binding —
+    # 9012 ends the UPI reference on row 1
+    refuses(m, "account_not_in_statement", m.require_account_match,
+            [HDFC_PAGE], hdfc, "HDFC CA xx9012")
+    # nor may any other number in the header: 4230 is the customer id
+    refuses(m, "account_not_in_statement", m.require_account_match,
+            [HDFC_PAGE], hdfc, "HDFC CA xx4230")
+    # and a document with no account-number line fails closed
+    refuses(m, "no_account_number_line", m.require_account_match,
+            [page((10, [(2, 60, "nothing")]))], hdfc, "HDFC CA xx1234")
+
+
+def test_account_identity_comes_from_the_statement(m):
+    """The REMOTEID is keyed on the account number the statement prints, not on
+    the operator's label.
+
+    A label is free-form: `HDFC CA xx1234`, `HDFC xx1234` and `xx001234` all name
+    one account and reduce to three different strings. Any of them keying the
+    digest gives every transaction a new REMOTEID, and re-importing duplicates
+    the whole statement — the failure the digest exists to prevent, reached
+    through the label.
+    """
+    bank = m.HDFC()
+    pages = capture("hdfc-bbox-capture.xml")
+    # different valid tails, same account, same returned number
+    numbers = {m.require_account_match(pages, bank, tail)
+               for tail in ("HDFC CA xx5552", "xx55552", "5555555555552")}
+    assert numbers == {"55555555555552"}, numbers
+
+    row = {"date": "01/08/26", "narr": "UPI-ALPHA-9@x-ABCD0001-111111111111-P",
+           "ref": "1", "dr": "10.00", "cr": "", "bal": "990.00"}
+    keys = {m.build([row], bank, "Co", "Bank", "SUSP", {}, tail,
+                    account=m.require_account_match(pages, bank, tail))[1][0]["remoteid"]
+            for tail in ("HDFC CA xx5552", "xx55552", "5555555555552")}
+    assert len(keys) == 1, keys
+
+    # a tail short enough to match two numbers on that line is refused rather
+    # than resolved to whichever came first. HDFC prints a product code beside
+    # the account number, so two numbers on that line is the documented residual
+    # of this binding rather than a hypothetical.
+    refuses(m, "unbindable_account", m.require_account_match, pages, bank, "xx55")
+    two_numbers = page(
+        (52, [(340, 380, "Account"), (382, 396, "No"), (397, 400, ":"),
+              (403, 470, "00000000001234"), (474, 520, "99001234")]),
+        (100, [(5, 30, "Date"), (72, 120, "Narration")]),
+    )
+    refuses(m, "ambiguous_account_match", m.require_account_match,
+            [two_numbers], bank, "xx1234")
+    # ... and a tail long enough to pick one of them is accepted
+    assert m.require_account_match([two_numbers], bank, "xx0000001234") == "00000000001234"
+
+
+# --------------------------------------------------------------------------- #
+# numeric parsing                                                              #
+# --------------------------------------------------------------------------- #
+
+def test_hyphenated_counterparties_survive_every_narration_shape(m):
+    """Every HDFC narration field is hyphen-delimited, so a counterparty called
+    ACME-INDUSTRIES occupies two fields. Cutting at the first hyphen either
+    misses its mapping or silently posts to an unrelated ledger called ACME."""
+    hdfc = m.HDFC()
+    for narration, expected in (
+        # UPI: bounded by the VPA
+        ("UPI-ACME-INDUSTRIES-acme@ok-HDFC0001-123456789012-P", "ACME-INDUSTRIES"),
+        # UPI without a VPA: bounded by the 12-digit reference, less the bank code
+        ("UPI-XXXXXX0000-ZZZZ0000001-888888888888-PAYMENT", "UNNAMED"),
+        # IMPS: bounded by the masked account. NOT by the four-letter bank code,
+        # which a name component can also be (ACME is four capitals too).
+        ("IMPS-999999999999-ACME INDUSTRIES-ZZZZ-XXXXXXXX0000-US", "ACME INDUSTRIES"),
+        ("IMPS-999999999999-ACME-INDUSTRIES-ZZZZ-XXXXXXXX0000-US", "ACME-INDUSTRIES"),
+        # NEFT: bounded by the UTR, skipping the leading IFSC — which has the
+        # same shape as the UTR and would otherwise terminate the name at once
+        ("NEFT DR-ZZZZ0000000-ACME INTL-MUM-ZZZZZ00000000000-BB", "ACME INTL"),
+        ("NEFT DR-ZZZZ0000000-ACME-INTL-MUM-ZZZZZ00000000000-BB", "ACME-INTL"),
+        # a long all-capitals name is not a reference: the UTR test requires
+        # digits, or INTERNATIONAL terminates its own name
+        ("NEFT CR-ZZZZ0000000-INTERNATIONAL-MUM-ZZZZZ00000000000-B", "INTERNATIONAL"),
+        # the cell wrap lands inside the UTR itself, so the marker arrives
+        # split. Found against a real statement, where a two-character payee
+        # name absorbed the branch field because the boundary went unrecognised.
+        ("NEFT DR-ZZZZ0ZZZZZZ-GST-MUM-ZZZ ZZ00000000000-BB0", "GST"),
+        # shapes the rules were not written for go to suspense, never to a guess
+        ("UPI-NOSTRUCTURE-HERE", "UNRESOLVED"),
+        ("IMPS-1-WEIRD", "UNRESOLVED"),
+        ("NEFT DR-ONLY-TWO", "UNRESOLVED"),
+    ):
+        assert hdfc.party({"narr": narration}) == expected, narration
+
+
+def test_control_values_take_the_operator_at_their_word(m):
+    """These are copied off a printed page, so they arrive with separators."""
+    assert m.control_value("1,00,000.00", "--opening") == D("100000.00")
+    assert m.control_value("-248044.20", "--expect-closing", signed=True) == D("-248044.20")
+    # a total of withdrawals may not be negative
+    refuses(m, "malformed_control_value", m.control_value, "-1.00", "--expect-debits")
+    refuses(m, "malformed_control_value", m.control_value, "1.005", "--opening")
+    refuses(m, "malformed_control_value", m.control_value, "abc", "--opening")
+
+
+def test_amount_parsing_is_strict(m):
+    assert m._money("") is None and m._money("  ") is None
+    assert m._money("1234.50") == D("1234.50")
+    # a third decimal place must not be silently rounded into the XML
+    refuses(m, "malformed_amount", m._money, "1.005")
+    # nonnumeric text in an amount cell is a parse failure, not a zero: read as
+    # zero it lets the balance chain "prove" a row whose amount was never read
+    refuses(m, "malformed_amount", m._money, "garbage")
+    # a balance may be negative on an overdrawn account
+    assert m._balance("-248044.20") == D("-248044.20")
+    refuses(m, "malformed_balance", m._balance, "248044.20Dr")
+
+
+def test_reconcile(m):
+    bank = m.HDFC()
+    rows = [{"date": "01/08/26", "dr": "", "cr": "100.00", "bal": "1100.00"},
+            {"date": "02/08/26", "dr": "50.00", "cr": "", "bal": "1050.00"}]
+    assert m.reconcile(rows, bank, "1000.00", "1050.00") == D("1050.00")
+
+    broken = [dict(r) for r in rows]
+    broken[1]["bal"] = "1049.00"
+    refuses(m, "balance_chain_broken", m.reconcile, broken, bank, "1000.00", "1049.00")
+
+    # a self-consistent prefix reconciles perfectly and is still not the
+    # statement: only the printed closing balance catches a truncated parse
+    refuses(m, "extent_unproven", m.reconcile, rows[:1], bank, "1000.00", "1050.00")
+    refuses(m, "empty_statement", m.reconcile, [], bank, "1000.00", "1000.00")
+
+    # both columns populated is a column-geometry failure that can still satisfy
+    # the balance chain, because reconcile nets the two sides
+    two_sided = [{"date": "01/08/26", "dr": "50.00", "cr": "150.00", "bal": "1100.00"}]
+    refuses(m, "two_sided_row", m.reconcile, two_sided, bank, "1000.00", "1100.00")
+
+    overdrawn = [{"date": "01/08/26", "dr": "1500.00", "cr": "", "bal": "-500.00"}]
+    assert m.reconcile(overdrawn, bank, "1000.00", "-500.00") == D("-500.00")
+
+
+def test_closing_balance_alone_cannot_prove_extent(m):
+    """The closing balance is the NET, so a dropped tail whose two sides cancel
+    lands on the printed figure and the parse looks complete. Only the printed
+    debit and credit totals see it — which is why they are required."""
+    bank = m.HDFC()
+    full = [{"date": "01/08/26", "dr": "", "cr": "100.00", "bal": "1100.00"},
+            {"date": "02/08/26", "dr": "50.00", "cr": "", "bal": "1050.00"},
+            {"date": "03/08/26", "dr": "", "cr": "50.00", "bal": "1100.00"}]
+    truncated = full[:1]
+    # both close at 1100.00, so reconcile cannot tell them apart
+    assert m.reconcile(full, bank, "1000.00", "1100.00") == D("1100.00")
+    assert m.reconcile(truncated, bank, "1000.00", "1100.00") == D("1100.00")
+    # the debit total does: 50.00 against the truncated parse's 0
+    assert sum(m._money(r["dr"], "dr", i) or D(0) for i, r in enumerate(full, 1)) == D("50.00")
+    assert sum(m._money(r["dr"], "dr", i) or D(0)
+               for i, r in enumerate(truncated, 1)) == D(0)
+
+
+def test_impossible_dates_are_typed(m):
+    bank = m.HDFC()
+    rows = [{"date": "31/02/26", "narr": "UPI-A-9@x-ABCD0001-111111111111-P",
+             "ref": "1", "dr": "10.00", "cr": "", "bal": "990.00"}]
+    refuses(m, "unparseable_date", m.build, rows, bank, "Co", "Bank", "SUSP", {}, "AC1234")
+
+
+# --------------------------------------------------------------------------- #
+# XML shape                                                                    #
+# --------------------------------------------------------------------------- #
+
+def test_dewrap(m):
+    """A fragment reaching the cell edge was broken mid-token and joins with
+    nothing; a shorter one ended at a real space."""
+    edge = 100.0
+    assert m._dewrap([("UPI/DR/1234", 99.5), ("56789012/X", 60.0)], edge) == "UPI/DR/123456789012/X"
+    assert m._dewrap([("NORTH", 40.0), ("WIND", 45.0)], edge) == "NORTH WIND"
+    assert m._dewrap([], edge) == ""
+
+
+def test_escaping(m):
+    """9.1b: one unescaped '&' makes the whole request malformed, and
+    'Duties & Taxes' is a stock group in every company."""
+    assert m.escape("Ram & Sons <Ltd>") == "Ram &amp; Sons &lt;Ltd&gt;"
+    xml = m.envelope("A & B", [m.voucher_xml(
+        "Payment", datetime.date(2026, 8, 1), "R1", "narr & more",
+        "Ram & Sons", "Bank", D("10.00"))])
+    assert "&amp;" in xml and " & " not in xml
+    import xml.etree.ElementTree as ET
+    ET.fromstring(xml)
+
+
+def test_sign_convention(m):
+    """Debit is ISDEEMEDPOSITIVE Yes with a NEGATIVE amount."""
+    v = m.voucher_xml("Payment", datetime.date(2026, 8, 1), "R1", "n",
+                      "Party", "Bank", D("100.00"), party_ledger="Party")
+    assert "<LEDGERNAME>Party</LEDGERNAME>\n    <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>" \
+           "\n    <AMOUNT>-100.00</AMOUNT>" in v
+    assert "<LEDGERNAME>Bank</LEDGERNAME>\n    <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>" \
+           "\n    <AMOUNT>100.00</AMOUNT>" in v
+    assert "<DATE>20260801</DATE>" in v and "<EFFECTIVEDATE>20260801</EFFECTIVEDATE>" in v
+    # a Contra has no party ledger
+    c = m.voucher_xml("Contra", datetime.date(2026, 8, 1), "R2", "n", "Cash", "Bank", D("5.00"))
+    assert "PARTYLEDGERNAME" not in c
+
+
+def test_voucher_with_identical_legs_is_refused(m):
+    """It balances, imports cleanly, and moves nothing — the transaction simply
+    disappears from the book. Tally's own name matching decides identity."""
+    refuses(m, "self_cancelling_voucher", m.voucher_xml,
+            "Payment", datetime.date(2026, 8, 1), "R1", "n",
+            "HDFC BANK LTD.", "hdfc bank ltd.", D("10.00"))
+
+
+def test_selfcheck_rejects_bad_xml(m):
+    good = m.envelope("Co", [m.voucher_xml("Payment", datetime.date(2026, 8, 1), "R1",
+                                           "n", "P", "Bank", D("10.00"))])
+    count, out, inward = m.selfcheck(good, "Bank", [{"voucher_type": "Payment"}])
+    assert (count, out, inward) == (1, D("10.00"), D(0))
+    # each malformation must trip its OWN check, not merely some check
+    for broken, category in (
+        (good.replace("<AMOUNT>10.00</AMOUNT>", "<AMOUNT>11.00</AMOUNT>"),
+         "unbalanced_voucher"),
+        (good.replace("<ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>",
+                      "<ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>"), "sign_convention"),
+        (good.replace("<EFFECTIVEDATE>20260801</EFFECTIVEDATE>",
+                      "<EFFECTIVEDATE>20260802</EFFECTIVEDATE>"), "date_disagreement"),
+        (good.replace("<NARRATION>n</NARRATION>", "<NARRATION> </NARRATION>"),
+         "empty_narration"),
+    ):
+        refuses(m, category, m.selfcheck, broken, "Bank", [{"voucher_type": "Payment"}])
+    refuses(m, "manifest_count_mismatch", m.selfcheck, good, "Bank",
+            [{"voucher_type": "Payment"}] * 2)
+    # the bank leg is recognised by Tally's matching rules, not by string equality
+    count, out, inward = m.selfcheck(good, "bank", [{"voucher_type": "Payment"}])
+    assert out == D("10.00")
+
+
+# --------------------------------------------------------------------------- #
+# mapping                                                                      #
+# --------------------------------------------------------------------------- #
+
+def mapping_file(directory, text):
+    path = pathlib.Path(directory) / "map.csv"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_mapping_key_survives_non_ascii_scripts(m):
+    """An ASCII-only key reduces a name written entirely in Devanagari, Tamil or
+    Bengali to the empty string, so every such party shares one key and a book
+    with two of them posts both to whichever was mapped first — with no
+    collision left for `load_mapping` to refuse. The demo company this project
+    reads carries ledgers in all three scripts."""
+    assert m._key("पार्टी")
+    # distinct names stay distinct, including ones differing only in their
+    # vowel signs — dropping combining marks would be the same bug one layer down
+    names = ["पार्टी", "पारटी", "ஏபிசி", "কোম্পানি"]
+    assert len({m._key(n) for n in names}) == len(names)
+    # and the ASCII behaviour is unchanged
+    assert m._key("A & B") == m._key("AB") == "AB"
+
+
+def test_mapping_key_ignores_wrap_spacing(m):
+    with tempfile.TemporaryDirectory() as directory:
+        path = mapping_file(directory,
+                            "party,ledger,treatment\n"
+                            "ZEPHYR MANUFACTURING,M/s Zephyr,auto\n"
+                            "OWN ACCOUNT,,skip\n")
+        mapping = m.load_mapping(path)
+    # the wrap heuristic can space the same name two ways; both must map
+    for spelling in ("ZEPHYRM ANUFACTURING", "ZEPHYRMANUFACTURING", "Zephyr Manufacturing"):
+        assert mapping[m._key(spelling)] == ("M/s Zephyr", "auto"), spelling
+    assert mapping[m._key("OWN ACCOUNT")][1] == "skip"
+
+
+def test_mapping_refuses_ambiguous_input(m):
+    with tempfile.TemporaryDirectory() as directory:
+        # 'party' missing: every record would be skipped and the run would still
+        # report a clean, balanced, entirely suspense-bound import
+        refuses(m, "mapping_headers_missing", m.load_mapping,
+                mapping_file(directory, "name,ledger,treatment\nA,L,auto\n"))
+        # two different counterparties collapsing to one key: last row would win
+        refuses(m, "mapping_key_collision", m.load_mapping,
+                mapping_file(directory, "party,ledger,treatment\n"
+                                        "A & B,Ledger One,auto\n"
+                                        "AB,Ledger Two,auto\n"))
+        # ... but an identical instruction spelled two ways is not a conflict
+        mapping = m.load_mapping(mapping_file(
+            directory, "party,ledger,treatment\nA & B,One,auto\nAB,One,auto\n"))
+        assert mapping[m._key("AB")] == ("One", "auto")
+        # a Contra's other leg must be a real bank/cash ledger
+        refuses(m, "contra_without_ledger", m.load_mapping,
+                mapping_file(directory, "party,ledger,treatment\nOWN,,contra\n"))
+        refuses(m, "unknown_treatment", m.load_mapping,
+                mapping_file(directory, "party,ledger,treatment\nA,L,transfer\n"))
+        # a name with no letters or digits at all would bucket with every other
+        refuses(m, "unusable_mapping_key", m.load_mapping,
+                mapping_file(directory, "party,ledger,treatment\n---,L,auto\n"))
+        # two columns normalising to one name: the later silently wins, and if
+        # it is blank the row is skipped and its transactions fall to suspense
+        refuses(m, "mapping_headers_duplicated", m.load_mapping,
+                mapping_file(directory, "party,Party,ledger,treatment\nA,,L,auto\n"))
+        # capitalised or padded headers pass the header check; the records must
+        # be normalised too, or every row reads empty and the whole mapping is
+        # discarded into suspense while the run reports success
+        mapping = m.load_mapping(mapping_file(
+            directory, " Party , Ledger , Treatment \nAcme,Acme Ledger,auto\n"))
+        assert mapping[m._key("ACME")] == ("Acme Ledger", "auto")
+
+
+# --------------------------------------------------------------------------- #
+# voucher construction                                                         #
+# --------------------------------------------------------------------------- #
+
+def test_build_treatments(m):
+    """skip emits nothing; contra emits a Contra; unmapped falls to suspense."""
+    bank = m.HDFC()
+    rows = [{"date": "01/08/26", "narr": "UPI-ALPHA-9@x-ABCD0001-111111111111-P", "ref": "1",
+             "dr": "10.00", "cr": "", "bal": "990.00"},
+            {"date": "02/08/26", "narr": "UPI-OWN ACCT-9@x-ABCD0001-222222222222-P", "ref": "2",
+             "dr": "20.00", "cr": "", "bal": "970.00"},
+            {"date": "03/08/26", "narr": "UPI-GHOST-9@x-ABCD0001-333333333333-P", "ref": "3",
+             "dr": "", "cr": "30.00", "bal": "1000.00"}]
+    mapping = {m._key("ALPHA"): ("Alpha Ledger", "contra"),
+               m._key("OWN ACCT"): ("", "skip")}
+    vouchers, manifest = m.build(rows, bank, "Co", "Bank", "SUSPENSE ACC", mapping, "ACC")
+    assert len(vouchers) == 2 and len(manifest) == 3
+    assert 'VCHTYPE="Contra"' in vouchers[0] and "PARTYLEDGERNAME" not in vouchers[0]
+    assert [r["voucher_type"] for r in manifest] == ["Contra", "SKIPPED", "Receipt"]
+    # a skipped row still records its REMOTEID: if the statement was already
+    # imported before the mapping said skip, that key is the only way to remove
+    # the voucher still standing in the book. Omission is not deletion.
+    assert manifest[1]["remoteid"]
+    assert manifest[2]["suspense"] == "YES"
+    assert "reallocate from Suspense" in manifest[2]["narration"]
+    # an unmapped party keeps the statement's own spelling in the narration so it
+    # can still be identified later
+    assert "GHOST" in manifest[2]["narration"]
+
+
+def test_suspense_is_compared_the_way_tally_compares_it(m):
+    """3.3b: Tally resolves 'suspense-acc' and 'SUSPENSE ACC' to one master. An
+    exact compare would post to suspense while reporting the row as resolved and
+    dropping the operator's warning — the row would vanish from the suspense
+    count it exists to appear in."""
+    bank = m.HDFC()
+    rows = [{"date": "01/08/26", "narr": "UPI-ALPHA-9@x-ABCD0001-111111111111-P",
+             "ref": "1", "dr": "10.00", "cr": "", "bal": "990.00"}]
+    mapping = {m._key("ALPHA"): ("suspense-acc", "auto")}
+    _, manifest = m.build(rows, bank, "Co", "Bank", "SUSPENSE ACC", mapping, "ACC")
+    assert manifest[0]["suspense"] == "YES"
+    assert "UNIDENTIFIED" in manifest[0]["narration"]
+
+
+def test_remoteid_is_derived_from_the_transaction(m):
+    """3.3a makes a repeated REMOTEID an upsert, so the key must not depend on
+    where the row happened to fall in this particular download."""
+    bank = m.HDFC()
+    alpha = {"date": "01/08/26", "narr": "UPI-ALPHA-9@x-ABCD0001-111111111111-P",
+             "ref": "1", "dr": "10.00", "cr": "", "bal": "990.00"}
+    beta = {"date": "01/08/26", "narr": "UPI-BETA-9@x-ABCD0001-222222222222-P",
+            "ref": "2", "dr": "20.00", "cr": "", "bal": "970.00"}
+
+    _, one = m.build([alpha, beta], bank, "Co", "Bank", "SUSP", {}, "ACC")
+    # the same transaction preceded by an extra row in an overlapping export:
+    # its ordinal moves, its identity does not
+    earlier = {"date": "31/07/26", "narr": "UPI-GAMMA-9@x-ABCD0001-333333333333-P",
+               "ref": "0", "dr": "5.00", "cr": "", "bal": "1000.00"}
+    _, two = m.build([earlier, alpha, beta], bank, "Co", "Bank", "SUSP", {}, "ACC")
+    assert one[0]["remoteid"] == two[1]["remoteid"], "same transaction, same key"
+    assert one[1]["remoteid"] == two[2]["remoteid"]
+    # two different transactions at the same date and ordinal must not collide,
+    # or the second import silently overwrites the first
+    assert one[0]["remoteid"] != one[1]["remoteid"]
+
+    # a genuinely repeated line is caught rather than silently upserted away
+    refuses(m, "duplicate_remoteid", m.build,
+            [alpha, dict(alpha)], bank, "Co", "Bank", "SUSP", {}, "ACC")
+
+
+# --------------------------------------------------------------------------- #
+# command line                                                                 #
+# --------------------------------------------------------------------------- #
+
+def test_hard_links_are_the_same_file(m):
+    """`--out` naming a second hard link to the input PDF destroys the statement
+    on the O_TRUNC, and two links to one inode keep different names, so a
+    lexical path compare passes."""
+    with tempfile.TemporaryDirectory() as directory:
+        source = pathlib.Path(directory) / "statement.pdf"
+        source.write_text("pdf", encoding="utf-8")
+        link = pathlib.Path(directory) / "other-name.pdf"
+        os.link(source, link)
+        args = m.build_parser().parse_args(
+            cli(m, **{"--pdf": str(source), "--dry-run": None, "--out": str(link)}))
+        refuses(m, "path_collision", m.preflight, args)
+
+
+def test_empty_selection_is_not_a_successful_import(m):
+    """An ordered window that does not overlap the statement selects nothing,
+    and every downstream check accepts an empty file."""
+    bank = m.HDFC()
+    rows = [{"date": "01/08/26", "narr": "UPI-A-9@x-ABCD0001-111111111111-P",
+             "ref": "1", "dr": "10.00", "cr": "", "bal": "990.00"}]
+    refuses(m, "empty_selection", m.build, rows, bank, "Co", "Bank", "SUSP", {}, "AC1234",
+            date_from=datetime.date(2025, 1, 1), date_to=datetime.date(2025, 12, 31))
+
+
+def test_a_transaction_naming_the_bank_is_not_the_footer(m):
+    """The footer anchor is a subset test, so any line carrying its words ends
+    the page — including a payment whose counterparty is the bank itself, which
+    drops that row and every row after it.
+
+    The guard is that a line opening a transaction is a transaction whatever
+    else it says, so the date wins and the anchor only breaks ties.
+
+    The tokenisation below is contrived: these narrations join fields with
+    hyphens, so a payee "HDFC BANK LIMITED" usually tokenises as "…-HDFC",
+    "BANK", "LIMITED-…" and only the middle word is bare. A bare trailing-hyphen
+    token followed by a space does occur (the real capture carries "ACH D- TP
+    ACH …"), so this is reachable rather than impossible — and the guard costs
+    one comparison either way.
+    """
+    bank = m.HDFC()
+    tricky = page(
+        (100, [(5, 30, "Date"), (72, 120, "Narration"), (282, 340, "Chq./Ref.No."),
+               (402, 452, "Withdrawal"), (562, 600, "Closing")]),
+        (120, [(2, 60, "01/08/26"), (72, 110, "TPT-"), (112, 150, "HDFC"),
+               (152, 185, "BANK"), (187, 230, "LIMITED"),
+               (282, 350, "0000000000000001"), (402, 460, "10.00"),
+               (562, 620, "990.00")]),
+        (140, [(2, 60, "02/08/26"), (72, 200, "UPI-BETA-b@z-ZZZZ1-222222222222-P"),
+               (282, 350, "0000000000000002"), (402, 460, "20.00"),
+               (562, 620, "970.00")]),
+        (170, [(28, 60, "HDFC"), (62, 95, "BANK"), (97, 140, "LIMITED")]),
+        (190, [(2, 60, "03/08/26"), (72, 200, "UPI-GHOST-g@z-ZZZZ1-333333333333-X"),
+               (402, 460, "1.00"), (562, 620, "969.00")]),
+    )
+    rows = m.parse_pages([tricky], bank)
+    assert len(rows) == 2, [r["narr"] for r in rows]
+    assert "HDFC BANK LIMITED" in rows[0]["narr_spaced"]
+    # the real footer, printed from the left margin, still ended the page
+    assert "GHOST" not in " ".join(r["narr"] for r in rows)
+
+
+def test_dry_run_groups_by_mapping_key(m):
+    """The dry run is the list the operator writes the mapping from, so it must
+    group the way the mapping is read.
+
+    One counterparty reaches it under two spellings whenever the wrap heuristic
+    decides differently on two lines — a real statement showed one payee as both
+    `MERCURY MANUFACTURERS` and `MERCURY M ANUFACTURERS`. Those are one mapping
+    row, and listing them as two invites the operator to write two rows and then
+    wonder why the second never fires.
+    """
+    manifest = [
+        m._manifest_row(party="MERCURY MANUFACTURERS", voucher_type="Receipt",
+                        amount="60000.00", suspense="YES"),
+        m._manifest_row(party="MERCURY M ANUFACTURERS", voucher_type="Receipt",
+                        amount="220000.00", suspense="YES"),
+        m._manifest_row(party="AMBIKA INDUSTRIES", voucher_type="Receipt",
+                        amount="1000.00", suspense="YES"),
+    ]
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        m._print_dry_run(manifest)
+    report = printed.getvalue()
+
+    # one row for the two spellings, carrying their combined total
+    assert "280,000.00" in report
+    assert "220,000.00" not in report and "60,000.00" not in report
+    # ... labelled with the spelling the bank printed. A wrap can only insert a
+    # space, never remove one, so the lower word count is the original — even
+    # though the other spelling carries more value.
+    lines = [line for line in report.splitlines() if line.startswith("MERCURY")]
+    assert lines and lines[0].startswith("MERCURY MANUFACTURERS"), lines
+    # and the variant is still named, so it stays findable in the statement
+    assert "also printed as MERCURY M ANUFACTURERS" in report
+    assert "AMBIKA INDUSTRIES" in report
+
+
+def test_output_files_are_owner_only(m):
+    """The XML and manifest carry counterparties, amounts and every narration;
+    the default 022 umask would publish them as 0644 on a shared host."""
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "out.xml"
+        path.write_text("stale", encoding="utf-8")
+        os.chmod(path, 0o644)
+        m._write_private(path, "<ENVELOPE/>")
+        assert path.read_text(encoding="utf-8") == "<ENVELOPE/>"
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_password_is_never_an_argument(m):
+    """A password on the command line lands in shell history and in the process
+    list, and these are commonly derived from personal identifiers."""
+    assert m.read_password({m.PASSWORD_ENV: SENTINEL}) == SENTINEL
+    # argparse must reject it outright rather than quietly ignoring it
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            m.main(cli(m) + ["--password", SENTINEL])
+    except SystemExit as exit_:
+        assert not isinstance(exit_, m.Refusal)
+    else:
+        raise AssertionError("--password was accepted")
+    # with no environment variable and no tty there is nowhere safe to read it
+    refuses(m, "no_password", m.read_password, {}, interactive=False)
+
+
+def cli(m, **overrides):
+    args = {"--pdf": "s.pdf", "--bank": "hdfc", "--company": "Co",
+            "--confirm-open-company": "Co", "--bank-ledger": "Bank",
+            "--account-tail": "xx1234", "--opening": "0", "--expect-closing": "0",
+            "--expect-debits": "0", "--expect-credits": "0", "--dry-run": True}
+    args.update(overrides)
+    argv = []
+    for flag, value in args.items():
+        if value is True:
+            argv.append(flag)
+        elif value is not None:
+            argv += [flag, value]
+    return argv
+
+
+def test_preflight_runs_before_the_pdf_is_opened(m):
+    """Split out of main so it is reachable on its own: a mistyped flag should
+    cost nothing, and none of these checks needs the statement."""
+    parser = m.build_parser()
+    args = parser.parse_args(cli(m, **{"--from": "2026-08-01", "--to": "2026-08-31"}))
+    window, expected = m.preflight(args)
+    assert window == (datetime.date(2026, 8, 1), datetime.date(2026, 8, 31))
+    assert set(expected) == {"opening", "closing", "debits", "credits"}
+    assert expected["opening"] == D("0")
+    # a window open at either end is legal — it means "no bound on that side"
+    assert m.preflight(parser.parse_args(cli(m)))[0] == (None, None)
+
+
+def test_control_totals_are_all_three_compared(m):
+    bank = m.HDFC()
+    rows = [{"date": "01/08/26", "dr": "", "cr": "100.00", "bal": "1100.00"},
+            {"date": "02/08/26", "dr": "50.00", "cr": "", "bal": "1050.00"}]
+    expected = {"debits": D("50.00"), "credits": D("100.00")}
+    assert m.verify_against_statement(rows, bank, expected) == expected
+    for wrong in ({"debits": D("60.00"), "credits": D("100.00")},
+                  {"debits": D("50.00"), "credits": D("110.00")}):
+        refuses(m, "control_total_mismatch", m.verify_against_statement, rows, bank, wrong)
+
+
+def test_manifest_rows_always_carry_every_column(m):
+    """csv.DictWriter raises on an unexpected key — after the XML is written."""
+    row = m._manifest_row(row=1, voucher_type="Payment")
+    assert set(row) == set(m.MANIFEST_COLUMNS)
+    assert row["narration"] == "" and row["row"] == 1
+
+
+def test_cli_refuses_before_reading_anything(m):
+    """Every one of these produced a successful-looking run that wrote nothing
+    useful, wrote to the wrong place, or wrote an empty import."""
+    refuses(m, "company_unconfirmed", m.main,
+            cli(m, **{"--confirm-open-company": "Co Ltd"}))
+    # two unset shell variables agree with each other. An empty company name is
+    # the most dangerous value this flag can take, not the most harmless:
+    # 9.11d means Tally imports into whichever company is open.
+    refuses(m, "company_blank", m.main,
+            cli(m, **{"--company": "  ", "--confirm-open-company": "  "}))
+    refuses(m, "malformed_cli_date", m.main, cli(m, **{"--from": "2026-02-30"}))
+    refuses(m, "malformed_cli_date", m.main, cli(m, **{"--to": "not-a-date"}))
+    refuses(m, "no_output_requested", m.main, cli(m, **{"--dry-run": None}))
+    refuses(m, "reversed_date_window", m.main,
+            cli(m, **{"--from": "2026-08-31", "--to": "2026-08-01"}))
+    refuses(m, "path_collision", m.main,
+            cli(m, **{"--dry-run": None, "--out": "s.pdf"}))
+    refuses(m, "path_collision", m.main,
+            cli(m, **{"--dry-run": None, "--out": "x.csv", "--manifest": "x.csv"}))
+
+
+def main():
+    module = load()
+    for name, test in sorted(globals().items()):
+        if name.startswith("test_"):
+            test(module)
+            print(f"ok  {name}")
+    print("all offline contract tests passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
