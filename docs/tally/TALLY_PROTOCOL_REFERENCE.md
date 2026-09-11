@@ -942,12 +942,17 @@ names Tally keeps apart — which posts to the wrong account, silently.
 | --- | --- |
 | ASCII case folding | **VERIFIED** — lowercase matched |
 | supplying a **space** where the master has a **hyphen** | **VERIFIED** — `BRIDGE PROBE LEDGER A` matched `BRIDGE-PROBE-LEDGER-A` |
-| supplying a **hyphen** where the master has a **space** | **UNVERIFIED** — the reverse direction was never sent |
+| supplying a **hyphen** where the master has a **space** | **UNVERIFIED here** — the reverse direction was never sent on this SKU. Measured **matched** on licensed 7.1, §9.4d |
 | one trailing space ignored | **VERIFIED** |
-| *leading* whitespace ignored | **UNVERIFIED** |
-| runs of internal whitespace collapsed to one | **UNVERIFIED** — only a single space was tested |
+| *leading* whitespace ignored | **UNVERIFIED here**. Measured **matched** on licensed 7.1, §9.4d |
+| runs of internal whitespace collapsed to one | **UNVERIFIED here** — only a single space was tested. Measured **matched** on licensed 7.1, §9.4d |
 | non-ASCII case folding (Devanagari, Tamil, Bengali, Turkish dotted I) | **UNVERIFIED** |
-| any other separator (underscore, en dash, `/`) treated as a space | **UNVERIFIED** |
+| any other separator (underscore, en dash, `/`) treated as a space | **UNVERIFIED here**, and §9.4d splits it on licensed 7.1: `/` **matched**, underscore and en dash **rejected**. Not one row — do not fold them together |
+
+**A wider result exists for a different SKU.** §9.4d re-ran this measurement on **licensed
+TallyPrime 7.1** and found the gateway folds more than these rows establish. It is a separate
+section on purpose: these rows are about Edit Log 7.0 Educational, and absorbing a licensed-Silver
+result into them would silently widen the scope of a measurement nobody repeated here.
 
 A fold implementing only the verified three is safe in the direction that matters: it may *fail to
 match* a pair Tally would accept, which surfaces as a refusal a human sees. Adding the unverified
@@ -1012,6 +1017,63 @@ So: **ledgers, on Edit Log 7.0 Educational. Licensed and standard TallyPrime are
 Whether stock items, groups and voucher types match by the same rule is UNVERIFIED too, and §3.3b
 says nothing about voucher numbers — a fold shared between master names and voucher numbers is
 assuming something nobody has measured.
+
+### 9.4d Master-name matching on **licensed** TallyPrime 7.1
+
+**VERIFIED 2026-09-12**, and it widens §9.4b rather than confirming it. §9.4b is inherited from a
+2026-07-30 measurement on **Edit Log 7.0 Educational** and marks licensed TallyPrime UNVERIFIED.
+This is that measurement re-run on the SKU this project actually writes to: **TallyPrime 7.1,
+licence tier silver, `education_mode=false`**, ledgers, one lab company.
+
+**Method is §9.4b's own.** Import a voucher naming a folded spelling of a ledger that exists, and
+let Tally answer: a created voucher means the name resolved, a `LINEERROR` naming that ledger
+means it did not. Twelve variants, one voucher each, then the **day book was read back** to record
+which master each voucher actually posted against — the counters alone would not have said. All
+eight created vouchers were then deleted by `REMOTEID` and the day read back empty.
+
+| Supplied against a live master | Licensed 7.1 | §9.4b on Educational |
+| --- | --- | --- |
+| exact | **matched** | matched |
+| ASCII lowercase | **matched** | matched |
+| one trailing space | **matched** | matched |
+| a **space** where the master has a **hyphen** | **matched** | matched |
+| a **hyphen** where the master has a **space** | **matched** | *UNVERIFIED* |
+| leading whitespace | **matched** | *UNVERIFIED* |
+| an internal whitespace run collapsed | **matched** | *UNVERIFIED* |
+| a **slash** where the master has a **space** | **matched** | not sent |
+| an **en dash** where the master has a space | **rejected** | *UNVERIFIED* |
+| an **underscore** where the master has a space | **rejected** | *UNVERIFIED* |
+| `AND` for `&` | **rejected** | rejected |
+| **NFD** against an NFC master | **rejected** | not sent |
+
+**What this says.** On licensed 7.1, Tally treats **space, hyphen and slash** as interchangeable
+separators, collapses internal whitespace runs, ignores leading and trailing whitespace, folds
+**ASCII** case, and is otherwise **exact on codepoints**.
+
+> **RULE: separators fold, and the set is `space`, `-`, `/` — nothing else.** An en dash and an
+> underscore are ordinary characters to Tally and are **not** separators, so a fold that treats
+> "punctuation" or "separators" as a class is wider than the gateway and will merge masters it
+> keeps apart.
+
+That is the trap §9.4b warned about, arriving from the other side: the danger was never only that
+a reader would fold too much, it was that "normalises separators" names no particular set. Two of
+the four separators tested are folded and two are not, and nothing about their appearance predicts
+which.
+
+**Canonical equivalence is still refused**, consistent with the exact-codepoint finding recorded
+elsewhere in this document: an NFD spelling of an NFC ledger does not resolve. A fold that
+normalises before comparing merges masters this gateway keeps apart.
+
+**Scope.** One instance, one build, one licence tier, **ledgers only**, one company, and the
+measurement is of *import-time* name resolution — not collection filters, not stock items, groups
+or voucher types, and not voucher numbers. §9.4b's Educational scope stands as its own row; this
+does not retire it, and where the two disagree they disagree about different SKUs rather than
+about the same one.
+
+**Fixtures.** `MB-PROBE-LEDGER-A` and `MB CAFÉ PROBE` remain in `BRIDGE CORPUS OPENING` under
+`Suspense A/c`, carrying no balances, so this is repeatable. They post-date the catalogue digest
+recorded in `TEST_CORPUS.md` §9.2.
+
 
 ### 9.4c Real catalogues carry families a partial name cannot separate
 

@@ -468,6 +468,13 @@ tier. Every *source* name is fabricated — a real source document has still nev
 nothing here speaks to how operator-written names actually differ from master names. It exercises
 the MCP consumer; the desktop consumer shares the crate but was not driven.
 
+**Superseded in part, 2026-09-12.** The separator row below was read as a defect and drove a
+narrowing of the resolving fold. `TALLY_PROTOCOL_REFERENCE.md` §9.4d then measured that same
+equivalence directly on **licensed** TallyPrime 7.1 and found Tally does accept it — along with
+leading whitespace, collapsed runs and a slash — so the fold was widened back to what the gateway
+actually does. Read the paragraph below as the history it is: the row's `normalized` result was
+right, and the reasoning that called it wrong was working from §9.4b's Educational scope.
+
 **It found a defect, which is the reason to run these.** On the first run the third row *bound*
 `MB-PILOT-ALPHA-(5550001001)` to a master carrying spaces. That is the **reverse** of the
 direction `TALLY_PROTOCOL_REFERENCE.md` §9.4b measured, and §9.4b marks it **UNVERIFIED** — so
@@ -485,6 +492,13 @@ identically across both runs.
 
 So this table is VERIFIED for all ten rows, at `330bd696`. ADR 0016 §3 records the narrowing and
 its cost.
+
+**The catalogue digest has since moved, and a mismatch is not drift.** Qualifying §9.4d needed two
+ledgers — `MB-PROBE-LEDGER-A` and `MB CAFÉ PROBE` — and they remain in this company under
+`Suspense A/c` carrying no balances, so that the measurement is repeatable. Both post-date the
+runs above, so `catalogue_evidence_sha256` for `BRIDGE CORPUS OPENING` no longer equals
+`0767077c…`. Anyone re-running this slice should expect a different digest and check the ledger
+list before treating it as the book changing underneath them.
 
 **What it found within minutes.** The `DELTA`/`EPSILON` pair exposed a defect no fabricated
 fixture had produced: a *byte-exact* request for `MB PARTY DELTA (5550001009)` was being

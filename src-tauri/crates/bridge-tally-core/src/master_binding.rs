@@ -643,7 +643,7 @@ impl SourceEntity {
         Ok(Self {
             position,
             key: master_identity_key(&name),
-            binding_key: source_binding_key(&name),
+            binding_key: verified_fold(&name),
             name,
             identifiers,
         })
@@ -745,9 +745,10 @@ impl MasterCatalog {
         let mut by_token: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         for (index, entry) in entries.iter().enumerate() {
             by_key.entry(entry.key.clone()).or_default().push(index);
-            for binding_key in master_binding_keys(&entry.name) {
-                by_binding_key.entry(binding_key).or_default().push(index);
-            }
+            by_binding_key
+                .entry(verified_fold(&entry.name))
+                .or_default()
+                .push(index);
             for identifier in &entry.identifiers {
                 by_identifier
                     .entry(identifier.clone())
@@ -1322,60 +1323,52 @@ fn master_identity_key(value: &str) -> String {
         .join(" ")
 }
 
-/// The fold that may **resolve** a name to a master, held to exactly what
-/// `TALLY_PROTOCOL_REFERENCE.md` §9.4b measured Tally doing.
+/// The fold that may **resolve** a name to a master: exactly the equivalences
+/// `TALLY_PROTOCOL_REFERENCE.md` §9.4d measured on the SKU this writes to.
 ///
-/// Three transformations were verified: ASCII case folding, one trailing space
-/// ignored, and a **space supplied where the master carries a hyphen**. That
-/// last one is directional — `BRIDGE PROBE LEDGER A` was sent against a live
-/// `BRIDGE-PROBE-LEDGER-A`, and the reverse was never sent — so it cannot be a
-/// symmetric replacement in a shared key. It lives in `master_binding_keys`,
-/// on the master side only, which is the side the evidence is about.
+/// §9.4b measured Edit Log 7.0 Educational and marked most of this UNVERIFIED,
+/// so an earlier version of this module resolved on three transformations only
+/// and offered the rest as candidates. §9.4d re-ran that measurement on
+/// **licensed TallyPrime 7.1**, read the day book back to see which master each
+/// name actually reached, and found the gateway wider than the Educational
+/// scope allowed anyone to claim:
 ///
-/// **Canonical equivalence is not folded here, and that one is measured rather
-/// than merely unverified.** A voucher naming a UI-created `Cafe\u{301}...`
-/// ledger in its canonically equivalent NFD spelling was rejected —
-/// `EXCEPTIONS=1`, `LINEERROR`, ledger does not exist — while the NFC spelling
-/// created it. Tally stores a master name as the bytes that made it and matches
-/// on exact codepoints, so NFC and NFD spellings are *different masters*.
-/// Folding them together here would resolve a source name onto a master Tally
-/// itself keeps apart. It reads like decoding rather than folding, which is
-/// exactly why it nearly stayed.
+/// - ASCII case folds;
+/// - leading and trailing whitespace is ignored;
+/// - an internal run of spaces collapses;
+/// - **space, `-` and `/` are one separator**, in both directions.
 ///
-/// Every other unverified step — the reverse hyphen direction, collapsed
-/// whitespace runs, leading whitespace, Unicode dash variants, non-ASCII case —
-/// is deliberately absent too. None is lost: `master_identity_key` carries them
-/// all, and everything it reaches is offered as a candidate.
+/// Everything else is exact on codepoints. So the two rules that matter are
+/// both negative, and neither is guessable from appearance:
+///
+/// **An en dash and an underscore are not separators.** They were sent and
+/// rejected. A fold that treats "punctuation" or "separators" as a class is
+/// wider than the gateway and merges masters Tally keeps apart — which is why
+/// the separator set here is written out rather than described.
+///
+/// **Canonical equivalence is not folded.** An NFD spelling of an NFC master
+/// was rejected here too, consistent with the exact-codepoint finding recorded
+/// against this same release. Normalizing before comparing would resolve a name
+/// onto a master the gateway keeps apart. It reads like decoding rather than
+/// folding, which is how it survived two audits of this function.
+///
+/// Both hyphen directions are measured now, so this is symmetric and one key
+/// per side is enough — the asymmetric index an earlier version needed is gone.
 fn verified_fold(value: &str) -> String {
-    value.to_ascii_lowercase()
-}
-
-/// The key a **source** name is looked up by.
-///
-/// One trailing space is dropped here and nowhere else, because that is how it
-/// was measured: §9.4b *supplied* a name carrying a trailing space against a
-/// clean live master and Tally matched it. The reverse — a master carrying a
-/// trailing space, reached from a clean source name — was never sent, and
-/// stripping on the master side quietly asserted it. Same directional trap as
-/// the hyphen, one row further down the same table.
-fn source_binding_key(value: &str) -> String {
-    verified_fold(value.strip_suffix(' ').unwrap_or(value))
-}
-
-/// The keys a **master** name answers to.
-///
-/// Its own, and — because a source space was measured matching a master hyphen
-/// — the same name with its hyphens read as spaces. Offering the second from
-/// the master side is what keeps the measured direction measured: a source
-/// hyphen finds no master space, while a source space finds a master hyphen.
-///
-/// Two masters that answer to one key are an ambiguity and are refused there,
-/// which is the same answer Tally's own behaviour implies: it would match that
-/// source name to both.
-fn master_binding_keys(value: &str) -> BTreeSet<String> {
-    let base = verified_fold(value);
-    let hyphens_as_spaces = base.replace('-', " ");
-    BTreeSet::from([base, hyphens_as_spaces])
+    value
+        .chars()
+        .map(|character| match character {
+            '-' | '/' => ' ',
+            other => other.to_ascii_lowercase(),
+        })
+        .collect::<String>()
+        // ASCII space only. A tab and a no-break space were never sent, so they
+        // stay ordinary characters rather than joining the separator set on the
+        // strength of looking like whitespace.
+        .split(' ')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Splits a comparison key into words.
