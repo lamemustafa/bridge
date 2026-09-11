@@ -53,14 +53,21 @@ const MAX_HEADING_CHARS = 160;
 // Nothing may be added here to get a new duplicate through: move the later
 // arrival instead.
 //
-// The *count* is part of the exemption. Excusing the number alone would let a
-// contributor add a third `1.2` and still pass, turning the one piece of
-// recorded debt into a hole.
+// The exemption names the *headings*, not a count. A count alone has two holes:
+// a third `1.2` passes if one of the originals is renumbered in the same
+// change, and a collision-cleanup racing a stale section PR can replace a
+// grandfathered occurrence with a genuinely new one while the total stays two.
+// Naming them means a new `1.2` is a new heading, and a new heading is a
+// failure whatever the arithmetic says.
 const KNOWN_DUPLICATES = new Map([
   [
     "1.2",
     {
-      occurrences: 2,
+      headings: [
+        "Request charset controls response charset",
+        "A modal error dialog in Tally's UI blocks the gateway until a human " +
+          "clicks OK — **P0 operationally**",
+      ],
       reason:
         "present on master before this gate existed; renumbering either would " +
         "break citations that already point at them",
@@ -68,15 +75,31 @@ const KNOWN_DUPLICATES = new Map([
   ],
 ]);
 
+// Compare heading text, not the whole line: the level (`##` vs `###`) is
+// formatting and may legitimately change, while the words identify the section.
+function titleOf(line) {
+  return line.trim().replace(/^#+\s+\S+\s*/, "").trim();
+}
+
 const lines = readFileSync(reference, "utf8").split("\n");
 const occurrences = new Map();
 let fence = null;
 lines.forEach((line, index) => {
   const rail = FENCE.exec(line);
   if (rail) {
-    // a fence closes only on the same character, at least as long
-    if (fence === null) fence = rail[1];
-    else if (rail[1][0] === fence[0] && rail[1].length >= fence.length) fence = null;
+    if (fence === null) {
+      fence = rail[1];
+      return;
+    }
+    // A closing fence carries no info string: ```xml inside a block opens
+    // nothing and closes nothing, and treating it as a closer would count the
+    // example headings below it as real sections. It must also match the
+    // opener's character and be at least as long.
+    const closes =
+      rail[1][0] === fence[0] &&
+      rail[1].length >= fence.length &&
+      line.slice(line.indexOf(rail[1]) + rail[1].length).trim() === "";
+    if (closes) fence = null;
     return;
   }
   if (fence !== null) return;
@@ -108,8 +131,27 @@ function describe(number, found) {
 const failures = [];
 let omitted = 0;
 for (const [number, found] of occurrences) {
-  const allowed = KNOWN_DUPLICATES.get(number)?.occurrences ?? 1;
-  if (found.length <= allowed) continue;
+  const excused = KNOWN_DUPLICATES.get(number);
+  if (!excused && found.length === 1) continue;
+  if (excused) {
+    const remaining = [...excused.headings];
+    const unexcused = found.filter((one) => {
+      const at = remaining.indexOf(titleOf(one.text));
+      if (at === -1) return true;
+      remaining.splice(at, 1);
+      return false;
+    });
+    if (!unexcused.length) continue;
+    failures.push(
+      `section ${number} is excused only for its grandfathered headings ` +
+        `(${excused.reason}); these are new:\n` +
+        unexcused
+          .slice(0, MAX_REPORTED_OCCURRENCES)
+          .map((one) => `    line ${one.line}: ${one.text.slice(0, MAX_HEADING_CHARS)}`)
+          .join("\n"),
+    );
+    continue;
+  }
   if (failures.length >= MAX_REPORTED_NUMBERS) {
     omitted += 1;
     continue;
@@ -120,15 +162,18 @@ if (omitted) {
   failures.push(`... and ${omitted} further duplicated section number(s)`);
 }
 
-// A known duplicate that has been resolved should stop being excused, or the
-// exemption outlives the problem and quietly covers the next collision.
-for (const [number, { occurrences: allowed, reason }] of KNOWN_DUPLICATES) {
-  const found = occurrences.get(number) ?? [];
-  if (found.length >= allowed) continue;
+// A grandfathered heading that has been renumbered or retitled should stop
+// being excused, or the exemption outlives the problem and quietly covers the
+// next collision under the same number.
+for (const [number, { headings, reason }] of KNOWN_DUPLICATES) {
+  const present = new Set((occurrences.get(number) ?? []).map((one) => titleOf(one.text)));
+  const gone = headings.filter((heading) => !present.has(heading));
+  if (!gone.length) continue;
   failures.push(
-    `section ${number} now appears ${found.length} time(s), fewer than the ` +
-      `${allowed} this gate excuses (${reason}) — update or remove its ` +
-      "KNOWN_DUPLICATES entry so the exemption cannot cover a future collision",
+    `section ${number} no longer carries ${gone.length} of its grandfathered ` +
+      `heading(s) (${reason}) — update or remove its KNOWN_DUPLICATES entry so ` +
+      "the exemption cannot cover a future collision:\n" +
+      gone.map((heading) => `    ${heading.slice(0, MAX_HEADING_CHARS)}`).join("\n"),
   );
 }
 
