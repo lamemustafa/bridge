@@ -1121,8 +1121,11 @@ fn decide(
     let remote_id_unverifiable =
         proposal.remote_id.is_some() && window.remote_id_evidence() == RemoteIdEvidence::NotRead;
 
-    // Rule two: a voucher number is identity only where the numbering method
-    // preserves it (§9.8), and only when it is unique on both sides.
+    // Both identity lookups are resolved *before* either settles, so that a
+    // `REMOTEID` selecting one voucher while the number selects another can be
+    // reported as a disagreement instead of decided by whichever ran first.
+    // That is why the number lookup sits above rule one rather than under
+    // rule two, where it is used.
     let number_matches: Vec<usize> = proposal
         .number_key
         .as_deref()
@@ -1141,8 +1144,6 @@ fn decide(
         })
         .unwrap_or_default();
 
-    // Manual numbering only decides within an observed voucher type: numbers
-    // are a per-type series, so a cross-type number match is a resemblance.
     // Rule one: identity first. A REMOTEID is a key Bridge itself wrote.
     if let Some(remote_id) = proposal.remote_id.as_deref() {
         let unique_here = proposal_remote_counts.get(remote_id).copied() == Some(1);
@@ -1162,7 +1163,9 @@ fn decide(
             );
         }
         if !matches.is_empty() {
-            if matches.len() == 1 && unique_here {
+            // Uniqueness on the proposal side was settled above, so one match
+            // here is one match on both sides.
+            if matches.len() == 1 {
                 // Both identities are resolved before either settles. A
                 // REMOTEID selecting one voucher while the number selects
                 // another is two identity signals disagreeing, and ranking one
@@ -1212,9 +1215,12 @@ fn decide(
         }
     }
 
-    // A collision between two proposals is a fact about the *source*. It does
-    // not become less true because the book has never seen this voucher type,
-    // so it is settled before the observed-type guard rather than inside it.
+    // Rule two: a voucher number is identity only where the numbering method
+    // preserves it (§9.8), and only when it is unique on both sides.
+    //
+    // The proposal side comes first, because a collision between two proposals
+    // is a fact about the *source*: it does not become less true because the
+    // book has never seen this voucher type.
     if method == NumberingMethod::Manual {
         if let Some(number_key) = proposal.number_key.as_deref() {
             let proposed_twice = proposal_number_counts
@@ -1438,12 +1444,15 @@ fn differences(
             observed: Some(voucher.magnitude.as_str().to_string()),
         });
     }
-    // Only a bound party can disagree. An ambiguous one has no single name to
-    // disagree with, and asserting a difference from a candidate would be the
-    // same guess by another route.
-    // The diagnostic compares against the *observed party field*, not against
+    // Two narrowings, and each has a reason the other does not.
+    //
+    // Only a *bound* party can disagree: an ambiguous one has no single name to
+    // disagree with, and asserting a difference against a candidate would be
+    // the same guess by another route.
+    //
+    // And the comparison is against the *observed party field*, not against
     // every ledger the voucher touches. Widening to all entry ledgers is right
-    // for finding a candidate and wrong for reporting a disagreement: a
+    // for finding a candidate and wrong for reporting a disagreement — a
     // voucher whose party is one name while an entry names another would
     // otherwise report no difference while serializing the other name as
     // `observed`. A voucher with no party field has nothing to disagree with.
