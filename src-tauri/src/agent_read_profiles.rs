@@ -25,6 +25,11 @@ use super::*;
 /// does not reproduce that, and whether `BILLALLOCATIONS.*` also cures it there
 /// is untested. It is strictly more faithful than the curated form and strictly
 /// cheaper than the entry wildcard.
+///
+/// The measurement, its instance scope and what remains unknown are recorded in
+/// `docs/tally/TALLY_PROTOCOL_REFERENCE.md` §8.2a. That section is the canonical
+/// statement; this comment says which shape the code requests and why, and must
+/// not become a second, diverging account of the evidence.
 const AGENT_VOUCHER_FETCH: &str = "DATE,VOUCHERNUMBER,VOUCHERTYPENAME,PARTYLEDGERNAME,NARRATION,\
 GUID,ALTERID,MASTERID,ISCANCELLED,ISOPTIONAL,ALLLEDGERENTRIES.LEDGERNAME,ALLLEDGERENTRIES.AMOUNT,\
 ALLLEDGERENTRIES.ISDEEMEDPOSITIVE,ALLLEDGERENTRIES.BILLALLOCATIONS.*";
