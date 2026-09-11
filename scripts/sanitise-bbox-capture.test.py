@@ -483,34 +483,12 @@ for fixture in sorted(pathlib.Path(__file__).with_name("fixtures").glob("*-bbox-
             f"{survivors}",
         )
 
-# KNOWN DEFECT, recorded here because it cannot be fixed from inside this
-# repository. Both committed captures were produced by the *old* alphabet, which
-# contained `X`, so some of their pure-`X` tokens are fabricated letter runs
-# rather than source masks — breaking the invariant asserted above that an `X`
-# in a replacement means the source was masked there.
-#
-# It is not a leak: those tokens are fabricated either way. It is a fidelity
-# defect. The parsers find a masked account by reading a run of `X`, so a
-# fabricated run makes the fixture present a masked field where the real
-# statement had an ordinary word.
-#
-# The evidence is unambiguous on one line. The branch address reads
-# `ZZZZZ - QQQQQQ XXXXX VVVVVV`: four consecutive fabricated words in the old
-# ALPHA's own order, `Z`, `Q`, `X`, `V`. The third is fabricated, not masked.
-#
-# There is deliberately **no assertion here**, because none of the three honest
-# options is a passing test:
-#   * it cannot be detected in general — a fabricated `XXXXX` and a real mask
-#     are the same five bytes;
-#   * it cannot be repaired by re-running this script on the fixture, which
-#     would preserve those `X` runs as masks, the very thing that is wrong;
-#   * it cannot be repaired by hand without authoring a capture by hand, which
-#     `AGENTS.md` P1 forbids for exactly this class of reason.
-#
-# Regenerating from the original `pdftotext` output is the fix, and only whoever
-# holds those statements can do it. Until then, treat a pure-`X` token in these
-# two files — one with no digits in it — as possibly fabricated.
-
+# Cleared 2026-09-12. Both captures were regenerated from their source
+# statements with the current alphabet, which no longer fabricates `X`, so the
+# invariant above holds again: a pure-`X` run in a fixture means the source was
+# masked there. Verified by comparing every pure-`X` token in each regenerated
+# fixture against the raw `pdftotext` output — zero appear that the source does
+# not contain. The defect was cleared by regeneration, not by editing a fixture.
 if failures:
     print(f"\n{len(failures)} failing contract(s)")
     sys.exit(1)
