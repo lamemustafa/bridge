@@ -719,11 +719,164 @@ do not infer missing evidence or resend it to obtain a cleaner receipt.
 `LINEERROR` text is **untrustworthy for cause attribution** — an out-of-range date produced
 "Voucher date is missing" when the date was present.
 
-### 9.3 No natural idempotency for vouchers
+### 9.3 Voucher idempotency depends on `REMOTEID` — **this section's title used to say the opposite**
 
-**VERIFIED.** Re-sending an identical voucher payload with the same `VOUCHERNUMBER` created a
-**second voucher**. Tally does not dedupe. A crash-retry duplicates client data unless the
+**VERIFIED, on an automatically numbered voucher type.** Re-sending an identical voucher payload
+carrying the same `VOUCHERNUMBER` created a **second voucher**.
+
+Read that precisely, because the obvious paraphrase — "Tally does not dedupe on the voucher
+number" — is false in two directions. Under **automatic** numbering the supplied number is
+*discarded* (§9.8), so the two sends never shared a stored voucher number and nothing could have
+deduped on it. Under **Manual + `PREVENTDUPLICATES=Yes`**, §9.8 records that a repeated number is
+**cleanly rejected** — a qualified duplicate-rejection mechanism that a reader of this sentence
+would otherwise never look for.
+
+So: on the numbering method measured here, a crash-retry duplicates client data unless the
 integrator prevents it.
+
+**That measurement stands; the conclusion drawn from it did not.** This section was headed *"No
+natural idempotency for vouchers"*, and it was read — including by me, repeatedly — as saying no
+idempotency mechanism exists.
+
+Note what that means about the failure. This document was never *wrong*: **§9.8's scope
+clarification has carried the upsert result since 2026-09-06**, with the counters and the file
+SHA, and links `IMPLEMENTATION_GUIDE.md` §3.3a. The defect was navigational — the narrow case
+stated under a heading that reads as the general one, five sections earlier, with no pointer to the
+exception. A reader who lands here stops here. That is the whole reason a cross-reference is worth
+as much as a measurement.
+
+§3.3a supersedes the general reading:
+
+```
+import #1  REMOTEID="…-001"  ->  CREATED=1  ALTERED=0
+import #2  byte-identical    ->  CREATED=0  ALTERED=1
+vouchers in Tally afterwards ->  1
+```
+
+**With a client-supplied `REMOTEID`, a re-import upserts. It does not duplicate.** The vouchers
+measured here carried **no** client `REMOTEID`, so Tally assigned its own and every send was a new
+object — that was the uncontrolled variable, and the title generalised past it.
+
+Consequences, since a stale reading of this section is expensive in both directions: an integrator
+who believes there is no idempotency builds a dedup table or a narration hack it does not need, and
+one who supplies a `REMOTEID` without knowing it upserts can silently **overwrite** an earlier
+voucher by reusing a key.
+
+**Not the outbox, though.** `REMOTEID` prevents a duplicate; it does not tell you, after a crash,
+*what you sent*. The `REMOTEID` **attribute** does not echo the client key on readback (below), so
+a resend is only safe while the exact key and payload are still on disk. Be precise about the
+field: the key itself does survive anywhere Tally does not own — a narration marker comes back —
+and a categorical "Tally does not return the key" would send recovery work to discard the one
+attribution channel that works. The durable dispatch intent stays — see the
+`row fsynced before dispatch` invariant in `IMPROVEMENT_PLAN_2026H2.md` and the
+restart-reconciliation flow in `docs/agent/README.md`.
+
+§3.3a has the full table, including that `ACTION="Alter"` with a `REMOTEID` creates a duplicate —
+inverted from intuition. **That is a reason not to use `Alter`, not a reason to use `Create` as a
+correction path:** every correction sends a *different* payload, and changed-payload behaviour is
+UNVERIFIED (below). This section prescribes no correction path.
+
+**The `REMOTEID` *attribute* does not echo the client key on the one path where this was checked.**
+§3.3a records that Tally overwrites the attribute with its own value; what came back was a
+*company-GUID + master-id* pair. The committed capture
+`src-tauri/crates/bridge-tally-protocol/tests/fixtures/agent/native-namespaced-journal.utf16le.xml`
+shows a voucher Bridge imported returning
+`REMOTEID="61c6de69-1748-461c-ad3f-162cb949df9f-00000005"` where the client key was
+`9c8d8de4-…`.
+
+**Be precise about which field.** The client key is *not* absent from that response — the same
+capture returns
+`<NARRATION>… [BRIDGE:9c8d8de4-c06c-847b-8309-60ba702bf663]</NARRATION>`, and §9.8 records that the
+`REMOTEID` and the narration marker were the same batch-derived UUID. So the observation is
+field-specific: **the attribute is overwritten; a marker you place in a field Tally does not own
+survives.** Stating it as "the client key appears nowhere" would contradict a byte-level check of
+the very capture cited.
+
+On that path, then, the client value is **stored and matched for upsert** while not being readable
+back *through that attribute*, and a readback comparing the returned `REMOTEID` against the one you
+sent rejects a legitimate import.
+
+Whether the client key also works as a **`Delete`** selector is a separate question and is
+**UNVERIFIED here**: §9.7's Delete row was measured on this document's Edit Log 7.0 Educational
+baseline (§0), not on a licensed instance, and not by client key on these voucher types. Do not
+read "usable as a key" into it.
+
+**Scope: one Silver 7.1 Journal readback. PARTIAL.** Whether another voucher type, request shape or
+Tally version preserves the client value is **UNVERIFIED**. Do not generalise this into a rule that
+the attribute is never useful — on a release that did preserve it, that rule would discard real
+identity evidence. Check what your own readback returns before relying on it either way.
+
+**Do not replace attribution with a content fingerprint.** The obvious substitute — confirm the
+voucher by date, ledger entries and amount — is not an attribution key: a company holding a
+recurring or duplicate same-day payment already contains a voucher with that tuple, so a
+pre-existing voucher can stand in for a write that never happened. Bridge's own verifier treats a
+fingerprint-only match as `matching_content_observed` and reaches `posted_verified` only through a
+narration-tagged match, with pre-import boundary and identity checks around it
+(`src-tauri/src/agent_import.rs`).
+
+**Carry a marker in a field Tally does not rewrite** — which is what the capture above shows
+working, and why Bridge's verifier is built on the narration tag rather than on the attribute.
+
+**§9.8's scope limit still applies to all of the above.** The exact-file repeat was measured on the
+licensed **Journal** path; §9.8 says explicitly that it does not establish other request shapes,
+other voucher types, or universal `REMOTEID` semantics. Treat upsert-on-repeat as verified for
+Journal and **UNVERIFIED elsewhere**.
+
+**Qualifying another voucher type takes a captured response, not a count.** A repeat that was
+rejected, or whose transport failed before Tally processed it, also leaves the voucher count at
+one — so "re-import and check the count" can promote semantics that were never exercised. Match
+what §9.8 required of the Journal evidence: a captured response showing `CREATED=0, ALTERED=1`
+with every failure counter zero, plus a readback proving it is the **same object** (unchanged GUID
+and master ID), and only then record the type as qualified.
+
+**Changed payloads are a separate, untested case.** Everything above is a *byte-identical* repeat.
+`IMPLEMENTATION_GUIDE.md` §3.3a's own untested list includes "when the payload differs from the
+original (partial update semantics)". So a corrected voucher re-sent under the same `REMOTEID` may
+overwrite, may partially update, or may duplicate: **UNVERIFIED**. Do not prescribe re-import as a
+correction path on that basis. Delete by `REMOTEID` and create afresh is the path with the
+better evidence, but read §9.7's boundary before treating it as settled: the Delete row in that
+matrix belongs to this document's **Edit Log 7.0 Educational** baseline (§0), which qualifies
+nothing for licensed standard TallyPrime.
+
+**But §9.12b does.** A one-sided invoice voucher was removed on a **licensed TallyPrime 7.1 Gold**
+book with `ACTION="Delete"` keyed by the **client-supplied** `REMOTEID`, and a corrected voucher
+created in its place. So the delete is confirmed on Gold for that voucher shape, and reading only
+§9.7 here would give a Gold implementer the opposite of what this document already establishes
+five sections later.
+
+Scope it precisely rather than in either direction, and mind what §9.12b actually is:
+**§9.12 is marked PARTIAL — a hand import through the desktop UI, which produces no gateway
+response at all.** So §9.12b establishes a **stored-state** effect on licensed Gold for an invoice
+voucher: the voucher was gone afterwards. It does not establish the gateway path, and by this
+section's own requirement below it cannot — there is no delete response to show `DELETED=1` with
+clean counters.
+
+So the two measurements cover different halves and neither covers the third case:
+
+- **Gateway, Edit Log 7.0 Educational — VERIFIED.** §9.7's Voucher/Delete cell is `DELETED=1`
+  keyed by `REMOTEID`, read back and confirmed. That *is* the gateway path, and it is the working
+  correction primitive for anyone targeting that environment.
+- **Stored state, licensed 7.1 Gold — confirmed via the UI (§9.12b).** The voucher was gone
+  afterwards. No gateway response exists to corroborate it.
+- **Gateway on a licensed SKU — UNVERIFIED**, on Gold and on the Silver/Journal profile this
+  section is about alike. §9.7 does not reach it because its baseline is Educational; §9.12b does
+  not reach it because a UI import returns nothing.
+
+Say which of the three you are standing on. "Delete works" is true in two of them and unproven in
+the one a licensed integration actually runs in.
+
+**Qualifying it on a new SKU or voucher type takes more than "read one voucher back".** A single
+read cannot tell *the original is gone* from *my read did not cover it*: an incomplete, failed or
+mis-scoped read looks exactly like a successful delete, and finding the **replacement** proves
+nothing about the original. If the delete silently failed and the create succeeded, both vouchers
+are in the book and a naive check qualifies the path for the next batch. What it takes:
+
+- the delete's **own response**, showing `DELETED=1` with every failure counter zero — not the
+  create's;
+- a **company-pinned** read of the same date range before and after, complete enough that an empty
+  result is distinguishable from an unfiltered one (read a range you know holds other vouchers, and
+  confirm those still come back);
+- the voucher count moving by exactly the expected amount across the pair.
 
 ### 9.4 Master re-create is a silent Alter
 
@@ -747,6 +900,118 @@ establish that every omitted ledger field is preserved on every Tally version or
 synthetic read responses and the exact native master/balance/group responses are retained in
 the repository's `master_fields_lab` fixtures; every request in the lab run was bracketed by a
 200 `/status` response and every write was explicitly scoped to the lab company.
+
+### 9.4b Master-name matching: case- and separator-insensitive, otherwise exact
+
+**VERIFIED 2026-07-30** — recorded in `IMPLEMENTATION_GUIDE.md` §3.3a's sibling §3.3b since then,
+and promoted here because it is observed gateway behaviour and this document is where behaviour
+lives. Measured against a ledger named `BRIDGE-PROBE-LEDGER-A` and one named `ZZ Ram & Sons Pvt Ltd`:
+
+| Supplied name | Result |
+| --- | --- |
+| exact | **matched** |
+| lowercase | **matched** |
+| trailing space | **matched** |
+| `BRIDGE PROBE LEDGER A` (hyphens → spaces) | **matched** |
+| `ZZ Ram AND Sons Pvt Ltd` (`AND` for `&`) | **rejected** |
+| `ZZ Ram & Sons` (missing suffix word) | **rejected** |
+| `ZZ Ram & Son Pvt Ltd` (singular for plural) | **rejected** |
+| entirely different name | **rejected** |
+
+Tally folds **ASCII case**, and accepted a **space supplied where the master carries a hyphen**. It
+is otherwise **exact on letters**.
+
+**That separator result is directional.** The measurement sent `BRIDGE PROBE LEDGER A` against a
+master named `BRIDGE-PROBE-LEDGER-A`. The reverse — supplying `A-B` against a master named `A B` —
+was never sent, and a fold treating the two as interchangeable would substitute a name Tally might
+reject.
+
+Stated that narrowly on purpose. "Normalises separators" reads as *separators generally*, and a
+skimming implementer folds underscores, slashes and en dashes together — binding a voucher to the
+wrong ledger. One separator was measured, in one direction. The table below marks every row.
+
+> **RULE: wherever the question is "will Tally treat these as the same master?", compare on a
+> canonical form — never on string equality, and never on a looser fold.**
+
+**What that canonical form may safely contain, and what it may not.** Only three transformations
+were measured: ASCII case folding, **one** trailing space, and a hyphen matching a single space.
+A fold is only as safe as its least-verified step, and every step beyond those three can merge
+names Tally keeps apart — which posts to the wrong account, silently.
+
+| Transformation | State |
+| --- | --- |
+| ASCII case folding | **VERIFIED** — lowercase matched |
+| supplying a **space** where the master has a **hyphen** | **VERIFIED** — `BRIDGE PROBE LEDGER A` matched `BRIDGE-PROBE-LEDGER-A` |
+| supplying a **hyphen** where the master has a **space** | **UNVERIFIED** — the reverse direction was never sent |
+| one trailing space ignored | **VERIFIED** |
+| *leading* whitespace ignored | **UNVERIFIED** |
+| runs of internal whitespace collapsed to one | **UNVERIFIED** — only a single space was tested |
+| non-ASCII case folding (Devanagari, Tamil, Bengali, Turkish dotted I) | **UNVERIFIED** |
+| any other separator (underscore, en dash, `/`) treated as a space | **UNVERIFIED** |
+
+A fold implementing only the verified three is safe in the direction that matters: it may *fail to
+match* a pair Tally would accept, which surfaces as a refusal a human sees. Adding the unverified
+ones risks the opposite — a silent match onto a different ledger. Qualify each independently
+before folding it in, and note that the demo company this project reads carries ledgers in three
+non-Latin scripts, so the case-folding row is reachable rather than theoretical.
+
+> **RULE: prefer an exact spelling, and refuse an ambiguous fold. Never pick one.** The fold tells
+> you which masters are *candidates*; it does not tell you which one Tally would choose, and one
+> successful alternate-spelling experiment does not establish that a catalogue cannot hold both
+> `A-B` and `A B`. Those collapse together here, and nothing measured says what happens then.
+
+Bridge's own resolver encodes the **ambiguity discipline** to copy
+(`src-tauri/src/agent.rs`): take the exact spelling if a candidate is exactly what was requested;
+none is `ledger_not_found`; and **more than one is `ledger_ambiguous` — an error, not a choice.** A
+comparison that returns the first match is the failure this rule exists to prevent.
+
+**Copy its discipline, not its fold.** That resolver's `ledger_lookup_key` keeps only alphanumerics,
+which is *looser* than anything §3.3b measured — it drops `&` outright, so `A & B` and `AB` share a
+key.
+
+Be exact about what was and was not tested there, because I was not. §3.3b sent
+`ZZ Ram AND Sons Pvt Ltd` against `ZZ Ram & Sons Pvt Ltd` and it was **rejected** — that tested
+*replacing* `&` with the letters `AND`. **Nobody has tested deleting `&`**, so whether Tally treats
+`A & B` and `AB` as the same master is **UNVERIFIED**.
+
+That cuts both ways and the rule below is written for it: a loose fold might merge masters Tally
+keeps apart, or it might not, and neither is established. Resolving automatically on an untested
+equivalence is the part that is unsafe — not the equivalence itself.
+
+That loosening creates a hole the ambiguity rule cannot close, because **a sole candidate under a
+loose fold is not a resolution.** Ask for `A & B` in a catalogue holding only `AB` and there is
+exactly one candidate, no ambiguity to refuse, and the write goes to a master Tally would not have
+matched. Uniqueness under a fold is only as meaningful as the fold.
+
+> **RULE: resolve automatically only on an exact spelling, or on a fold no looser than §3.3b.** A
+> looser fold may *suggest* — it is a good way to surface "did you mean?" — but its output is a
+> candidate for a human to confirm, never a binding.
+
+Both directions are live hazards, and they fail in opposite ways:
+
+- **Too strict** (plain `==`) silently rejects a name Tally would have accepted. A binder that
+  compared exactly refused **16 of 16** hyphenated masters on a real book, all of them near-misses
+  it should have bound; and a tool comparing its suspense ledger exactly posted to suspense while
+  reporting the row as resolved, dropping it from the very report it existed to appear in.
+- **Too loose** (stripping every non-alphanumeric, say) merges masters Tally keeps apart — `A & B`
+  and `AB` are different ledgers. A fold used for *lookup* may be looser than this deliberately, but
+  it must then refuse an ambiguous result rather than pick one.
+
+**Consequence for anything that generates a file.** Abbreviation, symbol expansion and
+pluralisation are **not** normalised away: `AND` for `&`, a missing suffix word and a singular for a
+plural are all rejected. Those have to be resolved *before* the file is generated — no amount of
+comparison at write time recovers a name the operator shortened.
+
+**Scope — and it is narrower than the promotion made it look.** This measurement is inherited from
+`IMPLEMENTATION_GUIDE.md` §3.3b, dated 2026-07-30, which belongs to this document's §0 baseline:
+**TallyPrime Edit Log 7.0 in Educational mode.** Not licensed, not standard TallyPrime. I first
+wrote "one licensed instance" here, which would have let a reader treat master-name matching as
+qualified on the SKU they are actually writing to.
+
+So: **ledgers, on Edit Log 7.0 Educational. Licensed and standard TallyPrime are UNVERIFIED.**
+Whether stock items, groups and voucher types match by the same rule is UNVERIFIED too, and §3.3b
+says nothing about voucher numbers — a fold shared between master names and voucher numbers is
+assuming something nobody has measured.
 
 ### 9.5 Identity after write
 
