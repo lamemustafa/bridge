@@ -241,6 +241,27 @@ mod tests {
     }
 
     #[test]
+    fn nested_markup_in_a_classification_scalar_is_refused() {
+        // <GSTDUTYHEAD><VALUE>CGST</VALUE></GSTDUTYHEAD> flattened to "CGST" and was
+        // released as a recognised duty head. A field that only ever carries a scalar,
+        // and whose value drives a classification, must fail at the boundary on an
+        // unexpected shape rather than become compliance data.
+        for (field, nested) in [
+            ("GSTDUTYHEAD", "<GSTDUTYHEAD><VALUE>CGST</VALUE></GSTDUTYHEAD>"),
+            ("TAXTYPE", "<TAXTYPE><VALUE>GST</VALUE></TAXTYPE>"),
+        ] {
+            let response = format!(
+                "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><CMPINFO><LEDGER>1</LEDGER></CMPINFO><COLLECTION><LEDGER NAME=\"Nested\" RESERVEDNAME=\"\"><GUID>{COMPANY_GUID}-00000044</GUID><BRIDGECOMPANYGUID>{COMPANY_GUID}</BRIDGECOMPANYGUID><MASTERID>68</MASTERID><ALTERID>68</ALTERID><PARENT>Duties &amp; Taxes</PARENT>{nested}<OPENINGBALANCE>0.00</OPENINGBALANCE><LANGUAGENAME.LIST><NAME.LIST><NAME>Localized Nested</NAME></NAME.LIST></LANGUAGENAME.LIST></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>"
+            );
+            assert!(
+                parse_native_party_ledger_master_records_with_evidence(&response, COMPANY_GUID)
+                    .is_err(),
+                "nested markup in {field} must be refused, not flattened"
+            );
+        }
+    }
+
+    #[test]
     fn a_duty_head_on_a_non_gst_ledger_is_contradictory_not_recognised() {
         // <TAXTYPE>Others</TAXTYPE><GSTDUTYHEAD>CGST</GSTDUTYHEAD> is a response
         // contradicting itself. Classifying head-first recognised it and never

@@ -204,6 +204,11 @@ pub struct PartyLedgerMasterFields {
 /// Tally's vocabulary is deliberately not normalised: for example, the state
 /// head is `"State Tax"`, not `"SGST"`. `raw` therefore remains exactly as
 /// returned, and any value outside the measured set is surfaced explicitly.
+///
+/// The measured spellings, the `TAXTYPE` interaction and its four states, the two
+/// wire shapes of absence, and the instance scope are recorded in
+/// `docs/tally/TALLY_PROTOCOL_REFERENCE.md` §8.3. That section is canonical; this
+/// type implements it and should not become a second account of the protocol.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "observation", rename_all = "snake_case")]
 pub enum GstDutyHeadObservation {
@@ -3064,14 +3069,14 @@ fn parse_native_ledger_collection_row_with_master_fields(
                     &mut master_fields_seen,
                     &mut master_fields.address,
                 )?,
-                b"TAXTYPE" => retain_party_ledger_master_field(
+                b"TAXTYPE" => retain_party_ledger_master_scalar(
                     reader,
                     &child,
                     retain_master_fields,
                     &mut master_fields_seen,
                     &mut master_fields.tax_type,
                 )?,
-                b"GSTDUTYHEAD" => retain_party_ledger_master_field(
+                b"GSTDUTYHEAD" => retain_party_ledger_master_scalar(
                     reader,
                     &child,
                     retain_master_fields,
@@ -3249,6 +3254,82 @@ struct ParsedNativeLedgerCollectionRow {
     identities: ParsedSourceIdentities,
     alter_id: Option<String>,
     response_company_guid: Option<String>,
+}
+
+/// Read a scalar that must be a scalar: any child element is a malformed response.
+///
+/// `read_flattened_optional_text` counts nesting depth and keeps collecting text, so
+/// `<GSTDUTYHEAD><VALUE>CGST</VALUE></GSTDUTYHEAD>` flattens to `CGST` and is released
+/// as a recognised duty head. For a field that only ever carries a scalar, and whose
+/// value drives a classification, an unexpected shape has to fail at the boundary
+/// rather than become compliance data.
+///
+/// Used for `TAXTYPE` and `GSTDUTYHEAD`, the two inputs to
+/// [`GstDutyHeadObservation::from_observations`]. The other retained master fields keep
+/// the flattening reader: they are recorded, not classified, and narrowing them is a
+/// separate decision from this one.
+fn read_scalar_rejecting_nested_markup(
+    reader: &mut Reader<&[u8]>,
+    name: QName<'_>,
+) -> anyhow::Result<Option<String>> {
+    let expected = name.as_ref().to_ascii_uppercase();
+    let mut parts = Vec::new();
+    loop {
+        match reader.read_event()? {
+            Event::Start(child) | Event::Empty(child) => {
+                let child = String::from_utf8_lossy(child.name().as_ref()).to_ascii_uppercase();
+                anyhow::bail!(
+                    "party/ledger master scalar contained nested markup <{child}>"
+                );
+            }
+            Event::Text(text) => {
+                let decoded = text.decode()?;
+                let value = quick_xml::escape::unescape(&decoded)?;
+                let value = value.trim();
+                if !value.is_empty() {
+                    parts.push(value.to_owned());
+                }
+            }
+            Event::CData(text) => {
+                let value = text.decode()?;
+                let value = value.trim();
+                if !value.is_empty() {
+                    parts.push(value.to_owned());
+                }
+            }
+            Event::End(end) => {
+                if end.name().as_ref().to_ascii_uppercase() != expected {
+                    anyhow::bail!("party/ledger master field closed unexpectedly");
+                }
+                break;
+            }
+            Event::Eof => anyhow::bail!("party/ledger master field ended before it closed"),
+            _ => {}
+        }
+    }
+    Ok((!parts.is_empty()).then(|| parts.join("\n")))
+}
+
+/// Retain a classification-driving field, refusing nested markup. See
+/// [`read_scalar_rejecting_nested_markup`].
+fn retain_party_ledger_master_scalar(
+    reader: &mut Reader<&[u8]>,
+    element: &quick_xml::events::BytesStart<'_>,
+    retain: bool,
+    seen: &mut HashSet<Vec<u8>>,
+    target: &mut PartyLedgerMasterFieldObservation,
+) -> anyhow::Result<()> {
+    validate_only_attributes(element, &[b"TYPE"])?;
+    let name = element.name();
+    let key = name.as_ref().to_ascii_uppercase();
+    if !seen.insert(key) {
+        anyhow::bail!("native ledger row repeated a party/ledger master field");
+    }
+    let value = read_scalar_rejecting_nested_markup(reader, name)?;
+    if retain {
+        *target = PartyLedgerMasterFieldObservation::Returned(value.unwrap_or_default());
+    }
+    Ok(())
 }
 
 fn retain_party_ledger_master_field(

@@ -697,6 +697,61 @@ typed `On Account` rows sat inside the curated side's "(none)" pile, the tallies
 and the conclusion published was "identical". A comparison whose categories can absorb the
 difference cannot detect the difference — count the absent case as its own bucket.
 
+### 8.3 GST duty head — the vocabulary is irregular and `TAXTYPE` qualifies it — **VERIFIED 2026-09-12; single instance**
+
+**Scope: TallyPrime 7.1 Silver, licensed, one company, 28 ledger masters.** Captured from
+`List of Ledgers` with `FETCH … TAXTYPE, GSTDUTYHEAD`, retained as
+`tests/fixtures/agent/native-ledger-masters-duty-heads.utf16le.xml`.
+
+**The measured vocabulary, verbatim on the wire:**
+
+| `GSTDUTYHEAD` | meaning |
+| --- | --- |
+| `CGST` | central tax |
+| `IGST` | integrated tax |
+| `State Tax` | state tax — **NOT** `SGST` |
+| `UT Tax` | union-territory tax |
+| `Cess` | cess |
+
+`SGST` never appears. The state head is spelled `State Tax`, which is why the set is enumerated
+rather than pattern-matched, and why an unrecognised spelling is surfaced with its raw value
+instead of being normalised into a neighbour.
+
+**`TAXTYPE` qualifies the head and the two can contradict.** Four states, and all four are
+distinguishable only because both fields are read:
+
+| `TAXTYPE` | `GSTDUTYHEAD` | classification |
+| --- | --- | --- |
+| `GST`, or not observed | one of the five | recognised |
+| `GST`, or not observed | anything else, non-empty | unrecognised, raw value retained |
+| observed, non-`GST` (e.g. `Others`) | absent or empty | not a tax ledger |
+| observed, non-`GST` | non-empty | **contradictory — neither is asserted** |
+
+The last row is a response contradicting itself. Classifying head-first recognises it and never
+consults `TAXTYPE`, which releases the contradiction as valid compliance data. Only an **observed**
+non-`GST` tax type contradicts: an absent or empty `TAXTYPE` is not evidence that the ledger is
+non-GST, and treating it as such would refuse real GST ledgers on any version that omits the field.
+
+**Absence has two wire shapes and they mean the same thing.** This instance **omits**
+`GSTDUTYHEAD` entirely for non-GST ledgers — 0 self-closing elements across 28 masters — while a
+committed capture elsewhere in the repository carries `<GSTDUTYHEAD/>`. A reader that treats only
+one shape as absent classifies ordinary ledgers wrongly on the other.
+
+**Nested markup is refused, not flattened.** A scalar reader that counts depth and concatenates
+child text turns `<GSTDUTYHEAD><VALUE>CGST</VALUE></GSTDUTYHEAD>` into a recognised `CGST`. Both
+fields here are read with a scalar reader that rejects any child element, because an unexpected
+response shape must fail at the boundary rather than become compliance data.
+
+**The head is settable at CREATE and silently not settable at ALTER.** Measured both ways. An
+`ACTION="Create"` master import carrying `TAXTYPE` and `GSTDUTYHEAD` returns `CREATED=2 ALTERED=0
+ERRORS=0` and the values read back set. An `ACTION="Alter"` against an existing ledger returns
+`ALTERED=1 ERRORS=0` — a success — and the field stays empty. An earlier note of ours recorded only
+the second and concluded the head "cannot be set by import", which was an alter-time observation
+written as an import-time rule.
+
+**Not established:** whether these five spellings hold across Tally versions or localisations. The
+capture is one instance. An unrecognised value is therefore surfaced, never guessed.
+
 ## 9. Writes (import)
 
 **VERIFIED.** Writes succeed on **Education mode** — the restriction is on the *voucher date*

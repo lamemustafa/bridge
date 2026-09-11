@@ -29,7 +29,9 @@ and why that order matters are in the
 [release process](../../release-process.md#compatibility-surface-reseal).
 `seal-surface` alone never reads the repository, so using it before rehashing
 would preserve stale file pins under a fresh manifest digest. CI validates this
-evidence boundary; it does not reseal changed sources.
+evidence boundary; it does not reseal changed sources. Changing the pin set
+itself is the one exception to that ordering -- see
+[Adding or removing a pin](../../release-process.md#adding-or-removing-a-pin).
 
 An evidenced `observed`, `supported`, or `unsupported` cell requires all of the
 following:
