@@ -663,6 +663,24 @@ fn a_masked_value_identifies_nothing() {
     );
     // Distinct letters are what an identity-bearing code has and a mask does not.
     assert_eq!(entity("Item PH01AB00").identifiers().len(), 1);
+
+    // A mask spelled with punctuation reaches the numeric branch instead, where
+    // every non-digit is an ordinary delimiter — so `********12345678` split
+    // cleanly and offered its visible suffix as though it were the account.
+    for masked in ["Purchases ********12345678", "Purchases ####12345678"] {
+        assert!(
+            entity(masked).identifiers().is_empty(),
+            "{masked} exposed its suffix as an identifier"
+        );
+    }
+    let punctuated = ledgers(&["Sales ********12345678", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&punctuated, "Purchases ********12345678").bound_name(),
+        None
+    );
+    // Ordinary punctuation around a whole number is not a mask.
+    assert_eq!(entity("Party (5550001001)").identifiers().len(), 1);
+    assert_eq!(entity("Party 5550001-002").identifiers().len(), 1);
 }
 
 #[test]
