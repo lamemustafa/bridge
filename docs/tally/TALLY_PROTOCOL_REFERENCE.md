@@ -877,11 +877,31 @@ lives. Measured against a ledger named `BRIDGE-PROBE-LEDGER-A` and one named `ZZ
 | `ZZ Ram & Son Pvt Ltd` (singular for plural) | **rejected** |
 | entirely different name | **rejected** |
 
-Tally normalises **case and separators**, and is otherwise **exact on letters**. The canonical form
-is therefore: upper-case, hyphen becomes space, collapse whitespace, trim.
+Tally normalises **case and separators**, and is otherwise **exact on letters**.
 
-> **RULE: wherever the question is "will Tally treat these as the same master?", compare on that
+> **RULE: wherever the question is "will Tally treat these as the same master?", compare on a
 > canonical form — never on string equality, and never on a looser fold.**
+
+**What that canonical form may safely contain, and what it may not.** Only three transformations
+were measured: ASCII case folding, **one** trailing space, and a hyphen matching a single space.
+A fold is only as safe as its least-verified step, and every step beyond those three can merge
+names Tally keeps apart — which posts to the wrong account, silently.
+
+| Transformation | State |
+| --- | --- |
+| ASCII case folding | **VERIFIED** — lowercase matched |
+| hyphen ⇄ single space | **VERIFIED** — `BRIDGE PROBE LEDGER A` matched `BRIDGE-PROBE-LEDGER-A` |
+| one trailing space ignored | **VERIFIED** |
+| *leading* whitespace ignored | **UNVERIFIED** |
+| runs of internal whitespace collapsed to one | **UNVERIFIED** — only a single space was tested |
+| non-ASCII case folding (Devanagari, Tamil, Bengali, Turkish dotted I) | **UNVERIFIED** |
+| any other separator (underscore, en dash, `/`) treated as a space | **UNVERIFIED** |
+
+A fold implementing only the verified three is safe in the direction that matters: it may *fail to
+match* a pair Tally would accept, which surfaces as a refusal a human sees. Adding the unverified
+ones risks the opposite — a silent match onto a different ledger. Qualify each independently
+before folding it in, and note that the demo company this project reads carries ledgers in three
+non-Latin scripts, so the case-folding row is reachable rather than theoretical.
 
 Both directions are live hazards, and they fail in opposite ways:
 
