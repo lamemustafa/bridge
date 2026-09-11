@@ -114,7 +114,14 @@ def _split_tokens(text):
 # Excluding X makes an X in a replacement mean exactly one thing — the source
 # was masked there — so the shapes no longer compete.
 ALPHA = "ZQVWKJYBGFHLMNPRSTDC"
-ENTITY = re.compile(r"&(?:amp|lt|gt|quot|apos|#\d+|#x[0-9A-Fa-f]+);")
+# Markup escapes: syntax, held out and restored untouched.
+STRUCTURAL_ENTITY = re.compile(r"&(?:amp|lt|gt|quot|apos);")
+# Character references: content, decoded and then fabricated like any other text.
+NUMERIC_ENTITY = re.compile(r"&#(?:(\d+)|[xX]([0-9A-Fa-f]+));")
+# Decoding a reference can put a raw `&`, `<` or `>` back into the text — `&#38;`
+# is an ampersand — and writing one out unescaped produces a file that is no
+# longer XML. Separators are emitted through this.
+XML_ESCAPES = {"&": "&amp;", "<": "&lt;", ">": "&gt;"}
 _seen = {}
 _taken = set()
 # Every token the capture itself contains, collected before any allocation.
@@ -151,9 +158,9 @@ def reserve_source_tokens(text):
     to know the whole input before it issues the first replacement. That is why
     `main` makes a pass over the kept words before it scrubs any of them.
     """
-    for is_token, piece in _split_tokens(text):
+    for is_token, piece in _split_tokens(_decode_numeric_entities(text)):
         if is_token and len(piece) >= IDENTIFYING_LENGTH:
-            _source.add(piece)
+            _source.add(piece.upper())
 
 
 def _shape_of(token):
@@ -235,11 +242,21 @@ def _fake_token(token):
             digits //= len(alphabet)
         index += 1
         built = "".join(built)
+        # Distinctness is judged **case-folded**, because that is how the reader
+        # of these fixtures judges it. `bank_statement_import._key` upper-cases a
+        # counterparty name before matching, so `ZZZZZ` and `zzzzz` are one
+        # mapping row — and with a counter per exact shape, the first all-upper
+        # and the first all-lower token of a length both landed on the alphabet's
+        # first letter. `ALPHA` and `bravo` became `ZZZZZ` and `zzzzz`, two
+        # counterparties that collapse downstream while `_taken` called them
+        # distinct. Folding here makes this file agree with the only definition
+        # of "the same party" that matters.
         # Three ways a candidate is unusable, and they are different failures:
         # equal to this token, or to any other token the capture contains, means
         # customer text would sit in the fixture verbatim; already taken means
         # two counterparties would merge.
-        if built != token and built not in _source and built not in _taken:
+        folded = built.upper()
+        if built != token and folded not in _source and folded not in _taken:
             candidate = built
             break
     if candidate is None:
@@ -258,22 +275,51 @@ def _fake_token(token):
         )
     _next[shape] = index
     _seen[token] = candidate
-    _taken.add(candidate)
+    _taken.add(candidate.upper())
     return candidate
 
 
+def _decode_numeric_entities(text):
+    """`&#2358;` is a customer's letter wearing an ASCII costume.
+
+    A numeric character reference **is content** — it is how `pdftotext` writes
+    a character it will not emit as a raw byte, which is precisely the exotic
+    ones. Holding it out as though it were syntax copied it through: measured,
+    `scrub('&#2358;&#2381;&#2352;&#2368; TRADERS')` returned the whole
+    Devanagari name unchanged. Worse, that leak is **invisible to a scan for
+    non-ASCII characters**, because every byte in the output really is ASCII,
+    so the artefact check over the committed fixtures reported them clean.
+
+    Decoding first puts the real character into the token stream, where the
+    ordinary rules fabricate it. One reference becomes one replacement
+    character, which is also what the bbox geometry was measured against.
+    """
+    def one(match):
+        digits, hexits = match.groups()
+        try:
+            return chr(int(digits or hexits, 10 if digits else 16))
+        except (ValueError, OverflowError):
+            return match.group(0)  # not a character; leave it for the eye
+    return NUMERIC_ENTITY.sub(one, text)
+
+
 def scrub(text):
-    """Sanitise one word's text, preserving XML entity syntax.
+    """Sanitise one word's text, preserving XML *syntax*.
 
     `&amp;` is one character in the document and four in the file. Splitting on
     non-alphanumerics treats `amp` as customer text and rewrites the word to
     something like `Z&qqq;X` — no longer valid bbox XML, and no longer the
-    parsing behaviour the real bytes exercise. Entities are held out, the text
-    around them is scrubbed, and they go back exactly as they were.
+    parsing behaviour the real bytes exercise. The five named entities are held
+    out, the text around them is scrubbed, and they go back exactly as they
+    were.
+
+    Only those five. They are markup escapes and carry no information about the
+    customer. A numeric reference is the opposite — see above.
     """
-    parts = ENTITY.split(text)
+    text = _decode_numeric_entities(text)
+    parts = STRUCTURAL_ENTITY.split(text)
     if len(parts) > 1:
-        entities = ENTITY.findall(text)
+        entities = STRUCTURAL_ENTITY.findall(text)
         out = [_scrub_plain(parts[0])]
         for entity, rest in zip(entities, parts[1:]):
             out.append(entity)
@@ -307,10 +353,14 @@ def _scrub_plain(text):
         elif is_token:
             out.append(_fake_token(piece))
         else:
-            # Separators only: punctuation, spaces, symbols. Nothing reaches
-            # this branch that could be a name, which is the whole change —
-            # previously an Indic name arrived here and was passed through.
-            out.append(piece)
+            # ASCII punctuation and whitespace only. Nothing reaches this branch
+            # that could be a name, which is the whole change — previously an
+            # Indic name arrived here and was passed through.
+            #
+            # Re-escaped, because decoding a numeric reference can have put a
+            # raw `&`, `<` or `>` here and the output has to stay XML.
+            out.append("".join(XML_ESCAPES.get(character, character)
+                               for character in piece))
     return "".join(out)
 
 
@@ -340,10 +390,16 @@ BANNER_TEMPLATE = """<!--
   customer value replaced and the geometry untouched.
 
   What is real: the page size, every xMin/yMin/xMax/yMax, the word and line
-  breaks, the entity encoding, and the bank's own template vocabulary (column
-  headers, field labels, transaction-mode tags, the page footer). That is the
-  part a template change or a pdftotext change would break, and the part a
-  hand-written fixture cannot honestly reproduce.
+  breaks, the five named XML entities, and the bank's own template vocabulary
+  (column headers, field labels, transaction-mode tags, the page footer). That
+  is the part a template change or a pdftotext change would break, and the part
+  a hand-written fixture cannot honestly reproduce.
+
+  Numeric character references are NOT preserved. `&#2358;` is a customer's
+  letter written in ASCII, not markup — holding it out as syntax copied whole
+  names through, invisibly to any check that scans for non-ASCII bytes. Each
+  reference is decoded and then fabricated like the character it is, so one
+  reference becomes one replacement character and the geometry still holds.
 
   What is fabricated: every other token. Sanitisation is allowlist-only, so a
   token survives verbatim only if it is vocabulary the bank prints for every

@@ -23,6 +23,7 @@ import string
 import sys
 import tempfile
 import unicodedata
+import xml.etree.ElementTree
 
 sys.dont_write_bytecode = True  # a stale .pyc silently re-runs the old rule
 
@@ -63,6 +64,14 @@ def scrub_all(module, words):
     except SystemExit as stop:
         return values, f"exhausted after {len(values)} of {len(words)}: {stop}"
     return values, None
+
+
+def _wellformed(fragment):
+    try:
+        xml.etree.ElementTree.fromstring(fragment)
+    except xml.etree.ElementTree.ParseError:
+        return False
+    return True
 
 
 def leaked(source, output):
@@ -284,7 +293,7 @@ check(
 # or mark straight through, so an emoji in a merchant name reached the fixture.
 for label, text in [
     ("an emoji sequence", "\U0001F469\U0001F3FD‍\U0001F4BB Consulting"),
-    ("a symbol", "Cafe ☕ Ltd"),
+    ("symbol", "Cafe ☕ Ltd"),
     ("a soft hyphen inside a word", "AB­CD"),
     ("a non-breaking space", "AB CD"),
 ]:
@@ -301,6 +310,57 @@ for label, text in [
         len(out) == len(text),
         f"{len(text)} -> {len(out)}",
     )
+
+# Exotic characters reach a capture as **numeric character references**, because
+# that is how `pdftotext` writes what it will not emit as a raw byte. Held out as
+# though they were markup, they were copied through whole — and the leak is
+# invisible to every check that looks for non-ASCII bytes, because there are
+# none. These go through `scrub()`, not `_scrub_plain`, since the entity handling
+# is what is under test.
+for label, text, must_not_contain in [
+    ("symbol", "Cafe &#9749; Ltd", "&#9749;"),
+    ("whole Devanagari name", "&#2358;&#2381;&#2352;&#2368; TRADERS", "&#2358;"),
+    ("hex reference", "&#x0936;&#x0940; LTD", "&#x0936;"),
+]:
+    fresh = load()
+    out = fresh.scrub(text)
+    check(
+        f"an entity-encoded {label} is fabricated, not copied",
+        must_not_contain not in out and "&#" not in out,
+        f"{text!r} -> {out!r}",
+    )
+
+# The five named entities are markup, not content, and must survive exactly.
+fresh = load()
+out = fresh.scrub("A &amp; B")
+check("a named entity is still held out untouched", "&amp;" in out, f"-> {out!r}")
+
+# Decoding can put a raw `&` back into the text, and an unescaped one would stop
+# the fixture being XML at all.
+for text in ["&#38; alone", "&#60;tag&#62;", "&#99999999999999;"]:
+    fresh = load()
+    out = fresh.scrub(text)
+    check(
+        f"the output of {text!r} is still well-formed",
+        _wellformed(f"<word>{out}</word>"),
+        f"-> {out!r}",
+    )
+
+# Two counterparties must not merge under the rule the *reader* of the fixture
+# uses. `bank_statement_import._key` upper-cases before matching, so a
+# case-distinct pair of replacements is still one mapping row.
+fresh = load()
+upper, lower = fresh._scrub_plain("ALPHA"), fresh._scrub_plain("bravo")
+check(
+    "replacements stay distinct when case-folded",
+    upper.upper() != lower.upper(),
+    f"{upper!r} and {lower!r} are one key downstream",
+)
+check(
+    "...and each still carries its own case shape",
+    upper.isupper() and lower.islower(),
+    f"{upper!r} {lower!r}",
+)
 
 # A masked account is a convention, not data, and the parsers read the X run.
 out = m._scrub_plain("XXXXXXXX1234")
@@ -319,11 +379,17 @@ check("the digits behind an X run are replaced", out != "XXXXXXXX1234", f"-> {ou
 # Scoped to the `<word>` bodies, which is the captured document. The banner
 # above them is prose this repository wrote and it contains em dashes; checking
 # the whole file would fail on those and say nothing about the capture.
+#
+# **Entities are decoded first.** A scan for bytes above 127 is exactly the check
+# an entity-encoded leak walks past: `&#2358;&#2381;&#2352;&#2368;` is a whole
+# Devanagari name and every byte of it is ASCII. Without the decode this check
+# reported both fixtures clean while `scrub()` was copying such names through.
 WORD_BODY = re.compile(r"<word[^>]*>(.*?)</word>", re.S)
 for fixture in sorted(pathlib.Path(__file__).with_name("fixtures").glob("*-bbox-capture.xml")):
     bodies = WORD_BODY.findall(fixture.read_text(encoding="utf-8"))
     assert bodies, f"{fixture.name}: no words matched — this check is checking nothing"
-    exotic = sorted({c for body in bodies for c in body if ord(c) > 127})
+    exotic = sorted({c for body in bodies
+                     for c in m._decode_numeric_entities(body) if ord(c) > 127})
     check(
         f"{fixture.name} carries nothing non-ASCII ({len(bodies)} words)",
         not exotic,
