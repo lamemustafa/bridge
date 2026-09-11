@@ -78,11 +78,20 @@ Two residuals, both worth knowing:
    went** — a redirect heading. The citation still lands, and the reader gets to the replacement.
    Deleting the heading leaves them at a number that no longer exists, with nothing to follow.
 
-4. **A swap is caught even though both numbers still exist.** Exchange two numbers and presence
-   alone sees nothing wrong, while every citation to either now lands on the other's content. The
-   gate also checks whether a heading has turned up on a number the base had allocated to something
-   else *and* left one of its own behind — an exchange vacates as well as occupies, which is what
-   distinguishes it from an ordinary retitle.
+4. **Do not exchange two numbers. Nothing enforces this.** Swap them and both are still present,
+   so the gate sees nothing, while every citation to either lands on the other's content.
+
+   Catching it needs a section to be recognisable apart from its number, and the only candidate is
+   its title — which is mutable, and that is fatal rather than awkward: **a title moving from one
+   number to another is exactly what a swap and a legitimate retitle chain both look like.** Rename
+   `10 Alpha` to `10 Beta` and `20 Beta` to `20 Gamma` and `Beta` has vacated 20 and occupied 10,
+   with nothing moved.
+
+   Three attempts were made and each produced a false positive on a legitimate edit — firing on any
+   retitle; then blind to a swap of two sections whose titles each appear twice; then firing on the
+   retitle chain above. A gate that blocks legitimate documentation edits gets bypassed or switched
+   off, which costs more than the gap. So this is a **third residual**, alongside the stale green
+   check and the two unmerged PRs: known, written down, and not pretended away.
 5. **Claiming a number says nothing about Tally.** Whether the behaviour a section describes is
    verified, and to what scope, is settled in the reference itself and in its evidence blocks. The
    confidence markers are the reference's job and cannot be summarised anywhere else without

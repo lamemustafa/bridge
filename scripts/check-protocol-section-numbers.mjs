@@ -318,76 +318,32 @@ if (base) {
     );
   }
 
-  // Presence alone cannot see a **swap**: exchange two numbers and both are
-  // still there, while every citation to either now lands on the other's
-  // content. That needs a section to be recognisable independently of its
-  // number, and the only available handle is its title.
+  // **A pure swap is not detected, and this gate no longer tries.**
   //
-  // The test is not "is this title still at its number" — that fires on a
-  // retitle, which breaks nothing. It is: **did a base title turn up under a
-  // number that the base had already allocated to something else?** That is
-  // what a swap and a re-use look like, and a retitle looks like nothing,
-  // because a retitle only *removes* numbers from a title's set.
+  // Exchange two numbers and both are still present, so the check above sees
+  // nothing. Catching it needs a section to be recognisable apart from its
+  // number, and the only candidate is its title — which is mutable, and that
+  // is fatal rather than merely awkward: a title moving from one number to
+  // another is *exactly* what a swap and a legitimate **retitle chain** both
+  // look like. Rename `10 Alpha` to `10 Beta` and `20 Beta` to `20 Gamma`, and
+  // `Beta` has vacated 20 and occupied 10 without anything moving.
   //
-  // Working in sets rather than on a single number is what makes repeated
-  // titles safe, which two review findings here were about. An earlier version
-  // handled them by ignoring any title that was not unique on both sides —
-  // which quietly meant a swap of two sections whose titles each appear twice
-  // went undetected, with both numbers still present so the check above passed
-  // too. Nothing is discarded now.
-  const numbersByTitle = (scanned) => {
-    const byTitle = new Map();
-    for (const [number, found] of scanned) {
-      for (const one of found) {
-        const title = titleOf(one.text);
-        if (!byTitle.has(title)) byTitle.set(title, new Set());
-        byTitle.get(title).add(number);
-      }
-    }
-    return byTitle;
-  };
-  const wasAt = numbersByTitle(base.numbers);
-  const isAt = numbersByTitle(occurrences);
-  const allocated = new Set(base.numbers.keys());
-  const moved = [];
-  for (const [title, before] of wasAt) {
-    const now = isAt.get(title) ?? new Set();
-    // An exchange *vacates* as well as occupies. A title that only ever gains a
-    // number has not moved: retitling `20 Beta` to `20 Alpha` while `10 Alpha`
-    // stays puts `Alpha` at both 10 and 20, and neither number went anywhere —
-    // that is a retitle, which this gate exists to allow. Requiring a departure
-    // as well as an arrival is what separates the two, and without it the set
-    // comparison reintroduced the false positive it was meant to remove.
-    const vacated = [...before].filter((number) => !now.has(number));
-    if (!vacated.length) continue;
-    for (const number of now) {
-      // Not in this title's own base numbers, but allocated on the base to
-      // something else: this heading has taken over a merged number.
-      if (before.has(number) || !allocated.has(number)) continue;
-      moved.push({ title, number, vacated });
-    }
-  }
-  if (moved.length) {
-    failures.push(
-      `heading(s) now sitting on a section number the base gave to something ` +
-        `else, against ${base.ref}. That is a swap or a re-use: a citation to ` +
-        "that number now lands on different content. Leave merged numbers where " +
-        "they are and give new material a free one:\n" +
-        moved
-          .slice(0, MAX_REPORTED_NUMBERS)
-          .map(({ title, number, vacated }) => {
-            // Cap this list too: a title can sit under arbitrarily many numbers
-            // in a generated document, and `MAX_REPORTED_NUMBERS` above bounds
-            // the count of findings, not the width of any one of them.
-            const shown = vacated.slice(0, MAX_REPORTED_NUMBERS).map(short).join(", ");
-            const rest = vacated.length > MAX_REPORTED_NUMBERS
-              ? ` and ${vacated.length - MAX_REPORTED_NUMBERS} more`
-              : "";
-            return `    ${short(title)}: left ${shown}${rest}, now at ${short(number)}`;
-          })
-          .join("\n"),
-    );
-  }
+  // Three attempts, three false positives on legitimate edits, each found by
+  // review rather than by the attempt before it:
+  //
+  //   1. "is this title still at its number" — fired on any retitle;
+  //   2. the same, restricted to titles unique on both sides — blind to a swap
+  //      of two sections whose titles each appear twice, with no other check
+  //      behind it;
+  //   3. comparing each title's *set* of numbers, requiring one vacated — fires
+  //      on the retitle chain above.
+  //
+  // The information is not there. A gate that blocks legitimate documentation
+  // edits gets bypassed or switched off, which costs more than the gap it was
+  // closing, so this is a **documented residual** rather than a fourth attempt:
+  // `SECTION-REGISTER.md` names it alongside the other two things no file in
+  // the repository can see. Rule 2 there tells authors not to exchange numbers;
+  // nothing enforces it.
 } else {
   // Say so rather than passing quietly: a check that cannot run is not a check
   // that passed.

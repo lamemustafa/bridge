@@ -194,33 +194,29 @@ check(
   "absent here",
   "9.7",
 );
+// Titles move between numbers for entirely legitimate reasons, which is why
+// this gate no longer tries to detect a swap. Each of the three cases below was
+// a false positive in one of the three attempts, and each must now pass — the
+// last one is the residual that buys the other two.
 check(
-  "swapping two numbers is caught, though both numbers still exist",
+  "a retitle chain is allowed — Beta leaves 20 and arrives at 10, nothing moved",
+  (d) => swap(swap(d, "## 10 Alpha", "## 10 Beta"), "## 20 Beta", "## 20 Gamma"),
+  "passes",
+);
+check(
+  "exchanging two numbers is NOT detected — a documented residual, not a pass",
   (d) =>
     swap(
       swap(d, "## 9.7 Operation support matrix", "## 77.77 Operation support matrix"),
       "77.77 Stable title",
       "9.7 Stable title",
     ),
-  "a section number the base gave to something else",
-);
-// The swap above has unique titles. When *both* swapped titles also appear on
-// another section — `10 Alpha` / `11 Alpha` and `20 Beta` / `21 Beta` — an
-// implementation that protects itself from repeated titles by ignoring them
-// lets the exchange through, and the presence check cannot help because both
-// numbers are still there. Review found exactly this, and it is why the check
-// compares each title's *set* of numbers rather than a single one.
-check(
-  "swapping two numbers is caught even when both titles are repeated elsewhere",
-  (d) => swap(swap(d, "## 10 Alpha", "## 10 Beta"), "## 20 Beta", "## 20 Alpha"),
-  "a section number the base gave to something else",
-  "Alpha",
+  "passes",
 );
 
-// Retitling a section **to a title another section already has** puts that
-// title at two numbers without either number moving. An exchange vacates as
-// well as occupies, so requiring a departure is what tells the two apart —
-// without it the set comparison reintroduces the false positive it replaced.
+
+// Retitling a section to a title another section already has puts that title at
+// two numbers without either number moving.
 check(
   "retitling a section to a title another section already has is allowed",
   (d) => swap(d, "## 20 Beta", "## 20 Alpha"),
