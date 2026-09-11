@@ -721,9 +721,18 @@ do not infer missing evidence or resend it to obtain a cleaner receipt.
 
 ### 9.3 Voucher idempotency depends on `REMOTEID` — **this section's title used to say the opposite**
 
-**VERIFIED.** Re-sending an identical voucher payload with the same `VOUCHERNUMBER` created a
-**second voucher**. Tally does not dedupe on the voucher number. A crash-retry duplicates client
-data unless the integrator prevents it.
+**VERIFIED, on an automatically numbered voucher type.** Re-sending an identical voucher payload
+carrying the same `VOUCHERNUMBER` created a **second voucher**.
+
+Read that precisely, because the obvious paraphrase — "Tally does not dedupe on the voucher
+number" — is false in two directions. Under **automatic** numbering the supplied number is
+*discarded* (§9.8), so the two sends never shared a stored voucher number and nothing could have
+deduped on it. Under **Manual + `PREVENTDUPLICATES=Yes`**, §9.8 records that a repeated number is
+**cleanly rejected** — a qualified duplicate-rejection mechanism that a reader of this sentence
+would otherwise never look for.
+
+So: on the numbering method measured here, a crash-retry duplicates client data unless the
+integrator prevents it.
 
 **That measurement stands; the conclusion drawn from it did not.** This section was headed *"No
 natural idempotency for vouchers"*, and it was read — including by me, repeatedly — as saying no

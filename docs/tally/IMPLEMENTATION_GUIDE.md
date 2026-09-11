@@ -569,24 +569,43 @@ This is the mechanism the UDF experiments (§3.4a) were looking for and missed. 
 "no natural idempotency" finding (§3.4) used vouchers with **no** client `REMOTEID`, where
 Tally assigns its own — that was the uncontrolled variable.
 
-**Four properties, all verified:**
+**Three properties verified, one inferred and since withdrawn:**
 
-| Property | Behaviour |
-| --- | --- |
-| `ACTION="Create"` + existing `REMOTEID` | **Upsert** — `ALTERED=1`, no duplicate |
-| `ACTION="Alter"` + `REMOTEID` | **Creates a duplicate** — inverted from intuition; use `Create` |
-| Client `REMOTEID` readable afterwards | **No.** Tally overwrites the attribute with its own value (`bb8ad19e-…-00018c44`) |
-| Correction path | Re-import a corrected file with the same `REMOTEID`s and the earlier rows are **overwritten** |
+| Property | Behaviour | State |
+| --- | --- | --- |
+| `ACTION="Create"` + existing `REMOTEID`, **byte-identical** payload | **Upsert** — `ALTERED=1`, no duplicate | VERIFIED |
+| `ACTION="Alter"` + `REMOTEID` | **Creates a duplicate** — inverted from intuition | VERIFIED |
+| Client `REMOTEID` echoed in the returned **attribute** | **No.** Tally overwrites it with its own value (`bb8ad19e-…-00018c44`) | VERIFIED |
+| Re-importing a **corrected** file overwrites the earlier rows | — | **UNVERIFIED — see below** |
+
+**The correction row was never measured.** It was inferred from the byte-identical repeat, and a
+corrected file is by definition a *different* payload — which is the case the Untested list below
+has always named. It may overwrite, may partially update, or may duplicate. `TALLY_PROTOCOL_REFERENCE.md`
+§9.3 carries the same correction, and neither document now prescribes a correction path.
 
 **Consequences.**
 
-*Positive:* this gives real idempotency and a real correction path without a TDL plugin, without
-narration hacks, and without an outbox. For a generate-a-file-the-human-imports design it means
-re-running the same file is safe, and fixing a mistake is a re-import.
+*Positive:* this gives real duplicate prevention without a TDL plugin and without a UDF
+fingerprint. For a generate-a-file-the-human-imports design, **re-running the same file is safe.**
 
-*Negative:* because the client key is **not readable back**, you cannot audit which client
-identifier produced which voucher, and you cannot verify from a read that your key was honoured.
-Any proof-of-post claim must account for that — Tally's dedupe is trustworthy but opaque.
+*Not the outbox, and not the narration marker.* Both of those were listed here as unnecessary and
+neither is:
+
+- **The durable dispatch intent stays.** `REMOTEID` prevents a duplicate; it does not tell you,
+  after a crash, *what you sent*. A resend is only safe while the exact key and payload are still
+  on disk, which is what the `row fsynced before dispatch` invariant and the restart-reconciliation
+  flow in `docs/agent/README.md` are for.
+- **An independent attribution marker stays.** The returned *attribute* does not echo the client
+  key — but the key itself survives in any field Tally does not own. The committed capture
+  `fixtures/agent/native-namespaced-journal.utf16le.xml` returns it inside `NARRATION` as
+  `[BRIDGE:9c8d8de4-…]`, which is why Bridge's verifier reaches `posted_verified` only through a
+  narration-tagged match. A date/ledger/amount fingerprint is **not** a substitute: a recurring or
+  duplicate same-day payment already gives that tuple, so a pre-existing voucher stands in for a
+  write that never happened.
+
+*Negative:* because the attribute is not echoed, you cannot audit from that field which client
+identifier produced which voucher, and you cannot verify from it that your key was honoured. Any
+proof-of-post claim must account for that — carry your own marker in a field Tally leaves alone.
 
 **Untested:** whether `REMOTEID` dedupe holds across company boundaries, across a Tally restart,
 or when the payload differs from the original (partial update semantics). Also untested on
