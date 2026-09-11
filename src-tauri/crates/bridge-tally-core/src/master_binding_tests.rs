@@ -520,6 +520,11 @@ fn a_fiscal_period_label_is_not_an_identity_bearing_code() {
         // canonicalization strips, so the test has to see the raw token.
         "FY2025-26",
         "FY2025/26",
+        // The comparison key folds these dash variants; the period boundary
+        // has to admit the same set or the range fuses instead of splitting.
+        "FY2025\u{2013}26",
+        "FY2025\u{2014}26",
+        "2025\u{2013}2026",
         "2025-2026",
         "APR2025-MAR2026",
     ] {
@@ -701,9 +706,19 @@ fn a_masked_value_identifies_nothing() {
         bind_one_name(&punctuated, "Purchases ********12345678").bound_name(),
         None
     );
+    // A mask and the digits it hides are often written apart; that is the same
+    // statement, and reading tokens independently lost the relationship.
+    for separated in ["Purchases **** 12345678", "Purchases #### 12345678"] {
+        assert!(
+            entity(separated).identifiers().is_empty(),
+            "{separated} exposed its suffix as an identifier"
+        );
+    }
     // Ordinary punctuation around a whole number is not a mask.
     assert_eq!(entity("Party (5550001001)").identifiers().len(), 1);
     assert_eq!(entity("Party 5550001-002").identifiers().len(), 1);
+    // And a number following an ordinary word is untouched.
+    assert_eq!(entity("Invoice 5550001001").identifiers().len(), 1);
 }
 
 #[test]

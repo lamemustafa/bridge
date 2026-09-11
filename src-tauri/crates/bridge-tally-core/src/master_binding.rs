@@ -1231,7 +1231,17 @@ fn tokens_of(key: &str) -> BTreeSet<String> {
 /// discarding the identifier that pointed elsewhere.
 fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingError> {
     let mut identifiers = BTreeSet::new();
+    // A mask and the digits it hides are often written apart — `**** 12345678`
+    // is the same statement as `********12345678`, and reading tokens
+    // independently lost the relationship between them.
+    let mut previous_was_mask = false;
     for token in value.split(char::is_whitespace) {
+        if token.is_empty() {
+            continue;
+        }
+        let masked_here = is_mask_punctuated(token);
+        let masked = masked_here || previous_was_mask;
+        previous_was_mask = masked_here;
         let canonical = token
             .chars()
             .filter(|character| character.is_ascii_alphanumeric())
@@ -1260,7 +1270,7 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
         // here carry Devanagari, Tamil and Bengali ledger names, and an
         // ASCII-only guard read `पार्टी12345678` as digits standing alone,
         // binding a party to an unrelated `Bank 12345678`.
-        if token.chars().any(char::is_alphabetic) || is_mask_punctuated(token) {
+        if token.chars().any(char::is_alphabetic) || masked {
             continue;
         }
         for run in token.split(|character: char| {
@@ -1297,6 +1307,13 @@ fn is_mask_punctuated(token: &str) -> bool {
         .chars()
         .any(|character| matches!(character, '*' | '#' | '\u{2022}' | '\u{00d7}'))
 }
+
+/// The separators an operator writes a range with. The comparison key already
+/// folds these dash variants to ASCII; the period boundary has to admit the
+/// same set, or `FY2025\u{2013}26` fuses where `FY2025-26` splits.
+const DASH_VARIANTS: [char; 9] = [
+    '-', '/', '\u{2010}', '\u{2011}', '\u{2012}', '\u{2013}', '\u{2014}', '\u{2015}', '\u{2212}',
+];
 
 /// A masked value exposes a non-unique suffix and identifies nothing.
 ///
@@ -1337,7 +1354,7 @@ fn is_masked(canonical: &str) -> bool {
 /// every exclusion here it can only make a bind *less* likely.
 fn is_period(token: &str) -> bool {
     let mut any_number = false;
-    for part in token.split(['-', '/']) {
+    for part in token.split(DASH_VARIANTS) {
         let canonical = part
             .chars()
             .filter(char::is_ascii_alphanumeric)
