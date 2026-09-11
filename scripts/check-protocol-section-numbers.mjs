@@ -198,15 +198,24 @@ if (!occurrences.size) {
   );
 }
 
+// Every value interpolated into a diagnostic goes through this. The heading text
+// and the occurrence counts were capped and the *number* was not, so a generated
+// reference carrying one very long numeric token still produced output that grew
+// with its input — unretrievable exactly when the gate has something to say.
+function short(value) {
+  const text = String(value);
+  return text.length <= MAX_HEADING_CHARS ? text : `${text.slice(0, MAX_HEADING_CHARS)}…`;
+}
+
 function describe(number, found) {
   const shown = found.slice(0, MAX_REPORTED_OCCURRENCES);
   const lines = shown.map(
-    (one) => `    line ${one.line}: ${one.text.slice(0, MAX_HEADING_CHARS)}`,
+    (one) => `    line ${one.line}: ${short(one.text)}`,
   );
   if (found.length > shown.length) {
     lines.push(`    ... and ${found.length - shown.length} more`);
   }
-  return `section ${number} is used ${found.length} times:\n${lines.join("\n")}`;
+  return `section ${short(number)} is used ${found.length} times:\n${lines.join("\n")}`;
 }
 
 const failures = [];
@@ -224,11 +233,11 @@ for (const [number, found] of occurrences) {
     });
     if (!unexcused.length) continue;
     failures.push(
-      `section ${number} is excused only for its grandfathered headings ` +
+      `section ${short(number)} is excused only for its grandfathered headings ` +
         `(${excused.reason}); these are new:\n` +
         unexcused
           .slice(0, MAX_REPORTED_OCCURRENCES)
-          .map((one) => `    line ${one.line}: ${one.text.slice(0, MAX_HEADING_CHARS)}`)
+          .map((one) => `    line ${one.line}: ${short(one.text)}`)
           .join("\n"),
     );
     continue;
@@ -251,10 +260,10 @@ for (const [number, { headings, reason }] of KNOWN_DUPLICATES) {
   const gone = headings.filter((heading) => !present.has(heading));
   if (!gone.length) continue;
   failures.push(
-    `section ${number} no longer carries ${gone.length} of its grandfathered ` +
+    `section ${short(number)} no longer carries ${gone.length} of its grandfathered ` +
       `heading(s) (${reason}) — update or remove its KNOWN_DUPLICATES entry so ` +
       "the exemption cannot cover a future collision:\n" +
-      gone.map((heading) => `    ${heading.slice(0, MAX_HEADING_CHARS)}`).join("\n"),
+      gone.map((heading) => `    ${short(heading)}`).join("\n"),
   );
 }
 
@@ -300,7 +309,7 @@ if (base) {
         moved
           .slice(0, MAX_REPORTED_NUMBERS)
           .map(({ number, title, now }) =>
-            `    ${title.slice(0, MAX_HEADING_CHARS)}: was ${number}, now ${now.join(", ")}`)
+            `    ${short(title)}: was ${short(number)}, now ${now.map(short).join(", ")}`)
           .join("\n"),
     );
   }
