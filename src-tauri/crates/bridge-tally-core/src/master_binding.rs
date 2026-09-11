@@ -809,14 +809,21 @@ fn bind_one(catalog: &MasterCatalog, entity: &SourceEntity, budget: &mut usize) 
     // Rule one: the identifier is the key, the name is a hint. A name
     // comparison on a pair that carries a decisive identifier is not merely
     // weaker evidence, it is actively misleading.
+    // Which masters *each* identifier reached, not merely which masters were
+    // reached. Flattening the two loses the only fact that separates a number
+    // shared by several masters from several numbers pointing at different
+    // ones, and those need opposite answers.
+    let mut per_identifier: Vec<BTreeSet<usize>> = Vec::new();
     let mut identifier_matches = BTreeSet::new();
     let mut identifier_conflict = false;
     for identifier in &entity.identifiers {
         if let Some(holders) = catalog.by_identifier.get(identifier) {
-            if holders.len() > 1 {
+            let reached = holders.iter().copied().collect::<BTreeSet<_>>();
+            if reached.len() > 1 {
                 identifier_conflict = true;
             }
-            identifier_matches.extend(holders.iter().copied());
+            identifier_matches.extend(reached.iter().copied());
+            per_identifier.push(reached);
         }
     }
 
@@ -833,9 +840,21 @@ fn bind_one(catalog: &MasterCatalog, entity: &SourceEntity, budget: &mut usize) 
     //
     // Found by seeding two live ledgers that share an embedded number. No
     // fabricated fixture had produced the combination.
-    let identifier_points_elsewhere = !identifier_conflict
-        && identifier_matches.len() == 1
-        && exact.is_some_and(|index| !identifier_matches.contains(&index));
+    // A byte-exact name survives an identifier that is merely *shared*: that
+    // one identifier reached the master the name spells along with its
+    // siblings, and the name is what separates them. It does not survive an
+    // identifier that reached somewhere else entirely — that is disagreement,
+    // and preferring the name silently discards it.
+    //
+    // The test is per identifier, not over their union. Asking whether the
+    // union contains the exact master answers the shared case correctly and the
+    // mixed case wrongly: `ACME 11111111` with a hint reaching `BETA 22222222`
+    // has the exact master in the union while one identifier plainly disagrees.
+    let identifier_points_elsewhere = exact.is_some_and(|index| {
+        per_identifier
+            .iter()
+            .any(|reached| !reached.contains(&index))
+    });
     let status = if identifier_points_elsewhere {
         unresolved_status(
             catalog,
@@ -1207,7 +1226,8 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
         if canonical.len() >= MIN_CODE_IDENTIFIER_CHARS
             && digits >= MIN_CODE_IDENTIFIER_DIGITS
             && letters >= 2
-            && !is_period_label(&canonical)
+            && !is_period(token)
+            && !is_masked(&canonical)
         {
             identifiers.insert(Identifier {
                 kind: IdentifierKind::Code,
@@ -1219,7 +1239,12 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
         // reach an unrelated `Bank 12345678` through the one-letter gap that
         // the code test rejects — a token either identifies by its whole shape
         // or not at all.
-        if letters > 0 {
+        //
+        // The test is **Unicode alphabetic**, not ASCII. The books observed
+        // here carry Devanagari, Tamil and Bengali ledger names, and an
+        // ASCII-only guard read `पार्टी12345678` as digits standing alone,
+        // binding a party to an unrelated `Bank 12345678`.
+        if token.chars().any(char::is_alphabetic) {
             continue;
         }
         for run in token.split(|character: char| {
@@ -1228,7 +1253,7 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
             let digits = run.chars().filter(char::is_ascii_digit).collect::<String>();
             if digits.len() >= MIN_NUMERIC_IDENTIFIER_DIGITS
                 && !is_plausible_date(&digits)
-                && !is_year_range(run)
+                && !is_period(run)
             {
                 identifiers.insert(Identifier {
                     kind: IdentifierKind::Numeric,
@@ -1243,24 +1268,59 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
     Ok(identifiers.into_iter().collect())
 }
 
+/// A masked value exposes a non-unique suffix and identifies nothing.
+///
+/// `XXXXX1234X` clears every length and composition test — ten characters, six
+/// letters, four digits, no period — while the only information in it is a last
+/// four that any number of parties share. Two unrelated ledgers carrying the
+/// same mask would bind to each other.
+///
+/// Recognized by its letters being a single repeated character, which is what a
+/// mask is and what an identity-bearing code never is: `PH01AB00` and a
+/// registration number both carry distinct letters.
+fn is_masked(canonical: &str) -> bool {
+    let mut letters = canonical.chars().filter(char::is_ascii_alphabetic);
+    match letters.next() {
+        Some(first) => letters.all(|letter| letter == first),
+        None => false,
+    }
+}
+
 /// A period label identifies a period, not a party or an item. Two unrelated
-/// ledgers routinely share one — `Purchases FY2025` and `Sales FY2025`,
-/// `Purchases SEPTEMBER2025` and `Sales SEPTEMBER2025` — and identifier-first
-/// matching would bind the source to whichever exists before comparing names.
+/// ledgers routinely share one, and identifier-first matching would bind the
+/// source to whichever exists before it ever compared the names.
 ///
-/// The test is on the **numbers**, not on the words: a token is a period label
-/// when it carries at least one number and **every** number in it reads as a
-/// year or a small ordinal. Capping the length of the alphabetic run was the
-/// previous attempt and it kept losing to longer spellings — `APR2025` was
-/// caught while `SEPTEMBER2025` and `2025QUARTER1` walked through. A month name
-/// can be any length; a year cannot.
+/// Applied to the **raw token**, because operators write ranges with the very
+/// separators canonicalization strips: `FY2025-26` fuses to `FY202526`, whose
+/// six-digit run reads as no period at all, and the label walked straight into
+/// being a code. Splitting on the separator first keeps `FY2025` and `26`
+/// legible as what they are.
 ///
-/// An identity-bearing code survives this because its digits do not read as
-/// periods: `PH01AB00` carries `00`, `AB12345678` carries an eight-digit run,
-/// and a registration number carries something no calendar would produce. Like
+/// The test is on the **numbers**, not the words: every part carries only
+/// alphabetic markers and numbers that read as a year or a small ordinal, and
+/// at least one number appears. Capping the length of the alphabetic run was an
+/// earlier attempt that kept losing to longer spellings — a month name can be
+/// any length; a year cannot.
+///
+/// An identity-bearing code survives: `PH-01A-B00` splits to a `PH` carrying no
+/// number at all, and `AB12345678` holds a run no calendar would produce. Like
 /// every exclusion here it can only make a bind *less* likely.
-fn is_period_label(canonical: &str) -> bool {
-    let mut has_number = false;
+fn is_period(token: &str) -> bool {
+    let mut any_number = false;
+    for part in token.split(['-', '/']) {
+        let canonical = part
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .map(|character| character.to_ascii_uppercase())
+            .collect::<String>();
+        if canonical.is_empty() || !part_reads_as_period(&canonical, &mut any_number) {
+            return false;
+        }
+    }
+    any_number
+}
+
+fn part_reads_as_period(canonical: &str, any_number: &mut bool) -> bool {
     let mut rest = canonical;
     while !rest.is_empty() {
         let alphabetic = rest.starts_with(|character: char| character.is_ascii_alphabetic());
@@ -1272,39 +1332,18 @@ fn is_period_label(canonical: &str) -> bool {
         if alphabetic {
             continue;
         }
-        if !reads_as_period_number(run) {
+        let value = run.parse::<u32>().unwrap_or(u32::MAX);
+        let reads_as_period = match run.len() {
+            1 | 2 => (1..=99).contains(&value),
+            4 => (1900..=2199).contains(&value),
+            _ => false,
+        };
+        if !reads_as_period {
             return false;
         }
-        has_number = true;
+        *any_number = true;
     }
-    has_number
-}
-
-/// A year, or a small ordinal such as a month or quarter.
-fn reads_as_period_number(run: &str) -> bool {
-    let value = run.parse::<u32>().unwrap_or(u32::MAX);
-    match run.len() {
-        1 | 2 => (1..=99).contains(&value),
-        4 => (1900..=2199).contains(&value),
-        _ => false,
-    }
-}
-
-/// `2025-2026` and `2025/2026` are fiscal years, which two unrelated ledgers
-/// share as routinely as they share a month. Stripping the separator turned
-/// them into an eight-digit run that no calendar-date reading rejects, so the
-/// range has to be recognized before the digits are fused.
-fn is_year_range(run: &str) -> bool {
-    let mut halves = run.split(['-', '/']);
-    match (halves.next(), halves.next(), halves.next()) {
-        (Some(first), Some(second), None) => [first, second].iter().all(|half| {
-            half.len() == 4
-                && half
-                    .parse::<u32>()
-                    .is_ok_and(|year| (1900..=2199).contains(&year))
-        }),
-        _ => false,
-    }
+    true
 }
 
 /// An eight-digit run that reads as a calendar date in any order this project/// An eight-digit run that reads as a calendar date in any order this project/// An eight-digit run that reads as a calendar date in any order this project
