@@ -1407,10 +1407,17 @@ measurement (2026-08-19, TallyPrime 7.1, port 9001) sent a voucher import naming
 **existed but was not loaded**, and it **failed closed** with
 `LINEERROR: Could not set 'SVCurrentCompany' to '<name>'`. Two distinct cases:
 
-| the name refers to | observed |
-|---|---|
-| a company that exists but is not loaded | fails closed, names the problem |
-| a company that matches nothing | imports into the loaded company |
+| the name refers to | observed | confidence |
+|---|---|---|
+| a company that exists but is not loaded | fails closed, names the problem | **VERIFIED** |
+| a company that matches nothing | imports into the loaded company | **UNVERIFIED** — inferred |
+
+The second row is **not** an observation, and listing it as one is what this
+table did before. What was observed is that a name with two letters transposed
+imported into the loaded company. That the transposition matched *nothing* is an
+inference from its shape; the box's company list was never enumerated, so it may
+have matched some other company, or none. Read the paragraph below before citing
+this row — and do not let a reader take the row alone.
 
 A plausible reading is that Tally refuses when it can see a company it is being asked to switch
 to and cannot, and ignores a name resolving to nothing. **That is a hypothesis.** The 2026-09-10
