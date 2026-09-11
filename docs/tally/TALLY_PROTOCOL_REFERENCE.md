@@ -1424,12 +1424,38 @@ purchase, debit note, credit note — are **UNVERIFIED** and this section prescr
 them. There is a reason to expect them to match (the element belongs to the invoice *view*, not to
 the voucher type) and that is a hypothesis, not a default.
 
-**Procedure for the first write of an untested invoice type**, which costs one voucher and settles
-it: send a single voucher, then read it back. If the party and tax ledgers are missing and the
-stored total is the inventory lines alone, the element was discarded — check `Import Exceptions`
-for *"Mismatch in total amount between Credit and Debit entries"*, remove the voucher with
-`ACTION="Delete"` by `REMOTEID` (§9.12b) and re-send with the other element. Record the answer
-here. Do not send a batch of a new invoice type before that single voucher has been read back.
+**Procedure for the first write of an untested invoice type.** It costs one voucher and settles the
+question — but it *deliberately risks the silent one-sided write described above*, and its cleanup
+depends on a `Delete` that is itself not qualified on a licensed book (§9.12b). So run it where a
+bad voucher does not matter:
+
+1. **Use a disposable synthetic company, and take a backup first** — `docs/adr/0004-tally-write-safety.md`
+   requires both for an initial write, and this is exactly the case it was written for. If the
+   process stops before the deletion, or the delete fails, the malformed voucher stays.
+2. Send a single voucher, then read it back. **The read-back is what decides**: if the party and
+   tax ledgers are missing and the stored total is the inventory lines alone, the element was
+   discarded. `Import Exceptions` *may* also carry
+   *"Mismatch in total amount between Credit and Debit entries"* — that was the message on the one
+   sales invoice measured, and an absent entry is not evidence that the write succeeded.
+3. **If the read-back matches the voucher you intended, you are done.** Record the element and
+   stop. Do **not** delete a good voucher to try the other element: the alternate may be the
+   discarded shape, and you would be trading a correct voucher for a malformed one.
+
+   **"Party and tax ledgers are present" is not that comparison.** It proves the outer list was
+   accepted and nothing more — amounts, signs, bill allocations and inventory fields can still be
+   missing or rewritten, and §12a.4 lists eight rewrites that each reported clean counters. Compare
+   the read-back against the **intended state** field by field, as
+   `docs/adr/0004-tally-write-safety.md` requires. A subset check recorded as "this element works"
+   becomes the evidence someone else builds a batch on.
+4. **Only if the read-back showed the discard**, remove it with `ACTION="Delete"` by `REMOTEID`
+   (§9.12b), re-send with the other element, and **read that back too** — the second attempt is
+   as unproven as the first, and stopping after sending it leaves the question open and possibly
+   a second bad voucher behind.
+5. Record the answer here, naming which element was tried first, so the next person knows whether
+   a "worked" result came from one attempt or two.
+
+**Do not run step 2 against a customer's live book, and do not send a batch of a new invoice type
+before that single voucher has been read back.**
 
 **`Import Exceptions` accumulates across imports.** The same report also listed 25 unrelated
 `Duplicate Voucher No.` entries from that book's earlier history, and the Gateway was already
@@ -1445,28 +1471,40 @@ flagging data exceptions before the import ran. **Its counts are not attributabl
  <PARTYLEDGERNAME>…</PARTYLEDGERNAME><BASICBASEPARTYNAME>…</BASICBASEPARTYNAME>
  <PERSISTEDVIEW>Invoice Voucher View</PERSISTEDVIEW><ISINVOICE>Yes</ISINVOICE>
  <LEDGERENTRIES.LIST>                       <!-- party: debit, negative -->
-  <LEDGERNAME>…</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-336.67</AMOUNT>
+  <LEDGERNAME>…</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-118.00</AMOUNT>
   <BILLALLOCATIONS.LIST>
-   <NAME>…invoice no…</NAME><BILLTYPE>New Ref</BILLTYPE><AMOUNT>-336.67</AMOUNT>
+   <NAME>…invoice no…</NAME><BILLTYPE>New Ref</BILLTYPE><AMOUNT>-118.00</AMOUNT>
   </BILLALLOCATIONS.LIST>
  </LEDGERENTRIES.LIST>
- <LEDGERENTRIES.LIST>…each tax ledger: credit, positive…</LEDGERENTRIES.LIST>
+ <LEDGERENTRIES.LIST>…CGST: credit, positive…<AMOUNT>9.00</AMOUNT></LEDGERENTRIES.LIST>
+ <LEDGERENTRIES.LIST>…SGST: credit, positive…<AMOUNT>9.00</AMOUNT></LEDGERENTRIES.LIST>
  <ALLINVENTORYENTRIES.LIST>
   <STOCKITEMNAME>…</STOCKITEMNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-  <RATE>244.91/Nos</RATE><ACTUALQTY>1 Nos</ACTUALQTY><BILLEDQTY>1 Nos</BILLEDQTY>
-  <AMOUNT>244.91</AMOUNT>
-  <ACCOUNTINGALLOCATIONS.LIST>                <!-- per line; no voucher-level sales ledger -->
+  <RATE>100.00/Nos</RATE><ACTUALQTY>1 Nos</ACTUALQTY><BILLEDQTY>1 Nos</BILLEDQTY>
+  <AMOUNT>100.00</AMOUNT>
+  <ACCOUNTINGALLOCATIONS.LIST>                <!-- the shape that was observed -->
    <LEDGERNAME>…sales ledger…</LEDGERNAME>
-   <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>244.91</AMOUNT>
+   <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>100.00</AMOUNT>
   </ACCOUNTINGALLOCATIONS.LIST>
  </ALLINVENTORYENTRIES.LIST>
 </VOUCHER>
 ```
 
+**Every figure above is synthetic** — one line of 100.00 at 9% + 9%, party 118.00, balancing to
+zero. The measured voucher's own amounts are not reproduced anywhere in this section. The shape is
+what was observed; the numbers are constructed to illustrate it.
+
 Four further observations, each measured:
 
-1. **Every inventory line needs its own `ACCOUNTINGALLOCATIONS.LIST`** naming the sales ledger and
-   repeating the line amount. There is no voucher-level sales-ledger element.
+1. **Each inventory line carried its own `ACCOUNTINGALLOCATIONS.LIST`**, naming the sales ledger
+   and repeating the line amount, and the voucher posted.
+
+   **That is the observed working shape, not a proven requirement.** Both attempts in the A/B
+   included the nested allocations and changed only the outer ledger-list element, so this records
+   that the nested shape is *accepted* — not that every line needs one, and not that a
+   voucher-level sales-ledger element cannot work. Encoding the stronger claim would make a future
+   writer reject valid shapes or add structure it does not need. A one-variable probe that omits
+   or moves the allocation would settle it.
 2. **A service line carries an amount and no quantity** — omit `RATE`, `ACTUALQTY` and `BILLEDQTY`
    entirely and the line posts with a blank quantity, matching hand entry.
 3. **The party line needs `BILLALLOCATIONS.LIST` / `New Ref`**, or the amount lands On Account and
@@ -1482,16 +1520,42 @@ Four further observations, each measured:
    **gateway** observation about accounting vouchers; what the counters say for a non-bill-wise
    *invoice*, through either path, is **UNVERIFIED**. Preflight the ledger; do not rely on any
    counter to tell you afterwards.
-4. **Tax rounds per line, then sums.** An invoice with 7,165.07 taxable at 9% stores **644.84**, not
-   the 644.86 that 9% of the total gives — 644.84 being the sum of per-line rounded tax. **Compute
-   tax per line and sum; do not tax the invoice total.**
+4. **The stored tax matched the sum of per-line rounded tax, not tax on the total.** The two
+   methods can disagree once a line's tax carries a fraction of a paisa — but not always, and the
+   difference is what matters rather than the fraction. Two lines of 100.01 at 9% *agree*: each
+   9.0009 rounds to 9.00 for 18.00, and 9% of the 200.02 total is 18.0018, which also rounds to
+   18.00. Three lines of 100.05 at 9% *disagree*: each 9.0045 rounds to 9.00 for 27.00, while 9%
+   of the 300.15 total is 27.0135, which rounds to 27.01. They part company only when the
+   accumulated per-line rounding crosses a half-paisa boundary.
 
-   **PARTIAL — the mechanism is measured, the magnitude is not.** One invoice was measured, and two
-   paise is that invoice's discrepancy, not a bound. Taxing the total is not always wrong (two
-   ₹100 lines at 9% agree under either method) and when it is wrong the error is not capped at two
-   paise — each line contributes up to half a paisa of rounding, so the worst case grows with the
-   line count. So: never derive a validation tolerance from the ₹0.02 here. Compare against the sum
-   of per-line rounded tax, which is exact, rather than allowing a fixed slack.
+   **UNVERIFIED — this is a read-back, not a calculation probe**, and the policy follows from
+   that. The A/B recorded here changed only the ledger-list element name. Nothing varied or
+   omitted the *supplied* tax, so reading one balanced import back cannot distinguish Tally
+   **calculating** tax per line from Tally simply **storing the amount it was given**.
+
+   > **Until that is settled: send the source document's own tax.** If Tally stores what it
+   > receives — the possibility this evidence cannot rule out — then recomputing tax per line
+   > *replaces* the invoice's figures with different ones wherever the two methods diverge, which
+   > is a worse outcome than either rounding convention.
+   >
+   > **When there is no source figure, this evidence does not tell you which formula to use.** The
+   > A/B supplied the tax, so it establishes nothing about how a missing one should be synthesised;
+   > per-line and on-total are equally unsupported here. Do not silently pick one — **fail closed
+   > and ask**, or record explicitly which convention the run chose so the difference is
+   > attributable later. The per-line figure is what the measured voucher ended up holding, which
+   > is a reason to prefer it *if you must choose* and not a reason to believe it is right.
+
+   The settling probe is one variable: send a tax amount differing from **both** methods and read
+   back what is stored.
+
+   **Do not derive a validation tolerance from any single figure.** Taxing the total is not always
+   wrong (two lines of 100.00 at 9% agree under either method), and where it is wrong the error is
+   not bounded by one example — each line contributes up to half a paisa, so the worst case grows
+   with the line count. Compare against the sum of per-line rounded tax, which is exact, rather
+   than allowing fixed slack.
+
+   *The worked figures above are synthetic. They reproduce the arithmetic the measured invoice
+   showed; the invoice's own amounts are not reproduced here.*
 
 The whole voucher must still sum to zero across `LEDGERENTRIES` **and** `ALLINVENTORYENTRIES`.
 
