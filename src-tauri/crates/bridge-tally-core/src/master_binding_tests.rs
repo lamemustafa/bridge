@@ -481,6 +481,20 @@ fn the_master_fold_stops_where_tally_stops() {
             "{wrong:?} bound, but Tally rejects it"
         );
     }
+
+    // The *absent-master* direction, which prefer-exact and refuse-ambiguous
+    // do not cover: the requested master is not in the book and one different
+    // ledger collapses onto the request, so there is one candidate and no
+    // ambiguity to refuse. Uniqueness under a fold is only as meaningful as
+    // the fold, and `&` has to stay significant for this to hold.
+    for (requested, present) in [("A & B", "AB"), ("AB", "A & B")] {
+        let only = ledgers(&[present, "Gamma"]);
+        assert_eq!(
+            bind_one_name(&only, requested).bound_name(),
+            None,
+            "{requested:?} bound to {present:?}, which Tally treats as a different master"
+        );
+    }
 }
 
 #[test]
