@@ -155,6 +155,59 @@ fn the_published_schema_names_the_three_numbering_methods_and_its_bounds() {
     assert!(tool.get("annotations").is_none());
 }
 
+/// `remote_id` is no longer an accepted input: the shipped read cannot fetch
+/// `REMOTEID`, so supplying one could only ever withhold a verdict that a
+/// unique manual number would otherwise settle. Refusing the input is more
+/// honest than accepting it and degrading.
+#[tokio::test]
+async fn a_remote_id_is_not_an_accepted_input_at_this_surface() {
+    let definitions = tool_definitions(true, false);
+    let schema = definitions
+        .as_array()
+        .and_then(|tools| tools.iter().find(|tool| tool["name"] == "voucher_presence"))
+        .expect("voucher_presence schema")["inputSchema"]
+        .clone();
+    assert!(schema["properties"]["vouchers"]["items"]["properties"]
+        .get("remote_id")
+        .is_none());
+    let directory = tempfile::tempdir().expect("directory");
+    let server = offline_server(directory.path());
+    let response = server
+        .call_tool_response(
+            "voucher_presence",
+            json!({"company_guid":GUID,"from":"20260901","to":"20260930",
+                "numbering":[{"voucher_type":"Journal","numbering_method":"manual"}],
+                "vouchers":[{"date":"20260901","voucher_type":"Journal","remote_id":"tally-1",
+                    "entries":[{"ledger":"Cash","amount":"-1.00"},{"ledger":"WR2 Sales","amount":"1.00"}]}]}),
+        )
+        .await;
+    assert_eq!(
+        response.value["structuredContent"]["result"]["error"]["code"],
+        "argument_invalid:vouchers"
+    );
+    assert_eq!(response.value["structuredContent"]["evidence"]["bytes"], 0);
+}
+
+#[test]
+fn the_result_is_pageable_so_an_over_large_report_is_not_discarded() {
+    // `page_shape` recognises `items` with an `offset`; without that this
+    // shape is untrimmable and a complete report is replaced wholesale by
+    // `agent_response_too_large` after every Tally read has been paid for.
+    let mut structured = json!({"result":{"offset":0,"total":3,"items":
+        (0..3).map(|id| json!({"position":id,"padding":"x".repeat(256)})).collect::<Vec<_>>()}});
+    let (bounded, trimmed, _) =
+        enforce_response_byte_cap(structured.clone(), 400).expect("trims rather than refusing");
+    assert!(trimmed);
+    let kept = bounded["result"]["items"].as_array().expect("items");
+    assert!(!kept.is_empty() && kept.len() < 3);
+    assert_eq!(bounded["result"]["next_offset"], kept.len());
+    // And an untrimmed report keeps every row and offers no cursor.
+    structured["result"]["items"] = json!([{"position":0}]);
+    let (complete, trimmed, _) = enforce_response_byte_cap(structured, 10_000).expect("fits");
+    assert!(!trimmed);
+    assert!(complete["result"].get("next_offset").is_none());
+}
+
 #[test]
 fn an_unknown_numbering_method_is_refused_at_the_published_schema() {
     assert_eq!(
@@ -217,7 +270,8 @@ async fn nested_bounds_are_read_from_the_schema_rather_than_duplicated() {
         ["maxLength"]
         .as_u64()
         .expect("a published maxLength") as usize;
-    let entries = json!([{"ledger":"Cash","amount":"-1.00"},{"ledger":"WR2 Sales","amount":"1.00"}]);
+    let entries =
+        json!([{"ledger":"Cash","amount":"-1.00"},{"ledger":"WR2 Sales","amount":"1.00"}]);
     let numbering = json!([{"voucher_type":"Journal","numbering_method":"manual"}]);
     let directory = tempfile::tempdir().expect("directory");
     let server = offline_server(directory.path());
@@ -502,12 +556,14 @@ async fn a_live_shaped_cycle_separates_present_undecided_and_absent() {
     assert_eq!(result["profile"], "agent_voucher_presence_v1");
     assert_eq!(result["window"]["from"], "20260901");
     assert_eq!(result["window"]["to"], "20260930");
+    assert_eq!(result["total"], 3);
+    assert_eq!(result["offset"], 0);
     assert_eq!(result["totals"]["requested"], 3);
     assert_eq!(result["totals"]["present"], 2);
     assert_eq!(result["totals"]["absent"], 1);
     assert_eq!(result["totals"]["possibly_present"], 0);
 
-    let vouchers = result["vouchers"].as_array().expect("vouchers");
+    let vouchers = result["items"].as_array().expect("items");
     assert_eq!(vouchers[0]["presence"], "present");
     assert_eq!(vouchers[0]["basis"], "manual_voucher_number");
     assert_eq!(vouchers[0]["book_key"], format!("{CAPTURED_GUID}-00000001"));

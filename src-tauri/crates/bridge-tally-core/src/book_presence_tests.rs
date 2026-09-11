@@ -1769,3 +1769,122 @@ fn a_remote_id_and_a_number_agreeing_on_one_voucher_still_settle() {
     );
     assert_eq!(only(&report).present_book_key(), Some("book-1"));
 }
+
+/// A source that names no party had no party rule run against it, so an
+/// absence rests on date and amount alone — the pair this contract says
+/// collides. `Present` by identity is unaffected; only the absence is
+/// withheld, and supplying the party is what makes it available again.
+#[test]
+fn a_proposal_that_names_no_party_cannot_be_reported_absent() {
+    let window = window(&[BookRow::new("book-1", "20260819", "AA0130").party("Bravo Industries")]);
+    let mut proposal = ProposalRow::new(0, "20260812", "AA0777");
+    proposal.party = None;
+    proposal.rows = vec![["Charlie Minerals", "-55.00"], ["Sales Account", "55.00"]];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &[proposal.build()],
+    );
+    let entry = only(&report);
+    assert_eq!(entry.party, PartyOutcome::NotSupplied);
+    assert!(!entry.is_absent());
+    assert_eq!(reason(entry), UndecidedReason::PartyNotSupplied);
+}
+
+#[test]
+fn naming_the_party_is_what_makes_absence_available() {
+    let window = window(&[BookRow::new("book-1", "20260819", "AA0130").party("Bravo Industries")]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0777")
+        .party("Charlie Minerals")
+        .rows(vec![
+            ["Charlie Minerals", "-55.00"],
+            ["Sales Account", "55.00"],
+        ])
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    assert!(only(&report).is_absent());
+}
+
+#[test]
+fn a_proposal_that_names_no_party_still_settles_by_identity() {
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118")]);
+    let mut proposal = ProposalRow::new(0, "20260812", "AA0118");
+    proposal.party = None;
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &[proposal.build()],
+    );
+    assert_eq!(only(&report).present_book_key(), Some("book-1"));
+}
+
+/// A collision between two proposals is a fact about the source. It does not
+/// become less true because the book has never seen that voucher type.
+#[test]
+fn proposals_sharing_a_number_collide_even_for_an_unobserved_type() {
+    let window = window(&[BookRow::new("book-1", "20260819", "AA0130").party("Bravo Industries")]);
+    let declaration =
+        NumberingDeclaration::new([("Part Sale", NumberingMethod::Manual)]).expect("numbering");
+    let money = vec![["Charlie Minerals", "-61.00"], ["Sales Account", "61.00"]];
+    let proposals = [
+        ProposalRow::new(0, "20260812", "AA0801")
+            .voucher_type("Part Sale")
+            .party("Charlie Minerals")
+            .rows(money.clone())
+            .build(),
+        ProposalRow::new(1, "20260812", "AA0801")
+            .voucher_type("Part Sale")
+            .party("Charlie Minerals")
+            .rows(money)
+            .build(),
+    ];
+    let report = run(&window, &catalog(), &declaration, &proposals);
+    assert_eq!(
+        report.totals().absent,
+        0,
+        "colliding rows are not safe to import"
+    );
+    for entry in report.vouchers() {
+        assert!(!entry.voucher_type_observed);
+        assert_eq!(reason(entry), UndecidedReason::ProposalNumberCollision);
+    }
+}
+
+/// A window cannot say "REMOTEID was never read" while carrying one. The two
+/// statements contradict, and the contradiction would let a verdict settle on
+/// evidence the window itself says was not gathered.
+#[test]
+fn a_window_declaring_remote_ids_unread_refuses_to_carry_one() {
+    let carrying = vec![BookRow::new("book-1", "20260812", "AA0118")
+        .remote_id("tally-1")
+        .build()];
+    assert_eq!(
+        BookWindow::observed(
+            "20260801",
+            "20260831",
+            WindowRead::Complete,
+            RemoteIdEvidence::NotRead,
+            carrying,
+        )
+        .expect_err("contradiction"),
+        PresenceError::WindowRemoteIdContradiction
+    );
+    // The same vouchers are fine once the window admits it read the column.
+    assert!(BookWindow::observed(
+        "20260801",
+        "20260831",
+        WindowRead::Complete,
+        RemoteIdEvidence::Observed,
+        vec![BookRow::new("book-1", "20260812", "AA0118")
+            .remote_id("tally-1")
+            .build()],
+    )
+    .is_ok());
+}

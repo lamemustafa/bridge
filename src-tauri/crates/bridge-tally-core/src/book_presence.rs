@@ -66,6 +66,11 @@ pub enum PresenceError {
     WindowVoucherOutsideRange,
     #[error("book window carried the same voucher key twice")]
     WindowDuplicateVoucherKey,
+    /// A window declaring that `REMOTEID` was never read, carrying vouchers
+    /// that have one. The two statements contradict, and the contradiction
+    /// would let a verdict settle on evidence the window says was not gathered.
+    #[error("book window declared REMOTEID unread while carrying one")]
+    WindowRemoteIdContradiction,
     /// A proposal dated outside the window would be judged against evidence
     /// that could not contain it.
     #[error("book window does not cover every proposed date")]
@@ -108,6 +113,7 @@ impl PresenceError {
             Self::WindowTooLarge => "presence_window_too_large",
             Self::WindowVoucherOutsideRange => "presence_window_voucher_outside_range",
             Self::WindowDuplicateVoucherKey => "presence_window_duplicate_voucher_key",
+            Self::WindowRemoteIdContradiction => "presence_window_remote_id_contradiction",
             Self::WindowDoesNotCover => "presence_window_does_not_cover",
             Self::ProposalsEmpty => "presence_proposals_empty",
             Self::TooManyProposals => "presence_proposals_too_many",
@@ -376,6 +382,9 @@ impl BookWindow {
             if !keys.insert(voucher.key()) {
                 return Err(PresenceError::WindowDuplicateVoucherKey);
             }
+            if remote_id_evidence == RemoteIdEvidence::NotRead && voucher.remote_id.is_some() {
+                return Err(PresenceError::WindowRemoteIdContradiction);
+            }
         }
         Ok(Self {
             from,
@@ -536,6 +545,12 @@ pub enum UndecidedReason {
     /// The party comparison could not be completed, so no rule that needs a
     /// party actually ran and `Absent` is not available.
     PartyNotDecidable,
+    /// The source named no party at all. Nothing was skipped — but nothing was
+    /// compared either, and a book voucher for the same party and amount on
+    /// another date would never have surfaced. `Present` is still reachable by
+    /// identity; only the absence claim is withheld, and supplying the party
+    /// is what makes it available.
+    PartyNotSupplied,
     /// Two proposals both resolved to the same book voucher, possibly by
     /// different identity bases. One book voucher can satisfy at most one
     /// proposal, so every claimant is demoted rather than one being chosen.
@@ -562,6 +577,7 @@ impl UndecidedReason {
             Self::VoucherTypeNotObserved => "presence_voucher_type_not_observed",
             Self::ResemblesBookVoucher => "presence_resembles_book_voucher",
             Self::PartyNotDecidable => "presence_party_not_decidable",
+            Self::PartyNotSupplied => "presence_party_not_supplied",
             Self::BookVoucherClaimedTwice => "presence_book_voucher_claimed_twice",
             Self::IdentityConflict => "presence_identity_conflict",
             Self::RemoteIdEvidenceUnavailable => "presence_remote_id_evidence_unavailable",
@@ -845,7 +861,10 @@ fn bind_parties(
             None => PartyResolution {
                 outcome: PartyOutcome::NotSupplied,
                 compare_keys: BTreeSet::new(),
-                incomplete: false,
+                // No party was skipped, and none was compared. The party rules
+                // could not run at all, so an absence rests on the date and
+                // amount alone — which is the pair this contract says collides.
+                incomplete: true,
             },
             Some(name) => resolved
                 .get(name)
@@ -872,7 +891,7 @@ fn resolution_of(binding: &master_binding::EntityBinding) -> PartyResolution {
         match &unresolved.candidates {
             // Nothing resembles the party, and that is information.
             Candidates::None => (BTreeSet::new(), false),
-            Candidates::Listed(listed) => (keys(listed), false),
+            Candidates::Listed { listed } => (keys(listed), false),
             // Names exist that were never compared, either way.
             Candidates::Truncated { listed, .. } => (keys(listed), true),
             Candidates::Withheld { .. } => (BTreeSet::new(), true),
@@ -1190,14 +1209,16 @@ fn decide(
         }
     }
 
-    if method == NumberingMethod::Manual && type_observed {
+    // A collision between two proposals is a fact about the *source*. It does
+    // not become less true because the book has never seen this voucher type,
+    // so it is settled before the observed-type guard rather than inside it.
+    if method == NumberingMethod::Manual {
         if let Some(number_key) = proposal.number_key.as_deref() {
             let proposed_twice = proposal_number_counts
                 .get(&(proposal.type_key.as_str(), number_key))
                 .copied()
                 .unwrap_or_default()
                 > 1;
-            let touched = number_matches.iter().copied().collect::<BTreeSet<_>>();
             if proposed_twice {
                 return shell(
                     PresenceStatus::PossiblyPresent(undecided(
@@ -1208,13 +1229,38 @@ fn decide(
                             CandidateRule::SharedVoucherNumber,
                         ),
                     )),
-                    touched,
+                    number_matches.iter().copied().collect(),
                 );
             }
-            if number_matches.len() > 1 {
+        }
+    }
+
+    // Manual numbering only decides *within* an observed voucher type: numbers
+    // are a per-type series, so a cross-type match is a resemblance.
+    if method == NumberingMethod::Manual && type_observed && proposal.number_key.is_some() {
+        let touched = number_matches.iter().copied().collect::<BTreeSet<_>>();
+        if number_matches.len() > 1 {
+            return shell(
+                PresenceStatus::PossiblyPresent(undecided(
+                    UndecidedReason::BookNumberCollision,
+                    candidates_from(window, &number_matches, CandidateRule::SharedVoucherNumber),
+                )),
+                touched,
+            );
+        }
+        if number_matches.len() == 1 {
+            let matched = &window.vouchers[number_matches[0]];
+            // Two identity signals that disagree are reported, never
+            // settled in the number's favour — the same rule ADR 0016
+            // applies to an identifier contradicting an exact name.
+            let contradicted = match (proposal.remote_id.as_deref(), matched.remote_id.as_deref()) {
+                (Some(proposed), Some(observed)) => proposed != observed,
+                _ => false,
+            };
+            if remote_id_unverifiable {
                 return shell(
                     PresenceStatus::PossiblyPresent(undecided(
-                        UndecidedReason::BookNumberCollision,
+                        UndecidedReason::RemoteIdEvidenceUnavailable,
                         candidates_from(
                             window,
                             &number_matches,
@@ -1224,47 +1270,23 @@ fn decide(
                     touched,
                 );
             }
-            if number_matches.len() == 1 {
-                let matched = &window.vouchers[number_matches[0]];
-                // Two identity signals that disagree are reported, never
-                // settled in the number's favour — the same rule ADR 0016
-                // applies to an identifier contradicting an exact name.
-                let contradicted =
-                    match (proposal.remote_id.as_deref(), matched.remote_id.as_deref()) {
-                        (Some(proposed), Some(observed)) => proposed != observed,
-                        _ => false,
-                    };
-                if remote_id_unverifiable {
-                    return shell(
-                        PresenceStatus::PossiblyPresent(undecided(
-                            UndecidedReason::RemoteIdEvidenceUnavailable,
-                            candidates_from(
-                                window,
-                                &number_matches,
-                                CandidateRule::SharedVoucherNumber,
-                            ),
-                        )),
-                        touched,
-                    );
-                }
-                if contradicted {
-                    return shell(
-                        PresenceStatus::PossiblyPresent(undecided(
-                            UndecidedReason::IdentityConflict,
-                            candidates_from(
-                                window,
-                                &number_matches,
-                                CandidateRule::SharedVoucherNumber,
-                            ),
-                        )),
-                        touched,
-                    );
-                }
+            if contradicted {
                 return shell(
-                    settled(proposal, party, matched, PresenceBasis::ManualVoucherNumber),
+                    PresenceStatus::PossiblyPresent(undecided(
+                        UndecidedReason::IdentityConflict,
+                        candidates_from(
+                            window,
+                            &number_matches,
+                            CandidateRule::SharedVoucherNumber,
+                        ),
+                    )),
                     touched,
                 );
             }
+            return shell(
+                settled(proposal, party, matched, PresenceBasis::ManualVoucherNumber),
+                touched,
+            );
         }
     }
 
@@ -1314,11 +1336,12 @@ fn decide(
             );
         }
         if party.incomplete {
+            let reason = match party.outcome {
+                PartyOutcome::NotSupplied => UndecidedReason::PartyNotSupplied,
+                _ => UndecidedReason::PartyNotDecidable,
+            };
             return shell(
-                PresenceStatus::PossiblyPresent(undecided(
-                    UndecidedReason::PartyNotDecidable,
-                    Vec::new(),
-                )),
+                PresenceStatus::PossiblyPresent(undecided(reason, Vec::new())),
                 BTreeSet::new(),
             );
         }

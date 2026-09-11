@@ -57,7 +57,7 @@ the contract that says what a comparison is allowed to conclude.
 
 | Candidate key | Where it holds | Where it fails |
 | --- | --- | --- |
-| `REMOTEID` | A voucher whose Tally-assigned value the caller has already observed. | The **client** key is not readable back at all: §3.3a verified that Tally overwrites the attribute with its own value, so a key Bridge wrote can never be matched against a later read. Whether a voucher keyed by hand in the Tally UI carries a Tally-assigned value is **untested in either direction** — assuming it does not would be as unfounded as assuming it does. |
+| `REMOTEID` | A voucher whose Tally-assigned value the caller has already observed. | The **attribute** does not carry the client's key back: §3.3a verified Tally overwrites it with its own value. It does not follow that the key is unreadable — §9.8's batch-identity run recorded the `REMOTEID` and the **narration marker** sharing one batch-derived UUID, so it survives in the field Tally does not own. Whether a voucher keyed by hand in the Tally UI carries a Tally-assigned value is **untested in either direction**. |
 | `VOUCHERNUMBER` | Voucher types numbered **Manual**. One book preserved a long alphanumeric invoice series verbatim, another a plain three-digit bill number. | Under **Automatic** numbering Tally *discards* the supplied number (§9.8), so a number-based key is silently ineffective. And a book that does not set `PREVENTDUPLICATES` can hold the same number twice — one did, twenty-five times. |
 | date + party + amount | Needs neither of the above. | Collides. In one month of real data `141,600`, `177,000` and `16,992` each recurred across *unrelated* parties. |
 
@@ -194,9 +194,8 @@ Two bases, and nothing else:
 - **`RemoteId`** — the proposal and exactly one book voucher carry the same
   `REMOTEID`, and no other proposal carries it. Note carefully what a caller
   may put there: **not** the client key it wrote on a previous import, which
-  §3.3a verified is overwritten and unreadable, but a Tally-assigned value it
-  has previously read back. A caller that supplies its own write key here will
-  match nothing and be told `absent` — correctly, and uselessly.
+  §3.3a verified Tally overwrites in the attribute, but a Tally-assigned value
+  it has previously read back.
 - **`ManualVoucherNumber`** — the voucher type is declared `Manual`, and the
   (voucher type, normalized number) pair selects **exactly one book voucher and
   exactly one proposal**. Uniqueness on both sides is ADR 0016's rule 2, and it
@@ -297,16 +296,19 @@ severity:
   Tally, not in the return, not in Bridge, and not in any exceptions report.
   There is no artifact to find later.
 - A false `Absent` on a voucher **Bridge previously imported** creates nothing
-  at all: the same client `REMOTEID` upserts (§3.3a). The duplicate risk is
-  confined to vouchers an operator keyed by hand — which is the real residual,
-  and was both blocked engagements, but it is a smaller set than "everything".
+  at all *when the re-sent payload is byte-identical* — that is the case §3.3a
+  measured, and its own untested list names "when the payload differs from the
+  original". So the duplicate risk is confined to vouchers an operator keyed by
+  hand **plus** any re-send whose content has changed: smaller than
+  "everything", and larger than "hand-keyed only".
 - A false `Absent` on a hand-keyed voucher does create a duplicate, and that
   duplicate is **visible and correctable**: Tally's own `Duplicate Voucher No.`
   exceptions report surfaces it, and re-importing under the same client
-  `REMOTEID` overwrites the earlier row (§3.3a's correction path), which is the
-  only correction Tally offers since vouchers cannot be modified (§9.7). Note
-  the mechanism precisely — correction works by *re-import*, not by reading the
-  key back, because §3.3a verified the client key is not readable at all.
+  `REMOTEID` overwrites the earlier row (§3.3a's correction path) — the **least
+  unverified** correction available rather than a confirmed one, since §9.7's
+  operation matrix and the Delete row it rests on were measured on an Edit Log
+  7.0 Educational baseline and are not qualified on a licensed profile. The
+  mechanism is *re-import*, not reading the key back out of the attribute.
 
 **Therefore the bar for `Present` is set higher than the bar for `Absent`, and
 both are set higher than a resemblance.** `Present` requires identity;
@@ -410,13 +412,28 @@ human-approved batch — this ADR does not move.
   `PossiblyPresent` would misrepresent the capability. The crate is shared, and
   the desktop consumes the same function once a draft row carries a number and
   a party.
-- **`RemoteId` is contract-complete and not reachable from the shipped read.**
-  `render_agent_vouchers` does not `FETCH` `REMOTEID`; only the AlterID change
-  feed does. Adding it changes a qualified read profile and needs its own live
-  evidence, so it is not done here. The shipped adapter therefore declares
-  `RemoteIdEvidence::NotRead`, which makes the gap structural rather than
-  advisory: a proposal that supplies a `REMOTEID` is withheld from `Absent`
-  instead of being judged on the keys that happen to remain. Both motivating engagements were hand-keyed
+- **`RemoteId` is contract-complete and not reachable from the shipped read**,
+  so the adapter declares `RemoteIdEvidence::NotRead` and the tool's schema
+  does not accept a `remote_id` at all. `render_agent_vouchers` does not
+  `FETCH REMOTEID`; only the AlterID change feed does. Accepting an input that
+  could only ever *withhold* a verdict would be worse than refusing it.
+- **The identity channel that does survive a round trip is the narration, and
+  this read already fetches it.** §9.8's batch-identity run recorded the
+  `REMOTEID` and the narration marker sharing one batch-derived UUID: Tally
+  overwrites the field it owns and leaves alone the field it does not, and
+  `render_agent_vouchers` fetches `NARRATION`. A marker a generator writes into
+  the narration is therefore readable back **today**, with no change to a
+  qualified read profile — which makes it the named path to a reachable
+  identity basis for vouchers Bridge itself wrote. Deliberately not built here:
+  a new basis is its own change, and this contract is under review. It is the
+  first thing to build on top of it.
+- **A content fingerprint is never promoted to identity, which is the rule
+  `agent_import.rs` already enforces.** There a fingerprint-only match is
+  `matching_content_observed` and `posted_verified` needs a narration-tagged
+  match. Here date, party and amount can only ever produce candidates. The
+  hazard is identical in both: a company with a recurring same-day payment
+  already holds a voucher with that tuple, so the tuple would let a pre-existing
+  voucher stand in for one that was never written. Both motivating engagements were hand-keyed
   and would not have had one regardless.
 - The window is read in full before any comparison; `vouchers`' own pagination
   bounds output, not Tally's work. A window past `MAX_WINDOW_VOUCHERS` is

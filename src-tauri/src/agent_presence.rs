@@ -22,17 +22,6 @@ pub(super) const MAX_PRESENCE_VOUCHERS: usize = 500;
 pub(super) const MAX_PRESENCE_VOUCHER_TYPES: usize = 50;
 /// Most ledger entries one proposed voucher may carry.
 pub(super) const MAX_PRESENCE_ENTRIES: usize = 200;
-/// Candidates this response may carry in total, across every proposal.
-///
-/// The per-proposal cap alone does not bound the response, and this result
-/// shape is deliberately **not** pageable — `page_shape` cannot trim it, so an
-/// over-large report is replaced wholesale by `agent_response_too_large`
-/// *after* every Tally read has been paid for. An aggregate budget keeps an
-/// admitted request retrievable. Spending it in proposal order, and marking
-/// what it cut, is the same discipline `master_binding` applies to its own
-/// report.
-const MAX_PRESENCE_RESPONSE_CANDIDATES: usize = 1_000;
-
 /// Enforces the published `inputSchema` on this tool's nested arrays.
 ///
 /// The shared argument validator stops at the outer selectors, and the core
@@ -66,6 +55,9 @@ impl Server {
         // Parse the caller's own input before any Tally read: a malformed
         // proposal set should never cost a read.
         enforce_published_schema(args)?;
+        let offset = arg_usize(args, "offset", 0)?;
+        let limit =
+            arg_positive_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
         let numbering = parse_numbering(args)?;
         let proposals = parse_proposals(args)?;
         // Both remaining cross-input refusals depend only on the arguments, so
@@ -165,17 +157,18 @@ impl Server {
             let request = PresenceRequest::new(&window, &catalog, &numbering, &proposals)
                 .map_err(presence_code)?;
             let report = book_presence::assess(&request);
+            let (result, truncated) = presence_result(&report, &catalogue, reason, offset, limit);
 
             Ok(ToolOutcome {
                 payload: json!({
                     "company": company_json(&company, std::slice::from_ref(&company)),
-                    "result": presence_result(&report, &catalogue, reason),
+                    "result": result,
                 }),
                 evidence: accumulated
                     .clone()
                     .expect("presence evidence is present after admitted reads"),
                 company_guid: Some(guid.to_string()),
-                truncated: false,
+                truncated,
             })
         }
         .await;
@@ -277,7 +270,10 @@ fn parse_proposals(args: &Value) -> Result<Vec<ProposedVoucher>, String> {
                 date: &date,
                 voucher_type: voucher["voucher_type"].as_str().ok_or_else(invalid)?,
                 voucher_number: voucher["voucher_number"].as_str(),
-                remote_id: voucher["remote_id"].as_str(),
+                // Not an accepted input: the shipped read cannot fetch
+                // REMOTEID, so a supplied one could only ever withhold a
+                // verdict. The crate keeps the basis for callers that can.
+                remote_id: None,
                 party: voucher["party"].as_str(),
                 entries: &entries,
             })
@@ -291,43 +287,37 @@ fn presence_result(
     report: &PresenceReport,
     catalogue: &[String],
     corroboration_reason: Option<&'static str>,
-) -> Value {
+    offset: usize,
+    limit: usize,
+) -> (Value, bool) {
     let (from, to) = report.window();
-    let mut budget = MAX_PRESENCE_RESPONSE_CANDIDATES;
-    let vouchers = report
+    let total = report.vouchers().len();
+    // Paged like every other read in this adapter, for one reason beyond
+    // consistency: this result shape is otherwise invisible to `page_shape`,
+    // so an over-large report would be discarded wholesale *after* all three
+    // Tally reads were paid for. An `items` array with an `offset` is the
+    // shape the response machinery can trim with a resumable cursor.
+    let items = report
         .vouchers()
         .iter()
-        .map(|entry| {
-            let mut value =
-                mark_presence_party_names(serde_json::to_value(entry).unwrap_or_default());
-            // A trimmed list keeps its true count and says it was cut, so an
-            // empty list here still never reads as "nothing resembles this".
-            if let Some(candidates) = value.get_mut("candidates").and_then(Value::as_array_mut) {
-                if candidates.len() > budget {
-                    candidates.truncate(budget);
-                    value["candidates_truncated"] = Value::Bool(true);
-                }
-                let spent = value["candidates"]
-                    .as_array()
-                    .map(Vec::len)
-                    .unwrap_or_default();
-                budget = budget.saturating_sub(spent);
-            }
-            value
-        })
+        .skip(offset)
+        .take(limit)
+        .map(|entry| mark_presence_party_names(serde_json::to_value(entry).unwrap_or_default()))
         .collect::<Vec<_>>();
-    let candidate_budget_exhausted = budget == 0;
-    json!({
+    let truncated = offset.saturating_add(items.len()) < total;
+    let result = json!({
         "profile": "agent_voucher_presence_v1",
         // Every verdict is relative to this window. `absent` means absent from
         // this range and never absent from the book.
         "window": {"from": from, "to": to, "read": "complete", "reason": corroboration_reason},
-        "vouchers": vouchers,
-        "candidate_budget_exhausted": candidate_budget_exhausted,
+        "items": items,
+        "offset": offset,
+        "total": total,
         "totals": report.totals(),
         "book": report.observations(),
         "catalogue_evidence_sha256": sha256_json(&catalogue.to_vec()),
-    })
+    });
+    (result, truncated)
 }
 
 /// Marks the names an egress policy treats as party data. Voucher numbers and
