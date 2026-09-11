@@ -127,8 +127,9 @@ function catalogBindingSummary(binding: SourceDraftCatalogBinding | null, total:
     // and they call for opposite actions. A withheld family is the binder
     // refusing to print an arbitrary slice of ledgers this name cannot separate
     // — slicing put the right one out of view about a third of the time across
-    // sixteen live catalogues, recorded with its counts and scope in
-    // `docs/tally/TEST_CORPUS.md` §9.1 — and a fuller source name fixes it. Budget exhaustion is
+    // sixteen live catalogues: `TALLY_PROTOCOL_REFERENCE.md` §9.4c states the
+    // rule, `TEST_CORPUS.md` §9.1 carries the counts and their scope — and a
+    // fuller source name fixes it. Budget exhaustion is
     // this report running out of room on earlier rows; the source name is fine
     // and nothing the operator writes here would change it.
     if (binding.unbound_reason === "master_binding_no_discriminating_candidate") {
@@ -149,7 +150,11 @@ function catalogRefusalLead(reason: string | null) {
     case "master_binding_identifier_name_conflict":
       return "This source name matches one existing ledger exactly, while an identifier inside it matches a different one. They disagree, so nothing is chosen.";
     case "master_binding_identifier_conflict":
-      return "An identifier in this source line appears in more than one existing ledger, so it cannot say which.";
+      // Two different shapes reach this reason: one identifier carried by
+      // several ledgers, and several identifiers each reaching a different
+      // ledger. Naming only the first sent the operator hunting for a duplicate
+      // that does not exist.
+      return "The identifiers in this source line do not agree on one existing ledger — either one of them appears in several, or they point at different ones.";
     case "master_binding_name_ambiguous":
       return "More than one existing ledger carries this name once case and separators are set aside, and nothing measured says which one Tally would pick.";
     default:

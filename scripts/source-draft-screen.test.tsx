@@ -388,7 +388,7 @@ test("names the refusal when the name and the identifier point at different ledg
 
 test("distinguishes the two other refusals that are not weak matches", async () => {
   for (const [reason, phrase] of [
-    ["master_binding_identifier_conflict", "appears in more than one existing ledger"],
+    ["master_binding_identifier_conflict", "do not agree on one existing ledger"],
     ["master_binding_name_ambiguous", "once case and separators are set aside"],
   ] as const) {
     mocks.invoke.mockReset();
