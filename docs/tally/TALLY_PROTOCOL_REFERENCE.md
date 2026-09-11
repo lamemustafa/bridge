@@ -2490,6 +2490,30 @@ that the ledger master itself stayed unchanged.
 This establishes only a GUI rename on the observed TallyPrime Edit Log EDU profile. XML
 rename behaviour, other releases, and other configurations remain unverified.
 
+**Extended 2026-09-11 — two of those axes are now observed.** The same behaviour was measured
+again on **TallyPrime 7.1 licensed Silver** (`education_mode: false`), through the
+**`StandardLedgerCatalogV1`** collection rather than `LedgerOpeningCoverageV1`, on a synthetic
+company. One ledger was renamed in the UI and then restored; the ledger's GUID and master slot
+were unchanged, the ledger count held, and no other ledger's GUID moved — a rename in place, not
+a delete-plus-create. So the finding now holds across two SKUs and two read profiles. The
+before/after responses are retained as
+`fixtures/agent/native-ledger-catalogue{,-renamed}.utf16le.xml` and drive the binding
+revalidation regression test.
+
+Three further facts fell out of that capture:
+
+- A ledger GUID is **company-scoped with a master suffix** — `<company GUID>-000000d0` — so it is
+  meaningful only within its company, and the company GUID is recoverable from it. Company GUIDs
+  are not unique across split companies, so a ledger GUID inherits that ambiguity.
+- Ledgers **do** emit `RESERVEDNAME`, but empty (`RESERVEDNAME=""`). A parser keying on the
+  attribute's *presence* rather than its emptiness will read it wrongly.
+- **No master change can be undone byte-exactly.** After renaming and renaming back, the response
+  was identical except `<CMPINFO><LEDGER>` advancing 60 → 62 — a monotonic per-master-type
+  alteration counter that never rewinds. A "restore and prove nothing changed" check must
+  therefore compare master *identity*, not a response hash.
+
+**XML-driven rename remains unverified** — neither capture used one. Deletion was not exercised.
+
 ---
 
 ## 13. Open questions
@@ -2517,3 +2541,4 @@ rename behaviour, other releases, and other configurations remain unverified.
 | 2026-08-02 | Added §12a from a live measurement session: built-in named reports (qualifying §2.2), per-kind ageing semantics, the two ageing methods, eight import rewrites (extending §9), configuration as a non-diagnostic, the unallocated remainder and its recovery, the `Company` collection ignoring `SVCURRENTCOMPANY` (qualifying §9.11), and a linear volume model with a cheap pre-flight count. |
 | 2026-08-22 | Updated §5.3 with the observed Education `{1,2,31}` boundary rule and the limited TallyPrime Silver arbitrary-day observations; this settles #115 item 1 for the recorded profile. |
 | 2026-08-28 | Added §8.1's read-only ledger-master field-presence observation and explicit public-fixture privacy boundary. |
+| 2026-09-11 | Extended §12a.9 to TallyPrime 7.1 licensed Silver and the `StandardLedgerCatalogV1` profile from a live rename/restore capture, and recorded three structural facts it settled: company-scoped ledger GUIDs, empty-but-present `RESERVEDNAME` on ledgers, and the monotonic `CMPINFO` alteration counter. |
