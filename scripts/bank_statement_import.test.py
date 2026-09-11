@@ -1362,6 +1362,38 @@ def test_an_ach_reference_must_be_reference_shaped(m):
         assert party(f"ACH D- TP ACH {tail}") == expected, tail
 
 
+def test_ledger_key_folds_exactly_what_its_docstring_claims(m):
+    """`_ledger_key` is looser than §9.4b, and the docstring says so with a
+    table. Pin the table, because the hazard here is not the behaviour — it
+    fails safe at all three call sites — but somebody copying the function into
+    a binder on the strength of a docstring that used to call it "Tally's own
+    master-name identity".
+
+    A change in either direction should be deliberate: tightening it breaks the
+    verified rows, loosening it adds a row Tally has never been shown to fold.
+    """
+    same = lambda a, b: m._ledger_key(a) == m._ledger_key(b)
+
+    # VERIFIED by 9.4b — these must keep folding.
+    assert same("bridge probe ledger a", "BRIDGE PROBE LEDGER A")
+    assert same("BRIDGE PROBE LEDGER A", "BRIDGE-PROBE-LEDGER-A")
+    assert same("A B ", "A B")
+
+    # UNVERIFIED by 9.4b, folded here anyway. Safe only because nothing in this
+    # tool resolves against a master list; recorded so it cannot drift silently.
+    assert same("A-B", "A B"), "the reverse hyphen direction"
+    assert same("A  B", "A B"), "internal whitespace run"
+    assert same("  A B", "A B"), "leading whitespace"
+
+    # Must stay apart: 3.3b measured both of these as rejected, and the
+    # separators below were never measured at all.
+    assert not same("ZZ Ram AND Sons", "ZZ Ram & Sons")
+    assert not same("AB", "A & B")
+    assert not same("A_B", "A B")
+    assert not same("A/B", "A B")
+    assert not same("A\u2013B", "A B"), "en dash is not an ASCII hyphen"
+
+
 def main():
     module = load()
     for name, test in sorted(globals().items()):

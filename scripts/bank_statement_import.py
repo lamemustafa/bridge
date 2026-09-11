@@ -599,13 +599,45 @@ def _key(text):
 
 
 def _ledger_key(name):
-    """Tally's own master-name identity — IMPLEMENTATION_GUIDE.md 3.3b.
+    """A fold **looser than** Tally's measured master-name identity (§9.4b).
 
-    VERIFIED there: matching is case-insensitive and treats a hyphen as a
-    space, and is otherwise exact ('&' is NOT equivalent to 'AND', and a
-    missing word does not match). So this is the comparison to use whenever
-    the question is "will Tally consider these the same ledger?" — an exact
-    string compare answers a different, wrong question.
+    It was documented here as *being* Tally's identity. It is not, and the
+    difference is three transformations Tally has never been shown to make:
+
+    | transformation                   | §9.4b      | this fold   |
+    | -------------------------------- | ---------- | ----------- |
+    | ASCII case fold                  | VERIFIED   | folds       |
+    | space supplied for stored hyphen | VERIFIED   | folds       |
+    | one trailing space               | VERIFIED   | folds       |
+    | **hyphen supplied for stored space** | UNVERIFIED | **folds**   |
+    | **internal whitespace run collapsed** | UNVERIFIED | **folds**   |
+    | **leading whitespace ignored**   | UNVERIFIED | **folds**   |
+    | `&` vs `AND`, `&` deleted        | rejects    | keeps apart |
+    | en dash, underscore, `/`         | UNVERIFIED | keeps apart |
+
+    §9.4b's measurement is **directional** — a space was supplied where the
+    master carried a hyphen, and the reverse was never sent — and a fold is
+    symmetric by construction, so it cannot express that. §9.4b gives the
+    asymmetric predicate to use when the question is "will Tally match these?".
+
+    **Why a loose fold is nonetheless safe here, and this is the whole
+    argument:** nothing in this tool resolves a name against Tally's master
+    list. It is offline; it never sees the masters. The ledger name comes from
+    the operator's own mapping CSV and is written into the XML verbatim, and
+    Tally does its own matching at import. This fold is only ever used for
+    three internal comparisons, and being loose in each of them fails safe:
+
+      * `voucher_xml` refuses a voucher whose legs collapse together — looser
+        refuses more, which is the direction a refusal should err;
+      * `build` decides whether a row counts as unidentified and warrants an
+        operator warning — looser warns more often;
+      * `selfcheck` matches the bank leg, where both sides came from the same
+        `--bank-ledger` argument, so the fold changes nothing.
+
+    **Do not copy this function into anything that binds a name to a master.**
+    There, each of those three rows silently posts to a ledger Tally would not
+    have matched, and a sole candidate under a loose fold is not a resolution.
+    Use §9.4b's `accepts(supplied, stored)` predicate instead.
     """
     return _squash(name.replace("-", " ")).upper()
 
