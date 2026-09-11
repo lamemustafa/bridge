@@ -11,6 +11,31 @@ pub(crate) struct SourceDraftCommandError {
     pub(crate) code: &'static str,
     pub(crate) message: &'static str,
     pub(crate) remediation: &'static str,
+    /// Coordinates still justified by the read that produced this refusal.
+    ///
+    /// A refused catalogue selection is evidence about every *other* retained
+    /// binding too, because one response decided both. Carrying the survivors
+    /// here lets the renderer drop a stale current-session label without
+    /// re-reading Tally, and without over-correcting by clearing labels this
+    /// same read upholds.
+    ///
+    /// `None` -- and absent from the wire -- means this failure carries no
+    /// binding evidence, which is every other error. That is deliberately not
+    /// the same as `Some([])`, which is a refusal reporting that nothing
+    /// survived: the renderer must clear every label in that case, and would
+    /// read an empty list as "no evidence" if the two shared a representation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) current_catalog_bindings: Option<Vec<SourceDraftCurrentCatalogBinding>>,
+}
+
+impl SourceDraftCommandError {
+    pub(super) fn with_current_catalog_bindings(
+        mut self,
+        bindings: Vec<SourceDraftCurrentCatalogBinding>,
+    ) -> Self {
+        self.current_catalog_bindings = Some(bindings);
+        self
+    }
 }
 
 pub(super) type CommandResult<T> = Result<T, SourceDraftCommandError>;
@@ -196,6 +221,7 @@ pub(super) fn error(code: &'static str) -> SourceDraftCommandError {
         code,
         message,
         remediation,
+        current_catalog_bindings: None,
     }
 }
 

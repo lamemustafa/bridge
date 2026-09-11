@@ -6,6 +6,7 @@ import {
   SourceDraft,
   SourceDraftAction,
   SourceDraftCatalogTargets,
+  SourceDraftCurrentCatalogBinding,
   SourceDraftProposedEntry,
   SourceDraftProposal,
   SourceDraftRow,
@@ -22,11 +23,30 @@ function catalogSelectionKey(rowPosition: number, entryPosition: number) {
   return `${rowPosition}:${entryPosition}`;
 }
 
-function currentSessionSelections(draft: SourceDraft) {
-  return Object.fromEntries(draft.current_catalog_bindings.map(({ row_position, entry_position }) => {
-    const target = draft.rows.find((row) => row.position === row_position)?.proposal.entries[entry_position - 1]?.ledger;
+function selectionsFor(rows: SourceDraftRow[], bindings: SourceDraftCurrentCatalogBinding[]) {
+  return Object.fromEntries(bindings.map(({ row_position, entry_position }) => {
+    const target = rows.find((row) => row.position === row_position)?.proposal.entries[entry_position - 1]?.ledger;
     return [catalogSelectionKey(row_position, entry_position), target ?? ""];
   }).filter(([, target]) => target !== ""));
+}
+
+function currentSessionSelections(draft: SourceDraft) {
+  return selectionsFor(draft.rows, draft.current_catalog_bindings);
+}
+
+// A refused apply settles the other retained bindings from the same read, and
+// reports the survivors. An absent field means the failure carries no such
+// evidence; an empty array means the read disproved every binding, so the two
+// must not be collapsed.
+function settledBindingsOf(cause: unknown): SourceDraftCurrentCatalogBinding[] | null {
+  if (!cause || typeof cause !== "object") return null;
+  const reported = (cause as { current_catalog_bindings?: unknown }).current_catalog_bindings;
+  if (!Array.isArray(reported)) return null;
+  return reported.every((binding) => !!binding && typeof binding === "object"
+    && typeof (binding as SourceDraftCurrentCatalogBinding).row_position === "number"
+    && typeof (binding as SourceDraftCurrentCatalogBinding).entry_position === "number")
+    ? (reported as SourceDraftCurrentCatalogBinding[])
+    : null;
 }
 
 function cloneProposal(proposal: SourceDraftProposal): SourceDraftProposal {
@@ -335,7 +355,22 @@ export function SourceDraftScreen({
       setCatalogSelections(nextSelections);
       setSavedPath(null);
     } catch (cause) {
-      if (mounted.current && generation === operationGeneration.current) setError(errorMessage(cause));
+      if (mounted.current && generation === operationGeneration.current) {
+        setError(errorMessage(cause));
+        // The refusal was decided by a fresh read, and that read is evidence
+        // about the rows it did not refuse. Applying it here is what keeps a
+        // row from still reading as bound-this-session after Bridge has
+        // established that it is not.
+        const settled = settledBindingsOf(cause);
+        if (settled && draft) {
+          const nextSelections = selectionsFor(draft.rows, settled);
+          setCatalogInvalidatedSelections((current) => ({
+            ...current,
+            ...Object.fromEntries(Object.entries(catalogSelections).filter(([key, target]) => nextSelections[key] !== target)),
+          }));
+          setCatalogSelections(nextSelections);
+        }
+      }
     } finally {
       actionRef.current = null;
       endBusy();
