@@ -297,8 +297,9 @@ if (base) {
   // number, or deleted outright. All three break `see §9.7` identically.
   //
   // Retitling stays free, which is what PR #296 needed: the number is still
-  // there, so nothing fires. A swap is caught, because a swap is two moves and
-  // both destinations are new numbers while neither source survives.
+  // there, so nothing fires. A swap is *not* caught — both numbers survive an
+  // exchange, so presence sees nothing; see the block below for why the gate no
+  // longer tries.
   const missing = [...base.numbers.keys()].filter((number) => !occurrences.has(number));
   if (missing.length) {
     failures.push(
