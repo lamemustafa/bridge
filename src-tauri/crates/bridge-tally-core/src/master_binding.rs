@@ -1194,11 +1194,27 @@ fn master_identity_key(value: &str) -> String {
         .join(" ")
 }
 
+/// Splits a comparison key into words.
+///
+/// The separator set is defined **positively** — whitespace, and ASCII
+/// punctuation — rather than as "not alphanumeric". The difference is not
+/// pedantic: `char::is_alphanumeric` is **false for a Devanagari virama**, the
+/// halant that joins consonants, and false for a nukta. Splitting on it tore
+/// Indic ledger names apart at the joins, so `राय एण्ड सन्स` yielded one usable
+/// token instead of three and `ट्रेडर्स` was cut to a fragment. Those names are
+/// in the books this binder reads.
+///
+/// So: an ASCII class may decide a question about ASCII characters, and
+/// everything outside ASCII — letters, digits, marks, joiners alike — is word
+/// content. That keeps the rule correct for scripts nobody here has tested,
+/// which is the property worth having.
 fn tokens_of(key: &str) -> BTreeSet<String> {
-    key.split(|character: char| !character.is_alphanumeric())
-        .filter(|token| token.chars().count() >= MIN_TOKEN_CHARS)
-        .map(str::to_string)
-        .collect()
+    key.split(|character: char| {
+        character.is_whitespace() || (character.is_ascii() && !character.is_ascii_alphanumeric())
+    })
+    .filter(|token| token.chars().count() >= MIN_TOKEN_CHARS)
+    .map(str::to_string)
+    .collect()
 }
 
 /// Extracts every identifier a name carries, in canonical form.

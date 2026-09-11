@@ -641,6 +641,29 @@ fn conflicting_identifiers_outrank_a_byte_exact_name_but_a_shared_one_does_not()
 }
 
 #[test]
+fn an_indic_name_is_not_torn_apart_at_its_joins() {
+    // `char::is_alphanumeric` is false for a Devanagari virama — the halant
+    // that joins consonants — and false for a nukta. Splitting on "not
+    // alphanumeric" cut these names at the joins, so a shared word stopped
+    // being a shared token. These names are in the books this binder reads.
+    let catalog = ledgers(&[
+        "\u{936}\u{94d}\u{930}\u{940} \u{917}\u{923}\u{947}\u{936} \u{91f}\u{94d}\u{930}\u{947}\u{921}\u{930}\u{94d}\u{938}",
+        "\u{930}\u{93e}\u{92f} \u{90f}\u{923}\u{94d}\u{921} \u{938}\u{928}\u{94d}\u{938}",
+        "Beta Supply",
+    ]);
+    // The second book's distinctive word, which the virama used to fragment
+    // away entirely, now reaches its own master.
+    let binding = bind_one_name(&catalog, "\u{938}\u{928}\u{94d}\u{938}");
+    assert!(
+        candidate_names(&binding)
+            .iter()
+            .any(|name| name.contains("\u{930}\u{93e}\u{92f}")),
+        "a shared Indic word did not surface its master: {:?}",
+        candidate_names(&binding)
+    );
+}
+
+#[test]
 fn a_non_ascii_name_beside_digits_is_still_a_name() {
     // The observed books carry Devanagari, Tamil and Bengali ledger names. An
     // ASCII-only letter guard read `पार्टी12345678` as digits standing alone
