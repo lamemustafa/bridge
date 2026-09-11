@@ -1080,7 +1080,7 @@ zero; fail closed or quarantine.
 | Abandoned request | Gateway blocked for minutes | I7 |
 | Modal dialog | Gateway blocked until a human clicks | §5.1 |
 | `ClosingBalance` read as a period figure | Wrong balance, presented as correct | §6.4 |
-| `ACTION="Alter"` + `REMOTEID` | Creates a duplicate — use `Create` | §3.3a |
+| `ACTION="Alter"` + `REMOTEID` | Creates a duplicate. `Create` upserts a **byte-identical** repeat; a *corrected* payload is UNVERIFIED and may overwrite, partially update or duplicate | §3.3a |
 | Master name differing by more than case/separators | Voucher rejected, master NOT auto-created | §3.3b |
 | Omitting `BILLALLOCATIONS.LIST` | Allocation becomes `On Account` with no bill identity | §3.3c |
 | Self-referential `$$NumItems` in a collection | Gateway hangs, empty reply | §5.3b |

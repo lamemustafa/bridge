@@ -903,6 +903,17 @@ ones risks the opposite — a silent match onto a different ledger. Qualify each
 before folding it in, and note that the demo company this project reads carries ledgers in three
 non-Latin scripts, so the case-folding row is reachable rather than theoretical.
 
+> **RULE: prefer an exact spelling, and refuse an ambiguous fold. Never pick one.** The fold tells
+> you which masters are *candidates*; it does not tell you which one Tally would choose, and one
+> successful alternate-spelling experiment does not establish that a catalogue cannot hold both
+> `A-B` and `A B`. Those collapse together here, and nothing measured says what happens then.
+
+Bridge's own resolver already encodes this, and it is the shape to copy
+(`src-tauri/src/agent.rs`): take the exact spelling if one of the candidates is exactly what was
+requested; otherwise exactly one candidate resolves, none is `ledger_not_found`, and **more than
+one is `ledger_ambiguous` — an error, not a choice.** A canonical comparison that returns the
+first match is the failure this rule exists to prevent.
+
 Both directions are live hazards, and they fail in opposite ways:
 
 - **Too strict** (plain `==`) silently rejects a name Tally would have accepted. A binder that
@@ -918,9 +929,16 @@ pluralisation are **not** normalised away: `AND` for `&`, a missing suffix word 
 plural are all rejected. Those have to be resolved *before* the file is generated — no amount of
 comparison at write time recovers a name the operator shortened.
 
-**Scope.** One licensed instance, ledgers. Whether stock items, groups and voucher types match by
-the same rule is **UNVERIFIED**; §3.3b says nothing about voucher numbers either, and a fold shared
-between master names and voucher numbers is assuming something nobody has measured.
+**Scope — and it is narrower than the promotion made it look.** This measurement is inherited from
+`IMPLEMENTATION_GUIDE.md` §3.3b, dated 2026-07-30, which belongs to this document's §0 baseline:
+**TallyPrime Edit Log 7.0 in Educational mode.** Not licensed, not standard TallyPrime. I first
+wrote "one licensed instance" here, which would have let a reader treat master-name matching as
+qualified on the SKU they are actually writing to.
+
+So: **ledgers, on Edit Log 7.0 Educational. Licensed and standard TallyPrime are UNVERIFIED.**
+Whether stock items, groups and voucher types match by the same rule is UNVERIFIED too, and §3.3b
+says nothing about voucher numbers — a fold shared between master names and voucher numbers is
+assuming something nobody has measured.
 
 ### 9.5 Identity after write
 
