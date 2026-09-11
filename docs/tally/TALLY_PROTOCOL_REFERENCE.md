@@ -1432,9 +1432,11 @@ bad voucher does not matter:
 1. **Use a disposable synthetic company, and take a backup first** — `docs/adr/0004-tally-write-safety.md`
    requires both for an initial write, and this is exactly the case it was written for. If the
    process stops before the deletion, or the delete fails, the malformed voucher stays.
-2. Send a single voucher, then read it back. If the party and tax ledgers are missing and the
-   stored total is the inventory lines alone, the element was discarded — `Import Exceptions` will
-   show *"Mismatch in total amount between Credit and Debit entries"*.
+2. Send a single voucher, then read it back. **The read-back is what decides**: if the party and
+   tax ledgers are missing and the stored total is the inventory lines alone, the element was
+   discarded. `Import Exceptions` *may* also carry
+   *"Mismatch in total amount between Credit and Debit entries"* — that was the message on the one
+   sales invoice measured, and an absent entry is not evidence that the write succeeded.
 3. Remove it with `ACTION="Delete"` by `REMOTEID` (§9.12b) and re-send with the other element.
 4. Record the answer here.
 
@@ -1455,23 +1457,28 @@ flagging data exceptions before the import ran. **Its counts are not attributabl
  <PARTYLEDGERNAME>…</PARTYLEDGERNAME><BASICBASEPARTYNAME>…</BASICBASEPARTYNAME>
  <PERSISTEDVIEW>Invoice Voucher View</PERSISTEDVIEW><ISINVOICE>Yes</ISINVOICE>
  <LEDGERENTRIES.LIST>                       <!-- party: debit, negative -->
-  <LEDGERNAME>…</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-336.67</AMOUNT>
+  <LEDGERNAME>…</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-118.00</AMOUNT>
   <BILLALLOCATIONS.LIST>
-   <NAME>…invoice no…</NAME><BILLTYPE>New Ref</BILLTYPE><AMOUNT>-336.67</AMOUNT>
+   <NAME>…invoice no…</NAME><BILLTYPE>New Ref</BILLTYPE><AMOUNT>-118.00</AMOUNT>
   </BILLALLOCATIONS.LIST>
  </LEDGERENTRIES.LIST>
- <LEDGERENTRIES.LIST>…each tax ledger: credit, positive…</LEDGERENTRIES.LIST>
+ <LEDGERENTRIES.LIST>…CGST: credit, positive…<AMOUNT>9.00</AMOUNT></LEDGERENTRIES.LIST>
+ <LEDGERENTRIES.LIST>…SGST: credit, positive…<AMOUNT>9.00</AMOUNT></LEDGERENTRIES.LIST>
  <ALLINVENTORYENTRIES.LIST>
   <STOCKITEMNAME>…</STOCKITEMNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-  <RATE>244.91/Nos</RATE><ACTUALQTY>1 Nos</ACTUALQTY><BILLEDQTY>1 Nos</BILLEDQTY>
-  <AMOUNT>244.91</AMOUNT>
-  <ACCOUNTINGALLOCATIONS.LIST>                <!-- per line; no voucher-level sales ledger -->
+  <RATE>100.00/Nos</RATE><ACTUALQTY>1 Nos</ACTUALQTY><BILLEDQTY>1 Nos</BILLEDQTY>
+  <AMOUNT>100.00</AMOUNT>
+  <ACCOUNTINGALLOCATIONS.LIST>                <!-- the shape that was observed -->
    <LEDGERNAME>…sales ledger…</LEDGERNAME>
-   <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>244.91</AMOUNT>
+   <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>100.00</AMOUNT>
   </ACCOUNTINGALLOCATIONS.LIST>
  </ALLINVENTORYENTRIES.LIST>
 </VOUCHER>
 ```
+
+**Every figure above is synthetic** — one line of 100.00 at 9% + 9%, party 118.00, balancing to
+zero. The measured voucher's own amounts are not reproduced anywhere in this section. The shape is
+what was observed; the numbers are constructed to illustrate it.
 
 Four further observations, each measured:
 
@@ -1500,18 +1507,27 @@ Four further observations, each measured:
    *invoice*, through either path, is **UNVERIFIED**. Preflight the ledger; do not rely on any
    counter to tell you afterwards.
 4. **The stored tax matched the sum of per-line rounded tax, not tax on the total.** The two
-   methods disagree whenever a line's tax does not land on a whole paisa. Three lines of 100.05 at
-   9% make the point: each line rounds to 9.00 and the sum is 27.00, while 9% of the 300.15 total
-   is 27.0135, which rounds to 27.01. **Compute tax per line and sum; do not tax the invoice
-   total.**
+   methods can disagree once a line's tax carries a fraction of a paisa — but not always, and the
+   difference is what matters rather than the fraction. Two lines of 100.01 at 9% *agree*: each
+   9.0009 rounds to 9.00 for 18.00, and 9% of the 200.02 total is 18.0018, which also rounds to
+   18.00. Three lines of 100.05 at 9% *disagree*: each 9.0045 rounds to 9.00 for 27.00, while 9%
+   of the 300.15 total is 27.0135, which rounds to 27.01. They part company only when the
+   accumulated per-line rounding crosses a half-paisa boundary.
 
-   **UNVERIFIED — this is a read-back, not a calculation probe.** The A/B recorded here changed
-   only the ledger-list element name. Nothing varied or omitted the *supplied* tax amount, so
-   reading one balanced import back cannot distinguish Tally **calculating** tax per line from
-   Tally simply **storing the amount it was given**. The instruction above is sound either way —
-   sending per-line-summed tax matches what the book ends up holding — but do not build on the
-   mechanism until a one-variable probe has run: send a tax amount that differs from both methods
-   and read back what is stored.
+   **UNVERIFIED — this is a read-back, not a calculation probe**, and the policy follows from
+   that. The A/B recorded here changed only the ledger-list element name. Nothing varied or
+   omitted the *supplied* tax, so reading one balanced import back cannot distinguish Tally
+   **calculating** tax per line from Tally simply **storing the amount it was given**.
+
+   > **Until that is settled: send the source document's own tax.** If Tally stores what it
+   > receives — the possibility this evidence cannot rule out — then recomputing tax per line
+   > *replaces* the invoice's figures with different ones wherever the two methods diverge, which
+   > is a worse outcome than either rounding convention. Recompute only when there is no source
+   > figure to carry, and then sum per line rather than taxing the total, because that is what the
+   > measured voucher ended up holding.
+
+   The settling probe is one variable: send a tax amount differing from **both** methods and read
+   back what is stored.
 
    **Do not derive a validation tolerance from any single figure.** Taxing the total is not always
    wrong (two lines of 100.00 at 9% agree under either method), and where it is wrong the error is
