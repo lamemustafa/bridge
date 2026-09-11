@@ -44,6 +44,22 @@ x
 
 y
 
+## 10 Alpha
+
+a
+
+## 11 Alpha
+
+b
+
+## 20 Beta
+
+c
+
+## 21 Beta
+
+d
+
 ## 1.2 Request charset controls response charset
 
 z
@@ -133,6 +149,16 @@ check(
   "passes",
 );
 check("adding a new number is the normal case", (d) => `${d}\n### 9.9 Brand new section\n\nnew\n`, "passes");
+// A new section may legitimately carry a title an existing section already has
+// — the reference has two sections titled "Repeated heading" today. The swap
+// check must not read that as a move: the number it appears at is *new*, so no
+// merged number changed hands. Without the base-allocated test this is a false
+// positive, and it is the only case that distinguishes the two.
+check(
+  "a new number may carry a title an existing section already has",
+  (d) => `${d}\n## 30 Alpha\n\nnew\n`,
+  "passes",
+);
 
 // --- refused -----------------------------------------------------------------
 check(
@@ -158,8 +184,28 @@ check(
       "77.77 Stable title",
       "9.7 Stable title",
     ),
-  "heading moved to a different number",
+  "a section number the base gave to something else",
 );
+// The swap above has unique titles. When *both* swapped titles also appear on
+// another section — `10 Alpha` / `11 Alpha` and `20 Beta` / `21 Beta` — an
+// implementation that protects itself from repeated titles by ignoring them
+// lets the exchange through, and the presence check cannot help because both
+// numbers are still there. Review found exactly this, and it is why the check
+// compares each title's *set* of numbers rather than a single one.
+check(
+  "swapping two numbers is caught even when both titles are repeated elsewhere",
+  (d) => swap(swap(d, "## 10 Alpha", "## 10 Beta"), "## 20 Beta", "## 20 Alpha"),
+  "a section number the base gave to something else",
+);
+
+// ...and retitling one of a repeated pair is still allowed, which is the
+// property the discarded-titles approach was protecting.
+check(
+  "retitling one of a repeated pair is allowed",
+  (d) => swap(d, "## 11 Alpha", "## 11 Something else"),
+  "passes",
+);
+
 check(
   "a new heading under a grandfathered duplicate number is refused",
   (d) => `${d}\n## 1.2 A third one sneaking in\n\nq\n`,

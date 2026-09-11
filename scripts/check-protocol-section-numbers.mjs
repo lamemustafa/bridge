@@ -321,48 +321,53 @@ if (base) {
   // Presence alone cannot see a **swap**: exchange two numbers and both are
   // still there, while every citation to either now lands on the other's
   // content. That needs a section to be recognisable independently of its
-  // number, and the only available handle is its title — so use it, but only
-  // where it is actually a handle.
+  // number, and the only available handle is its title.
   //
-  // A title identifies a section only when it is unique on **both** revisions.
-  // Restricting the check to that is what makes it safe: two sections sharing a
-  // title can no longer make retitling one of them look like a move, which was
-  // the third review finding here. The other two are already answered — a
-  // Setext heading's number is stripped by `titleOf` now, and a renumber that
-  // also retitles is caught by the presence check above, which needs no title
-  // at all.
+  // The test is not "is this title still at its number" — that fires on a
+  // retitle, which breaks nothing. It is: **did a base title turn up under a
+  // number that the base had already allocated to something else?** That is
+  // what a swap and a re-use look like, and a retitle looks like nothing,
+  // because a retitle only *removes* numbers from a title's set.
   //
-  // Because both sides are unique, the destination is exactly one number, so
-  // the diagnostic cannot grow with its input the way `now.join(", ")` could.
-  const soleNumberOf = (scanned) => {
+  // Working in sets rather than on a single number is what makes repeated
+  // titles safe, which two review findings here were about. An earlier version
+  // handled them by ignoring any title that was not unique on both sides —
+  // which quietly meant a swap of two sections whose titles each appear twice
+  // went undetected, with both numbers still present so the check above passed
+  // too. Nothing is discarded now.
+  const numbersByTitle = (scanned) => {
     const byTitle = new Map();
     for (const [number, found] of scanned) {
       for (const one of found) {
         const title = titleOf(one.text);
-        byTitle.set(title, byTitle.has(title) ? null : number);
+        if (!byTitle.has(title)) byTitle.set(title, new Set());
+        byTitle.get(title).add(number);
       }
     }
     return byTitle;
   };
-  const wasAt = soleNumberOf(base.numbers);
-  const isAt = soleNumberOf(occurrences);
+  const wasAt = numbersByTitle(base.numbers);
+  const isAt = numbersByTitle(occurrences);
+  const allocated = new Set(base.numbers.keys());
   const moved = [];
-  for (const [title, number] of wasAt) {
-    if (number === null) continue;
-    const now = isAt.get(title);
-    if (now === undefined || now === null || now === number) continue;
-    moved.push({ title, number, now });
+  for (const [title, before] of wasAt) {
+    for (const number of isAt.get(title) ?? []) {
+      // Not in this title's own base numbers, but allocated on the base to
+      // something else: this heading has taken over a merged number.
+      if (before.has(number) || !allocated.has(number)) continue;
+      moved.push({ title, number, before: [...before] });
+    }
   }
   if (moved.length) {
     failures.push(
-      `section(s) whose heading moved to a different number against ${base.ref}. ` +
-        "Both numbers still exist, so this is a swap or a re-use: a citation to " +
-        "either one now lands on the other's content. Leave merged numbers where " +
+      `heading(s) now sitting on a section number the base gave to something ` +
+        `else, against ${base.ref}. That is a swap or a re-use: a citation to ` +
+        "that number now lands on different content. Leave merged numbers where " +
         "they are and give new material a free one:\n" +
         moved
           .slice(0, MAX_REPORTED_NUMBERS)
-          .map(({ title, number, now }) =>
-            `    ${short(title)}: was ${short(number)}, now ${short(now)}`)
+          .map(({ title, number, before }) =>
+            `    ${short(title)}: was at ${before.map(short).join(", ")}, now also at ${short(number)}`)
           .join("\n"),
     );
   }
