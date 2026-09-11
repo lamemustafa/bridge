@@ -2029,6 +2029,11 @@ fn this_contracts_files_are_still_pinned_in_the_compatibility_surface() {
     for path in [
         "src-tauri/crates/bridge-tally-core/src/book_presence.rs",
         "src-tauri/src/agent_presence.rs",
+        // The adapter reads its bounds from the published schema rather than
+        // restating them, so the only independent statement of the admission
+        // contract is the assertion in this file. Unpinned, a loosened schema
+        // and its matching test update leave the digest untouched.
+        "src-tauri/src/agent_presence_tests.rs",
     ] {
         assert!(
             pinned.contains(path),
@@ -2229,5 +2234,92 @@ fn an_echoed_party_difference_is_bounded() {
     assert_eq!(
         party.observed.as_deref().map(|value| value.chars().count()),
         Some(MAX_OBSERVATION_LABEL_CHARS)
+    );
+}
+
+/// Bounding must not quietly turn a true difference into a false display.
+///
+/// Two accepted names can agree for the whole bounded prefix and differ after
+/// it -- the adapter admits names eight times longer than this bound. The
+/// comparison sees the difference, so a difference is reported; without a
+/// marker both sides then serialize to the same string and the report asserts
+/// that two identical values differ. The marker cannot recover the missing
+/// tail, but it stops the report from lying about what it is showing.
+#[test]
+fn a_difference_bounded_on_both_sides_says_the_values_were_shortened() {
+    let shared = "Bravo ".to_string() + &"o".repeat(MAX_OBSERVATION_LABEL_CHARS);
+    let proposed: &'static str = Box::leak(format!("{shared} Northern Division").into_boxed_str());
+    let observed: &'static str = Box::leak(format!("{shared} Southern Division").into_boxed_str());
+    let names = [
+        "Alpha Traders",
+        proposed,
+        "Sales Account",
+        "Output CGST 9%",
+        "Output SGST 9%",
+    ];
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118").party_field(observed)]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .party(proposed)
+        .build()];
+    let report = run(
+        &window,
+        &catalog_of(&names),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let PresenceStatus::Present { differences, .. } = &only(&report).status else {
+        panic!("expected Present");
+    };
+    let party = differences
+        .iter()
+        .find(|difference| difference.field == DifferenceField::Party)
+        .expect("the full values differ, so a difference is reported");
+    let shown_proposed = party.proposed.as_deref().expect("proposed");
+    let shown_observed = party.observed.as_deref().expect("observed");
+    // The premise: bounding really does collapse these two onto one string.
+    assert_eq!(
+        shown_proposed, shown_observed,
+        "the values agree across the whole bounded prefix"
+    );
+    for shown in [shown_proposed, shown_observed] {
+        assert!(
+            shown.ends_with('\u{2026}'),
+            "a shortened value must say it was shortened"
+        );
+        assert_eq!(
+            shown.chars().count(),
+            MAX_OBSERVATION_LABEL_CHARS,
+            "the marker is inside the bound, not added to it"
+        );
+    }
+}
+
+/// A collision returns before resemblance can decide anything, but the
+/// proposal still *reached* what it resembles. Every earlier collision test
+/// had the whole window sharing the number, so the colliding set and the
+/// resembled set were the same rows and a bare set looked correct.
+#[test]
+fn a_number_collision_still_reaches_what_it_only_resembled() {
+    let window = window(&[
+        BookRow::new("book-1", "20260812", "AA0118"),
+        // Shares the number: a collision, and the reason this returns early.
+        BookRow::new("book-2", "20260812", "AA0118"),
+        // Shares date, party and amount but not the number: resembled only,
+        // and reachable solely through the resemblance scan the early return
+        // used to skip.
+        BookRow::new("book-3", "20260812", "AA0777"),
+    ]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118").build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    assert_eq!(reason(only(&report)), UndecidedReason::BookNumberCollision);
+    assert_eq!(
+        report.observations().unmatched_book_vouchers,
+        0,
+        "book-3 was plainly resembled; the collision must not hide that"
     );
 }

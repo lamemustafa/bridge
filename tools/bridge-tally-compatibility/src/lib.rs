@@ -48,7 +48,22 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// the reverse, dropping one silently, while the surface digest and the
 /// evidence attesting the reads beneath both stayed unchanged. Two files for
 /// one named reason, one per surface; still not headroom.
-pub const MAX_SURFACE_FILES: usize = 213;
+///
+/// Raised again from 213 to 214 to admit
+/// `src-tauri/src/agent_presence_tests.rs`. The admission contract for
+/// `voucher_presence` -- which properties are accepted, their bounds, and the
+/// refusal of anything undeclared -- is published from `agent_catalog.rs`, and
+/// `agent_presence.rs` deliberately *reads* those bounds rather than restating
+/// them. Loosening the published schema therefore changes what the tool
+/// admits without touching a pinned file. The one place the contract is
+/// stated independently is the assertion in this test, so a schema loosened
+/// together with its corresponding test update -- the normal, unsuspicious
+/// pairing -- would otherwise leave the digest unchanged and let existing
+/// evidence attest an admission contract it never covered. Pinning
+/// `agent_catalog.rs` instead would put every tool-description edit in the
+/// repository through a reseal; this pin binds the statement of the contract
+/// rather than the file that happens to carry it. One file, one named reason.
+pub const MAX_SURFACE_FILES: usize = 214;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;

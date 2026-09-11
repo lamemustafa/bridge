@@ -1289,8 +1289,13 @@ fn decide(
 
     // Manual numbering only decides *within* an observed voucher type: numbers
     // are a per-type series, so a cross-type match is a resemblance.
-    if method == NumberingMethod::Manual && type_observed && proposal.number_key.is_some() {
-        let touched = number_matches.iter().copied().collect::<BTreeSet<_>>();
+    if method == NumberingMethod::Manual && type_observed && !number_matches.is_empty() {
+        // Every return below reaches the same rows -- the ones sharing the
+        // number, plus whatever this proposal resembles -- so the union is
+        // taken once, here. Taking it per branch is what let three early
+        // returns ship a bare set, and `unmatched_book_vouchers` then counted
+        // a plainly resembled row as one no proposal came near.
+        let touched = with_resemblances(number_matches.iter().copied().collect());
         if number_matches.len() > 1 {
             return shell(
                 PresenceStatus::PossiblyPresent(undecided(
@@ -1337,7 +1342,7 @@ fn decide(
             }
             return shell(
                 settled(proposal, party, matched, PresenceBasis::ManualVoucherNumber),
-                with_resemblances(touched),
+                touched,
             );
         }
     }
@@ -1599,8 +1604,23 @@ fn observe(
 }
 
 /// Bounds an echoed observation label. See `MAX_OBSERVATION_LABEL_CHARS`.
+/// Bounds a value echoed back to the caller, and says so when it shortened one.
+///
+/// The marker is not decoration. Every comparison upstream runs on the *full*
+/// values, so two names differing only past the bound would otherwise serialize
+/// as one identical pair sitting beside a claim that they differ. The marker
+/// does not recover the distinction -- nothing at this bound can -- but it
+/// keeps the report from asserting something false about what it is showing.
 fn label(value: &str) -> String {
-    value.chars().take(MAX_OBSERVATION_LABEL_CHARS).collect()
+    if value.chars().count() <= MAX_OBSERVATION_LABEL_CHARS {
+        return value.to_string();
+    }
+    let mut bounded: String = value
+        .chars()
+        .take(MAX_OBSERVATION_LABEL_CHARS - 1)
+        .collect();
+    bounded.push('\u{2026}');
+    bounded
 }
 
 fn keep_strongest(
