@@ -104,16 +104,31 @@ let failed = 0;
 // case must produce. Asserting the *fragment* rather than merely "it failed" is
 // the point: three of these cases used to fail for an unrelated reason, and a
 // test that only checks the exit code calls that a pass.
-const check = (name, edit, expect) => {
+const check = (name, edit, expect, about) => {
   writeFileSync(join(work, DOC), edit(BASE_DOC));
   const out = runGate();
   const text = `${out.stdout}${out.stderr}`;
-  const ok = expect === "passes"
-    ? out.status === 0
-    : out.status !== 0 && text.includes(expect);
+  let ok;
+  let why = expect;
+  if (expect === "passes") {
+    ok = out.status === 0;
+  } else {
+    // A substring alone is too weak, and several cases share one. `absent
+    // here` would still match if the gate started failing for an unrelated
+    // section while the mutation under test went undetected — the test stays
+    // green on a broken gate, which is the failure these tests exist to catch.
+    //
+    // So three assertions, not one: the rule that fired, the **section number**
+    // the case is about, and that exactly one problem was reported. Together
+    // those pin down which rule fired on which input.
+    const oneProblem = text.includes("(1 problem(s))");
+    const mentions = about === undefined || text.includes(about);
+    ok = out.status !== 0 && text.includes(expect) && oneProblem && mentions;
+    why = `${expect}${about === undefined ? "" : ` — about ${about}`} — exactly 1 problem`;
+  }
   if (!ok) {
     failed += 1;
-    console.error(`FAIL ${name}\n  expected: ${expect}\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+    console.error(`FAIL ${name}\n  expected: ${why}\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
   } else {
     console.log(`ok   ${name}`);
   }
@@ -165,16 +180,19 @@ check(
   "renumbering a Setext heading is caught (its title carries no '#')",
   (d) => swap(d, "77.77 Stable title", "77.78 Stable title"),
   "absent here",
+  "77.77",
 );
 check(
   "renumbering while also retitling is caught (no title to match on)",
   (d) => swap(d, "## 9.7 Operation support matrix", "## 77.79 Completely new wording"),
   "absent here",
+  "9.7",
 );
 check(
   "deleting a merged section is caught — it breaks citations just as a move does",
   (d) => d.replace(/## 9\.7 Operation support matrix\n\nbody\n/, ""),
   "absent here",
+  "9.7",
 );
 check(
   "swapping two numbers is caught, though both numbers still exist",
@@ -196,6 +214,17 @@ check(
   "swapping two numbers is caught even when both titles are repeated elsewhere",
   (d) => swap(swap(d, "## 10 Alpha", "## 10 Beta"), "## 20 Beta", "## 20 Alpha"),
   "a section number the base gave to something else",
+  "Alpha",
+);
+
+// Retitling a section **to a title another section already has** puts that
+// title at two numbers without either number moving. An exchange vacates as
+// well as occupies, so requiring a departure is what tells the two apart —
+// without it the set comparison reintroduces the false positive it replaced.
+check(
+  "retitling a section to a title another section already has is allowed",
+  (d) => swap(d, "## 20 Beta", "## 20 Alpha"),
+  "passes",
 );
 
 // ...and retitling one of a repeated pair is still allowed, which is the
@@ -210,11 +239,13 @@ check(
   "a new heading under a grandfathered duplicate number is refused",
   (d) => `${d}\n## 1.2 A third one sneaking in\n\nq\n`,
   "excused only for its grandfathered headings",
+  "1.2",
 );
 check(
   "a plain duplicate number is refused",
   (d) => `${d}\n## 9.7 Second claimant\n\nq\n`,
   "is used 2 times",
+  "9.7",
 );
 
 // A failure list reports whichever rules fired, so the umbrella line must not

@@ -351,11 +351,20 @@ if (base) {
   const allocated = new Set(base.numbers.keys());
   const moved = [];
   for (const [title, before] of wasAt) {
-    for (const number of isAt.get(title) ?? []) {
+    const now = isAt.get(title) ?? new Set();
+    // An exchange *vacates* as well as occupies. A title that only ever gains a
+    // number has not moved: retitling `20 Beta` to `20 Alpha` while `10 Alpha`
+    // stays puts `Alpha` at both 10 and 20, and neither number went anywhere —
+    // that is a retitle, which this gate exists to allow. Requiring a departure
+    // as well as an arrival is what separates the two, and without it the set
+    // comparison reintroduced the false positive it was meant to remove.
+    const vacated = [...before].filter((number) => !now.has(number));
+    if (!vacated.length) continue;
+    for (const number of now) {
       // Not in this title's own base numbers, but allocated on the base to
       // something else: this heading has taken over a merged number.
       if (before.has(number) || !allocated.has(number)) continue;
-      moved.push({ title, number, before: [...before] });
+      moved.push({ title, number, vacated });
     }
   }
   if (moved.length) {
@@ -366,8 +375,16 @@ if (base) {
         "they are and give new material a free one:\n" +
         moved
           .slice(0, MAX_REPORTED_NUMBERS)
-          .map(({ title, number, before }) =>
-            `    ${short(title)}: was at ${before.map(short).join(", ")}, now also at ${short(number)}`)
+          .map(({ title, number, vacated }) => {
+            // Cap this list too: a title can sit under arbitrarily many numbers
+            // in a generated document, and `MAX_REPORTED_NUMBERS` above bounds
+            // the count of findings, not the width of any one of them.
+            const shown = vacated.slice(0, MAX_REPORTED_NUMBERS).map(short).join(", ");
+            const rest = vacated.length > MAX_REPORTED_NUMBERS
+              ? ` and ${vacated.length - MAX_REPORTED_NUMBERS} more`
+              : "";
+            return `    ${short(title)}: left ${shown}${rest}, now at ${short(number)}`;
+          })
           .join("\n"),
     );
   }

@@ -60,9 +60,30 @@ Two residuals, both worth knowing:
 
    **Retitling is not renumbering, and is allowed.** Citations point at the number, so changing a
    heading's words breaks nothing — and it is sometimes the point of a change, as when a title
-   states a narrow case in general-sounding words. The gate fails on a heading that turns up under
-   a *different* number, not on one whose wording changed.
-3. **Claiming a number says nothing about Tally.** Whether the behaviour a section describes is
+   states a narrow case in general-sounding words. That includes retitling a section to words
+   another section already uses: two headings may share a title, and the reference has such a pair
+   today.
+
+   **The gate tests whether a merged *number* is still there**, not whether a heading kept its
+   words. Identifying sections by title needs a section to have an identity apart from its number,
+   and the only candidate — the title — fails three ways: a Setext heading carries its number
+   inside its text, retitling and renumbering together makes the old title vanish, and two sections
+   sharing a title make retitling either one look like a move.
+
+3. **A merged number may not be removed either.** `see §9.7` breaks the same way whether 9.7 was
+   renumbered, retitled into a different number, or deleted outright, so the gate treats all three
+   alike. In practice this costs nothing: no number has ever disappeared from the reference.
+
+   If a section genuinely must go, **leave its number in place with a line saying where the content
+   went** — a redirect heading. The citation still lands, and the reader gets to the replacement.
+   Deleting the heading leaves them at a number that no longer exists, with nothing to follow.
+
+4. **A swap is caught even though both numbers still exist.** Exchange two numbers and presence
+   alone sees nothing wrong, while every citation to either now lands on the other's content. The
+   gate also checks whether a heading has turned up on a number the base had allocated to something
+   else *and* left one of its own behind — an exchange vacates as well as occupies, which is what
+   distinguishes it from an ordinary retitle.
+5. **Claiming a number says nothing about Tally.** Whether the behaviour a section describes is
    verified, and to what scope, is settled in the reference itself and in its evidence blocks. The
    confidence markers are the reference's job and cannot be summarised anywhere else without
    losing them.
