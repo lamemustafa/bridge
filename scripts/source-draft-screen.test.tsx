@@ -34,6 +34,7 @@ const draft = {
   source_sha256: "a".repeat(64),
   source_notices: [{ kind: "Non-voucher records retained", count: 3 }],
   rows: [row(1), row(2)],
+  current_catalog_bindings: [],
 };
 
 const catalogScope = {
@@ -264,7 +265,11 @@ test("requires an explicit current-session re-read before treating a saved match
       proposal: { ...item.proposal, entries: [{ ...item.proposal.entries[0], ledger: "Existing target" }] },
     } : item),
   };
-  const applied = { ...savedTarget, revision: 2 };
+  const applied = {
+    ...savedTarget,
+    revision: 2,
+    current_catalog_bindings: [{ row_position: 1, entry_position: 1 }],
+  };
   mocks.invoke
     .mockResolvedValueOnce(savedTarget)
     .mockResolvedValueOnce(catalog)
@@ -305,6 +310,127 @@ test("requires an explicit current-session re-read before treating a saved match
     request: { draft_id: draft.draft_id, ...catalogScope },
   });
   expect(host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")?.value).toBe("");
+  root.unmount();
+});
+
+test("shows a Tally-changed warning instead of a current-session label when retained target revalidation fails", async () => {
+  const twoTargetCatalog = { ...catalog, targets: ["Target A", "Target B"] };
+  const boundA = {
+    ...draft,
+    revision: 2,
+    rows: draft.rows.map((item, index) => index === 0 ? {
+      ...item,
+      proposal: { ...item.proposal, entries: [{ ...item.proposal.entries[0], ledger: "Target A" }] },
+    } : item),
+    current_catalog_bindings: [{ row_position: 1, entry_position: 1 }],
+  };
+  const boundBOnly = {
+    ...boundA,
+    revision: 3,
+    rows: boundA.rows.map((item, index) => index === 1 ? {
+      ...item,
+      proposal: { ...item.proposal, entries: [{ ...item.proposal.entries[0], ledger: "Target B" }] },
+    } : item),
+    current_catalog_bindings: [{ row_position: 2, entry_position: 1 }],
+  };
+  mocks.invoke
+    .mockResolvedValueOnce(draft)
+    .mockResolvedValueOnce(twoTargetCatalog)
+    .mockResolvedValueOnce(boundA)
+    .mockResolvedValueOnce(boundBOnly);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  await act(async () => setValue(host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!, "Target A"));
+  expect(host.textContent).toContain("This current-session target was re-read and bound.");
+
+  await act(async () => button(host, "#2").click());
+  await act(async () => setValue(host.querySelector<HTMLSelectElement>("#source-draft-2-entry-0-ledger")!, "Target B"));
+  expect(host.textContent).toContain("This current-session target was re-read and bound.");
+
+  await act(async () => button(host, "#1").click());
+  expect(host.textContent).toContain("Tally changed after this target was bound. Saved unverified target: Target A.");
+  expect(host.textContent).not.toContain("This current-session target was re-read and bound.");
+  root.unmount();
+});
+
+test("a refused apply clears a current-session label the same read disproved", async () => {
+  const twoTargetCatalog = { ...catalog, targets: ["Target A", "Target B"] };
+  const boundA = {
+    ...draft,
+    revision: 2,
+    rows: draft.rows.map((item, index) => index === 0 ? {
+      ...item,
+      proposal: { ...item.proposal, entries: [{ ...item.proposal.entries[0], ledger: "Target A" }] },
+    } : item),
+    current_catalog_bindings: [{ row_position: 1, entry_position: 1 }],
+  };
+  // Tally renamed Target A, so selecting it again is refused. That refusal was
+  // decided by a fresh read, which also disproves row 1 -- and says so.
+  mocks.invoke
+    .mockResolvedValueOnce(draft)
+    .mockResolvedValueOnce(twoTargetCatalog)
+    .mockResolvedValueOnce(boundA)
+    .mockRejectedValueOnce({
+      code: "source_draft_catalogue_target_changed",
+      message: "The selected existing ledger changed before Bridge could apply it.",
+      remediation: "Load existing ledgers again and make a fresh selection.",
+      current_catalog_bindings: [],
+    });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  await act(async () => setValue(host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!, "Target A"));
+  expect(host.textContent).toContain("This current-session target was re-read and bound.");
+
+  await act(async () => button(host, "#2").click());
+  await act(async () => setValue(host.querySelector<HTMLSelectElement>("#source-draft-2-entry-0-ledger")!, "Target A"));
+  expect(host.textContent).toContain("The selected existing ledger changed before Bridge could apply it.");
+
+  await act(async () => button(host, "#1").click());
+  expect(host.textContent).not.toContain("This current-session target was re-read and bound.");
+  expect(host.textContent).toContain("Tally changed after this target was bound. Saved unverified target: Target A.");
+  root.unmount();
+});
+
+test("an unrelated apply failure carries no binding evidence and leaves the label alone", async () => {
+  const twoTargetCatalog = { ...catalog, targets: ["Target A", "Target B"] };
+  const boundA = {
+    ...draft,
+    revision: 2,
+    rows: draft.rows.map((item, index) => index === 0 ? {
+      ...item,
+      proposal: { ...item.proposal, entries: [{ ...item.proposal.entries[0], ledger: "Target A" }] },
+    } : item),
+    current_catalog_bindings: [{ row_position: 1, entry_position: 1 }],
+  };
+  // A transport failure proves nothing about any binding, so it must not be
+  // read as "the read disproved them all".
+  mocks.invoke
+    .mockResolvedValueOnce(draft)
+    .mockResolvedValueOnce(twoTargetCatalog)
+    .mockResolvedValueOnce(boundA)
+    .mockRejectedValueOnce({
+      code: "source_draft_catalogue_unreachable",
+      message: "Bridge could not reach Tally.",
+      remediation: "Check Tally and retry.",
+    });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  await act(async () => setValue(host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!, "Target A"));
+  await act(async () => button(host, "#2").click());
+  await act(async () => setValue(host.querySelector<HTMLSelectElement>("#source-draft-2-entry-0-ledger")!, "Target B"));
+  expect(host.textContent).toContain("Bridge could not reach Tally.");
+
+  await act(async () => button(host, "#1").click());
+  expect(host.textContent).toContain("This current-session target was re-read and bound.");
   root.unmount();
 });
 

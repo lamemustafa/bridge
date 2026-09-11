@@ -2490,6 +2490,66 @@ that the ledger master itself stayed unchanged.
 This establishes only a GUI rename on the observed TallyPrime Edit Log EDU profile. XML
 rename behaviour, other releases, and other configurations remain unverified.
 
+**VERIFIED 2026-09-11; one synthetic company on TallyPrime 7.1 licensed Silver
+(`education_mode: false`), read through `StandardLedgerCatalogV1`.** Two of the axes named above
+are now observed. One ledger was renamed in the UI and then restored; the ledger's GUID and master
+slot were unchanged, the ledger count held, and no other ledger's GUID moved — a rename in place,
+not a delete-plus-create. So the finding holds across two SKUs and two read profiles. The
+before/after responses are retained as
+`fixtures/agent/native-ledger-catalogue{,-renamed}.utf16le.xml` and drive the binding revalidation
+regression test.
+
+Three further facts fell out of that capture. They are marked separately because two of them are
+generalisations from a single company, and the rule behind them is not established:
+
+- **PARTIAL.** A ledger GUID appears to be **company-scoped with a master suffix** —
+  `<company GUID>-000000d0`. The composition was observed on every ledger of the one company
+  captured, so the *shape* is verified there; that it holds across other companies, releases and
+  SKUs is inferred, not tested. If it does hold, a ledger GUID is meaningful only within its
+  company and the company GUID is recoverable from it — and since company GUIDs are not unique
+  across split companies (§9.11b), a ledger GUID inherits that ambiguity.
+- **VERIFIED 2026-09-11; the nine ledgers in the captured company.** Ledger rows carry
+  `RESERVEDNAME` and use it **the same way group rows do** — populated for a reserved master, empty
+  for one that is not. Eight of the nine are empty; `Profit & Loss A/c` carries
+  `RESERVEDNAME="Profit &amp; Loss A/c"`.
+
+  This is the three-state convention already implemented in
+  `TallyNamedMaster::reserved_name`: a non-empty value is a trustworthy reserved identity, an
+  **empty** value is Tally's own explicit signal that the row is *not* a reserved master, and an
+  absent attribute is no signal at all. A parser must therefore key on neither the attribute's
+  presence nor an assumption of emptiness.
+
+  Note that "reserved" is narrower than "auto-created": `Cash` is created by Tally and its
+  `RESERVEDNAME` is empty, so Tally itself declines to treat it as reserved. Do not infer
+  reservation from a ledger having appeared without the operator creating it.
+
+  An earlier revision of this section claimed ledgers emit `RESERVEDNAME` *always empty*. That was
+  wrong, and contradicted by the very fixtures it cited.
+- **UNVERIFIED — the `CMPINFO` counters, and a claim withdrawn.** An earlier revision of this
+  section said the response was "identical except `<CMPINFO><LEDGER>` advancing 60 → 62", read that
+  as a monotonic per-master-type alteration counter, and marked it PARTIAL. **Both the figure and
+  the interpretation are withdrawn.** The committed fixtures show neither. Diffing them gives six
+  changed lines, and five of them are `CMPINFO`:
+
+      <LEDGER>0</LEDGER>               ->  <LEDGER>61</LEDGER>
+      <CURRENCY>0</CURRENCY>           ->  <CURRENCY>14</CURRENCY>
+      <TAXUNIT>0</TAXUNIT>             ->  <TAXUNIT>20</TAXUNIT>
+      <VOUCHERNUMBERSERIES>0</...>     ->  <VOUCHERNUMBERSERIES>20</...>
+      <VOUCHER>0</VOUCHER>             ->  <VOUCHER>19</VOUCHER>
+
+  (the sixth is the renamed ledger itself). A counter that is **zero across every master type** in
+  one capture and populated in the next is not an alteration count incremented by the rename, and
+  `61` does not correspond to the nine ledgers the collection returns. What `CMPINFO` reports here,
+  and why one capture reports all zeros, is **not established** — do not build on it.
+
+  **The actionable consequence survives, and is strengthened.** A "restore and prove nothing
+  changed" check must compare master **identity**, never a response hash or byte equality: fields
+  outside the master set differ between two captures of the same company for reasons this reference
+  cannot yet explain. That is a stronger reason to compare identity than the withdrawn one.
+
+**UNVERIFIED — XML-driven rename.** Neither capture used one; both renames were performed in the
+UI. Deletion was not exercised at all. Per P6, neither may be built upon.
+
 ---
 
 ## 13. Open questions
@@ -2505,6 +2565,7 @@ rename behaviour, other releases, and other configurations remain unverified.
 | Is the crash observed on 2026-08-02 volume-driven or UI-driven? | It did not reproduce on an identical repeat; a UI keypress during generation is at least as likely. Recorded privately |
 | What is the correct key for `ACTION="Alter"` on a voucher? | On automatically numbered types observed, `GUID`, `REMOTEID`, `MASTERID`, and the `REMOTEID`/`MASTERID` combination have each created duplicates (§9.7, §12a.4). Manual + `PREVENTDUPLICATES=Yes` instead rejects the failed Alter (§9.8); other request shapes and licensed-SKU behavior remain untested |
 | Does the `On Account` residual identity hold on a bill-dominated book? | Verified on a book that is 98% unallocated; the opposite composition is the case where a false zero would look like success |
+| What do the `CMPINFO` counters report, and why can one capture return all zeros? | Two catalogue captures of the same company minutes apart returned `LEDGER` 0 then 61, with `CURRENCY`, `TAXUNIT`, `VOUCHERNUMBERSERIES` and `VOUCHER` likewise 0 then populated. Until this is explained, no two responses can be compared by hash or byte equality (§12a.9) |
 
 ---
 
@@ -2517,3 +2578,4 @@ rename behaviour, other releases, and other configurations remain unverified.
 | 2026-08-02 | Added §12a from a live measurement session: built-in named reports (qualifying §2.2), per-kind ageing semantics, the two ageing methods, eight import rewrites (extending §9), configuration as a non-diagnostic, the unallocated remainder and its recovery, the `Company` collection ignoring `SVCURRENTCOMPANY` (qualifying §9.11), and a linear volume model with a cheap pre-flight count. |
 | 2026-08-22 | Updated §5.3 with the observed Education `{1,2,31}` boundary rule and the limited TallyPrime Silver arbitrary-day observations; this settles #115 item 1 for the recorded profile. |
 | 2026-08-28 | Added §8.1's read-only ledger-master field-presence observation and explicit public-fixture privacy boundary. |
+| 2026-09-11 | Extended §12a.9 to TallyPrime 7.1 licensed Silver and the `StandardLedgerCatalogV1` profile from a live rename/restore capture (VERIFIED), and recorded three structural facts with separate markers: ledger `RESERVEDNAME` follows the same reserved/not-reserved convention as groups, one of nine populated (VERIFIED), company-scoped ledger GUIDs (PARTIAL — verified on all nine rows of one company). XML-driven rename and deletion remain UNVERIFIED. A later revision the same day withdrew a `CMPINFO` alteration-counter claim that the committed fixtures did not support. |

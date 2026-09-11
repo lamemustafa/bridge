@@ -11,6 +11,9 @@ test("local proposals survive shell navigation and save without source or Tally 
         entries: [{ position: 1, source_ledger: "Source ledger", source_amount: "-25.00", source_polarity: null }],
         proposal: { date: null, voucher_type: null, narration: null, notes: "", entries: [{ ledger: null, side: null, amount: null }] },
       }],
+      // The backend always emits this list; an empty one means no target in this
+      // draft is currently bound to a live catalog read.
+      current_catalog_bindings: [],
     };
     const calls: { command: string; args: unknown }[] = [];
     Object.assign(window, { sourceDraftCalls: calls });
