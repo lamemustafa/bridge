@@ -986,7 +986,7 @@ fn bind_one(
             ),
             None => {
                 let (candidates, masters_found) =
-                    collect_candidates(catalog, entity, &identifier_matches);
+                    remembered_candidates(catalog, entity, &identifier_matches, memo);
                 let reason = if !candidates.is_empty() {
                     UnboundReason::NearMiss
                 } else if masters_found > MAX_PREFIX_FAMILY {
@@ -1015,17 +1015,8 @@ fn unresolved_status(
     budget: &mut usize,
     memo: &mut CandidateMemo,
 ) -> BindingStatus {
-    let memo_key = (entity.key.clone(), identifier_matches.clone());
-    let (mut candidates, masters_found) = match memo.get(&memo_key) {
-        Some(remembered) => remembered.clone(),
-        None => {
-            let computed = collect_candidates(catalog, entity, identifier_matches);
-            if memo.len() < MAX_CANDIDATE_MEMO_ENTRIES {
-                memo.insert(memo_key, computed.clone());
-            }
-            computed
-        }
-    };
+    let (mut candidates, masters_found) =
+        remembered_candidates(catalog, entity, identifier_matches, memo);
     if let Some(index) = exact {
         if !candidates.iter().any(|(candidate, _)| *candidate == index) {
             candidates.push((index, CandidateRule::NormalizedEqual));
@@ -1093,6 +1084,40 @@ fn unresolved_from(
     }
 }
 
+/// `collect_candidates` behind its memo, and the only way to reach it.
+///
+/// The first version of this memo sat inside `unresolved_status`, which reaches
+/// the search for an identifier conflict and for a name ambiguity — but **not**
+/// for an ordinary near miss, which is the one case the cost was reported
+/// against. Routing one more call site would have fixed that instance and left
+/// the next one to be noticed; one entry point makes it structural.
+fn remembered_candidates(
+    catalog: &MasterCatalog,
+    entity: &SourceEntity,
+    identifier_matches: &BTreeSet<usize>,
+    memo: &mut CandidateMemo,
+) -> (Vec<(usize, CandidateRule)>, usize) {
+    let key = (entity.key.clone(), identifier_matches.clone());
+    if let Some(remembered) = memo.get(&key) {
+        return remembered.clone();
+    }
+    let computed = collect_candidates(catalog, entity, identifier_matches);
+    if memo.len() < MAX_CANDIDATE_MEMO_ENTRIES {
+        memo.insert(key, computed.clone());
+    }
+    computed
+}
+
+// Counts searches that actually ran, so a test can prove the memo is consulted
+// rather than assume it. A test asserting only that the answer is right passes
+// whether or not the search ran — which is exactly how the near-miss path
+// stayed unmemoized through a green suite.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static CANDIDATE_SEARCHES: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
 /// Produces every defensible master, each labelled with the rule that surfaced
 /// it. The strongest rule wins where several apply. Nothing here ranks by
 /// similarity, and nothing here chooses.
@@ -1101,6 +1126,8 @@ fn collect_candidates(
     entity: &SourceEntity,
     identifier_matches: &BTreeSet<usize>,
 ) -> (Vec<(usize, CandidateRule)>, usize) {
+    #[cfg(test)]
+    CANDIDATE_SEARCHES.with(|count| count.set(count.get() + 1));
     // Masters this name reaches by prefix. The key index is ordered, so this is
     // a range walk rather than a scan of the catalog per entity.
     let extending = if entity.key.chars().count() >= MIN_PREFIX_KEY_CHARS {

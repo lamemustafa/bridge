@@ -843,7 +843,19 @@ fn repeating_one_source_name_does_not_repeat_the_search_or_change_the_answer() {
     let repeated = (0..40)
         .map(|position| SourceEntity::new(position, "Acme Branch").expect("valid"))
         .collect::<Vec<_>>();
+    // Counted, not assumed. The first version of this memo was consulted on the
+    // conflict and ambiguity paths but not on the ordinary near miss — which is
+    // the case this test uses — and every assertion below still passed, because
+    // they check the answer rather than the work. `Acme Branch` matches no
+    // master exactly, by identifier or by the narrow fold, so all forty entities
+    // take that path.
+    super::CANDIDATE_SEARCHES.with(|count| count.set(0));
     let report = bound(&catalog, &repeated);
+    assert_eq!(
+        super::CANDIDATE_SEARCHES.with(std::cell::Cell::get),
+        1,
+        "forty rows naming one ledger ran the candidate search more than once"
+    );
     assert_eq!(report.totals().requested, 40);
     assert_eq!(report.totals().bound, 0);
     for entity in report.entities() {
