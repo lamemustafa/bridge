@@ -30,7 +30,7 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// reserved capacity covers a small cohesive feature (source, tests, docs
 /// and manifest) but makes further unreviewed additions an explicit
 /// compatibility-surface decision.
-pub const MAX_SURFACE_FILES: usize = 210;
+pub const MAX_SURFACE_FILES: usize = 211;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
@@ -41,8 +41,16 @@ const REQUIRED_SURFACE_DIRECTORIES: [&str; 2] =
 /// Compatibility evidence binds the selected-ledger constructor and the native
 /// lifecycle implementation, error fallback, and frontend admission points, rather than
 /// trusting only their callers.
-const REQUIRED_SURFACE_FILES: [&str; 5] = [
+///
+/// `agent_ledgers.rs` renders the agent ledger reads. It is here rather than left as a
+/// judgment pin because a judgment pin can be dropped during a conflict resolution and
+/// the gate still returns `compatibility_gate_passed` -- measured, by deleting this very
+/// entry and resealing. A required path cannot be dropped silently, and
+/// `gate_rejects_each_omitted_required_lifecycle_path` iterates this list, so adding it
+/// here is what covers its omission.
+const REQUIRED_SURFACE_FILES: [&str; 6] = [
     "src-tauri/src/agent_desktop_journal.rs",
+    "src-tauri/src/agent_ledgers.rs",
     "src-tauri/src/source_draft/lifecycle.rs",
     "src/JournalPostingScreen.tsx",
     "src/ErrorBoundary.tsx",
@@ -2456,10 +2464,10 @@ mod tests {
     }
 
     #[test]
-    fn surface_file_cap_refuses_211_entries() {
+    fn surface_file_cap_refuses_one_entry_above_the_cap() {
         let oversized = CompatibilitySurfaceManifest {
             schema_version: SURFACE_SCHEMA_VERSION,
-            files: (0..211)
+            files: (0..MAX_SURFACE_FILES + 1)
                 .map(|index| SurfaceFile {
                     path: format!("pinned-{index:03}"),
                     sha256: "0".repeat(64),

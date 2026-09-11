@@ -93,6 +93,179 @@ On Unix, replacement preserves an existing destination's mode; a new
 destination uses the normal `0666` mode subject to the process umask. Windows
 uses its normal ACL semantics rather than POSIX mode bits.
 
+#### Adding or removing a pin
+
+The three commands above assume the surface is already valid and only the
+*contents* of pinned files changed. Adding or removing an entry is different:
+editing the file list invalidates `manifest_sha256` immediately, and
+`rehash-surface` validates that checksum before it does anything. Run in the
+documented order it fails with `surface_checksum_mismatch` and changes nothing.
+
+So when the pin set itself changes, run `seal-surface` first to attest the new
+file list, then run the ordinary three-command sequence in full.
+
+This is the one case that inverts the standing rule against sealing before
+rehashing. That rule exists because `seal-surface` never reads the repository,
+so sealing stale hashes hides stale source under a fresh digest. Here the
+concern does not apply: the first seal only re-attests a file list whose one
+new digest was computed from disk, and the `rehash-surface` that follows
+re-reads every pin, including the new one, before the second seal. Never stop
+after that first seal.
+
+#### When the surface itself conflicts in a merge or rebase
+
+The surface and the matrix are **generated artifacts**. Never hand-merge them.
+
+Be precise about what the gate does and does not protect, because the two halves
+behave oppositely.
+
+**Stale bytes cannot slip through.** `validate_files` re-reads the raw bytes of
+every pinned file present and compares the SHA-256, so a surface pinning stale
+content fails with `surface_file_changed`. Resealing to silence a checksum
+complaint does not rescue it -- measured, a stale pin still fails after both
+`seal-surface` and `repoint-matrix`. For hashes the gate is byte-exact and
+fail-closed, so hand-merging them is futile rather than unsafe: every wrong
+resolution is loud, and regenerating is the only route to green.
+
+**A dropped entry slips through silently.** The gate can only check pins that are
+still in the list, and claims that are still in the matrix. Lose one in the
+resolution and the gate passes. That asymmetry is the whole hazard, and it is why
+the authored half below must be merged rather than regenerated.
+
+**What does matter is the order.** Resolve every genuine *source* conflict first,
+and only then regenerate. `tools/bridge-tally-compatibility/src/lib.rs` is itself a
+pinned file: the tool pins its own source into the surface it produces. Regenerate
+before that file is final and you pin a half-merged copy -- the gate will catch it,
+but only after you have spent the cycle.
+
+**These two files are not wholly generated, and that is what makes the conflict
+dangerous.** Each carries two kinds of content:
+
+- **derived** -- every `sha256`, `manifest_sha256`, `compatibility_surface_sha256`.
+  Regenerating rewrites these, so conflicts in them are noise.
+- **authored** -- the surface's *pin list*, and the matrix's *claims and promotion
+  constraints*. **Nothing regenerates these.** `rehash-surface` re-reads the bytes
+  of every entry that is present; it cannot restore an entry that is absent.
+  `repoint-matrix` assigns `compatibility_surface_sha256` and touches nothing else.
+
+So "take one side wholesale" is safe for the derived half and **silently lossy for
+the authored half**, and the gate will not catch it. Measured: delete one
+judgment-pinned entry from the surface -- then seal, rehash, seal, repoint, and the
+gate returns `compatibility_gate_passed`.
+
+**Where a pin matters enough that this is unacceptable, make it REQUIRED rather than
+relying on this procedure.** `REQUIRED_SURFACE_FILES` and `REQUIRED_SURFACE_DIRECTORIES`
+are checked for presence, not merely hashed, so an entry in either cannot be dropped
+silently at all. The same deletion that returned `compatibility_gate_passed` as a
+judgment pin returns `surface_required_directory_file_unpinned` once the path is
+required. `gate_rejects_each_omitted_required_lifecycle_path` iterates that list, so
+adding a path is also what tests it. A procedure a maintainer must follow is weaker
+than a constant they cannot circumvent; this section exists for the pins that are not
+worth promoting, not as a substitute for promoting the ones that are. `validate_files` enforces the required
+directories and `REQUIRED_SURFACE_FILES`; a judgment pin is in neither, so its
+absence is invisible. The matrix is worse: a dropped claim leaves no trace at all.
+
+1. Resolve every non-generated conflict and settle those files completely.
+2. Take **one side wholesale** for `compatibility-surface.json` and
+   `compatibility-matrix.json` -- but only as a starting point for the derived half.
+3. **Reconcile the authored half by hand, against the merge base.** This is the one
+   part of these files that must be *merged* rather than regenerated. List the pins
+   each side added and confirm the union is present:
+
+   **Name the two sides explicitly — during a rebase `HEAD` is not your branch.**
+   When a rebase stops on a conflict, `HEAD` is the upstream plus whatever has
+   already been replayed, and the commit being applied is `REBASE_HEAD`. Comparing
+   `HEAD` against `origin/master` there compares upstream with itself and never
+   reads the feature-side manifest at all — so it misses exactly the pin it is
+   meant to preserve. The conflict stages say it without either name: stage 2 is
+   the side you are replaying onto, stage 3 the side being applied.
+
+   ```bash
+   surface=docs/tally/compatibility/compatibility-surface.json
+   pins() { python3 -c 'import json,sys; [print(f["path"]) for f in json.load(sys.stdin)["files"]]' | sort; }
+
+   # during a rebase or merge conflict, read the stages -- they are unambiguous
+   git show ":1:$surface" | pins > /tmp/pins-base.txt   # merge base
+   git show ":2:$surface" | pins > /tmp/pins-ours.txt   # replayed onto / current
+   git show ":3:$surface" | pins > /tmp/pins-theirs.txt # being applied / incoming
+
+   # every pin either side ADDED since the base must survive the resolution
+   comm -13 /tmp/pins-base.txt /tmp/pins-ours.txt   # added by one side
+   comm -13 /tmp/pins-base.txt /tmp/pins-theirs.txt # added by the other
+
+   # and every pin either side REMOVED must stay removed -- additions alone are
+   # not enough, see below
+   comm -23 /tmp/pins-base.txt /tmp/pins-ours.txt   # removed by one side
+   comm -23 /tmp/pins-base.txt /tmp/pins-theirs.txt # removed by the other
+   ```
+
+   **Removals need the same treatment, and checking only additions hides them.**
+   A pin or claim that one side deliberately retired is still present in the base,
+   so it appears in neither `comm -13` output. Take the other side wholesale and it
+   comes back; reseal and the gate accepts it, because a resurrected pin hashes
+   fine. The retirement is silently undone, and which way it goes depends only on
+   which side step 2 happened to start from.
+
+   The union of additions minus the union of removals is the answer. Where one side
+   removed an entry the other side *modified*, that is a genuine add/remove conflict
+   and wants a decision, not a default -- resolve it explicitly and say which way in
+   the commit.
+
+   If the conflict is already resolved and the stages are gone, use `REBASE_HEAD`
+   (rebase) or `MERGE_HEAD` (merge) for the incoming side, never `origin/master`.
+
+   Do the same for the matrix's claims. A pin or claim that exists on one side and
+   not in your result is being deleted, and nothing downstream will say so.
+4. **Recompute `MAX_SURFACE_FILES` from the reconciled pin count, BEFORE regenerating.**
+   Do not carry a number derived from either side's cap. The ordering is not a
+   preference: `tools/bridge-tally-compatibility/src/lib.rs` is itself pinned, so
+   editing the constant after regenerating leaves its own digest stale and the gate
+   fails `surface_file_changed`. Sealing again does not rescue it — that re-attests
+   the stale hash. Every edit to a pinned file, the cap included, belongs before the
+   regeneration that hashes it.
+5. Regenerate: if the pin *set* changed, `seal-surface` first as described above,
+   then the ordinary three; otherwise just the ordinary three.
+6. Run the gate, and **check the pin count against the union you computed in step
+   3** -- the gate cannot do this for you.
+
+   `rehash-surface` also reports a changed-entry count, which is a check on your
+   reasoning **once you know what it counts**: only entries already in the list
+   whose digest on disk differs from the digest recorded. A newly added entry whose
+   digest you computed from disk is therefore **not** counted -- it already matches.
+   So adding one pin and raising the cap normally reports **one**: the tool's own
+   pinned source, changed by the cap edit. It reports two only if the new entry was
+   added with a placeholder digest, which is a legitimate way to do it but a
+   different one. Reconcile the number with how you added the pin; do not adjust a
+   digest to reach an expected count.
+
+A rebase carrying several commits that touch pinned files needs this at **each**
+commit that does, not once at the end. CI gates the final tree, but a history whose
+intermediate commits do not gate is not bisectable.
+
+**`MAX_SURFACE_FILES` is the line most likely to be silently wrong, and it is worse
+when it does NOT conflict.** The convention is to pin exactly the count in use, so
+any branch adding a pin must raise it. If two branches start from the same cap and
+each add one pin, both change it from N to N+1 -- an **identical edit**, which git
+merges automatically without ever showing you a conflict. The reconciled surface
+then holds N+2 pins against a cap of N+1, and step 4 fails with
+`surface_file_count_invalid`.
+
+That failure is loud, so it is not dangerous; what is misleading is expecting a
+conflict to prompt you. Recompute the cap from the reconciled pin count every time,
+whether or not git stopped to ask. The cap *test* derives its size from the constant
+precisely so that changing the cap does not also rewrite the test.
+
+Two further constraints apply:
+
+- `MAX_SURFACE_FILES` caps the pin count, and `RESERVED_SURFACE_FILES` bounds
+  how far the cap may exceed it. When the surface is at its cap, adding a pin
+  requires raising the constant, which the constant's own comment calls an
+  explicit compatibility-surface decision -- record the reason in the commit.
+- The tool pins its own source, so editing `tools/bridge-tally-compatibility`
+  to raise that cap stales its digest and needs another reseal after the edit.
+  Expect two passes, and run the tool's tests between them: a cap change can
+  invalidate a test that hard-codes the old bound.
+
 The PowerShell commands are intended for Windows PowerShell 5.1 and PowerShell
 7+. They deliberately do not use `>`: Windows PowerShell 5.1 redirection was
 measured to produce UTF-16LE. The output-path procedure is reasoned from the
