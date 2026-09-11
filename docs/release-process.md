@@ -150,9 +150,18 @@ dangerous.** Each carries two kinds of content:
 
 So "take one side wholesale" is safe for the derived half and **silently lossy for
 the authored half**, and the gate will not catch it. Measured: delete one
-judgment-pinned entry from the surface -- `src-tauri/src/agent_ledgers.rs`, the pin
-this very PR exists to add -- then seal, rehash, seal, repoint, and the gate
-returns `compatibility_gate_passed`. `validate_files` enforces the required
+judgment-pinned entry from the surface -- then seal, rehash, seal, repoint, and the
+gate returns `compatibility_gate_passed`.
+
+**Where a pin matters enough that this is unacceptable, make it REQUIRED rather than
+relying on this procedure.** `REQUIRED_SURFACE_FILES` and `REQUIRED_SURFACE_DIRECTORIES`
+are checked for presence, not merely hashed, so an entry in either cannot be dropped
+silently at all. The same deletion that returned `compatibility_gate_passed` as a
+judgment pin returns `surface_required_directory_file_unpinned` once the path is
+required. `gate_rejects_each_omitted_required_lifecycle_path` iterates that list, so
+adding a path is also what tests it. A procedure a maintainer must follow is weaker
+than a constant they cannot circumvent; this section exists for the pins that are not
+worth promoting, not as a substitute for promoting the ones that are. `validate_files` enforces the required
 directories and `REQUIRED_SURFACE_FILES`; a judgment pin is in neither, so its
 absence is invisible. The matrix is worse: a dropped claim leaves no trace at all.
 
@@ -207,11 +216,15 @@ absence is invisible. The matrix is worse: a dropped claim leaves no trace at al
 
    Do the same for the matrix's claims. A pin or claim that exists on one side and
    not in your result is being deleted, and nothing downstream will say so.
-4. Regenerate: if the pin *set* changed, `seal-surface` first as described above,
+4. **Recompute `MAX_SURFACE_FILES` from the reconciled pin count, BEFORE regenerating.**
+   Do not carry a number derived from either side's cap. The ordering is not a
+   preference: `tools/bridge-tally-compatibility/src/lib.rs` is itself pinned, so
+   editing the constant after regenerating leaves its own digest stale and the gate
+   fails `surface_file_changed`. Sealing again does not rescue it — that re-attests
+   the stale hash. Every edit to a pinned file, the cap included, belongs before the
+   regeneration that hashes it.
+5. Regenerate: if the pin *set* changed, `seal-surface` first as described above,
    then the ordinary three; otherwise just the ordinary three.
-5. **Recompute `MAX_SURFACE_FILES` from the reconciled pin count** -- do not carry
-   a number derived from either side's cap. See the note on the cap below; it does
-   not necessarily conflict, and when it does not, the arithmetic is silently wrong.
 6. Run the gate, and **check the pin count against the union you computed in step
    3** -- the gate cannot do this for you.
 

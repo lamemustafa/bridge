@@ -41,8 +41,16 @@ const REQUIRED_SURFACE_DIRECTORIES: [&str; 2] =
 /// Compatibility evidence binds the selected-ledger constructor and the native
 /// lifecycle implementation, error fallback, and frontend admission points, rather than
 /// trusting only their callers.
-const REQUIRED_SURFACE_FILES: [&str; 5] = [
+///
+/// `agent_ledgers.rs` renders the agent ledger reads. It is here rather than left as a
+/// judgment pin because a judgment pin can be dropped during a conflict resolution and
+/// the gate still returns `compatibility_gate_passed` -- measured, by deleting this very
+/// entry and resealing. A required path cannot be dropped silently, and
+/// `gate_rejects_each_omitted_required_lifecycle_path` iterates this list, so adding it
+/// here is what covers its omission.
+const REQUIRED_SURFACE_FILES: [&str; 6] = [
     "src-tauri/src/agent_desktop_journal.rs",
+    "src-tauri/src/agent_ledgers.rs",
     "src-tauri/src/source_draft/lifecycle.rs",
     "src/JournalPostingScreen.tsx",
     "src/ErrorBoundary.tsx",
