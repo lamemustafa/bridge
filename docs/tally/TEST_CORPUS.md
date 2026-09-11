@@ -357,17 +357,17 @@ them is **PARTIAL**. Scope of each, so neither is read for more than it covers:
 | claim | confidence | what establishes it |
 | --- | --- | --- |
 | The ten ledgers exist in that company and nowhere else | **VERIFIED** | `CREATED=10, ALTERED=0, ERRORS=0`, then a readback of the ledger list naming all ten, plus a readback of a guard company showing none |
-| No book carried an embedded identifier before this | **VERIFIED** | all 16 loaded companies read through the `StandardLedgerCatalogV1` request, responses written to files and parsed from the files; 470 names, 0 numeric and 1 code identifier |
+| No book carried an embedded **numeric** identifier before this | **VERIFIED** | all 16 loaded companies read through the `StandardLedgerCatalogV1` request, responses written to files and parsed from the files; 470 names, **0 numeric**. Exactly **one** name yielded a *code* identifier, so the absence is of the numeric shape only — stated narrowly because these counts are what justify the rule's strictness |
 | The identifier rule behaves correctly against live-read names | **PARTIAL** | exercised against these ten seeded names only, on one instance, one licence tier, one Tally build. Fabricated *source* names against live *catalogue* names — no real source document has been bound end to end |
 | The shipped consumer path runs end to end against a real instance | **VERIFIED 2026-09-11**, nine rows of ten | the branch's own `bridge_mcp` binary driven over stdio against licensed TallyPrime 7.1 Silver, reading this company's catalogue over the wire and returning the binder's report. One row is **PENDING** a re-run after the fold was narrowed — see "The end-to-end slice" below |
 | Binding is safe on catalogues generally | **UNVERIFIED** | one company, one instance, one Tally build, and every *source* name fabricated. No engagement has run a real document through this path; the mutation sweep is fabricated mutations of live names, not observed operator input |
 
 **Added 2026-09-10.** Ten ledgers prefixed `MB `, seeded so the master-binding
-identifier rule has live coverage. Before this, **no book on either instance carried an
-embedded identifier**: across 470 live ledger names read from all 16 loaded companies,
-zero yielded a numeric identifier and exactly one yielded a code identifier. The rule that
-distinguishes `bridge_tally_core::master_binding` from fuzzy matching was qualified by
-fabricated data alone.
+identifier rule has live coverage. Before this, across 470 live ledger names read from all
+16 loaded companies, **not one yielded a numeric identifier and exactly one yielded a code
+identifier** — so the numeric rule had no live coverage at all and the code rule had a
+single instance. The rule that distinguishes `bridge_tally_core::master_binding` from fuzzy
+matching was otherwise qualified by fabricated data alone.
 
 | ledger | what it exercises |
 | --- | --- |

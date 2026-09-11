@@ -65,8 +65,12 @@ The constructor refuses, rather than degrades, on:
   does not identify one master, nothing downstream is meaningful;
 - **an identifier hint that yields no identifier** — `IdentifierHintUnusable`. A
   hint that silently does nothing is a trap (P7);
-- bounds violations on entry count, entity count, name length, and **hint
-  count**. The last is checked as the hints arrive rather than on the finished
+- bounds violations on entry count, entity count, name length, **total catalog
+  name bytes**, and **hint count**. The byte bound is not redundant with the
+  other two: 20,000 names of 16,384 characters satisfies both and is 327 MB
+  before the constructor builds its keys, tokens and four indexes over them. It
+  is accumulated as the iterator is consumed, so a lazy catalog fails before the
+  next name is retained rather than after all of them are. The last is checked as the hints arrive rather than on the finished
   set: hints deduplicate, so a million repeated ones fold to a single identifier
   and the finished set never exceeds its bound, while every one of them has
   already been scanned and copied. Each hint yields at least one identifier or
@@ -235,14 +239,21 @@ The general lesson is worth more than the case: **a step that reads like
 decoding deserves the same evidence as a step that reads like folding.** This
 one survived two reviews of the fold by not looking like part of it.
 
-**Trimming a source name is not part of either fold.** `SourceEntity` trims
-what the document gave it, at the boundary, because leading and trailing space
-in extracted text is transcription noise; an observed master name is retained
-byte for byte, because a caller writes it back. So a source reading
-`"  Alpha Traders"` reaches `Alpha Traders`, while a *master* spelled
-`"  Alpha Traders"` does not resolve from a clean source name — it is offered.
-The asymmetry is deliberate and is the P3 rule, not a claim about what Tally
-folds.
+**Neither side is trimmed.** An earlier draft of this section said
+`SourceEntity` trims what the document gave it. It does not — `validated_name`
+bounds a name and returns it unchanged, and a master is retained byte for byte
+because a caller writes it back. The claim was written from what seemed
+reasonable rather than from the constructor, and a contract that describes
+behaviour the implementation does not have is worse than no contract: a consumer
+following it expects a bind and gets a candidate.
+
+What actually happens is narrower, and directional. **One trailing space is
+dropped from the source key, and from nothing else** — because that is the
+shape §9.4b measured: a name carrying a trailing space was *supplied* against a
+clean live master and Tally matched it. So `"Alpha Traders "` resolves to a
+live `Alpha Traders`, while a master spelled `"Alpha Traders "` does not resolve
+from a clean source name; it is offered as a candidate. Leading whitespace is
+unverified in both directions and is dropped from neither.
 
 **This was got wrong first, and the correction is the useful record.** An
 earlier version of this ADR claimed the fold "stops exactly where Tally stops"

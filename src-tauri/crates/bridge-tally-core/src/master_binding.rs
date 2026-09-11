@@ -18,6 +18,11 @@ use unicode_normalization::UnicodeNormalization;
 
 /// Most masters one catalog may carry.
 pub const MAX_CATALOG_ENTRIES: usize = 20_000;
+/// The aggregate a catalog's names may occupy, independent of how they divide
+/// into entries. Eight mebibytes is far above any observed book — the largest
+/// catalogue read here is 470 names — and far below the 327 MB the per-name and
+/// per-entry bounds admit between them.
+const MAX_CATALOG_NAME_BYTES: usize = 8 * 1024 * 1024;
 /// Most entities one binding request may name. This must stay at or above what
 /// a consumer's own parser admits: Bridge's source-draft parser accepts 2,000
 /// vouchers of 20 entries, and a bound below that turned a valid draft into a
@@ -215,8 +220,9 @@ pub enum UnboundReason {
     /// none of them — a truncated `DN Party 0` against `DN Party 001`…`120`.
     /// Listing an arbitrary capped slice of such a family put the right master
     /// out of view about a third of the time, so the family is counted and
-    /// deliberately not listed. Measured across sixteen live catalogues;
-    /// `docs/tally/TEST_CORPUS.md` §9.1 carries the counts and their scope.
+    /// deliberately not listed. The behaviour and its rule are
+    /// `TALLY_PROTOCOL_REFERENCE.md` §9.4c; `TEST_CORPUS.md` §9.1 carries the
+    /// counts and their scope.
     NoDiscriminatingCandidate,
     /// No rule produced a candidate. The master is probably missing.
     NoCandidate,
@@ -637,7 +643,7 @@ impl SourceEntity {
         Ok(Self {
             position,
             key: master_identity_key(&name),
-            binding_key: verified_fold(&name),
+            binding_key: source_binding_key(&name),
             name,
             identifiers,
         })
@@ -700,12 +706,23 @@ impl MasterCatalog {
         S: AsRef<str>,
     {
         let mut entries = Vec::new();
+        let mut accepted_bytes = 0_usize;
         let mut by_name = BTreeMap::new();
         for name in names {
             if entries.len() >= MAX_CATALOG_ENTRIES {
                 return Err(MasterBindingError::CatalogTooLarge);
             }
             let name = validated_name(name.as_ref())?;
+            // Per-name and per-count bounds do not bound the product of the
+            // two: 20,000 names of 16,384 characters satisfies both and is
+            // 327 MB of ASCII before this constructor builds its keys, tokens
+            // and four indexes over them. Accumulated as the iterator is
+            // consumed, so a lazy catalog fails before the next name is
+            // retained rather than after all of them are.
+            accepted_bytes = accepted_bytes.saturating_add(name.len());
+            if accepted_bytes > MAX_CATALOG_NAME_BYTES {
+                return Err(MasterBindingError::CatalogTooLarge);
+            }
             if by_name.contains_key(&name) {
                 return Err(MasterBindingError::CatalogDuplicateName);
             }
@@ -824,17 +841,40 @@ pub fn bind(
         return Err(MasterBindingError::TooManySourceEntities);
     }
     let mut budget = MAX_REPORT_CANDIDATE_BYTES;
+    let mut memo = CandidateMemo::new();
     Ok(BindingReport {
         class: catalog.class,
         catalog: catalog.fingerprint,
         entities: entities
             .iter()
-            .map(|entity| bind_one(catalog, entity, &mut budget))
+            .map(|entity| bind_one(catalog, entity, &mut budget, &mut memo))
             .collect(),
     })
 }
 
-fn bind_one(catalog: &MasterCatalog, entity: &SourceEntity, budget: &mut usize) -> EntityBinding {
+/// What `collect_candidates` produced for one distinct source name, keyed by
+/// the only two things it reads: the source key, and the masters the entity's
+/// identifiers reached.
+///
+/// A draft may repeat one ledger name across its rows, and the search is not
+/// cheap when it does: a truncated name against a large prefix family
+/// materializes and clones that whole family, once per row. The candidate byte
+/// budget bounds only what is serialized afterwards.
+///
+/// Capped rather than unbounded, because the memo is itself a copy of every
+/// candidate list it holds — a draft of 40,000 *distinct* names would trade the
+/// stall for the memory the aggregate bounds elsewhere exist to prevent. The
+/// repeated-name case, which is the one that stalls, needs very few entries.
+type CandidateMemo = BTreeMap<(String, BTreeSet<usize>), (Vec<(usize, CandidateRule)>, usize)>;
+
+const MAX_CANDIDATE_MEMO_ENTRIES: usize = 1_024;
+
+fn bind_one(
+    catalog: &MasterCatalog,
+    entity: &SourceEntity,
+    budget: &mut usize,
+    memo: &mut CandidateMemo,
+) -> EntityBinding {
     let exact = catalog.by_name.get(&entity.name).copied();
 
     // Rule one: the identifier is the key, the name is a hint. A name
@@ -894,6 +934,7 @@ fn bind_one(catalog: &MasterCatalog, entity: &SourceEntity, budget: &mut usize) 
             exact,
             &identifier_matches,
             budget,
+            memo,
         )
     } else if let Some(index) = exact {
         BindingStatus::Bound {
@@ -911,6 +952,7 @@ fn bind_one(catalog: &MasterCatalog, entity: &SourceEntity, budget: &mut usize) 
             exact,
             &identifier_matches,
             budget,
+            memo,
         )
     } else if let Some(matched) = identifier_matches.iter().copied().next() {
         // A decisive identifier, with no byte-exact name to outrank it. This is
@@ -940,6 +982,7 @@ fn bind_one(catalog: &MasterCatalog, entity: &SourceEntity, budget: &mut usize) 
                 exact,
                 &identifier_matches,
                 budget,
+                memo,
             ),
             None => {
                 let (candidates, masters_found) =
@@ -970,8 +1013,19 @@ fn unresolved_status(
     exact: Option<usize>,
     identifier_matches: &BTreeSet<usize>,
     budget: &mut usize,
+    memo: &mut CandidateMemo,
 ) -> BindingStatus {
-    let (mut candidates, masters_found) = collect_candidates(catalog, entity, identifier_matches);
+    let memo_key = (entity.key.clone(), identifier_matches.clone());
+    let (mut candidates, masters_found) = match memo.get(&memo_key) {
+        Some(remembered) => remembered.clone(),
+        None => {
+            let computed = collect_candidates(catalog, entity, identifier_matches);
+            if memo.len() < MAX_CANDIDATE_MEMO_ENTRIES {
+                memo.insert(memo_key, computed.clone());
+            }
+            computed
+        }
+    };
     if let Some(index) = exact {
         if !candidates.iter().any(|(candidate, _)| *candidate == index) {
             candidates.push((index, CandidateRule::NormalizedEqual));
@@ -1064,8 +1118,8 @@ fn collect_candidates(
     // arbitrary capped slice of one omitted the right master about a third of
     // the time against live books — 65.6% present, against 100% once families
     // over the bound were withheld. Counted, and withheld rather than listed.
-    // See `docs/tally/TEST_CORPUS.md` §9.1 for the counts, the cause, and what
-    // they do not cover.
+    // `TALLY_PROTOCOL_REFERENCE.md` §9.4c states the rule; `TEST_CORPUS.md`
+    // §9.1 carries the counts, the cause and what they do not cover.
     let withheld = if extending.len() > MAX_PREFIX_FAMILY {
         extending.clone()
     } else {
@@ -1266,9 +1320,19 @@ fn master_identity_key(value: &str) -> String {
 /// is deliberately absent too. None is lost: `master_identity_key` carries them
 /// all, and everything it reaches is offered as a candidate.
 fn verified_fold(value: &str) -> String {
-    // One trailing space, because one is what was sent.
-    let value = value.strip_suffix(' ').unwrap_or(value);
     value.to_ascii_lowercase()
+}
+
+/// The key a **source** name is looked up by.
+///
+/// One trailing space is dropped here and nowhere else, because that is how it
+/// was measured: §9.4b *supplied* a name carrying a trailing space against a
+/// clean live master and Tally matched it. The reverse — a master carrying a
+/// trailing space, reached from a clean source name — was never sent, and
+/// stripping on the master side quietly asserted it. Same directional trap as
+/// the hyphen, one row further down the same table.
+fn source_binding_key(value: &str) -> String {
+    verified_fold(value.strip_suffix(' ').unwrap_or(value))
 }
 
 /// The keys a **master** name answers to.
@@ -1371,6 +1435,7 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
             && digits >= MIN_CODE_IDENTIFIER_DIGITS
             && letters >= 2
             && !foreign_content
+            && !carries_plausible_date(&canonical)
             && !masked
             && !is_period(token)
             && !is_masked(&canonical)
@@ -1445,10 +1510,37 @@ fn is_mask_alphabetic(token: &str) -> bool {
 }
 
 fn is_mask_punctuated(token: &str) -> bool {
-    token
+    if token
         .chars()
         .any(|character| matches!(character, '*' | '#' | '\u{2022}' | '\u{00d7}'))
+    {
+        return true;
+    }
+    // Those four glyphs say "masked" on their own. Everything else has to be
+    // recognized by **shape**, because enumerating them lost to `........1234`
+    // and `____ 1234` and would have lost to the next spelling too. A run of
+    // one repeated non-alphanumeric is a mask; ordinary punctuation does not
+    // repeat that way, so `S.K. Traders` and `(5550001001)` are untouched.
+    let mut run: Option<(char, usize)> = None;
+    for character in token.chars() {
+        if character.is_alphanumeric() {
+            run = None;
+            continue;
+        }
+        run = match run {
+            Some((previous, count)) if previous == character => Some((character, count + 1)),
+            _ => Some((character, 1)),
+        };
+        if run.is_some_and(|(_, count)| count >= MIN_MASK_RUN) {
+            return true;
+        }
+    }
+    false
 }
+
+/// Three, because two is a legitimate ellipsis of a kind operators do write and
+/// a doubled separator is ordinary noise. Erring long here only costs a bind.
+const MIN_MASK_RUN: usize = 3;
 
 /// The separators an operator writes a range with. The comparison key already
 /// folds these dash variants to ASCII; the period boundary has to admit the
@@ -1549,6 +1641,19 @@ fn part_reads_as_period(canonical: &str, any_number: &mut bool) -> bool {
         *any_number = true;
     }
     true
+}
+
+/// Whether any maximal digit run inside a token reads as a date.
+///
+/// `is_plausible_date` guarded the numeric branch only, so `DATED20250911`
+/// reached the code branch untouched: `is_period` does not see it either,
+/// because its eight-digit case admits a year followed by a year and `0911` is
+/// neither. Two unrelated ledgers sharing a fused date label then bound to each
+/// other on it.
+fn carries_plausible_date(canonical: &str) -> bool {
+    canonical
+        .split(|character: char| !character.is_ascii_digit())
+        .any(is_plausible_date)
 }
 
 /// An eight-digit run that reads as a calendar date in any order this project
