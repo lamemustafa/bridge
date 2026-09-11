@@ -763,8 +763,11 @@ one who supplies a `REMOTEID` without knowing it upserts can silently **overwrit
 voucher by reusing a key.
 
 **Not the outbox, though.** `REMOTEID` prevents a duplicate; it does not tell you, after a crash,
-*what you sent*. Tally does not return the client key on readback (below), so a resend is only safe
-while the exact key and payload are still on disk. The durable dispatch intent stays — see the
+*what you sent*. The `REMOTEID` **attribute** does not echo the client key on readback (below), so
+a resend is only safe while the exact key and payload are still on disk. Be precise about the
+field: the key itself does survive anywhere Tally does not own — a narration marker comes back —
+and a categorical "Tally does not return the key" would send recovery work to discard the one
+attribution channel that works. The durable dispatch intent stays — see the
 `row fsynced before dispatch` invariant in `IMPROVEMENT_PLAN_2026H2.md` and the
 restart-reconciliation flow in `docs/agent/README.md`.
 
@@ -832,10 +835,20 @@ original (partial update semantics)". So a corrected voucher re-sent under the s
 overwrite, may partially update, or may duplicate: **UNVERIFIED**. Do not prescribe re-import as a
 correction path on that basis. Delete by `REMOTEID` and create afresh is the path with the
 better evidence, but read §9.7's boundary before treating it as settled: the Delete row in that
-matrix belongs to this document's **Edit Log 7.0 Educational** baseline (§0), and licensed standard
-TallyPrime is not qualified there. So Delete + Create is the *least* unverified correction path on
-this profile, not a confirmed one. Qualify the delete on the SKU you are writing to before using it
-on a live book, and prefer a hand correction until you have.
+matrix belongs to this document's **Edit Log 7.0 Educational** baseline (§0), which qualifies
+nothing for licensed standard TallyPrime.
+
+**But §9.12b does.** A one-sided invoice voucher was removed on a **licensed TallyPrime 7.1 Gold**
+book with `ACTION="Delete"` keyed by the **client-supplied** `REMOTEID`, and a corrected voucher
+created in its place. So the delete is confirmed on Gold for that voucher shape, and reading only
+§9.7 here would give a Gold implementer the opposite of what this document already establishes
+five sections later.
+
+Scope it precisely rather than in either direction: **Delete-by-client-`REMOTEID` is confirmed on
+licensed Gold for an invoice voucher (§9.12b), and unqualified elsewhere** — including on the
+Silver/Journal path this section is about, where §9.7's row is Educational. Qualify it on the SKU
+and voucher type you are writing to before running it over a batch; a single voucher read back
+settles it.
 
 ### 9.4 Master re-create is a silent Alter
 
@@ -877,7 +890,12 @@ lives. Measured against a ledger named `BRIDGE-PROBE-LEDGER-A` and one named `ZZ
 | `ZZ Ram & Son Pvt Ltd` (singular for plural) | **rejected** |
 | entirely different name | **rejected** |
 
-Tally normalises **case and separators**, and is otherwise **exact on letters**.
+Tally folds **ASCII case**, and matched a **hyphen against a single space**. It is otherwise
+**exact on letters**.
+
+Stated that narrowly on purpose. "Normalises separators" reads as *separators generally*, and a
+skimming implementer folds underscores, slashes and en dashes together — binding a voucher to the
+wrong ledger. One separator was measured, in one direction. The table below marks every row.
 
 > **RULE: wherever the question is "will Tally treat these as the same master?", compare on a
 > canonical form — never on string equality, and never on a looser fold.**
