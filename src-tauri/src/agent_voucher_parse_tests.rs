@@ -2,6 +2,7 @@
 use super::*;
 
 const CAPTURED_VOUCHER_COMPANY_GUID: &str = "61c6de69-1748-461c-ad3f-162cb949df9f";
+const CAPTURED_BILL_ALLOCATION_COMPANY_GUID: &str = "74d7e825-396a-4667-90b2-83f593f06a36";
 
 fn captured_native_vouchers() -> String {
     let bytes = include_bytes!(
@@ -14,6 +15,273 @@ fn captured_native_vouchers() -> String {
             .collect::<Vec<_>>(),
     )
     .unwrap()
+}
+
+fn captured_bill_allocation_vouchers() -> String {
+    let bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/vouchers_agst_ref_reopen_live.utf16le.xml"
+    );
+    String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn captured_bill_allocations_preserve_raw_fields_and_empty_entries() {
+    let captured = captured_bill_allocation_vouchers();
+    let rows = parse_agent_rows(&captured, CAPTURED_BILL_ALLOCATION_COMPANY_GUID).unwrap();
+    assert_eq!(
+        rows[0]["amounts"][0]["bill_allocations"],
+        json!([{
+            "reference": {"kind": "named", "name": "SET-INV-001"},
+            "bill_type": "New Ref",
+            "amount": "-1137.50"
+        }])
+    );
+    assert_eq!(rows[0]["amounts"][1]["bill_allocations"], json!([]));
+
+    let padded_reference = captured.replacen(
+        "<NAME>SET-INV-001</NAME>",
+        "<NAME>  SET-INV-001  </NAME>",
+        1,
+    );
+    let padded =
+        parse_agent_rows(&padded_reference, CAPTURED_BILL_ALLOCATION_COMPANY_GUID).unwrap();
+    assert_eq!(
+        padded[0]["amounts"][0]["bill_allocations"][0]["reference"]["name"],
+        "  SET-INV-001  "
+    );
+}
+
+#[test]
+fn on_account_bill_allocation_with_empty_name_is_explicitly_unnamed() {
+    let captured = captured_bill_allocation_vouchers()
+        .replacen("<NAME>SET-INV-001</NAME>", "<NAME></NAME>", 1)
+        .replacen(
+            "<BILLTYPE>New Ref</BILLTYPE>",
+            "<BILLTYPE>On Account</BILLTYPE>",
+            1,
+        );
+    let rows = parse_agent_rows(&captured, CAPTURED_BILL_ALLOCATION_COMPANY_GUID)
+        .expect("an unnamed On Account allocation must not abort its voucher read");
+
+    let allocation = &rows[0]["amounts"][0]["bill_allocations"][0];
+    assert_eq!(allocation["reference"], json!({"kind": "on_account"}));
+    assert!(
+        allocation.get("name").is_none(),
+        "On Account must not be represented by an empty or placeholder name"
+    );
+}
+
+#[test]
+fn reference_bearing_bill_allocation_with_empty_name_fails_closed() {
+    let captured = captured_bill_allocation_vouchers().replacen(
+        "<NAME>SET-INV-001</NAME>",
+        "<NAME></NAME>",
+        1,
+    );
+    assert_eq!(
+        parse_agent_rows(&captured, CAPTURED_BILL_ALLOCATION_COMPANY_GUID),
+        Err("bill_allocation_field_missing".into())
+    );
+}
+
+const WILDCARD_ALLOCATION_COMPANY_GUID: &str = "ae1490be-52c5-4544-9ffc-4b7da85f9797";
+
+fn captured_wildcard_allocation_vouchers() -> String {
+    let bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-billallocations-wildcard.utf16le.xml"
+    );
+    String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap()
+}
+
+fn captured_entry_wildcard_vouchers() -> String {
+    let bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-entry-wildcard-allocations.utf16le.xml"
+    );
+    String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn entry_wildcard_response_parses_with_its_twenty_seven_nested_lists() {
+    // ALLLEDGERENTRIES.* returns 27 nested *.LIST types per entry, including
+    // TAXBILLALLOCATIONS.LIST -- a DIFFERENT list that a loose scope match could
+    // confuse with BILLALLOCATIONS.LIST. This is the shape the profile requests,
+    // so the parser has to survive all of it and still report allocations exactly.
+    let captured = captured_entry_wildcard_vouchers();
+    let rows = parse_agent_rows(&captured, WILDCARD_ALLOCATION_COMPANY_GUID)
+        .expect("the entry wildcard response must parse");
+
+    let allocations: Vec<&serde_json::Value> = rows
+        .iter()
+        .flat_map(|row| row["amounts"].as_array().unwrap())
+        .flat_map(|amount| amount["bill_allocations"].as_array().unwrap())
+        .collect();
+    assert!(
+        allocations
+            .iter()
+            .any(|a| a["bill_type"] == "On Account"
+                && a["reference"] == json!({"kind": "on_account"})),
+        "On Account must arrive typed and explicitly unnamed"
+    );
+    assert!(
+        allocations
+            .iter()
+            .any(|a| a["bill_type"] == "New Ref" && a["reference"]["kind"] == "named"),
+        "a reference-bearing allocation must keep its name"
+    );
+}
+
+#[test]
+fn allocation_wildcard_response_parses_and_types_on_account() {
+    // Captured live from TallyPrime 7.1 Silver with
+    // ALLLEDGERENTRIES.BILLALLOCATIONS.* -- the shape this profile now requests.
+    // Curating NAME/BILLTYPE/AMOUNT instead DROPS BILLTYPE on On Account
+    // allocations, so they arrive as amount-only placeholders and are skipped,
+    // losing real allocations silently. This fixture is the proof that the
+    // wildcard restores the type, and that the extra sibling elements Tally
+    // returns inside the allocation do not disturb the parse.
+    let captured = captured_wildcard_allocation_vouchers();
+    let rows = parse_agent_rows(&captured, WILDCARD_ALLOCATION_COMPANY_GUID)
+        .expect("the allocation wildcard response must parse");
+
+    let allocations: Vec<&serde_json::Value> = rows
+        .iter()
+        .flat_map(|row| row["amounts"].as_array().unwrap())
+        .flat_map(|amount| amount["bill_allocations"].as_array().unwrap())
+        .collect();
+
+    assert!(
+        allocations
+            .iter()
+            .any(|allocation| allocation["bill_type"] == "On Account"
+                && allocation["reference"] == json!({"kind": "on_account"})),
+        "On Account must arrive typed and explicitly unnamed, not as a placeholder"
+    );
+    assert!(
+        allocations
+            .iter()
+            .any(|allocation| allocation["bill_type"] == "New Ref"
+                && allocation["reference"]["kind"] == "named"),
+        "a reference-bearing allocation must keep its name"
+    );
+}
+
+#[test]
+fn amount_only_bill_allocation_placeholder_is_ignored_not_refused() {
+    // Tally emits an amount-only container for a ledger entry with no typed
+    // allocation. It is not empty, so it reaches the field checks; requiring
+    // BILLTYPE unconditionally aborted the ENTIRE vouchers read over a row that
+    // carries no bill identity to record.
+    let captured = captured_bill_allocation_vouchers();
+    let start = captured.find("<BILLALLOCATIONS.LIST>").unwrap();
+    let end = start
+        + captured[start..].find("</BILLALLOCATIONS.LIST>").unwrap()
+        + "</BILLALLOCATIONS.LIST>".len();
+    let mut placeholder = captured.clone();
+    placeholder.replace_range(
+        start..end,
+        "<BILLALLOCATIONS.LIST><AMOUNT>-1137.50</AMOUNT></BILLALLOCATIONS.LIST>",
+    );
+
+    let rows = parse_agent_rows(&placeholder, CAPTURED_BILL_ALLOCATION_COMPANY_GUID)
+        .expect("an amount-only placeholder must not abort the voucher read");
+
+    assert_eq!(
+        rows[0]["amounts"][0]["bill_allocations"],
+        json!([]),
+        "the placeholder carries no allocation, so none is reported -- and it is \
+         skipped rather than invented"
+    );
+    // The rest of the read must be intact: skipping the row has to fall through
+    // to the scope bookkeeping, or every later element is mis-attributed.
+    assert_eq!(
+        rows.len(),
+        parse_agent_rows(&captured, CAPTURED_BILL_ALLOCATION_COMPANY_GUID)
+            .unwrap()
+            .len()
+    );
+    assert_eq!(rows[0]["amounts"][1]["bill_allocations"], json!([]));
+}
+
+#[test]
+fn on_account_carrying_a_name_is_refused_not_silently_unnamed() {
+    // On Account cannot carry a bill identity. A NAME alongside it is a
+    // contradiction, and dropping it loses a supplier reference that a malformed
+    // response -- or a request-shape regression -- is trying to report. The typed
+    // outstandings boundary refuses the same state; this one did not.
+    let captured = captured_bill_allocation_vouchers().replacen(
+        "<BILLTYPE>New Ref</BILLTYPE>",
+        "<BILLTYPE>On Account</BILLTYPE>",
+        1,
+    );
+    assert!(captured.contains("<NAME>SET-INV-001</NAME>"));
+    assert_eq!(
+        parse_agent_rows(&captured, CAPTURED_BILL_ALLOCATION_COMPANY_GUID),
+        Err("bill_reference_forbidden".into())
+    );
+}
+
+#[test]
+fn named_bill_allocation_without_a_type_still_fails_closed() {
+    // The other half of the admission rule: a name without a type is partially
+    // populated, not a placeholder. Guessing the type would invent an allocation
+    // the book does not contain.
+    let captured = captured_bill_allocation_vouchers();
+    let start = captured.find("<BILLALLOCATIONS.LIST>").unwrap();
+    let end = start
+        + captured[start..].find("</BILLALLOCATIONS.LIST>").unwrap()
+        + "</BILLALLOCATIONS.LIST>".len();
+    let mut named_untyped = captured.clone();
+    named_untyped.replace_range(
+        start..end,
+        "<BILLALLOCATIONS.LIST><NAME>SET-INV-001</NAME>\
+         <AMOUNT>-1137.50</AMOUNT></BILLALLOCATIONS.LIST>",
+    );
+    assert_eq!(
+        parse_agent_rows(&named_untyped, CAPTURED_BILL_ALLOCATION_COMPANY_GUID),
+        Err("bill_allocation_field_missing".into())
+    );
+}
+
+#[test]
+fn incomplete_bill_allocations_are_refused_instead_of_becoming_empty() {
+    let captured = captured_bill_allocation_vouchers();
+    for field in ["NAME", "BILLTYPE", "AMOUNT"] {
+        let start = captured.find("<BILLALLOCATIONS.LIST>").unwrap();
+        let field_start = start + captured[start..].find(&format!("<{field}")).unwrap();
+        let field_end = field_start
+            + captured[field_start..]
+                .find(&format!("</{field}>"))
+                .unwrap()
+            + field.len()
+            + 3;
+        for replacement in [String::new(), format!("<{field}></{field}>")] {
+            let mut damaged = captured.clone();
+            damaged.replace_range(field_start..field_end, &replacement);
+            assert_eq!(
+                parse_agent_rows(&damaged, CAPTURED_BILL_ALLOCATION_COMPANY_GUID),
+                Err("bill_allocation_field_missing".into()),
+                "{field}"
+            );
+        }
+    }
 }
 
 #[test]

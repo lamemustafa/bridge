@@ -27,47 +27,60 @@ fn import_boundary_rejects_malformed_accounting_scalars_in_captured_vouchers() {
         baseline
     );
     // Fault injection into existing captured responses, not new Tally fixtures.
-    for (field, original, invalid, code) in [
+    //
+    // Each case carries its own needle rather than a `>value</TAG>` pattern built
+    // from the field name. The captured bill allocation repeats its ledger entry's
+    // amount verbatim -- an allocation covers the entry -- so a needle that ignores
+    // the opening tag corrupts BOTH and the bill-allocation parse, which runs
+    // first, answers instead. The case then asserts which layer speaks first
+    // rather than that a malformed entry amount is refused. The entry element
+    // carries `TYPE="Amount"` and the allocation's does not, so they separate
+    // cleanly, and both layers are now asserted.
+    let entry_amount = baseline.rows[0].entries[0].amount.as_str();
+    for (label, needle, replacement, code) in [
         (
             "ISDEEMEDPOSITIVE",
-            "Yes",
-            "Maybe",
+            ">Yes</ISDEEMEDPOSITIVE>".to_string(),
+            ">Maybe</ISDEEMEDPOSITIVE>".to_string(),
             "import_verification_export_invalid",
         ),
         (
             "ISCANCELLED",
-            "No",
-            "Maybe",
+            ">No</ISCANCELLED>".to_string(),
+            ">Maybe</ISCANCELLED>".to_string(),
             "import_verification_export_invalid",
         ),
         (
             "ISOPTIONAL",
-            "No",
-            "Maybe",
+            ">No</ISOPTIONAL>".to_string(),
+            ">Maybe</ISOPTIONAL>".to_string(),
             "import_verification_export_invalid",
         ),
         (
             "DATE",
-            baseline.rows[0].date.as_deref().unwrap(),
-            "20260230",
+            format!(">{}</DATE>", baseline.rows[0].date.as_deref().unwrap()),
+            ">20260230</DATE>".to_string(),
             "import_verification_export_invalid",
         ),
         (
-            "AMOUNT",
-            baseline.rows[0].entries[0].amount.as_str(),
-            "not-a-number",
+            "entry AMOUNT",
+            format!("<AMOUNT TYPE=\"Amount\">{entry_amount}</AMOUNT>"),
+            "<AMOUNT TYPE=\"Amount\">not-a-number</AMOUNT>".to_string(),
             "import_verification_amount_invalid",
         ),
+        (
+            "bill allocation AMOUNT",
+            format!("<AMOUNT>{entry_amount}</AMOUNT>"),
+            "<AMOUNT>not-a-number</AMOUNT>".to_string(),
+            "bill_allocation_amount_invalid",
+        ),
     ] {
-        let invalid = captured.replace(
-            &format!(">{original}</{field}>"),
-            &format!(">{invalid}</{field}>"),
-        );
-        assert_ne!(invalid, captured, "fault injection for {field}");
+        let invalid = captured.replace(&needle, &replacement);
+        assert_ne!(invalid, captured, "fault injection for {label}");
         assert_eq!(
             parse_import_vouchers(&invalid, CAPTURED_GUID),
             Err(code.to_string()),
-            "{field}"
+            "{label}"
         );
     }
 }
