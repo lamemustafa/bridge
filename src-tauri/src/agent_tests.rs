@@ -78,28 +78,34 @@ fn voucher_profiles_fetch_accounting_state_and_bill_allocations() {
         for field in [
             "ISCANCELLED",
             "ISOPTIONAL",
-            // The allocation wildcard, NOT the three curated children. Curating
-            // NAME/BILLTYPE/AMOUNT silently drops BILLTYPE on `On Account`
-            // allocations, which then arrive as amount-only placeholders that are
-            // indistinguishable from an entry with no allocation -- so a real
-            // allocation is lost with nothing reporting it. Measured on
-            // TallyPrime 7.1 Silver: 6 of 144 allocations, recovered by the
-            // wildcard for 1.12x the payload against 7.3x for
-            // `ALLLEDGERENTRIES.*`. See AGENT_VOUCHER_FETCH.
-            "ALLLEDGERENTRIES.BILLALLOCATIONS.*",
+            // The ENTRY wildcard, which 2.4a proves correct on the instance where
+            // curated allocation paths misreport New Ref/Agst Ref as On Account.
+            // The narrower BILLALLOCATIONS.* is cheaper and measured equivalent
+            // HERE, but untested THERE -- and an unverified narrowing is not worth
+            // a payload saving when the failure is silently-wrong evidence.
+            "ALLLEDGERENTRIES.*",
         ] {
             assert!(fields.iter().any(|value| value == field), "missing {field}");
         }
-        for curated in [
+        for narrower in [
             "ALLLEDGERENTRIES.BILLALLOCATIONS.NAME",
             "ALLLEDGERENTRIES.BILLALLOCATIONS.BILLTYPE",
+            "ALLLEDGERENTRIES.BILLALLOCATIONS.*",
         ] {
             assert!(
-                !fields.iter().any(|value| value == curated),
-                "{curated} must not be curated back in: it drops On Account types"
+                !fields.iter().any(|value| value == narrower),
+                "{narrower} must not be narrowed back in while 2.4a's instance is unverified"
             );
         }
     }
+    // A read should fetch what it returns: ledger_movement discards allocations.
+    let movement = render_agent_movement_vouchers("Book", "20260901", "20260902").unwrap();
+    assert!(
+        !movement.contains("BILLALLOCATIONS"),
+        "movement must not pay the allocation payload for data MovementEntry drops"
+    );
+    assert!(movement.contains("ALLLEDGERENTRIES.LEDGERNAME"));
+
     let xml = voucher_collection_xml().replace(
         "<GUID>",
         "<ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><GUID>",

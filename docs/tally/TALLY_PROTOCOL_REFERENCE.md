@@ -679,11 +679,20 @@ handling of a placeholder, ignoring it, deletes a real allocation and reports no
 that *rejects* untyped rows fails loudly; one that *skips* them, which is right for genuine
 placeholders, turns this into silent loss. Both boundaries are defensible alone.
 
-**`ALLLEDGERENTRIES.BILLALLOCATIONS.*` is the shape to prefer.** It recovers exactly what the
-entry-level wildcard recovers, at **1.12×** the curated payload against **7.3×**, and introduces
-**no element type the parser did not already receive** — the allocation's children are the same set
-either way. The entry wildcard adds 22 further nested lists per entry, including
-`TAXBILLALLOCATIONS.LIST`, which is a different list.
+**`ALLLEDGERENTRIES.BILLALLOCATIONS.*` recovers what the entry wildcard recovers**, at **1.12×**
+the curated payload against **7.3×**, introducing no element type the parser did not already
+receive — the allocation's children are the same set either way.
+
+**But Bridge's agent reads use `ALLLEDGERENTRIES.*` anyway, deliberately.** The narrower shape is
+measured equivalent *here* and untested on the instance §2.4a describes, which is the one where
+curated allocation paths misreport `New Ref`/`Agst Ref` as `On Account`. The asymmetry decides it:
+if the narrow shape is wrong there, a reader silently receives incorrect bill types on compliance
+data; if the wide shape costs too much, that is loud, measurable and fixable. An unverified
+narrowing is not worth a payload saving when the failure mode is silently-wrong evidence.
+
+Use the narrower shape only where the payload genuinely binds and the instance is known good.
+A read that **discards** allocations should fetch neither — Bridge's `ledger_movement` profile
+omits them entirely rather than paying for data its result type drops.
 
 **What is still unknown.** Whether `BILLALLOCATIONS.*` also cures §2.4a's `New Ref`/`Agst Ref`
 corruption **on the affected instance** is untested — nobody in reach has that book. Until someone

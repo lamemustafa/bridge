@@ -105,6 +105,49 @@ fn captured_wildcard_allocation_vouchers() -> String {
     .unwrap()
 }
 
+fn captured_entry_wildcard_vouchers() -> String {
+    let bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-entry-wildcard-allocations.utf16le.xml"
+    );
+    String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn entry_wildcard_response_parses_with_its_twenty_seven_nested_lists() {
+    // ALLLEDGERENTRIES.* returns 27 nested *.LIST types per entry, including
+    // TAXBILLALLOCATIONS.LIST -- a DIFFERENT list that a loose scope match could
+    // confuse with BILLALLOCATIONS.LIST. This is the shape the profile requests,
+    // so the parser has to survive all of it and still report allocations exactly.
+    let captured = captured_entry_wildcard_vouchers();
+    let rows = parse_agent_rows(&captured, WILDCARD_ALLOCATION_COMPANY_GUID)
+        .expect("the entry wildcard response must parse");
+
+    let allocations: Vec<&serde_json::Value> = rows
+        .iter()
+        .flat_map(|row| row["amounts"].as_array().unwrap())
+        .flat_map(|amount| amount["bill_allocations"].as_array().unwrap())
+        .collect();
+    assert!(
+        allocations
+            .iter()
+            .any(|a| a["bill_type"] == "On Account"
+                && a["reference"] == json!({"kind": "on_account"})),
+        "On Account must arrive typed and explicitly unnamed"
+    );
+    assert!(
+        allocations
+            .iter()
+            .any(|a| a["bill_type"] == "New Ref" && a["reference"]["kind"] == "named"),
+        "a reference-bearing allocation must keep its name"
+    );
+}
+
 #[test]
 fn allocation_wildcard_response_parses_and_types_on_account() {
     // Captured live from TallyPrime 7.1 Silver with

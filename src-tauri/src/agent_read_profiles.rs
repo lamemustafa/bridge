@@ -1,38 +1,51 @@
 //! Read profiles for the local MCP adapter.
 use super::*;
 
-/// The voucher FETCH list shared by the windowed and changed-since reads.
+/// The FETCH list for reads that RETURN bill allocations.
 ///
-/// `BILLALLOCATIONS.*` rather than naming NAME/BILLTYPE/AMOUNT. Curating those
-/// three silently DROPS `BILLTYPE` on `On Account` allocations, which then
-/// arrive as amount-only placeholders indistinguishable from a ledger entry
-/// that has no allocation at all. Measured on TallyPrime 7.1 Silver, company
-/// `BRIDGE GST RECON LAB`, window 20250601-20250831, 144 allocations:
+/// `ALLLEDGERENTRIES.*`, the shape `IMPLEMENTATION_GUIDE.md` §2.4a proves correct on
+/// the instance where curated allocation paths misreport genuine `New Ref`/`Agst Ref`
+/// rows as `On Account`. Measured on TallyPrime 7.1 Silver (protocol reference §8.2a),
+/// `ALLLEDGERENTRIES.BILLALLOCATIONS.*` recovers the same allocations for 1.12x the
+/// curated payload against 7.3x — but that is one instance, and §8.2a says plainly it
+/// is **untested on the affected one**.
 ///
-/// | Fetch | `New Ref` | `Agst Ref` | `On Account` | Bytes |
-/// | --- | --- | --- | --- | --- |
-/// | curated three fields | 31 | 1 | **0** | 150,512 |
-/// | `BILLALLOCATIONS.*` | 31 | 1 | **6** | 168,051 |
-/// | `ALLLEDGERENTRIES.*` | 31 | 1 | **6** | 1,103,107 |
+/// The asymmetry decides it. If the narrower shape is wrong there, a reader silently
+/// receives incorrect bill types on compliance data. If the wider shape costs too much,
+/// that is loud, measurable and fixable. An unverified narrowing is not worth a payload
+/// saving when the failure mode is silently-wrong evidence, so the proven shape is used
+/// until someone runs the A/B on that corpus.
 ///
-/// `BILLALLOCATIONS.*` recovers everything the full wildcard does, for 1.12x the
-/// curated payload instead of 7.3x, and adds no element types the parser did not
-/// already see -- the entry-level wildcard adds 22 further nested lists,
-/// including `TAXBILLALLOCATIONS.LIST`, which is a different list entirely.
-///
-/// This does NOT close `IMPLEMENTATION_GUIDE.md` §2.4a. That instance saw curated
-/// paths misreport genuine `New Ref`/`Agst Ref` as `On Account`; this instance
-/// does not reproduce that, and whether `BILLALLOCATIONS.*` also cures it there
-/// is untested. It is strictly more faithful than the curated form and strictly
-/// cheaper than the entry wildcard.
-///
-/// The measurement, its instance scope and what remains unknown are recorded in
-/// `docs/tally/TALLY_PROTOCOL_REFERENCE.md` §8.2a. That section is the canonical
-/// statement; this comment says which shape the code requests and why, and must
-/// not become a second, diverging account of the evidence.
+/// The parser handles all 27 nested `*.LIST` types this returns per entry, including
+/// `TAXBILLALLOCATIONS.LIST` — a different list from `BILLALLOCATIONS.LIST` — proven by
+/// `entry_wildcard_response_parses_with_its_twenty_seven_nested_lists` against a live
+/// capture rather than a constructed one.
 const AGENT_VOUCHER_FETCH: &str = "DATE,VOUCHERNUMBER,VOUCHERTYPENAME,PARTYLEDGERNAME,NARRATION,\
+GUID,ALTERID,MASTERID,ISCANCELLED,ISOPTIONAL,ALLLEDGERENTRIES.*";
+
+/// The FETCH list for `ledger_movement`, which DISCARDS bill allocations.
+///
+/// `MovementEntry` carries no allocation field, so the movement read threw the
+/// allocation payload away after paying for it — and, worse, inherited allocation
+/// parse failures: one malformed allocation aborted a movement read that never wanted
+/// allocations. With the entry wildcard above that cost becomes 7.3x for data the
+/// caller cannot see, and dense windows that previously fit could exceed limits while
+/// returning no movement at all.
+///
+/// A read should fetch what it returns. This list is the three entry fields movement
+/// actually uses.
+const AGENT_MOVEMENT_FETCH: &str = "DATE,VOUCHERNUMBER,VOUCHERTYPENAME,PARTYLEDGERNAME,NARRATION,\
 GUID,ALTERID,MASTERID,ISCANCELLED,ISOPTIONAL,ALLLEDGERENTRIES.LEDGERNAME,ALLLEDGERENTRIES.AMOUNT,\
-ALLLEDGERENTRIES.ISDEEMEDPOSITIVE,ALLLEDGERENTRIES.BILLALLOCATIONS.*";
+ALLLEDGERENTRIES.ISDEEMEDPOSITIVE";
+
+/// Windowed voucher read for `ledger_movement`, which does not return allocations.
+pub(super) fn render_agent_movement_vouchers(
+    company: &str,
+    from: &str,
+    to: &str,
+) -> Result<String, String> {
+    render_windowed_vouchers(company, from, to, None, AGENT_MOVEMENT_FETCH)
+}
 
 pub(super) fn render_agent_vouchers(
     company: &str,
@@ -40,13 +53,23 @@ pub(super) fn render_agent_vouchers(
     to: &str,
     alter_id: Option<u64>,
 ) -> Result<String, String> {
+    render_windowed_vouchers(company, from, to, alter_id, AGENT_VOUCHER_FETCH)
+}
+
+fn render_windowed_vouchers(
+    company: &str,
+    from: &str,
+    to: &str,
+    alter_id: Option<u64>,
+    fetch: &str,
+) -> Result<String, String> {
     let company = ValidatedCompanyName::new(company.to_string())
         .map_err(|_| "company_name_invalid".to_string())?;
     let alter_filter = alter_id
         .map(|value| format!(" AND $AlterID > {value}"))
         .unwrap_or_default();
     Ok(format!(
-        "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Vouchers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeAgentWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"{alter_filter}</SYSTEM><COLLECTION NAME=\"Bridge Agent Vouchers\" ISMODIFY=\"No\"><TYPE>Voucher</TYPE><FETCH>{AGENT_VOUCHER_FETCH}</FETCH><FILTERS>BridgeAgentWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>",
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Vouchers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeAgentWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"{alter_filter}</SYSTEM><COLLECTION NAME=\"Bridge Agent Vouchers\" ISMODIFY=\"No\"><TYPE>Voucher</TYPE><FETCH>{fetch}</FETCH><FILTERS>BridgeAgentWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>",
         xml_escape(company.as_str())
     ))
 }
