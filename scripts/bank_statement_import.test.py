@@ -642,8 +642,35 @@ def test_mapping_key_survives_non_ascii_scripts(m):
     # vowel signs — dropping combining marks would be the same bug one layer down
     names = ["पार्टी", "पारटी", "ஏபிசி", "কোম্পানি"]
     assert len({m._key(n) for n in names}) == len(names)
-    # and the ASCII behaviour is unchanged
-    assert m._key("A & B") == m._key("AB") == "AB"
+
+
+def test_mapping_key_keeps_punctuation_significant(m):
+    """`_key` folds whitespace and nothing else.
+
+    This assertion used to read `_key("A & B") == _key("AB") == "AB"` — the
+    defect written down as a contract. Dropping punctuation collapsed genuinely
+    different names onto one mapping row, and while `load_mapping` refuses two
+    *mapping rows* that collide, nothing refuses a **statement** party colliding
+    with a row written for somebody else: one candidate, no ambiguity to reject,
+    and the transaction posts to a ledger the operator never chose for it.
+
+    Removing it was measured rather than assumed. Across the 23 distinct parties
+    in the delivered manifests, none carried punctuation the old key dropped,
+    and the one real merge — the cell-wrap case below — is unaffected.
+    """
+    apart = [("A & B", "AB"), ("S.K. Minerals", "SK Minerals"),
+             ("M/s Mercury", "Ms Mercury"), ("Shree-Ram Traders", "Shree Ram Traders")]
+    for left, right in apart:
+        assert m._key(left) != m._key(right), f"{left!r} and {right!r} must stay apart"
+
+    # ...while the reason the key is loose at all still holds: one payee, split
+    # two ways by the PDF cell wrap, measured on the delivered HDFC statement.
+    assert m._key("MERCURYM ANUFACTURERS") == m._key("MERCURYMANUFACTURERS")
+    assert m._key("ZEPHYR MANUFACTURING") == m._key("ZEPHYRMANUFACTURING")
+
+    # Case still folds, and nothing else is touched.
+    assert m._key("m/s mercury") == m._key("M/S MERCURY")
+    assert m._key("A&B") == "A&B"
 
 
 def test_mapping_key_ignores_wrap_spacing(m):
@@ -665,23 +692,35 @@ def test_mapping_refuses_ambiguous_input(m):
         # report a clean, balanced, entirely suspense-bound import
         refuses(m, "mapping_headers_missing", m.load_mapping,
                 mapping_file(directory, "name,ledger,treatment\nA,L,auto\n"))
-        # two different counterparties collapsing to one key: last row would win
+        # two different counterparties collapsing to one key: last row would win.
+        # They must collide under the key `_key` actually computes — spacing
+        # only. `A & B` / `AB` was the old example and no longer collides,
+        # which is the point of the change, not a gap here.
         refuses(m, "mapping_key_collision", m.load_mapping,
                 mapping_file(directory, "party,ledger,treatment\n"
-                                        "A & B,Ledger One,auto\n"
-                                        "AB,Ledger Two,auto\n"))
+                                        "ZEPHYR MANUFACTURING,Ledger One,auto\n"
+                                        "ZEPHYRMANUFACTURING,Ledger Two,auto\n"))
         # ... but an identical instruction spelled two ways is not a conflict
         mapping = m.load_mapping(mapping_file(
-            directory, "party,ledger,treatment\nA & B,One,auto\nAB,One,auto\n"))
-        assert mapping[m._key("AB")] == ("One", "auto")
+            directory, "party,ledger,treatment\n"
+                       "ZEPHYR MANUFACTURING,One,auto\nZEPHYRMANUFACTURING,One,auto\n"))
+        assert mapping[m._key("ZEPHYRMANUFACTURING")] == ("One", "auto")
+        # and two names that differ only in punctuation are now simply two rows
+        two = m.load_mapping(mapping_file(
+            directory, "party,ledger,treatment\nA & B,One,auto\nAB,Two,auto\n"))
+        assert two[m._key("A & B")] == ("One", "auto")
+        assert two[m._key("AB")] == ("Two", "auto")
         # a Contra's other leg must be a real bank/cash ledger
         refuses(m, "contra_without_ledger", m.load_mapping,
                 mapping_file(directory, "party,ledger,treatment\nOWN,,contra\n"))
         refuses(m, "unknown_treatment", m.load_mapping,
                 mapping_file(directory, "party,ledger,treatment\nA,L,transfer\n"))
-        # a name with no letters or digits at all would bucket with every other
-        refuses(m, "unusable_mapping_key", m.load_mapping,
-                mapping_file(directory, "party,ledger,treatment\n---,L,auto\n"))
+        # `---` used to reduce to an empty key and was refused for it. With the
+        # key folding whitespace only it is an ordinary name, and the empty-key
+        # case is unreachable — `_squash` drops a whitespace-only party first.
+        assert m.load_mapping(
+            mapping_file(directory, "party,ledger,treatment\n---,L,auto\n"))[m._key("---")] \
+            == ("L", "auto")
         # two columns normalising to one name: the later silently wins, and if
         # it is blank the row is skipped and its transactions fall to suspense
         refuses(m, "mapping_headers_duplicated", m.load_mapping,
@@ -718,17 +757,32 @@ def test_build_treatments(m):
     # the voucher still standing in the book. Omission is not deletion.
     assert manifest[1]["remoteid"]
     assert manifest[2]["suspense"] == "YES"
-    assert "reallocate from Suspense" in manifest[2]["narration"]
+    # names the suspense ledger the operator configured, not the word "Suspense"
+    assert "reallocate from SUSPENSE ACC" in manifest[2]["narration"]
     # an unmapped party keeps the statement's own spelling in the narration so it
     # can still be identified later
     assert "GHOST" in manifest[2]["narration"]
 
 
-def test_suspense_is_compared_the_way_tally_compares_it(m):
-    """3.3b: Tally resolves 'suspense-acc' and 'SUSPENSE ACC' to one master. An
-    exact compare would post to suspense while reporting the row as resolved and
-    dropping the operator's warning — the row would vanish from the suspense
-    count it exists to appear in."""
+def test_a_row_landing_in_suspense_is_flagged_loosely_and_named_exactly(m):
+    """Two separate contracts, and the second is the one that was wrong.
+
+    **Flagging is loose on purpose.** A mapping naming the suspense ledger in a
+    different spelling must still raise the operator's warning; an exact compare
+    would report the row as resolved and drop it from the suspense count it
+    exists to appear in. Over-flagging costs a look.
+
+    **The message must name the ledger actually written.** This used to say
+    "reallocate from Suspense" unconditionally, which is an instruction that
+    cannot be followed when the fold over-flags: `_ledger_key` is looser than
+    §9.4b in six ways, so a mapping to `A-B` against a suspense master named
+    `A B` is flagged while the voucher is posted to `A-B`. The operator was sent
+    to search a ledger the voucher had never been in. Naming the real
+    destination makes a false positive cost a look rather than a wrong search.
+
+    This test no longer claims Tally resolves the two spellings to one master.
+    §9.4b marks that direction UNVERIFIED, and nothing offline can know it.
+    """
     bank = m.HDFC()
     rows = [{"date": "01/08/26", "narr": "UPI-ALPHA-9@x-ABCD0001-111111111111-P",
              "ref": "1", "dr": "10.00", "cr": "", "bal": "990.00"}]
@@ -736,6 +790,18 @@ def test_suspense_is_compared_the_way_tally_compares_it(m):
     _, manifest = m.build(rows, bank, "Co", "Bank", "SUSPENSE ACC", mapping, "ACC")
     assert manifest[0]["suspense"] == "YES"
     assert "UNIDENTIFIED" in manifest[0]["narration"]
+    # the ledger the voucher was actually written to, not the word "Suspense"
+    assert "reallocate from suspense-acc" in manifest[0]["narration"], manifest[0]["narration"]
+    assert manifest[0]["dr_ledger"] == "suspense-acc"
+
+    # the over-flagging case the old wording could not describe: an unverified
+    # fold equates the mapped ledger with the suspense master, and the voucher
+    # goes to the mapped one
+    mapping = {m._key("ALPHA"): ("A-B", "auto")}
+    _, manifest = m.build(rows, bank, "Co", "Bank", "A B", mapping, "ACC")
+    assert manifest[0]["suspense"] == "YES"
+    assert "reallocate from A-B" in manifest[0]["narration"], manifest[0]["narration"]
+    assert manifest[0]["dr_ledger"] == "A-B"
 
 
 def test_remoteid_is_derived_from_the_transaction(m):
@@ -1360,6 +1426,47 @@ def test_an_ach_reference_must_be_reference_shaped(m):
         ("UNIT-7 METALS-12 345 67890", "UNIT-7 METALS"),
     ]:
         assert party(f"ACH D- TP ACH {tail}") == expected, tail
+
+
+def test_ledger_key_folds_exactly_what_its_docstring_claims(m):
+    """`_ledger_key` is looser than §9.4b, and the docstring says so with a
+    table. Pin the table, because the hazard here is not the behaviour — it
+    fails safe at all three call sites — but somebody copying the function into
+    a binder on the strength of a docstring that used to call it "Tally's own
+    master-name identity".
+
+    A change in either direction should be deliberate: tightening it breaks the
+    verified rows, loosening it adds a row Tally has never been shown to fold.
+    """
+    same = lambda a, b: m._ledger_key(a) == m._ledger_key(b)
+
+    # VERIFIED by 9.4b — these must keep folding.
+    assert same("bridge probe ledger a", "BRIDGE PROBE LEDGER A")
+    assert same("BRIDGE PROBE LEDGER A", "BRIDGE-PROBE-LEDGER-A")
+    assert same("A B ", "A B")
+
+    # UNVERIFIED by 9.4b, folded here anyway. Safe only because nothing in this
+    # tool resolves against a master list; recorded so it cannot drift silently.
+    assert same("A-B", "A B"), "the reverse hyphen direction"
+    assert same("A  B", "A B"), "internal whitespace run"
+    assert same("  A B", "A B"), "leading whitespace"
+    # ...and the three the first version of this table missed, because they are
+    # properties of `.upper()` and `_squash` rather than of anything written in
+    # `_ledger_key`. A table that lists only the deliberate folds understates
+    # the function to exactly the reader most likely to copy it.
+    assert same("A   ", "A"), "arbitrary trailing whitespace, not one space"
+    assert same("straße", "STRASSE"), "str.upper() is Unicode, not ASCII, and changes length"
+    assert same("A\tB", "A B"), "tab folds to a space"
+    assert same("A\u00a0B", "A B"), "NBSP folds to a space"
+
+    # Must stay apart. Only the first was measured as rejected; the rest were
+    # never sent at all, and this fold happening to keep them apart is not
+    # evidence that Tally does.
+    assert not same("ZZ Ram AND Sons", "ZZ Ram & Sons"), "measured: rejected"
+    assert not same("AB", "A & B"), "deleting & was never measured either way"
+    assert not same("A_B", "A B")
+    assert not same("A/B", "A B")
+    assert not same("A\u2013B", "A B"), "en dash is not an ASCII hyphen"
 
 
 def main():

@@ -576,36 +576,112 @@ def _looks_like_utr(text):
 
 
 def _key(text):
-    """Mapping key: letters and digits only, case-folded.
+    """Mapping key: **whitespace-insensitive, everything else significant.**
 
-    Deliberately more aggressive than Tally's own matching (`_ledger_key`),
-    because the wrap heuristic can space one counterparty's name two ways and
-    both spellings must reach the same mapping row. The cost is that it can
-    also collapse two *different* names — `load_mapping` refuses a file where
-    that happens rather than letting one silently win.
+    Whitespace is folded because the PDF cell-wrap genuinely splits one
+    counterparty's name two ways in one statement — measured on the delivered
+    HDFC book, where `MERCURYM ANUFACTURERS` and `MERCURYMANUFACTURERS` are the
+    same payee and must reach the same mapping row. That is a property of
+    `pdftotext` geometry, established here, and it is the whole reason this key
+    is looser than an exact compare.
 
-    Unicode-aware rather than `[A-Z0-9]`. An ASCII class reduces a name written
-    entirely in Devanagari, Tamil or Bengali to the empty string, and every such
-    party then shares one key — a book with two of them posts both to whichever
-    was mapped first, with no collision left to refuse. The demo company this
-    project reads carries ledgers in all three scripts.
+    **Punctuation used to be dropped too, and that part was removed.** Keeping
+    only letters, digits and marks also collapsed `A & B` with `AB`,
+    `S.K. Minerals` with `SK Minerals`, `M/s Mercury` with `Ms Mercury` and
+    `Shree-Ram Traders` with `Shree Ram Traders` — different names, silently
+    posted to one ledger. `load_mapping` refuses two *mapping rows* that
+    collide, but nothing refuses a **statement** party colliding with a mapping
+    row written for somebody else: there is exactly one candidate, no ambiguity
+    to reject, and the write goes to a ledger the operator never chose for it.
+    §9.4b calls this out — a sole candidate under a loose fold is not a
+    resolution — and named `ledger_lookup_key`'s alphanumeric-only fold as the
+    example. This was the same fold.
 
-    Marks are kept as well as letters and digits: `str.isalnum` is false for a
-    combining matra, so dropping those would collapse Indic names that differ
-    only in their vowel signs — the same bug one layer down.
+    **Removing it cost nothing measurable.** Across the 23 distinct parties in
+    the delivered manifests, **none** carried punctuation that the old key
+    dropped — bank narration party fields are upper-case alphanumeric — and the
+    single real merge, the wrap case above, survives unchanged. The risky half
+    was doing no work.
+
+    Folding is done on the *characters*, not by a category filter, so a name
+    written in Devanagari, Tamil or Bengali keeps every character rather than
+    reducing toward the empty string, and combining marks (category `Mn`, for
+    which `str.isalnum` is false) are preserved with the letters they modify.
+
+    That also retires a refusal. `load_mapping` used to reject a party whose key
+    came out empty — reachable when the key kept only letters and digits, since
+    `---` reduced to nothing and would have bucketed with every other such name.
+    Removing only whitespace makes it **unreachable**: `_squash` has already
+    dropped any name that is entirely whitespace, and every other name keeps at
+    least one character. The check was deleted rather than left in place,
+    because an unreachable guard reads as protection and is not.
     """
     return "".join(character for character in text.upper()
-                   if unicodedata.category(character)[0] in "LNM")
+                   if not character.isspace())
 
 
 def _ledger_key(name):
-    """Tally's own master-name identity — IMPLEMENTATION_GUIDE.md 3.3b.
+    r"""A fold **looser than** Tally's measured master-name identity (§9.4b).
 
-    VERIFIED there: matching is case-insensitive and treats a hyphen as a
-    space, and is otherwise exact ('&' is NOT equivalent to 'AND', and a
-    missing word does not match). So this is the comparison to use whenever
-    the question is "will Tally consider these the same ledger?" — an exact
-    string compare answers a different, wrong question.
+    It was documented here as *being* Tally's identity. It is not. Every row
+    below marked **folds** against anything other than VERIFIED is a
+    transformation Tally has never been shown to make. The first draft of this
+    table said there were three; there are six, and the three it missed are the
+    ones that do not look like decisions:
+
+    | transformation                   | §9.4b      | this fold   |
+    | -------------------------------- | ---------- | ----------- |
+    | ASCII case fold                  | VERIFIED   | folds       |
+    | space supplied for stored hyphen | VERIFIED   | folds       |
+    | one trailing space               | VERIFIED   | folds       |
+    | **hyphen supplied for stored space** | UNVERIFIED | **folds**   |
+    | **internal whitespace run collapsed** | UNVERIFIED | **folds**   |
+    | **leading whitespace ignored**   | UNVERIFIED | **folds**   |
+    | **two or more trailing spaces**  | UNVERIFIED | **folds**   |
+    | **non-ASCII case fold**          | UNVERIFIED | **folds**   |
+    | **tab / NBSP / other Unicode space as a space** | UNVERIFIED | **folds** |
+    | `&` vs `AND`                     | rejects    | keeps apart |
+    | `&` deleted                      | UNVERIFIED | keeps apart |
+    | en dash, underscore, `/`         | UNVERIFIED | keeps apart |
+
+    Three of those need spelling out, because they are properties of `.upper()`
+    and `_squash` rather than anything written here, and that is exactly why the
+    first version of this table missed them:
+
+      * `str.upper()` is **not** an ASCII case fold. It applies Unicode case
+        mapping, so `straße` and `STRASSE` collide — and note the length
+        changes, which no rule in §9.4b contemplates at all.
+      * `_squash` is `re.sub(r"\s+", " ", text).strip()`. `\s` matches tab,
+        newline, NBSP and the rest of Unicode whitespace, so all of them fold to
+        an ASCII space; §9.4b measured a single ASCII space.
+      * `.strip()` removes **arbitrary** leading and trailing whitespace. §9.4b
+        measured *one* trailing space, and the reverse direction not at all.
+
+    §9.4b's measurement is **directional** — a space was supplied where the
+    master carried a hyphen, and the reverse was never sent — and a fold is
+    symmetric by construction, so it cannot express that. §9.4b gives the
+    asymmetric predicate to use when the question is "will Tally match these?".
+
+    **Why a loose fold is nonetheless safe here, and this is the whole
+    argument:** nothing in this tool resolves a name against Tally's master
+    list. It is offline; it never sees the masters. The ledger name comes from
+    the operator's own mapping CSV and is written into the XML verbatim, and
+    Tally does its own matching at import. This fold is only ever used for
+    three internal comparisons, and being loose in each of them fails safe:
+
+      * `voucher_xml` refuses a voucher whose legs collapse together — looser
+        refuses more, which is the direction a refusal should err;
+      * `build` decides whether a row counts as unidentified and warrants an
+        operator warning — looser warns more often;
+      * `selfcheck` matches the bank leg, where both sides came from the same
+        `--bank-ledger` argument, so the fold changes nothing.
+
+    **Do not copy this function into anything that binds a name to a master.**
+    There, every unverified row above silently posts to a ledger Tally would not
+    have matched, and a sole candidate under a loose fold is not a resolution.
+    Use §9.4b's `accepts(candidate, tally_name)` predicate instead — it is
+    written out in the reference, as alternatives rather than as a fold,
+    precisely because a fold is symmetric and the separator result is not.
     """
     return _squash(name.replace("-", " ")).upper()
 
@@ -1080,12 +1156,6 @@ def load_mapping(path):
                     "visible. Map the individual narrations the dry run prints beside "
                     f"{party!r} instead.",
                 )
-            if not key:
-                raise Refusal(
-                    "unusable_mapping_key",
-                    f"{path} line {line}: {party!r} reduces to an empty key, which every "
-                    "other such name would share.",
-                )
             if key in mapping and mapping[key] != (ledger, treatment):
                 first_party, first_line = origin[key]
                 raise Refusal(
@@ -1216,9 +1286,23 @@ def build(rows, bank, company, bank_ledger, suspense, mapping, account_tail,
             continue
         kind = "Contra" if treatment == "contra" else ("Payment" if outward else "Receipt")
         mode, reference = bank.reference(row)
-        # Tally resolves 'suspense-acc' and 'SUSPENSE ACC' to the same master
-        # (3.3b), so an exact string compare would post to suspense while
-        # reporting the row as resolved and omitting the operator's warning.
+        # Whether this row needs an operator's eye. Deliberately the **loose**
+        # fold: over-flagging costs a look, under-flagging posts an
+        # unidentified row and says nothing.
+        #
+        # It is not a claim that Tally would treat the two names as one master.
+        # This comment used to say Tally resolves `suspense-acc` and
+        # `SUSPENSE ACC` to the same master and cite 3.3b; §9.4b measures that
+        # direction as UNVERIFIED, and `_ledger_key` is looser than §9.4b in six
+        # ways besides. Nothing here can know what Tally would match.
+        #
+        # Which is why the message below names `ledger` — the name actually
+        # written into the voucher — rather than "Suspense". When the fold
+        # over-flags (a mapping to `A-B` against a suspense master named `A B`),
+        # the old wording told the operator to reallocate from a ledger the
+        # voucher was never posted to, which is an instruction that cannot be
+        # followed. Naming the real destination makes a false positive cost a
+        # look instead of a wrong search.
         unidentified = _ledger_key(ledger) == _ledger_key(suspense)
         shown = party if unidentified else ledger
         narration = _squash(
@@ -1226,7 +1310,7 @@ def build(rows, bank, company, bank_ledger, suspense, mapping, account_tail,
             f" | {account_tail} | {date.strftime('%d-%b-%Y')}"
         )
         if unidentified:
-            narration += " | UNIDENTIFIED - reallocate from Suspense"
+            narration += f" | UNIDENTIFIED - reallocate from {ledger}"
         remote_id = _remote_id(account, date, row, bank)
         if remote_id in seen:
             raise Refusal(
@@ -1650,8 +1734,10 @@ def _print_dry_run(manifest):
         print(f"{shown[:33]:<34}{kind:<10}{bucket['total']:>14,}  {suspense}")
         for variant, _amount in spellings:
             print(f"  also printed as {variant[:60]}")
-    print("\nOne line per mapping row: spellings that differ only in spacing or "
-          "punctuation\nare one counterparty, and one row in the CSV covers them.")
+    print("\nOne line per mapping row: spellings that differ only in SPACING are "
+          "one counterparty,\nand one row in the CSV covers them. Punctuation is "
+          "significant — `A & B` and `AB`\nare two rows, and a variant left "
+          "unmapped falls to suspense.")
 
 
 def _print_operator_notes(company, skipped):
