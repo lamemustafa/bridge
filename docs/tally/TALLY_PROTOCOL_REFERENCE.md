@@ -1707,23 +1707,45 @@ bad voucher does not matter:
 
    **Naming the disposable company does not put the write in it.** §9.11d is a verified case of a
    mismatched `<SVCURRENTCOMPANY>` posting into the **loaded** company with `CREATED=1, ERRORS=0,
-   EXCEPTIONS=0` — and the shape that fails closed is the rarer one, while a typo or a
-   year-suffixed name is the shape that silently succeeds. A probe that deliberately sends a
-   malformed voucher is the worst payload to aim at the wrong book, so do what §9.11d's third
-   conclusion already requires and this procedure did not:
+   EXCEPTIONS=0`. **Which** mismatches behave that way is UNVERIFIED — §9.11d's own provenance note
+   calls the "matches nothing" reading a hypothesis, because that instance's company list was never
+   enumerated, and a separate measurement had an existing-but-unloaded name fail closed. So do not
+   reason about which *kind* of wrong name is dangerous; there is a verified silent case and no rule
+   saying when it applies. A probe that deliberately sends a malformed voucher is the worst payload
+   to aim at the wrong book, so do what §9.11d's third conclusion already requires and this
+   procedure did not:
 
-   - **Immediately before sending**, read the company and compare its **GUID** (§9.11a) against the
-     disposable company's. Not its name — the name is the thing §9.11d showed can be wrong while
-     everything still reports success. Fresh, because a company can be switched between a check and
-     a send; a GUID read minutes earlier proves nothing about this write.
-   - **Bind the read-back in step 2 to that same GUID.** Reading "the current company" afterwards
+   - **Immediately before sending**, read the company and compare the **complete identity tuple**
+     `(canonical_origin, COMPANYNUMBER, GUID, NAME, BOOKSFROM)` against the disposable company's.
+     **Not the GUID alone** — §9.11b is VERIFIED that a year-end split gives the child its parent's
+     GUID, so a GUID-only check approves the wrong book of a split pair, and binding the read-back
+     to that same non-unique GUID cannot expose the mistake either. Not the name alone, for the
+     §9.11d reason above.
+   - **Bind the read-back in step 2 to that same tuple.** Reading "the current company" afterwards
      asks a question whose answer may have changed, and a voucher found in the wrong book still
      counts as found.
-   - **If the GUID does not match, stop.** Do not switch companies and retry from memory — load the
-     disposable company and re-read.
+   - **If any field differs, stop.** Do not switch companies and retry from memory — load the
+     disposable company and re-observe the whole tuple.
 
-   Everything after this step assumes the write landed where it was aimed. That assumption is the
-   one §9.11d refutes, so it is the one that has to be checked rather than intended.
+   **A pre-write check does not bind the write, and calling it "fresh" does not change that.**
+   Between the read and the import the loaded company can change — an operator switching books, a
+   scheduled task, a second client. Nothing in this procedure closes that window, and an earlier
+   draft of this section presented immediacy as though it did. State it as what it is: a residual
+   unsafe outcome, narrowed but not removed.
+
+   What actually narrows it, in order of how much they are worth:
+
+   1. **Run the probe on an instance nobody else is using**, with only the disposable company
+     loaded, for the duration. Sole control of the box is the only thing here that removes the
+     race rather than shrinking it.
+   2. **Never run this procedure on a machine that has a customer book loaded at all.** If a
+     customer company is open, there is a book for a mis-aimed write to land in. If none is, the
+     worst case is a wasted probe.
+   3. Keep the gap between the identity read and the send as short as possible, in the same
+     session, with no operator interaction in between.
+
+   If (1) and (2) cannot be arranged, **do not run this probe**. The question it answers is worth
+   one voucher in a disposable book; it is not worth a malformed voucher in a customer's.
 2. Send a single voucher, then read it back. **The read-back is what decides**: if the party and
    tax ledgers are missing and the stored total is the inventory lines alone, the element was
    discarded. `Import Exceptions` *may* also carry
@@ -1865,9 +1887,17 @@ Four further observations, each measured:
    - **A source figure exists** (the ordinary case): that figure is what was sent, so it is what
      the read-back must equal. Exactly, not within slack — a difference means Tally recalculated,
      which is the open question and worth a stop rather than a tolerance.
-   - **No source figure**: there is nothing to validate against, because the convention was chosen
-     rather than known. Record which one the run used, per the rule above, and leave it there.
-     A check against the formula you just picked confirms only that you applied it.
+   - **No source figure**: a convention was chosen, and choosing one produced **a concrete amount
+     that was sent**. Compare the read-back against that amount, exactly, the same as above — this
+     is step 3's field-by-field comparison and the tax field is not exempt from it. Skipping it
+     lets Tally recalculate or rewrite the figure with nothing noticing, which is the one thing
+     this probe exists to detect.
+
+     What stays unverified is the amount's **accounting correctness**, not its round-trip. Those
+     are different claims and an earlier draft of this section collapsed them: "we do not know
+     whether this figure is right" became "there is nothing to check", which is false the moment a
+     number is on the wire. Record which convention was used, and record that the stored value
+     matched what was sent.
 
    Until the settling probe runs, "the tax is correct" is not a claim this document can support;
    "the tax is unchanged from the source" is, and it is the one worth enforcing.
