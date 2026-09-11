@@ -370,6 +370,18 @@ impl ProposedVoucher {
     pub fn voucher_type(&self) -> &str {
         &self.voucher_type
     }
+
+    /// The party name as the source document spelled it, and this proposal's
+    /// place in the batch. An adapter that wants to refuse a malformed party
+    /// *before* it spends a read needs both, because the entity parse that
+    /// would refuse it otherwise happens inside `PresenceRequest::new`.
+    pub fn party(&self) -> Option<&str> {
+        self.party.as_deref()
+    }
+
+    pub fn position(&self) -> usize {
+        self.position
+    }
 }
 
 /// One observed window of a company's book. It can only be constructed from a

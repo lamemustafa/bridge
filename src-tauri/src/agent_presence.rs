@@ -13,7 +13,7 @@ use bridge_tally_core::book_presence::{
     ObservedVoucher, PresenceError, PresenceReport, PresenceRequest, ProposedVoucher,
     ProposedVoucherInput, RemoteIdEvidence, WindowRead,
 };
-use bridge_tally_core::master_binding::{MasterCatalog, MasterClass};
+use bridge_tally_core::master_binding::{MasterCatalog, MasterClass, SourceEntity};
 
 /// Most vouchers one presence request may propose. The window read is
 /// unaffected by this: it always reads its whole range.
@@ -65,6 +65,16 @@ impl Server {
         // enforces them again at its own boundary; this only stops a request
         // that was always going to be refused from exercising the endpoint.
         for proposal in &proposals {
+            // A party's *entity shape* -- how many identifiers its name
+            // carries -- is decided entirely by the caller's text, and the
+            // crate parses it inside `PresenceRequest::new`, three reads
+            // later. Parsing it here keeps the promise the refusal path
+            // already makes everywhere else: an input this tool was always
+            // going to reject costs no Tally read.
+            if let Some(party) = proposal.party() {
+                SourceEntity::new(proposal.position(), party)
+                    .map_err(|error| error.safe_reason_code().to_string())?;
+            }
             if proposal.date() < from.as_str() || proposal.date() > to.as_str() {
                 return Err(PresenceError::WindowDoesNotCover
                     .safe_reason_code()
@@ -140,6 +150,28 @@ impl Server {
                 || before != after
             {
                 return Err("ledger_snapshot_drifted".to_string().into());
+            }
+
+            // The window is independent evidence about which ledgers exist,
+            // and it is already in hand. A ledger the book posts to but the
+            // catalogue never listed proves the catalogue short -- both reads
+            // agreeing only proves they agree. Left unchecked, a proposal
+            // naming that ledger binds `Unmatched`, every party rule declines
+            // to run, and an `Absent` is authorised off a comparison that was
+            // never possible. That is the failure this whole contract exists
+            // to prevent, so it fails closed here rather than being reported.
+            for row in &rows {
+                let entry_ledgers = row["amounts"]
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|entry| entry["ledger"].as_str());
+                for ledger in row["party"].as_str().into_iter().chain(entry_ledgers) {
+                    if catalog.exact(ledger).is_none() {
+                        return Err("ledger_catalogue_incomplete".to_string().into());
+                    }
+                }
             }
 
             let observed = rows
