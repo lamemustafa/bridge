@@ -51,6 +51,21 @@ pub const MAX_IDENTIFIERS_PER_NAME: usize = 32;
 /// excludes a year, a rate, a house number and a masked last-four; a mobile,
 /// an account number and a customer code all clear it.
 pub const MIN_NUMERIC_IDENTIFIER_DIGITS: usize = 8;
+/// The longest run that can still be somebody's identifier.
+///
+/// This bounds `retained_tag`, which is the point. An unresolved entity carries
+/// its identifiers into a fallback so an operator can find the money later, and
+/// the documented way to carry them is a narration — which `agent_import`
+/// refuses over 2,000 characters. Unbounded values made `assign_fallback`
+/// succeed while producing a readback identity that could not be written, which
+/// is a worse failure than refusing: it is discovered at the write, not here.
+///
+/// Bounding the *value* rather than truncating the tag keeps the tag complete.
+/// Thirty-two identifiers at this length, with their `kind:` prefixes and
+/// separators, stay under that narration limit. A run longer than this is not
+/// an account number, a registration or a part code; it is a digit sequence
+/// that happens to be long, and treating it as an identity was never right.
+const MAX_IDENTIFIER_CHARS: usize = 48;
 /// Alphanumeric characters a mixed letter-and-digit token needs before it is
 /// treated as a code identifier.
 ///
@@ -890,6 +905,19 @@ fn bind_one(
     let mut identifier_conflict = false;
     for identifier in &entity.identifiers {
         if let Some(holders) = catalog.by_identifier.get(identifier) {
+            // An identifier held by more masters than a candidate list may show
+            // is already a conflict, and its holders are a family this entity
+            // does not separate — the same shape `collect_candidates` withholds
+            // rather than slices. Nothing downstream can use the set, so it is
+            // not built: a catalog where one identifier is held by 20,000
+            // masters would otherwise clone 20,000 elements per source row,
+            // before the candidate memo is even consulted.
+            if holders.len() > MAX_CANDIDATES_PER_ENTITY {
+                identifier_conflict = true;
+                continue;
+            }
+            #[cfg(test)]
+            HOLDER_EXPANSIONS.with(|count| count.set(count.get() + 1));
             let reached = holders.iter().copied().collect::<BTreeSet<_>>();
             if reached.len() > 1 {
                 identifier_conflict = true;
@@ -1103,10 +1131,27 @@ fn remembered_candidates(
         return remembered.clone();
     }
     let computed = collect_candidates(catalog, entity, identifier_matches);
-    if memo.len() < MAX_CANDIDATE_MEMO_ENTRIES {
+    // Entry *count* alone does not bound a memo whose keys and values are
+    // themselves collections. Caching a large result would retain exactly what
+    // recomputing it costs, multiplied by the cap — trading a stall for the
+    // memory the aggregate bounds elsewhere exist to prevent. A large result is
+    // cheap to recompute relative to what holding it costs, so it is not held.
+    let worth_holding =
+        key.1.len() <= MAX_CANDIDATES_PER_ENTITY && computed.0.len() <= MAX_CANDIDATES_PER_ENTITY;
+    if worth_holding && memo.len() < MAX_CANDIDATE_MEMO_ENTRIES {
         memo.insert(key, computed.clone());
     }
     computed
+}
+
+// Counts holder sets actually materialized, for the same reason as the search
+// counter below: the *outcome* of expanding a family and of refusing to is
+// identical — a conflict either way — so a test asserting the outcome cannot
+// tell whether the work was done.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static HOLDER_EXPANSIONS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
 }
 
 // Counts searches that actually ran, so a test can prove the memo is consulted
@@ -1459,6 +1504,7 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
             && !masked
             && !is_period(token)
             && !is_masked(&canonical)
+            && canonical.len() <= MAX_IDENTIFIER_CHARS
         {
             identifiers.insert(Identifier {
                 kind: IdentifierKind::Code,
@@ -1483,6 +1529,7 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
         }) {
             let digits = run.chars().filter(char::is_ascii_digit).collect::<String>();
             if digits.len() >= MIN_NUMERIC_IDENTIFIER_DIGITS
+                && digits.len() <= MAX_IDENTIFIER_CHARS
                 && !is_plausible_date(&digits)
                 && !is_period(run)
             {

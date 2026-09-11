@@ -594,6 +594,12 @@ Implement — voucher writes (after masters CONFIRMED-path is soak-tested):
    compatibility claim qualified on the licensed lab. The fingerprint
    check is mandatory secondary dedupe regardless (narration is user-
    editable; never trust the embedded key alone on re-dispatch).
+   DEVIATION 2026-09-11 (IMPROVEMENT_PLAN_2026H2 §8.19): "dedupe" here
+   means RAISE A FLAG FOR A HUMAN, never suppress automatically. The
+   tuple cannot tell a retry from a legitimate second payment — a
+   standing instruction, or two invoices settled to one supplier on one
+   day, produce the identical tuple — so automatic suppression is a
+   silent under-write. See IMPLEMENTATION_GUIDE.md §6.2.
 7. Cancel qualified as the compensation primitive (ACTION=Cancel by
    REMOTEID/GUID). Alter-by-GUID qualified per version; where flaky, the
    fallback is a Cancel+Create saga bound in one outbox transaction with
@@ -617,7 +623,10 @@ Tests (the non-negotiable five, plus unit coverage):
   licensed-lab evidence must record the Windows result specifically, since the
   compatibility matrix targets Windows;
 - duplicate re-dispatch with edited narration (key destroyed) is still
-  caught by the fingerprint check;
+  caught by the fingerprint check — "caught" meaning SURFACED FOR REVIEW,
+  not suppressed (deviation 2026-09-11, IMPROVEMENT_PLAN_2026H2 §8.19); a
+  run that passes this case by suppressing the second dispatch is
+  qualifying the defect;
 - foreign writer interleaves between import and readback → LASTVCHID
   cross-check catches it (no false CONFIRM);
 - alter with concurrent foreign edit → MANUAL, never blind retry;

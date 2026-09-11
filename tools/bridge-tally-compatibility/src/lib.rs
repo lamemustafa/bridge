@@ -31,14 +31,19 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// and manifest) but makes further unreviewed additions an explicit
 /// compatibility-surface decision.
 ///
-/// Raised from 210 to 211 to admit
-/// `src-tauri/crates/bridge-tally-core/src/master_binding.rs`. That file
-/// decides `validate_masters` results and, through them, import admission;
-/// left unpinned, an edit confined to the matcher would leave the surface
-/// digest unchanged and let existing evidence attest behaviour it never
-/// covered. This is the deliberate decision the paragraph above requires, and
-/// it is one file for one named reason — not headroom.
-pub const MAX_SURFACE_FILES: usize = 211;
+/// **Raised twice, by two branches that did not see each other.** 210 to 211 on
+/// master for `src-tauri/src/agent_ledgers.rs`, and 211 to 212 here for
+/// `src-tauri/crates/bridge-tally-core/src/master_binding.rs`. Both reasons
+/// stand and the number carries both; a merge that kept one raise and one pin
+/// would pass the gate with the other file silently unpinned, which is the
+/// failure this constant exists to make loud.
+///
+/// `master_binding.rs` decides `validate_masters` results and, through them,
+/// import admission. Left unpinned, an edit confined to the matcher would leave
+/// the surface digest unchanged and let existing evidence attest behaviour it
+/// never covered. That is the deliberate decision the paragraph above requires,
+/// and it is one file for one named reason — not headroom.
+pub const MAX_SURFACE_FILES: usize = 212;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
@@ -49,8 +54,16 @@ const REQUIRED_SURFACE_DIRECTORIES: [&str; 2] =
 /// Compatibility evidence binds the selected-ledger constructor and the native
 /// lifecycle implementation, error fallback, and frontend admission points, rather than
 /// trusting only their callers.
-const REQUIRED_SURFACE_FILES: [&str; 5] = [
+///
+/// `agent_ledgers.rs` renders the agent ledger reads. It is here rather than left as a
+/// judgment pin because a judgment pin can be dropped during a conflict resolution and
+/// the gate still returns `compatibility_gate_passed` -- measured, by deleting this very
+/// entry and resealing. A required path cannot be dropped silently, and
+/// `gate_rejects_each_omitted_required_lifecycle_path` iterates this list, so adding it
+/// here is what covers its omission.
+const REQUIRED_SURFACE_FILES: [&str; 6] = [
     "src-tauri/src/agent_desktop_journal.rs",
+    "src-tauri/src/agent_ledgers.rs",
     "src-tauri/src/source_draft/lifecycle.rs",
     "src/JournalPostingScreen.tsx",
     "src/ErrorBoundary.tsx",
@@ -2464,7 +2477,7 @@ mod tests {
     }
 
     #[test]
-    fn surface_file_cap_refuses_one_more_than_the_cap() {
+    fn surface_file_cap_refuses_one_entry_above_the_cap() {
         let oversized = CompatibilitySurfaceManifest {
             schema_version: SURFACE_SCHEMA_VERSION,
             files: (0..MAX_SURFACE_FILES + 1)

@@ -84,6 +84,56 @@ fn unusable_names_are_refused_at_the_boundary() {
 }
 
 #[test]
+fn the_measured_transformations_compose() {
+    // Twelve single-axis results license each transformation alone and say
+    // nothing about applying several at once — which is what a canonical form
+    // does on every comparison. Two reviewers raised that independently, so
+    // §9.4d measured it rather than arguing it: eight composed variants, all
+    // matched, all confirmed by day-book readback against the intended master.
+    let catalog = ledgers(&[
+        "MB PILOT ALPHA (5550001001)",
+        "MB-PROBE-LEDGER-A",
+        "Beta Supply",
+    ]);
+    for (supplied, expected) in [
+        (
+            "  mb pilot alpha (5550001001)  ",
+            "MB PILOT ALPHA (5550001001)",
+        ),
+        ("mb-pilot-alpha-(5550001001)", "MB PILOT ALPHA (5550001001)"),
+        (
+            "  mb-pilot-alpha-(5550001001)  ",
+            "MB PILOT ALPHA (5550001001)",
+        ),
+        (
+            "MB/PILOT  ALPHA (5550001001)",
+            "MB PILOT ALPHA (5550001001)",
+        ),
+        ("mb-pilot alpha/(5550001001)", "MB PILOT ALPHA (5550001001)"),
+        (
+            "  mb-pilot/alpha  (5550001001) ",
+            "MB PILOT ALPHA (5550001001)",
+        ),
+        ("  mb probe  ledger a ", "MB-PROBE-LEDGER-A"),
+    ] {
+        assert_eq!(
+            bind_one_name(&catalog, supplied).bound_name(),
+            Some(expected),
+            "{supplied:?} did not compose to {expected:?}"
+        );
+    }
+
+    // Composition does not create equivalences out of unmeasured parts: an en
+    // dash stays rejected however much measured folding surrounds it.
+    let dashed = ledgers(&["Alpha \u{2013} Traders", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&dashed, "  alpha   traders ").bound_name(),
+        None,
+        "an unmeasured transformation was carried in by composition"
+    );
+}
+
+#[test]
 fn surrounding_and_repeated_whitespace_is_folded_on_both_sides() {
     // §9.4d: leading whitespace, one trailing space and a collapsed internal
     // run all matched on licensed 7.1, in both directions.
@@ -918,6 +968,84 @@ fn repeating_one_source_name_does_not_repeat_the_search_or_change_the_answer() {
         candidate_names(&report.entities()[1]),
         ["Party Delta (5550001007)", "Party Gamma (5550001007)"],
         "the memo handed one entity another's candidates"
+    );
+}
+
+#[test]
+fn a_retained_identity_stays_short_enough_to_write_back() {
+    // An unresolved entity carries its identifiers into a fallback so the money
+    // can be found later, and the documented way to carry them is a narration —
+    // which the import path refuses over 2,000 characters. Unbounded values let
+    // `assign_fallback` succeed while producing a tag nobody could write, which
+    // fails at the write rather than here.
+    let long_run = "5".repeat(400);
+    assert!(
+        entity(&format!("Party {long_run}"))
+            .identifiers()
+            .is_empty(),
+        "a 400-digit run is not an account number"
+    );
+    let long_code = format!("AB{}", "7".repeat(400));
+    assert!(entity(&format!("Party {long_code}"))
+        .identifiers()
+        .is_empty());
+
+    // The bound is on the value, so the tag stays complete rather than
+    // truncated — a truncated identity is worse than none, because it looks
+    // usable. Thirty-two of the longest admitted identifiers still fit.
+    let hints = (0..MAX_IDENTIFIERS_PER_NAME)
+        .map(|index| format!("{index:02}{}", "5".repeat(MAX_IDENTIFIER_CHARS - 2)))
+        .collect::<Vec<_>>();
+    let source =
+        SourceEntity::with_identifier_hints(0, "Zeta Holdings", hints.iter().map(String::as_str))
+            .expect("the longest admitted identifiers are still admitted");
+    let catalog = ledgers(&["Alpha Traders", "Beta Supply"]);
+    let report = bound(&catalog, &[source]);
+    let tag = report
+        .assign_fallback(0, &catalog, "Alpha Traders")
+        .expect("a fallback in the same catalog")
+        .retained_tag();
+    assert!(
+        tag.len() <= 2_000,
+        "a retained identity of {} characters cannot be written back",
+        tag.len()
+    );
+    // Complete, not truncated: every identifier is still in it.
+    assert_eq!(tag.matches("numeric:").count(), MAX_IDENTIFIERS_PER_NAME);
+}
+
+#[test]
+fn an_identifier_held_by_a_whole_family_is_a_conflict_without_expanding_it() {
+    // One identifier on more masters than a candidate list may show is already
+    // a conflict, and its holders are a family this entity does not separate.
+    // Building the set anyway cloned it per source row, before the candidate
+    // memo was consulted — the cost is paid on a result nothing can use.
+    let names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Shared Party {index:03} (5550009999)"))
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    // Counted, not inferred. Refusing to expand and expanding then refusing
+    // produce the same verdict, so only a count can tell them apart.
+    super::HOLDER_EXPANSIONS.with(|count| count.set(0));
+    let binding = bind_one_name(&catalog, "Zeta Holdings 5550009999");
+    assert_eq!(
+        super::HOLDER_EXPANSIONS.with(std::cell::Cell::get),
+        0,
+        "a family larger than any candidate list was expanded anyway"
+    );
+    assert_eq!(
+        binding.bound_name(),
+        None,
+        "a shared identifier never binds"
+    );
+    assert_eq!(reason(&binding), UnboundReason::IdentifierConflict);
+    // The identity is still reported, so the operator can still find the money.
+    assert_eq!(
+        binding.unresolved().expect("unbound").unresolved_identity,
+        [Identifier {
+            kind: IdentifierKind::Numeric,
+            value: "5550009999".to_string(),
+        }]
     );
 }
 
