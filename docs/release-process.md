@@ -183,7 +183,24 @@ absence is invisible. The matrix is worse: a dropped claim leaves no trace at al
    # every pin either side ADDED since the base must survive the resolution
    comm -13 /tmp/pins-base.txt /tmp/pins-ours.txt   # added by one side
    comm -13 /tmp/pins-base.txt /tmp/pins-theirs.txt # added by the other
+
+   # and every pin either side REMOVED must stay removed -- additions alone are
+   # not enough, see below
+   comm -23 /tmp/pins-base.txt /tmp/pins-ours.txt   # removed by one side
+   comm -23 /tmp/pins-base.txt /tmp/pins-theirs.txt # removed by the other
    ```
+
+   **Removals need the same treatment, and checking only additions hides them.**
+   A pin or claim that one side deliberately retired is still present in the base,
+   so it appears in neither `comm -13` output. Take the other side wholesale and it
+   comes back; reseal and the gate accepts it, because a resurrected pin hashes
+   fine. The retirement is silently undone, and which way it goes depends only on
+   which side step 2 happened to start from.
+
+   The union of additions minus the union of removals is the answer. Where one side
+   removed an entry the other side *modified*, that is a genuine add/remove conflict
+   and wants a decision, not a default -- resolve it explicitly and say which way in
+   the commit.
 
    If the conflict is already resolved and the stages are gone, use `REBASE_HEAD`
    (rebase) or `MERGE_HEAD` (merge) for the incoming side, never `origin/master`.
