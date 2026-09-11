@@ -298,9 +298,20 @@ Implement:
    fix-it list.
 5. Encoding/normalization hardening: UTF-8/UTF-16LE/BOM fixtures;
    non-English (Devanagari, Gujarati, Tamil) company/ledger/narration
-   fixtures in the simulator corpus; NFC normalization + case-insensitive
-   collation for name keys (Tally name uniqueness is effectively
-   case-insensitive).
+   fixtures in the simulator corpus; case-insensitive collation for name keys
+   (Tally name uniqueness is effectively case-insensitive).
+
+   **DEVIATION 2026-09-12 — NFC normalization for name keys is withdrawn.**
+   This item previously required it. `TALLY_PROTOCOL_REFERENCE.md` §9.4b records
+   the measurement: a voucher naming a UI-created **NFC** ledger in its
+   canonically equivalent **NFD** spelling was rejected — `EXCEPTIONS=1`,
+   `LINEERROR` saying the ledger does not exist — while the NFC spelling created
+   it, and an NFD create read back with identical NFD codepoints. **Tally matches
+   and stores exact codepoints.** Normalising before comparing therefore resolves
+   a name onto a master Tally itself keeps apart, which is a silent misbinding.
+   Keep the non-Latin fixtures and the case folding; do **not** normalise. It is
+   the only transformation in that table with evidence pointing the wrong way,
+   which is why it needs a deviation here rather than a note.
 6. Migration: versioned mirror schema evolution for the new fields
    (voucher lines, bill allocations, inventory lines, tax lines) with
    rollback notes.

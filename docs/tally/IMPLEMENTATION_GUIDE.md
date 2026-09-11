@@ -675,10 +675,18 @@ duplicate. So on that path a crash-retry of the *same file* is safe on its own, 
 that used to stand here — that the fingerprint plus an embedded key is "the only thing" preventing a
 duplicate — is no longer true where §3.3a applies.
 
-It is still true everywhere §3.3a does not reach, and that is most places: a **different** payload
-under the same key is untested (it may overwrite, partially update or duplicate), as is any
-non-Journal voucher type, any other SKU, and a retry across a Tally restart or a company boundary.
-Name which case you are in before relying on either mechanism.
+**And it is not true anywhere else either.** An earlier revision of this paragraph — mine — said it
+"is still true everywhere §3.3a does not reach", which quietly kept the fingerprint alive as a
+duplicate-prevention mechanism in every case §3.3a excludes. §3.4a establishes the opposite: a
+`(date, amount, ledger-set, voucher-type)` tuple **cannot** distinguish a retry from a legitimate
+identical payment, so it prevents no duplicate anywhere. Two paragraphs of one patch contradicting
+each other is how a withdrawn mandate comes back.
+
+What is actually true outside §3.3a's reach is narrower and less comfortable: **there is no proven
+duplicate-prevention mechanism there at all.** A **different** payload under the same key is
+untested (it may overwrite, partially update or duplicate), as is any non-Journal voucher type, any
+other SKU, and a retry across a Tally restart or a company boundary. Name which case you are in,
+and where it is not §3.3a's, stop and involve a human rather than reaching for the tuple.
 
 ### 3.4a Undefined UDF fields are silently discarded — **the plan's primary idempotency key does not work as written**
 
