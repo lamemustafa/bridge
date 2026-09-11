@@ -85,8 +85,15 @@ export type SourceDraftCatalogTargets = {
   source_sha256: string;
   targets: string[];
   bindings: SourceDraftCatalogBinding[];
-  /// "complete" when every source entry was bound; "unavailable" when the
-  /// narrowing pass could not run. An empty list alone cannot say which.
+  /// Whether the narrowing pass **ran**, not whether it resolved anything.
+  /// "complete" means every source entry was put through binding and carries a
+  /// result — which for many of them will be a near miss or nothing at all;
+  /// "unavailable" means the pass could not run, so an empty list says nothing.
+  /// An empty list alone cannot distinguish the two, which is why this exists.
+  ///
+  /// It is **not** an all-bound signal and must not gate resolution: a draft
+  /// whose every entry is unmatched still reports "complete". Read the bindings
+  /// for that.
   bindings_state: "complete" | "unavailable";
   evidence: { request_sha256: string; response_sha256: string; bytes: number; state: "complete" };
 };

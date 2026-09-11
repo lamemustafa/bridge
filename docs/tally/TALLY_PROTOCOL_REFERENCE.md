@@ -1013,6 +1013,31 @@ Whether stock items, groups and voucher types match by the same rule is UNVERIFI
 says nothing about voucher numbers — a fold shared between master names and voucher numbers is
 assuming something nobody has measured.
 
+### 9.4c Real catalogues carry families a partial name cannot separate
+
+**VERIFIED 2026-09-10** for the counts, across 16 loaded companies on both lab instances; the rule
+built on them is PARTIAL. `TEST_CORPUS.md` §9.1 carries the procedure, the per-company figures and
+what they do not cover.
+
+Live books name parties in **sequentially-numbered families** — one observed catalogue runs a single
+prefix across more than a hundred ledgers that differ only in a trailing number. A source name that
+is a truncation of one of them reaches the whole family and distinguishes no member of it.
+
+**Why that is a protocol-level fact and not an implementation detail:** any client matching a
+supplied name against a read catalogue meets it, and the tempting response — offer the first N and
+let a human pick — is measured wrong. Listing an arbitrary capped slice of such a family **put the
+intended master outside the offered list about a third of the time** (present in 65.6% of lists,
+against 100% once families beyond the cap were withheld and counted instead).
+
+> **RULE: where a supplied name reaches a family it does not separate, report the count and withhold
+> the list. An arbitrary slice of a family is not a shortlist — it is a wrong answer that looks like
+> a shortlist.**
+
+The scope is narrow and matters: the catalogue side is live, and every *source* name in the
+measurement is a fabricated mutation of a live name. It measures the rule against real naming
+habits, not against real operator input.
+
+
 ### 9.5 Identity after write
 
 **VERIFIED.** `LASTMID` is **0** on successful master creates — unusable for master identity;
