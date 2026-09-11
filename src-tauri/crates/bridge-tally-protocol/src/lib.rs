@@ -1622,7 +1622,11 @@ fn parse_standard_ledger_identity_row(
                             anyhow::bail!("standard ledger collection repeated ledger parent");
                         }
                         parent_seen = true;
-                        parent = match read_optional_text(reader, child.name())? {
+                        // `read_identifier_text`, not `read_optional_text`: the latter
+                        // trims, which would hand `safe_standard_ledger_parent` an
+                        // already-normalized name and defeat the byte preservation the
+                        // function below exists to provide.
+                        parent = match read_identifier_text(reader, child.name())? {
                             Some(value) => match safe_standard_ledger_parent(&value) {
                                 Some(value) => PartyLedgerMasterFieldObservation::Returned(value),
                                 None => PartyLedgerMasterFieldObservation::NotObserved,
