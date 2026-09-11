@@ -10,9 +10,10 @@ use std::collections::BTreeSet;
 
 use bridge_tally_core::book_presence::{
     self, BookVoucher, BookWindow, NumberingDeclaration, NumberingMethod, ObservedEntry,
-    ObservedVoucher, PresenceError, PresenceReport, PresenceRequest, ProposedVoucher,
-    ProposedVoucherInput, RemoteIdEvidence, WindowRead,
+    ObservedVoucher, ObservedWindow, PresenceError, PresenceReport, PresenceRequest,
+    ProposedVoucher, ProposedVoucherInput, WindowRead,
 };
+use bridge_tally_core::book_presence::{ColumnEvidence, ObservedMarker};
 use bridge_tally_core::master_binding::{MasterCatalog, MasterClass, SourceEntity};
 
 /// Most vouchers one presence request may propose. The window read is
@@ -196,9 +197,18 @@ impl Server {
             // absent value here means "never read", not "the voucher has
             // none". Declaring that keeps a proposal whose own REMOTEID was
             // never compared out of `absent`.
-            let window =
-                BookWindow::observed(&from, &to, read, RemoteIdEvidence::NotRead, observed)
-                    .map_err(presence_code)?;
+            let window = BookWindow::observed(ObservedWindow {
+                from: &from,
+                to: &to,
+                read,
+                // The qualified `vouchers` profile does not FETCH REMOTEID.
+                remote_id_evidence: ColumnEvidence::NotRead,
+                // It does FETCH NARRATION, which is what makes the marker
+                // basis reachable with no change to a qualified read.
+                narration_evidence: ColumnEvidence::Observed,
+                vouchers: observed,
+            })
+            .map_err(presence_code)?;
             let request = PresenceRequest::new(&window, &catalog, &numbering, &proposals)
                 .map_err(presence_code)?;
             let report = book_presence::assess(&request);
@@ -266,10 +276,46 @@ fn book_voucher(row: &Value) -> Result<BookVoucher, PresenceError> {
         voucher_number: row["voucher_number"].as_str(),
         remote_id: None,
         party: row["party"].as_str(),
+        marker: observed_marker(row["narration"].as_str()),
         entries: &entries,
         cancelled: row["cancelled"].as_bool().unwrap_or_default(),
         optional: row["optional"].as_bool().unwrap_or_default(),
     })
+}
+
+/// Applies the `[BRIDGE:...]` convention to one observed narration.
+///
+/// The convention belongs to the writer, so it is read here and the core crate
+/// receives an opaque string. Two conditions must hold before a marker names
+/// an import, and they fail closed for different reasons (ADR 0018 §3):
+///
+/// - **Exactly one occurrence.** Two mean the voucher claims two imports,
+///   which is the middle case this contract never resolves; `verify_import`
+///   already treats it as an error rather than taking the first.
+/// - **The canonical form this writer produces.** A marker is
+///   `import_identity`'s UUID over a random batch id. An older scheme wrote the
+///   caller's transaction label instead, and those are, in this module's own
+///   words, commonly reused -- matching one would pair a proposal with an
+///   unrelated voucher from an unrelated batch and drop an invoice silently.
+fn observed_marker(narration: Option<&str>) -> ObservedMarker<'_> {
+    let Some(narration) = narration else {
+        return ObservedMarker::Absent;
+    };
+    let mut found = agent_import::narration_markers(narration);
+    match (found.next(), found.next()) {
+        (None, _) => ObservedMarker::Absent,
+        (Some(Some(identity)), None) if is_batch_derived(identity) => {
+            ObservedMarker::Identifying(identity)
+        }
+        _ => ObservedMarker::Unidentified,
+    }
+}
+
+/// Whether a marker has the exact shape `import_identity` writes. Parsing
+/// alone is not enough: `Uuid` accepts several spellings, and only the one the
+/// writer emits can have come from a batch-derived identity.
+fn is_batch_derived(identity: &str) -> bool {
+    uuid::Uuid::parse_str(identity).is_ok_and(|parsed| parsed.to_string() == identity)
 }
 
 fn parse_numbering(args: &Value) -> Result<NumberingDeclaration, String> {
@@ -306,6 +352,18 @@ fn parse_proposals(args: &Value) -> Result<Vec<ProposedVoucher>, String> {
     let mut parsed = Vec::with_capacity(proposed.len());
     for (position, voucher) in proposed.iter().enumerate() {
         let date = normalized_date(voucher["date"].as_str().ok_or_else(invalid)?)?;
+        // Both or neither. Supplying one alone is a caller error, and silently
+        // ignoring it would skip the strongest key this proposal has.
+        let marker = match (
+            voucher["batch_id"].as_str(),
+            voucher["bridge_txn_id"].as_str(),
+        ) {
+            (Some(batch_id), Some(txn_id)) => {
+                Some(agent_import::import_identity(batch_id, txn_id).to_string())
+            }
+            (None, None) => None,
+            _ => return Err("presence_import_identity_incomplete".to_string()),
+        };
         let rows = voucher["entries"].as_array().ok_or_else(invalid)?;
         let entries = rows
             .iter()
@@ -327,6 +385,11 @@ fn parse_proposals(args: &Value) -> Result<Vec<ProposedVoucher>, String> {
                 // verdict. The crate keeps the basis for callers that can.
                 remote_id: None,
                 party: voucher["party"].as_str(),
+                // Derived, never accepted: a caller handing over a marker
+                // string could name a legacy label and match an unrelated
+                // import. See ADR 0018 §1 -- the input shape is the safety
+                // argument, not a validation rule someone has to remember.
+                narration_marker: marker.as_deref(),
                 entries: &entries,
             })
             .map_err(|error| error.safe_reason_code().to_string())?,

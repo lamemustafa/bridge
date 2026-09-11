@@ -63,7 +63,18 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// `agent_catalog.rs` instead would put every tool-description edit in the
 /// repository through a reseal; this pin binds the statement of the contract
 /// rather than the file that happens to carry it. One file, one named reason.
-pub const MAX_SURFACE_FILES: usize = 214;
+///
+/// Raised again from 214 to 215 to admit
+/// `src-tauri/src/agent_import_identity.rs`. ADR 0018 makes the narration
+/// marker an identity basis for voucher presence, and a marker is whatever
+/// `import_identity` derives -- the presence adapter calls the very function
+/// the import writer calls, so that a reader and a writer cannot disagree
+/// about one voucher's identity. That makes the derivation a contract point
+/// for two surfaces at once. An edit confined to it would change which
+/// proposed vouchers are reported as already in the book, in both directions
+/// and silently, while the surface digest stayed unchanged. One file, one
+/// named reason; still not headroom.
+pub const MAX_SURFACE_FILES: usize = 215;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;

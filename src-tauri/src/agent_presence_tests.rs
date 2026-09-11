@@ -637,7 +637,7 @@ fn every_admission_leaf_is_pinned_by_this_digest() {
     // digest, which is exactly the visibility the seal is for. If this fails
     // and the schema change was deliberate, update the constant *and* reseal
     // — that pairing is the point, not an inconvenience.
-    const PINNED: &str = "6b2f7f67269beaf40631057eeb3ccd563360239393129dc082c0755b5ff3a31c";
+    const PINNED: &str = "785b14835f3235ec009a248ac2b443316e764c584b31f2532aa1335365c5fb40";
     let definitions = tool_definitions(true, false);
     let schema = definitions
         .as_array()
@@ -1239,4 +1239,176 @@ async fn replay_the_twenty_invoice_engagement() {
             summarise(entry)
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// ADR 0018 — reading the narration marker.
+//
+// These are the adapter's half of the basis. The crate never parses a marker;
+// everything that decides what counts as one is here, so this is where it has
+// to be pinned down.
+// ---------------------------------------------------------------------------
+
+/// A batch id has the shape `render_import_xml` generates for one.
+const BATCH: &str = "bridge-2b1c9f4e-9d3a-4f71-8c2e-5a6b7c8d9e01";
+
+fn narration_with(marker: &str) -> String {
+    format!(
+        "Invoice for the month {}{marker}]",
+        agent_import::NARRATION_MARKER_PREFIX
+    )
+}
+
+/// The one property the whole basis rests on: what the reader accepts is
+/// exactly what the writer writes. If these two ever disagree, presence reports
+/// every voucher Bridge imported as absent and a caller duplicates all of them.
+#[test]
+fn the_reader_accepts_exactly_what_the_writer_derives() {
+    let identity = agent_import::import_identity(BATCH, "txn-001").to_string();
+    let narration = narration_with(&identity);
+    assert_eq!(
+        observed_marker(Some(&narration)),
+        ObservedMarker::Identifying(identity.as_str())
+    );
+    // And the derivation is a function of both halves, not of the label alone.
+    assert_ne!(
+        identity,
+        agent_import::import_identity("bridge-other", "txn-001").to_string(),
+        "the batch is what makes a reused caller label distinct"
+    );
+}
+
+/// The safety property of ADR 0018 §3. An older scheme wrote the caller's
+/// transaction label into the narration, and those labels are reused across
+/// batches; matching one would pair a proposal with an unrelated voucher from
+/// an unrelated import and drop an invoice without a trace.
+#[test]
+fn a_legacy_caller_label_is_never_an_identity() {
+    for label in ["txn-001", "INV-2026-0001", "batch1_txn1"] {
+        assert_eq!(
+            observed_marker(Some(&narration_with(label))),
+            ObservedMarker::Unidentified,
+            "{label} is a caller label, not a batch-derived identity"
+        );
+    }
+    // Nor is a UUID spelled some other way than the writer spells it.
+    let identity = agent_import::import_identity(BATCH, "txn-001").to_string();
+    for spelling in [
+        identity.replace('-', ""),
+        identity.to_ascii_uppercase(),
+        format!("urn:uuid:{identity}"),
+    ] {
+        assert_eq!(
+            observed_marker(Some(&narration_with(&spelling))),
+            ObservedMarker::Unidentified,
+            "only the canonical form can have come from the writer"
+        );
+    }
+}
+
+/// Two markers mean the voucher claims two imports, and a malformed one cannot
+/// name any. Both are still Bridge writes, so neither reads as `Absent`.
+#[test]
+fn an_ambiguous_or_malformed_marker_is_a_bridge_write_without_a_name() {
+    let identity = agent_import::import_identity(BATCH, "txn-001").to_string();
+    let other = agent_import::import_identity(BATCH, "txn-002").to_string();
+    let prefix = agent_import::NARRATION_MARKER_PREFIX;
+    for narration in [
+        format!("{prefix}{identity}] {prefix}{other}]"),
+        format!("{prefix}{identity}"),
+        format!("{prefix}]"),
+        format!("{prefix}{identity} with a space]"),
+    ] {
+        assert_eq!(
+            observed_marker(Some(&narration)),
+            ObservedMarker::Unidentified,
+            "narration {narration:?}"
+        );
+    }
+    // A narration Bridge never touched is a different fact from one it did.
+    assert_eq!(
+        observed_marker(Some("Cheque deposited at the branch")),
+        ObservedMarker::Absent
+    );
+    assert_eq!(observed_marker(None), ObservedMarker::Absent);
+}
+
+/// Half an import identity is a caller error, not something to quietly drop:
+/// ignoring it would skip the strongest key this proposal has and let an
+/// `absent` stand on a comparison that never ran.
+#[tokio::test]
+async fn an_import_identity_must_be_supplied_whole() {
+    let entries =
+        json!([{"ledger":"Cash","amount":"-1.00"},{"ledger":"WR2 Sales","amount":"1.00"}]);
+    let numbering = json!([{"voucher_type":"Journal","numbering_method":"manual"}]);
+    let directory = tempfile::tempdir().expect("directory");
+    let server = offline_server(directory.path());
+    for (half, refused) in [
+        (json!({"batch_id": BATCH}), true),
+        (json!({"bridge_txn_id": "txn-001"}), true),
+        (
+            json!({"batch_id": BATCH, "bridge_txn_id": "txn-001"}),
+            false,
+        ),
+        (json!({}), false),
+    ] {
+        let mut voucher = json!({"date":"20260901","voucher_type":"Journal","entries":entries});
+        for (key, value) in half.as_object().expect("object") {
+            voucher[key] = value.clone();
+        }
+        let response = server
+            .call_tool_response(
+                "voucher_presence",
+                json!({"company_guid":GUID,"from":"20260901","to":"20260930",
+                    "numbering":numbering,"vouchers":[voucher]}),
+            )
+            .await;
+        let code = response.value["structuredContent"]["result"]["error"]["code"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert_eq!(
+            code == "presence_import_identity_incomplete",
+            refused,
+            "half {half} was not treated as {}",
+            if refused { "an error" } else { "acceptable" }
+        );
+    }
+}
+
+/// The admission contract grew two properties, and both have to stay bounded.
+/// Widening either is how a caller reaches a marker it chose rather than one
+/// the writer derived.
+#[test]
+fn the_import_identity_inputs_are_bounded_where_they_are_published() {
+    let definitions = tool_definitions(true, false);
+    let voucher = definitions
+        .as_array()
+        .and_then(|tools| tools.iter().find(|tool| tool["name"] == "voucher_presence"))
+        .expect("voucher_presence tool")["inputSchema"]["properties"]["vouchers"]["items"]
+        .clone();
+    assert_eq!(voucher["additionalProperties"], json!(false));
+    for key in ["batch_id", "bridge_txn_id"] {
+        assert_eq!(
+            voucher["properties"][key]["maxLength"],
+            json!(64),
+            "{key} is unbounded"
+        );
+        assert_eq!(voucher["properties"][key]["minLength"], json!(1));
+    }
+    // The transaction label's alphabet is the writer's, so a caller cannot
+    // smuggle a shape the derivation never produces.
+    assert_eq!(
+        voucher["properties"]["bridge_txn_id"]["pattern"],
+        json!("^[A-Za-z0-9_-]+$")
+    );
+    // Neither is required: a proposal that supplies no import identity behaves
+    // exactly as it did before ADR 0018.
+    assert_eq!(
+        voucher["required"],
+        json!(["date", "voucher_type", "entries"])
+    );
+    // And a marker still cannot be handed over directly.
+    assert!(voucher["properties"].get("narration_marker").is_none());
+    assert!(voucher["properties"].get("remote_id").is_none());
 }
