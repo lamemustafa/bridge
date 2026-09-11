@@ -227,6 +227,75 @@ mod tests {
         );
     }
 
+    fn captured_live_ledger_masters() -> String {
+        let bytes = include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-ledger-masters-duty-heads.utf16le.xml"
+        );
+        String::from_utf16(
+            &bytes
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn live_capture_backs_the_recognised_duty_head_vocabulary() {
+        // Captured from a live TallyPrime 7.1 Silver response to
+        // render_party_ledger_master_request, so the vocabulary is checked against
+        // bytes Tally actually sent rather than against a fixture written from the
+        // same understanding as the parser. A hand-authored response can encode a
+        // wrong vocabulary in both places and agree with itself.
+        let parsed = parse_native_party_ledger_master_records_with_evidence(
+            &captured_live_ledger_masters(),
+            "ae1490be-52c5-4544-9ffc-4b7da85f9797",
+        )
+        .expect("live ledger-master capture parses");
+
+        let mut recognised: Vec<(String, GstDutyHead)> = parsed
+            .records
+            .iter()
+            .filter_map(|row| match &row.record.fields.gst_duty_head {
+                GstDutyHeadObservation::Recognized { raw, head } => Some((raw.clone(), *head)),
+                _ => None,
+            })
+            .collect();
+        recognised.sort_by(|left, right| left.0.cmp(&right.0));
+        recognised.dedup();
+
+        assert_eq!(
+            recognised,
+            vec![
+                ("CGST".to_string(), GstDutyHead::Cgst),
+                ("IGST".to_string(), GstDutyHead::Igst),
+                ("State Tax".to_string(), GstDutyHead::StateTax),
+            ],
+            "the live spellings must classify exactly as the vocabulary claims"
+        );
+
+        // The state head really is spelled `State Tax` on the wire, not `SGST`.
+        // That irregularity is the reason this vocabulary is enumerated at all.
+        let capture = captured_live_ledger_masters();
+        assert!(capture.contains(">State Tax</GSTDUTYHEAD>"));
+        assert!(!capture.contains(">SGST</GSTDUTYHEAD>"));
+
+        // This instance OMITS the element for non-GST ledgers rather than emitting
+        // it empty, so the captured empty-element shape is exercised separately by
+        // captured_empty_duty_head_uses_tax_type_classification.
+        assert!(!capture.contains("<GSTDUTYHEAD/>"));
+        assert!(
+            parsed
+                .records
+                .iter()
+                .any(|row| matches!(
+                    row.record.fields.gst_duty_head,
+                    GstDutyHeadObservation::NotTaxLedger { .. }
+                )),
+            "the same capture must also carry ordinary non-tax ledgers"
+        );
+    }
+
     #[test]
     fn gst_duty_head_vocabulary_is_explicit_and_irregular() {
         for (raw, head) in [
