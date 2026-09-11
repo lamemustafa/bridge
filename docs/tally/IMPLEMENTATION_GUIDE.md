@@ -1113,6 +1113,42 @@ checkout and its persistent Cargo target separate from release and evidence
 builds. Record a commit or tree identity with each result; a passing check on a
 moving checkout is not a reproducible result.
 
+### Editing `TALLY_PROTOCOL_REFERENCE.md` — two gates fire
+
+Both are build rules and both fail CI in ways a docs diff gives no hint about.
+
+**1. Section numbers are gated.** `scripts/check-protocol-section-numbers.mjs`
+reads the numbered headings out of the reference and fails on:
+
+- a **duplicate** number;
+- a number **present on the base revision and absent here** — which covers
+  renumbering, retitling into a different number, and **deleting a section**.
+  All three break `see §9.7` identically, so all three are refused.
+
+**Retitling is allowed**, including retitling to a title another section
+already uses. Identity is the number, because that is what other documents and
+code cite (`src-tauri/src/agent_import.rs` cites 9.8).
+
+If a section genuinely must go, **leave its number with a line saying where the
+content went**. A redirect heading keeps the citation landing; deleting the
+heading strands every reader who follows one.
+
+The gate does **not** detect a pure exchange of two numbers, and deliberately
+does not try — see `SECTION-REGISTER.md` for why three attempts each produced a
+false positive on legitimate edits, and for the other residuals.
+
+**2. The reference is pinned in the compatibility surface**, so even a
+documentation-only edit stales its digest and fails the `Tally portable core`
+job. The reseal procedure is in
+[`docs/release-process.md`](../release-process.md#compatibility-surface-reseal).
+
+Run before pushing:
+
+```bash
+node scripts/check-protocol-section-numbers.mjs
+node scripts/check-protocol-section-numbers.test.mjs
+```
+
 ### Local iteration
 
 Cargo already enables incremental compilation for development and test profiles.
