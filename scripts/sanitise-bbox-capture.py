@@ -379,27 +379,6 @@ def _scrub_plain(text):
     return "".join(out)
 
 
-def main(src, dst, keep, banner):
-    """keep: [(page_index, [(y_min, y_max), ...]), ...] regions to retain."""
-    pages = pathlib.Path(src).read_text().split("<page ")[1:]
-    chunks = []
-    for page_index, spans in keep:
-        page = pages[page_index]
-        head = page[:page.index(">") + 1]
-        kept = []
-        for match in re.finditer(
-                r'<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">(.*?)</word>',
-                page, re.S):
-            x0, y0, x1, y1, body = match.groups()
-            if not any(low <= float(y0) <= high for low, high in spans):
-                continue
-            kept.append(f'<word xMin="{x0}" yMin="{y0}" xMax="{x1}" yMax="{y1}">'
-                        f'{scrub(body)}</word>')
-        chunks.append("<page " + head + "\n" + "\n".join(kept) + "\n</page>")
-    pathlib.Path(dst).write_text(banner + "\n".join(chunks) + "\n", encoding="utf-8")
-    print(f"wrote {dst}: {sum(c.count('<word') for c in chunks)} words, {len(chunks)} pages")
-
-
 BANNER_TEMPLATE = """<!--
   pdftotext -bbox-layout output from a real {bank} statement, with every
   customer value replaced and the geometry untouched.
