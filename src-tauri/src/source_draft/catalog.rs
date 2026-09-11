@@ -1,7 +1,8 @@
 //! Ephemeral existing-ledger selections for one open source draft.
 //!
-//! A capture and its selected master bindings are never serialized. They are
-//! invalidated when the source draft or selected company scope changes.
+//! Opaque catalog identities and selected master bindings are never serialized.
+//! Only binding coordinates justified by the latest capture reach the desktop,
+//! so it can avoid claiming that a saved proposal is current.
 
 use std::collections::BTreeMap;
 
@@ -13,13 +14,13 @@ use bridge_tally_protocol::{StandardLedgerCatalog, StandardLedgerCatalogBinding}
 use crate::{
     commands::SelectedCompanyIdentity,
     tally::{
-        standard_ledger_catalog::{StandardLedgerCatalogRead, StandardLedgerCatalogReadError},
-        EndpointKey, TallyConfig, TallyRuntime, VerifiedCompanyIdentity,
+        standard_ledger_catalog::StandardLedgerCatalogRead, EndpointKey, TallyConfig, TallyRuntime,
+        VerifiedCompanyIdentity,
     },
 };
 
 use super::{
-    dto, error,
+    current_catalog_bindings, dto, error,
     types::{CommandResult, MAX_TEXT_BYTES},
     validate_proposals, ActiveDraft, SourceDraftDto, SourceDraftProposal, SourceDraftStore,
 };
@@ -81,6 +82,12 @@ struct SelectedLedgerBinding {
     binding: StandardLedgerCatalogBinding,
 }
 
+impl CatalogCapture {
+    pub(super) fn current_binding_positions(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        self.bindings.keys().copied()
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct CatalogLoadSnapshot {
     draft_id: Uuid,
@@ -100,15 +107,14 @@ pub(super) struct CatalogApplySnapshot {
     pub(super) catalog: StandardLedgerCatalog,
 }
 
+/// The freshly read catalog must still contain the selected pair. The response
+/// is parsed once by the read itself, so this takes the parsed catalog rather
+/// than reparsing the body per binding.
 pub(super) fn require_current_catalog_binding(
     binding: &StandardLedgerCatalogBinding,
-    fresh_body: &str,
-    identity: &VerifiedCompanyIdentity,
+    fresh: &StandardLedgerCatalog,
 ) -> CommandResult<()> {
-    let still_current = binding
-        .matches(fresh_body, identity.display_name(), identity.company_guid())
-        .map_err(|cause| error(StandardLedgerCatalogReadError::from(cause).command_code()))?;
-    if still_current {
+    if binding.matches_catalog(fresh) {
         Ok(())
     } else {
         Err(error("source_draft_catalogue_target_changed"))
@@ -195,8 +201,11 @@ pub(super) async fn apply_existing_ledger_target(
     )
     .await
     .map_err(|cause| error(cause.command_code()))?;
-    require_current_catalog_binding(&binding, &fresh.body, &identity)?;
-    store.commit_catalog_target(snapshot, request, binding)
+    // One response decides both questions, so the currency of every retained
+    // binding is settled even when this selection is refused. Deciding them
+    // separately would let a refusal leave older bindings claiming a currency
+    // this very read disproves.
+    store.commit_catalog_target(snapshot, request, binding, &fresh.catalog)
 }
 
 impl SourceDraftStore {
@@ -333,8 +342,9 @@ impl SourceDraftStore {
     pub(super) fn commit_catalog_target(
         &self,
         snapshot: CatalogApplySnapshot,
-        mut request: SourceDraftCatalogApplyRequest,
+        request: SourceDraftCatalogApplyRequest,
         binding: StandardLedgerCatalogBinding,
+        fresh: &StandardLedgerCatalog,
     ) -> CommandResult<SourceDraftDto> {
         let mut active = self
             .active
@@ -358,6 +368,34 @@ impl SourceDraftStore {
         if capture.id != snapshot.capture_id || capture.generation != generation {
             return Err(error("source_draft_catalogue_invalidated"));
         }
+        // Settle every retained binding against this response before deciding the
+        // requested target, so a refused selection cannot leave older bindings
+        // claiming a currency the same read disproves.
+        SourceDraftStore::revalidate_retained_bindings(current, fresh);
+        // Past this point the store has already been changed by that settle, so
+        // *every* way of failing owes the renderer the survivors -- not just the
+        // refusal. Attaching them here rather than at each `?` makes that a
+        // property of the boundary instead of something each new error path has
+        // to remember, which is how the validation paths below were missed once
+        // already.
+        match Self::commit_settled_target(current, request, binding, fresh) {
+            Ok(draft) => Ok(draft),
+            Err(cause) => {
+                Err(cause.with_current_catalog_bindings(current_catalog_bindings(current)))
+            }
+        }
+    }
+
+    /// The half of the commit that runs after the retained bindings have been
+    /// settled. Split out so the caller can attach the survivors to anything
+    /// this returns; it must not be called from anywhere else.
+    fn commit_settled_target(
+        current: &mut ActiveDraft,
+        mut request: SourceDraftCatalogApplyRequest,
+        binding: StandardLedgerCatalogBinding,
+        fresh: &StandardLedgerCatalog,
+    ) -> CommandResult<SourceDraftDto> {
+        require_current_catalog_binding(&binding, fresh)?;
         let row = request.row_position - 1;
         let entry = request.entry_position - 1;
         request.proposals[row].entries[entry].ledger = Some(request.target_name.clone());
@@ -413,6 +451,17 @@ impl SourceDraftStore {
                 == Some(binding.name.as_str())
         });
     }
+
+    /// A retained binding can claim current-session status only when the same
+    /// fresh response still contains its exact observed name and GUID.
+    fn revalidate_retained_bindings(active: &mut ActiveDraft, fresh: &StandardLedgerCatalog) {
+        let Some(capture) = active.catalog.as_mut() else {
+            return;
+        };
+        capture
+            .bindings
+            .retain(|_, selected| selected.binding.matches_catalog(fresh));
+    }
 }
 
 #[cfg(test)]
@@ -422,7 +471,10 @@ mod tests {
         source_draft::{dto, empty_proposals, files::serialize_draft},
         source_draft_xml::parse_source_xml,
     };
-    use bridge_tally_protocol::parse_standard_ledger_catalog_with_identities;
+    use bridge_tally_protocol::{
+        decode_tally_xml_response_bytes_limited, parse_standard_ledger_catalog_with_identities,
+        ExpectedTallyTextEncoding,
+    };
     use tally_protocol_simulator::{
         Fixture, ProductStatus, ResponseFraming, ScenarioPlan, SequenceSimulator, WireEncoding,
     };
@@ -430,19 +482,71 @@ mod tests {
     const CAPTURED_COMPANY: &str = "WR2 Unicode Lab";
     const CAPTURED_GUID: &str = "61c6de69-1748-461c-ad3f-162cb949df9f";
 
+    /// Decode a captured response through the same reader production uses.
+    ///
+    /// The captures carry no BOM, because Tally declares the encoding in
+    /// `Content-Type` rather than in the body. Supplying it the way the
+    /// transport does keeps a fixture production would reject from quietly
+    /// passing a test: a bespoke UTF-16LE loop here would decode bytes the real
+    /// reader never accepts.
+    fn decode_captured_response(bytes: &[u8]) -> String {
+        decode_tally_xml_response_bytes_limited(
+            bytes,
+            "text/xml; charset=utf-16",
+            ExpectedTallyTextEncoding::Utf16Le,
+            bytes.len(),
+        )
+        .expect("captured catalogue decodes through the production reader")
+        .text
+    }
+
     fn captured_catalog_and_xml() -> (StandardLedgerCatalog, String) {
-        let bytes = include_bytes!(
+        let xml = decode_captured_response(include_bytes!(
             "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ledger-catalogue.utf16le.xml"
-        );
-        let words = bytes
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-            .collect::<Vec<_>>();
-        let xml = String::from_utf16(&words).expect("captured catalogue is UTF-16LE");
+        ));
         let catalog =
             parse_standard_ledger_catalog_with_identities(&xml, CAPTURED_COMPANY, CAPTURED_GUID)
                 .expect("captured catalogue remains parser-admitted");
         (catalog, xml)
+    }
+
+    /// The ledger renamed between the two captured responses below.
+    const RENAMED_FROM: &str = "WR2 Sales";
+    const RENAMED_TO: &str = "WR2 Sales Renamed";
+    /// A ledger the captured rename left alone, so a test can tell "settled
+    /// because this read disproved it" apart from "cleared everything".
+    const SURVIVES_RENAME: &str = "Cash";
+
+    /// The rows the store currently treats as bound, in a stable order.
+    fn binding_positions(store: &SourceDraftStore) -> Vec<(usize, usize)> {
+        let active = store.active.lock().unwrap();
+        let mut positions = active
+            .as_ref()
+            .and_then(|draft| draft.catalog.as_ref())
+            .map(|capture| capture.current_binding_positions().collect::<Vec<_>>())
+            .unwrap_or_default();
+        positions.sort_unstable();
+        positions
+    }
+
+    /// The same company's catalogue captured again after `WR2 Sales` was renamed
+    /// to `WR2 Sales Renamed` in Tally, through the same production read path.
+    ///
+    /// This is the captured evidence for the behaviour already decided in
+    /// `docs/tally/TALLY_PROTOCOL_REFERENCE.md` §12a.9 — Tally can retain a GUID
+    /// while changing a visible ledger name — which is why
+    /// `StandardLedgerCatalogBinding::matches` binds the selected pair rather
+    /// than a name. The reference remains the decision; this fixture only shows
+    /// it observed.
+    ///
+    /// Measured across the pair on TallyPrime 7.1: the ledger keeps GUID
+    /// `…-000000d0` and only its name changes, the ledger count is unchanged, and
+    /// no other ledger's GUID moves. The book was restored afterwards. Neither
+    /// response is hand-mutated.
+    fn captured_renamed_catalog_xml() -> String {
+        decode_captured_response(include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ledger-catalogue-renamed.utf16le.xml"
+        ))
     }
 
     fn source() -> crate::source_draft_xml::ParsedSource {
@@ -479,6 +583,15 @@ mod tests {
     fn status_plan() -> ScenarioPlan {
         ScenarioPlan::new(Fixture::ProductStatus(ProductStatus::TallyPrime))
             .with_framing(ResponseFraming::ContentLength)
+    }
+
+    fn append_catalog_read_plans(plans: &mut Vec<ScenarioPlan>, xml: String) {
+        plans.push(company_plan(CAPTURED_COMPANY, CAPTURED_GUID));
+        plans.push(catalog_plan(xml.clone()));
+        plans.push(status_plan());
+        plans.push(catalog_plan(xml));
+        plans.push(status_plan());
+        plans.push(company_plan(CAPTURED_COMPANY, CAPTURED_GUID));
     }
 
     fn install_active_catalog(store: &SourceDraftStore) -> (Uuid, Uuid, Vec<String>, String) {
@@ -807,6 +920,479 @@ mod tests {
         assert_eq!(simulator.finish().expect("all requests observed").len(), 8);
     }
 
+    #[tokio::test]
+    async fn catalog_services_revalidate_retained_binding_after_catalogue_change_without_tauri_state(
+    ) {
+        let store = SourceDraftStore::default();
+        let draft_id = install_active_draft_without_catalog(&store);
+        let (_, catalog_xml) = captured_catalog_and_xml();
+        let catalog = parse_standard_ledger_catalog_with_identities(
+            &catalog_xml,
+            CAPTURED_COMPANY,
+            CAPTURED_GUID,
+        )
+        .expect("captured catalogue remains parser-admitted");
+        // Target A is the ledger that a real rename in Tally moved between the two
+        // captured responses; target B is any other ledger, present in both.
+        let all = catalog.names().map(str::to_owned).collect::<Vec<_>>();
+        assert!(
+            all.iter().any(|name| name == RENAMED_FROM),
+            "captured catalogue still contains the ledger the rename capture moved"
+        );
+        let other = all
+            .iter()
+            .find(|name| name.as_str() != RENAMED_FROM)
+            .expect("captured catalogue has a second bindable name")
+            .clone();
+        let names = [RENAMED_FROM.to_owned(), other];
+
+        let changed_catalog_xml = captured_renamed_catalog_xml();
+        let changed_catalog = parse_standard_ledger_catalog_with_identities(
+            &changed_catalog_xml,
+            CAPTURED_COMPANY,
+            CAPTURED_GUID,
+        )
+        .expect("captured renamed catalogue remains parser-admitted");
+        let changed_names = changed_catalog.names().collect::<Vec<_>>();
+        // The captured pair really is a rename, not a hand-edited string: A is gone
+        // under its old name, present under the new one, and the ledger count holds.
+        assert!(
+            !changed_names.contains(&names[0].as_str()),
+            "the live rename removed target A's old name"
+        );
+        assert!(
+            changed_names.contains(&RENAMED_TO),
+            "the live rename introduced target A's new name"
+        );
+        assert!(
+            changed_names.contains(&names[1].as_str()),
+            "target B survives the live rename untouched"
+        );
+        assert_eq!(
+            changed_names.len(),
+            all.len(),
+            "a rename changes no ledger count"
+        );
+        let mut plans = vec![company_plan(CAPTURED_COMPANY, CAPTURED_GUID)];
+        append_catalog_read_plans(&mut plans, catalog_xml.clone());
+        plans.push(company_plan(CAPTURED_COMPANY, CAPTURED_GUID));
+        append_catalog_read_plans(&mut plans, catalog_xml);
+        plans.push(company_plan(CAPTURED_COMPANY, CAPTURED_GUID));
+        append_catalog_read_plans(&mut plans, changed_catalog_xml);
+        let simulator = SequenceSimulator::spawn(plans).expect("catalog service simulator");
+        let config = TallyConfig {
+            host: simulator.address().ip().to_string(),
+            port: simulator.address().port(),
+        };
+        let runtime = TallyRuntime::default();
+        let loaded = load_existing_ledger_targets(
+            &store,
+            &runtime,
+            SourceDraftCatalogLoadRequest {
+                draft_id: draft_id.to_string(),
+                config: config.clone(),
+                selected_company: selected_company(),
+            },
+        )
+        .await
+        .expect("service load admits the captured catalog");
+        // A must be the ledger the live rename actually moved, otherwise this
+        // exercises a target Tally never touched and proves nothing.
+        let a = loaded
+            .targets
+            .iter()
+            .find(|target| target.as_str() == names[0])
+            .expect("the renamed ledger is offered as a target")
+            .clone();
+        let b = loaded
+            .targets
+            .iter()
+            .find(|target| target.as_str() == names[1])
+            .expect("a second, untouched ledger is offered as a target")
+            .clone();
+        let initial_proposals = store
+            .active
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .proposals
+            .clone();
+        let first = apply_existing_ledger_target(
+            &store,
+            &runtime,
+            SourceDraftCatalogApplyRequest {
+                draft_id: draft_id.to_string(),
+                revision: 1,
+                capture_id: loaded.capture_id.clone(),
+                config: config.clone(),
+                selected_company: selected_company(),
+                row_position: 1,
+                entry_position: 1,
+                target_name: a.clone(),
+                proposals: initial_proposals,
+            },
+        )
+        .await
+        .expect("target A applies after its fresh read");
+        assert_eq!(
+            first
+                .current_catalog_bindings
+                .iter()
+                .map(|binding| (binding.row_position, binding.entry_position))
+                .collect::<Vec<_>>(),
+            vec![(1, 1)],
+            "A is current after its own fresh read"
+        );
+        let second = apply_existing_ledger_target(
+            &store,
+            &runtime,
+            SourceDraftCatalogApplyRequest {
+                draft_id: draft_id.to_string(),
+                revision: first.revision,
+                capture_id: loaded.capture_id,
+                config,
+                selected_company: selected_company(),
+                row_position: 2,
+                entry_position: 1,
+                target_name: b.clone(),
+                proposals: first.rows.iter().map(|row| row.proposal.clone()).collect(),
+            },
+        )
+        .await
+        .expect("target B applies after its fresh read");
+        assert_eq!(
+            second
+                .current_catalog_bindings
+                .iter()
+                .map(|binding| (binding.row_position, binding.entry_position))
+                .collect::<Vec<_>>(),
+            vec![(2, 1)],
+            "only B is current after Tally removed A"
+        );
+        assert_eq!(
+            second.rows[0].proposal.entries[0].ledger.as_deref(),
+            Some(a.as_str()),
+            "A's operator proposal text survives without a currency claim"
+        );
+        assert_eq!(
+            second.rows[1].proposal.entries[0].ledger.as_deref(),
+            Some(b.as_str())
+        );
+        assert_eq!(simulator.finish().expect("all requests observed").len(), 21);
+    }
+
+    /// A refused selection must not leave older bindings claiming a currency the
+    /// same response disproves. Binding the renamed ledger a second time fails,
+    /// and that failure has to settle the first binding too.
+    #[tokio::test]
+    async fn a_refused_selection_still_settles_retained_bindings_without_tauri_state() {
+        let store = SourceDraftStore::default();
+        let draft_id = install_active_draft_without_catalog(&store);
+        let (_, catalog_xml) = captured_catalog_and_xml();
+        let renamed_catalog_xml = captured_renamed_catalog_xml();
+
+        let mut plans = vec![company_plan(CAPTURED_COMPANY, CAPTURED_GUID)];
+        append_catalog_read_plans(&mut plans, catalog_xml.clone());
+        for _ in 0..2 {
+            plans.push(company_plan(CAPTURED_COMPANY, CAPTURED_GUID));
+            append_catalog_read_plans(&mut plans, catalog_xml.clone());
+        }
+        plans.push(company_plan(CAPTURED_COMPANY, CAPTURED_GUID));
+        append_catalog_read_plans(&mut plans, renamed_catalog_xml);
+        let simulator = SequenceSimulator::spawn(plans).expect("catalog service simulator");
+        let config = TallyConfig {
+            host: simulator.address().ip().to_string(),
+            port: simulator.address().port(),
+        };
+        let runtime = TallyRuntime::default();
+
+        let loaded = load_existing_ledger_targets(
+            &store,
+            &runtime,
+            SourceDraftCatalogLoadRequest {
+                draft_id: draft_id.to_string(),
+                config: config.clone(),
+                selected_company: selected_company(),
+            },
+        )
+        .await
+        .expect("service load admits the captured catalog");
+        for expected in [RENAMED_FROM, SURVIVES_RENAME] {
+            assert!(
+                loaded.targets.iter().any(|target| target == expected),
+                "the captured catalogue offers {expected}"
+            );
+        }
+
+        let mut proposals = store
+            .active
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .proposals
+            .clone();
+        let mut revision = 1;
+        // Row 1 binds the ledger the live rename moved; row 2 binds one it left
+        // alone. Both are current against the catalogue read at the time.
+        for (row_position, target_name) in [(1, RENAMED_FROM), (2, SURVIVES_RENAME)] {
+            let applied = apply_existing_ledger_target(
+                &store,
+                &runtime,
+                SourceDraftCatalogApplyRequest {
+                    draft_id: draft_id.to_string(),
+                    revision,
+                    capture_id: loaded.capture_id.clone(),
+                    config: config.clone(),
+                    selected_company: selected_company(),
+                    row_position,
+                    entry_position: 1,
+                    target_name: target_name.to_owned(),
+                    proposals,
+                },
+            )
+            .await
+            .expect("the target applies while Tally still offers it");
+            revision = applied.revision;
+            proposals = applied
+                .rows
+                .iter()
+                .map(|row| row.proposal.clone())
+                .collect();
+        }
+        assert_eq!(
+            binding_positions(&store),
+            vec![(1, 1), (2, 1)],
+            "both rows are current before Tally moves"
+        );
+
+        // Tally renames the row 1 ledger, and the operator selects it again.
+        let refused = apply_existing_ledger_target(
+            &store,
+            &runtime,
+            SourceDraftCatalogApplyRequest {
+                draft_id: draft_id.to_string(),
+                revision,
+                capture_id: loaded.capture_id,
+                config,
+                selected_company: selected_company(),
+                row_position: 1,
+                entry_position: 1,
+                target_name: RENAMED_FROM.to_owned(),
+                proposals,
+            },
+        )
+        .await
+        .expect_err("the renamed target is refused");
+        assert_eq!(refused.code, "source_draft_catalogue_target_changed");
+
+        // The refusing read settles row 1, which it disproves, and leaves row 2,
+        // which it upholds -- so this is evidence, not a blanket clear.
+        assert_eq!(
+            binding_positions(&store),
+            vec![(2, 1)],
+            "the refusing read settles only what it disproves"
+        );
+        assert_eq!(
+            refused
+                .current_catalog_bindings
+                .as_deref()
+                .expect("a refusal reports what the same read settled")
+                .iter()
+                .map(|binding| (binding.row_position, binding.entry_position))
+                .collect::<Vec<_>>(),
+            vec![(2, 1)],
+            "the refusal carries the survivors, so the renderer need not guess"
+        );
+        assert_eq!(simulator.finish().expect("all requests observed").len(), 28);
+    }
+
+    /// The refusal is not the only way to fail after the bindings have been
+    /// settled: the commit still validates the *completed* proposal and still
+    /// bumps the revision. Any of those reaches the renderer with the store
+    /// already changed, so it owes the same evidence.
+    ///
+    /// This drives the revision path because it is the one reachable from a
+    /// small fixture. The proposal-size path needs a source large enough for the
+    /// inserted target name to cross `MAX_PROPOSAL_BYTES`, which the per-field
+    /// `MAX_TEXT_BYTES` bound puts several megabytes out of reach here. Both are
+    /// covered by the same boundary rather than individually, which is the point
+    /// of attaching the survivors once.
+    #[tokio::test]
+    async fn a_post_settle_failure_other_than_refusal_also_reports_the_surviving_bindings() {
+        let store = SourceDraftStore::default();
+        let draft_id = install_active_draft_without_catalog(&store);
+        let (_, catalog_xml) = captured_catalog_and_xml();
+
+        let mut plans = vec![company_plan(CAPTURED_COMPANY, CAPTURED_GUID)];
+        append_catalog_read_plans(&mut plans, catalog_xml.clone());
+        plans.push(company_plan(CAPTURED_COMPANY, CAPTURED_GUID));
+        append_catalog_read_plans(&mut plans, catalog_xml.clone());
+        plans.push(company_plan(CAPTURED_COMPANY, CAPTURED_GUID));
+        append_catalog_read_plans(&mut plans, catalog_xml);
+        let simulator = SequenceSimulator::spawn(plans).expect("catalog service simulator");
+        let config = TallyConfig {
+            host: simulator.address().ip().to_string(),
+            port: simulator.address().port(),
+        };
+        let runtime = TallyRuntime::default();
+
+        let loaded = load_existing_ledger_targets(
+            &store,
+            &runtime,
+            SourceDraftCatalogLoadRequest {
+                draft_id: draft_id.to_string(),
+                config: config.clone(),
+                selected_company: selected_company(),
+            },
+        )
+        .await
+        .expect("service load admits the captured catalog");
+        let proposals = store
+            .active
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .proposals
+            .clone();
+
+        let bound = apply_existing_ledger_target(
+            &store,
+            &runtime,
+            SourceDraftCatalogApplyRequest {
+                draft_id: draft_id.to_string(),
+                revision: 1,
+                capture_id: loaded.capture_id.clone(),
+                config: config.clone(),
+                selected_company: selected_company(),
+                row_position: 1,
+                entry_position: 1,
+                target_name: SURVIVES_RENAME.to_owned(),
+                proposals,
+            },
+        )
+        .await
+        .expect("the surviving target applies");
+
+        // Exhaust the revision so the commit fails after the settle, on a path
+        // that is not the refusal.
+        store.active.lock().unwrap().as_mut().unwrap().revision = u64::MAX;
+        let rejected = apply_existing_ledger_target(
+            &store,
+            &runtime,
+            SourceDraftCatalogApplyRequest {
+                draft_id: draft_id.to_string(),
+                revision: u64::MAX,
+                capture_id: loaded.capture_id,
+                config,
+                selected_company: selected_company(),
+                row_position: 2,
+                entry_position: 1,
+                target_name: SURVIVES_RENAME.to_owned(),
+                proposals: bound.rows.iter().map(|row| row.proposal.clone()).collect(),
+            },
+        )
+        .await
+        .expect_err("the revision cannot advance");
+        assert_eq!(rejected.code, "source_draft_revision_exhausted");
+        assert_eq!(
+            rejected
+                .current_catalog_bindings
+                .as_deref()
+                .expect("a failure after the settle reports what survived")
+                .iter()
+                .map(|binding| (binding.row_position, binding.entry_position))
+                .collect::<Vec<_>>(),
+            vec![(1, 1)],
+            "row 1 is still current, and the renderer is told so despite the failure"
+        );
+        assert_eq!(simulator.finish().expect("all requests observed").len(), 21);
+    }
+
+    #[tokio::test]
+    async fn catalog_services_keep_identical_retained_bindings_current_without_tauri_state() {
+        let store = SourceDraftStore::default();
+        let draft_id = install_active_draft_without_catalog(&store);
+        let (_, catalog_xml) = captured_catalog_and_xml();
+        let mut plans = vec![company_plan(CAPTURED_COMPANY, CAPTURED_GUID)];
+        append_catalog_read_plans(&mut plans, catalog_xml.clone());
+        plans.push(company_plan(CAPTURED_COMPANY, CAPTURED_GUID));
+        append_catalog_read_plans(&mut plans, catalog_xml.clone());
+        plans.push(company_plan(CAPTURED_COMPANY, CAPTURED_GUID));
+        append_catalog_read_plans(&mut plans, catalog_xml);
+        let simulator = SequenceSimulator::spawn(plans).expect("catalog service simulator");
+        let config = TallyConfig {
+            host: simulator.address().ip().to_string(),
+            port: simulator.address().port(),
+        };
+        let runtime = TallyRuntime::default();
+        let loaded = load_existing_ledger_targets(
+            &store,
+            &runtime,
+            SourceDraftCatalogLoadRequest {
+                draft_id: draft_id.to_string(),
+                config: config.clone(),
+                selected_company: selected_company(),
+            },
+        )
+        .await
+        .expect("service load admits the captured catalog");
+        let initial_proposals = store
+            .active
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .proposals
+            .clone();
+        let first = apply_existing_ledger_target(
+            &store,
+            &runtime,
+            SourceDraftCatalogApplyRequest {
+                draft_id: draft_id.to_string(),
+                revision: 1,
+                capture_id: loaded.capture_id.clone(),
+                config: config.clone(),
+                selected_company: selected_company(),
+                row_position: 1,
+                entry_position: 1,
+                target_name: loaded.targets[0].clone(),
+                proposals: initial_proposals,
+            },
+        )
+        .await
+        .expect("target A applies after its fresh read");
+        let second = apply_existing_ledger_target(
+            &store,
+            &runtime,
+            SourceDraftCatalogApplyRequest {
+                draft_id: draft_id.to_string(),
+                revision: first.revision,
+                capture_id: loaded.capture_id,
+                config,
+                selected_company: selected_company(),
+                row_position: 2,
+                entry_position: 1,
+                target_name: loaded.targets[1].clone(),
+                proposals: first.rows.iter().map(|row| row.proposal.clone()).collect(),
+            },
+        )
+        .await
+        .expect("target B applies after its fresh read");
+        assert_eq!(
+            second
+                .current_catalog_bindings
+                .iter()
+                .map(|binding| (binding.row_position, binding.entry_position))
+                .collect::<Vec<_>>(),
+            vec![(1, 1), (2, 1)],
+            "an unchanged A remains current alongside B"
+        );
+        assert_eq!(simulator.finish().expect("all requests observed").len(), 21);
+    }
+
     #[test]
     fn full_apply_prunes_another_changed_binding_but_keeps_the_new_binding() {
         let store = SourceDraftStore::default();
@@ -845,7 +1431,7 @@ mod tests {
             .catalog_apply_snapshot(&request)
             .expect("full proposal vector is admissible before fresh read");
         store
-            .commit_catalog_target(snapshot, request, second_binding)
+            .commit_catalog_target(snapshot, request, second_binding, &catalog)
             .expect("target B commits after its fresh read");
 
         let active = store.active.lock().unwrap();
@@ -879,10 +1465,9 @@ mod tests {
         };
         let snapshot = store.catalog_load_snapshot(&request).unwrap();
         store.invalidate_catalogue().unwrap();
-        let (catalog, body) = captured_catalog_and_xml();
+        let (catalog, _) = captured_catalog_and_xml();
         let read = StandardLedgerCatalogRead {
             catalog,
-            body,
             request_sha256: "request".into(),
             response_sha256: "response".into(),
             bytes: 2,
@@ -915,7 +1500,7 @@ mod tests {
         };
         let expected = serde_json::to_vec(&replacement.proposals).unwrap();
         store.replace(replacement).unwrap();
-        let (catalog, body) = captured_catalog_and_xml();
+        let (catalog, _) = captured_catalog_and_xml();
         assert_eq!(
             store
                 .install_catalog(
@@ -924,7 +1509,6 @@ mod tests {
                     VerifiedCompanyIdentity::test_fixture(CAPTURED_COMPANY, CAPTURED_GUID),
                     StandardLedgerCatalogRead {
                         catalog,
-                        body,
                         request_sha256: "request".into(),
                         response_sha256: "response".into(),
                         bytes: 2,
@@ -973,12 +1557,14 @@ mod tests {
         let request = apply_request(id, 1, capture_id, names[0].clone(), proposals);
         let snapshot = store.catalog_apply_snapshot(&request).unwrap();
         let binding = snapshot.catalog.bind_selected([names[0].clone()]).unwrap();
+        // Rejected on the snapshot check before the fresh catalog is consulted.
+        let fresh = snapshot.catalog.clone();
         let before =
             serde_json::to_vec(&store.active.lock().unwrap().as_ref().unwrap().proposals).unwrap();
         store.invalidate_catalogue().unwrap();
         assert_eq!(
             store
-                .commit_catalog_target(snapshot, request, binding)
+                .commit_catalog_target(snapshot, request, binding, &fresh)
                 .unwrap_err()
                 .code,
             "source_draft_catalogue_invalidated"
@@ -1019,10 +1605,12 @@ mod tests {
             catalog: None,
         };
         let expected = serde_json::to_vec(&replacement.proposals).unwrap();
+        // Rejected on the snapshot check before the fresh catalog is consulted.
+        let fresh = snapshot.catalog.clone();
         store.replace(replacement).unwrap();
         assert_eq!(
             store
-                .commit_catalog_target(snapshot, request, binding)
+                .commit_catalog_target(snapshot, request, binding, &fresh)
                 .unwrap_err()
                 .code,
             "source_draft_catalogue_invalidated"
@@ -1033,7 +1621,7 @@ mod tests {
     }
 
     #[test]
-    fn catalog_bindings_are_not_serialized_in_dto_or_saved_draft() {
+    fn catalog_binding_identities_are_not_serialized_in_dto_or_saved_draft() {
         let store = SourceDraftStore::default();
         let (_, _, names, _) = install_active_catalog(&store);
         let (catalog, _) = captured_catalog_and_xml();
@@ -1060,7 +1648,36 @@ mod tests {
         let saved: serde_json::Value =
             serde_json::from_slice(&serialize_draft(&active.source, &active.proposals).unwrap())
                 .unwrap();
-        for value in [&response, &saved] {
+        assert_eq!(
+            response["current_catalog_bindings"],
+            serde_json::json!([{"row_position": 1, "entry_position": 1}]),
+            "the desktop receives only the current binding coordinate"
+        );
+        // A refusal now carries binding coordinates too, so it is the same wire
+        // surface and gets the same guarantee.
+        let refusal = serde_json::to_value(
+            error("source_draft_catalogue_target_changed")
+                .with_current_catalog_bindings(current_catalog_bindings(&active)),
+        )
+        .unwrap();
+        assert_eq!(
+            refusal["current_catalog_bindings"],
+            serde_json::json!([{"row_position": 1, "entry_position": 1}]),
+            "a refusal reports coordinates and nothing identifying"
+        );
+        // An unrelated failure proves nothing about any binding, and must be
+        // distinguishable from a refusal that disproved them all.
+        let unrelated = serde_json::to_value(error("source_draft_not_active")).unwrap();
+        assert!(
+            unrelated
+                .as_object()
+                .unwrap()
+                .get("current_catalog_bindings")
+                .is_none(),
+            "an error carrying no binding evidence omits the field entirely"
+        );
+
+        for value in [&response, &saved, &refusal] {
             let object = value.as_object().unwrap();
             assert!(!object.contains_key("catalog"));
             assert!(!object.contains_key("capture_id"));
@@ -1069,23 +1686,22 @@ mod tests {
         }
     }
 
+    /// Both sides are captured responses either side of a real rename in Tally,
+    /// so this refuses on observed behaviour rather than on an edited string.
     #[test]
     fn changed_observed_catalogue_refuses_bound_target_before_commit() {
-        let (catalog, xml) = captured_catalog_and_xml();
-        let name = catalog.names().next().unwrap().to_owned();
-        let binding = catalog.bind_selected([name.clone()]).unwrap();
-        let identity = VerifiedCompanyIdentity::test_fixture(CAPTURED_COMPANY, CAPTURED_GUID);
-        assert!(require_current_catalog_binding(&binding, &xml, &identity).is_ok());
-        let expected = format!("NAME=\"{name}\"");
+        let (catalog, _) = captured_catalog_and_xml();
+        let binding = catalog.bind_selected([RENAMED_FROM.to_owned()]).unwrap();
+        assert!(require_current_catalog_binding(&binding, &catalog).is_ok());
+
+        let renamed = parse_standard_ledger_catalog_with_identities(
+            &captured_renamed_catalog_xml(),
+            CAPTURED_COMPANY,
+            CAPTURED_GUID,
+        )
+        .expect("captured renamed catalogue remains parser-admitted");
         assert_eq!(
-            xml.matches(&expected).count(),
-            1,
-            "captured target occurs once"
-        );
-        let changed = xml.replacen(&expected, "NAME=\"renamed before apply\"", 1);
-        assert_ne!(changed, xml, "control changes captured response in memory");
-        assert_eq!(
-            require_current_catalog_binding(&binding, &changed, &identity)
+            require_current_catalog_binding(&binding, &renamed)
                 .unwrap_err()
                 .code,
             "source_draft_catalogue_target_changed"

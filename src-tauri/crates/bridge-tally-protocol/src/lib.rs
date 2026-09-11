@@ -1385,6 +1385,25 @@ pub struct StandardLedgerCatalogBinding {
 }
 
 impl StandardLedgerCatalogBinding {
+    /// True when every selected pair is still present in an already-parsed
+    /// catalog.
+    ///
+    /// TALLY_PROTOCOL_REFERENCE.md §12a.9: Tally can retain a GUID while
+    /// changing a visible ledger name, so admission binds the selected pair
+    /// rather than either half.
+    ///
+    /// Callers holding a parsed response should prefer this: a caller checking
+    /// several bindings against one response would otherwise reparse it once
+    /// per binding.
+    pub fn matches_catalog(&self, current: &StandardLedgerCatalog) -> bool {
+        self.entries.iter().all(|(name, guid)| {
+            current.entries.iter().any(|candidate| {
+                &candidate.name == name && candidate.guid.eq_ignore_ascii_case(guid)
+            })
+        })
+    }
+
+    /// [`Self::matches_catalog`] for a caller that holds only the response body.
     pub fn matches(
         &self,
         xml: &str,
@@ -1396,13 +1415,7 @@ impl StandardLedgerCatalogBinding {
             expected_company_name,
             expected_company_guid,
         )?;
-        // TALLY_PROTOCOL_REFERENCE.md §12a.9: Tally can retain a GUID while
-        // changing a visible ledger name, so admission binds the selected pair.
-        Ok(self.entries.iter().all(|(name, guid)| {
-            current.entries.iter().any(|candidate| {
-                &candidate.name == name && candidate.guid.eq_ignore_ascii_case(guid)
-            })
-        }))
+        Ok(self.matches_catalog(&current))
     }
 }
 
