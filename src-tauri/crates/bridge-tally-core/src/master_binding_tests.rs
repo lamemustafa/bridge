@@ -437,6 +437,34 @@ fn a_hyphen_matches_a_space_because_tally_says_so() {
 }
 
 #[test]
+fn masters_that_collapse_under_the_fold_are_refused_never_chosen() {
+    // `TALLY_PROTOCOL_REFERENCE.md` §9.4b requires prefer-exact,
+    // refuse-ambiguous, never-pick. `A-B` and `A B` collapse under the three
+    // verified transformations and nothing measured says which one Tally would
+    // choose, so a fold that returns the first match is the failure mode.
+    let catalog = ledgers(&["Alpha-Beta", "Alpha Beta", "Gamma"]);
+
+    // Prefer-exact: byte equality outranks a key shared by two masters.
+    assert_eq!(
+        bind_one_name(&catalog, "Alpha Beta").bound_name(),
+        Some("Alpha Beta")
+    );
+    assert_eq!(
+        bind_one_name(&catalog, "Alpha-Beta").bound_name(),
+        Some("Alpha-Beta")
+    );
+
+    // Refuse-ambiguous, never-pick: with no exact spelling to prefer, the
+    // collapse is reported with both masters offered, not resolved to one.
+    for spelling in ["alpha beta", "ALPHA  BETA"] {
+        let binding = bind_one_name(&catalog, spelling);
+        assert_eq!(reason(&binding), UnboundReason::NameAmbiguous);
+        assert_eq!(binding.bound_name(), None);
+        assert_eq!(candidate_names(&binding), ["Alpha Beta", "Alpha-Beta"]);
+    }
+}
+
+#[test]
 fn the_master_fold_stops_where_tally_stops() {
     // §3.3b also measured what Tally does NOT normalise: `AND` for `&`, a
     // missing suffix word, and a singular for a plural were all rejected.
