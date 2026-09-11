@@ -757,17 +757,32 @@ def test_build_treatments(m):
     # the voucher still standing in the book. Omission is not deletion.
     assert manifest[1]["remoteid"]
     assert manifest[2]["suspense"] == "YES"
-    assert "reallocate from Suspense" in manifest[2]["narration"]
+    # names the suspense ledger the operator configured, not the word "Suspense"
+    assert "reallocate from SUSPENSE ACC" in manifest[2]["narration"]
     # an unmapped party keeps the statement's own spelling in the narration so it
     # can still be identified later
     assert "GHOST" in manifest[2]["narration"]
 
 
-def test_suspense_is_compared_the_way_tally_compares_it(m):
-    """3.3b: Tally resolves 'suspense-acc' and 'SUSPENSE ACC' to one master. An
-    exact compare would post to suspense while reporting the row as resolved and
-    dropping the operator's warning — the row would vanish from the suspense
-    count it exists to appear in."""
+def test_a_row_landing_in_suspense_is_flagged_loosely_and_named_exactly(m):
+    """Two separate contracts, and the second is the one that was wrong.
+
+    **Flagging is loose on purpose.** A mapping naming the suspense ledger in a
+    different spelling must still raise the operator's warning; an exact compare
+    would report the row as resolved and drop it from the suspense count it
+    exists to appear in. Over-flagging costs a look.
+
+    **The message must name the ledger actually written.** This used to say
+    "reallocate from Suspense" unconditionally, which is an instruction that
+    cannot be followed when the fold over-flags: `_ledger_key` is looser than
+    §9.4b in six ways, so a mapping to `A-B` against a suspense master named
+    `A B` is flagged while the voucher is posted to `A-B`. The operator was sent
+    to search a ledger the voucher had never been in. Naming the real
+    destination makes a false positive cost a look rather than a wrong search.
+
+    This test no longer claims Tally resolves the two spellings to one master.
+    §9.4b marks that direction UNVERIFIED, and nothing offline can know it.
+    """
     bank = m.HDFC()
     rows = [{"date": "01/08/26", "narr": "UPI-ALPHA-9@x-ABCD0001-111111111111-P",
              "ref": "1", "dr": "10.00", "cr": "", "bal": "990.00"}]
@@ -775,6 +790,18 @@ def test_suspense_is_compared_the_way_tally_compares_it(m):
     _, manifest = m.build(rows, bank, "Co", "Bank", "SUSPENSE ACC", mapping, "ACC")
     assert manifest[0]["suspense"] == "YES"
     assert "UNIDENTIFIED" in manifest[0]["narration"]
+    # the ledger the voucher was actually written to, not the word "Suspense"
+    assert "reallocate from suspense-acc" in manifest[0]["narration"], manifest[0]["narration"]
+    assert manifest[0]["dr_ledger"] == "suspense-acc"
+
+    # the over-flagging case the old wording could not describe: an unverified
+    # fold equates the mapped ledger with the suspense master, and the voucher
+    # goes to the mapped one
+    mapping = {m._key("ALPHA"): ("A-B", "auto")}
+    _, manifest = m.build(rows, bank, "Co", "Bank", "A B", mapping, "ACC")
+    assert manifest[0]["suspense"] == "YES"
+    assert "reallocate from A-B" in manifest[0]["narration"], manifest[0]["narration"]
+    assert manifest[0]["dr_ledger"] == "A-B"
 
 
 def test_remoteid_is_derived_from_the_transaction(m):
@@ -1423,11 +1450,20 @@ def test_ledger_key_folds_exactly_what_its_docstring_claims(m):
     assert same("A-B", "A B"), "the reverse hyphen direction"
     assert same("A  B", "A B"), "internal whitespace run"
     assert same("  A B", "A B"), "leading whitespace"
+    # ...and the three the first version of this table missed, because they are
+    # properties of `.upper()` and `_squash` rather than of anything written in
+    # `_ledger_key`. A table that lists only the deliberate folds understates
+    # the function to exactly the reader most likely to copy it.
+    assert same("A   ", "A"), "arbitrary trailing whitespace, not one space"
+    assert same("straße", "STRASSE"), "str.upper() is Unicode, not ASCII, and changes length"
+    assert same("A\tB", "A B"), "tab folds to a space"
+    assert same("A\u00a0B", "A B"), "NBSP folds to a space"
 
-    # Must stay apart: 3.3b measured both of these as rejected, and the
-    # separators below were never measured at all.
-    assert not same("ZZ Ram AND Sons", "ZZ Ram & Sons")
-    assert not same("AB", "A & B")
+    # Must stay apart. Only the first was measured as rejected; the rest were
+    # never sent at all, and this fold happening to keep them apart is not
+    # evidence that Tally does.
+    assert not same("ZZ Ram AND Sons", "ZZ Ram & Sons"), "measured: rejected"
+    assert not same("AB", "A & B"), "deleting & was never measured either way"
     assert not same("A_B", "A B")
     assert not same("A/B", "A B")
     assert not same("A\u2013B", "A B"), "en dash is not an ASCII hyphen"

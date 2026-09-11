@@ -621,10 +621,13 @@ def _key(text):
 
 
 def _ledger_key(name):
-    """A fold **looser than** Tally's measured master-name identity (§9.4b).
+    r"""A fold **looser than** Tally's measured master-name identity (§9.4b).
 
-    It was documented here as *being* Tally's identity. It is not, and the
-    difference is three transformations Tally has never been shown to make:
+    It was documented here as *being* Tally's identity. It is not. Every row
+    below marked **folds** against anything other than VERIFIED is a
+    transformation Tally has never been shown to make. The first draft of this
+    table said there were three; there are six, and the three it missed are the
+    ones that do not look like decisions:
 
     | transformation                   | §9.4b      | this fold   |
     | -------------------------------- | ---------- | ----------- |
@@ -634,8 +637,25 @@ def _ledger_key(name):
     | **hyphen supplied for stored space** | UNVERIFIED | **folds**   |
     | **internal whitespace run collapsed** | UNVERIFIED | **folds**   |
     | **leading whitespace ignored**   | UNVERIFIED | **folds**   |
-    | `&` vs `AND`, `&` deleted        | rejects    | keeps apart |
+    | **two or more trailing spaces**  | UNVERIFIED | **folds**   |
+    | **non-ASCII case fold**          | UNVERIFIED | **folds**   |
+    | **tab / NBSP / other Unicode space as a space** | UNVERIFIED | **folds** |
+    | `&` vs `AND`                     | rejects    | keeps apart |
+    | `&` deleted                      | UNVERIFIED | keeps apart |
     | en dash, underscore, `/`         | UNVERIFIED | keeps apart |
+
+    Three of those need spelling out, because they are properties of `.upper()`
+    and `_squash` rather than anything written here, and that is exactly why the
+    first version of this table missed them:
+
+      * `str.upper()` is **not** an ASCII case fold. It applies Unicode case
+        mapping, so `straße` and `STRASSE` collide — and note the length
+        changes, which no rule in §9.4b contemplates at all.
+      * `_squash` is `re.sub(r"\s+", " ", text).strip()`. `\s` matches tab,
+        newline, NBSP and the rest of Unicode whitespace, so all of them fold to
+        an ASCII space; §9.4b measured a single ASCII space.
+      * `.strip()` removes **arbitrary** leading and trailing whitespace. §9.4b
+        measured *one* trailing space, and the reverse direction not at all.
 
     §9.4b's measurement is **directional** — a space was supplied where the
     master carried a hyphen, and the reverse was never sent — and a fold is
@@ -657,9 +677,11 @@ def _ledger_key(name):
         `--bank-ledger` argument, so the fold changes nothing.
 
     **Do not copy this function into anything that binds a name to a master.**
-    There, each of those three rows silently posts to a ledger Tally would not
+    There, every unverified row above silently posts to a ledger Tally would not
     have matched, and a sole candidate under a loose fold is not a resolution.
-    Use §9.4b's `accepts(supplied, stored)` predicate instead.
+    Use §9.4b's `accepts(candidate, tally_name)` predicate instead — it is
+    written out in the reference, as alternatives rather than as a fold,
+    precisely because a fold is symmetric and the separator result is not.
     """
     return _squash(name.replace("-", " ")).upper()
 
@@ -1264,9 +1286,23 @@ def build(rows, bank, company, bank_ledger, suspense, mapping, account_tail,
             continue
         kind = "Contra" if treatment == "contra" else ("Payment" if outward else "Receipt")
         mode, reference = bank.reference(row)
-        # Tally resolves 'suspense-acc' and 'SUSPENSE ACC' to the same master
-        # (3.3b), so an exact string compare would post to suspense while
-        # reporting the row as resolved and omitting the operator's warning.
+        # Whether this row needs an operator's eye. Deliberately the **loose**
+        # fold: over-flagging costs a look, under-flagging posts an
+        # unidentified row and says nothing.
+        #
+        # It is not a claim that Tally would treat the two names as one master.
+        # This comment used to say Tally resolves `suspense-acc` and
+        # `SUSPENSE ACC` to the same master and cite 3.3b; §9.4b measures that
+        # direction as UNVERIFIED, and `_ledger_key` is looser than §9.4b in six
+        # ways besides. Nothing here can know what Tally would match.
+        #
+        # Which is why the message below names `ledger` — the name actually
+        # written into the voucher — rather than "Suspense". When the fold
+        # over-flags (a mapping to `A-B` against a suspense master named `A B`),
+        # the old wording told the operator to reallocate from a ledger the
+        # voucher was never posted to, which is an instruction that cannot be
+        # followed. Naming the real destination makes a false positive cost a
+        # look instead of a wrong search.
         unidentified = _ledger_key(ledger) == _ledger_key(suspense)
         shown = party if unidentified else ledger
         narration = _squash(
@@ -1274,7 +1310,7 @@ def build(rows, bank, company, bank_ledger, suspense, mapping, account_tail,
             f" | {account_tail} | {date.strftime('%d-%b-%Y')}"
         )
         if unidentified:
-            narration += " | UNIDENTIFIED - reallocate from Suspense"
+            narration += f" | UNIDENTIFIED - reallocate from {ledger}"
         remote_id = _remote_id(account, date, row, bank)
         if remote_id in seen:
             raise Refusal(
@@ -1698,8 +1734,10 @@ def _print_dry_run(manifest):
         print(f"{shown[:33]:<34}{kind:<10}{bucket['total']:>14,}  {suspense}")
         for variant, _amount in spellings:
             print(f"  also printed as {variant[:60]}")
-    print("\nOne line per mapping row: spellings that differ only in spacing or "
-          "punctuation\nare one counterparty, and one row in the CSV covers them.")
+    print("\nOne line per mapping row: spellings that differ only in SPACING are "
+          "one counterparty,\nand one row in the CSV covers them. Punctuation is "
+          "significant — `A & B` and `AB`\nare two rows, and a variant left "
+          "unmapped falls to suspense.")
 
 
 def _print_operator_notes(company, skipped):
