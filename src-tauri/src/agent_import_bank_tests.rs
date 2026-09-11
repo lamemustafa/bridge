@@ -262,6 +262,24 @@ fn a_user_created_group_at_the_account_root_ends_the_walk_as_the_root() {
 }
 
 #[test]
+fn a_padded_parent_does_not_resolve_to_a_group_it_does_not_name() {
+    // The exactness of the hop is only as good as what reaches it. The
+    // catalogue validator used to trim a ledger's PARENT, which absorbed the
+    // difference upstream of the walk and let a padded reference resolve to a
+    // group it does not byte-match — the pair the walk exists to refuse.
+    let mut ledgers = captured_demo_ledger_parents();
+    ledgers.push(("Padded Bank".into(), Some(" Bank Accounts ".into())));
+    let masters = observed(&ledgers, captured_demo_groups());
+    assert_eq!(masters.classify("Padded Bank").state(), "not_established");
+    let refusals = cash_bank_refusals(
+        &demo_batch("Payment", "Gujarat Poly Industries", "Padded Bank"),
+        &masters,
+        200_000,
+    );
+    assert!(refusals.is_refused(), "a padded reference funds nothing");
+}
+
+#[test]
 fn a_renamed_predefined_group_still_classifies_by_its_reserved_identity() {
     // Section 8.2a measured a predefined group being renamed over XML while
     // RESERVEDNAME kept its original identity. Classification must survive it.

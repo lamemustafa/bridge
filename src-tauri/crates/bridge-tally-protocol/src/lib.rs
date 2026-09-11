@@ -1754,9 +1754,16 @@ fn normalized_standard_company_guid(value: &str) -> anyhow::Result<String> {
     Ok(value.to_string())
 }
 
+/// Validates a ledger's `PARENT` without normalising it.
+///
+/// The emptiness test reads the trimmed view, but the value is retained
+/// verbatim. A `PARENT` is a foreign reference to a group `NAME`, matched by
+/// exact codepoint, so trimming here would silently resolve a pair that
+/// [`group_ancestry`] is built to refuse — and it would do so upstream of the
+/// walk, where the walk cannot see it.
 fn safe_standard_ledger_parent(value: &str) -> Option<String> {
-    let value = value.trim();
-    if value.is_empty() || value.len() > 1024 || value.chars().any(unsafe_display_character) {
+    if value.trim().is_empty() || value.len() > 1024 || value.chars().any(unsafe_display_character)
+    {
         return None;
     }
     Some(value.to_string())
