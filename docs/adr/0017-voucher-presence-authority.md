@@ -507,8 +507,30 @@ human-approved batch — this ADR does not move.
   requirement is satisfied upstream by the two reads that produce its input. Its
   own tests are fabricated from a placeholder alphabet: they establish the
   behaviour of the rules, and are not, and may not be presented as, evidence
-  about any Tally instance. **No verdict from this contract has yet been checked
-  against a real book.**
+  about any Tally instance.
+
+- **Twenty verdicts have been checked against a real book**, and the scope of
+  that check matters more than the fact of it. On a licensed TallyPrime 7.1
+  Silver instance (`education_mode: false`), over an 82-voucher window of a
+  dense synthetic corpus: fifteen invoices the book already held returned
+  `Present` on `ManualVoucherNumber` with no differences, one shortened by a
+  fixed amount returned `Present` **with exactly that amount difference**, and
+  four invoices for a party the book had never seen returned `Absent`.
+
+  Four limits travel with that result and none of them is incidental.
+  **It is read-only**: the proposals are built from the book's own rows, so the
+  present ones are present by construction — it shows the rules identify a
+  voucher they were shown, not one posted independently. **The shortfall is on
+  the wrong side**: the engagement's voucher was short in the *book*, and a
+  read-only harness can only shorten the proposal, so the difference detected
+  is the same one with the sides reversed. **The numbering method is the
+  operator's assertion**, not the book's: the replay refuses any voucher type
+  the operator has not declared manually numbered, because declaring an
+  automatically numbered type `manual` would manufacture the very `Present`
+  verdicts being offered as evidence. And it says **nothing about window
+  completeness** — it runs over a window whose completeness rests on the same
+  unproven cardinality described above, so it is evidence about the *rules* and
+  not about the read.
 
 ## Alternatives rejected
 

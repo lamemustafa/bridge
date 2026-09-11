@@ -935,6 +935,9 @@ fn a_maximal_book_degrades_to_its_counts_rather_than_costing_the_report() {
 //     engagement and the assertion says so.
 //   * It **emits no book content** — counts, bases and reason codes only. A
 //     failure prints what went wrong, never a party name, number or amount.
+//     The observation object is filtered to its scalar fields to keep that
+//     true: its listed groups carry real voucher numbers, types and GUIDs,
+//     and `--nocapture` output reaches terminals and CI logs.
 // ---------------------------------------------------------------------------
 
 /// How many faithful copies to propose, how many to perturb, how many to invent.
@@ -1033,20 +1036,35 @@ async fn replay_the_twenty_invoice_engagement() {
         )
     };
 
+    // Magnitude is the sum of the non-negative entries, so a shortfall must
+    // come off that side to be a difference at all — and it must not push the
+    // entry through zero, or the entry leaves the sum entirely and the
+    // magnitude moves by its whole value rather than by the shortfall. The
+    // test would still see *a* difference and still pass, measuring something
+    // other than what it says it measures. So it is taken off the largest
+    // positive entry, and only where that entry can absorb it.
+    let widest_positive = |row: &Value| -> Option<usize> {
+        row["amounts"]
+            .as_array()
+            .expect("amounts")
+            .iter()
+            .enumerate()
+            .map(|(at, entry)| (at, paise(entry["amount"].as_str().expect("amount"))))
+            .filter(|(_, value)| *value > SHORT_BY_PAISE)
+            .max_by_key(|(_, value)| *value)
+            .map(|(at, _)| at)
+    };
+
     let proposal_from = |row: &Value, short_by: i64| {
-        let mut shortfall = short_by;
+        let target = (short_by > 0).then(|| widest_positive(row).expect("an entry to shorten"));
         let entries = row["amounts"]
             .as_array()
             .expect("amounts")
             .iter()
-            .map(|entry| {
+            .enumerate()
+            .map(|(at, entry)| {
                 let value = paise(entry["amount"].as_str().expect("amount"));
-                // Magnitude is the sum of the non-negative entries, so the
-                // shortfall has to come off that side to be a difference at
-                // all. This is the engagement's shortfall, applied to the one
-                // line that carries the invoice value.
-                let adjusted = if shortfall > 0 && value > 0 {
-                    shortfall = 0;
+                let adjusted = if target == Some(at) {
                     value - short_by
                 } else {
                     value
@@ -1072,7 +1090,14 @@ async fn replay_the_twenty_invoice_engagement() {
     // harness may not write, so the shortfall is introduced on the proposal
     // side instead. The difference the report must find is the same one; only
     // which side is missing the GST head is reversed.
-    proposals.push(proposal_from(posted[REPLAY_PRESENT], SHORT_BY_PAISE));
+    // The row to shorten has to be able to absorb the shortfall. Picking
+    // blindly is how the perturbation silently becomes a different one.
+    let shortened = posted
+        .iter()
+        .skip(REPLAY_PRESENT)
+        .find(|row| widest_positive(row).is_some())
+        .expect("a voucher whose invoice line exceeds the shortfall");
+    proposals.push(proposal_from(shortened, SHORT_BY_PAISE));
     // A new customer's invoice, which the engagement also had. It must differ
     // from every book row in *party and amount*, not just in number: in a
     // one-day window every row shares the date, so a known party alone would
@@ -1086,6 +1111,18 @@ async fn replay_the_twenty_invoice_engagement() {
         proposals.push(invented);
     }
 
+    // The numbering method is an *assertion about the book*, and the harness
+    // is not entitled to make it. Declaring an automatically numbered type
+    // `manual` would let Tally's own numbers produce `present` and the replay
+    // would pass on verdicts the contract says are not identity — evidence
+    // manufactured by the test rather than found in the book. So the operator
+    // names the manually numbered types and the replay refuses any other.
+    let declared = live_env("BRIDGE_PRESENCE_LIVE_MANUAL_TYPES");
+    let declared = declared
+        .split(',')
+        .map(str::trim)
+        .filter(|kind| !kind.is_empty())
+        .collect::<BTreeSet<_>>();
     let mut types = posted
         .iter()
         .take(needed)
@@ -1093,6 +1130,13 @@ async fn replay_the_twenty_invoice_engagement() {
         .collect::<Vec<_>>();
     types.sort_unstable();
     types.dedup();
+    for kind in &types {
+        assert!(
+            declared.contains(kind),
+            "a voucher type in this window was not declared manually numbered; \
+             set BRIDGE_PRESENCE_LIVE_MANUAL_TYPES or narrow the window"
+        );
+    }
     let numbering = types
         .iter()
         .map(|kind| json!({"voucher_type": kind, "numbering_method": "manual"}))
@@ -1127,7 +1171,20 @@ async fn replay_the_twenty_invoice_engagement() {
         result["totals"],
         items.iter().map(summarise).collect::<Vec<_>>()
     );
-    println!("book observations: {}", result["book"]);
+    // Scalars only, by construction rather than by intention. `book` also
+    // carries `duplicate_numbers` and `unbalanced_vouchers`, and those hold
+    // real voucher numbers, voucher types and GUIDs -- printing the object
+    // whole would put customer accounting data into a terminal or a CI log,
+    // which is exactly what the header above promises this does not do. A
+    // promise a reader has to check the code to trust is not a promise.
+    let counts = result["book"]
+        .as_object()
+        .expect("book")
+        .iter()
+        .filter(|(_, value)| !value.is_array())
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>();
+    println!("book observations: {}", counts.join(" "));
 
     for (index, entry) in items.iter().take(REPLAY_PRESENT).enumerate() {
         assert_eq!(
@@ -1150,15 +1207,21 @@ async fn replay_the_twenty_invoice_engagement() {
         "the short proposal came back {}",
         summarise(differing)
     );
-    let fields = differing["differences"]
+    // The *exact* shortfall, not merely "some difference". Asserting only
+    // that a difference exists is what let the perturbation drift into
+    // something else while the test went on passing.
+    let amount = differing["differences"]
         .as_array()
         .expect("differences")
         .iter()
-        .filter_map(|difference| difference["field"].as_str())
-        .collect::<Vec<_>>();
-    assert!(
-        fields.contains(&"amount"),
-        "the short proposal reported {fields:?} rather than an amount difference"
+        .find(|difference| difference["field"] == "amount")
+        .expect("an amount difference");
+    let proposed = paise(amount["proposed"].as_str().expect("proposed"));
+    let observed = paise(amount["observed"].as_str().expect("observed"));
+    assert_eq!(
+        observed - proposed,
+        SHORT_BY_PAISE,
+        "the reported shortfall is not the one the proposal applied"
     );
     for (index, entry) in items.iter().skip(needed).enumerate() {
         assert_eq!(
