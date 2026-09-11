@@ -34,7 +34,11 @@ const reference = fileURLToPath(
 // Levels 2-6, not 2-4: Markdown allows six, a child of an existing `####`
 // section naturally needs a fifth, and a pattern that stopped at four would let
 // such a heading duplicate an existing number while this gate reported success.
-const HEADING = /^(#{2,6})\s+((?:\d+[a-z]?)(?:\.\d+[a-z]?)*)(?=[\s.:—-]|$)/;
+// ATX headings may carry up to three leading spaces and still be headings;
+// four or more make an indented code block. A `##` inside a fenced block is not
+// a heading at all, and counting one there fails CI over an example.
+const HEADING = /^ {0,3}(#{2,6})\s+((?:\d+[a-z]?)(?:\.\d+[a-z]?)*)(?=[\s.:—-]|$)/;
+const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 
 // Diagnostics are bounded. A malformed or generated reference can carry very
 // many duplicates, or one very long heading, and CI evidence that does not fit
@@ -66,7 +70,16 @@ const KNOWN_DUPLICATES = new Map([
 
 const lines = readFileSync(reference, "utf8").split("\n");
 const occurrences = new Map();
+let fence = null;
 lines.forEach((line, index) => {
+  const rail = FENCE.exec(line);
+  if (rail) {
+    // a fence closes only on the same character, at least as long
+    if (fence === null) fence = rail[1];
+    else if (rail[1][0] === fence[0] && rail[1].length >= fence.length) fence = null;
+    return;
+  }
+  if (fence !== null) return;
   const found = HEADING.exec(line);
   if (!found) return;
   const number = found[2];

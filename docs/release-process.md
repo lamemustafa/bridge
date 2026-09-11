@@ -33,10 +33,15 @@ is **not** enough to escape the shadow: `cargo clippy` still resolves the wrong
 not one. Prepending the toolchain's `bin` to `PATH` covers all three:
 
 ```bash
-export PATH="$(rustup which --toolchain "$(sed -n 's/^channel *= *"\(.*\)"/\1/p' \
-  ../rust-toolchain.toml)" rustc | xargs dirname):$PATH"
+channel="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' ../rust-toolchain.toml)"
+rustc_path="$(rustup which --toolchain "$channel" rustc)"
+export PATH="$(dirname "$rustc_path"):$PATH"
 rustc --version   # must match rust-toolchain.toml before you continue
 ```
+
+Quote `rustc_path` rather than piping it through `xargs dirname`: `xargs` splits
+on whitespace, so a home directory containing a space turns one path into
+several and the `PATH` entry it builds points nowhere.
 
 `--output` asks the
 compatibility tool to stage and replace the destination itself, and it is
