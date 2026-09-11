@@ -1403,16 +1403,12 @@ fn cash_bank_refusals(
     let distinct = refused.len();
     let ledgers = refused
         .into_values()
-        .enumerate()
-        .take_while(|(index, row)| {
+        .take_while(|row| {
             let cost = serde_json::to_string(row).map_or(usize::MAX, |text| text.len());
-            // The first row always goes out, however long its ledger name:
-            // one actionable failure beats a bare count.
-            let affordable = *index == 0 || cost <= budget;
+            let affordable = cost <= budget;
             budget = budget.saturating_sub(cost);
             affordable
         })
-        .map(|(_, row)| row)
         .collect::<Vec<_>>();
     CashBankRefusals {
         omitted: distinct.saturating_sub(ledgers.len()),

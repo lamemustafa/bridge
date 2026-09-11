@@ -859,15 +859,25 @@ fn refusal_diagnostics_stay_inside_a_byte_budget() {
         bytes <= refusal_diagnostic_budget(200_000) + MAX_MASTER_NAME_CHARS * 2,
         "diagnostics stayed within budget, got {bytes}"
     );
-    // A caller configured far below the default gets a proportionally smaller
-    // budget, and still gets one actionable row rather than a bare count.
-    let tight = cash_bank_refusals(&batch, &masters, 256);
-    assert_eq!(tight.ledgers.len(), 1);
-    assert_eq!(tight.omitted, MAX_MASTER_NAMES - 1);
+    // No row is exempted to guarantee "at least one". An exempt row reproduced
+    // the very size failure the budget prevents, and a name trimmed to fit is
+    // worse than an absent one because a ledger matches by exact codepoint.
+    // The counts are integers and always survive, so a caller on a tiny cap
+    // still learns how many refusals it cannot see.
     assert!(refusal_diagnostic_budget(256) < refusal_diagnostic_budget(200_000));
-    // A ledger name is reported whole, never trimmed to fit.
-    let reported = refusals.ledgers[0]["ledger"].to_string();
-    assert!(reported.contains(&"N".repeat(MAX_MASTER_NAME_CHARS - 4)));
+    let tight = cash_bank_refusals(&batch, &masters, 256);
+    assert_eq!(tight.legs, MAX_MASTER_NAMES);
+    assert_eq!(
+        tight.ledgers.len() + tight.omitted,
+        MAX_MASTER_NAMES,
+        "every failure is reported or counted, at any cap"
+    );
+    for row in &tight.ledgers {
+        assert!(
+            serde_json::to_string(row).unwrap().len() <= refusal_diagnostic_budget(256),
+            "no row is exempt from the budget"
+        );
+    }
 }
 
 #[tokio::test]

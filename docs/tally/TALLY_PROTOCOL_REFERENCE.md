@@ -940,18 +940,32 @@ Four properties of it are not guessable, and each was measured:
 3. **No `<VOUCHERNUMBER>`.** These types numbered automatically in the observed book, and §9.8
    established that automatic numbering discards a supplied number in silence. Tally assigned
    its own. The bank's reference goes in the narration, which survives.
-4. **`REMOTEID` on every voucher.** By §9.7 a voucher cannot be altered or cancelled over XML
-   and Delete by `REMOTEID` is the only working correction path, so a batch imported without
-   one cannot be cleanly withdrawn.
+4. **`REMOTEID` on every voucher.** By §9.7 a voucher cannot be altered or cancelled over XML,
+   and Delete by `REMOTEID` is the *least unverified* correction path — that row was measured on
+   the Edit Log 7.0 Educational baseline, so it is not a confirmed licensed behaviour. A batch
+   imported without one has no correction path at all, which is the point of sending it.
 
-   **But the readback does not echo it, and that is a trap.** A `Voucher` collection returns a
-   `REMOTEID` attribute holding *Tally's own* `<company GUID>-<master id>` identifier, not the
-   value the client sent — visible in the committed live capture
-   `fixtures/agent/native-namespaced-journal.utf16le.xml`, whose batch-derived client value
-   appears nowhere in the response. Verification therefore cannot use `REMOTEID` to confirm a
-   voucher is the one it wrote, and a builder that compares the two refuses every legitimate
-   readback. Bridge attributes by its narration marker instead. The client value is still
-   *stored* and still deletes (§9.7); it is only unreadable through this collection.
+   **But the readback does not echo it in that attribute, and that is a trap.** A `Voucher`
+   collection returns a `REMOTEID` attribute holding *Tally's own* `<company GUID>-<master id>`
+   identifier, not the value the client sent. From the committed live capture
+   `fixtures/agent/native-namespaced-journal.utf16le.xml`, a readback of a voucher Bridge
+   imported:
+
+   ```
+   REMOTEID attribute : 61c6de69-1748-461c-ad3f-162cb949df9f-00000005
+   NARRATION          : ... [BRIDGE:9c8d8de4-c06c-847b-8309-60ba702bf663]
+   ```
+
+   **The client key is not absent from the response — it is in the narration.** §9.8 records
+   that this batch used the same batch-derived UUID for its `REMOTEID` and its narration marker,
+   and the marker came back intact while the attribute did not. The rule is field-specific and
+   more useful stated that way: **Tally overwrites the attribute it owns, and preserves a marker
+   placed in a field it does not.** That is why Bridge attributes readback by the narration tag —
+   a deliberate choice of a durable carrier, not a workaround for a missing one.
+
+   A verifier that compares the observed attribute against the value it sent therefore refuses
+   every legitimate readback. The client value is still *stored*, still matches for a
+   byte-identical repeat, and still deletes; it is only unreadable through this attribute.
 
 §9.1b applies unchanged and bites hardest here: a single unescaped `&` in a counterparty name
 rejects the whole file with no field hint.
@@ -1050,12 +1064,24 @@ carries no such flag, and adding one would mean authoring a request shape with n
 behind it. Every party amount therefore lands On Account, exactly as the measured import did,
 and every build naming a counterparty says so in its warnings.
 
-**`EFFECTIVEDATE` is written but not verified.** The verification collection of §9.8 does not
-`FETCH` it, so `verify_import` compares the date, voucher type and signed entries and cannot see
-whether Tally kept, rewrote or dropped the effective date — or whether an operator later edited
-it. A readback with a wrong effective date still reports `posted_verified`. Closing this needs
-one live check that the collection returns the field at all: fetching an element never observed
-in a response, and then requiring it, would refuse every legitimate verification instead.
+**Two written elements are not verified: `EFFECTIVEDATE` and `PARTYLEDGERNAME`.** The
+verification collection of §9.8 fetches neither, so `verify_import` compares the date, voucher
+type and signed entries and cannot see whether Tally kept, rewrote or dropped either — nor
+whether an operator later edited them. A readback with a wrong effective date, or a party
+silently dropped, still reports `posted_verified`.
+
+The two are not equally unknown, and the difference decides how to close them:
+
+| element | is it returned by a voucher collection? |
+| --- | --- |
+| `PARTYLEDGERNAME` | **yes, observed** — a captured `Sales` readback carries it populated. Whether the three bank types echo it is not observed |
+| `EFFECTIVEDATE` | **unobserved** — no captured response in this tree carries it |
+
+Neither may be fetched and *required* on that basis alone. Requiring an element that a
+response does not return refuses every legitimate verification, which is a worse failure than
+the one it guards — the same trap as comparing `REMOTEID` above, where the field comes back
+carrying Tally's value rather than the client's. Both close with one live read that adds them to
+the `FETCH` list and looks at what arrives.
 
 ### 9.9 Bulk import throughput
 

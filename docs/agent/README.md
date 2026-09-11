@@ -226,9 +226,9 @@ licence mode, or manually imported file, and only an unnumbered single-voucher
    window back, compares the exact signed ledger entries, reports missing or
    divergent rows and duplicates, writes `.proof.json` and `.proof.md`, and
    appends the verification status to the local import ledger. It compares the
-   date, voucher type and entries; it does **not** compare `EFFECTIVEDATE`,
-   which `Payment`, `Receipt` and `Contra` files carry — see the limit noted in
-   reference §9.13.
+   date, voucher type and entries; it does **not** compare `EFFECTIVEDATE` or
+   `PARTYLEDGERNAME`, which `Payment`, `Receipt` and `Contra` files carry — see
+   the limits noted in reference §9.13.
 
 The file path is deliberately not a direct-posting path. Masters must already
 exist and match exactly. File generation requires fresh supported product/mode
