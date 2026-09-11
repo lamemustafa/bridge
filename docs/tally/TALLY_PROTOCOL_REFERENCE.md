@@ -1704,6 +1704,26 @@ bad voucher does not matter:
 1. **Use a disposable synthetic company, and take a backup first** — `docs/adr/0004-tally-write-safety.md`
    requires both for an initial write, and this is exactly the case it was written for. If the
    process stops before the deletion, or the delete fails, the malformed voucher stays.
+
+   **Naming the disposable company does not put the write in it.** §9.11d is a verified case of a
+   mismatched `<SVCURRENTCOMPANY>` posting into the **loaded** company with `CREATED=1, ERRORS=0,
+   EXCEPTIONS=0` — and the shape that fails closed is the rarer one, while a typo or a
+   year-suffixed name is the shape that silently succeeds. A probe that deliberately sends a
+   malformed voucher is the worst payload to aim at the wrong book, so do what §9.11d's third
+   conclusion already requires and this procedure did not:
+
+   - **Immediately before sending**, read the company and compare its **GUID** (§9.11a) against the
+     disposable company's. Not its name — the name is the thing §9.11d showed can be wrong while
+     everything still reports success. Fresh, because a company can be switched between a check and
+     a send; a GUID read minutes earlier proves nothing about this write.
+   - **Bind the read-back in step 2 to that same GUID.** Reading "the current company" afterwards
+     asks a question whose answer may have changed, and a voucher found in the wrong book still
+     counts as found.
+   - **If the GUID does not match, stop.** Do not switch companies and retry from memory — load the
+     disposable company and re-read.
+
+   Everything after this step assumes the write landed where it was aimed. That assumption is the
+   one §9.11d refutes, so it is the one that has to be checked rather than intended.
 2. Send a single voucher, then read it back. **The read-back is what decides**: if the party and
    tax ledgers are missing and the stored total is the inventory lines alone, the element was
    discarded. `Import Exceptions` *may* also carry
@@ -1723,8 +1743,19 @@ bad voucher does not matter:
    (§9.12b), re-send with the other element, and **read that back too** — the second attempt is
    as unproven as the first, and stopping after sending it leaves the question open and possibly
    a second bad voucher behind.
-5. Record the answer here, naming which element was tried first, so the next person knows whether
-   a "worked" result came from one attempt or two.
+5. **Record the answer here, naming which element was tried first and which transport carried
+   it** — the desktop UI import or the XML gateway. The element-order note alone is not enough to
+   read the result later.
+
+   The observation this rule comes from was a **UI import**, and this section says a few
+   paragraphs above that what the *gateway* counters report for this payload is untested. A probe
+   sent through the gateway therefore varies two things at once — invoice type **and** transport —
+   so its result cannot be entered as a comparable answer to the one-variable question. Either
+   use the same UI-import route, or record the transport and keep the conclusion **partial**,
+   scoped to the path it was measured on.
+
+   This is the same discipline §9.12b needed and for the same reason: a finding inherits the scope
+   of the path that produced it, and a table row that omits the path silently widens it.
 
 **Do not run step 2 against a customer's live book, and do not send a batch of a new invoice type
 before that single voucher has been read back.**
@@ -1820,11 +1851,26 @@ Four further observations, each measured:
    The settling probe is one variable: send a tax amount differing from **both** methods and read
    back what is stored.
 
-   **Do not derive a validation tolerance from any single figure.** Taxing the total is not always
-   wrong (two lines of 100.00 at 9% agree under either method), and where it is wrong the error is
-   not bounded by one example — each line contributes up to half a paisa, so the worst case grows
-   with the line count. Compare against the sum of per-line rounded tax, which is exact, rather
-   than allowing fixed slack.
+   **Do not derive a validation tolerance from any single figure.** The two methods are not always
+   apart (two lines of 100.00 at 9% agree), and where they are apart the gap is not bounded by one
+   example — each line contributes up to half a paisa, so the worst case grows with the line count.
+   Fixed slack is therefore the wrong instrument whatever you validate against.
+
+   **Validate against the preserved source figure, not against a formula.** An earlier version of
+   this paragraph said to compare with the per-line sum "which is exact", and that contradicted the
+   directive four lines above it: a source invoice that rounds on the total would be flagged by the
+   very check meant to protect it — the check rejecting the exact figure this section requires
+   sending. Neither formula is established here, so neither can be the reference.
+
+   - **A source figure exists** (the ordinary case): that figure is what was sent, so it is what
+     the read-back must equal. Exactly, not within slack — a difference means Tally recalculated,
+     which is the open question and worth a stop rather than a tolerance.
+   - **No source figure**: there is nothing to validate against, because the convention was chosen
+     rather than known. Record which one the run used, per the rule above, and leave it there.
+     A check against the formula you just picked confirms only that you applied it.
+
+   Until the settling probe runs, "the tax is correct" is not a claim this document can support;
+   "the tax is unchanged from the source" is, and it is the one worth enforcing.
 
    *The worked figures above are synthetic. They reproduce the arithmetic the measured invoice
    showed; the invoice's own amounts are not reproduced here.*
