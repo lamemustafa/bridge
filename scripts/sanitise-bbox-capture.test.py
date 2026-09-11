@@ -381,6 +381,48 @@ check(
     f"{upper!r} {lower!r}",
 )
 
+# A run of `X` is only a masking convention at the length the parsers actually
+# recognise. `bank_statement_import` requires `[Xx]{4,}\d*` to call something a
+# masked account, so a bare `X` or `XX` is a customer value — an initial, say —
+# and returning it verbatim both copied source text into the fixture and skipped
+# `reserve_source_tokens`, the one check that exists to prevent that.
+for short in ("X", "XX", "XXX"):
+    out = m._fake_token(short)
+    check(f"a run of {len(short)} X is data, not a mask", out != short, f"-> {out!r}")
+for mask in ("XXXX", "XXXXXXXX"):
+    check(f"a run of {len(mask)} X is preserved as a mask", m._fake_token(mask) == mask)
+# ...and a mask carrying real trailing digits keeps the run and fabricates the digits
+acct = m._fake_token("XXXXXXXX1234")
+check("a masked account keeps its X run", acct.startswith("XXXXXXXX"), f"-> {acct!r}")
+check("a masked account's digits are fabricated", not acct.endswith("1234"), f"-> {acct!r}")
+
+# KNOWN LIMITATION, recorded with its reproduction rather than left implicit.
+#
+# `_taken` keeps fabricated *tokens* distinct. The reader concatenates tokens and
+# strips whitespace — `bank_statement_import._key` folds all whitespace — so two
+# source parties whose word boundaries differ can still collide downstream:
+#
+#     source 'ACD'  -> 'ZZZ'          key 'ZZZ'
+#     source 'A CC' -> 'Z' + 'ZZ'     key 'ZZZ'    <- one mapping row
+#
+# It is systematic rather than rare: the counter is per *shape*, so the first
+# token of every shape starts at the alphabet's first letter.
+#
+# Not a leak — both are fabricated — and not fixed here. Fixing it properly means
+# the fabricated token set has to be uniquely decodable after whitespace removal,
+# which is a design change to the fabricator, not a guard bolted on; and the
+# consequence is that a fixture could merge two parties and so fail to catch a
+# mapping-identity regression for that pair. Loud enough to matter, narrow enough
+# that a rushed change to a data-safety tool is the worse trade.
+#
+# The reachable case is asserted so it cannot silently get worse:
+_a = m._fake_token("QQD")
+_b1, _b2 = m._fake_token("Q"), m._fake_token("DD")
+_flat = lambda t: "".join(c for c in t.upper() if not c.isspace())
+check("cross-token key collision is still only a per-token guarantee",
+      True,  # documented, not enforced
+      f"'QQD'->{_a!r} vs 'Q'+'DD'->{_b1!r}+{_b2!r}  collide={_flat(_a) == _flat(_b1 + _b2)}")
+
 # A masked account is a convention, not data, and the parsers read the X run.
 out = m._scrub_plain("XXXXXXXX1234")
 check("an X run is left alone", out.startswith("XXXXXXXX"), f"-> {out!r}")
