@@ -185,6 +185,12 @@ pub enum GstDutyHeadObservation {
     /// `TAXTYPE` was observed and is not the literal GST tax type; this is
     /// distinct from a GST ledger whose duty-head field was absent.
     NotTaxLedger { tax_type: String },
+    /// A duty head arrived on a ledger whose observed `TAXTYPE` is NOT GST --
+    /// for example `<TAXTYPE>Others</TAXTYPE><GSTDUTYHEAD>CGST</GSTDUTYHEAD>`.
+    /// The two fields contradict each other, so neither is asserted: the head is
+    /// not recognised and the ledger is not reported as a tax ledger. Both raw
+    /// values are retained so a reviewer can see what was actually returned.
+    Contradictory { tax_type: String, raw: String },
     #[default]
     Absent,
 }
@@ -194,45 +200,59 @@ impl GstDutyHeadObservation {
         tax_type: &PartyLedgerMasterFieldObservation,
         duty_head: &PartyLedgerMasterFieldObservation,
     ) -> Self {
-        match duty_head {
-            PartyLedgerMasterFieldObservation::Returned(raw) if !raw.is_empty() => {
-                match raw.as_str() {
-                    "CGST" => Self::Recognized {
-                        raw: raw.clone(),
-                        head: GstDutyHead::Cgst,
-                    },
-                    "IGST" => Self::Recognized {
-                        raw: raw.clone(),
-                        head: GstDutyHead::Igst,
-                    },
-                    "State Tax" => Self::Recognized {
-                        raw: raw.clone(),
-                        head: GstDutyHead::StateTax,
-                    },
-                    "UT Tax" => Self::Recognized {
-                        raw: raw.clone(),
-                        head: GstDutyHead::UtTax,
-                    },
-                    "Cess" => Self::Recognized {
-                        raw: raw.clone(),
-                        head: GstDutyHead::Cess,
-                    },
-                    _ => Self::Unrecognized { raw: raw.clone() },
-                }
+        // Tally renders an absent duty head both by omitting the element and as
+        // an explicit empty one; both mean the same thing here.
+        let head = match duty_head {
+            PartyLedgerMasterFieldObservation::Returned(raw) if !raw.is_empty() => Some(raw),
+            _ => None,
+        };
+        // Observed AND not GST. An unobserved or empty TAXTYPE is not evidence
+        // that the ledger is non-GST, so it does not contradict a duty head.
+        let non_gst = match tax_type {
+            PartyLedgerMasterFieldObservation::Returned(value)
+                if !value.is_empty() && value != "GST" =>
+            {
+                Some(value)
             }
-            // Tally renders an absent duty head both by omitting the element and
-            // as an explicit empty element. Classification intentionally gives
-            // both shapes the same meaning while retaining non-empty raw values.
-            _ => match tax_type {
-                PartyLedgerMasterFieldObservation::Returned(tax_type)
-                    if !tax_type.is_empty() && tax_type != "GST" =>
-                {
-                    Self::NotTaxLedger {
-                        tax_type: tax_type.clone(),
-                    }
-                }
-                _ => Self::Absent,
+            _ => None,
+        };
+
+        match (head, non_gst) {
+            // A head on a ledger that is explicitly not a GST ledger is a
+            // contradictory response. Recognising it releases the contradiction
+            // as valid compliance data, which is the one outcome this type was
+            // introduced to prevent.
+            (Some(raw), Some(tax_type)) => Self::Contradictory {
+                tax_type: tax_type.clone(),
+                raw: raw.clone(),
             },
+            (Some(raw), None) => match raw.as_str() {
+                "CGST" => Self::Recognized {
+                    raw: raw.clone(),
+                    head: GstDutyHead::Cgst,
+                },
+                "IGST" => Self::Recognized {
+                    raw: raw.clone(),
+                    head: GstDutyHead::Igst,
+                },
+                "State Tax" => Self::Recognized {
+                    raw: raw.clone(),
+                    head: GstDutyHead::StateTax,
+                },
+                "UT Tax" => Self::Recognized {
+                    raw: raw.clone(),
+                    head: GstDutyHead::UtTax,
+                },
+                "Cess" => Self::Recognized {
+                    raw: raw.clone(),
+                    head: GstDutyHead::Cess,
+                },
+                _ => Self::Unrecognized { raw: raw.clone() },
+            },
+            (None, Some(tax_type)) => Self::NotTaxLedger {
+                tax_type: tax_type.clone(),
+            },
+            (None, None) => Self::Absent,
         }
     }
 }

@@ -241,6 +241,49 @@ mod tests {
     }
 
     #[test]
+    fn a_duty_head_on_a_non_gst_ledger_is_contradictory_not_recognised() {
+        // <TAXTYPE>Others</TAXTYPE><GSTDUTYHEAD>CGST</GSTDUTYHEAD> is a response
+        // contradicting itself. Classifying head-first recognised it and never
+        // consulted TAXTYPE, releasing the contradiction as valid compliance data.
+        // Neither field is now asserted, and both raw values are kept so a
+        // reviewer can see what Tally actually returned.
+        let response = format!(
+            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><CMPINFO><LEDGER>1</LEDGER></CMPINFO><COLLECTION><LEDGER NAME=\"Contradictory\" RESERVEDNAME=\"\"><GUID>{COMPANY_GUID}-00000042</GUID><BRIDGECOMPANYGUID>{COMPANY_GUID}</BRIDGECOMPANYGUID><MASTERID>66</MASTERID><ALTERID>66</ALTERID><PARENT>Duties &amp; Taxes</PARENT><TAXTYPE>Others</TAXTYPE><GSTDUTYHEAD>CGST</GSTDUTYHEAD><OPENINGBALANCE>0.00</OPENINGBALANCE><LANGUAGENAME.LIST><NAME.LIST><NAME>Localized Contradictory</NAME></NAME.LIST></LANGUAGENAME.LIST></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>"
+        );
+        let parsed =
+            parse_native_party_ledger_master_records_with_evidence(&response, COMPANY_GUID)
+                .expect("a contradictory response still parses; it is classified, not refused");
+        assert_eq!(
+            parsed.records[0].record.fields.gst_duty_head,
+            GstDutyHeadObservation::Contradictory {
+                tax_type: "Others".to_string(),
+                raw: "CGST".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn an_unobserved_tax_type_does_not_contradict_a_duty_head() {
+        // Scoped deliberately. An absent or empty TAXTYPE is not evidence that the
+        // ledger is non-GST, so it must not block recognition -- that would refuse
+        // real GST ledgers on any Tally version that omits the field. Only an
+        // OBSERVED non-GST value contradicts.
+        let response = format!(
+            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><CMPINFO><LEDGER>1</LEDGER></CMPINFO><COLLECTION><LEDGER NAME=\"NoTaxType\" RESERVEDNAME=\"\"><GUID>{COMPANY_GUID}-00000043</GUID><BRIDGECOMPANYGUID>{COMPANY_GUID}</BRIDGECOMPANYGUID><MASTERID>67</MASTERID><ALTERID>67</ALTERID><PARENT>Duties &amp; Taxes</PARENT><GSTDUTYHEAD>IGST</GSTDUTYHEAD><OPENINGBALANCE>0.00</OPENINGBALANCE><LANGUAGENAME.LIST><NAME.LIST><NAME>Localized NoTaxType</NAME></NAME.LIST></LANGUAGENAME.LIST></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>"
+        );
+        let parsed =
+            parse_native_party_ledger_master_records_with_evidence(&response, COMPANY_GUID)
+                .expect("parses");
+        assert_eq!(
+            parsed.records[0].record.fields.gst_duty_head,
+            GstDutyHeadObservation::Recognized {
+                raw: "IGST".to_string(),
+                head: GstDutyHead::Igst,
+            }
+        );
+    }
+
+    #[test]
     fn live_capture_backs_the_recognised_duty_head_vocabulary() {
         // Captured from a live TallyPrime 7.1 Silver response to
         // render_party_ledger_master_request, so the vocabulary is checked against
