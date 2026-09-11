@@ -88,6 +88,7 @@ of this tool is posted to a real book.
 """
 
 import argparse
+import contextlib
 import csv
 import datetime
 import decimal
@@ -364,6 +365,32 @@ class SBI(Bank):
         return "TXN", ""
 
 
+# The digit count of an ACH bank reference — **exactly** the observed length,
+# not a minimum, because this is the only thing separating a reference from a
+# number inside the counterparty's own name.
+#
+# An earlier version guessed a lower bound of six, reasoning about a "gap"
+# between a name's number (a unit or a year) and a reference. That was wrong in
+# the most ordinary way available: an Indian PIN code is six digits and is
+# routinely printed with a space, so `ACH D- TP ACH ACME-400 001` resolved to
+# `ACME` and an `ACME` mapping would post that transaction to the wrong ledger.
+# Reasoning about where a threshold "ought" to sit invented a gap that the
+# address line walks straight through.
+#
+# So it is not reasoned, it is observed: every ACH reference seen in a real
+# narration is ten digits. Anything else — longer, shorter, wrapped into a
+# different length — is UNRESOLVED and reaches suspense, where an operator sees
+# it. An unrecognised narration costs a look; a misattributed one announces
+# nothing. When a reference of another length is genuinely observed, widen this
+# and record the observation.
+ACH_REFERENCE_DIGITS = 10
+# `-\s*` before the run, and `\s*` between its digits: the cell wraps wherever
+# the column edge falls, which includes immediately after the delimiter. See
+# finding S1.
+ACH_PARTY = re.compile(
+    r"^ACH D-\s*TP ACH (.+)-\s*((?:\d\s*){%d})$" % ACH_REFERENCE_DIGITS)
+
+
 class HDFC(Bank):
     """HDFC Bank current-account statement."""
 
@@ -480,13 +507,26 @@ class HDFC(Bank):
                 return "UNRESOLVED"
             # UPI-XXXXXX4230-... is a masked account, not a payee name
             return "UNNAMED" if re.fullmatch(r"[X]+\d*", candidate) else candidate
-        # Greedy, anchored at the end: the delimiter is the **final** bank
-        # reference, not the first hyphen followed by digits. Non-greedy stopped
-        # at the first one, so `ACH D- TP ACH STUDIO-54 INDUSTRIES-1234567890`
-        # resolved to `STUDIO` — and a mapping for `STUDIO` then silently posts
-        # an unrelated counterparty's transaction to that ledger. A name
-        # containing a hyphenated number is ordinary (`STUDIO-54`, `UNIT-7`).
-        found = re.match(r"^ACH D-\s*TP ACH (.+)-\d+$", narr)
+        # Shape and delimiter: finding S2 in `docs/tally/README.md`
+        # ("Statement-layout findings"). Internal spaces in the reference, and
+        # why this branch reads `narr_spaced` rather than `narr`: finding S1
+        # there, which also records the residual neither reading resolves.
+        #
+        # Greedy binds the name to the *last* qualifying reference: `(.+)`
+        # prefers the longest match, and `ACME TRADERS-12345` fails because the
+        # character after it is a space rather than a hyphen.
+        #
+        # The **digit count is part of the shape**, and it has to be, because
+        # "hyphen then digits" alone does not distinguish a bank reference from
+        # an ordinary name. `ACH D- TP ACH STUDIO-54` resolved to `STUDIO` and
+        # `ACH D- TP ACH STUDIO-5 4` — a name whose number wrapped at the column
+        # edge — did too, so a mapping for `STUDIO` silently posted a `STUDIO-54`
+        # transaction to the wrong ledger. Requiring a reference-length run of
+        # digits leaves both as UNRESOLVED, which routes them to suspense where
+        # an operator sees them. That is the direction to fail in: an
+        # unrecognised narration costs a look, a misattributed one does not
+        # announce itself at all.
+        found = ACH_PARTY.match(narr)
         if found:
             return _squash(found.group(1))
         for prefix, label in (("EMI ", "EMI"), ("DEBIT CARD", "DEBIT CARD FEE")):
@@ -1291,21 +1331,43 @@ def read_password(env=None, interactive=None):
     return getpass.getpass("statement PDF password: ")
 
 
-def _write_private(path, text, accept_inherited=False):
-    """Create output files readable only by their owner, where the OS allows it.
+def _existing_target_on_windows(path):
+    # The acknowledgement covers the *directory* the operator checked with
+    # `icacls`. It does not cover a file that is already there: an overwrite
+    # keeps that file's existing DACL rather than inheriting the directory's,
+    # and `os.chmod` cannot restrict it. So an operator can follow the
+    # instruction exactly and still overwrite a file readable by other
+    # principals — with the tool reporting success.
+    return Refusal(
+        "existing_target_on_windows",
+        f"{path} already exists. On Windows an overwrite keeps the file's "
+        "own ACL, not the directory's, so checking the directory says "
+        "nothing about this file. Delete it (or choose a new name) and "
+        "re-run, so the new file inherits the ACL you checked.",
+    )
 
-    The XML and the manifest carry counterparty names, amounts, an account
-    label and every narration in the statement. On a shared host the default
-    022 umask would publish all of it as mode 0644.
+
+def windows_destination_refusal(path, accept_inherited):
+    """Why this destination cannot be written on Windows, or None.
+
+    One rule, applied twice on purpose. `preflight` applies it to **every**
+    destination before the run writes anything, because refusing the manifest
+    after the XML has been written leaves a partial result whose remedy —
+    remove the manifest and re-run — then fails on the XML the failed run
+    created. `_open_private` applies it again at the moment of the create,
+    because a preflight result is a fact about the past: between the check and
+    the create, another process can put a file there.
     """
-    if os.name == "nt" and not accept_inherited:
+    if os.name != "nt":
+        return None
+    if not accept_inherited:
         # On Windows `os.chmod` toggles the read-only attribute and the mode
         # argument to `os.open` is ignored; the file inherits the directory's
-        # ACL. So the guarantee in this docstring is simply false there, and a
-        # file carrying account numbers, counterparties, amounts and every
-        # narration would be readable by anyone the directory allows — while the
-        # tool reported it as owner-only. Refuse rather than reassure.
-        raise Refusal(
+        # ACL. So the owner-only guarantee is simply false there, and a file
+        # carrying account numbers, counterparties, amounts and every narration
+        # would be readable by anyone the directory allows — while the tool
+        # reported it as owner-only. Refuse rather than reassure.
+        return Refusal(
             "cannot_restrict_on_windows",
             f"{path}: this tool writes owner-only files, and POSIX modes do not "
             "do that on Windows — the output would inherit the directory's ACL "
@@ -1314,10 +1376,98 @@ def _write_private(path, text, accept_inherited=False):
             "--accept-inherited-permissions, which records that you have "
             "checked and makes the claim your own rather than this tool's.",
         )
-    handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
-        stream.write(text)
-    os.chmod(path, 0o600)  # an existing file keeps its old mode through O_CREAT
+    if os.path.exists(path):
+        return _existing_target_on_windows(path)
+    return None
+
+
+def _open_private(path, accept_inherited=False):
+    """Create one output file readable only by its owner, and return the handle.
+
+    The XML and the manifest carry counterparty names, amounts, an account
+    label and every narration in the statement. On a shared host the default
+    022 umask would publish all of it as mode 0644.
+
+    Always `O_EXCL`: this only ever creates a file that did not exist. On
+    Windows that is the rule itself — an overwrite would keep the existing
+    file's ACL — and deciding it at create time rather than after an
+    `os.path.exists` is what makes it race-free. On POSIX an overwrite is
+    permitted, but it is `write_outputs` that performs it, by renaming a
+    staged file over the destination once every payload is safely on disk.
+    """
+    refusal = windows_destination_refusal(path, accept_inherited)
+    if refusal:
+        raise refusal
+    try:
+        return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        raise _existing_target_on_windows(path) from None
+
+
+def write_outputs(targets, accept_inherited=False, after_claim=None):
+    """Claim **every** destination, then write them. All of them or none.
+
+    `targets` is [(path, text), ...] in the order they should be reported.
+    `after_claim` runs once every destination is claimed and still empty;
+    raising from it rolls the whole set back.
+
+    Creating each file at its own write site left a partial result that the
+    refusal's own remedy could not clear: with `--out` new and `--manifest`
+    taken, the XML was written, the manifest was refused, and "remove it and
+    re-run" then failed on the XML the failed run had just created. Preflight
+    narrowed that to a race but did not close it, because the two creates were
+    still independent events with the first payload written in between.
+
+    **Nothing that already exists is touched until every payload is written.**
+    An earlier version claimed each destination with `O_TRUNC` on POSIX, which
+    emptied an existing output at claim time — so a later failure rolled back by
+    unlinking a file whose previous contents the run had already destroyed. A
+    command that refused could therefore leave the operator with neither the old
+    output nor a new one. That is worse than the partial result it was fixing.
+
+    So a destination that exists is **staged**: the payload is written to a
+    sibling temporary file and renamed over the destination at the end, which is
+    atomic and happens only once every target has succeeded. A destination that
+    does not exist is created exclusively under its own name, which is both the
+    reservation against a concurrent run and, on Windows, the rule itself —
+    there an existing destination is refused outright rather than staged.
+    """
+    claimed, staged = [], []
+    try:
+        for path, _ in targets:
+            if os.path.exists(path):
+                # Refuses here on Windows; on POSIX, stage beside it.
+                refusal = windows_destination_refusal(path, accept_inherited)
+                if refusal:
+                    raise refusal
+                handle, temporary = tempfile.mkstemp(
+                    dir=os.path.dirname(os.path.abspath(path)),
+                    prefix=os.path.basename(path) + ".", suffix=".part")
+                claimed.append((temporary, handle))
+                staged.append((temporary, path))
+            else:
+                claimed.append((path, _open_private(path, accept_inherited)))
+        if after_claim is not None:
+            after_claim()
+        for index, ((_, text), (where, handle)) in enumerate(zip(targets, claimed)):
+            claimed[index] = (where, None)  # fdopen owns the handle from here
+            with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
+                stream.write(text)
+            os.chmod(where, 0o600)
+    except BaseException:
+        # Only paths this call created are removed. A created destination is
+        # still this run's; a staged file never was the destination at all.
+        for where, handle in claimed:
+            if handle is not None:
+                with contextlib.suppress(OSError):
+                    os.close(handle)
+            with contextlib.suppress(OSError):
+                os.unlink(where)
+        raise
+    # Every payload is on disk. Replacing now cannot lose an existing output to
+    # a failure that has already been ruled out.
+    for temporary, path in staged:
+        os.replace(temporary, path)
 
 
 def _check_paths(args):
@@ -1393,6 +1543,23 @@ def preflight(args):
             "generated document, or --dry-run to review the mapping without writing.",
         )
     _check_paths(args)
+    # Both destinations, before either is written. Judging them one at a time at
+    # write time meant a run with a new `--out` and an existing `--manifest`
+    # wrote the XML, then refused the manifest: a partial result whose stated
+    # remedy — remove the manifest and re-run — immediately failed on the XML
+    # the failed run had just created. `_claim_destinations` re-checks at the
+    # create, where it can be atomic.
+    #
+    # Not under `--dry-run`, which returns before opening either destination.
+    # These checks are about writing a file; refusing a preview that would write
+    # nothing made `--dry-run` unusable on Windows for exactly the command an
+    # operator wants to preview — their real one, flags and all.
+    if not args.dry_run:
+        for path in (args.out, args.manifest):
+            if path:
+                refusal = windows_destination_refusal(path, args.accept_inherited_permissions)
+                if refusal:
+                    raise refusal
 
     window = tuple(_cli_date(value, flag) for value, flag in
                    ((args.date_from, "--from"), (args.date_to, "--to")))
@@ -1437,12 +1604,14 @@ def verify_against_statement(rows, bank, expected):
     return totals
 
 
-def _write_csv(path, records, accept_inherited=False):
+def _manifest_csv(records):
+    """The manifest as text. Separated from writing it so both payloads exist
+    before either destination is claimed."""
     writer_target = io.StringIO()
     writer = csv.DictWriter(writer_target, fieldnames=list(MANIFEST_COLUMNS))
     writer.writeheader()
     writer.writerows(records)
-    _write_private(path, writer_target.getvalue(), accept_inherited)
+    return writer_target.getvalue()
 
 
 def _print_dry_run(manifest):
@@ -1612,20 +1781,24 @@ def main(argv=None):
     print(f"\n{count} vouchers; {skipped} skipped as already carried elsewhere")
     print(f"  bank ledger out {outward:,}  in {inward:,}")
     print(f"  suspense vouchers {sum(1 for record in manifest if record['suspense'])}")
+    targets = []
     if args.out:
-        _write_private(args.out, xml_text, args.accept_inherited_permissions)
-        # Re-run the collision check now that the XML exists. The check before
-        # the run can only compare the two output paths lexically, because
-        # `samefile` needs both to exist — and a lexical compare is
-        # case-sensitive while the volume may not be, so `--out Result.xml
-        # --manifest result.XML` passed, the XML was written, and the manifest
-        # then truncated it with both success lines printed. Asking the
-        # filesystem here costs one call and refuses before anything is lost.
-        _check_paths(args)
-        print(f"  wrote {args.out} (mode 0600)")
+        targets.append((args.out, xml_text))
     if args.manifest:
-        _write_csv(args.manifest, manifest, args.accept_inherited_permissions)
-        print(f"  wrote {args.manifest} (mode 0600)")
+        targets.append((args.manifest, _manifest_csv(manifest)))
+    if targets:
+        # `after_claim` re-runs the collision check once both destinations
+        # exist. The check before the run can only compare the two paths
+        # lexically, because `samefile` needs both to exist — and a lexical
+        # compare is case-sensitive while the volume may not be, so
+        # `--out Result.xml --manifest result.XML` passed it. Asking the
+        # filesystem here costs one call, and now happens while both files are
+        # still **empty**: previously the XML had already been written and the
+        # manifest truncated it, with both success lines printed.
+        write_outputs(targets, args.accept_inherited_permissions,
+                      after_claim=lambda: _check_paths(args))
+        for path, _ in targets:
+            print(f"  wrote {path} (mode 0600)")
     _print_operator_notes(args.company, skipped)
     return 0
 
