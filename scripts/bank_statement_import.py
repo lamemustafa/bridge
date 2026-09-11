@@ -576,26 +576,48 @@ def _looks_like_utr(text):
 
 
 def _key(text):
-    """Mapping key: letters and digits only, case-folded.
+    """Mapping key: **whitespace-insensitive, everything else significant.**
 
-    Deliberately more aggressive than Tally's own matching (`_ledger_key`),
-    because the wrap heuristic can space one counterparty's name two ways and
-    both spellings must reach the same mapping row. The cost is that it can
-    also collapse two *different* names — `load_mapping` refuses a file where
-    that happens rather than letting one silently win.
+    Whitespace is folded because the PDF cell-wrap genuinely splits one
+    counterparty's name two ways in one statement — measured on the delivered
+    HDFC book, where `MERCURYM ANUFACTURERS` and `MERCURYMANUFACTURERS` are the
+    same payee and must reach the same mapping row. That is a property of
+    `pdftotext` geometry, established here, and it is the whole reason this key
+    is looser than an exact compare.
 
-    Unicode-aware rather than `[A-Z0-9]`. An ASCII class reduces a name written
-    entirely in Devanagari, Tamil or Bengali to the empty string, and every such
-    party then shares one key — a book with two of them posts both to whichever
-    was mapped first, with no collision left to refuse. The demo company this
-    project reads carries ledgers in all three scripts.
+    **Punctuation used to be dropped too, and that part was removed.** Keeping
+    only letters, digits and marks also collapsed `A & B` with `AB`,
+    `S.K. Minerals` with `SK Minerals`, `M/s Mercury` with `Ms Mercury` and
+    `Shree-Ram Traders` with `Shree Ram Traders` — different names, silently
+    posted to one ledger. `load_mapping` refuses two *mapping rows* that
+    collide, but nothing refuses a **statement** party colliding with a mapping
+    row written for somebody else: there is exactly one candidate, no ambiguity
+    to reject, and the write goes to a ledger the operator never chose for it.
+    §9.4b calls this out — a sole candidate under a loose fold is not a
+    resolution — and named `ledger_lookup_key`'s alphanumeric-only fold as the
+    example. This was the same fold.
 
-    Marks are kept as well as letters and digits: `str.isalnum` is false for a
-    combining matra, so dropping those would collapse Indic names that differ
-    only in their vowel signs — the same bug one layer down.
+    **Removing it cost nothing measurable.** Across the 23 distinct parties in
+    the delivered manifests, **none** carried punctuation that the old key
+    dropped — bank narration party fields are upper-case alphanumeric — and the
+    single real merge, the wrap case above, survives unchanged. The risky half
+    was doing no work.
+
+    Folding is done on the *characters*, not by a category filter, so a name
+    written in Devanagari, Tamil or Bengali keeps every character rather than
+    reducing toward the empty string, and combining marks (category `Mn`, for
+    which `str.isalnum` is false) are preserved with the letters they modify.
+
+    That also retires a refusal. `load_mapping` used to reject a party whose key
+    came out empty — reachable when the key kept only letters and digits, since
+    `---` reduced to nothing and would have bucketed with every other such name.
+    Removing only whitespace makes it **unreachable**: `_squash` has already
+    dropped any name that is entirely whitespace, and every other name keeps at
+    least one character. The check was deleted rather than left in place,
+    because an unreachable guard reads as protection and is not.
     """
     return "".join(character for character in text.upper()
-                   if unicodedata.category(character)[0] in "LNM")
+                   if not character.isspace())
 
 
 def _ledger_key(name):
@@ -1111,12 +1133,6 @@ def load_mapping(path):
                     "them all. Unidentified rows must reach suspense, where they are "
                     "visible. Map the individual narrations the dry run prints beside "
                     f"{party!r} instead.",
-                )
-            if not key:
-                raise Refusal(
-                    "unusable_mapping_key",
-                    f"{path} line {line}: {party!r} reduces to an empty key, which every "
-                    "other such name would share.",
                 )
             if key in mapping and mapping[key] != (ledger, treatment):
                 first_party, first_line = origin[key]

@@ -642,8 +642,35 @@ def test_mapping_key_survives_non_ascii_scripts(m):
     # vowel signs — dropping combining marks would be the same bug one layer down
     names = ["पार्टी", "पारटी", "ஏபிசி", "কোম্পানি"]
     assert len({m._key(n) for n in names}) == len(names)
-    # and the ASCII behaviour is unchanged
-    assert m._key("A & B") == m._key("AB") == "AB"
+
+
+def test_mapping_key_keeps_punctuation_significant(m):
+    """`_key` folds whitespace and nothing else.
+
+    This assertion used to read `_key("A & B") == _key("AB") == "AB"` — the
+    defect written down as a contract. Dropping punctuation collapsed genuinely
+    different names onto one mapping row, and while `load_mapping` refuses two
+    *mapping rows* that collide, nothing refuses a **statement** party colliding
+    with a row written for somebody else: one candidate, no ambiguity to reject,
+    and the transaction posts to a ledger the operator never chose for it.
+
+    Removing it was measured rather than assumed. Across the 23 distinct parties
+    in the delivered manifests, none carried punctuation the old key dropped,
+    and the one real merge — the cell-wrap case below — is unaffected.
+    """
+    apart = [("A & B", "AB"), ("S.K. Minerals", "SK Minerals"),
+             ("M/s Mercury", "Ms Mercury"), ("Shree-Ram Traders", "Shree Ram Traders")]
+    for left, right in apart:
+        assert m._key(left) != m._key(right), f"{left!r} and {right!r} must stay apart"
+
+    # ...while the reason the key is loose at all still holds: one payee, split
+    # two ways by the PDF cell wrap, measured on the delivered HDFC statement.
+    assert m._key("MERCURYM ANUFACTURERS") == m._key("MERCURYMANUFACTURERS")
+    assert m._key("ZEPHYR MANUFACTURING") == m._key("ZEPHYRMANUFACTURING")
+
+    # Case still folds, and nothing else is touched.
+    assert m._key("m/s mercury") == m._key("M/S MERCURY")
+    assert m._key("A&B") == "A&B"
 
 
 def test_mapping_key_ignores_wrap_spacing(m):
@@ -665,23 +692,35 @@ def test_mapping_refuses_ambiguous_input(m):
         # report a clean, balanced, entirely suspense-bound import
         refuses(m, "mapping_headers_missing", m.load_mapping,
                 mapping_file(directory, "name,ledger,treatment\nA,L,auto\n"))
-        # two different counterparties collapsing to one key: last row would win
+        # two different counterparties collapsing to one key: last row would win.
+        # They must collide under the key `_key` actually computes — spacing
+        # only. `A & B` / `AB` was the old example and no longer collides,
+        # which is the point of the change, not a gap here.
         refuses(m, "mapping_key_collision", m.load_mapping,
                 mapping_file(directory, "party,ledger,treatment\n"
-                                        "A & B,Ledger One,auto\n"
-                                        "AB,Ledger Two,auto\n"))
+                                        "ZEPHYR MANUFACTURING,Ledger One,auto\n"
+                                        "ZEPHYRMANUFACTURING,Ledger Two,auto\n"))
         # ... but an identical instruction spelled two ways is not a conflict
         mapping = m.load_mapping(mapping_file(
-            directory, "party,ledger,treatment\nA & B,One,auto\nAB,One,auto\n"))
-        assert mapping[m._key("AB")] == ("One", "auto")
+            directory, "party,ledger,treatment\n"
+                       "ZEPHYR MANUFACTURING,One,auto\nZEPHYRMANUFACTURING,One,auto\n"))
+        assert mapping[m._key("ZEPHYRMANUFACTURING")] == ("One", "auto")
+        # and two names that differ only in punctuation are now simply two rows
+        two = m.load_mapping(mapping_file(
+            directory, "party,ledger,treatment\nA & B,One,auto\nAB,Two,auto\n"))
+        assert two[m._key("A & B")] == ("One", "auto")
+        assert two[m._key("AB")] == ("Two", "auto")
         # a Contra's other leg must be a real bank/cash ledger
         refuses(m, "contra_without_ledger", m.load_mapping,
                 mapping_file(directory, "party,ledger,treatment\nOWN,,contra\n"))
         refuses(m, "unknown_treatment", m.load_mapping,
                 mapping_file(directory, "party,ledger,treatment\nA,L,transfer\n"))
-        # a name with no letters or digits at all would bucket with every other
-        refuses(m, "unusable_mapping_key", m.load_mapping,
-                mapping_file(directory, "party,ledger,treatment\n---,L,auto\n"))
+        # `---` used to reduce to an empty key and was refused for it. With the
+        # key folding whitespace only it is an ordinary name, and the empty-key
+        # case is unreachable — `_squash` drops a whitespace-only party first.
+        assert m.load_mapping(
+            mapping_file(directory, "party,ledger,treatment\n---,L,auto\n"))[m._key("---")] \
+            == ("L", "auto")
         # two columns normalising to one name: the later silently wins, and if
         # it is blank the row is skipped and its transactions fall to suspense
         refuses(m, "mapping_headers_duplicated", m.load_mapping,
