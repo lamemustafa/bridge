@@ -65,7 +65,12 @@ The constructor refuses, rather than degrades, on:
   does not identify one master, nothing downstream is meaningful;
 - **an identifier hint that yields no identifier** — `IdentifierHintUnusable`. A
   hint that silently does nothing is a trap (P7);
-- bounds violations on entry count, entity count, and name length.
+- bounds violations on entry count, entity count, name length, and **hint
+  count**. The last is checked as the hints arrive rather than on the finished
+  set: hints deduplicate, so a million repeated ones fold to a single identifier
+  and the finished set never exceeds its bound, while every one of them has
+  already been scanned and copied. Each hint yields at least one identifier or
+  is refused outright, so the eager bound rejects nothing the late one admitted.
 
 A softer collision — two masters differing only in case, whitespace runs, or
 dash and quote style — does **not** fail the catalog. It is carried as a
@@ -117,13 +122,32 @@ it qualified as a code. Otherwise `Part A12345678` reaches an unrelated
 `Bank 12345678` through the one-letter gap the code test rejects: a token
 identifies by its whole shape or not at all.
 
+**A mask is a mask however it is spelled, and wherever it is written.** A value
+carrying mask punctuation (`****`, `####`) or a run of one repeated letter
+(`XXXX`) exposes a suffix rather than a number, and that suffix is no more
+identifying a space away than joined: `XXXX 12345678` is the same statement as
+`XXXX12345678`. A mask therefore suppresses the token that follows it, in both
+spellings and for both identifier shapes. Two unrelated ledgers sharing a masked
+last-eight must reach a near-miss, never a bind.
+
+**A code is a code only in the script it is written in.** Canonical form keeps
+ASCII alphanumerics alone, so a name in another script fused to an ASCII suffix
+would shed its letters and yield a code the name never contained, binding a
+party to an unrelated bank where the ASCII spelling of the same shape did not.
+A token holding non-ASCII letters yields no code. This rule has to hold in every
+script or the boundary is an ASCII boundary wearing a general name, and the
+books this binder reads carry Devanagari, Tamil and Bengali ledger names.
+
 **Period labels are recognized by their numbers, not their words.** A token is
 a period when every number in it reads as a year or a small ordinal — which
 catches `SEPTEMBER2025` and `2025QUARTER1` that no cap on the alphabetic run
 ever would, because a month name can be any length and a year cannot. A fiscal
 range (`2025-2026`, `2025/2026`) is excluded before its digits are fused, since
 stripping the separator produced an eight-digit run that no calendar reading
-rejects.
+rejects. Written without any separator the range arrives as one run that the
+splitting step never sees — `FY202425`, `FY20242025` — so a year followed by a
+two- or four-digit year is read as a period in its own right. Otherwise a
+missing `Purchases FY202425` identifier-binds to a sole live `Sales FY202425`.
 
 One narrow exclusion applies to the numeric shape: an eight-digit run that reads
 as a calendar date in 1900–2199 is a date, not an identifier. Without it two
@@ -160,12 +184,32 @@ favour.
 under **Tally's own rule for when two master names are the same**, and only when
 exactly one master shares it.
 
-That rule is measured, not chosen: `IMPLEMENTATION_GUIDE.md` §3.3b found Tally's
-master-name matching to be case-insensitive **and separator-insensitive — a
-hyphen matches a space** — and otherwise exact on letters. `AND` for `&`, a
-missing suffix word, and a singular for a plural were all rejected. So the fold
-lowercases, collapses whitespace, folds Unicode dash and quote variants to
-ASCII, and treats `-` as a space; and it stops exactly where Tally stops.
+**Part of that rule is measured, and the part that is not has to say so.**
+`TALLY_PROTOCOL_REFERENCE.md` §9.4b sent named variants at a live master and
+recorded which Tally accepted: ASCII case folding, one trailing space, and a
+**space supplied where the master carries a hyphen**. `AND` for `&`, a missing
+suffix word and a singular for a plural were rejected. Those three are Tally's
+behaviour; §9.4b marks everything else **UNVERIFIED** and warns that a fold is
+only as safe as its least-verified step.
+
+This fold is wider. It also folds the reverse hyphen direction, collapses runs
+of internal whitespace, ignores leading whitespace, and folds Unicode dash and
+quote variants to ASCII — four transformations on §9.4b's unverified list. An
+earlier draft of this section claimed the fold "stops exactly where Tally
+stops". That was wrong, and the live slice in `TEST_CORPUS.md` §9 shows it
+binding on the unverified reverse direction against a real instance.
+
+**So the extra width is Bridge's policy, not Tally's, and stands on its own
+argument:** a bind answers *which master the operator meant*, and two spellings
+differing only in separators are one name to whoever typed either. Two guards
+carry that. A fold merging two **live** masters never resolves — the pair is an
+ambiguity and both surface (§4). And the write gate admits `exact` only, so a
+normalized bind informs an operator without widening what may be written.
+
+It is nevertheless the least-proven step in this module. §9.4b's own remedy is
+open — let the verified three resolve and a looser fold only *suggest* — and
+taking it would reinstate the refusals the next paragraph argues against. That
+trade is recorded here, not settled here.
 
 **Being stricter than the authority is not the safe direction it appears to
 be.** It refuses names Tally would accept, and `X - Y` is a common ledger
@@ -174,7 +218,7 @@ that shape. A binder that reports a near-miss for a name the book would have
 matched has invented work, not prevented an error.
 
 This fold is deliberately **separate from the general comparison key**, which is
-shared with other contracts for voucher numbers and voucher-type names. §3.3b
+shared with other contracts for voucher numbers and voucher-type names. §9.4b
 says nothing about those, and widening the shared fold to serve masters would be
 the "never to make one caller's case pass" this ADR warns against. One fold per
 notion of sameness, each named for the question it answers. Nothing else binds. There is no edit distance, no

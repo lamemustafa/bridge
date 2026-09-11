@@ -359,7 +359,8 @@ them is **PARTIAL**. Scope of each, so neither is read for more than it covers:
 | The ten ledgers exist in that company and nowhere else | **VERIFIED** | `CREATED=10, ALTERED=0, ERRORS=0`, then a readback of the ledger list naming all ten, plus a readback of a guard company showing none |
 | No book carried an embedded identifier before this | **VERIFIED** | all 16 loaded companies read through the `StandardLedgerCatalogV1` request, responses written to files and parsed from the files; 470 names, 0 numeric and 1 code identifier |
 | The identifier rule behaves correctly against live-read names | **PARTIAL** | exercised against these ten seeded names only, on one instance, one licence tier, one Tally build. Fabricated *source* names against live *catalogue* names — no real source document has been bound end to end |
-| Binding is safe on catalogues generally | **UNVERIFIED** | no engagement has run through this code path; the mutation sweep is fabricated mutations of live names, not observed operator input |
+| The shipped consumer path runs end to end against a real instance | **VERIFIED 2026-09-11** | the branch's own `bridge_mcp` binary driven over stdio against licensed TallyPrime 7.1 Silver, reading this company's catalogue over the wire and returning the binder's report — see "The end-to-end slice" below |
+| Binding is safe on catalogues generally | **UNVERIFIED** | one company, one instance, one Tally build, and every *source* name fabricated. No engagement has run a real document through this path; the mutation sweep is fabricated mutations of live names, not observed operator input |
 
 **Added 2026-09-10.** Ten ledgers prefixed `MB `, seeded so the master-binding
 identifier rule has live coverage. Before this, **no book on either instance carried an
@@ -395,6 +396,51 @@ remaining nine. Counters were `CREATED=10, ALTERED=0, ERRORS=0`, and every name 
 confirmed by a readback of the ledger list — counters alone prove nothing, since Tally
 rewrites imports silently. **Do not re-send the create file:** an identical `Create` is a
 silent `Alter` that overwrites.
+
+## The end-to-end slice, 2026-09-11
+
+**VERIFIED.** The reviewable claim before this was that the binder had never run through the
+surface that ships it: the crate had tests, and the catalogue side had live coverage, but no
+run had gone request-to-report through the consumer. This one does.
+
+**Procedure.** `cargo build --bin bridge_mcp` on the branch under review, then the binary driven
+over stdio with a real MCP session — `initialize`, `notifications/initialized`,
+`tools/call validate_masters` — against `http://127.0.0.1:9001`, TallyPrime 7.1, licence tier
+**silver**, `education_mode=false`. The tool read this company's ledger catalogue over the wire
+(89,576 bytes, `evidence.state=complete`) and returned the binder's report. Ten fabricated source
+names, chosen so that every decision the binder can reach is reached against **live-read master
+names**.
+
+| requested (fabricated) | returned | what it establishes |
+| --- | --- | --- |
+| `MB PILOT ALPHA (5550001001)` | `exact` | byte equality |
+| `mb pilot alpha (5550001001)` | `identifier` | the identifier is consulted **before** the name, so a case variant never reached the fold |
+| `MB-PILOT-ALPHA-(5550001001)` | `normalized` | the separator fold — see the caveat below |
+| `Alpha Pilot Account 5550001001` | `identifier` | **the rule this module exists for**: a name sharing no word with the master bound on its embedded number |
+| `Zeta Holdings 5550001009` | `near_miss`, 2 candidates, `shared_identifier` | one identifier on two masters refuses and shows both |
+| `MB TRADING COMPANY LTD` | `near_miss`, 2 candidates | a truncation surfaces both neighbours and chooses neither |
+| `MB EXPENSES FY2025` | `near_miss`, 2 candidates, `shared_token` | a shared period label did **not** become an identifier |
+| `MB ITEM PH-01-AB-00` | `identifier` | a code matched across punctuation |
+| `Zeta Nowhere Traders` | `missing`, `listing: "none"` | an absence stated as an absence, not as an empty list |
+| `MB PARTY BETA` | `near_miss`, 4 candidates | a prefix family surfaced whole |
+
+**`exact_live_spelling` appeared on bound rows only** — `exact`, `identifier`, `normalized` —
+and on no refusal. The same ten names sent to the **previously installed** server, same company
+and instance minutes earlier, returned `exact_live_spelling` alongside `match_state: "near_miss"`
+for two of them. That field on a refusal is a guess wearing the shape of an answer, and it is
+what this change deletes; the two runs are the before and after on one real instance.
+
+**What this slice does not establish.** One company, one instance, one Tally build, one licence
+tier. Every *source* name is fabricated — a real source document has still never been bound, so
+nothing here speaks to how operator-written names actually differ from master names. It exercises
+the MCP consumer; the desktop consumer shares the crate but was not driven.
+
+**It also reproduced a known gap, live.** The third row bound `MB-PILOT-ALPHA-(5550001001)` to a
+master carrying spaces. That is the **reverse** of the direction
+`TALLY_PROTOCOL_REFERENCE.md` §9.4b measured, and §9.4b marks it **UNVERIFIED**. The bind is a
+Bridge policy about which master an operator meant, not a Tally behaviour, and §9.4b's own remedy
+is that a looser fold may *suggest* rather than resolve. Recorded here because the slice is where
+it became visible on a real instance rather than in a unit test.
 
 **What it found within minutes.** The `DELTA`/`EPSILON` pair exposed a defect no fabricated
 fixture had produced: a *byte-exact* request for `MB PARTY DELTA (5550001009)` was being

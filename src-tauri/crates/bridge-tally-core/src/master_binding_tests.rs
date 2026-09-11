@@ -569,6 +569,12 @@ fn a_fiscal_period_label_is_not_an_identity_bearing_code() {
         "2025\u{2013}2026",
         "2025-2026",
         "APR2025-MAR2026",
+        // Written without the separator, the range arrives as one run that
+        // every length test above missed, and the token passed as a code.
+        "FY202425",
+        "FY20242025",
+        "AY202526",
+        "202425FY",
     ] {
         assert!(
             entity(&format!("Purchases {label}"))
@@ -577,15 +583,56 @@ fn a_fiscal_period_label_is_not_an_identity_bearing_code() {
             "{label} was treated as a code identifier"
         );
     }
-    let catalog = ledgers(&["Sales FY2025", "Beta Supply"]);
-    let binding = bind_one_name(&catalog, "Purchases FY2025");
-    assert_eq!(
-        binding.bound_name(),
-        None,
-        "a shared period label must not bind two unrelated ledgers"
-    );
+    for label in ["FY2025", "FY202425"] {
+        let catalog = ledgers(&[&format!("Sales {label}"), "Beta Supply"]);
+        let binding = bind_one_name(&catalog, &format!("Purchases {label}"));
+        assert_eq!(
+            binding.bound_name(),
+            None,
+            "the shared period label {label} bound two unrelated ledgers"
+        );
+    }
     // A genuine identity-bearing code still is one.
     assert_eq!(entity("Item PH01AB00").identifiers().len(), 1);
+}
+
+#[test]
+fn a_name_in_another_script_does_not_shed_its_letters_into_a_code() {
+    // Canonicalization keeps only ASCII, so a Devanagari party name fused to an
+    // ASCII suffix yielded the code `AB12345678` — a string the name never
+    // contained — and reached an unrelated bank ledger. The ASCII spelling of
+    // the same shape never did, which is what makes it a defect rather than a
+    // policy: the boundary was an ASCII boundary wearing a general name.
+    let party = "\u{92a}\u{93e}\u{930}\u{94d}\u{91f}\u{940}";
+    let fused = format!("{party}AB12345678");
+    assert!(
+        entity(&fused).identifiers().is_empty(),
+        "a dropped non-ASCII prefix manufactured a code"
+    );
+    let catalog = ledgers(&["Bank AB12345678", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&catalog, &fused).bound_name(),
+        None,
+        "a party name must not reach a bank ledger by shedding its script"
+    );
+    // The ASCII spelling this is measured against, unchanged: it keeps every
+    // letter, so it carries a code of its own and reaches no bank.
+    assert_eq!(
+        entity("PartyAB12345678").identifiers(),
+        [Identifier {
+            kind: IdentifierKind::Code,
+            value: "PARTYAB12345678".to_string(),
+        }]
+    );
+    assert_eq!(
+        bind_one_name(&catalog, "PartyAB12345678").bound_name(),
+        None
+    );
+    // A code standing on its own beside a name in any script is still a code.
+    assert_eq!(
+        entity(&format!("{party} AB12345678")).identifiers().len(),
+        1
+    );
 }
 
 #[test]
@@ -756,6 +803,32 @@ fn a_masked_value_identifies_nothing() {
             "{separated} exposed its suffix as an identifier"
         );
     }
+    // A mask spelled with letters is the same statement as one spelled with
+    // punctuation, and it too is written apart from the digits it hides. Read
+    // token by token, `XXXX` failed the punctuation test and the visible suffix
+    // escaped as a whole account number.
+    for separated in [
+        "Purchases XXXX 12345678",
+        "Purchases XXXXXXXX 12345678",
+        "Purchases (XXXX) 12345678",
+    ] {
+        assert!(
+            entity(separated).identifiers().is_empty(),
+            "{separated} exposed its suffix as an identifier"
+        );
+    }
+    let alphabetic = ledgers(&["Sales XXXX 12345678", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&alphabetic, "Purchases XXXX 12345678").bound_name(),
+        None,
+        "a masked last-eight must not bind two unrelated ledgers"
+    );
+    // A suffix shaped as a code is no less hidden than one shaped as a number.
+    assert!(entity("Purchases XXXX AB12345678").identifiers().is_empty());
+    // Ordinary words are not masks, however repetitive: only a run of one
+    // repeated letter is, and one letter alone is an ordinary word.
+    assert_eq!(entity("Purchases Unit 5550001001").identifiers().len(), 1);
+    assert_eq!(entity("Purchases A 5550001001").identifiers().len(), 1);
     // Ordinary punctuation around a whole number is not a mask.
     assert_eq!(entity("Party (5550001001)").identifiers().len(), 1);
     assert_eq!(entity("Party 5550001-002").identifiers().len(), 1);
@@ -977,6 +1050,24 @@ fn an_identifier_hint_is_bounded_before_anything_scans_it() {
         SourceEntity::with_identifier_hints(0, "Alpha Traders", [huge.as_str()]),
         Err(MasterBindingError::NameTooLong)
     );
+    // Bounding each hint does not bound the iterator. Repeated hints fold to
+    // one identifier, so the deduplicated check never fired however many
+    // arrived, while every one of them was scanned and copied first.
+    let repeated = vec!["5550001001"; MAX_IDENTIFIERS_PER_NAME + 1];
+    assert_eq!(
+        SourceEntity::with_identifier_hints(0, "Alpha Traders", repeated),
+        Err(MasterBindingError::TooManyIdentifiers)
+    );
+    // The bound admits everything a usable entity could carry.
+    let distinct = (0..MAX_IDENTIFIERS_PER_NAME)
+        .map(|index| format!("555000{index:04}"))
+        .collect::<Vec<_>>();
+    assert!(SourceEntity::with_identifier_hints(
+        0,
+        "Alpha Traders",
+        distinct.iter().map(String::as_str)
+    )
+    .is_ok());
 }
 
 #[test]

@@ -396,7 +396,16 @@ pub struct BindingTotals {
 }
 
 /// The result of one binding run.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+///
+/// Serializes but does **not** deserialize, and the asymmetry is the point.
+/// `assign_fallback` proves provenance by comparing the catalog fingerprint it
+/// recorded, and `catalog.fingerprint()` is public — so a derived `Deserialize`
+/// would let any caller restore an invented `Ambiguous` entity carrying the
+/// right fingerprint and draw a fallback for an entity the binder never emitted.
+/// `bind` is the only way to obtain one. A report that must cross a process
+/// boundary needs a restore that re-derives these fields, not a derive that
+/// trusts them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BindingReport {
     class: MasterClass,
     catalog: CatalogFingerprint,
@@ -595,7 +604,18 @@ impl SourceEntity {
     ) -> Result<Self, MasterBindingError> {
         let name = validated_name(name)?;
         let mut identifiers = extract_identifiers(&name)?;
-        for hint in hints {
+        for (index, hint) in hints.into_iter().enumerate() {
+            // Bounded here rather than after the loop: the iterator is
+            // caller-supplied and may be unbounded, and each turn scans a
+            // string and allocates. A million repeated hints deduplicate to one
+            // identifier, so the check below never fired while the work to
+            // reach it was already done. Every hint yields at least one
+            // identifier or is refused outright, so more hints than the
+            // identifier bound cannot produce a usable entity however they fold
+            // together — the eager bound rejects nothing the late one admitted.
+            if index >= MAX_IDENTIFIERS_PER_NAME {
+                return Err(MasterBindingError::TooManyIdentifiers);
+            }
             // A hint is caller-supplied document text like any other name, and
             // must clear the same bound before anything scans or copies it.
             validate_name_bounds(hint)?;
@@ -1170,21 +1190,30 @@ pub(crate) fn comparison_key(value: &str) -> String {
 /// Whether Tally itself would consider two master names the same.
 ///
 /// This is not `comparison_key`, and the difference is not cosmetic.
-/// `IMPLEMENTATION_GUIDE.md` §3.3b measured Tally's own master-name matching:
-/// case-insensitive **and separator-insensitive — a hyphen matches a space** —
-/// and otherwise exact on letters. `BRIDGE PROBE LEDGER A` matched a live
-/// `BRIDGE-PROBE-LEDGER-A`; `AND` for `&`, a missing suffix word and a singular
-/// for a plural were all rejected.
+/// `TALLY_PROTOCOL_REFERENCE.md` §9.4b measured Tally's own master-name
+/// matching and verified exactly three transformations: ASCII case folding, one
+/// trailing space, and a **space supplied where the master carries a hyphen**
+/// (`BRIDGE PROBE LEDGER A` matched a live `BRIDGE-PROBE-LEDGER-A`). `AND` for
+/// `&`, a missing suffix word and a singular for a plural were all rejected.
 ///
-/// Tally is the authority on what counts as the same master, so this fold
-/// follows it. Being *stricter* than the authority is not the safe direction it
-/// looks like: it refuses names Tally would accept, and `X - Y` is a common
-/// ledger convention — six of seventeen hyphenated names in the observed books
-/// take that shape.
+/// **This fold is wider than those three, deliberately, and the width is
+/// Bridge's own policy.** The reverse hyphen direction, collapsed whitespace
+/// runs, leading whitespace and the Unicode dash variants are all on §9.4b's
+/// UNVERIFIED list. It is not "what Tally does" — do not describe it that way.
+/// What justifies it is a different question: a bind answers which master the
+/// operator *meant*, and two spellings differing only in separators are one
+/// name to whoever typed either. `X - Y` is a common ledger convention — six of
+/// seventeen hyphenated names in the observed books take that shape — so a
+/// binder refusing them invents work rather than preventing an error.
+///
+/// Two guards make the width survivable, and neither may be removed without
+/// narrowing the fold with it: a fold that merges two **live** masters never
+/// resolves, and the write gate admits an exact spelling only. ADR 0016 §3
+/// records the open trade.
 ///
 /// It is a **separate** function rather than a widening of `comparison_key`
 /// precisely because that one is shared: voucher numbers and voucher-type names
-/// fold through it too, and §3.3b says nothing about those. One fold per notion
+/// fold through it too, and §9.4b says nothing about those. One fold per notion
 /// of sameness, each named for the question it answers.
 fn master_identity_key(value: &str) -> String {
     comparison_key(value)
@@ -1239,7 +1268,7 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
         if token.is_empty() {
             continue;
         }
-        let masked_here = is_mask_punctuated(token);
+        let masked_here = is_mask_punctuated(token) || is_mask_alphabetic(token);
         let masked = masked_here || previous_was_mask;
         previous_was_mask = masked_here;
         let canonical = token
@@ -1249,9 +1278,22 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
             .collect::<String>();
         let digits = canonical.chars().filter(char::is_ascii_digit).count();
         let letters = canonical.chars().filter(char::is_ascii_alphabetic).count();
+        // Canonicalization keeps only ASCII, so a name written in another
+        // script and fused to an ASCII suffix yields a code the name never
+        // contained: a Devanagari party name followed by `AB12345678`
+        // canonicalized to `AB12345678` and reached an unrelated
+        // `Bank AB12345678`, while the ASCII-spelled `PartyAB12345678` did not.
+        // A token identifies by its whole shape or not at all, and that rule
+        // has to hold in every script or the boundary is an ASCII boundary
+        // wearing a general name.
+        let foreign_letters = token
+            .chars()
+            .any(|character| !character.is_ascii() && character.is_alphabetic());
         if canonical.len() >= MIN_CODE_IDENTIFIER_CHARS
             && digits >= MIN_CODE_IDENTIFIER_DIGITS
             && letters >= 2
+            && !foreign_letters
+            && !masked
             && !is_period(token)
             && !is_masked(&canonical)
         {
@@ -1302,6 +1344,28 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
 /// code branch only, because a mask spelled with letters is caught by the
 /// letter test; a mask spelled with punctuation reaches the numeric branch,
 /// where every non-digit is an ordinary delimiter.
+/// A mask spelled with letters hides its digits exactly as one spelled with
+/// punctuation does. `is_masked` already reads the shape inside a single token,
+/// so `XXXX1234` never became a code; written a space apart as `XXXX 12345678`
+/// the same statement lost its mask, and the visible suffix escaped as though
+/// it were a whole account number — enough to bind a missing purchase ledger to
+/// a sole live sales one carrying the same last eight.
+///
+/// Two characters minimum, and letters only: a lone `A` is an ordinary name
+/// word, and a token carrying digits is already judged whole by `is_masked`.
+fn is_mask_alphabetic(token: &str) -> bool {
+    let canonical = token
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .map(|character| character.to_ascii_uppercase())
+        .collect::<String>();
+    canonical.len() >= 2
+        && canonical
+            .chars()
+            .all(|character| character.is_ascii_alphabetic())
+        && is_masked(&canonical)
+}
+
 fn is_mask_punctuated(token: &str) -> bool {
     token
         .chars()
@@ -1383,6 +1447,22 @@ fn part_reads_as_period(canonical: &str, any_number: &mut bool) -> bool {
         let reads_as_period = match run.len() {
             1 | 2 => (1..=99).contains(&value),
             4 => (1900..=2199).contains(&value),
+            // A range written without its separator. `FY2025-26` splits and is
+            // read part by part; `FY202425` arrives whole, and every length
+            // test above missed it — so the token passed as a code and bound a
+            // missing `Purchases FY202425` to a sole live `Sales FY202425`.
+            // Both spellings of the suffix occur: `202425` and `20242025`.
+            6 | 8 => {
+                let (lead, suffix) = run.split_at(4);
+                let lead = lead.parse::<u32>().unwrap_or(u32::MAX);
+                let suffix_value = suffix.parse::<u32>().unwrap_or(u32::MAX);
+                (1900..=2199).contains(&lead)
+                    && if suffix.len() == 2 {
+                        (1..=99).contains(&suffix_value)
+                    } else {
+                        (1900..=2199).contains(&suffix_value)
+                    }
+            }
             _ => false,
         };
         if !reads_as_period {
@@ -1393,7 +1473,7 @@ fn part_reads_as_period(canonical: &str, any_number: &mut bool) -> bool {
     true
 }
 
-/// An eight-digit run that reads as a calendar date in any order this project/// An eight-digit run that reads as a calendar date in any order this project/// An eight-digit run that reads as a calendar date in any order this project
+/// An eight-digit run that reads as a calendar date in any order this project
 /// admits is a date, not an identifier. Recognizing only `YYYYMMDD` left
 /// `01012026` binding a source to an unrelated master that shares its period
 /// label. Being generous here can only make a bind *less* likely, which is the
