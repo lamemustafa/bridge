@@ -928,6 +928,98 @@ def test_cli_refuses_before_reading_anything(m):
             cli(m, **{"--dry-run": None, "--out": "x.csv", "--manifest": "x.csv"}))
 
 
+def test_ach_party_ends_at_the_final_bank_reference(m):
+    """A non-greedy boundary stopped at the first hyphen followed by digits, so
+    `STUDIO-54 INDUSTRIES` resolved to `STUDIO` — and a mapping for `STUDIO`
+    then silently posts an unrelated counterparty to that ledger. Hyphenated
+    numbers inside a name are ordinary."""
+    def party(narr):
+        return m.HDFC.party(m.HDFC, {"narr": narr, "narr_spaced": narr})
+    assert party("ACH D- TP ACH STUDIO-54 INDUSTRIES-1234567890") == "STUDIO-54 INDUSTRIES"
+    assert party("ACH D- TP ACH ACME TRADERS-1234567890") == "ACME TRADERS"
+    # The reference is still the delimiter, not part of the name.
+    assert "1234567890" not in party("ACH D- TP ACH UNIT-7 METALS-1234567890")
+
+
+def test_a_zero_in_one_amount_column_is_still_two_sided(m):
+    """`if debit and credit` asked whether both were **non-zero**. A row filling
+    both columns with one of them `0.00` is a column-geometry failure, and it
+    used to pass: the balance replay still matched, so `build()` emitted a
+    voucher from a structurally invalid row."""
+    rows = [{"date": "01/08/26", "narr": "x", "ref": "1",
+             "dr": "0.00", "cr": "10.00", "bal": "10.00"}]
+    refusal = refuses(m, "two_sided_row", m.reconcile, rows, m.HDFC, "0", "10.00")
+    assert "both amount columns" in str(refusal)
+
+
+def test_a_mapping_may_not_claim_the_unresolved_sentinel(m):
+    """`UNRESOLVED` is what `party()` prints when it could not identify anyone.
+    Every unrecognised narration shape reports the same word, so one mapping row
+    for it would gather unrelated transactions into one ledger — or, with
+    `skip`, drop all of them — instead of letting them reach suspense where an
+    operator can see them."""
+    with tempfile.TemporaryDirectory() as directory:
+        for sentinel in sorted(m.PARSER_SENTINELS):
+            path = mapping_file(directory, f"party,ledger,treatment\n{sentinel},Some Ledger,auto\n")
+            refusal = refuses(m, "mapping_claims_a_sentinel", m.load_mapping, path)
+            assert "could NOT identify" in str(refusal)
+        # and the name is matched the way every other party name is
+        path = mapping_file(directory, "party,ledger,treatment\nun resolved,L,skip\n")
+        refuses(m, "mapping_claims_a_sentinel", m.load_mapping, path)
+        # an ordinary name that merely contains the word is fine
+        path = mapping_file(directory, "party,ledger,treatment\nUNRESOLVED TRADING CO,L,auto\n")
+        assert m.load_mapping(path)
+
+
+def test_a_blank_bank_ledger_is_refused_by_the_parser(m):
+    """`required=True` asserts the flag was given, not that it says anything.
+    An empty value reached every voucher as an empty `<LEDGERNAME>`, and
+    `selfcheck` compared it against the same empty argument and agreed."""
+    parser = m.build_parser()
+    for blank in ("", "   ", "\t"):
+        try:
+            parser.parse_args(cli(m, **{"--bank-ledger": blank}))
+        except SystemExit:
+            pass
+        else:
+            raise AssertionError(f"--bank-ledger {blank!r} was accepted")
+    assert parser.parse_args(cli(m, **{"--bank-ledger": "HDFC Bank"}))
+
+
+def test_case_only_output_aliases_are_caught_once_the_xml_exists(m):
+    """On a case-insensitive volume `--out Result.xml --manifest result.XML` are
+    one file. The pre-run check cannot see it — `samefile` needs both paths to
+    exist, so it falls back to a case-*sensitive* lexical compare — and the
+    manifest then truncated the XML with both success lines printed.
+
+    The fix is to ask the filesystem again once the XML exists, before the
+    manifest is written. Skipped where the volume is case-sensitive, because
+    there the two names really are two files and there is nothing to catch.
+    """
+    class Args:
+        pdf = mapping = None
+
+    with tempfile.TemporaryDirectory() as directory:
+        probe = pathlib.Path(directory, "Aa.probe")
+        probe.write_text("")
+        if not pathlib.Path(directory, "aa.probe").exists():
+            return  # case-sensitive volume
+        probe.unlink()
+
+        args = Args()
+        args.out = str(pathlib.Path(directory, "Result.xml"))
+        args.manifest = str(pathlib.Path(directory, "result.XML"))
+
+        # Before either exists the lexical compare cannot distinguish them.
+        m._check_paths(args)
+
+        pathlib.Path(args.out).write_text("<xml/>")
+        refusal = refuses(m, "path_collision", m._check_paths, args)
+        assert "same file" in str(refusal)
+        # and the XML the run already wrote is still intact
+        assert pathlib.Path(args.out).read_text() == "<xml/>"
+
+
 def main():
     module = load()
     for name, test in sorted(globals().items()):

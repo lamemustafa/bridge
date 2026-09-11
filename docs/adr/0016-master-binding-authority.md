@@ -65,7 +65,12 @@ The constructor refuses, rather than degrades, on:
   does not identify one master, nothing downstream is meaningful;
 - **an identifier hint that yields no identifier** — `IdentifierHintUnusable`. A
   hint that silently does nothing is a trap (P7);
-- bounds violations on entry count, entity count, and name length.
+- bounds violations on entry count, entity count, name length, and **hint
+  count**. The last is checked as the hints arrive rather than on the finished
+  set: hints deduplicate, so a million repeated ones fold to a single identifier
+  and the finished set never exceeds its bound, while every one of them has
+  already been scanned and copied. Each hint yields at least one identifier or
+  is refused outright, so the eager bound rejects nothing the late one admitted.
 
 A softer collision — two masters differing only in case, whitespace runs, or
 dash and quote style — does **not** fail the catalog. It is carried as a
@@ -117,13 +122,47 @@ it qualified as a code. Otherwise `Part A12345678` reaches an unrelated
 `Bank 12345678` through the one-letter gap the code test rejects: a token
 identifies by its whole shape or not at all.
 
+**A mask is a mask however it is spelled, and wherever it is written.** A value
+carrying mask punctuation (`****`, `####`) or a run of one repeated letter
+(`XXXX`) exposes a suffix rather than a number, and that suffix is no more
+identifying a space away than joined: `XXXX 12345678` is the same statement as
+`XXXX12345678`. A mask therefore suppresses the token that follows it, in both
+spellings and for both identifier shapes. Two unrelated ledgers sharing a masked
+last-eight must reach a near-miss, never a bind.
+
+A token carrying no alphanumeric content is a **delimiter**, and a delimiter
+does not end a mask: `XXXX - 12345678` says what `XXXX 12345678` says. Reading
+the mask state token by token let a single `-` or `/` clear it and walk the
+suffix out as a whole account number. An ordinary word does end a mask, or
+nothing downstream of one could identify anything again.
+
+**An identifier may only be built from characters the token actually has.**
+Canonical form keeps ASCII alphanumerics, and the digit-run split keeps ASCII
+digits, so anything else in a token is discarded in silence — and what survives
+is an identifier the name never contained. A name in another script fused to
+`AB12345678` yielded that code and reached an unrelated bank; `12345678`
+followed by Devanagari numerals yielded that number and did the same. In both
+cases the ASCII spelling of the same shape never would.
+
+So the admitted set is **positive**: a token yields an identifier only if it is
+ASCII apart from the dash variants this module already folds as separators.
+Guarding "non-ASCII letters" was the first attempt and was too narrow —
+`char::is_alphabetic` is false for a Devanagari digit — which is the second time
+in this module an ASCII-shaped class silently decided a non-ASCII question. The
+question is not which scripts exist; it is which characters canonicalization is
+entitled to drop. The books this binder reads carry Devanagari, Tamil and
+Bengali ledger names, so the boundary is reached rather than theoretical.
+
 **Period labels are recognized by their numbers, not their words.** A token is
 a period when every number in it reads as a year or a small ordinal — which
 catches `SEPTEMBER2025` and `2025QUARTER1` that no cap on the alphabetic run
 ever would, because a month name can be any length and a year cannot. A fiscal
 range (`2025-2026`, `2025/2026`) is excluded before its digits are fused, since
 stripping the separator produced an eight-digit run that no calendar reading
-rejects.
+rejects. Written without any separator the range arrives as one run that the
+splitting step never sees — `FY202425`, `FY20242025` — so a year followed by a
+two- or four-digit year is read as a period in its own right. Otherwise a
+missing `Purchases FY202425` identifier-binds to a sole live `Sales FY202425`.
 
 One narrow exclusion applies to the numeric shape: an eight-digit run that reads
 as a calendar date in 1900–2199 is a date, not an identifier. Without it two
@@ -160,26 +199,81 @@ favour.
 under **Tally's own rule for when two master names are the same**, and only when
 exactly one master shares it.
 
-That rule is measured, not chosen: `IMPLEMENTATION_GUIDE.md` §3.3b found Tally's
-master-name matching to be case-insensitive **and separator-insensitive — a
-hyphen matches a space** — and otherwise exact on letters. `AND` for `&`, a
-missing suffix word, and a singular for a plural were all rejected. So the fold
-lowercases, collapses whitespace, folds Unicode dash and quote variants to
-ASCII, and treats `-` as a space; and it stops exactly where Tally stops.
+**There are two folds, and which one may answer is the whole of this section.**
 
-**Being stricter than the authority is not the safe direction it appears to
-be.** It refuses names Tally would accept, and `X - Y` is a common ledger
-convention — six of the seventeen hyphenated names in the observed books take
-that shape. A binder that reports a near-miss for a name the book would have
-matched has invented work, not prevented an error.
+`TALLY_PROTOCOL_REFERENCE.md` §9.4b sent named variants at a live master and
+recorded which Tally accepted. Exactly three: ASCII case folding, one trailing
+space, and a **space supplied where the master carries a hyphen**. `AND` for
+`&`, a missing suffix word and a singular for a plural were rejected. §9.4b
+marks everything else UNVERIFIED and states the rule this section now follows —
+*a fold is only as safe as its least-verified step, and a looser fold may
+**suggest**, never resolve.*
+
+- The **narrow fold** resolves. It implements those three and nothing else. The
+  hyphen step is directional, because the measurement was: a source **space**
+  was sent at a master **hyphen**, and the reverse was never sent. A symmetric
+  key cannot express a direction, so the master side of the index answers to
+  both its own spelling and its hyphens-as-spaces, while the source side answers
+  only to its own. A source hyphen therefore finds no master space.
+- The **wide fold** suggests. It carries the reverse hyphen direction, collapsed
+  whitespace runs, leading whitespace and the Unicode dash variants — and
+  everything it reaches is offered as a `NormalizedEqual` candidate for a human
+  to confirm.
+
+**One transformation is not merely unverified — it is measured wrong, and it is
+the one that nearly slipped through.** Canonical equivalence looks like decoding
+rather than folding: NFC and NFD spell the same characters, and no operator can
+type them differently on purpose. But Tally stores a master name as the bytes
+that created it and matches on exact codepoints. A voucher naming a UI-created
+ledger in its canonically equivalent NFD spelling was **rejected** —
+`EXCEPTIONS=1`, `LINEERROR`, ledger does not exist — while the NFC spelling
+created it (measured 2026-08-19, TallyPrime 7.1). So they are different masters
+to Tally, and folding them here would resolve a source name onto a master Tally
+itself keeps apart. NFC stays in the wide fold, where it can only suggest.
+
+The general lesson is worth more than the case: **a step that reads like
+decoding deserves the same evidence as a step that reads like folding.** This
+one survived two reviews of the fold by not looking like part of it.
+
+**Trimming a source name is not part of either fold.** `SourceEntity` trims
+what the document gave it, at the boundary, because leading and trailing space
+in extracted text is transcription noise; an observed master name is retained
+byte for byte, because a caller writes it back. So a source reading
+`"  Alpha Traders"` reaches `Alpha Traders`, while a *master* spelled
+`"  Alpha Traders"` does not resolve from a clean source name — it is offered.
+The asymmetry is deliberate and is the P3 rule, not a claim about what Tally
+folds.
+
+**This was got wrong first, and the correction is the useful record.** An
+earlier version of this ADR claimed the fold "stops exactly where Tally stops"
+while the implementation resolved on four transformations §9.4b marks
+UNVERIFIED. It read naturally, which is exactly the skimming-implementer failure
+§9.4b was written to prevent, and the live slice in `TEST_CORPUS.md` §9 caught
+it binding that way against a real instance.
+
+**The cost is real and is stated here rather than discovered later.** `X - Y` is
+a common ledger convention — six of the seventeen hyphenated names in the
+observed books take that shape — and reaching it from `X Y` needs the measured
+hyphen step *and* a whitespace run collapsed. So those no longer resolve. On the
+fabricated mutation book, 420 of 995 mutations bind where most once did.
+
+**What makes that a trade and not a loss** is measured alongside it: every
+mutation the wide fold would have resolved is still shown, as a candidate
+carrying the right master. The sweep asserts it case by case rather than as a
+percentage. So narrowing the fold costs a confirmation, never a search — which
+is the trade §9.4b prescribes and the same one §4 makes for every other
+near-miss in this module. A binder that answers from unverified evidence has not
+saved the operator a step; it has moved the step to wherever the wrong posting
+is found.
 
 This fold is deliberately **separate from the general comparison key**, which is
-shared with other contracts for voucher numbers and voucher-type names. §3.3b
+shared with other contracts for voucher numbers and voucher-type names. §9.4b
 says nothing about those, and widening the shared fold to serve masters would be
 the "never to make one caller's case pass" this ADR warns against. One fold per
-notion of sameness, each named for the question it answers. Nothing else binds. There is no edit distance, no
-phonetic key, no token stemming, and no similarity threshold anywhere in the
-implementation.
+notion of sameness, each named for the question it answers.
+
+**Nothing else binds.** There is no edit distance, no phonetic key, no token
+stemming, and no similarity threshold anywhere in the implementation.
 
 ### 4. Near-misses produce candidates and never resolve
 

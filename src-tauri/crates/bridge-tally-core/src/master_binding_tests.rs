@@ -88,11 +88,18 @@ fn an_observed_master_name_is_retained_verbatim_while_a_source_name_is_trimmed()
     // A caller writes the bound name back to Tally byte for byte. Trimming an
     // observed name here would report a spelling that does not exist and
     // refuse at the write gate with no explanation.
-    let catalog = ledgers(&["  Alpha Traders  ", "Beta Supply"]);
-    assert_eq!(catalog.names().next(), Some("  Alpha Traders  "));
+    let catalog = ledgers(&["Alpha Traders ", "Beta Supply"]);
+    assert_eq!(catalog.names().next(), Some("Alpha Traders "));
     let binding = bind_one_name(&catalog, "Alpha Traders");
-    assert_eq!(binding.bound_name(), Some("  Alpha Traders  "));
+    assert_eq!(binding.bound_name(), Some("Alpha Traders "));
     assert_eq!(binding.source_name, "Alpha Traders");
+    // One trailing space is what §9.4b sent. *Leading* whitespace is on its
+    // unverified list, so a master carrying it surfaces as a candidate instead
+    // of resolving — and is retained verbatim either way.
+    let leading = ledgers(&["  Alpha Traders", "Beta Supply"]);
+    let binding = bind_one_name(&leading, "Alpha Traders");
+    assert_eq!(binding.bound_name(), None);
+    assert_eq!(candidate_names(&binding), ["  Alpha Traders"]);
 }
 
 #[test]
@@ -152,15 +159,31 @@ fn an_exact_name_binds() {
 }
 
 #[test]
-fn case_whitespace_and_dash_style_do_not_defeat_a_bind() {
-    let catalog = ledgers(&["Alpha \u{2013} Traders", "Beta Supply"]);
-    let binding = bind_one_name(&catalog, "  alpha - TRADERS  ");
+fn case_binds_but_an_unverified_fold_only_suggests() {
+    // ASCII case folding is measured, so it resolves.
+    let cased = ledgers(&["Alpha Traders", "Beta Supply"]);
     assert_eq!(
-        binding.status,
+        bind_one_name(&cased, "ALPHA traders").status,
         BindingStatus::Bound {
-            catalog_name: "Alpha \u{2013} Traders".to_string(),
+            catalog_name: "Alpha Traders".to_string(),
             basis: BindingBasis::NormalizedName,
         }
+    );
+
+    // An en dash, a collapsed whitespace run and leading whitespace are all on
+    // §9.4b's unverified list. The wide fold still reaches the master, so it is
+    // offered — a candidate a human confirms, which is exactly what §9.4b says
+    // a looser fold is for. Nothing is lost here except the automatic answer.
+    let catalog = ledgers(&["Alpha \u{2013} Traders", "Beta Supply"]);
+    let binding = bind_one_name(&catalog, "  alpha - TRADERS  ");
+    assert_eq!(binding.bound_name(), None);
+    assert_eq!(reason(&binding), UnboundReason::NearMiss);
+    assert_eq!(
+        binding.unresolved().expect("unbound").candidates.listed(),
+        [Candidate {
+            catalog_name: "Alpha \u{2013} Traders".to_string(),
+            rule: CandidateRule::NormalizedEqual,
+        }]
     );
 }
 
@@ -415,25 +438,71 @@ fn a_decisive_identifier_pointing_elsewhere_still_outranks_a_byte_exact_name() {
 }
 
 #[test]
-fn a_hyphen_matches_a_space_because_tally_says_so() {
-    // IMPLEMENTATION_GUIDE.md §3.3b, measured: Tally's own master-name matching
-    // treats a hyphen as a space. Being stricter than the authority refuses
-    // names Tally would accept, and `X - Y` is a common ledger convention.
-    let catalog = ledgers(&["Bank - HDFC Current", "Beta Supply"]);
-    let binding = bind_one_name(&catalog, "Bank HDFC Current");
+fn a_source_space_matches_a_master_hyphen_and_only_that_direction() {
+    // `TALLY_PROTOCOL_REFERENCE.md` §9.4b sent `BRIDGE PROBE LEDGER A` at a live
+    // `BRIDGE-PROBE-LEDGER-A` and Tally matched it. That is the whole of the
+    // measurement: one separator, one direction.
+    let hyphenated = ledgers(&["BRIDGE-PROBE-LEDGER-A", "Beta Supply"]);
     assert_eq!(
-        binding.status,
+        bind_one_name(&hyphenated, "BRIDGE PROBE LEDGER A").status,
         BindingStatus::Bound {
-            catalog_name: "Bank - HDFC Current".to_string(),
+            catalog_name: "BRIDGE-PROBE-LEDGER-A".to_string(),
             basis: BindingBasis::NormalizedName,
         }
     );
-    // And the reverse direction.
-    let hyphenated = ledgers(&["BRIDGE PROBE LEDGER A", "Beta Supply"]);
+
+    // The reverse was never sent, and §9.4b marks it UNVERIFIED. A symmetric
+    // replacement would resolve it, which is why the hyphen fold lives on the
+    // master side of the index rather than in a key both sides share.
+    let spaced = ledgers(&["BRIDGE PROBE LEDGER A", "Beta Supply"]);
+    let binding = bind_one_name(&spaced, "BRIDGE-PROBE-LEDGER-A");
+    assert_eq!(binding.bound_name(), None);
+    assert_eq!(candidate_names(&binding), ["BRIDGE PROBE LEDGER A"]);
+
+    // `X - Y` is a common ledger convention, and reaching it from `X Y` needs
+    // the measured hyphen step *and* a whitespace run collapsed — which is not
+    // measured. So it suggests rather than resolves. This is the largest single
+    // cost of holding the fold to the evidence, and it is recorded here so that
+    // widening it again is a deliberate act with a test to change.
+    let spaced_hyphen = ledgers(&["Bank - HDFC Current", "Beta Supply"]);
+    let binding = bind_one_name(&spaced_hyphen, "Bank HDFC Current");
+    assert_eq!(binding.bound_name(), None);
+    assert_eq!(candidate_names(&binding), ["Bank - HDFC Current"]);
+}
+
+#[test]
+fn masters_that_collapse_under_the_fold_are_refused_never_chosen() {
+    // `TALLY_PROTOCOL_REFERENCE.md` §9.4b requires prefer-exact,
+    // refuse-ambiguous, never-pick. `A-B` and `A B` collapse under the three
+    // verified transformations and nothing measured says which one Tally would
+    // choose, so a fold that returns the first match is the failure mode.
+    let catalog = ledgers(&["Alpha-Beta", "Alpha Beta", "Gamma"]);
+
+    // Prefer-exact: byte equality outranks a key shared by two masters.
     assert_eq!(
-        bind_one_name(&hyphenated, "BRIDGE-PROBE-LEDGER-A").bound_name(),
-        Some("BRIDGE PROBE LEDGER A")
+        bind_one_name(&catalog, "Alpha Beta").bound_name(),
+        Some("Alpha Beta")
     );
+    assert_eq!(
+        bind_one_name(&catalog, "Alpha-Beta").bound_name(),
+        Some("Alpha-Beta")
+    );
+
+    // Refuse-ambiguous, never-pick: with no exact spelling to prefer, the
+    // collapse is reported with both masters offered, not resolved to one.
+    let binding = bind_one_name(&catalog, "alpha beta");
+    assert_eq!(reason(&binding), UnboundReason::NameAmbiguous);
+    assert_eq!(binding.bound_name(), None);
+    assert_eq!(candidate_names(&binding), ["Alpha Beta", "Alpha-Beta"]);
+
+    // A whitespace run is not a verified transformation, so this one never
+    // reaches the narrow index at all. It is still refused, and still shows
+    // both — a near-miss rather than an ambiguity, which is the honest label:
+    // these two are not proven to collapse, they are merely both plausible.
+    let binding = bind_one_name(&catalog, "ALPHA  BETA");
+    assert_eq!(reason(&binding), UnboundReason::NearMiss);
+    assert_eq!(binding.bound_name(), None);
+    assert_eq!(candidate_names(&binding), ["Alpha Beta", "Alpha-Beta"]);
 }
 
 #[test]
@@ -451,6 +520,20 @@ fn the_master_fold_stops_where_tally_stops() {
             bind_one_name(&catalog, wrong).bound_name(),
             None,
             "{wrong:?} bound, but Tally rejects it"
+        );
+    }
+
+    // The *absent-master* direction, which prefer-exact and refuse-ambiguous
+    // do not cover: the requested master is not in the book and one different
+    // ledger collapses onto the request, so there is one candidate and no
+    // ambiguity to refuse. Uniqueness under a fold is only as meaningful as
+    // the fold, and `&` has to stay significant for this to hold.
+    for (requested, present) in [("A & B", "AB"), ("AB", "A & B")] {
+        let only = ledgers(&[present, "Gamma"]);
+        assert_eq!(
+            bind_one_name(&only, requested).bound_name(),
+            None,
+            "{requested:?} bound to {present:?}, which Tally treats as a different master"
         );
     }
 }
@@ -527,6 +610,12 @@ fn a_fiscal_period_label_is_not_an_identity_bearing_code() {
         "2025\u{2013}2026",
         "2025-2026",
         "APR2025-MAR2026",
+        // Written without the separator, the range arrives as one run that
+        // every length test above missed, and the token passed as a code.
+        "FY202425",
+        "FY20242025",
+        "AY202526",
+        "202425FY",
     ] {
         assert!(
             entity(&format!("Purchases {label}"))
@@ -535,15 +624,120 @@ fn a_fiscal_period_label_is_not_an_identity_bearing_code() {
             "{label} was treated as a code identifier"
         );
     }
-    let catalog = ledgers(&["Sales FY2025", "Beta Supply"]);
-    let binding = bind_one_name(&catalog, "Purchases FY2025");
+    for label in ["FY2025", "FY202425"] {
+        let catalog = ledgers(&[&format!("Sales {label}"), "Beta Supply"]);
+        let binding = bind_one_name(&catalog, &format!("Purchases {label}"));
+        assert_eq!(
+            binding.bound_name(),
+            None,
+            "the shared period label {label} bound two unrelated ledgers"
+        );
+    }
+    // A genuine identity-bearing code still is one.
+    assert_eq!(entity("Item PH01AB00").identifiers().len(), 1);
+}
+
+#[test]
+fn a_name_in_another_script_does_not_shed_its_letters_into_a_code() {
+    // Canonicalization keeps only ASCII, so a Devanagari party name fused to an
+    // ASCII suffix yielded the code `AB12345678` — a string the name never
+    // contained — and reached an unrelated bank ledger. The ASCII spelling of
+    // the same shape never did, which is what makes it a defect rather than a
+    // policy: the boundary was an ASCII boundary wearing a general name.
+    let party = "\u{92a}\u{93e}\u{930}\u{94d}\u{91f}\u{940}";
+    let fused = format!("{party}AB12345678");
+    assert!(
+        entity(&fused).identifiers().is_empty(),
+        "a dropped non-ASCII prefix manufactured a code"
+    );
+    let catalog = ledgers(&["Bank AB12345678", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&catalog, &fused).bound_name(),
+        None,
+        "a party name must not reach a bank ledger by shedding its script"
+    );
+    // The ASCII spelling this is measured against, unchanged: it keeps every
+    // letter, so it carries a code of its own and reaches no bank.
+    assert_eq!(
+        entity("PartyAB12345678").identifiers(),
+        [Identifier {
+            kind: IdentifierKind::Code,
+            value: "PARTYAB12345678".to_string(),
+        }]
+    );
+    assert_eq!(
+        bind_one_name(&catalog, "PartyAB12345678").bound_name(),
+        None
+    );
+    // A code standing on its own beside a name in any script is still a code.
+    assert_eq!(
+        entity(&format!("{party} AB12345678")).identifiers().len(),
+        1
+    );
+
+    // Letters were the first guard and were too narrow: `char::is_alphabetic`
+    // is false for a Devanagari digit, so non-ASCII numerals walked through it
+    // and canonicalization dropped them just the same. The numeric branch had
+    // the identical hole, which no thread named — a trailing run of Devanagari
+    // digits is not alphabetic either, so the ASCII digits before it were
+    // emitted as a whole account number.
+    let digits = "\u{967}\u{968}\u{969}";
+    for fused in [
+        format!("Purchases AB{digits}12345678"),
+        format!("Purchases 12345678{digits}"),
+        format!("Purchases {digits}12345678"),
+    ] {
+        assert!(
+            entity(&fused).identifiers().is_empty(),
+            "{fused} manufactured an identifier out of what canonicalization dropped"
+        );
+    }
+    let bank = ledgers(&["Bank AB12345678", "Bank 12345678", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&bank, &format!("Purchases AB{digits}12345678")).bound_name(),
+        None
+    );
+    assert_eq!(
+        bind_one_name(&bank, &format!("Purchases 12345678{digits}")).bound_name(),
+        None
+    );
+    // The dash variants stay admitted: this module already folds them as
+    // separators, and a punctuated code must still agree with a plain one.
+    assert_eq!(
+        entity("Item PH\u{2011}01AB00").identifiers(),
+        entity("Item PH01AB00").identifiers()
+    );
+}
+
+#[test]
+fn two_encodings_of_one_name_are_two_masters_to_tally_and_so_to_this() {
+    // Measured 2026-08-19 on TallyPrime 7.1: a voucher naming a UI-created
+    // ledger in its canonically equivalent NFD spelling was rejected with
+    // `EXCEPTIONS=1` and a LINEERROR saying the ledger does not exist, while
+    // the NFC spelling created it. Tally stores the bytes it was given and
+    // matches on exact codepoints, so these are different masters to Tally and
+    // must be different masters here.
+    //
+    // This is stronger than the UNVERIFIED rows in §9.4b's table: folding it
+    // is not unproven, it is proven wrong. It reads like decoding rather than
+    // folding, which is why it nearly stayed in the resolving fold.
+    let precomposed = "Caf\u{e9} Traders";
+    let decomposed = "Cafe\u{301} Traders";
+    let catalog = ledgers(&[precomposed, "Beta Supply"]);
+    let binding = bind_one_name(&catalog, decomposed);
     assert_eq!(
         binding.bound_name(),
         None,
-        "a shared period label must not bind two unrelated ledgers"
+        "an NFD source name resolved onto an NFC master Tally keeps apart"
     );
-    // A genuine identity-bearing code still is one.
-    assert_eq!(entity("Item PH01AB00").identifiers().len(), 1);
+    // The wide fold still reaches it, so an operator sees the one master worth
+    // looking at rather than nothing at all.
+    assert_eq!(candidate_names(&binding), [precomposed]);
+    // And the spelling Tally would actually match still binds.
+    assert_eq!(
+        bind_one_name(&catalog, precomposed).bound_name(),
+        Some(precomposed)
+    );
 }
 
 #[test]
@@ -714,6 +908,58 @@ fn a_masked_value_identifies_nothing() {
             "{separated} exposed its suffix as an identifier"
         );
     }
+    // A mask spelled with letters is the same statement as one spelled with
+    // punctuation, and it too is written apart from the digits it hides. Read
+    // token by token, `XXXX` failed the punctuation test and the visible suffix
+    // escaped as a whole account number.
+    for separated in [
+        "Purchases XXXX 12345678",
+        "Purchases XXXXXXXX 12345678",
+        "Purchases (XXXX) 12345678",
+    ] {
+        assert!(
+            entity(separated).identifiers().is_empty(),
+            "{separated} exposed its suffix as an identifier"
+        );
+    }
+    let alphabetic = ledgers(&["Sales XXXX 12345678", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&alphabetic, "Purchases XXXX 12345678").bound_name(),
+        None,
+        "a masked last-eight must not bind two unrelated ledgers"
+    );
+    // A suffix shaped as a code is no less hidden than one shaped as a number.
+    assert!(entity("Purchases XXXX AB12345678").identifiers().is_empty());
+    // A delimiter between the mask and its suffix does not unmask it. Reading
+    // the state token by token, a `-` reset it and the suffix walked out.
+    for punctuated in [
+        "Purchases XXXX - 12345678",
+        "Purchases **** / 12345678",
+        "Purchases XXXX . 12345678",
+        "Purchases XXXX - - 12345678",
+    ] {
+        assert!(
+            entity(punctuated).identifiers().is_empty(),
+            "{punctuated} exposed its suffix as an identifier"
+        );
+    }
+    let separated = ledgers(&["Sales XXXX - 12345678", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&separated, "Purchases XXXX - 12345678").bound_name(),
+        None
+    );
+    // An ordinary word after a mask does end it, or nothing downstream of one
+    // could ever identify anything again.
+    assert_eq!(
+        entity("Purchases XXXX Invoice 5550001001")
+            .identifiers()
+            .len(),
+        1
+    );
+    // Ordinary words are not masks, however repetitive: only a run of one
+    // repeated letter is, and one letter alone is an ordinary word.
+    assert_eq!(entity("Purchases Unit 5550001001").identifiers().len(), 1);
+    assert_eq!(entity("Purchases A 5550001001").identifiers().len(), 1);
     // Ordinary punctuation around a whole number is not a mask.
     assert_eq!(entity("Party (5550001001)").identifiers().len(), 1);
     assert_eq!(entity("Party 5550001-002").identifiers().len(), 1);
@@ -935,6 +1181,24 @@ fn an_identifier_hint_is_bounded_before_anything_scans_it() {
         SourceEntity::with_identifier_hints(0, "Alpha Traders", [huge.as_str()]),
         Err(MasterBindingError::NameTooLong)
     );
+    // Bounding each hint does not bound the iterator. Repeated hints fold to
+    // one identifier, so the deduplicated check never fired however many
+    // arrived, while every one of them was scanned and copied first.
+    let repeated = vec!["5550001001"; MAX_IDENTIFIERS_PER_NAME + 1];
+    assert_eq!(
+        SourceEntity::with_identifier_hints(0, "Alpha Traders", repeated),
+        Err(MasterBindingError::TooManyIdentifiers)
+    );
+    // The bound admits everything a usable entity could carry.
+    let distinct = (0..MAX_IDENTIFIERS_PER_NAME)
+        .map(|index| format!("555000{index:04}"))
+        .collect::<Vec<_>>();
+    assert!(SourceEntity::with_identifier_hints(
+        0,
+        "Alpha Traders",
+        distinct.iter().map(String::as_str)
+    )
+    .is_ok());
 }
 
 #[test]
@@ -1270,11 +1534,15 @@ fn fabricated_document() -> Vec<(&'static str, Option<&'static str>, Expected)> 
         // Named exactly as the book spells it.
         ("Cash", None, Expected::Bound("Cash")),
         ("CGST OUTPUT 9%", None, Expected::Bound("CGST OUTPUT 9%")),
-        // Case and spacing noise from the source system.
+        // Case noise alone is measured, so it still resolves.
+        ("cgst output 9%", None, Expected::Bound("CGST OUTPUT 9%")),
+        // Spacing noise from the source system is not. Leading whitespace and
+        // a collapsed run are both on §9.4b's unverified list, so this one is
+        // offered rather than answered — with `CGST OUTPUT 9%` first.
         (
             "  cgst   output 9%  ",
             None,
-            Expected::Bound("CGST OUTPUT 9%"),
+            Expected::Unbound(UnboundReason::NearMiss),
         ),
         (
             "beta placeholder trading co",
@@ -1368,9 +1636,9 @@ fn a_document_against_a_realistic_book_binds_only_where_a_human_would() {
 
     // The shape of the answer, pinned so a loosened threshold moves a number.
     let totals = report.totals();
-    assert_eq!(totals.requested, 12);
+    assert_eq!(totals.requested, 13);
     assert_eq!(totals.bound, 7);
-    assert_eq!(totals.ambiguous, 3);
+    assert_eq!(totals.ambiguous, 4);
     assert_eq!(totals.unmatched, 2);
     assert_eq!(totals.requested, totals.bound + totals.unbound);
 }
@@ -1448,8 +1716,19 @@ fn no_mutation_of_a_master_name_ever_binds_to_a_different_master() {
         .map(|name| (comparison_key(name), name.as_str()))
         .collect::<BTreeMap<_, _>>();
 
+    // What the *wide* fold would resolve. Narrowing the resolving fold to the
+    // three transformations §9.4b verified is only defensible if it withdraws
+    // answers, never masters, so the cases it used to settle are tracked by
+    // name rather than by a percentage that drifts with the fixture.
+    let wide = names
+        .iter()
+        .map(|name| (master_identity_key(name), name.as_str()))
+        .collect::<BTreeMap<_, _>>();
+
     let mut checked = 0_usize;
     let mut self_bound = 0_usize;
+    let mut self_offered = 0_usize;
+    let mut downgraded = 0_usize;
     for name in &names {
         for mutation in source_mutations(name) {
             let key = comparison_key(&mutation);
@@ -1458,8 +1737,23 @@ fn no_mutation_of_a_master_name_ever_binds_to_a_different_master() {
             }
             checked += 1;
             let binding = bind_one_name(&catalog, &mutation);
+            let wide_would_bind = wide.get(&master_identity_key(&mutation)) == Some(&name.as_str());
             match binding.bound_name() {
-                None => {}
+                None => {
+                    let offered = candidate_names(&binding).iter().any(|shown| shown == name);
+                    if offered {
+                        self_offered += 1;
+                    }
+                    // The invariant that makes the narrowing a trade rather than
+                    // a loss: anything the wide fold settled is still shown.
+                    assert!(
+                        !wide_would_bind || offered,
+                        "narrowing the fold hid {name:?} from its own mutation {mutation:?}"
+                    );
+                    if wide_would_bind {
+                        downgraded += 1;
+                    }
+                }
                 Some(bound_to) => {
                     assert_eq!(
                         bound_to, name,
@@ -1474,10 +1768,23 @@ fn no_mutation_of_a_master_name_ever_binds_to_a_different_master() {
         checked > 900,
         "the sweep must actually cover the book: {checked}"
     );
-    // Most mutations are case and spacing noise, which must still bind.
+    // The narrowing this book measures. Most of these mutations are spacing
+    // and dash noise, and holding the resolving fold to the three
+    // transformations §9.4b actually verified stops most of them resolving.
+    // That is the intended trade and not the property under test — what has to
+    // hold is that a withdrawn answer left the right master **visible**, so the
+    // cost is one confirmation rather than a master a human never sees.
+    // The cost, stated rather than implied. Most of this book's mutations are
+    // spacing and dash noise, and holding the resolving fold to the evidence
+    // stops most of them resolving: they become a near-miss carrying the right
+    // master, which costs a confirmation and never a search.
     assert!(
-        self_bound * 2 > checked,
-        "only {self_bound} of {checked} mutations bound at all"
+        downgraded > 0,
+        "the sweep no longer exercises the narrowed fold at all"
+    );
+    assert!(
+        self_bound + self_offered > checked * 2 / 3,
+        "{self_bound} bound and {self_offered} offered of {checked}"
     );
 }
 

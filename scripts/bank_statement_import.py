@@ -71,10 +71,16 @@ section 9. The ones this module is built around:
 WHAT THIS TOOL CANNOT CHECK, AND WHAT IT DOES INSTEAD
 
 It is offline, so it cannot ask Tally which company is open — and per 9.11d
-`SVCURRENTCOMPANY` is *not* a write guard: a name matching no loaded company is
-ignored and the vouchers land in whichever company happens to be open. There is
-no offline fix for that, so `--confirm-open-company` makes it a deliberate
-operator act instead of a silent one. See `main`.
+`SVCURRENTCOMPANY` is *not* a write guard. What is measured there: a name that
+did NOT match the loaded company still posted into it, silently. Which kinds of
+mismatch behave that way is *not* settled — 9.11d marks that reading a
+hypothesis, because the box's company list was never enumerated — and a
+separate measurement had an existing-but-unloaded name fail closed.
+
+The uncertainty does not soften the conclusion, it hardens it: there is a
+verified silent-misdirection case and no rule saying when it applies, so the
+target cannot be verified from here at all. `--confirm-open-company` makes
+confirming it a deliberate operator act instead of a silent one. See `main`.
 
 Everything else fails closed. The design rule throughout: a malformed input, an
 ambiguous mapping or an unproven extent must stop the run, because every output
@@ -474,7 +480,13 @@ class HDFC(Bank):
                 return "UNRESOLVED"
             # UPI-XXXXXX4230-... is a masked account, not a payee name
             return "UNNAMED" if re.fullmatch(r"[X]+\d*", candidate) else candidate
-        found = re.match(r"^ACH D-\s*TP ACH (.+?)-\d+", narr)
+        # Greedy, anchored at the end: the delimiter is the **final** bank
+        # reference, not the first hyphen followed by digits. Non-greedy stopped
+        # at the first one, so `ACH D- TP ACH STUDIO-54 INDUSTRIES-1234567890`
+        # resolved to `STUDIO` — and a mapping for `STUDIO` then silently posts
+        # an unrelated counterparty's transaction to that ledger. A name
+        # containing a hyphenated number is ordinary (`STUDIO-54`, `UNIT-7`).
+        found = re.match(r"^ACH D-\s*TP ACH (.+)-\d+$", narr)
         if found:
             return _squash(found.group(1))
         for prefix, label in (("EMI ", "EMI"), ("DEBIT CARD", "DEBIT CARD FEE")):
@@ -834,9 +846,18 @@ def reconcile(rows, bank, opening, expect_closing):
         )
     running = D(opening)
     for index, row in enumerate(rows, 1):
-        debit = _money(row[bank.debit_column], bank.debit_column, index) or D(0)
-        credit = _money(row[bank.credit_column], bank.credit_column, index) or D(0)
-        if debit and credit:
+        # Keep the parsed optionals: `is not None` asks whether the **cell was
+        # filled**, which is what a column-geometry failure looks like. Testing
+        # the Decimals for truthiness asked whether they were non-zero, so a row
+        # carrying `0.00` in one column and a real amount in the other walked
+        # past this check — the balance replay and the printed totals still
+        # matched, and `build()` went on to emit a voucher from a structurally
+        # invalid row.
+        debit_cell = _money(row[bank.debit_column], bank.debit_column, index)
+        credit_cell = _money(row[bank.credit_column], bank.credit_column, index)
+        debit = debit_cell or D(0)
+        credit = credit_cell or D(0)
+        if debit_cell is not None and credit_cell is not None:
             raise Refusal(
                 "two_sided_row",
                 f"row {index} ({row[bank.date_column]}) fills both amount columns "
@@ -931,6 +952,16 @@ def envelope(company, vouchers):
 MAPPING_COLUMNS = ("party", "ledger", "treatment")
 
 
+# The words `party()` returns when it could not identify a counterparty. They
+# are output, not input: every unrecognised narration shape reports the same
+# one, so a mapping row for one would gather unrelated transactions under a
+# single ledger — or, with `skip`, silently drop all of them — instead of
+# letting them fall to suspense where an operator can see them. Reserved in
+# `load_mapping`, and bypassed at lookup so a future sentinel cannot re-open
+# the hole by being forgotten here.
+PARSER_SENTINELS = frozenset({"UNRESOLVED", "UNNAMED"})
+
+
 def load_mapping(path):
     """CSV: party,ledger,treatment
 
@@ -997,6 +1028,18 @@ def load_mapping(path):
             # differently in two printings of the same name ("ZEPHYRM ANUFACTURING"
             # vs "ZEPHYRMANUFACTURING"), and both must reach the same ledger
             key = _key(party)
+            if key in PARSER_SENTINELS:
+                raise Refusal(
+                    "mapping_claims_a_sentinel",
+                    f"{path} line {line}: {party!r} is a value this tool prints when it "
+                    f"could NOT identify a counterparty, not a counterparty name. "
+                    "Every unrecognised narration shape reports the same word, so a row "
+                    "for it would collect transactions that have nothing to do with each "
+                    "other and send them to one ledger — or, with treatment 'skip', drop "
+                    "them all. Unidentified rows must reach suspense, where they are "
+                    "visible. Map the individual narrations the dry run prints beside "
+                    f"{party!r} instead.",
+                )
             if not key:
                 raise Refusal(
                     "unusable_mapping_key",
@@ -1108,7 +1151,15 @@ def build(rows, bank, company, bank_ledger, suspense, mapping, account_tail,
             raise Refusal("row_without_amount", f"row {index} has no amount")
         outward = bool(debit)
         party = bank.party(row)
-        ledger, treatment = mapping.get(_key(party), (suspense, "auto"))
+        # A sentinel means "not identified", so it must go to suspense whatever
+        # the mapping says. `load_mapping` already refuses such a row, and this
+        # is the second lock: the refusal is a rule about a file, while this is
+        # a property of the run, and only one of the two survives someone adding
+        # a sentinel without remembering the loader.
+        if _key(party) in PARSER_SENTINELS:
+            ledger, treatment = suspense, "auto"
+        else:
+            ledger, treatment = mapping.get(_key(party), (suspense, "auto"))
         ledger = ledger or suspense
         if treatment == "skip":
             # the REMOTEID is recorded even though no voucher is emitted: if this
@@ -1240,13 +1291,29 @@ def read_password(env=None, interactive=None):
     return getpass.getpass("statement PDF password: ")
 
 
-def _write_private(path, text):
-    """Create output files readable only by their owner.
+def _write_private(path, text, accept_inherited=False):
+    """Create output files readable only by their owner, where the OS allows it.
 
     The XML and the manifest carry counterparty names, amounts, an account
     label and every narration in the statement. On a shared host the default
     022 umask would publish all of it as mode 0644.
     """
+    if os.name == "nt" and not accept_inherited:
+        # On Windows `os.chmod` toggles the read-only attribute and the mode
+        # argument to `os.open` is ignored; the file inherits the directory's
+        # ACL. So the guarantee in this docstring is simply false there, and a
+        # file carrying account numbers, counterparties, amounts and every
+        # narration would be readable by anyone the directory allows — while the
+        # tool reported it as owner-only. Refuse rather than reassure.
+        raise Refusal(
+            "cannot_restrict_on_windows",
+            f"{path}: this tool writes owner-only files, and POSIX modes do not "
+            "do that on Windows — the output would inherit the directory's ACL "
+            "while claiming to be private. Write to a directory only you can "
+            "read (check with `icacls <dir>`) and re-run with "
+            "--accept-inherited-permissions, which records that you have "
+            "checked and makes the claim your own rather than this tool's.",
+        )
     handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
         stream.write(text)
@@ -1370,12 +1437,12 @@ def verify_against_statement(rows, bank, expected):
     return totals
 
 
-def _write_csv(path, records):
+def _write_csv(path, records, accept_inherited=False):
     writer_target = io.StringIO()
     writer = csv.DictWriter(writer_target, fieldnames=list(MANIFEST_COLUMNS))
     writer.writeheader()
     writer.writerows(records)
-    _write_private(path, writer_target.getvalue())
+    _write_private(path, writer_target.getvalue(), accept_inherited)
 
 
 def _print_dry_run(manifest):
@@ -1444,6 +1511,26 @@ def _print_operator_notes(company, skipped):
           "too. Until then, correct by hand or with a journal.")
 
 
+def _nonblank(flag):
+    """An argparse type that rejects an empty or whitespace-only value.
+
+    `required=True` only asserts the flag was **given**. A shell that expands
+    `--bank-ledger "$LEDGER"` with `LEDGER` unset supplies an empty string,
+    which satisfied argparse and then reached every voucher as an empty
+    `<LEDGERNAME>`. `selfcheck` compared that empty value back against the same
+    empty argument and agreed with itself, so the run printed correct voucher
+    and bank totals for a file Tally cannot use.
+    """
+    def parse(text):
+        if not text.strip():
+            raise argparse.ArgumentTypeError(
+                f"{flag} is empty. An empty ledger name reaches every voucher as an "
+                "empty <LEDGERNAME>, and the self-check cannot see it because it "
+                "compares the file against this same argument.")
+        return text
+    return parse
+
+
 def build_parser():
     """The command line, kept apart from the run so it can be read as a whole.
 
@@ -1453,17 +1540,23 @@ def build_parser():
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--pdf", required=True)
+    parser.add_argument("--accept-inherited-permissions", action="store_true",
+                        help="Windows only: proceed although the output will inherit the "
+                             "directory's ACL rather than being owner-only. Use after "
+                             "checking the directory with `icacls`.")
     parser.add_argument("--bank", required=True, choices=sorted(BANKS))
     parser.add_argument("--company", required=True,
                         help="EXACT company name as Tally shows it")
     parser.add_argument("--confirm-open-company", required=True, metavar="NAME",
                         help="repeat the company name as it appears in the title bar of "
-                             "the Tally window you are about to import into. Tally "
-                             "ignores a company name that matches nothing and imports "
-                             "into whichever company is open (9.11d), so this tool "
-                             "cannot verify the target and neither can the XML. This "
-                             "flag makes confirming it a deliberate act.")
-    parser.add_argument("--bank-ledger", required=True)
+                             "the Tally window you are about to import into. A "
+                             "mismatched company name has been seen to import into "
+                             "whichever company was open, silently (9.11d); when that "
+                             "happens is not settled. So this tool cannot verify the "
+                             "target and neither can the XML. This flag makes "
+                             "confirming it a deliberate act.")
+    parser.add_argument("--bank-ledger", required=True, type=_nonblank("--bank-ledger"),
+                        help="EXACT name of the bank ledger in Tally")
     parser.add_argument("--account-tail", required=True,
                         help="short account label carrying at least the last 4 digits of "
                              "the account, e.g. 'SBI CA xx2129'. Those digits must appear "
@@ -1520,10 +1613,18 @@ def main(argv=None):
     print(f"  bank ledger out {outward:,}  in {inward:,}")
     print(f"  suspense vouchers {sum(1 for record in manifest if record['suspense'])}")
     if args.out:
-        _write_private(args.out, xml_text)
+        _write_private(args.out, xml_text, args.accept_inherited_permissions)
+        # Re-run the collision check now that the XML exists. The check before
+        # the run can only compare the two output paths lexically, because
+        # `samefile` needs both to exist — and a lexical compare is
+        # case-sensitive while the volume may not be, so `--out Result.xml
+        # --manifest result.XML` passed, the XML was written, and the manifest
+        # then truncated it with both success lines printed. Asking the
+        # filesystem here costs one call and refuses before anything is lost.
+        _check_paths(args)
         print(f"  wrote {args.out} (mode 0600)")
     if args.manifest:
-        _write_csv(args.manifest, manifest)
+        _write_csv(args.manifest, manifest, args.accept_inherited_permissions)
         print(f"  wrote {args.manifest} (mode 0600)")
     _print_operator_notes(args.company, skipped)
     return 0

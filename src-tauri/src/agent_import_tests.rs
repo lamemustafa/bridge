@@ -275,9 +275,10 @@ fn schema_balance_matcher_rendering_and_ledger_append_are_fail_closed() {
         validate_payload(&unbalanced),
         Err("voucher_not_balanced".to_string())
     );
-    // Case, whitespace style, dash style and quote style name the same live
-    // ledger, so they bind and report its exact spelling. Only byte equality
-    // is `exact`, which is what build_import_xml admits.
+    // ASCII case and one trailing space are transformations
+    // `TALLY_PROTOCOL_REFERENCE.md` §9.4b measured Tally performing, so they
+    // name the same live ledger: they bind and report its exact spelling. Only
+    // byte equality is `exact`, which is what build_import_xml admits.
     for wanted in ["bank ", "bank", "BANK"] {
         let matched = one_master_match(wanted, &["Bank"]);
         assert_eq!(matched["match_state"], "normalized");
@@ -286,18 +287,26 @@ fn schema_balance_matcher_rendering_and_ledger_append_are_fail_closed() {
             "Bank"
         );
     }
-    assert_eq!(
-        one_master_match("A\u{a0}B", &["A B"])["match_state"],
-        "normalized"
-    );
-    assert_eq!(
-        one_master_match("Fees-Admin", &["Fees–Admin"])["match_state"],
-        "normalized"
-    );
-    assert_eq!(
-        one_master_match("Bob's", &["Bob’s"])["match_state"],
-        "normalized"
-    );
+    // A non-breaking space, an en dash and a curly quote are **not** on that
+    // list. Each still reaches its master through the wide fold, so the caller
+    // sees one candidate and confirms it; what it no longer gets is an answer
+    // and a live spelling to copy into the exact-only write gate.
+    for (wanted, live) in [
+        ("A\u{a0}B", "A B"),
+        ("Fees-Admin", "Fees\u{2013}Admin"),
+        ("Bob's", "Bob\u{2019}s"),
+    ] {
+        let matched = one_master_match(wanted, &[live]);
+        assert_eq!(
+            matched["match_state"], "near_miss",
+            "{wanted} resolved on an unverified fold"
+        );
+        assert!(matched.get("exact_live_spelling").is_none());
+        assert_eq!(
+            matched["candidates"][0]["name"][super::super::PARTY_NAME_MARKER],
+            live
+        );
+    }
     assert_eq!(one_master_match("Bank", &["Bank"])["match_state"], "exact");
     // A shorter name that a live ledger extends is a near-miss with one
     // candidate, and one candidate is still not a decision.
