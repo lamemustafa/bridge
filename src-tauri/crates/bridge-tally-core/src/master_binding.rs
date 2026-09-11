@@ -1244,7 +1244,7 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
         // here carry Devanagari, Tamil and Bengali ledger names, and an
         // ASCII-only guard read `पार्टी12345678` as digits standing alone,
         // binding a party to an unrelated `Bank 12345678`.
-        if token.chars().any(char::is_alphabetic) {
+        if token.chars().any(char::is_alphabetic) || is_mask_punctuated(token) {
             continue;
         }
         for run in token.split(|character: char| {
@@ -1266,6 +1266,20 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
         return Err(MasterBindingError::TooManyIdentifiers);
     }
     Ok(identifiers.into_iter().collect())
+}
+
+/// A value written with mask punctuation is partial by construction, so the
+/// digits it does expose are a suffix rather than the number.
+///
+/// `********12345678` split cleanly on the asterisks and yielded its visible
+/// eight digits as though they were the whole account. `is_masked` guards the
+/// code branch only, because a mask spelled with letters is caught by the
+/// letter test; a mask spelled with punctuation reaches the numeric branch,
+/// where every non-digit is an ordinary delimiter.
+fn is_mask_punctuated(token: &str) -> bool {
+    token
+        .chars()
+        .any(|character| matches!(character, '*' | '#' | '\u{2022}' | '\u{00d7}'))
 }
 
 /// A masked value exposes a non-unique suffix and identifies nothing.
