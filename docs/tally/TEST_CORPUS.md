@@ -359,7 +359,7 @@ them is **PARTIAL**. Scope of each, so neither is read for more than it covers:
 | The ten ledgers exist in that company and nowhere else | **VERIFIED** | `CREATED=10, ALTERED=0, ERRORS=0`, then a readback of the ledger list naming all ten, plus a readback of a guard company showing none |
 | No book carried an embedded identifier before this | **VERIFIED** | all 16 loaded companies read through the `StandardLedgerCatalogV1` request, responses written to files and parsed from the files; 470 names, 0 numeric and 1 code identifier |
 | The identifier rule behaves correctly against live-read names | **PARTIAL** | exercised against these ten seeded names only, on one instance, one licence tier, one Tally build. Fabricated *source* names against live *catalogue* names — no real source document has been bound end to end |
-| The shipped consumer path runs end to end against a real instance | **VERIFIED 2026-09-11** | the branch's own `bridge_mcp` binary driven over stdio against licensed TallyPrime 7.1 Silver, reading this company's catalogue over the wire and returning the binder's report — see "The end-to-end slice" below |
+| The shipped consumer path runs end to end against a real instance | **VERIFIED 2026-09-11**, nine rows of ten | the branch's own `bridge_mcp` binary driven over stdio against licensed TallyPrime 7.1 Silver, reading this company's catalogue over the wire and returning the binder's report. One row is **PENDING** a re-run after the fold was narrowed — see "The end-to-end slice" below |
 | Binding is safe on catalogues generally | **UNVERIFIED** | one company, one instance, one Tally build, and every *source* name fabricated. No engagement has run a real document through this path; the mutation sweep is fabricated mutations of live names, not observed operator input |
 
 **Added 2026-09-10.** Ten ledgers prefixed `MB `, seeded so the master-binding
@@ -403,7 +403,7 @@ silent `Alter` that overwrites.
 surface that ships it: the crate had tests, and the catalogue side had live coverage, but no
 run had gone request-to-report through the consumer. This one does.
 
-**Procedure.** `cargo build --bin bridge_mcp` on the branch under review, then the binary driven
+**Procedure.** `cargo build --bin bridge_mcp` at commit `9e34cd77`, then the binary driven
 over stdio with a real MCP session — `initialize`, `notifications/initialized`,
 `tools/call validate_masters` — against `http://127.0.0.1:9001`, TallyPrime 7.1, licence tier
 **silver**, `education_mode=false`. The tool read this company's ledger catalogue over the wire
@@ -415,7 +415,7 @@ names**.
 | --- | --- | --- |
 | `MB PILOT ALPHA (5550001001)` | `exact` | byte equality |
 | `mb pilot alpha (5550001001)` | `identifier` | the identifier is consulted **before** the name, so a case variant never reached the fold |
-| `MB-PILOT-ALPHA-(5550001001)` | `normalized` | the separator fold — see the caveat below |
+| `MB-PILOT-ALPHA-(5550001001)` | `normalized` | the separator fold — **since narrowed**, see below |
 | `Alpha Pilot Account 5550001001` | `identifier` | **the rule this module exists for**: a name sharing no word with the master bound on its embedded number |
 | `Zeta Holdings 5550001009` | `near_miss`, 2 candidates, `shared_identifier` | one identifier on two masters refuses and shows both |
 | `MB TRADING COMPANY LTD` | `near_miss`, 2 candidates | a truncation surfaces both neighbours and chooses neither |
@@ -435,12 +435,20 @@ tier. Every *source* name is fabricated — a real source document has still nev
 nothing here speaks to how operator-written names actually differ from master names. It exercises
 the MCP consumer; the desktop consumer shares the crate but was not driven.
 
-**It also reproduced a known gap, live.** The third row bound `MB-PILOT-ALPHA-(5550001001)` to a
-master carrying spaces. That is the **reverse** of the direction
-`TALLY_PROTOCOL_REFERENCE.md` §9.4b measured, and §9.4b marks it **UNVERIFIED**. The bind is a
-Bridge policy about which master an operator meant, not a Tally behaviour, and §9.4b's own remedy
-is that a looser fold may *suggest* rather than resolve. Recorded here because the slice is where
-it became visible on a real instance rather than in a unit test.
+**It found a defect, which is the reason to run these.** The third row bound
+`MB-PILOT-ALPHA-(5550001001)` to a master carrying spaces. That is the **reverse** of the
+direction `TALLY_PROTOCOL_REFERENCE.md` §9.4b measured, and §9.4b marks it **UNVERIFIED** — so
+the binder was resolving on evidence that does not support resolving, which is exactly what
+§9.4b exists to prevent. The resolving fold has since been narrowed to the three verified
+transformations, and that row now returns a near-miss carrying `MB PILOT ALPHA (5550001001)` as
+its sole candidate. ADR 0016 §3 records the narrowing and its cost.
+
+**One row of this table is therefore owed a re-run.** The nine other rows are unaffected by the
+narrowing — they turn on identifiers, exact equality or refusal — and their unit coverage is
+unchanged. Row three's new behaviour is covered by
+`a_source_space_matches_a_master_hyphen_and_only_that_direction` but has not itself been seen on
+a live instance: the lab endpoint went down before the re-run. Read this table as VERIFIED for
+nine rows and PENDING for one, not as ten.
 
 **What it found within minutes.** The `DELTA`/`EPSILON` pair exposed a defect no fabricated
 fixture had produced: a *byte-exact* request for `MB PARTY DELTA (5550001009)` was being

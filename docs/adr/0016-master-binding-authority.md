@@ -184,38 +184,57 @@ favour.
 under **Tally's own rule for when two master names are the same**, and only when
 exactly one master shares it.
 
-**Part of that rule is measured, and the part that is not has to say so.**
+**There are two folds, and which one may answer is the whole of this section.**
+
 `TALLY_PROTOCOL_REFERENCE.md` §9.4b sent named variants at a live master and
-recorded which Tally accepted: ASCII case folding, one trailing space, and a
-**space supplied where the master carries a hyphen**. `AND` for `&`, a missing
-suffix word and a singular for a plural were rejected. Those three are Tally's
-behaviour; §9.4b marks everything else **UNVERIFIED** and warns that a fold is
-only as safe as its least-verified step.
+recorded which Tally accepted. Exactly three: ASCII case folding, one trailing
+space, and a **space supplied where the master carries a hyphen**. `AND` for
+`&`, a missing suffix word and a singular for a plural were rejected. §9.4b
+marks everything else UNVERIFIED and states the rule this section now follows —
+*a fold is only as safe as its least-verified step, and a looser fold may
+**suggest**, never resolve.*
 
-This fold is wider. It also folds the reverse hyphen direction, collapses runs
-of internal whitespace, ignores leading whitespace, and folds Unicode dash and
-quote variants to ASCII — four transformations on §9.4b's unverified list. An
-earlier draft of this section claimed the fold "stops exactly where Tally
-stops". That was wrong, and the live slice in `TEST_CORPUS.md` §9 shows it
-binding on the unverified reverse direction against a real instance.
+- The **narrow fold** resolves. It implements those three and nothing else. The
+  hyphen step is directional, because the measurement was: a source **space**
+  was sent at a master **hyphen**, and the reverse was never sent. A symmetric
+  key cannot express a direction, so the master side of the index answers to
+  both its own spelling and its hyphens-as-spaces, while the source side answers
+  only to its own. A source hyphen therefore finds no master space.
+- The **wide fold** suggests. It carries the reverse hyphen direction, collapsed
+  whitespace runs, leading whitespace and the Unicode dash variants — and
+  everything it reaches is offered as a `NormalizedEqual` candidate for a human
+  to confirm.
 
-**So the extra width is Bridge's policy, not Tally's, and stands on its own
-argument:** a bind answers *which master the operator meant*, and two spellings
-differing only in separators are one name to whoever typed either. Two guards
-carry that. A fold merging two **live** masters never resolves — the pair is an
-ambiguity and both surface (§4). And the write gate admits `exact` only, so a
-normalized bind informs an operator without widening what may be written.
+**Trimming a source name is not part of either fold.** `SourceEntity` trims
+what the document gave it, at the boundary, because leading and trailing space
+in extracted text is transcription noise; an observed master name is retained
+byte for byte, because a caller writes it back. So a source reading
+`"  Alpha Traders"` reaches `Alpha Traders`, while a *master* spelled
+`"  Alpha Traders"` does not resolve from a clean source name — it is offered.
+The asymmetry is deliberate and is the P3 rule, not a claim about what Tally
+folds.
 
-It is nevertheless the least-proven step in this module. §9.4b's own remedy is
-open — let the verified three resolve and a looser fold only *suggest* — and
-taking it would reinstate the refusals the next paragraph argues against. That
-trade is recorded here, not settled here.
+**This was got wrong first, and the correction is the useful record.** An
+earlier version of this ADR claimed the fold "stops exactly where Tally stops"
+while the implementation resolved on four transformations §9.4b marks
+UNVERIFIED. It read naturally, which is exactly the skimming-implementer failure
+§9.4b was written to prevent, and the live slice in `TEST_CORPUS.md` §9 caught
+it binding that way against a real instance.
 
-**Being stricter than the authority is not the safe direction it appears to
-be.** It refuses names Tally would accept, and `X - Y` is a common ledger
-convention — six of the seventeen hyphenated names in the observed books take
-that shape. A binder that reports a near-miss for a name the book would have
-matched has invented work, not prevented an error.
+**The cost is real and is stated here rather than discovered later.** `X - Y` is
+a common ledger convention — six of the seventeen hyphenated names in the
+observed books take that shape — and reaching it from `X Y` needs the measured
+hyphen step *and* a whitespace run collapsed. So those no longer resolve. On the
+fabricated mutation book, 420 of 995 mutations bind where most once did.
+
+**What makes that a trade and not a loss** is measured alongside it: every
+mutation the wide fold would have resolved is still shown, as a candidate
+carrying the right master. The sweep asserts it case by case rather than as a
+percentage. So narrowing the fold costs a confirmation, never a search — which
+is the trade §9.4b prescribes and the same one §4 makes for every other
+near-miss in this module. A binder that answers from unverified evidence has not
+saved the operator a step; it has moved the step to wherever the wrong posting
+is found.
 
 This fold is deliberately **separate from the general comparison key**, which is
 shared with other contracts for voucher numbers and voucher-type names. §9.4b

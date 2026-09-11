@@ -584,7 +584,10 @@ impl FallbackBinding {
 pub struct SourceEntity {
     position: usize,
     name: String,
+    /// The wide fold. Suggests; never resolves.
     key: String,
+    /// The narrow fold. Resolves.
+    binding_key: String,
     identifiers: Vec<Identifier>,
 }
 
@@ -633,6 +636,7 @@ impl SourceEntity {
         Ok(Self {
             position,
             key: master_identity_key(&name),
+            binding_key: verified_fold(&name),
             name,
             identifiers,
         })
@@ -678,6 +682,7 @@ pub struct MasterCatalog {
     entries: Vec<CatalogEntry>,
     by_name: BTreeMap<String, usize>,
     by_key: BTreeMap<String, Vec<usize>>,
+    by_binding_key: BTreeMap<String, Vec<usize>>,
     by_identifier: BTreeMap<Identifier, Vec<usize>>,
     by_token: BTreeMap<String, Vec<usize>>,
     common_tokens: BTreeSet<String>,
@@ -717,10 +722,14 @@ impl MasterCatalog {
         }
 
         let mut by_key: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut by_binding_key: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut by_identifier: BTreeMap<Identifier, Vec<usize>> = BTreeMap::new();
         let mut by_token: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         for (index, entry) in entries.iter().enumerate() {
             by_key.entry(entry.key.clone()).or_default().push(index);
+            for binding_key in master_binding_keys(&entry.name) {
+                by_binding_key.entry(binding_key).or_default().push(index);
+            }
             for identifier in &entry.identifiers {
                 by_identifier
                     .entry(identifier.clone())
@@ -765,6 +774,7 @@ impl MasterCatalog {
             entries,
             by_name,
             by_key,
+            by_binding_key,
             by_identifier,
             by_token,
             common_tokens,
@@ -909,7 +919,15 @@ fn bind_one(catalog: &MasterCatalog, entity: &SourceEntity, budget: &mut usize) 
             basis: BindingBasis::Identifier,
         }
     } else {
-        match catalog.by_key.get(&entity.key).map(Vec::as_slice) {
+        // The narrow index, not the wide one: only a transformation Tally was
+        // measured performing may settle which master was meant. Everything the
+        // wide fold reaches and this does not falls through to `collect_candidates`
+        // below, where it is offered as `NormalizedEqual` for a human to confirm.
+        match catalog
+            .by_binding_key
+            .get(&entity.binding_key)
+            .map(Vec::as_slice)
+        {
             Some([index]) => BindingStatus::Bound {
                 catalog_name: catalog.entries[*index].name.clone(),
                 basis: BindingBasis::NormalizedName,
@@ -1187,40 +1205,76 @@ pub(crate) fn comparison_key(value: &str) -> String {
         .join(" ")
 }
 
-/// Whether Tally itself would consider two master names the same.
+/// The **wide** fold: which masters are worth showing a human.
 ///
-/// This is not `comparison_key`, and the difference is not cosmetic.
-/// `TALLY_PROTOCOL_REFERENCE.md` §9.4b measured Tally's own master-name
-/// matching and verified exactly three transformations: ASCII case folding, one
-/// trailing space, and a **space supplied where the master carries a hyphen**
-/// (`BRIDGE PROBE LEDGER A` matched a live `BRIDGE-PROBE-LEDGER-A`). `AND` for
-/// `&`, a missing suffix word and a singular for a plural were all rejected.
+/// This is deliberately looser than anything measured, and it may never decide
+/// a binding. `verified_fold` does that. The separation is the whole design:
+/// §9.4b verified three transformations and marks the rest UNVERIFIED, and its
+/// own remedy is that a looser fold may *suggest* while only the measured ones
+/// resolve. So the reverse hyphen direction, collapsed whitespace runs, leading
+/// whitespace and the Unicode dash variants all live here, where the worst they
+/// can do is put the right master in front of an operator.
 ///
-/// **This fold is wider than those three, deliberately, and the width is
-/// Bridge's own policy.** The reverse hyphen direction, collapsed whitespace
-/// runs, leading whitespace and the Unicode dash variants are all on §9.4b's
-/// UNVERIFIED list. It is not "what Tally does" — do not describe it that way.
-/// What justifies it is a different question: a bind answers which master the
-/// operator *meant*, and two spellings differing only in separators are one
-/// name to whoever typed either. `X - Y` is a common ledger convention — six of
-/// seventeen hyphenated names in the observed books take that shape — so a
-/// binder refusing them invents work rather than preventing an error.
-///
-/// Two guards make the width survivable, and neither may be removed without
-/// narrowing the fold with it: a fold that merges two **live** masters never
-/// resolves, and the write gate admits an exact spelling only. ADR 0016 §3
-/// records the open trade.
+/// An earlier version of this module let this fold bind. It read naturally and
+/// was wrong: `X - Y` is a common ledger convention — six of seventeen
+/// hyphenated names in the observed books take that shape — and reaching it
+/// from `X Y` needs the measured hyphen step **and** a whitespace run collapsed,
+/// which nothing measured. Answering from here was a Bridge guess wearing
+/// Tally's authority, and `TEST_CORPUS.md` §9 caught it binding that way
+/// against a live instance.
 ///
 /// It is a **separate** function rather than a widening of `comparison_key`
 /// precisely because that one is shared: voucher numbers and voucher-type names
 /// fold through it too, and §9.4b says nothing about those. One fold per notion
-/// of sameness, each named for the question it answers.
+/// of sameness, each named for the question it answers — and here there are two
+/// notions, because "could this be the master?" and "is this the master?" are
+/// different questions with different evidence behind them.
 fn master_identity_key(value: &str) -> String {
     comparison_key(value)
         .replace('-', " ")
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// The fold that may **resolve** a name to a master, held to exactly what
+/// `TALLY_PROTOCOL_REFERENCE.md` §9.4b measured Tally doing.
+///
+/// Three transformations were verified: ASCII case folding, one trailing space
+/// ignored, and a **space supplied where the master carries a hyphen**. That
+/// last one is directional — `BRIDGE PROBE LEDGER A` was sent against a live
+/// `BRIDGE-PROBE-LEDGER-A`, and the reverse was never sent — so it cannot be a
+/// symmetric replacement in a shared key. It lives in `master_binding_keys`,
+/// on the master side only, which is the side the evidence is about.
+///
+/// One step here is not on that list: NFC. Canonical equivalence is a property
+/// of how the same characters may be encoded, not a claim about which names
+/// Tally treats as one, and distinguishing two encodings of an identical name
+/// would be distinguishing something no operator can see or type differently.
+/// Every other unverified step — the reverse hyphen direction, collapsed
+/// whitespace runs, leading whitespace, Unicode dash variants, non-ASCII case —
+/// is deliberately absent. They are not lost: `master_identity_key` still
+/// carries them, and everything it reaches is offered as a candidate.
+fn verified_fold(value: &str) -> String {
+    // One trailing space, because one is what was sent.
+    let value = value.strip_suffix(' ').unwrap_or(value);
+    value.nfc().collect::<String>().to_ascii_lowercase()
+}
+
+/// The keys a **master** name answers to.
+///
+/// Its own, and — because a source space was measured matching a master hyphen
+/// — the same name with its hyphens read as spaces. Offering the second from
+/// the master side is what keeps the measured direction measured: a source
+/// hyphen finds no master space, while a source space finds a master hyphen.
+///
+/// Two masters that answer to one key are an ambiguity and are refused there,
+/// which is the same answer Tally's own behaviour implies: it would match that
+/// source name to both.
+fn master_binding_keys(value: &str) -> BTreeSet<String> {
+    let base = verified_fold(value);
+    let hyphens_as_spaces = base.replace('-', " ");
+    BTreeSet::from([base, hyphens_as_spaces])
 }
 
 /// Splits a comparison key into words.

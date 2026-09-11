@@ -88,11 +88,18 @@ fn an_observed_master_name_is_retained_verbatim_while_a_source_name_is_trimmed()
     // A caller writes the bound name back to Tally byte for byte. Trimming an
     // observed name here would report a spelling that does not exist and
     // refuse at the write gate with no explanation.
-    let catalog = ledgers(&["  Alpha Traders  ", "Beta Supply"]);
-    assert_eq!(catalog.names().next(), Some("  Alpha Traders  "));
+    let catalog = ledgers(&["Alpha Traders ", "Beta Supply"]);
+    assert_eq!(catalog.names().next(), Some("Alpha Traders "));
     let binding = bind_one_name(&catalog, "Alpha Traders");
-    assert_eq!(binding.bound_name(), Some("  Alpha Traders  "));
+    assert_eq!(binding.bound_name(), Some("Alpha Traders "));
     assert_eq!(binding.source_name, "Alpha Traders");
+    // One trailing space is what §9.4b sent. *Leading* whitespace is on its
+    // unverified list, so a master carrying it surfaces as a candidate instead
+    // of resolving — and is retained verbatim either way.
+    let leading = ledgers(&["  Alpha Traders", "Beta Supply"]);
+    let binding = bind_one_name(&leading, "Alpha Traders");
+    assert_eq!(binding.bound_name(), None);
+    assert_eq!(candidate_names(&binding), ["  Alpha Traders"]);
 }
 
 #[test]
@@ -152,15 +159,31 @@ fn an_exact_name_binds() {
 }
 
 #[test]
-fn case_whitespace_and_dash_style_do_not_defeat_a_bind() {
-    let catalog = ledgers(&["Alpha \u{2013} Traders", "Beta Supply"]);
-    let binding = bind_one_name(&catalog, "  alpha - TRADERS  ");
+fn case_binds_but_an_unverified_fold_only_suggests() {
+    // ASCII case folding is measured, so it resolves.
+    let cased = ledgers(&["Alpha Traders", "Beta Supply"]);
     assert_eq!(
-        binding.status,
+        bind_one_name(&cased, "ALPHA traders").status,
         BindingStatus::Bound {
-            catalog_name: "Alpha \u{2013} Traders".to_string(),
+            catalog_name: "Alpha Traders".to_string(),
             basis: BindingBasis::NormalizedName,
         }
+    );
+
+    // An en dash, a collapsed whitespace run and leading whitespace are all on
+    // §9.4b's unverified list. The wide fold still reaches the master, so it is
+    // offered — a candidate a human confirms, which is exactly what §9.4b says
+    // a looser fold is for. Nothing is lost here except the automatic answer.
+    let catalog = ledgers(&["Alpha \u{2013} Traders", "Beta Supply"]);
+    let binding = bind_one_name(&catalog, "  alpha - TRADERS  ");
+    assert_eq!(binding.bound_name(), None);
+    assert_eq!(reason(&binding), UnboundReason::NearMiss);
+    assert_eq!(
+        binding.unresolved().expect("unbound").candidates.listed(),
+        [Candidate {
+            catalog_name: "Alpha \u{2013} Traders".to_string(),
+            rule: CandidateRule::NormalizedEqual,
+        }]
     );
 }
 
@@ -415,25 +438,36 @@ fn a_decisive_identifier_pointing_elsewhere_still_outranks_a_byte_exact_name() {
 }
 
 #[test]
-fn a_hyphen_matches_a_space_because_tally_says_so() {
-    // IMPLEMENTATION_GUIDE.md §3.3b, measured: Tally's own master-name matching
-    // treats a hyphen as a space. Being stricter than the authority refuses
-    // names Tally would accept, and `X - Y` is a common ledger convention.
-    let catalog = ledgers(&["Bank - HDFC Current", "Beta Supply"]);
-    let binding = bind_one_name(&catalog, "Bank HDFC Current");
+fn a_source_space_matches_a_master_hyphen_and_only_that_direction() {
+    // `TALLY_PROTOCOL_REFERENCE.md` §9.4b sent `BRIDGE PROBE LEDGER A` at a live
+    // `BRIDGE-PROBE-LEDGER-A` and Tally matched it. That is the whole of the
+    // measurement: one separator, one direction.
+    let hyphenated = ledgers(&["BRIDGE-PROBE-LEDGER-A", "Beta Supply"]);
     assert_eq!(
-        binding.status,
+        bind_one_name(&hyphenated, "BRIDGE PROBE LEDGER A").status,
         BindingStatus::Bound {
-            catalog_name: "Bank - HDFC Current".to_string(),
+            catalog_name: "BRIDGE-PROBE-LEDGER-A".to_string(),
             basis: BindingBasis::NormalizedName,
         }
     );
-    // And the reverse direction.
-    let hyphenated = ledgers(&["BRIDGE PROBE LEDGER A", "Beta Supply"]);
-    assert_eq!(
-        bind_one_name(&hyphenated, "BRIDGE-PROBE-LEDGER-A").bound_name(),
-        Some("BRIDGE PROBE LEDGER A")
-    );
+
+    // The reverse was never sent, and §9.4b marks it UNVERIFIED. A symmetric
+    // replacement would resolve it, which is why the hyphen fold lives on the
+    // master side of the index rather than in a key both sides share.
+    let spaced = ledgers(&["BRIDGE PROBE LEDGER A", "Beta Supply"]);
+    let binding = bind_one_name(&spaced, "BRIDGE-PROBE-LEDGER-A");
+    assert_eq!(binding.bound_name(), None);
+    assert_eq!(candidate_names(&binding), ["BRIDGE PROBE LEDGER A"]);
+
+    // `X - Y` is a common ledger convention, and reaching it from `X Y` needs
+    // the measured hyphen step *and* a whitespace run collapsed — which is not
+    // measured. So it suggests rather than resolves. This is the largest single
+    // cost of holding the fold to the evidence, and it is recorded here so that
+    // widening it again is a deliberate act with a test to change.
+    let spaced_hyphen = ledgers(&["Bank - HDFC Current", "Beta Supply"]);
+    let binding = bind_one_name(&spaced_hyphen, "Bank HDFC Current");
+    assert_eq!(binding.bound_name(), None);
+    assert_eq!(candidate_names(&binding), ["Bank - HDFC Current"]);
 }
 
 #[test]
@@ -456,12 +490,19 @@ fn masters_that_collapse_under_the_fold_are_refused_never_chosen() {
 
     // Refuse-ambiguous, never-pick: with no exact spelling to prefer, the
     // collapse is reported with both masters offered, not resolved to one.
-    for spelling in ["alpha beta", "ALPHA  BETA"] {
-        let binding = bind_one_name(&catalog, spelling);
-        assert_eq!(reason(&binding), UnboundReason::NameAmbiguous);
-        assert_eq!(binding.bound_name(), None);
-        assert_eq!(candidate_names(&binding), ["Alpha Beta", "Alpha-Beta"]);
-    }
+    let binding = bind_one_name(&catalog, "alpha beta");
+    assert_eq!(reason(&binding), UnboundReason::NameAmbiguous);
+    assert_eq!(binding.bound_name(), None);
+    assert_eq!(candidate_names(&binding), ["Alpha Beta", "Alpha-Beta"]);
+
+    // A whitespace run is not a verified transformation, so this one never
+    // reaches the narrow index at all. It is still refused, and still shows
+    // both — a near-miss rather than an ambiguity, which is the honest label:
+    // these two are not proven to collapse, they are merely both plausible.
+    let binding = bind_one_name(&catalog, "ALPHA  BETA");
+    assert_eq!(reason(&binding), UnboundReason::NearMiss);
+    assert_eq!(binding.bound_name(), None);
+    assert_eq!(candidate_names(&binding), ["Alpha Beta", "Alpha-Beta"]);
 }
 
 #[test]
@@ -1403,11 +1444,15 @@ fn fabricated_document() -> Vec<(&'static str, Option<&'static str>, Expected)> 
         // Named exactly as the book spells it.
         ("Cash", None, Expected::Bound("Cash")),
         ("CGST OUTPUT 9%", None, Expected::Bound("CGST OUTPUT 9%")),
-        // Case and spacing noise from the source system.
+        // Case noise alone is measured, so it still resolves.
+        ("cgst output 9%", None, Expected::Bound("CGST OUTPUT 9%")),
+        // Spacing noise from the source system is not. Leading whitespace and
+        // a collapsed run are both on §9.4b's unverified list, so this one is
+        // offered rather than answered — with `CGST OUTPUT 9%` first.
         (
             "  cgst   output 9%  ",
             None,
-            Expected::Bound("CGST OUTPUT 9%"),
+            Expected::Unbound(UnboundReason::NearMiss),
         ),
         (
             "beta placeholder trading co",
@@ -1501,9 +1546,9 @@ fn a_document_against_a_realistic_book_binds_only_where_a_human_would() {
 
     // The shape of the answer, pinned so a loosened threshold moves a number.
     let totals = report.totals();
-    assert_eq!(totals.requested, 12);
+    assert_eq!(totals.requested, 13);
     assert_eq!(totals.bound, 7);
-    assert_eq!(totals.ambiguous, 3);
+    assert_eq!(totals.ambiguous, 4);
     assert_eq!(totals.unmatched, 2);
     assert_eq!(totals.requested, totals.bound + totals.unbound);
 }
@@ -1581,8 +1626,19 @@ fn no_mutation_of_a_master_name_ever_binds_to_a_different_master() {
         .map(|name| (comparison_key(name), name.as_str()))
         .collect::<BTreeMap<_, _>>();
 
+    // What the *wide* fold would resolve. Narrowing the resolving fold to the
+    // three transformations §9.4b verified is only defensible if it withdraws
+    // answers, never masters, so the cases it used to settle are tracked by
+    // name rather than by a percentage that drifts with the fixture.
+    let wide = names
+        .iter()
+        .map(|name| (master_identity_key(name), name.as_str()))
+        .collect::<BTreeMap<_, _>>();
+
     let mut checked = 0_usize;
     let mut self_bound = 0_usize;
+    let mut self_offered = 0_usize;
+    let mut downgraded = 0_usize;
     for name in &names {
         for mutation in source_mutations(name) {
             let key = comparison_key(&mutation);
@@ -1591,8 +1647,23 @@ fn no_mutation_of_a_master_name_ever_binds_to_a_different_master() {
             }
             checked += 1;
             let binding = bind_one_name(&catalog, &mutation);
+            let wide_would_bind = wide.get(&master_identity_key(&mutation)) == Some(&name.as_str());
             match binding.bound_name() {
-                None => {}
+                None => {
+                    let offered = candidate_names(&binding).iter().any(|shown| shown == name);
+                    if offered {
+                        self_offered += 1;
+                    }
+                    // The invariant that makes the narrowing a trade rather than
+                    // a loss: anything the wide fold settled is still shown.
+                    assert!(
+                        !wide_would_bind || offered,
+                        "narrowing the fold hid {name:?} from its own mutation {mutation:?}"
+                    );
+                    if wide_would_bind {
+                        downgraded += 1;
+                    }
+                }
                 Some(bound_to) => {
                     assert_eq!(
                         bound_to, name,
@@ -1607,10 +1678,23 @@ fn no_mutation_of_a_master_name_ever_binds_to_a_different_master() {
         checked > 900,
         "the sweep must actually cover the book: {checked}"
     );
-    // Most mutations are case and spacing noise, which must still bind.
+    // The narrowing this book measures. Most of these mutations are spacing
+    // and dash noise, and holding the resolving fold to the three
+    // transformations §9.4b actually verified stops most of them resolving.
+    // That is the intended trade and not the property under test — what has to
+    // hold is that a withdrawn answer left the right master **visible**, so the
+    // cost is one confirmation rather than a master a human never sees.
+    // The cost, stated rather than implied. Most of this book's mutations are
+    // spacing and dash noise, and holding the resolving fold to the evidence
+    // stops most of them resolving: they become a near-miss carrying the right
+    // master, which costs a confirmation and never a search.
     assert!(
-        self_bound * 2 > checked,
-        "only {self_bound} of {checked} mutations bound at all"
+        downgraded > 0,
+        "the sweep no longer exercises the narrowed fold at all"
+    );
+    assert!(
+        self_bound + self_offered > checked * 2 / 3,
+        "{self_bound} bound and {self_offered} offered of {checked}"
     );
 }
 
