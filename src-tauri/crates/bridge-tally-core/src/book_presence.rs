@@ -43,6 +43,14 @@ pub const MAX_DUPLICATE_NUMBER_GROUPS: usize = 25;
 pub const MAX_KEYS_PER_DUPLICATE_GROUP: usize = 10;
 /// Most unbalanced book vouchers listed in the book observations.
 pub const MAX_UNBALANCED_LISTED: usize = 25;
+/// Longest echoed label in the book observations.
+///
+/// The observations sit outside the paged rows, so a consumer's response
+/// machinery cannot trim them — an unbounded echo there can push a complete
+/// report past a byte budget that trimming rows could no longer rescue. These
+/// two fields are **recognition labels**, not keys: a group's identity is its
+/// `book_keys`, which are bounded by count.
+pub const MAX_OBSERVATION_LABEL_CHARS: usize = 128;
 /// Longest accepted text field, in characters. This bounds pathological input;
 /// it is not a claim about what Tally accepts.
 pub const MAX_TEXT_CHARS: usize = 16_384;
@@ -545,6 +553,11 @@ pub enum UndecidedReason {
     /// The party comparison could not be completed, so no rule that needs a
     /// party actually ran and `Absent` is not available.
     PartyNotDecidable,
+    /// The voucher type is declared `Manual`, so the number is the one key
+    /// that could decide — and the source supplied none. Nothing was skipped,
+    /// and nothing decisive was offered either, so the absence would rest on
+    /// resemblance alone.
+    ManualNumberNotSupplied,
     /// The source named no party at all. Nothing was skipped — but nothing was
     /// compared either, and a book voucher for the same party and amount on
     /// another date would never have surfaced. `Present` is still reachable by
@@ -578,6 +591,7 @@ impl UndecidedReason {
             Self::ResemblesBookVoucher => "presence_resembles_book_voucher",
             Self::PartyNotDecidable => "presence_party_not_decidable",
             Self::PartyNotSupplied => "presence_party_not_supplied",
+            Self::ManualNumberNotSupplied => "presence_manual_number_not_supplied",
             Self::BookVoucherClaimedTwice => "presence_book_voucher_claimed_twice",
             Self::IdentityConflict => "presence_identity_conflict",
             Self::RemoteIdEvidenceUnavailable => "presence_remote_id_evidence_unavailable",
@@ -1344,6 +1358,19 @@ fn decide(
                 BTreeSet::new(),
             );
         }
+        // Under a Manual declaration the number is the deciding key. A
+        // proposal that supplies none has offered nothing decisive, so an
+        // absence would rest on date, party and amount — which this contract
+        // does not let decide.
+        if method == NumberingMethod::Manual && proposal.number_key.is_none() {
+            return shell(
+                PresenceStatus::PossiblyPresent(undecided(
+                    UndecidedReason::ManualNumberNotSupplied,
+                    (Vec::new(), 0),
+                )),
+                BTreeSet::new(),
+            );
+        }
         if party.incomplete {
             let reason = match party.outcome {
                 PartyOutcome::NotSupplied => UndecidedReason::PartyNotSupplied,
@@ -1488,8 +1515,12 @@ fn observe(
         }
         let first = &window.vouchers[positions[0]];
         duplicate_numbers.push(DuplicateNumberGroup {
-            voucher_type: first.voucher_type.clone(),
-            voucher_number: first.voucher_number.clone().unwrap_or_default(),
+            voucher_type: label(&first.voucher_type),
+            voucher_number: first
+                .voucher_number
+                .as_deref()
+                .map(label)
+                .unwrap_or_default(),
             book_keys: positions
                 .iter()
                 .take(MAX_KEYS_PER_DUPLICATE_GROUP)
@@ -1528,6 +1559,11 @@ fn observe(
         window_voucher_count: window.vouchers.len(),
         remote_id_observed: !index.by_remote_id.is_empty(),
     }
+}
+
+/// Bounds an echoed observation label. See `MAX_OBSERVATION_LABEL_CHARS`.
+fn label(value: &str) -> String {
+    value.chars().take(MAX_OBSERVATION_LABEL_CHARS).collect()
 }
 
 fn keep_strongest(

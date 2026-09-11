@@ -1925,3 +1925,77 @@ fn a_large_number_collision_reports_its_true_size_without_listing_it() {
     // And the book-side diagnostic sees the collision it is there to find.
     assert_eq!(report.observations().duplicate_number_group_count, 1);
 }
+
+/// Under a `Manual` declaration the number is the one key that can decide, so
+/// a proposal supplying none has offered nothing decisive — an absence would
+/// rest on date, party and amount, which this contract does not let decide.
+#[test]
+fn a_manual_type_without_a_number_cannot_be_reported_absent() {
+    let window = window(&[BookRow::new("book-1", "20260819", "AA0130").party("Bravo Industries")]);
+    let mut proposal = ProposalRow::new(0, "20260812", "AA0999");
+    proposal.number = None;
+    proposal = proposal.party("Charlie Minerals").rows(vec![
+        ["Charlie Minerals", "-77.00"],
+        ["Sales Account", "77.00"],
+    ]);
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &[proposal.build()],
+    );
+    let entry = only(&report);
+    assert!(!entry.is_absent());
+    assert_eq!(reason(entry), UndecidedReason::ManualNumberNotSupplied);
+}
+
+#[test]
+fn an_automatic_type_without_a_number_is_still_answerable() {
+    // Under automatic numbering the number was never decisive, so omitting it
+    // skips nothing and the absence stands on the rules that could run.
+    let window = window(&[BookRow::new("book-1", "20260819", "AA0130").party("Bravo Industries")]);
+    let mut proposal = ProposalRow::new(0, "20260812", "AA0999");
+    proposal.number = None;
+    proposal = proposal.party("Charlie Minerals").rows(vec![
+        ["Charlie Minerals", "-77.00"],
+        ["Sales Account", "77.00"],
+    ]);
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Automatic),
+        &[proposal.build()],
+    );
+    assert!(only(&report).is_absent());
+}
+
+/// The observations sit outside the paged rows, so a consumer cannot trim
+/// them. An unbounded echo there can push a complete report past a byte budget
+/// that trimming rows could no longer rescue.
+#[test]
+fn book_observation_labels_are_bounded() {
+    let long: &'static str = Box::leak(
+        "N".repeat(MAX_OBSERVATION_LABEL_CHARS + 50)
+            .into_boxed_str(),
+    );
+    let window = window(&[
+        BookRow::new("book-1", "20260812", long),
+        BookRow::new("book-2", "20260813", long).party("Bravo Industries"),
+    ]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118").build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let group = &report.observations().duplicate_numbers[0];
+    assert_eq!(
+        group.voucher_number.chars().count(),
+        MAX_OBSERVATION_LABEL_CHARS
+    );
+    // The group's identity is its keys, which are bounded by count, not by the
+    // label that helps a human recognise it.
+    assert_eq!(group.book_keys, vec!["book-1", "book-2"]);
+    assert_eq!(group.book_voucher_count, 2);
+}

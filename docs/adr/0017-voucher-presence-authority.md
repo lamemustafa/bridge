@@ -89,6 +89,17 @@ consumed as-is:
   resembling one cannot be carrying a posted voucher in this book, so
   party-independent rules are all that remain and `Absent` stays available.
 
+Three further conditions withhold `Absent` before any of that, and they share
+one shape: **the source offered nothing the decisive rules could use.** A
+proposal that names no party (`PartyNotSupplied`) leaves an absence resting on
+date and amount, the pair this contract says collides. A proposal under a
+`Manual` declaration that supplies no voucher number
+(`ManualNumberNotSupplied`) has withheld the one key that could decide. And a
+proposal carrying a `REMOTEID` the window never read
+(`RemoteIdEvidenceUnavailable`) had its strongest key skipped. None of these
+blocks `Present` — identity still settles where it can; only the *absence*
+claim is withheld, and supplying the missing field is what makes it available.
+
 Two binding outcomes withhold `Absent` outright: `NoDiscriminatingCandidate`
 (a name family that is deliberately not listed) and a truncated candidate list.
 In both, names that might have matched were never compared, and reporting
@@ -342,6 +353,12 @@ reported alongside the verdicts rather than discarded:
 - `unbalanced_vouchers` — a book voucher whose entries do not sum to zero.
 - `unclaimed_book_vouchers` — how many vouchers in the window no proposal
   matched. Counted only; listing them is a different report.
+
+These sit **outside** the paged rows, so a consumer's response machinery cannot
+trim them: an unbounded echo here could push a complete report past a byte
+budget that trimming rows could no longer rescue. The two echoed strings are
+therefore bounded, and treated as what they are — **recognition labels, not
+keys.** A group's identity is its `book_keys`, which are bounded by count.
 
 A voucher's magnitude is the sum of its positive entry amounts, computed in
 exact decimal. It is defined whether or not the voucher balances, so an
