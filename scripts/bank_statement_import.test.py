@@ -980,7 +980,7 @@ def test_ach_party_ends_at_the_final_bank_reference(m):
     # boundary traded one failure for another.
     assert party("ACH D- TP ACH ACME TRADERS-12345 67890") == "ACME TRADERS"
     assert party("ACH D- TP ACH STUDIO-54 INDUSTRIES-12345 67890") == "STUDIO-54 INDUSTRIES"
-    assert party("ACH D- TP ACH UNIT-7 METALS-12 345 6789") == "UNIT-7 METALS"
+    assert party("ACH D- TP ACH UNIT-7 METALS-12 345 67890") == "UNIT-7 METALS"
 
 
 def test_a_wrapped_ach_reference_survives_the_parser(m):
@@ -1257,6 +1257,46 @@ def test_no_output_is_written_unless_every_destination_was_claimed(m):
         assert stat.S_IMODE(first.stat().st_mode) == 0o600
 
 
+def test_a_failed_run_does_not_destroy_the_previous_output(m):
+    """The rollback must not be worse than the failure it cleans up after.
+
+    Claiming an existing POSIX destination with `O_TRUNC` emptied it *at claim
+    time*, so a later failure rolled back by unlinking a file whose contents the
+    run had already destroyed — leaving the operator with neither the previous
+    output nor a new one. An existing destination is staged and renamed into
+    place only once every payload is written.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        existing = pathlib.Path(directory, "previous.xml")
+        existing.write_text("the previous run's output")
+        unwritable = str(pathlib.Path(directory, "missing-dir", "second.csv"))
+
+        try:
+            m.write_outputs([(str(existing), "<new/>"), (unwritable, "row\n")])
+            raise AssertionError("the second destination cannot be opened")
+        except (OSError, m.Refusal):
+            pass
+
+        assert existing.exists(), "the previous output was deleted by the rollback"
+        assert existing.read_text() == "the previous run's output", \
+            "the previous output was truncated before the run could commit"
+        # nothing staged is left lying around next to it
+        assert sorted(p.name for p in pathlib.Path(directory).iterdir()) == \
+            ["previous.xml"], sorted(p.name for p in pathlib.Path(directory).iterdir())
+
+    # and when every target does succeed, an existing destination is replaced
+    with tempfile.TemporaryDirectory() as directory:
+        existing = pathlib.Path(directory, "previous.xml")
+        existing.write_text("old")
+        other = pathlib.Path(directory, "new.csv")
+        m.write_outputs([(str(existing), "<new/>"), (str(other), "row\n")])
+        assert existing.read_text() == "<new/>"
+        assert other.read_text() == "row\n"
+        assert stat.S_IMODE(existing.stat().st_mode) == 0o600
+        assert sorted(p.name for p in pathlib.Path(directory).iterdir()) == \
+            ["new.csv", "previous.xml"]
+
+
 def test_a_case_insensitive_collision_is_refused_before_anything_is_written(m):
     """`--out Result.xml --manifest result.XML` is one file on a case-insensitive
     volume. The lexical preflight cannot see it and `samefile` needs both paths
@@ -1293,9 +1333,22 @@ def test_an_ach_reference_must_be_reference_shaped(m):
     def party(narr):
         return m.HDFC.party(m.HDFC, {"narr": narr, "narr_spaced": narr})
 
-    # a name's own hyphenated number is never a delimiter
-    for tail in ["STUDIO-54", "UNIT-7", "SHOP-2024", "STUDIO-5 4", "SHOP-1 2 3"]:
+    # a name's own hyphenated number is never a delimiter.
+    #
+    # The last four are the ones that killed a *reasoned* threshold. An earlier
+    # version required six digits, arguing that a number inside a name is a unit
+    # or a year and so at most four — which overlooked the most ordinary six
+    # digits in an Indian address. A PIN code is six, and is routinely printed
+    # with a space, so `ACME-400 001` resolved to `ACME`. The rule is now the
+    # observed reference length, not an argument about where a gap ought to sit.
+    for tail in ["STUDIO-54", "UNIT-7", "SHOP-2024", "STUDIO-5 4", "SHOP-1 2 3",
+                 "ACME-400 001", "ACME-400001", "TRADERS-560 034", "CORP-110001"]:
         assert party(f"ACH D- TP ACH {tail}") == "UNRESOLVED", tail
+
+    # ...and a run that is merely *long* is not a reference either. Only the
+    # observed length is one; anything else reaches suspense.
+    for digits in ["123456789", "12345678901", "123456789012"]:
+        assert party(f"ACH D- TP ACH ACME-{digits}") == "UNRESOLVED", digits
 
     # a real reference still is, wrapped or not — including a wrap immediately
     # after the delimiter, where the line ends at the hyphen itself
@@ -1304,7 +1357,7 @@ def test_an_ach_reference_must_be_reference_shaped(m):
         ("ACME TRADERS-12345 67890", "ACME TRADERS"),
         ("ACME TRADERS- 1234567890", "ACME TRADERS"),
         ("STUDIO-54 INDUSTRIES- 1234567890", "STUDIO-54 INDUSTRIES"),
-        ("UNIT-7 METALS-12 345 6789", "UNIT-7 METALS"),
+        ("UNIT-7 METALS-12 345 67890", "UNIT-7 METALS"),
     ]:
         assert party(f"ACH D- TP ACH {tail}") == expected, tail
 

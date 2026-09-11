@@ -365,22 +365,30 @@ class SBI(Bank):
         return "TXN", ""
 
 
-# The fewest digits a trailing run must have before it counts as an ACH bank
-# reference rather than part of the counterparty's name. Chosen for the **gap**
-# rather than fitted to a sample: a number inside a name is a unit, a street or
-# a year, so at most four digits (`STUDIO-54`, `UNIT-7`, `SHOP-2024`), while the
-# references observed in real narrations run to ten. Six sits between them with
-# margin on both sides.
+# The digit count of an ACH bank reference — **exactly** the observed length,
+# not a minimum, because this is the only thing separating a reference from a
+# number inside the counterparty's own name.
 #
-# Residual, stated so it is not mistaken for a guarantee: a counterparty whose
-# name genuinely ends in a hyphen and six or more digits is still split at that
-# hyphen. Nothing in the narration distinguishes that case.
-ACH_REFERENCE_DIGITS = 6
+# An earlier version guessed a lower bound of six, reasoning about a "gap"
+# between a name's number (a unit or a year) and a reference. That was wrong in
+# the most ordinary way available: an Indian PIN code is six digits and is
+# routinely printed with a space, so `ACH D- TP ACH ACME-400 001` resolved to
+# `ACME` and an `ACME` mapping would post that transaction to the wrong ledger.
+# Reasoning about where a threshold "ought" to sit invented a gap that the
+# address line walks straight through.
+#
+# So it is not reasoned, it is observed: every ACH reference seen in a real
+# narration is ten digits. Anything else — longer, shorter, wrapped into a
+# different length — is UNRESOLVED and reaches suspense, where an operator sees
+# it. An unrecognised narration costs a look; a misattributed one announces
+# nothing. When a reference of another length is genuinely observed, widen this
+# and record the observation.
+ACH_REFERENCE_DIGITS = 10
 # `-\s*` before the run, and `\s*` between its digits: the cell wraps wherever
 # the column edge falls, which includes immediately after the delimiter. See
 # finding S1.
 ACH_PARTY = re.compile(
-    r"^ACH D-\s*TP ACH (.+)-\s*((?:\d\s*){%d,})$" % ACH_REFERENCE_DIGITS)
+    r"^ACH D-\s*TP ACH (.+)-\s*((?:\d\s*){%d})$" % ACH_REFERENCE_DIGITS)
 
 
 class HDFC(Bank):
@@ -1379,20 +1387,19 @@ def _open_private(path, accept_inherited=False):
     The XML and the manifest carry counterparty names, amounts, an account
     label and every narration in the statement. On a shared host the default
     022 umask would publish all of it as mode 0644.
+
+    Always `O_EXCL`: this only ever creates a file that did not exist. On
+    Windows that is the rule itself — an overwrite would keep the existing
+    file's ACL — and deciding it at create time rather than after an
+    `os.path.exists` is what makes it race-free. On POSIX an overwrite is
+    permitted, but it is `write_outputs` that performs it, by renaming a
+    staged file over the destination once every payload is safely on disk.
     """
     refusal = windows_destination_refusal(path, accept_inherited)
     if refusal:
         raise refusal
-    # `O_EXCL` on Windows, so "must not already exist" is decided by the
-    # filesystem at create time rather than by a preceding `os.path.exists`.
-    # With the check separated from the create, a file appearing in between was
-    # still opened `O_TRUNC` — truncating a file whose ACL the operator never
-    # checked, and reporting success. On POSIX an overwrite is permitted and
-    # the mode argument is honoured, so `O_TRUNC` stays.
-    exclusive = os.name == "nt"
-    flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
     try:
-        return os.open(path, flags, 0o600)
+        return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
         raise _existing_target_on_windows(path) from None
 
@@ -1401,40 +1408,66 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
     """Claim **every** destination, then write them. All of them or none.
 
     `targets` is [(path, text), ...] in the order they should be reported.
-    `after_claim` runs once every destination exists and is still empty; raising
-    from it rolls the whole set back.
+    `after_claim` runs once every destination is claimed and still empty;
+    raising from it rolls the whole set back.
 
     Creating each file at its own write site left a partial result that the
     refusal's own remedy could not clear: with `--out` new and `--manifest`
     taken, the XML was written, the manifest was refused, and "remove it and
     re-run" then failed on the XML the failed run had just created. Preflight
-    narrowed that to a race — another process taking the manifest between the
-    check and the write — but did not close it, because the two creates were
+    narrowed that to a race but did not close it, because the two creates were
     still independent events with the first payload written in between.
 
-    Claiming both handles up front makes the second failure happen while the
-    first file is still empty and still this run's to remove, so the rollback is
-    safe: nothing else can have put content there. A crossed pair of concurrent
-    invocations now has one of them lose its claim and clean up, rather than
-    both half-succeeding.
+    **Nothing that already exists is touched until every payload is written.**
+    An earlier version claimed each destination with `O_TRUNC` on POSIX, which
+    emptied an existing output at claim time — so a later failure rolled back by
+    unlinking a file whose previous contents the run had already destroyed. A
+    command that refused could therefore leave the operator with neither the old
+    output nor a new one. That is worse than the partial result it was fixing.
+
+    So a destination that exists is **staged**: the payload is written to a
+    sibling temporary file and renamed over the destination at the end, which is
+    atomic and happens only once every target has succeeded. A destination that
+    does not exist is created exclusively under its own name, which is both the
+    reservation against a concurrent run and, on Windows, the rule itself —
+    there an existing destination is refused outright rather than staged.
     """
-    claimed = []
+    claimed, staged = [], []
     try:
         for path, _ in targets:
-            claimed.append((path, _open_private(path, accept_inherited)))
+            if os.path.exists(path):
+                # Refuses here on Windows; on POSIX, stage beside it.
+                refusal = windows_destination_refusal(path, accept_inherited)
+                if refusal:
+                    raise refusal
+                handle, temporary = tempfile.mkstemp(
+                    dir=os.path.dirname(os.path.abspath(path)),
+                    prefix=os.path.basename(path) + ".", suffix=".part")
+                claimed.append((temporary, handle))
+                staged.append((temporary, path))
+            else:
+                claimed.append((path, _open_private(path, accept_inherited)))
         if after_claim is not None:
             after_claim()
+        for index, ((_, text), (where, handle)) in enumerate(zip(targets, claimed)):
+            claimed[index] = (where, None)  # fdopen owns the handle from here
+            with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
+                stream.write(text)
+            os.chmod(where, 0o600)
     except BaseException:
-        # Only files this call created are removed, and each is still empty.
-        for path, handle in claimed:
-            os.close(handle)
+        # Only paths this call created are removed. A created destination is
+        # still this run's; a staged file never was the destination at all.
+        for where, handle in claimed:
+            if handle is not None:
+                with contextlib.suppress(OSError):
+                    os.close(handle)
             with contextlib.suppress(OSError):
-                os.unlink(path)
+                os.unlink(where)
         raise
-    for (path, text), (_, handle) in zip(targets, claimed):
-        with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
-            stream.write(text)
-        os.chmod(path, 0o600)  # an existing file keeps its old mode through O_CREAT
+    # Every payload is on disk. Replacing now cannot lose an existing output to
+    # a failure that has already been ruled out.
+    for temporary, path in staged:
+        os.replace(temporary, path)
 
 
 def _check_paths(args):

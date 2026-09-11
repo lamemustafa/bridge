@@ -71,7 +71,7 @@ subject rather than against a live Tally:
 | Marker | Meaning here |
 | --- | --- |
 | **VERIFIED** | Seen in a real statement — present in a committed `pdftotext` capture. |
-| **PARTIAL** | The mechanism is verified; this particular instance is reproduced at the real column geometry on a constructed page, not observed in a real narration. |
+| **PARTIAL** | Rests on something verified, but this particular claim is not itself in a capture — it is reproduced on a constructed page at the real column geometry, or reasoned from a verified fact and exercised only by authored tests. |
 | **UNVERIFIED** | A judgement made to separate two cases, not a measurement. Do not build on it without checking. |
 
 A finding carries one marker per claim, because the claims in one finding do not all rest on
@@ -111,20 +111,25 @@ test so it is a recorded limitation rather than a surprise.
 **VERIFIED — the shape.** `ACH D- TP ACH <name>-<reference>` appears in the committed HDFC
 capture, carrying a ten-digit reference.
 
-**VERIFIED — the delimiter is the *final* hyphen-plus-digits, not the first.** A name may
-legitimately contain a hyphenated number (`STUDIO-54`, `UNIT-7`). A non-greedy boundary
-resolved `ACH D- TP ACH STUDIO-54 INDUSTRIES-1234567890` to `STUDIO`, and a mapping row for
-`STUDIO` then silently posts an unrelated counterparty to that ledger. Asserted in
-`test_ach_party_ends_at_the_final_bank_reference`.
+**PARTIAL — the delimiter is the *final* hyphen-plus-digits, not the first.** The rule is
+sound reasoning from a fact that is itself verified — a name may contain a hyphenated number
+(`STUDIO-54`, `UNIT-7`) — but **no captured ACH row exercises it.** The one ACH narration in
+the capture has a single terminal `-3333333333`, so it cannot distinguish "final" from
+"first"; every case that does is authored, in `test_ach_party_ends_at_the_final_bank_reference`.
+A non-greedy boundary resolved `ACH D- TP ACH STUDIO-54 INDUSTRIES-1234567890` to `STUDIO`,
+and a mapping row for `STUDIO` would then post an unrelated counterparty to that ledger —
+which is why the rule is there, and why it is worth keeping without claiming it was observed.
 
-**UNVERIFIED — the six-digit minimum (`ACH_REFERENCE_DIGITS`) that separates a reference from
-a name's own number.** "Hyphen then digits" does not distinguish them, so `STUDIO-54` and the
-wrapped `STUDIO-5 4` both resolved to `STUDIO`. The threshold is a judgement about the *gap*:
-a number inside a name is a unit, a street or a year, so at most four digits, while the only
-references actually observed run to ten. Six sits between with margin, and one capture is not
-a distribution. **Do not build on the exact number.** Anything shorter is `UNRESOLVED` and
-reaches suspense, which is the direction to fail in — an unrecognised narration costs a look,
-a misattributed one does not announce itself.
+**VERIFIED — the reference is ten digits.** That is the length in the captured narration, and
+`ACH_REFERENCE_DIGITS` now requires exactly it rather than a lower bound.
+
+A **six-digit minimum** stood here briefly and was wrong in the most ordinary way available.
+It was reasoned rather than observed — "a number inside a name is a unit, a street or a year,
+so at most four digits" — and an Indian PIN code is six, routinely printed with a space. So
+`ACH D- TP ACH ACME-400 001` resolved to `ACME`. The gap the argument relied on does not
+exist; the address line sits in it. Anything that is not the observed length is now
+`UNRESOLVED` and reaches suspense, which is the direction to fail in — an unrecognised
+narration costs a look, a misattributed one does not announce itself.
 
 **Residual:** a counterparty whose name genuinely ends in a hyphen and six or more digits is
 still split at that hyphen. Nothing in the narration distinguishes that case.
