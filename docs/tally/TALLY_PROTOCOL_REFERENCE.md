@@ -844,9 +844,16 @@ created in its place. So the delete is confirmed on Gold for that voucher shape,
 §9.7 here would give a Gold implementer the opposite of what this document already establishes
 five sections later.
 
-Scope it precisely rather than in either direction: **Delete-by-client-`REMOTEID` is confirmed on
-licensed Gold for an invoice voucher (§9.12b), and unqualified elsewhere** — including on the
-Silver/Journal path this section is about, where §9.7's row is Educational.
+Scope it precisely rather than in either direction, and mind what §9.12b actually is:
+**§9.12 is marked PARTIAL — a hand import through the desktop UI, which produces no gateway
+response at all.** So §9.12b establishes a **stored-state** effect on licensed Gold for an invoice
+voucher: the voucher was gone afterwards. It does not establish the gateway path, and by this
+section's own requirement below it cannot — there is no delete response to show `DELETED=1` with
+clean counters.
+
+So: **Delete-by-client-`REMOTEID` is confirmed as a stored-state effect on licensed Gold via the
+UI (§9.12b); the gateway delete is UNVERIFIED everywhere**, as is the whole path on the
+Silver/Journal profile this section is about, where §9.7's row is Educational.
 
 **Qualifying it on a new SKU or voucher type takes more than "read one voucher back".** A single
 read cannot tell *the original is gone* from *my read did not cover it*: an incomplete, failed or
@@ -901,8 +908,13 @@ lives. Measured against a ledger named `BRIDGE-PROBE-LEDGER-A` and one named `ZZ
 | `ZZ Ram & Son Pvt Ltd` (singular for plural) | **rejected** |
 | entirely different name | **rejected** |
 
-Tally folds **ASCII case**, and matched a **hyphen against a single space**. It is otherwise
-**exact on letters**.
+Tally folds **ASCII case**, and accepted a **space supplied where the master carries a hyphen**. It
+is otherwise **exact on letters**.
+
+**That separator result is directional.** The measurement sent `BRIDGE PROBE LEDGER A` against a
+master named `BRIDGE-PROBE-LEDGER-A`. The reverse — supplying `A-B` against a master named `A B` —
+was never sent, and a fold treating the two as interchangeable would substitute a name Tally might
+reject.
 
 Stated that narrowly on purpose. "Normalises separators" reads as *separators generally*, and a
 skimming implementer folds underscores, slashes and en dashes together — binding a voucher to the
@@ -919,7 +931,8 @@ names Tally keeps apart — which posts to the wrong account, silently.
 | Transformation | State |
 | --- | --- |
 | ASCII case folding | **VERIFIED** — lowercase matched |
-| hyphen ⇄ single space | **VERIFIED** — `BRIDGE PROBE LEDGER A` matched `BRIDGE-PROBE-LEDGER-A` |
+| supplying a **space** where the master has a **hyphen** | **VERIFIED** — `BRIDGE PROBE LEDGER A` matched `BRIDGE-PROBE-LEDGER-A` |
+| supplying a **hyphen** where the master has a **space** | **UNVERIFIED** — the reverse direction was never sent |
 | one trailing space ignored | **VERIFIED** |
 | *leading* whitespace ignored | **UNVERIFIED** |
 | runs of internal whitespace collapsed to one | **UNVERIFIED** — only a single space was tested |
@@ -943,8 +956,17 @@ none is `ledger_not_found`; and **more than one is `ledger_ambiguous` — an err
 comparison that returns the first match is the failure this rule exists to prevent.
 
 **Copy its discipline, not its fold.** That resolver's `ledger_lookup_key` keeps only alphanumerics,
-which is *looser* than §3.3b — it drops `&` — so `A & B` and `AB` share a key. §3.3b measured those
-as **different masters**: `ZZ Ram AND Sons Pvt Ltd` was rejected against `ZZ Ram & Sons Pvt Ltd`.
+which is *looser* than anything §3.3b measured — it drops `&` outright, so `A & B` and `AB` share a
+key.
+
+Be exact about what was and was not tested there, because I was not. §3.3b sent
+`ZZ Ram AND Sons Pvt Ltd` against `ZZ Ram & Sons Pvt Ltd` and it was **rejected** — that tested
+*replacing* `&` with the letters `AND`. **Nobody has tested deleting `&`**, so whether Tally treats
+`A & B` and `AB` as the same master is **UNVERIFIED**.
+
+That cuts both ways and the rule below is written for it: a loose fold might merge masters Tally
+keeps apart, or it might not, and neither is established. Resolving automatically on an untested
+equivalence is the part that is unsafe — not the equivalence itself.
 
 That loosening creates a hole the ambiguity rule cannot close, because **a sole candidate under a
 loose fold is not a resolution.** Ask for `A & B` in a catalogue holding only `AB` and there is
