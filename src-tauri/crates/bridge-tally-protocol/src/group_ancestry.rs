@@ -12,6 +12,9 @@
 //!   against the visible name silently stops matching in a renamed book.
 //! * **An empty `RESERVEDNAME` is a positive signal**, not a missing value: it
 //!   is Tally stating the group is user-created, so the walk climbs through it.
+//!   A whitespace-only value is treated the same way — it is no more an
+//!   identity than an empty one, and returning it as an ancestor would let a
+//!   caller read "established" from a row that established nothing.
 //!   A `None` is a third thing — a reader that never captured the attribute —
 //!   and carries no claim either way, so it refuses.
 //! * **A ledger exposes `PARENT` and no `PARENTSTRUCTURE`**, so ancestry is one
@@ -129,7 +132,12 @@ impl GroupIndex {
                 .reserved_name
                 .as_deref()
                 .ok_or(AncestryGap::ReservedNameMissing)?;
-            if !reserved.is_empty() {
+            // Blank after trimming is not a predefined identity. Tally signals
+            // user-created with an empty value; a whitespace-only one is
+            // neither observed nor usable, and returning it as an ancestor let
+            // a caller read "established as something" from a row that
+            // established nothing.
+            if !reserved.trim().is_empty() {
                 return Ok(reserved);
             }
             current = group
@@ -268,6 +276,27 @@ mod tests {
         assert_eq!(
             tree.reserved_ancestor(Some("Bank Accounts")),
             Ok("Bank Accounts")
+        );
+    }
+
+    #[test]
+    fn a_whitespace_only_reserved_name_is_no_more_an_identity_than_an_empty_one() {
+        // Returning it as an ancestor let a caller read "established as
+        // something other than money" from a row that established nothing,
+        // which positively admitted a counterparty leg.
+        let blank = GroupIndex::build([
+            group("Odd", "Current Assets", Some("   ")),
+            group(
+                "Current Assets",
+                "\u{fffd}#4; Primary",
+                Some("Current Assets"),
+            ),
+        ]);
+        assert_eq!(blank.reserved_ancestor(Some("Odd")), Ok("Current Assets"));
+        let orphan = GroupIndex::build([group("Odd", "\u{fffd}#4; Primary", Some(" "))]);
+        assert_eq!(
+            orphan.reserved_ancestor(Some("Odd")),
+            Err(AncestryGap::ReachedRoot)
         );
     }
 

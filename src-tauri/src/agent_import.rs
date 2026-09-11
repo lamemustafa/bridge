@@ -456,7 +456,7 @@ impl Server {
                 let observed = ObservedMasters::new(ledger_masters.parents(), groups);
                 let refusals =
                     cash_bank_refusals(&payload, &observed, self.settings.max_bytes);
-                if !refusals.ledgers.is_empty() {
+                if refusals.is_refused() {
                     return Ok(ToolOutcome {
                         payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
                             "state":"refused", "reason":"cash_bank_ledger_not_established",
@@ -1362,6 +1362,19 @@ struct CashBankRefusals {
 /// goes out regardless, and the rest are counted rather than dropped silently.
 fn refusal_diagnostic_budget(max_bytes: usize) -> usize {
     (max_bytes / 4).min(32 * 1024)
+}
+
+impl CashBankRefusals {
+    /// Whether the batch is refused.
+    ///
+    /// This is `legs`, never `ledgers`. The row vector is presentation and is
+    /// bounded by a *display* budget, so at a small configured response cap it
+    /// can be empty while legs still failed. Gating on it once let a batch with
+    /// failing cash/bank legs write its file, which made an accounting check
+    /// switchable by `BRIDGE_AGENT_MAX_BYTES`.
+    fn is_refused(&self) -> bool {
+        self.legs > 0
+    }
 }
 
 fn cash_bank_refusals(

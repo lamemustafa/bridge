@@ -775,6 +775,38 @@ fn one_misfiled_ledger_reports_once_however_many_vouchers_repeat_it() {
 }
 
 #[test]
+fn a_tiny_response_cap_cannot_admit_a_batch_whose_legs_failed() {
+    // The refusal rows are presentation and are bounded by a display budget;
+    // the verdict is the leg count. Reading the row vector as the verdict let
+    // a batch with failing cash/bank legs write its file whenever the cap was
+    // small enough to omit every row — an accounting check made switchable by
+    // BRIDGE_AGENT_MAX_BYTES.
+    let masters = observed(&captured_demo_ledger_parents(), captured_demo_groups());
+    let batch = demo_batch("Payment", "Cash", "HDFC Bank Current Account");
+    for cap in [200_000, 4_096, 256] {
+        let refusals = cash_bank_refusals(&batch, &masters, cap);
+        assert!(refusals.legs > 0, "the leg fails at every cap");
+        assert!(refusals.is_refused(), "cap {cap} still refuses the batch");
+    }
+    // The cap that empties the rows is the case that regressed.
+    let mut wide = batch.clone();
+    let template = wide.vouchers[0].clone();
+    let mut ledgers = captured_demo_ledger_parents();
+    wide.vouchers.clear();
+    for index in 0..8 {
+        let ledger = format!("{index:02} {}", "N".repeat(MAX_MASTER_NAME_CHARS - 3));
+        ledgers.push((ledger.clone(), Some("Cash-in-Hand".into())));
+        let mut voucher = template.clone();
+        voucher.bridge_txn_id = format!("txn-{index:02}");
+        voucher.entries[0].ledger = ledger;
+        wide.vouchers.push(voucher);
+    }
+    let refusals = cash_bank_refusals(&wide, &observed(&ledgers, captured_demo_groups()), 256);
+    assert!(refusals.ledgers.is_empty(), "no row fits this cap");
+    assert!(refusals.is_refused(), "and the batch is still refused");
+}
+
+#[test]
 fn a_counterparty_that_cannot_be_classified_is_refused() {
     // Both legs need a positive fact; they differ only in which one. An
     // unresolved counterparty is not evidence that it holds no money, and the
