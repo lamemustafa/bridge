@@ -137,15 +137,30 @@ absence is invisible. The matrix is worse: a dropped claim leaves no trace at al
    part of these files that must be *merged* rather than regenerated. List the pins
    each side added and confirm the union is present:
 
+   **Name the two sides explicitly — during a rebase `HEAD` is not your branch.**
+   When a rebase stops on a conflict, `HEAD` is the upstream plus whatever has
+   already been replayed, and the commit being applied is `REBASE_HEAD`. Comparing
+   `HEAD` against `origin/master` there compares upstream with itself and never
+   reads the feature-side manifest at all — so it misses exactly the pin it is
+   meant to preserve. The conflict stages say it without either name: stage 2 is
+   the side you are replaying onto, stage 3 the side being applied.
+
    ```bash
-   base=$(git merge-base HEAD origin/master)
-   for ref in "$base" HEAD origin/master; do
-     git show "$ref:docs/tally/compatibility/compatibility-surface.json" \
-       | python3 -c 'import json,sys; [print(f["path"]) for f in json.load(sys.stdin)["files"]]' \
-       | sort > "/tmp/pins-$(echo "$ref" | tr / _).txt"
-   done
+   surface=docs/tally/compatibility/compatibility-surface.json
+   pins() { python3 -c 'import json,sys; [print(f["path"]) for f in json.load(sys.stdin)["files"]]' | sort; }
+
+   # during a rebase or merge conflict, read the stages -- they are unambiguous
+   git show ":1:$surface" | pins > /tmp/pins-base.txt   # merge base
+   git show ":2:$surface" | pins > /tmp/pins-ours.txt   # replayed onto / current
+   git show ":3:$surface" | pins > /tmp/pins-theirs.txt # being applied / incoming
+
    # every pin either side ADDED since the base must survive the resolution
+   comm -13 /tmp/pins-base.txt /tmp/pins-ours.txt   # added by one side
+   comm -13 /tmp/pins-base.txt /tmp/pins-theirs.txt # added by the other
    ```
+
+   If the conflict is already resolved and the stages are gone, use `REBASE_HEAD`
+   (rebase) or `MERGE_HEAD` (merge) for the incoming side, never `origin/master`.
 
    Do the same for the matrix's claims. A pin or claim that exists on one side and
    not in your result is being deleted, and nothing downstream will say so.
