@@ -22,6 +22,7 @@
 // branches to be up to date" or a merge queue — not something a script can do.
 // The `push: master` run is the backstop, and it fails loudly on master.
 
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
@@ -45,6 +46,13 @@ const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 // gate reported success.
 const SETEXT_UNDERLINE = /^ {0,3}(=+|-+)\s*$/;
 const SETEXT_NUMBER = /^ {0,3}((?:\d+[a-z]?)(?:\.\d+[a-z]?)*)(?=[\s.:—-]|$)/;
+// A Setext heading's content is a *paragraph*. A list item, table row or block
+// quote is not one, and walking back to the top of a run of non-blank lines will
+// land on them — `1. **Write responses to a file**` reads as section `1`
+// otherwise, which is a real line in this document. Note `\d{1,9}[.)]\s` matches
+// an ordered-list marker (`1. `) and not a section number (`9.14 `), because in
+// the latter the dot is followed by a digit.
+const NOT_A_PARAGRAPH = /^ {0,3}(?:[-*+]\s|\d{1,9}[.)]\s|>|\||#)/;
 
 // Diagnostics are bounded. A malformed or generated reference can carry very
 // many duplicates, or one very long heading, and CI evidence that does not fit
@@ -87,53 +95,91 @@ function titleOf(line) {
   return line.trim().replace(/^#+\s+\S+\s*/, "").trim();
 }
 
-const lines = readFileSync(reference, "utf8").split("\n");
-const occurrences = new Map();
-let fence = null;
-function record(number, line, text) {
-  if (!occurrences.has(number)) occurrences.set(number, []);
-  occurrences.get(number).push({ line, text: text.trim() });
-}
-lines.forEach((line, index) => {
-  const rail = FENCE.exec(line);
-  if (rail) {
-    if (fence === null) {
-      // A backtick fence's info string may not contain a backtick — CommonMark
-      // says so, and Markdown does not open a block for one. Treating it as an
-      // opener suppressed every heading until the next bare closer, so a
-      // duplicate inside that span passed CI unseen.
-      const info = line.slice(line.indexOf(rail[1]) + rail[1].length);
-      if (rail[1][0] === "`" && info.includes("`")) return;
-      fence = rail[1];
+// Scanning one document's lines into number -> occurrences. A function rather
+// than a loop, because the base revision has to be scanned the same way.
+function scan(lines) {
+  const occurrences = new Map();
+  let fence = null;
+  const record = (number, line, text) => {
+    if (!occurrences.has(number)) occurrences.set(number, []);
+    occurrences.get(number).push({ line, text: text.trim() });
+  };
+
+  lines.forEach((line, index) => {
+    const rail = FENCE.exec(line);
+    if (rail) {
+      if (fence === null) {
+        // A backtick fence's info string may not contain a backtick — CommonMark
+        // says so, and Markdown does not open a block for one. Treating it as an
+        // opener suppressed every heading until the next bare closer, so a
+        // duplicate inside that span passed CI unseen. A tilde fence's info
+        // string may, so this is backtick-specific.
+        const info = line.slice(line.indexOf(rail[1]) + rail[1].length);
+        if (rail[1][0] === "`" && info.includes("`")) return;
+        fence = rail[1];
+        return;
+      }
+      // A closing fence carries no info string, matches the opener's character,
+      // and is at least as long.
+      const after = line.slice(line.indexOf(rail[1]) + rail[1].length);
+      if (rail[1][0] === fence[0] && rail[1].length >= fence.length && after.trim() === "") {
+        fence = null;
+      }
       return;
     }
-    // A closing fence carries no info string: ```xml inside a block opens
-    // nothing and closes nothing, and treating it as a closer would count the
-    // example headings below it as real sections. It must also match the
-    // opener's character and be at least as long.
-    const closes =
-      rail[1][0] === fence[0] &&
-      rail[1].length >= fence.length &&
-      line.slice(line.indexOf(rail[1]) + rail[1].length).trim() === "";
-    if (closes) fence = null;
-    return;
-  }
-  if (fence !== null) return;
+    if (fence !== null) return;
 
-  // Setext: this line underlines the one before it, which is then the heading.
-  // A blank line cannot be a Setext heading, and neither can an ATX one.
-  if (SETEXT_UNDERLINE.test(line) && index > 0) {
-    const above = lines[index - 1];
-    if (above.trim() && !HEADING.test(above)) {
-      const numbered = SETEXT_NUMBER.exec(above.trim());
-      if (numbered) record(numbered[1], index, above);
+    // Setext: this underlines the paragraph above it, and such a heading may
+    // span several lines — the number is on the *first* of them, not on the
+    // line immediately above the underline.
+    if (SETEXT_UNDERLINE.test(line) && index > 0) {
+      let first = index - 1;
+      while (first > 0 && lines[first - 1].trim() && !HEADING.test(lines[first - 1])) {
+        first -= 1;
+      }
+      const heading = lines[first];
+      // An ATX heading above is a heading in its own right, and `---` under it
+      // is a thematic break. A blank line is not a heading at all.
+      if (heading.trim() && !HEADING.test(heading) && !NOT_A_PARAGRAPH.test(heading)) {
+        // Matched against the raw line, not a trimmed copy: SETEXT_NUMBER's own
+        // {0,3} indentation limit is what rejects a four-space-indented code
+        // line beginning with a number, and trimming first threw that away.
+        const numbered = SETEXT_NUMBER.exec(heading);
+        if (numbered) record(numbered[1], first + 1, heading);
+      }
+      return;
     }
-    return;
-  }
 
-  const found = HEADING.exec(line);
-  if (found) record(found[2], index + 1, line);
-});
+    const found = HEADING.exec(line);
+    if (found) record(found[2], index + 1, line);
+  });
+  return occurrences;
+}
+
+// Rule 2 of the register — a merged section is never renumbered, because other
+// documents and code cite these numbers. Uniqueness alone cannot see that:
+// renumbering a unique heading leaves it unique. Only the base knows which
+// numbers were already allocated.
+function baseNumbers() {
+  const repository = fileURLToPath(new URL("../", import.meta.url));
+  const candidates = [
+    process.env.GITHUB_BASE_REF ? `origin/${process.env.GITHUB_BASE_REF}` : null,
+    "origin/master",
+    "master",
+  ].filter(Boolean);
+  for (const ref of candidates) {
+    const show = spawnSync(
+      "git",
+      ["show", `${ref}:docs/tally/TALLY_PROTOCOL_REFERENCE.md`],
+      { cwd: repository, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+    );
+    if (show.status === 0) return { ref, numbers: scan(show.stdout.split("\n")) };
+  }
+  return null;
+}
+
+const lines = readFileSync(reference, "utf8").split("\n");
+const occurrences = scan(lines);
 
 if (!occurrences.size) {
   throw new Error(
@@ -199,6 +245,29 @@ for (const [number, { headings, reason }] of KNOWN_DUPLICATES) {
       `heading(s) (${reason}) — update or remove its KNOWN_DUPLICATES entry so ` +
       "the exemption cannot cover a future collision:\n" +
       gone.map((heading) => `    ${heading.slice(0, MAX_HEADING_CHARS)}`).join("\n"),
+  );
+}
+
+// Rule 2: a number already allocated on the base may not move. Uniqueness cannot
+// see this — renumbering a unique heading leaves it unique — and code cites these
+// numbers (`src-tauri/src/agent_import.rs` cites 9.8).
+const base = baseNumbers();
+if (base) {
+  const removed = [...base.numbers.keys()].filter((number) => !occurrences.has(number));
+  if (removed.length) {
+    failures.push(
+      `section number(s) ${removed.slice(0, MAX_REPORTED_NUMBERS).join(", ")} exist on ` +
+        `${base.ref} and not here. A merged section is never renumbered — other ` +
+        "documents and code cite these numbers. Give the new section a free number " +
+        "and leave the existing one alone.",
+    );
+  }
+} else {
+  // Say so rather than passing quietly: a check that cannot run is not a check
+  // that passed.
+  console.warn(
+    "note: no base revision reachable (shallow clone?), so the never-renumber " +
+      "rule was NOT checked — only uniqueness was.",
   );
 }
 
