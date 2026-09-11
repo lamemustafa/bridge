@@ -851,9 +851,19 @@ voucher: the voucher was gone afterwards. It does not establish the gateway path
 section's own requirement below it cannot — there is no delete response to show `DELETED=1` with
 clean counters.
 
-So: **Delete-by-client-`REMOTEID` is confirmed as a stored-state effect on licensed Gold via the
-UI (§9.12b); the gateway delete is UNVERIFIED everywhere**, as is the whole path on the
-Silver/Journal profile this section is about, where §9.7's row is Educational.
+So the two measurements cover different halves and neither covers the third case:
+
+- **Gateway, Edit Log 7.0 Educational — VERIFIED.** §9.7's Voucher/Delete cell is `DELETED=1`
+  keyed by `REMOTEID`, read back and confirmed. That *is* the gateway path, and it is the working
+  correction primitive for anyone targeting that environment.
+- **Stored state, licensed 7.1 Gold — confirmed via the UI (§9.12b).** The voucher was gone
+  afterwards. No gateway response exists to corroborate it.
+- **Gateway on a licensed SKU — UNVERIFIED**, on Gold and on the Silver/Journal profile this
+  section is about alike. §9.7 does not reach it because its baseline is Educational; §9.12b does
+  not reach it because a UI import returns nothing.
+
+Say which of the three you are standing on. "Delete works" is true in two of them and unproven in
+the one a licensed integration actually runs in.
 
 **Qualifying it on a new SKU or voucher type takes more than "read one voucher back".** A single
 read cannot tell *the original is gone* from *my read did not cover it*: an incomplete, failed or
