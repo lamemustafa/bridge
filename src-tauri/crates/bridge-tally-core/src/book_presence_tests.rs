@@ -1999,3 +1999,40 @@ fn book_observation_labels_are_bounded() {
     assert_eq!(group.book_keys, vec!["book-1", "book-2"]);
     assert_eq!(group.book_voucher_count, 2);
 }
+
+/// This contract's two production files are pinned in the compatibility
+/// surface, and there is a way for that to stop being true **silently**.
+///
+/// Resolving a surface conflict by taking the base side — which is the only
+/// correct way to resolve a generated artifact — drops the entries a branch
+/// *adds*, because `rehash-surface` updates hashes and never adds paths. The
+/// compatibility gate does not catch it: its bound is
+/// `MAX_SURFACE_FILES - files.len() <= RESERVED_SURFACE_FILES`, which asserts
+/// there is no unreviewed *headroom* rather than that the cap matches the
+/// surface. A guard on the slack cannot catch a claim made too early, or a pin
+/// quietly lost.
+///
+/// So the claim is asserted here instead, in a file that is not itself pinned.
+/// If a rebase ever drops these two, this fails loudly rather than the seal
+/// passing over a surface that no longer covers the engine it was raised for.
+#[test]
+fn this_contracts_files_are_still_pinned_in_the_compatibility_surface() {
+    const SURFACE: &str =
+        include_str!("../../../../docs/tally/compatibility/compatibility-surface.json");
+    let surface: serde_json::Value = serde_json::from_str(SURFACE).expect("surface json");
+    let pinned = surface["files"]
+        .as_array()
+        .expect("files")
+        .iter()
+        .filter_map(|entry| entry["path"].as_str())
+        .collect::<BTreeSet<_>>();
+    for path in [
+        "src-tauri/crates/bridge-tally-core/src/book_presence.rs",
+        "src-tauri/src/agent_presence.rs",
+    ] {
+        assert!(
+            pinned.contains(path),
+            "{path} is no longer pinned: a conflict resolution dropped it and the gate cannot see that"
+        );
+    }
+}
