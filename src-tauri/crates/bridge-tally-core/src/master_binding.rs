@@ -213,9 +213,10 @@ pub enum UnboundReason {
     NearMiss,
     /// The source name matches a whole family of masters and distinguishes
     /// none of them — a truncated `DN Party 0` against `DN Party 001`…`120`.
-    /// Measured live: listing an arbitrary capped slice of such a family put
-    /// the right master out of view about a third of the time, so the family
-    /// is counted and deliberately not listed.
+    /// Listing an arbitrary capped slice of such a family put the right master
+    /// out of view about a third of the time, so the family is counted and
+    /// deliberately not listed. Measured across sixteen live catalogues;
+    /// `docs/tally/TEST_CORPUS.md` §9.1 carries the counts and their scope.
     NoDiscriminatingCandidate,
     /// No rule produced a candidate. The master is probably missing.
     NoCandidate,
@@ -1061,7 +1062,10 @@ fn collect_candidates(
     };
     // Beyond the bound they are a family this name does not separate, and an
     // arbitrary capped slice of one omitted the right master about a third of
-    // the time against live books. Counted, and withheld rather than listed.
+    // the time against live books — 65.6% present, against 100% once families
+    // over the bound were withheld. Counted, and withheld rather than listed.
+    // See `docs/tally/TEST_CORPUS.md` §9.1 for the counts, the cause, and what
+    // they do not cover.
     let withheld = if extending.len() > MAX_PREFIX_FAMILY {
         extending.clone()
     } else {

@@ -397,7 +397,39 @@ confirmed by a readback of the ledger list — counters alone prove nothing, sin
 rewrites imports silently. **Do not re-send the create file:** an identical `Create` is a
 silent `Alter` that overwrites.
 
-## The end-to-end slice, 2026-09-11
+### 9.1 Candidate quality across sixteen live catalogues, 2026-09-10
+
+**VERIFIED for the counts; the rule they justify is PARTIAL.** Recorded here because the binder
+encodes this result in two comments and a status name, and a measurement that lives only in an
+implementation comment cannot be audited (P6, P9).
+
+**Procedure.** Every ledger name of all 16 loaded companies was read through
+`StandardLedgerCatalogV1`, responses written to files and parsed from the files. 434 fabricated
+source names — mutations of those live names — were bound against their own company's catalogue,
+and each result was checked for whether the master the mutation came from appeared at all.
+
+| | listing a capped slice of a prefix family | withholding a family over `MAX_PREFIX_FAMILY` |
+| --- | --- | --- |
+| intended master present in the candidate list | **65.6%** | **100%** (434 of 434) |
+| median candidates offered per source name | **40** | **2** |
+| share of the catalogue offered | **62.8%** | — |
+
+**What drove it.** `CatalogPrefix` produced 12,108 of 12,793 candidates, almost all from
+sequentially-numbered party families — a truncated `DN Party 0` reaches `DN Party 001`…`120` and
+separates none of them. Capping the list at `MAX_CANDIDATES_PER_ENTITY` then printed an arbitrary
+25 of them, and the arbitrariness is the defect: **the intended master was absent from about a
+third of the lists.** So a family over the bound is counted and deliberately not listed, which is
+what `NoDiscriminatingCandidate` means.
+
+**Scope, so this is not read for more than it covers.** Two instances, 16 companies, one Tally
+build. The catalogue side is live; every *source* name is a fabricated mutation, so this measures
+how the rule behaves against real naming habits, not against real operator input. The 100% is a
+property of this corpus and these mutations, not a guarantee. It says the withholding rule fixed
+the failure it was written for; it does not say candidate lists are sufficient in general.
+
+---
+
+### 9.2 The end-to-end slice, 2026-09-11
 
 **VERIFIED.** The reviewable claim before this was that the binder had never run through the
 surface that ships it: the crate had tests, and the catalogue side had live coverage, but no
