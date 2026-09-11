@@ -263,28 +263,44 @@ for (const [number, { headings, reason }] of KNOWN_DUPLICATES) {
 // numbers (`src-tauri/src/agent_import.rs` cites 9.8).
 const base = baseNumbers();
 if (base) {
-  // Compare number -> heading, not the two number sets. Two merged sections that
-  // *exchange* numbers leave both sets identical, so a set comparison passes
-  // while every citation to either now resolves to the wrong section.
+  // What rule 2 forbids is a section's *number* moving, because citations point
+  // at numbers. So the test is: a heading that existed on the base now appears
+  // under a **different** number.
+  //
+  // Not "a number no longer carries the heading it had" — that also fires on a
+  // **retitle**, which breaks no citation and is sometimes the whole point of a
+  // change. PR #296 exists to retitle 9.3, whose old wording stated a narrow
+  // case in general-sounding words; the gate blocked it, which is a false
+  // positive, not the rule working.
+  //
+  // A swap is still caught, because a swap is two renumberings: each heading
+  // turns up under the other's number.
+  const numbersNow = new Map();
+  for (const [number, found] of occurrences) {
+    for (const one of found) {
+      if (!numbersNow.has(titleOf(one.text))) numbersNow.set(titleOf(one.text), []);
+      numbersNow.get(titleOf(one.text)).push(number);
+    }
+  }
   const moved = [];
   for (const [number, found] of base.numbers) {
-    const before = found.map((one) => titleOf(one.text)).sort();
-    const after = (occurrences.get(number) ?? []).map((one) => titleOf(one.text)).sort();
-    // A number may gain headings (that is the duplicate check's job) but the
-    // headings it already carried must still be under it.
-    const lost = before.filter((title) => !after.includes(title));
-    if (lost.length) moved.push({ number, lost });
+    for (const one of found) {
+      const title = titleOf(one.text);
+      const now = numbersNow.get(title) ?? [];
+      // gone entirely: a retitle or a deletion, neither of which moves a number
+      if (!now.length || now.includes(number)) continue;
+      moved.push({ number, title, now });
+    }
   }
   if (moved.length) {
     failures.push(
-      `section number(s) changed against ${base.ref}. A merged section is never ` +
+      `section(s) renumbered against ${base.ref}. A merged section is never ` +
         "renumbered — other documents and code cite these numbers. Give the new " +
         "section a free number and leave the existing one alone:\n" +
         moved
           .slice(0, MAX_REPORTED_NUMBERS)
-          .map(({ number, lost }) =>
-            `    ${number} no longer carries: ` +
-            lost.map((title) => title.slice(0, MAX_HEADING_CHARS)).join("; "))
+          .map(({ number, title, now }) =>
+            `    ${title.slice(0, MAX_HEADING_CHARS)}: was ${number}, now ${now.join(", ")}`)
           .join("\n"),
     );
   }
