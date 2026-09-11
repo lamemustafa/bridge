@@ -9,9 +9,9 @@ use super::*;
 use std::collections::BTreeSet;
 
 use bridge_tally_core::book_presence::{
-    self, BookVoucher, BookWindow, NumberingDeclaration, NumberingMethod, ObservedEntry,
-    ObservedVoucher, PresenceError, PresenceReport, PresenceRequest, ProposedVoucher,
-    ProposedVoucherInput, RemoteIdEvidence, WindowRead,
+    self, BookObservations, BookVoucher, BookWindow, NumberingDeclaration, NumberingMethod,
+    ObservedEntry, ObservedVoucher, PresenceError, PresenceReport, PresenceRequest,
+    ProposedVoucher, ProposedVoucherInput, RemoteIdEvidence, WindowRead,
 };
 use bridge_tally_core::master_binding::{MasterCatalog, MasterClass, SourceEntity};
 
@@ -111,20 +111,34 @@ impl Server {
             // An empty window is only an empty window once the existing
             // corroboration says so. Anything less becomes `WindowIncomplete`
             // at the crate boundary rather than a report full of "absent".
+            // Completeness is corroborated, never assumed, and that holds
+            // whether or not the window had rows in it. An empty read is
+            // checked against a wider read and the company high-water mark; a
+            // nonempty read is checked against a wider read on Tally's own
+            // identities. A silently short response looks exactly like a full
+            // one, and the verdict it produces — `Absent` — is what authorizes
+            // importing a voucher the book already holds.
             let mut read = WindowRead::Complete;
-            let mut reason = None;
-            if rows.is_empty() {
-                let (read_evidence, partial, corroboration) = self
-                    .corroborate_empty_voucher_read(&identity, &company.name, &from, &to, None)
-                    .await?;
-                accumulate(&mut accumulated, read_evidence);
-                reason = corroboration;
-                if partial {
-                    read = WindowRead::Partial;
-                    if let Some(evidence) = accumulated.as_mut() {
-                        evidence.state = "partial";
-                        evidence.reason_code = corroboration.map(str::to_string);
-                    }
+            let (read_evidence, partial, reason) = if rows.is_empty() {
+                self.corroborate_empty_voucher_read(&identity, &company.name, &from, &to, None)
+                    .await?
+            } else {
+                self.corroborate_nonempty_voucher_read(
+                    &identity,
+                    &company.name,
+                    &from,
+                    &to,
+                    None,
+                    &rows,
+                )
+                .await?
+            };
+            accumulate(&mut accumulated, read_evidence);
+            if partial {
+                read = WindowRead::Partial;
+                if let Some(evidence) = accumulated.as_mut() {
+                    evidence.state = "partial";
+                    evidence.reason_code = reason.map(str::to_string);
                 }
             }
 
@@ -189,7 +203,14 @@ impl Server {
             let request = PresenceRequest::new(&window, &catalog, &numbering, &proposals)
                 .map_err(presence_code)?;
             let report = book_presence::assess(&request);
-            let (result, truncated) = presence_result(&report, &catalogue, reason, offset, limit);
+            let (result, truncated) = presence_result(
+                &report,
+                &catalogue,
+                reason,
+                offset,
+                limit,
+                self.settings.max_bytes,
+            );
 
             Ok(ToolOutcome {
                 payload: json!({
@@ -321,6 +342,7 @@ fn presence_result(
     corroboration_reason: Option<&'static str>,
     offset: usize,
     limit: usize,
+    max_bytes: usize,
 ) -> (Value, bool) {
     let (from, to) = report.window();
     let total = report.vouchers().len();
@@ -346,10 +368,51 @@ fn presence_result(
         "offset": offset,
         "total": total,
         "totals": report.totals(),
-        "book": report.observations(),
+        "book": observations_within(report.observations(), max_bytes / OBSERVATION_BUDGET_SHARE),
         "catalogue_evidence_sha256": sha256_json(&catalogue.to_vec()),
     });
     (result, truncated)
+}
+
+/// `book` is the fixed half of this payload: paging trims `items`, and nothing
+/// trims this. So it has to fit on its own, against the **framed** size rather
+/// than the built one — `set_mcp_content_json` copies `structuredContent` into
+/// `content` as text, so what leaves here is twice what is assembled.
+///
+/// The caps admit more than that leaves room for. Twenty-five duplicate groups
+/// of ten 128-character keys, plus twenty-five unbalanced keys, at four bytes a
+/// character, is roughly 134 KB — which doubles past the default 200,000-byte
+/// cap on its own. `fit_response` trims only `items`, so it would drop every one
+/// of them and still fail, replacing a successful report with
+/// `agent_response_too_large`.
+///
+/// An eighth of the cap, so the doubled copy is a quarter and items keep the
+/// rest.
+const OBSERVATION_BUDGET_SHARE: usize = 8;
+
+/// The observations, trimmed to a byte budget, with their counts left intact.
+///
+/// Only the *lists* shrink. `duplicate_number_group_count`,
+/// `unbalanced_voucher_count` and `unmatched_book_vouchers` are what a reader
+/// reconciles against, so a shortened list still says how much it is short by —
+/// the same rule this project's candidate lists follow.
+fn observations_within(observations: &BookObservations, budget: usize) -> Value {
+    let mut trimmed = observations.clone();
+    loop {
+        let value = serde_json::to_value(&trimmed).unwrap_or_default();
+        if value.to_string().len() <= budget {
+            return value;
+        }
+        if trimmed.duplicate_numbers.pop().is_some() {
+            trimmed.duplicate_numbers_truncated = true;
+            continue;
+        }
+        if trimmed.unbalanced_vouchers.pop().is_some() {
+            continue;
+        }
+        // Nothing further may be dropped: what remains is counts and flags.
+        return serde_json::to_value(&trimmed).unwrap_or_default();
+    }
 }
 
 /// Marks the names an egress policy treats as party data. Voucher numbers and

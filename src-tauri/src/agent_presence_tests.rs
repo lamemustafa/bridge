@@ -2,6 +2,10 @@
 //! the repository's existing synthetic capture. Nothing here is evidence about
 //! a real book.
 use super::*;
+use bridge_tally_core::book_presence::{
+    DuplicateNumberGroup, MAX_BOOK_KEY_CHARS, MAX_DUPLICATE_NUMBER_GROUPS,
+    MAX_KEYS_PER_DUPLICATE_GROUP, MAX_UNBALANCED_LISTED,
+};
 use bridge_tally_transport::TallyEndpointConfig;
 use tally_protocol_simulator::{
     Fixture, ResponseFraming, ScenarioPlan, SequenceSimulator, WireEncoding,
@@ -513,10 +517,12 @@ fn plans(steps: Vec<Step>) -> Vec<ScenarioPlan> {
 fn presence_plans() -> Vec<ScenarioPlan> {
     let catalogue = catalogue_xml();
     let mut steps = vec![Step::Company, Step::Status, Step::Company, Step::Status];
-    // Catalogue, then the voucher window, then the catalogue again: the
-    // verdict is built from two observations and the second read proves the
-    // first still holds.
+    // Catalogue, the voucher window, the window again a day wider, then the
+    // catalogue again. The verdict is built from two observations and the last
+    // read proves the first still holds; the wider read is what turns
+    // "the response was nonempty" into "the response was not short".
     steps.extend(paired_read(&catalogue));
+    steps.extend(paired_read(&window_xml()));
     steps.extend(paired_read(&window_xml()));
     steps.extend(paired_read(&catalogue));
     plans(steps)
@@ -604,7 +610,10 @@ async fn a_live_shaped_cycle_separates_present_undecided_and_absent() {
         "complete"
     );
     let observed = simulator.finish().expect("requests");
-    assert_eq!(observed.len(), 22);
+    // Twenty-two before corroborating nonempty windows, twenty-four after. The
+    // two extra are the wider voucher read and its paired status probe, and
+    // this number is pinned so that cost is a decision rather than a drift.
+    assert_eq!(observed.len(), 24);
 }
 
 /// The admission contract this tool enforces lives in `agent_catalog.rs`, and
@@ -739,6 +748,7 @@ async fn a_ledger_missing_from_the_catalogue_fails_closed() {
     let mut steps = vec![Step::Company, Step::Status, Step::Company, Step::Status];
     steps.extend(paired_read(&catalogue));
     steps.extend(paired_read(&unlisted));
+    steps.extend(paired_read(&unlisted));
     steps.extend(paired_read(&catalogue));
     let simulator = SequenceSimulator::spawn(plans(steps)).expect("simulator");
     let directory = tempfile::tempdir().expect("directory");
@@ -824,4 +834,73 @@ async fn a_party_with_too_many_identifiers_costs_no_read() {
         response.value["structuredContent"]["evidence"]["bytes"], 0,
         "an input that was always going to be refused must cost no read"
     );
+}
+
+#[test]
+fn the_fixed_observations_fit_the_framed_envelope_without_losing_their_counts() {
+    // `book` is the half of this payload that paging cannot trim, and the
+    // framed response is twice what is built here because the MCP envelope
+    // repeats `structuredContent` as text. At the admitted caps — 25 duplicate
+    // groups of 10 keys, 25 unbalanced keys, 128 characters each, four bytes a
+    // character — it exceeds the default cap on its own, and `fit_response`
+    // would drop every item and still fail.
+    // Three bytes a character, which is what the Devanagari ledger names in
+    // these books actually cost — not a worst case invented for the test.
+    let long_key = "\u{92a}".repeat(MAX_BOOK_KEY_CHARS);
+    let observations = BookObservations {
+        duplicate_numbers: (0..MAX_DUPLICATE_NUMBER_GROUPS)
+            .map(|group| DuplicateNumberGroup {
+                voucher_type: format!("{long_key}t{group}"),
+                voucher_number: format!("{long_key}{group}"),
+                book_keys: (0..MAX_KEYS_PER_DUPLICATE_GROUP)
+                    .map(|key| format!("{long_key}{group}-{key}"))
+                    .collect(),
+                book_voucher_count: MAX_KEYS_PER_DUPLICATE_GROUP,
+            })
+            .collect(),
+        duplicate_number_group_count: MAX_DUPLICATE_NUMBER_GROUPS,
+        duplicate_numbers_truncated: false,
+        unbalanced_vouchers: (0..MAX_UNBALANCED_LISTED)
+            .map(|index| format!("{long_key}u{index}"))
+            .collect(),
+        unbalanced_voucher_count: MAX_UNBALANCED_LISTED,
+        unmatched_book_vouchers: 7,
+        window_voucher_count: 41,
+        remote_id_observed: true,
+    };
+    let untrimmed = serde_json::to_value(&observations).expect("serializable");
+    assert!(
+        untrimmed.to_string().len() * 2 > 200_000,
+        "the fixture no longer reaches the size this guards against"
+    );
+
+    let budget = 200_000 / OBSERVATION_BUDGET_SHARE;
+    let trimmed = observations_within(&observations, budget);
+    assert!(trimmed.to_string().len() <= budget);
+
+    // Only the lists shrink. The counts are what a reader reconciles against,
+    // so a shortened list still says how much it is short by.
+    assert_eq!(
+        trimmed["duplicate_number_group_count"],
+        MAX_DUPLICATE_NUMBER_GROUPS
+    );
+    assert_eq!(trimmed["unbalanced_voucher_count"], MAX_UNBALANCED_LISTED);
+    assert_eq!(trimmed["unmatched_book_vouchers"], 7);
+    assert_eq!(trimmed["window_voucher_count"], 41);
+    assert_eq!(trimmed["remote_id_observed"], true);
+    assert_eq!(trimmed["duplicate_numbers_truncated"], true);
+
+    // An ordinary report is untouched, and does not claim truncation.
+    let small = BookObservations {
+        duplicate_numbers: Vec::new(),
+        duplicate_number_group_count: 0,
+        duplicate_numbers_truncated: false,
+        unbalanced_vouchers: vec!["PH-0001".to_string()],
+        unbalanced_voucher_count: 1,
+        unmatched_book_vouchers: 0,
+        window_voucher_count: 3,
+        remote_id_observed: false,
+    };
+    let kept = observations_within(&small, budget);
+    assert_eq!(kept, serde_json::to_value(&small).expect("serializable"));
 }

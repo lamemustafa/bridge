@@ -950,6 +950,52 @@ fn corroborate_empty_voucher_window(
     }
 }
 
+/// Whether a **nonempty** narrow read saw every voucher its window holds.
+///
+/// `WindowRead::Complete` was asserted for any nonempty response, and that is
+/// not something a response can be inspected for: a silently short read returns
+/// rows that are all well-formed and all inside the window, and looks exactly
+/// like a full one. The omitted voucher then reads as `Absent`, which is the
+/// verdict that authorizes importing it a second time — the one wrong answer in
+/// this engine that puts a duplicate in a client's book.
+///
+/// So the range is re-read a day wider and the two reads are compared on
+/// Tally's own identity for the rows falling inside the original window. A row
+/// the wider read saw and the narrow one did not means the narrow read was
+/// short. A row carrying no `GUID` cannot be compared at all and is refused
+/// rather than assumed equal, and a row that appears between the two reads
+/// makes the window uncorroborated rather than absent — both fail towards
+/// `Partial`, which `BookWindow::observed` turns into `WindowIncomplete`.
+fn corroborate_nonempty_voucher_window(
+    rows: &[Value],
+    widened_rows: &[Value],
+    from: &str,
+    to: &str,
+) -> (bool, Option<&'static str>) {
+    match (
+        window_identities(rows, from, to),
+        window_identities(widened_rows, from, to),
+    ) {
+        (Some(observed), Some(widened)) if observed == widened => (false, None),
+        (Some(_), Some(_)) => (true, Some("window_short_read")),
+        _ => (true, Some("window_identity_unreadable")),
+    }
+}
+
+/// The multiset of Tally identities the rows carry inside the window, or
+/// `None` if any of them carries none.
+fn window_identities(rows: &[Value], from: &str, to: &str) -> Option<BTreeMap<String, usize>> {
+    let mut identities: BTreeMap<String, usize> = BTreeMap::new();
+    for row in rows.iter().filter(|row| row_in_window(row, from, to)) {
+        let guid = row.get("guid").and_then(Value::as_str)?;
+        if guid.is_empty() {
+            return None;
+        }
+        *identities.entry(guid.to_string()).or_insert(0) += 1;
+    }
+    Some(identities)
+}
+
 fn row_in_window(row: &Value, from: &str, to: &str) -> bool {
     row.get("date")
         .and_then(Value::as_str)
