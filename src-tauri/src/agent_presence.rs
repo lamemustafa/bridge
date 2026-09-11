@@ -359,6 +359,16 @@ fn parse_proposals(args: &Value) -> Result<Vec<ProposedVoucher>, String> {
             voucher["bridge_txn_id"].as_str(),
         ) {
             (Some(batch_id), Some(txn_id)) => {
+                // The published pattern is documentation: the shared validator
+                // enforces `minLength`, `maxLength` and the one `\S` special
+                // case, and evaluates no other regular expression. So the
+                // character rule is enforced here, with the writer's own
+                // function -- a label `build_import_xml` would have refused
+                // cannot have produced a marker, and hashing it anyway derives
+                // an identity no book can hold and calls the result `absent`.
+                if !agent_import::valid_txn_id(txn_id) {
+                    return Err("argument_invalid:bridge_txn_id".to_string());
+                }
                 Some(agent_import::import_identity(batch_id, txn_id).to_string())
             }
             (None, None) => None,

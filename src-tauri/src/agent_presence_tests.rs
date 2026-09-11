@@ -1397,7 +1397,8 @@ fn the_import_identity_inputs_are_bounded_where_they_are_published() {
         assert_eq!(voucher["properties"][key]["minLength"], json!(1));
     }
     // The transaction label's alphabet is the writer's, so a caller cannot
-    // smuggle a shape the derivation never produces.
+    // smuggle a shape the derivation never produces. Declaring it is not
+    // enforcing it -- see the test below, which is the one that matters.
     assert_eq!(
         voucher["properties"]["bridge_txn_id"]["pattern"],
         json!("^[A-Za-z0-9_-]+$")
@@ -1411,4 +1412,61 @@ fn the_import_identity_inputs_are_bounded_where_they_are_published() {
     // And a marker still cannot be handed over directly.
     assert!(voucher["properties"].get("narration_marker").is_none());
     assert!(voucher["properties"].get("remote_id").is_none());
+}
+
+/// A declared pattern is documentation until something evaluates it, and the
+/// shared validator evaluates exactly one: the `\S` special case. Every other
+/// regular expression in a published schema is inert.
+///
+/// So the transaction label's alphabet is enforced with the writer's own
+/// `valid_txn_id`. A label `build_import_xml` would refuse cannot have
+/// produced a narration marker; deriving one anyway yields an identity no book
+/// can hold, and on an empty window that reads as `absent` rather than as the
+/// input error it is. Against the live simulator, so zero bytes means the
+/// refusal really did come before the reads.
+#[tokio::test]
+async fn a_transaction_label_the_writer_would_refuse_is_refused_here() {
+    let simulator = SequenceSimulator::spawn(presence_plans()).expect("simulator");
+    let directory = tempfile::tempdir().expect("directory");
+    let server = Server::new(Settings {
+        endpoint: TallyEndpointConfig {
+            host: simulator.address().ip().to_string(),
+            port: simulator.address().port(),
+        },
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 500,
+        max_bytes: 200_000,
+        redaction: Redaction::None,
+        import_enabled: false,
+        writes_enabled: false,
+    });
+    // A space is the case the writer rejects and the declared pattern names.
+    for (label, refused) in [("txn 001", true), ("txn-001", false)] {
+        let mut voucher = proposal("JV-1", "Bridge Nested Debtor WR4", "12.50");
+        voucher["batch_id"] = json!("bridge-2b1c9f4e-9d3a-4f71-8c2e-5a6b7c8d9e01");
+        voucher["bridge_txn_id"] = json!(label);
+        let response = server
+            .call_tool_response(
+                "voucher_presence",
+                json!({"company_guid": CAPTURED_GUID, "from":"20260901", "to":"20260930",
+                    "numbering":[{"voucher_type":"Journal","numbering_method":"manual"}],
+                    "vouchers":[voucher]}),
+            )
+            .await;
+        let code = response.value["structuredContent"]["result"]["error"]["code"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert_eq!(
+            code == "argument_invalid:bridge_txn_id",
+            refused,
+            "label {label:?} produced {code:?}"
+        );
+        if refused {
+            assert_eq!(
+                response.value["structuredContent"]["evidence"]["bytes"], 0,
+                "a label the writer would refuse must cost no read"
+            );
+        }
+    }
 }

@@ -2788,9 +2788,24 @@ fn a_marker_and_a_number_cannot_claim_one_voucher_for_two_proposals() {
         &numbering(NumberingMethod::Manual),
         &proposals,
     );
-    for entry in report.vouchers() {
-        assert_eq!(reason(entry), UndecidedReason::BookVoucherClaimedTwice);
-    }
+    // A demotion is not a licence to misdescribe what matched: the proposal
+    // that reached this voucher by its marker must still say so, and the one
+    // that reached it by its number must say that.
+    let rules = report
+        .vouchers()
+        .iter()
+        .map(|entry| {
+            assert_eq!(reason(entry), UndecidedReason::BookVoucherClaimedTwice);
+            entry.undecided().expect("undecided").candidates[0].rule
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rules,
+        vec![
+            CandidateRule::SharedVoucherNumber,
+            CandidateRule::SharedNarrationMarker
+        ]
+    );
 }
 
 /// A `Present` on the marker reports its differences like any other basis --

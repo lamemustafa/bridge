@@ -1102,7 +1102,11 @@ pub(super) fn narration_markers(narration: &str) -> impl Iterator<Item = Option<
         })
 }
 
-fn valid_txn_id(value: &str) -> bool {
+/// The character rule `build_import_xml` enforces on a caller's transaction
+/// label. Presence reads it too: a label the writer would have refused cannot
+/// have produced a narration marker, so hashing one would derive an identity
+/// no book can hold. One rule, so read time and write time cannot drift.
+pub(in crate::agent) fn valid_txn_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 64
         && value

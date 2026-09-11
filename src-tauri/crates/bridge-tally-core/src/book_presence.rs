@@ -1236,11 +1236,13 @@ pub fn assess(request: &PresenceRequest<'_>) -> PresenceReport {
                 continue;
             }
             let book_key = book_key.to_string();
+            // The basis that found it is the evidence a reviewer needs, so it
+            // goes through the one mapping rather than a second hand-written
+            // one. The wildcard here used to bucket every non-`REMOTEID` basis
+            // as a shared number, which reported a marker match as a number
+            // match — a demotion is not a licence to misdescribe what matched.
             let rule = match &entry.status {
-                PresenceStatus::Present {
-                    basis: PresenceBasis::RemoteId,
-                    ..
-                } => CandidateRule::SharedRemoteId,
+                PresenceStatus::Present { basis, .. } => basis.candidate_rule(),
                 _ => CandidateRule::SharedVoucherNumber,
             };
             entry.status = PresenceStatus::PossiblyPresent(undecided(
