@@ -1,8 +1,12 @@
 //! Walking a ledger to the predefined group identity that classifies it.
 //!
-//! Two things in this repository need the same walk — a Schedule III head and
-//! a cash/bank leg — and they need it for different answers, so what is shared
-//! is the traversal and its refusals, never the verdict.
+//! Three things in this repository need the same walk — a Schedule III head, a
+//! cash/bank leg, and an outstandings party — and they need it for different
+//! answers, so what is shared is the traversal and its refusals, never the
+//! verdict. Each caller keeps its own policy above this: the outstandings
+//! reader, for instance, additionally requires the *whole* group collection to
+//! be coherent before walking any of it, because a report must be whole or
+//! refused while a classifier answers one ledger at a time.
 //!
 //! Every rule below is a measured property of Tally's group model, recorded in
 //! `docs/tally/TALLY_PROTOCOL_REFERENCE.md` §8.2a:
@@ -36,13 +40,16 @@
 //! is compared loosely, and only because a caller's own list of identities is
 //! hand-written rather than read from Tally.
 //!
-//! **One asymmetry to be aware of, and it is upstream of here.** A ledger's
-//! `PARENT` reaches this walk verbatim, but a *group's* `PARENT` is trimmed by
-//! the native group reader before it arrives, so a group-to-group hop still
-//! absorbs surrounding whitespace that a ledger-to-group hop now refuses. No
-//! captured response exhibits such a value, and closing it means untrimming a
-//! field the outstandings party classifier also consumes — so it belongs with
-//! the unification of that third walk rather than ahead of it.
+//! **Both hops arrive verbatim, and that took three separate fixes.** Every
+//! reader upstream of this walk once normalized the value it produced — the
+//! ledger `PARENT` twice over, in a validator and then again in the reader
+//! calling it, and the group `PARENT` in a shared text helper that seventeen
+//! other call sites legitimately want trimmed. Each trim was invisible from
+//! here, and each one resolved an incoherent pair against a real group before
+//! the walk could refuse it. The fix in every case was a reader that judges
+//! emptiness on the trimmed view and retains the bytes; the trap in every case
+//! was that the code asserting the property and the code defeating it were in
+//! different files.
 //!
 //! Every outcome that is not a reserved identity is an [`AncestryGap`]. A
 //! caller decides what each gap means for its own question; none of them is an

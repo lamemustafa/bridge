@@ -102,6 +102,56 @@ fn crosscheck_for(rows: &[NativeBillRow], requested_as_of: &str) -> NativeOverdu
 }
 
 #[test]
+fn a_padded_group_parent_does_not_resolve_to_the_unpadded_group() {
+    // A group's PARENT names another group row, and Tally matches master
+    // names by exact codepoint. Trimming it upstream resolved an incoherent
+    // pair against the unpadded group and classified the ledger below it as a
+    // party -- above the ancestry walk, where the walk could not refuse it.
+    // The refusal is the point: the read claimed complete ancestry and cannot
+    // resolve a hop, so the report fails rather than silently dropping or
+    // inventing a party.
+    let group_bytes = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY>
+        <DATA><COLLECTION>
+        <GROUP NAME="North Region" RESERVEDNAME=""><GUID>11111111-1111-1111-1111-111111111111-00000001</GUID><PARENT>  Sundry Debtors  </PARENT></GROUP>
+        <GROUP NAME="Sundry Debtors" RESERVEDNAME="Sundry Debtors"><GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><PARENT>Primary</PARENT></GROUP>
+        </COLLECTION></DATA></BODY></ENVELOPE>"#;
+    let ledger_bytes = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>
+        <LEDGER NAME="Nested Customer"><PARENT>North Region</PARENT>
+        <CLOSINGBALANCE>-100.00</CLOSINGBALANCE><OPENINGBALANCE>0.00</OPENINGBALANCE>
+        <ISBILLWISEON>No</ISBILLWISEON></LEDGER>
+        </COLLECTION></DATA></BODY></ENVELOPE>"#;
+    let groups = parse_native_group_snapshot(
+        &group_response_with_computed_company_guid(group_bytes),
+        RESERVEDNAME_TESTS_COMPANY_GUID,
+    )
+    .expect("a padded parent is a parseable value, merely not a matching one");
+    assert_eq!(
+        groups[0].parent.nonempty_returned_text(),
+        Some("  Sundry Debtors  "),
+        "the reader must retain the bytes, or the walk below cannot refuse the pair"
+    );
+    let ledgers = parse_native_ledger_snapshot(ledger_bytes).expect("raw ledger snapshot parses");
+
+    assert!(matches!(
+        compute_native_outstandings(
+            "Synthetic Company",
+            &[],
+            &[],
+            NativeMasterSnapshot {
+                ledgers: &ledgers,
+                groups: NativeGroupSnapshot::Complete(&groups),
+            },
+            AgeingAnchor::DueDate,
+            &as_of(NATIVE_CAPTURE_AS_OF),
+            group_bytes.len() + ledger_bytes.len(),
+        ),
+        Err(NativeOutstandingsError::InvalidResponse(
+            "ledger_group_parent_unresolved"
+        ))
+    ));
+}
+
+#[test]
 fn zero_bill_rows_with_nonzero_ledger_residual_are_unconfirmed() {
     let group_bytes = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY>
         <DATA><COLLECTION>

@@ -708,7 +708,8 @@ fn parse_group_row(
     // "absent entirely" -- RESERVEDNAME's empty string is itself a fact
     // (Tally's own signal that the row is user-created), not the absence of
     // one. See `TallyNamedMaster::reserved_name` and
-    // `super::compute::group_identity_key` for how each state is used.
+    // `crate::group_ancestry::GroupIndex::reserved_ancestor`, which climbs
+    // through the empty case and refuses the absent one.
     let reserved_name = raw_attribute_value(element, b"RESERVEDNAME");
     let mut parent = None;
     let mut parent_seen = false;
@@ -720,13 +721,16 @@ fn parse_group_row(
             .map_err(|_| NativeOutstandingsError::InvalidResponse("group_xml_malformed"))?
         {
             Event::Start(child) if child.name().as_ref().eq_ignore_ascii_case(b"PARENT") => {
-                let value = read_element_text(reader, child.name())?;
+                // Verbatim: this names another group row, and the hop is
+                // matched by exact codepoint. See
+                // `read_element_identifier_text`.
+                let value = read_element_identifier_text(reader, child.name())?;
                 if std::mem::replace(&mut parent_seen, true) {
                     return Err(NativeOutstandingsError::InvalidResponse(
                         "group_duplicate_parent",
                     ));
                 }
-                parent = (!value.is_empty()).then_some(value);
+                parent = (!value.trim().is_empty()).then_some(value);
             }
             Event::Start(child)
                 if child
@@ -995,7 +999,17 @@ fn path_is(path: &[Vec<u8>], expected: &[&[u8]]) -> bool {
             .all(|(segment, name)| segment.as_slice() == *name)
 }
 
-fn read_element_text(
+/// Reads an element's text **without normalising it**, for values that are
+/// foreign references to a master `NAME` rather than data to be interpreted.
+///
+/// Tally matches master names by exact codepoint, so a group `PARENT` that
+/// differs from the group `NAME` it refers to is an incoherent pair, not a
+/// spelling variant. Trimming it resolves that pair against the unpadded group
+/// and classifies a ledger on evidence that does not hold — and it does so
+/// upstream of the ancestry walk built to refuse exactly that, where the walk
+/// cannot see it. Emptiness is still judged on the trimmed view; only the
+/// retained value is verbatim.
+fn read_element_identifier_text(
     reader: &mut Reader<&[u8]>,
     name: QName<'_>,
 ) -> Result<String, NativeOutstandingsError> {
@@ -1007,7 +1021,16 @@ fn read_element_text(
         .map_err(|_| NativeOutstandingsError::InvalidResponse("native_xml_invalid_encoding"))?;
     let unescaped = quick_xml::escape::unescape(&decoded)
         .map_err(|_| NativeOutstandingsError::InvalidResponse("native_xml_invalid_escape"))?;
-    Ok(unescaped.trim().to_string())
+    Ok(unescaped.into_owned())
+}
+
+fn read_element_text(
+    reader: &mut Reader<&[u8]>,
+    name: QName<'_>,
+) -> Result<String, NativeOutstandingsError> {
+    Ok(read_element_identifier_text(reader, name)?
+        .trim()
+        .to_string())
 }
 
 use super::model::CompanyCurrency;
@@ -1687,7 +1710,7 @@ mod group_tests {
     /// entirely (an older capture, or a build that omits it). Folding the
     /// empty-string case into "absent" would let a custom group merely named
     /// like a predefined one pass as the identity fallback -- see
-    /// `native_outstandings::compute::group_identity_key` for how the
+    /// `crate::group_ancestry::GroupIndex::reserved_ancestor` for how the
     /// distinction is used.
     #[test]
     fn reserved_name_attribute_parsing_distinguishes_present_empty_and_absent() {
