@@ -35,7 +35,7 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE.md",
-      "sha256": "7ae007fafb0e9bb0cbc09eab264a120f64628e81940ef99acd540cd4003f3ef3"
+      "sha256": "9fcd17b03023839f3d85ed0054918b2e4efc58162cd075b3449c133a5a9035ff"
     },
     {
       "path": "docs/tally/compatibility/README.md",
@@ -842,5 +842,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "47877119a87e750a3d329e578bbec1c190aa9f55510511c83347684df570e460"
+  "manifest_sha256": "365ddf79d211c5e27ae22d00dd0030725f4011929d9a9da71d115a945aa9689c"
 }
