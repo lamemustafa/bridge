@@ -35,6 +35,7 @@ const draft = {
   source_notices: [{ kind: "Non-voucher records retained", count: 3 }],
   rows: [row(1), row(2)],
   current_catalog_bindings: [],
+  catalog_generation: 0,
 };
 
 const catalogScope = {
@@ -301,7 +302,9 @@ test("requires an explicit current-session re-read before treating a saved match
   expect(host.textContent).toContain("This current-session target was re-read and bound. It remains an unapproved proposal.");
 
   await act(async () => button(host, "Clear target").click());
-  expect(mocks.invoke).toHaveBeenNthCalledWith(4, "desktop_invalidate_source_draft_existing_ledger_targets");
+  expect(mocks.invoke).toHaveBeenNthCalledWith(4, "desktop_invalidate_source_draft_existing_ledger_targets", {
+    request: { draft_id: draft.draft_id, generation: draft.catalog_generation },
+  });
   expect(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')?.value).toBe("");
   expect(host.textContent).toContain("Load existing ledgers to choose a target.");
 
@@ -477,7 +480,9 @@ test("clears the visible catalogue and blocks a new read until the native compan
   expect(host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")).toBeTruthy();
 
   await act(async () => root.render(<SourceDraftScreen catalogScope={catalogScope} catalogScopeKey="company-two" />));
-  expect(mocks.invoke).toHaveBeenNthCalledWith(3, "desktop_invalidate_source_draft_existing_ledger_targets");
+  expect(mocks.invoke).toHaveBeenNthCalledWith(3, "desktop_invalidate_source_draft_existing_ledger_targets", {
+    request: { draft_id: draft.draft_id, generation: draft.catalog_generation },
+  });
   expect(button(host, "Load existing ledgers").disabled).toBe(true);
   expect(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')).toBeTruthy();
 
@@ -485,12 +490,44 @@ test("clears the visible catalogue and blocks a new read until the native compan
   expect(mocks.invoke).toHaveBeenCalledTimes(3);
   resolveFirstInvalidation();
   await act(async () => { await firstInvalidation; });
-  expect(mocks.invoke).toHaveBeenNthCalledWith(4, "desktop_invalidate_source_draft_existing_ledger_targets");
+  expect(mocks.invoke).toHaveBeenNthCalledWith(4, "desktop_invalidate_source_draft_existing_ledger_targets", {
+    request: { draft_id: draft.draft_id, generation: draft.catalog_generation },
+  });
   expect(button(host, "Load existing ledgers").disabled).toBe(true);
 
   resolveSecondInvalidation();
   await act(async () => { await secondInvalidation; });
   expect(button(host, "Load existing ledgers").disabled).toBe(false);
+  root.unmount();
+});
+
+test("names a later invalidation with the generation the previous one returned, not the stale value it was queued with", async () => {
+  let resolveFirstInvalidation!: (generation: number) => void;
+  const firstInvalidation = new Promise<number>((resolve) => { resolveFirstInvalidation = resolve; });
+  mocks.invoke
+    .mockResolvedValueOnce(draft)
+    .mockReturnValueOnce(firstInvalidation)
+    .mockResolvedValueOnce(8);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+
+  await act(async () => root.render(<SourceDraftScreen catalogScope={catalogScope} catalogScopeKey="company-two" />));
+  expect(mocks.invoke).toHaveBeenNthCalledWith(2, "desktop_invalidate_source_draft_existing_ledger_targets", {
+    request: { draft_id: draft.draft_id, generation: draft.catalog_generation },
+  });
+
+  // Resolved and settled here, before a further scope change queues the next
+  // invalidation, so the returned generation has already been folded back
+  // into draft state by the time it is captured below.
+  resolveFirstInvalidation(7);
+  await act(async () => { await firstInvalidation; });
+
+  await act(async () => root.render(<SourceDraftScreen catalogScope={catalogScope} catalogScopeKey="company-three" />));
+  expect(mocks.invoke).toHaveBeenNthCalledWith(3, "desktop_invalidate_source_draft_existing_ledger_targets", {
+    request: { draft_id: draft.draft_id, generation: 7 },
+  });
   root.unmount();
 });
 
@@ -591,7 +628,9 @@ test("reconciles a catalog apply committed before a concurrent scope invalidatio
   await act(async () => button(host, "Load existing ledgers").click());
   await act(async () => setValue(host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!, "Existing target"));
   await act(async () => root.render(<SourceDraftScreen catalogScope={catalogScope} catalogScopeKey="company-two" />));
-  expect(mocks.invoke).toHaveBeenCalledWith("desktop_invalidate_source_draft_existing_ledger_targets");
+  expect(mocks.invoke).toHaveBeenCalledWith("desktop_invalidate_source_draft_existing_ledger_targets", {
+    request: { draft_id: draft.draft_id, generation: draft.catalog_generation },
+  });
 
   resolveApply(applied);
   await act(async () => { await pendingApply; });

@@ -143,9 +143,14 @@ export function SourceDraftScreen({
   const onTallyReadActivityChangeRef = React.useRef(onTallyReadActivityChange);
   const busyLeaseCountRef = React.useRef(0);
   const catalogReadActiveRef = React.useRef(false);
+  // Read at the moment an invalidation is queued, not at the moment it runs,
+  // so a request queued behind a slow one still names the draft and
+  // generation it was meant for rather than whatever is active by then.
+  const draftRef = React.useRef<SourceDraft | null>(null);
   dirtyRef.current = dirty;
   onBusyChangeRef.current = onBusyChange;
   onTallyReadActivityChangeRef.current = onTallyReadActivityChange;
+  draftRef.current = draft;
 
   const setDraftDirty = React.useCallback((next: boolean) => {
     dirtyRef.current = next;
@@ -166,10 +171,35 @@ export function SourceDraftScreen({
   }
 
   function invalidateNativeCatalog() {
+    // Captured now, not when the queued call actually runs -- a request
+    // naming a draft or generation that has since been replaced is stale,
+    // and the native store treats it as a no-op rather than an error.
+    const target = draftRef.current;
+    // Fenced the same way every other native call in this file is: if a
+    // newer draft load or scope change starts before this resolves, the
+    // generation it reports belongs to a draft this screen has already
+    // moved past, and folding it in would be the same clobber this fencing
+    // exists to prevent.
+    const generation = operationGeneration.current;
     beginBusy();
     const next = catalogInvalidationTail.current
       .catch(() => undefined)
-      .then(() => invoke("desktop_invalidate_source_draft_existing_ledger_targets"));
+      .then(() => target
+        ? invoke<number>("desktop_invalidate_source_draft_existing_ledger_targets", {
+          request: { draft_id: target.draft_id, generation: target.catalog_generation },
+        })
+        : undefined)
+      .then((nextGeneration) => {
+        // The command always reports the generation now current for its
+        // draft -- even on its no-op paths -- specifically so this can fold
+        // it back in and keep the next invalidation from naming a value the
+        // store has already moved past. See
+        // `desktop_invalidate_source_draft_existing_ledger_targets`.
+        if (typeof nextGeneration !== "number" || !mounted.current || operationGeneration.current !== generation) return;
+        setDraft((current) => current && current.draft_id === target?.draft_id
+          ? { ...current, catalog_generation: nextGeneration }
+          : current);
+      });
     catalogInvalidationTail.current = next;
     void next.finally(endBusy).catch(() => undefined);
     return next;
