@@ -341,8 +341,105 @@ test("lists the bound ledger first without selecting it, and keeps the whole cat
   // The full catalogue stays reachable; narrowing is a shortcut, not a filter.
   const all = Array.from(target.querySelectorAll("optgroup")[1].querySelectorAll("option")).map((option) => option.value);
   expect(all).toEqual(["Alpha placeholder", "Beta placeholder", "Gamma placeholder"]);
-  expect(host.textContent).toContain("Listed first because a number inside the ledger name matches this source line.");
+  // `identifier` covers a numeric run and an alphanumeric code alike, and the
+  // DTO does not say which. Claiming "a number" was wrong for every ledger that
+  // carries a registration or part code instead.
+  expect(host.textContent).toContain("Listed first because an identifier inside the ledger name matches this source line.");
+  expect(host.textContent).not.toContain("a number inside");
   expect(host.textContent).not.toContain("recommended");
+  root.unmount();
+});
+
+test("names the refusal when the name and the identifier point at different ledgers", async () => {
+  // The one refusal where the operator has something to act on: both sides are
+  // strong and they disagree. Flattened into the generic near-miss sentence, it
+  // read as an ordinary weak match and the disagreement never reached anyone.
+  const conflictCatalog = {
+    ...catalog,
+    targets: ["Alpha placeholder", "Beta placeholder", "Gamma placeholder"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: null,
+      bound_basis: null,
+      unbound_reason: "master_binding_identifier_name_conflict",
+      candidates: ["Alpha placeholder", "Gamma placeholder"],
+      candidate_count: 2,
+      candidates_truncated: false,
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(conflictCatalog);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  expect(host.textContent).toContain("matches one existing ledger exactly, while an identifier inside it matches a different one");
+  expect(host.textContent).not.toContain("No single ledger matched this source line");
+  // Still a refusal: nothing is chosen, and the whole catalogue stays reachable.
+  expect(host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")?.value).toBe("");
+  root.unmount();
+});
+
+test("distinguishes the two other refusals that are not weak matches", async () => {
+  for (const [reason, phrase] of [
+    ["master_binding_identifier_conflict", "appears in more than one existing ledger"],
+    ["master_binding_name_ambiguous", "once case and separators are set aside"],
+  ] as const) {
+    mocks.invoke.mockReset();
+    mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce({
+      ...catalog,
+      targets: ["Alpha placeholder", "Beta placeholder", "Gamma placeholder"],
+      bindings: [{
+        row_position: 1,
+        entry_position: 1,
+        bound_target: null,
+        bound_basis: null,
+        unbound_reason: reason,
+        candidates: ["Alpha placeholder", "Gamma placeholder"],
+        candidate_count: 2,
+        candidates_truncated: false,
+      }],
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+    await act(async () => button(host, "Choose source XML").click());
+    await act(async () => button(host, "Load existing ledgers").click());
+    expect(host.textContent).toContain(phrase);
+    root.unmount();
+    host.remove();
+  }
+});
+
+test("an empty list because the report ran out of room is not a family the name cannot separate", async () => {
+  // Both arrive with an empty list and a nonzero count, and they call for
+  // opposite actions. A withheld family is fixed by a fuller source name;
+  // budget exhaustion on earlier rows is not fixed by anything written here,
+  // and telling the operator to rewrite the name would be a wild goose chase.
+  const exhaustedCatalog = {
+    ...catalog,
+    targets: ["Alpha placeholder", "Beta placeholder"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: null,
+      bound_basis: null,
+      unbound_reason: "master_binding_near_miss",
+      candidates: [],
+      candidate_count: 7,
+      candidates_truncated: true,
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(exhaustedCatalog);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  expect(host.textContent).toContain("ran out of room to list them");
+  expect(host.textContent).not.toContain("tells them apart from none of them");
+  expect(host.textContent).not.toContain("Use a fuller source name");
   root.unmount();
 });
 

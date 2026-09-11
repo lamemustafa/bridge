@@ -79,11 +79,20 @@ function narrowedTargets(binding: SourceDraftCatalogBinding | null) {
 /// States what binding did, in the operator's terms. It never says "best",
 /// "recommended" or "suggested match": nothing here is chosen for anyone, and a
 /// listed ledger is a shortcut through the list, not an answer.
+///
+/// The refusal reason is read, not flattened. Every unbound result used to get
+/// the same near-miss sentence, which made an identifier conflict — where the
+/// name points at one ledger and the number inside it points at another — look
+/// like an ordinary weak match. That is the one case where the operator has
+/// real information to act on, and it was the case being hidden.
 function catalogBindingSummary(binding: SourceDraftCatalogBinding | null, total: number) {
   if (!binding) return null;
   if (binding.bound_target) {
+    // `identifier` covers both shapes the binder extracts — a numeric run and
+    // an alphanumeric code such as a registration or part number — and the DTO
+    // does not say which. So the wording does not claim a number.
     const how = binding.bound_basis === "identifier"
-      ? "a number inside the ledger name"
+      ? "an identifier inside the ledger name"
       : binding.bound_basis === "exact_name"
         ? "the exact ledger name"
         : "the same ledger name, differently written";
@@ -94,14 +103,38 @@ function catalogBindingSummary(binding: SourceDraftCatalogBinding | null, total:
   }
   const shown = binding.candidates.length;
   if (shown === 0) {
-    // Measured against live books: this source name reaches a whole family of
-    // ledgers and separates none of them, so listing an arbitrary slice put the
-    // right one out of view about a third of the time. Say that, rather than
-    // print a count of nothing.
-    return `This source line matches ${binding.candidate_count} existing ledgers and tells them apart from none of them, so none is listed. Use a fuller source name, or choose from the full list of ${total}.`;
+    // Two different facts arrive here with an empty list and a nonzero count,
+    // and they call for opposite actions. A withheld family is the binder
+    // refusing to print an arbitrary slice of ledgers this name cannot separate
+    // — slicing put the right one out of view about a third of the time across
+    // sixteen live catalogues, recorded with its counts and scope in
+    // `docs/tally/TEST_CORPUS.md` §9.1 — and a fuller source name fixes it. Budget exhaustion is
+    // this report running out of room on earlier rows; the source name is fine
+    // and nothing the operator writes here would change it.
+    if (binding.unbound_reason === "master_binding_no_discriminating_candidate") {
+      return `This source line matches ${binding.candidate_count} existing ledgers and tells them apart from none of them, so none is listed. Use a fuller source name, or choose from the full list of ${total}.`;
+    }
+    return `This source line matches ${binding.candidate_count} existing ledgers, but this report ran out of room to list them. Choose from the full list of ${total}.`;
   }
   const listed = binding.candidates_truncated ? `${shown} of ${binding.candidate_count}` : `${shown}`;
-  return `No single ledger matched this source line, so nothing is chosen. ${listed} possible ${shown === 1 ? "ledger is" : "ledgers are"} listed first; the full list of ${total} follows.`;
+  const lead = catalogRefusalLead(binding.unbound_reason);
+  return `${lead} ${listed} possible ${shown === 1 ? "ledger is" : "ledgers are"} listed first; the full list of ${total} follows.`;
+}
+
+/// Why binding refused, where the reason changes what the operator should look
+/// at. A conflict is not a weak match: both sides of it are strong, and they
+/// disagree.
+function catalogRefusalLead(reason: string | null) {
+  switch (reason) {
+    case "master_binding_identifier_name_conflict":
+      return "This source name matches one existing ledger exactly, while an identifier inside it matches a different one. They disagree, so nothing is chosen.";
+    case "master_binding_identifier_conflict":
+      return "An identifier in this source line appears in more than one existing ledger, so it cannot say which.";
+    case "master_binding_name_ambiguous":
+      return "More than one existing ledger carries this name once case and separators are set aside, and nothing measured says which one Tally would pick.";
+    default:
+      return "No single ledger matched this source line, so nothing is chosen.";
+  }
 }
 
 function hasStartedProposal(row: SourceDraftRow) {
