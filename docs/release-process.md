@@ -90,15 +90,21 @@ after that first seal.
 
 The surface and the matrix are **generated artifacts**. Never hand-merge them.
 
-The reason is not that a hand-merge could slip through. It could not: `validate_files`
-re-reads the raw bytes of every pinned file from the repository and compares the
-SHA-256, so a surface pinning stale content fails the gate with
-`surface_file_changed`. Resealing to silence a checksum complaint does not rescue
-it -- measured, a stale pin still fails after both `seal-surface` and
-`repoint-matrix`. The gate is byte-exact and fail-closed.
+Be precise about what the gate does and does not protect, because the two halves
+behave oppositely.
 
-Hand-merging is futile rather than unsafe. Every wrong resolution is a loud
-failure, and the only route to a green gate is to regenerate.
+**Stale bytes cannot slip through.** `validate_files` re-reads the raw bytes of
+every pinned file present and compares the SHA-256, so a surface pinning stale
+content fails with `surface_file_changed`. Resealing to silence a checksum
+complaint does not rescue it -- measured, a stale pin still fails after both
+`seal-surface` and `repoint-matrix`. For hashes the gate is byte-exact and
+fail-closed, so hand-merging them is futile rather than unsafe: every wrong
+resolution is loud, and regenerating is the only route to green.
+
+**A dropped entry slips through silently.** The gate can only check pins that are
+still in the list, and claims that are still in the matrix. Lose one in the
+resolution and the gate passes. That asymmetry is the whole hazard, and it is why
+the authored half below must be merged rather than regenerated.
 
 **What does matter is the order.** Resolve every genuine *source* conflict first,
 and only then regenerate. `tools/bridge-tally-compatibility/src/lib.rs` is itself a
@@ -106,17 +112,49 @@ pinned file: the tool pins its own source into the surface it produces. Regenera
 before that file is final and you pin a half-merged copy -- the gate will catch it,
 but only after you have spent the cycle.
 
+**These two files are not wholly generated, and that is what makes the conflict
+dangerous.** Each carries two kinds of content:
+
+- **derived** -- every `sha256`, `manifest_sha256`, `compatibility_surface_sha256`.
+  Regenerating rewrites these, so conflicts in them are noise.
+- **authored** -- the surface's *pin list*, and the matrix's *claims and promotion
+  constraints*. **Nothing regenerates these.** `rehash-surface` re-reads the bytes
+  of every entry that is present; it cannot restore an entry that is absent.
+  `repoint-matrix` assigns `compatibility_surface_sha256` and touches nothing else.
+
+So "take one side wholesale" is safe for the derived half and **silently lossy for
+the authored half**, and the gate will not catch it. Measured: delete one
+judgment-pinned entry from the surface -- `src-tauri/src/agent_ledgers.rs`, the pin
+this very PR exists to add -- then seal, rehash, seal, repoint, and the gate
+returns `compatibility_gate_passed`. `validate_files` enforces the required
+directories and `REQUIRED_SURFACE_FILES`; a judgment pin is in neither, so its
+absence is invisible. The matrix is worse: a dropped claim leaves no trace at all.
+
 1. Resolve every non-generated conflict and settle those files completely.
 2. Take **one side wholesale** for `compatibility-surface.json` and
-   `compatibility-matrix.json`. The choice is provisional, because step 4 rewrites
-   their content; take whichever side's pin set is closer to the intended union.
-3. Re-add the pins your branch introduces that the taken side lacks. The `sha256`
-   may be a placeholder -- `rehash-surface` computes it from disk.
+   `compatibility-matrix.json` -- but only as a starting point for the derived half.
+3. **Reconcile the authored half by hand, against the merge base.** This is the one
+   part of these files that must be *merged* rather than regenerated. List the pins
+   each side added and confirm the union is present:
+
+   ```bash
+   base=$(git merge-base HEAD origin/master)
+   for ref in "$base" HEAD origin/master; do
+     git show "$ref:docs/tally/compatibility/compatibility-surface.json" \
+       | python3 -c 'import json,sys; [print(f["path"]) for f in json.load(sys.stdin)["files"]]' \
+       | sort > "/tmp/pins-$(echo "$ref" | tr / _).txt"
+   done
+   # every pin either side ADDED since the base must survive the resolution
+   ```
+
+   Do the same for the matrix's claims. A pin or claim that exists on one side and
+   not in your result is being deleted, and nothing downstream will say so.
 4. Regenerate: if the pin *set* changed, `seal-surface` first as described above,
    then the ordinary three; otherwise just the ordinary three.
-5. Run the gate. `rehash-surface` reports its changed-entry count, which is a
-   useful check on your own reasoning -- if you edited the cap and added one pin,
-   expect exactly two.
+5. Run the gate, and **check the pin count against the union you computed in step
+   3** -- the gate cannot do this for you. `rehash-surface` also reports its
+   changed-entry count, which is a check on your own reasoning: if you edited the
+   cap and added one pin, expect exactly two.
 
 A rebase carrying several commits that touch pinned files needs this at **each**
 commit that does, not once at the end. CI gates the final tree, but a history whose
