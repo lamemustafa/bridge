@@ -1437,8 +1437,16 @@ bad voucher does not matter:
    discarded. `Import Exceptions` *may* also carry
    *"Mismatch in total amount between Credit and Debit entries"* — that was the message on the one
    sales invoice measured, and an absent entry is not evidence that the write succeeded.
-3. Remove it with `ACTION="Delete"` by `REMOTEID` (§9.12b) and re-send with the other element.
-4. Record the answer here.
+3. **If the read-back was complete — party and tax ledgers present — you are done.** That element
+   works for this invoice type; record it and stop. Do **not** delete a good voucher to try the
+   other element: the alternate may be the discarded shape, and you would be trading a correct
+   voucher for a malformed one.
+4. **Only if the read-back showed the discard**, remove it with `ACTION="Delete"` by `REMOTEID`
+   (§9.12b), re-send with the other element, and **read that back too** — the second attempt is
+   as unproven as the first, and stopping after sending it leaves the question open and possibly
+   a second bad voucher behind.
+5. Record the answer here, naming which element was tried first, so the next person knows whether
+   a "worked" result came from one attempt or two.
 
 **Do not run step 2 against a customer's live book, and do not send a batch of a new invoice type
 before that single voucher has been read back.**
