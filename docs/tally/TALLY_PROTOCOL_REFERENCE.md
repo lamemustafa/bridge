@@ -2490,29 +2490,37 @@ that the ledger master itself stayed unchanged.
 This establishes only a GUI rename on the observed TallyPrime Edit Log EDU profile. XML
 rename behaviour, other releases, and other configurations remain unverified.
 
-**Extended 2026-09-11 — two of those axes are now observed.** The same behaviour was measured
-again on **TallyPrime 7.1 licensed Silver** (`education_mode: false`), through the
-**`StandardLedgerCatalogV1`** collection rather than `LedgerOpeningCoverageV1`, on a synthetic
-company. One ledger was renamed in the UI and then restored; the ledger's GUID and master slot
-were unchanged, the ledger count held, and no other ledger's GUID moved — a rename in place, not
-a delete-plus-create. So the finding now holds across two SKUs and two read profiles. The
+**VERIFIED 2026-09-11; one synthetic company on TallyPrime 7.1 licensed Silver
+(`education_mode: false`), read through `StandardLedgerCatalogV1`.** Two of the axes named above
+are now observed. One ledger was renamed in the UI and then restored; the ledger's GUID and master
+slot were unchanged, the ledger count held, and no other ledger's GUID moved — a rename in place,
+not a delete-plus-create. So the finding holds across two SKUs and two read profiles. The
 before/after responses are retained as
-`fixtures/agent/native-ledger-catalogue{,-renamed}.utf16le.xml` and drive the binding
-revalidation regression test.
+`fixtures/agent/native-ledger-catalogue{,-renamed}.utf16le.xml` and drive the binding revalidation
+regression test.
 
-Three further facts fell out of that capture:
+Three further facts fell out of that capture. They are marked separately because two of them are
+generalisations from a single company, and the rule behind them is not established:
 
-- A ledger GUID is **company-scoped with a master suffix** — `<company GUID>-000000d0` — so it is
-  meaningful only within its company, and the company GUID is recoverable from it. Company GUIDs
-  are not unique across split companies, so a ledger GUID inherits that ambiguity.
-- Ledgers **do** emit `RESERVEDNAME`, but empty (`RESERVEDNAME=""`). A parser keying on the
+- **PARTIAL.** A ledger GUID appears to be **company-scoped with a master suffix** —
+  `<company GUID>-000000d0`. The composition was observed on every ledger of the one company
+  captured, so the *shape* is verified there; that it holds across other companies, releases and
+  SKUs is inferred, not tested. If it does hold, a ledger GUID is meaningful only within its
+  company and the company GUID is recoverable from it — and since company GUIDs are not unique
+  across split companies (§9.11b), a ledger GUID inherits that ambiguity.
+- **VERIFIED 2026-09-11; the nine ledgers in the captured company.** Ledgers **do** emit
+  `RESERVEDNAME`, but empty (`RESERVEDNAME=""`) rather than omitting it. A parser keying on the
   attribute's *presence* rather than its emptiness will read it wrongly.
-- **No master change can be undone byte-exactly.** After renaming and renaming back, the response
-  was identical except `<CMPINFO><LEDGER>` advancing 60 → 62 — a monotonic per-master-type
-  alteration counter that never rewinds. A "restore and prove nothing changed" check must
-  therefore compare master *identity*, not a response hash.
+- **PARTIAL.** After renaming and renaming back, the response was identical except
+  `<CMPINFO><LEDGER>` advancing 60 → 62. The two increments are verified; that this is a
+  *monotonic, per-master-type* counter which never rewinds is inferred from those two points and
+  has not been tested against other master types, other operations, or a restart. Treat the
+  actionable consequence as the safe reading either way: a "restore and prove nothing changed"
+  check must compare master **identity**, not a response hash, because at least one field advanced
+  and did not return.
 
-**XML-driven rename remains unverified** — neither capture used one. Deletion was not exercised.
+**UNVERIFIED — XML-driven rename.** Neither capture used one; both renames were performed in the
+UI. Deletion was not exercised at all. Per P6, neither may be built upon.
 
 ---
 
@@ -2541,4 +2549,4 @@ Three further facts fell out of that capture:
 | 2026-08-02 | Added §12a from a live measurement session: built-in named reports (qualifying §2.2), per-kind ageing semantics, the two ageing methods, eight import rewrites (extending §9), configuration as a non-diagnostic, the unallocated remainder and its recovery, the `Company` collection ignoring `SVCURRENTCOMPANY` (qualifying §9.11), and a linear volume model with a cheap pre-flight count. |
 | 2026-08-22 | Updated §5.3 with the observed Education `{1,2,31}` boundary rule and the limited TallyPrime Silver arbitrary-day observations; this settles #115 item 1 for the recorded profile. |
 | 2026-08-28 | Added §8.1's read-only ledger-master field-presence observation and explicit public-fixture privacy boundary. |
-| 2026-09-11 | Extended §12a.9 to TallyPrime 7.1 licensed Silver and the `StandardLedgerCatalogV1` profile from a live rename/restore capture, and recorded three structural facts it settled: company-scoped ledger GUIDs, empty-but-present `RESERVEDNAME` on ledgers, and the monotonic `CMPINFO` alteration counter. |
+| 2026-09-11 | Extended §12a.9 to TallyPrime 7.1 licensed Silver and the `StandardLedgerCatalogV1` profile from a live rename/restore capture (VERIFIED), and recorded three structural facts with separate markers: empty-but-present `RESERVEDNAME` on ledgers (VERIFIED), company-scoped ledger GUIDs and the `CMPINFO` alteration counter (both PARTIAL — single-company generalisations). XML-driven rename and deletion remain UNVERIFIED. |
