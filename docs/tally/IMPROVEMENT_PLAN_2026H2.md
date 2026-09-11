@@ -734,8 +734,11 @@ not say so. That is the failure this plan is least able to detect, because nothi
 no counter is wrong.
 
 The correction, with the full table of what each signal does support, is in
-[`IMPLEMENTATION_GUIDE.md`](./IMPLEMENTATION_GUIDE.md) §6.2, and
-`TALLY_PROTOCOL_REFERENCE.md` §3.3a states the same rule from the other side:
+[`IMPLEMENTATION_GUIDE.md`](./IMPLEMENTATION_GUIDE.md) **§3.4a** — §6.2 is the Unicode
+round-trip result and carries none of this — and
+[`TALLY_PROTOCOL_REFERENCE.md`](./TALLY_PROTOCOL_REFERENCE.md) **§9.3** states the same rule from
+the other side. (`§3.3a` is a section of the implementation guide, not of the reference; citing it
+under the wrong document sent readers to a section that does not exist.)
 
 | Signal | What it supports |
 | --- | --- |
