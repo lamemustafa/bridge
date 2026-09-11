@@ -17,6 +17,8 @@
 //!    (`<LEDGER>0</LEDGER>`) — only the `DATA` section may be scanned for
 //!    rows, or those counters are misread as ledgers.
 
+use std::collections::HashSet;
+
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::QName;
 use quick_xml::Reader;
@@ -701,6 +703,7 @@ fn parse_group_row(
     reader: &mut Reader<&[u8]>,
     element: &BytesStart<'_>,
 ) -> Result<ParsedNativeGroupSnapshotRow, NativeOutstandingsError> {
+    validate_row_attributes(element, "group_row_malformed_attributes")?;
     let name = attribute_value(element, b"NAME").ok_or(
         NativeOutstandingsError::InvalidResponse("group_name_missing"),
     )?;
@@ -806,6 +809,7 @@ fn parse_ledger_row(
     reader: &mut Reader<&[u8]>,
     element: &BytesStart<'_>,
 ) -> Result<ParsedLedgerSnapshotRow, NativeOutstandingsError> {
+    validate_row_attributes(element, "ledger_row_malformed_attributes")?;
     let name = attribute_value(element, b"NAME").ok_or(
         NativeOutstandingsError::InvalidResponse("ledger_name_missing"),
     )?;
@@ -826,13 +830,16 @@ fn parse_ledger_row(
                 let child_name = child.name().as_ref().to_ascii_uppercase();
                 match child_name.as_slice() {
                     b"PARENT" => {
-                        let text = read_element_text(reader, child.name())?;
+                        // Verbatim: this names a group row, and the hop is
+                        // matched by exact codepoint. See
+                        // `read_element_identifier_text`.
+                        let text = read_element_identifier_text(reader, child.name())?;
                         if parent.is_some() {
                             return Err(NativeOutstandingsError::InvalidResponse(
                                 "ledger_duplicate_parent",
                             ));
                         }
-                        parent = Some((!text.is_empty()).then_some(text));
+                        parent = Some((!text.trim().is_empty()).then_some(text));
                     }
                     b"CLOSINGBALANCE" => {
                         let text = read_element_text(reader, child.name())?;
@@ -955,6 +962,38 @@ fn parse_tally_boolean(value: &str) -> Result<bool, NativeOutstandingsError> {
             "ledger_bill_wise_flag_invalid",
         ))
     }
+}
+
+/// Validates that a row element's attributes are structurally sound before
+/// any of them is read: no attribute name repeated (case-insensitively) and
+/// every value decodable. `.attributes()` on its own -- as `attribute_value`
+/// and `raw_attribute_value` below use it -- silently discards `Err` items
+/// via `.flatten()`, and quick-xml 0.41 yields `Err(AttrError::Duplicated)`
+/// for a repeated attribute name rather than refusing to iterate, so a row
+/// with e.g. two `RESERVEDNAME` attributes would otherwise parse cleanly and
+/// quietly keep the first. This deliberately does NOT allowlist which
+/// attributes may appear: this parser sits on the shipped outstandings read
+/// path, and refusing a response merely because Tally added a new attribute
+/// would be an availability regression. Duplicates and undecodable values are
+/// a different matter -- they are evidence quick-xml itself already flagged.
+fn validate_row_attributes(
+    element: &BytesStart<'_>,
+    invalid_response_code: &'static str,
+) -> Result<(), NativeOutstandingsError> {
+    let mut seen = HashSet::new();
+    for attribute in element.attributes().with_checks(true) {
+        let attribute = attribute
+            .map_err(|_| NativeOutstandingsError::InvalidResponse(invalid_response_code))?;
+        if !seen.insert(attribute.key.as_ref().to_ascii_lowercase()) {
+            return Err(NativeOutstandingsError::InvalidResponse(
+                invalid_response_code,
+            ));
+        }
+        attribute
+            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+            .map_err(|_| NativeOutstandingsError::InvalidResponse(invalid_response_code))?;
+    }
+    Ok(())
 }
 
 fn attribute_value(element: &BytesStart<'_>, key: &[u8]) -> Option<String> {
@@ -1153,6 +1192,7 @@ fn parse_currency_row(
     reader: &mut Reader<&[u8]>,
     element: &BytesStart<'_>,
 ) -> Result<CurrencyRow, NativeOutstandingsError> {
+    validate_row_attributes(element, "currency_row_malformed_attributes")?;
     let symbol = attribute_value(element, b"NAME").ok_or(
         NativeOutstandingsError::InvalidResponse("currency_name_missing"),
     )?;
@@ -1247,6 +1287,28 @@ mod currency_tests {
                 .collect::<Vec<_>>(),
         )
         .expect("captured UTF-16LE must decode")
+    }
+
+    #[test]
+    fn a_duplicated_attribute_on_a_currency_row_is_refused() {
+        // The currency row is the third element in this file read through the
+        // attribute helpers, and it is guarded for the same reason the group
+        // and ledger rows are: `.flatten()` drops the `Err` quick-xml raises
+        // for a repeated attribute, leaving whichever value came first
+        // silently in effect. No finding pointed here — the guard closes the
+        // class rather than the one instance that was reported.
+        let xml = concat!(
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>"#,
+            r#"<CURRENCY NAME="I₹" NAME="$"><MAILINGNAME>INR</MAILINGNAME>"#,
+            r#"<DECIMALPLACES>2</DECIMALPLACES></CURRENCY>"#,
+            r#"</COLLECTION></DATA></BODY></ENVELOPE>"#,
+        );
+        assert_eq!(
+            parse_company_currency(xml),
+            Err(NativeOutstandingsError::InvalidResponse(
+                "currency_row_malformed_attributes"
+            ))
+        );
     }
 
     #[test]

@@ -1608,13 +1608,38 @@ async fn built_batch_guidance_matches_the_saved_native_admission() {
         assert_eq!(result["voucher_count"], voucher_count);
         let next_step = result["next_step"].as_str().unwrap();
         assert_eq!(next_step.starts_with("Call post_import"), native);
-        assert_eq!(next_step.starts_with("Import this file in Tally"), !native);
+        assert_eq!(
+            next_step.starts_with("Confirm the loaded company matches this batch"),
+            !native
+        );
         if writes_enabled {
             assert!(result["warnings"][0]
                 .as_str()
                 .unwrap()
                 .contains("do not call post_import"));
         }
+        // The company-identity warning is unconditional: present for this
+        // Journal-only batch exactly as it would be for a bank one.
+        let warnings = result["warnings"]
+            .as_array()
+            .expect("warnings array")
+            .iter()
+            .map(|value| value.as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("Confirm the loaded company before importing")),
+            "company-identity warning missing from a Journal-only batch: {warnings:?}"
+        );
+        // The stale-classification warning is bank-gated and must not appear
+        // for a Journal-only batch.
+        assert!(
+            !warnings
+                .iter()
+                .any(|warning| warning.contains("Regrouping a ledger afterwards")),
+            "stale-classification warning leaked into a Journal-only batch: {warnings:?}"
+        );
         assert_eq!(simulator.finish().unwrap().len(), 32);
     }
 }

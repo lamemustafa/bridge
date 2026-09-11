@@ -40,16 +40,22 @@
 //! is compared loosely, and only because a caller's own list of identities is
 //! hand-written rather than read from Tally.
 //!
-//! **Both hops arrive verbatim, and that took three separate fixes.** Every
-//! reader upstream of this walk once normalized the value it produced — the
-//! ledger `PARENT` twice over, in a validator and then again in the reader
-//! calling it, and the group `PARENT` in a shared text helper that seventeen
-//! other call sites legitimately want trimmed. Each trim was invisible from
-//! here, and each one resolved an incoherent pair against a real group before
-//! the walk could refuse it. The fix in every case was a reader that judges
-//! emptiness on the trimmed view and retains the bytes; the trap in every case
-//! was that the code asserting the property and the code defeating it were in
-//! different files.
+//! **Both hops arrive verbatim, and that took four separate fixes.** Every
+//! reader upstream of this walk once normalized the value it produced: the
+//! standard catalogue's ledger `PARENT` twice over, in a validator and then
+//! again in the reader calling it; and, on the native side, the group `PARENT`
+//! and the ledger `PARENT`, both through a shared text helper the file's other
+//! fourteen call sites legitimately want trimming from. Each trim was
+//! invisible from here, and each resolved an incoherent pair against a real
+//! group before the walk could refuse it — or, once the hops became exact,
+//! failed a coherent one. The fix in every case was a reader that judges
+//! emptiness on the trimmed view and retains the bytes.
+//!
+//! **The trap is worth naming**, because three of the four were found only
+//! after the property had been asserted somewhere: the code claiming verbatim
+//! bytes and the code defeating it sat in different files, so nothing looked
+//! inconsistent. An exactness rule is only as good as its furthest upstream
+//! reader, and that reader is not usually the one you are editing.
 //!
 //! Every outcome that is not a reserved identity is an [`AncestryGap`]. A
 //! caller decides what each gap means for its own question; none of them is an

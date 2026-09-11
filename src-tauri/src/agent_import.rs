@@ -1050,6 +1050,14 @@ fn build_import_guidance(
 ) -> (Value, &'static str) {
     let preflight_warning =
         "The preflight observes the current verification window. The import or subsequent changes can make later readback exceed the source limits.";
+    // §9.11d and §9.13: a mismatched SVCURRENTCOMPANY is verified to post into
+    // whatever company Tally has loaded, CREATED=1 and no error. Deliberately
+    // NOT gated on bank_types — the hazard is general to any import, and
+    // warning only on the bank path would imply the Journal path is safe. The
+    // wording stays neutral between a hand import and a native post because
+    // this is emitted at build time, before which one happens is known.
+    let company_identity_warning =
+        "Confirm the loaded company before importing. A mismatched SVCURRENTCOMPANY is verified to post into whatever company Tally has loaded, with CREATED=1 and no error, so naming a company does not aim the write. Compare the whole identity immediately before importing — name, GUID, company number and books-from, not the GUID alone, because a year-end split gives the child its parent's GUID. Prefer an instance with no other company loaded.";
     // §9.13: every party amount in the observed import landed On Account, and
     // that is explicitly not established as correct for a book that reconciles
     // bills. Bridge cannot yet tell the two kinds of book apart — the ledger
@@ -1061,16 +1069,26 @@ fn build_import_guidance(
     let repeat_warning = bank_types.then_some(
         "Do not re-import this file if the outcome is uncertain. Exact-file repeat is qualified for Journal only; for Payment, Receipt and Contra a second import may create a second set of vouchers. Call verify_import, which reads the window back without writing.",
     );
+    // agent_import_cash_bank.rs's module header documents this gap: the build
+    // proves master stability across the build only, and says nothing about
+    // afterwards, so a regroup between build and hand import is invisible to
+    // verify_import.
+    let stale_classification_warning = bank_types.then_some(
+        "This file's Payment, Receipt and Contra split came from the group collection read during this build. Regrouping a ledger afterwards is an ordinary Tally operation and would silently make the voucher type wrong — a counterparty moved under a cash or bank group should have become a Contra. verify_import compares the entries as built, not current ancestry, so nothing catches it later. If any master changed since this batch was built, discard it and build again.",
+    );
     let allocation_warning = names_a_counterparty.then_some(
         "This batch names a counterparty on a Payment or Receipt and carries no bill allocation, so each amount lands On Account. If that ledger is configured for bill-wise accounting, the entry will need allocating in Tally afterwards; Bridge does not read that configuration and cannot warn per ledger.",
     );
     let warnings = |first: &str| {
         json!(std::iter::once(first)
             .chain(std::iter::once(preflight_warning))
+            .chain(std::iter::once(company_identity_warning))
             .chain(repeat_warning)
+            .chain(stale_classification_warning)
             .chain(allocation_warning)
             .collect::<Vec<_>>())
     };
+    let manual_import_next_step = "Confirm the loaded company matches this batch, import the file in Tally (Gateway of Tally → Import → Vouchers), then call verify_import";
     if writes_enabled && native_post_eligible {
         (
             warnings(
@@ -1083,14 +1101,14 @@ fn build_import_guidance(
             warnings(
                 "No import XML was sent to Tally. This saved batch is not eligible for native posting because native posting requires one unnumbered Journal with a reviewable preview. Import the written file manually, then use verify_import; do not call post_import for this batch.",
             ),
-            "Import this file in Tally (Gateway of Tally → Import → Vouchers) with the company open, then call verify_import",
+            manual_import_next_step,
         )
     } else {
         (
             warnings(
                 "No import XML was sent to Tally. Import the written file manually, then use verify_import.",
             ),
-            "Import this file in Tally (Gateway of Tally → Import → Vouchers) with the company open, then call verify_import",
+            manual_import_next_step,
         )
     }
 }

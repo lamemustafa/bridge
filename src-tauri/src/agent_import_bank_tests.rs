@@ -572,6 +572,32 @@ async fn a_payment_and_receipt_batch_builds_against_the_captured_masters() {
     assert!(xml.contains("<PARTYLEDGERNAME>WR2 Sales</PARTYLEDGERNAME>"));
     assert!(xml.contains("<EFFECTIVEDATE>20260901</EFFECTIVEDATE>"));
     assert!(!xml.contains("<VOUCHERNUMBER>"));
+    // The stale-classification warning is bank-gated and belongs here, beside
+    // the always-present company-identity warning — this batch is exactly the
+    // Payment/Receipt shape §9.13 and agent_import_cash_bank.rs's module
+    // header both describe as vulnerable to a regroup after this build.
+    let warnings = result["warnings"]
+        .as_array()
+        .expect("warnings array")
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("Regrouping a ledger afterwards")),
+        "stale-classification warning missing from a bank batch: {warnings:?}"
+    );
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("Confirm the loaded company before importing")),
+        "company-identity warning missing from a bank batch: {warnings:?}"
+    );
+    assert!(result["next_step"]
+        .as_str()
+        .unwrap()
+        .starts_with("Confirm the loaded company matches this batch"));
     // A cash/bank payload reads the group collection twice, exactly as it reads
     // the catalogue twice, and the whole sequence is consumed.
     assert_eq!(simulator.finish().expect("requests").len(), 44);

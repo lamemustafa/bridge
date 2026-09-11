@@ -1551,3 +1551,102 @@ fn illegal_numeric_references_in_amounts_remain_fail_closed() {
         Err(NativeOutstandingsError::InvalidAmount)
     );
 }
+
+#[test]
+fn a_padded_ledger_parent_is_retained_and_resolves_a_padded_group_name() {
+    // Companion to `a_padded_group_parent_does_not_resolve_to_the_unpadded_group`,
+    // exercising the other half of the pair: here it is the ledger's own
+    // `PARENT` that carries surrounding whitespace, not the group's. `PARENT`
+    // was read through `read_element_text`, which trims -- while a group's
+    // `NAME` is read through `attribute_value`, which does not. That asymmetry
+    // meant a group legitimately named with surrounding whitespace could never
+    // be matched by its own child ledger: the trimmed `PARENT` and the
+    // verbatim `NAME` were never the same bytes, so the ancestry walk refused
+    // the hop with `ledger_group_parent_unresolved` even though the pair is
+    // coherent. Reading `PARENT` verbatim (`read_element_identifier_text`)
+    // fixes it -- the retained value is asserted directly, not only inferred
+    // from the end result.
+    let group_bytes = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY>
+        <DATA><COLLECTION>
+        <GROUP NAME="  Sundry Debtors  " RESERVEDNAME="Sundry Debtors"><GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><PARENT>Primary</PARENT></GROUP>
+        </COLLECTION></DATA></BODY></ENVELOPE>"#;
+    let ledger_bytes = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>
+        <LEDGER NAME="Nested Customer"><PARENT>  Sundry Debtors  </PARENT>
+        <CLOSINGBALANCE>-100.00</CLOSINGBALANCE><OPENINGBALANCE>0.00</OPENINGBALANCE>
+        <ISBILLWISEON>No</ISBILLWISEON></LEDGER>
+        </COLLECTION></DATA></BODY></ENVELOPE>"#;
+    let groups = parse_native_group_snapshot(
+        &group_response_with_computed_company_guid(group_bytes),
+        RESERVEDNAME_TESTS_COMPANY_GUID,
+    )
+    .expect("raw group hierarchy parses");
+    let ledgers = parse_native_ledger_snapshot(ledger_bytes).expect("raw ledger snapshot parses");
+
+    assert_eq!(
+        ledgers[0].parent.as_deref(),
+        Some("  Sundry Debtors  "),
+        "the ledger PARENT reader must retain the bytes verbatim, or the padded \
+         group NAME below can never be matched"
+    );
+
+    let result = compute_native_outstandings(
+        "Synthetic Company",
+        &[],
+        &[],
+        NativeMasterSnapshot {
+            ledgers: &ledgers,
+            groups: NativeGroupSnapshot::Complete(&groups),
+        },
+        AgeingAnchor::DueDate,
+        &as_of(NATIVE_CAPTURE_AS_OF),
+        group_bytes.len() + ledger_bytes.len(),
+    )
+    .expect("the padded ledger PARENT and the padded group NAME are an exact-codepoint match");
+
+    assert_exact(&result.residual_total, "100");
+    assert_eq!(result.residuals[0].party, "Nested Customer");
+}
+
+#[test]
+fn a_duplicated_reservedname_attribute_on_a_group_row_is_refused() {
+    // quick-xml 0.41 has duplicate-attribute checking on by default and
+    // yields `Err(AttrError::Duplicated(..))` for a second `RESERVEDNAME` on
+    // the same element. `attribute_value`/`raw_attribute_value` reach the
+    // attribute iterator through `.flatten()`, which silently drops that
+    // `Err` and leaves the first occurrence in effect -- so without an
+    // explicit check, this row would parse cleanly and quietly keep whichever
+    // `RESERVEDNAME` came first, rather than refuse a response quick-xml
+    // itself already flagged as malformed.
+    let group_bytes = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY>
+        <DATA><COLLECTION>
+        <GROUP NAME="Sundry Debtors" RESERVEDNAME="Sundry Debtors" RESERVEDNAME="Sundry Creditors"><GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><PARENT>Primary</PARENT></GROUP>
+        </COLLECTION></DATA></BODY></ENVELOPE>"#;
+
+    assert_eq!(
+        parse_native_group_snapshot(
+            &group_response_with_computed_company_guid(group_bytes),
+            RESERVEDNAME_TESTS_COMPANY_GUID,
+        ),
+        Err(NativeOutstandingsError::InvalidResponse(
+            "group_row_malformed_attributes"
+        ))
+    );
+}
+
+#[test]
+fn a_duplicated_attribute_on_a_ledger_row_is_refused() {
+    // Same defect as the GROUP case above, exercised on the LEDGER row's
+    // attribute set instead of GROUP's.
+    let ledger_bytes = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+        <LEDGER NAME=\"Nested Customer\" NAME=\"Renamed Customer\"><PARENT>Sundry Debtors</PARENT>\
+        <CLOSINGBALANCE>-100.00</CLOSINGBALANCE><OPENINGBALANCE>0.00</OPENINGBALANCE>\
+        <ISBILLWISEON>No</ISBILLWISEON></LEDGER>\
+        </COLLECTION></DATA></BODY></ENVELOPE>";
+
+    assert_eq!(
+        parse_native_ledger_snapshot(ledger_bytes),
+        Err(NativeOutstandingsError::InvalidResponse(
+            "ledger_row_malformed_attributes"
+        ))
+    );
+}
