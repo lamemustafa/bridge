@@ -846,9 +846,20 @@ five sections later.
 
 Scope it precisely rather than in either direction: **Delete-by-client-`REMOTEID` is confirmed on
 licensed Gold for an invoice voucher (§9.12b), and unqualified elsewhere** — including on the
-Silver/Journal path this section is about, where §9.7's row is Educational. Qualify it on the SKU
-and voucher type you are writing to before running it over a batch; a single voucher read back
-settles it.
+Silver/Journal path this section is about, where §9.7's row is Educational.
+
+**Qualifying it on a new SKU or voucher type takes more than "read one voucher back".** A single
+read cannot tell *the original is gone* from *my read did not cover it*: an incomplete, failed or
+mis-scoped read looks exactly like a successful delete, and finding the **replacement** proves
+nothing about the original. If the delete silently failed and the create succeeded, both vouchers
+are in the book and a naive check qualifies the path for the next batch. What it takes:
+
+- the delete's **own response**, showing `DELETED=1` with every failure counter zero — not the
+  create's;
+- a **company-pinned** read of the same date range before and after, complete enough that an empty
+  result is distinguishable from an unfiltered one (read a range you know holds other vouchers, and
+  confirm those still come back);
+- the voucher count moving by exactly the expected amount across the pair.
 
 ### 9.4 Master re-create is a silent Alter
 
@@ -926,11 +937,23 @@ non-Latin scripts, so the case-folding row is reachable rather than theoretical.
 > successful alternate-spelling experiment does not establish that a catalogue cannot hold both
 > `A-B` and `A B`. Those collapse together here, and nothing measured says what happens then.
 
-Bridge's own resolver already encodes this, and it is the shape to copy
-(`src-tauri/src/agent.rs`): take the exact spelling if one of the candidates is exactly what was
-requested; otherwise exactly one candidate resolves, none is `ledger_not_found`, and **more than
-one is `ledger_ambiguous` — an error, not a choice.** A canonical comparison that returns the
-first match is the failure this rule exists to prevent.
+Bridge's own resolver encodes the **ambiguity discipline** to copy
+(`src-tauri/src/agent.rs`): take the exact spelling if a candidate is exactly what was requested;
+none is `ledger_not_found`; and **more than one is `ledger_ambiguous` — an error, not a choice.** A
+comparison that returns the first match is the failure this rule exists to prevent.
+
+**Copy its discipline, not its fold.** That resolver's `ledger_lookup_key` keeps only alphanumerics,
+which is *looser* than §3.3b — it drops `&` — so `A & B` and `AB` share a key. §3.3b measured those
+as **different masters**: `ZZ Ram AND Sons Pvt Ltd` was rejected against `ZZ Ram & Sons Pvt Ltd`.
+
+That loosening creates a hole the ambiguity rule cannot close, because **a sole candidate under a
+loose fold is not a resolution.** Ask for `A & B` in a catalogue holding only `AB` and there is
+exactly one candidate, no ambiguity to refuse, and the write goes to a master Tally would not have
+matched. Uniqueness under a fold is only as meaningful as the fold.
+
+> **RULE: resolve automatically only on an exact spelling, or on a fold no looser than §3.3b.** A
+> looser fold may *suggest* — it is a good way to surface "did you mean?" — but its output is a
+> candidate for a human to confirm, never a binding.
 
 Both directions are live hazards, and they fail in opposite ways:
 
