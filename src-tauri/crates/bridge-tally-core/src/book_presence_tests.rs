@@ -2036,3 +2036,82 @@ fn this_contracts_files_are_still_pinned_in_the_compatibility_surface() {
         );
     }
 }
+
+/// `unmatched_book_vouchers` promises to count rows no proposal matched **or
+/// even resembled**. A collision returns before rule three, so without help it
+/// would report a row this proposal plainly resembles as one nothing came
+/// near — the diagnostic contradicting itself.
+#[test]
+fn a_collision_still_counts_what_the_proposal_resembled() {
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118")]);
+    let money = vec![
+        ["Alpha Traders", "-11800.00"],
+        ["Sales Account", "10000.00"],
+        ["Output CGST 9%", "900.00"],
+        ["Output SGST 9%", "900.00"],
+    ];
+    // Two proposals share a REMOTEID the book does not carry, so the collision
+    // decides — but both plainly resemble book-1 on date, party and amount.
+    let proposals = [
+        ProposalRow::new(0, "20260812", "AA0901")
+            .remote_id("tally-9")
+            .rows(money.clone())
+            .build(),
+        ProposalRow::new(1, "20260812", "AA0902")
+            .remote_id("tally-9")
+            .rows(money)
+            .build(),
+    ];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    for entry in report.vouchers() {
+        assert_eq!(reason(entry), UndecidedReason::RemoteIdCollision);
+    }
+    assert_eq!(
+        report.observations().unmatched_book_vouchers,
+        0,
+        "book-1 was resembled by both proposals, whatever decided them"
+    );
+}
+
+/// A key is an identity, so a pathological one is refused rather than cut —
+/// half a key joins to nothing. It is also echoed in every candidate, and a
+/// consumer's framing can drop whole rows but cannot shrink one.
+#[test]
+fn a_pathological_book_key_is_refused_rather_than_truncated() {
+    let rows = [["Alpha Traders", "-1.00"], ["Sales Account", "1.00"]];
+    let entries = entries(&rows);
+    let long: String = "g".repeat(MAX_BOOK_KEY_CHARS + 1);
+    assert_eq!(
+        BookVoucher::observed(ObservedVoucher {
+            key: &long,
+            date: "20260812",
+            voucher_type: "Sales",
+            voucher_number: Some("AA0118"),
+            remote_id: None,
+            party: Some("Alpha Traders"),
+            entries: &entries,
+            cancelled: false,
+            optional: false,
+        })
+        .expect_err("pathological key"),
+        PresenceError::VoucherKeyTooLong
+    );
+    // A real Tally GUID — company prefix plus master id — is far inside it.
+    assert!(BookVoucher::observed(ObservedVoucher {
+        key: "61c6de69-1748-461c-ad3f-162cb949df9f-00000001",
+        date: "20260812",
+        voucher_type: "Sales",
+        voucher_number: Some("AA0118"),
+        remote_id: None,
+        party: Some("Alpha Traders"),
+        entries: &entries,
+        cancelled: false,
+        optional: false,
+    })
+    .is_ok());
+}

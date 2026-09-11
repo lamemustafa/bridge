@@ -43,6 +43,17 @@ pub const MAX_DUPLICATE_NUMBER_GROUPS: usize = 25;
 pub const MAX_KEYS_PER_DUPLICATE_GROUP: usize = 10;
 /// Most unbalanced book vouchers listed in the book observations.
 pub const MAX_UNBALANCED_LISTED: usize = 25;
+/// Longest accepted book-voucher key.
+///
+/// The key is echoed in every candidate, and a response can carry twenty-five
+/// of them per proposal, so an unbounded key defeats any page budget: a
+/// consumer's framing can drop whole rows but cannot shrink one. A Tally
+/// voucher GUID is a 36-character company prefix and a short suffix, so this
+/// is far above anything real and refuses only pathological input — and it
+/// *refuses* rather than truncates, because a key is an identity and half of
+/// one joins to nothing.
+pub const MAX_BOOK_KEY_CHARS: usize = 128;
+
 /// Longest echoed label in the book observations.
 ///
 /// The observations sit outside the paged rows, so a consumer's response
@@ -79,6 +90,8 @@ pub enum PresenceError {
     /// would let a verdict settle on evidence the window says was not gathered.
     #[error("book window declared REMOTEID unread while carrying one")]
     WindowRemoteIdContradiction,
+    #[error("book voucher key exceeded its bound")]
+    VoucherKeyTooLong,
     /// A proposal dated outside the window would be judged against evidence
     /// that could not contain it.
     #[error("book window does not cover every proposed date")]
@@ -122,6 +135,7 @@ impl PresenceError {
             Self::WindowVoucherOutsideRange => "presence_window_voucher_outside_range",
             Self::WindowDuplicateVoucherKey => "presence_window_duplicate_voucher_key",
             Self::WindowRemoteIdContradiction => "presence_window_remote_id_contradiction",
+            Self::VoucherKeyTooLong => "presence_voucher_key_too_long",
             Self::WindowDoesNotCover => "presence_window_does_not_cover",
             Self::ProposalsEmpty => "presence_proposals_empty",
             Self::TooManyProposals => "presence_proposals_too_many",
@@ -246,6 +260,9 @@ pub struct BookVoucher {
 impl BookVoucher {
     pub fn observed(input: ObservedVoucher<'_>) -> Result<Self, PresenceError> {
         let key = validated_text(input.key)?;
+        if key.chars().count() > MAX_BOOK_KEY_CHARS {
+            return Err(PresenceError::VoucherKeyTooLong);
+        }
         let date =
             TallyDate::parse(input.date.to_string()).map_err(|_| PresenceError::DateInvalid)?;
         let voucher_type = validated_text(input.voucher_type)?;
@@ -1158,6 +1175,14 @@ fn decide(
         })
         .unwrap_or_default();
 
+    // A verdict decided before rule three still *reached* whatever it
+    // resembles, and the observations count what no proposal came near.
+    let with_resemblances = |touched: BTreeSet<usize>| {
+        let mut touched = touched;
+        touched.extend(resemblances(proposal, party, window, index, &number_matches).into_keys());
+        touched
+    };
+
     // Rule one: identity first. A REMOTEID is a key Bridge itself wrote.
     if let Some(remote_id) = proposal.remote_id.as_deref() {
         let unique_here = proposal_remote_counts.get(remote_id).copied() == Some(1);
@@ -1173,7 +1198,7 @@ fn decide(
                     UndecidedReason::RemoteIdCollision,
                     candidates_from(window, matches, CandidateRule::SharedRemoteId),
                 )),
-                matches.iter().copied().collect(),
+                with_resemblances(matches.iter().copied().collect()),
             );
         }
         if !matches.is_empty() {
@@ -1206,7 +1231,7 @@ fn decide(
                             UndecidedReason::IdentityConflict,
                             (candidates, found),
                         )),
-                        touched,
+                        with_resemblances(touched),
                     );
                 }
                 return shell(
@@ -1224,7 +1249,7 @@ fn decide(
                     UndecidedReason::RemoteIdCollision,
                     candidates_from(window, matches, CandidateRule::SharedRemoteId),
                 )),
-                matches.iter().copied().collect(),
+                with_resemblances(matches.iter().copied().collect()),
             );
         }
     }
@@ -1252,7 +1277,7 @@ fn decide(
                             CandidateRule::SharedVoucherNumber,
                         ),
                     )),
-                    number_matches.iter().copied().collect(),
+                    with_resemblances(number_matches.iter().copied().collect()),
                 );
             }
         }
@@ -1315,36 +1340,7 @@ fn decide(
 
     // Rule three: everything else is resemblance, and resemblance decides
     // nothing. It only widens what a person is asked to look at.
-    let mut found: BTreeMap<usize, CandidateRule> = BTreeMap::new();
-    for position in &number_matches {
-        keep_strongest(&mut found, *position, CandidateRule::SharedVoucherNumber);
-    }
-    let mut pool: BTreeSet<usize> = BTreeSet::new();
-    if let Some(positions) = index.by_date.get(proposal.date()) {
-        pool.extend(positions.iter().copied());
-    }
-    for key in &party.compare_keys {
-        if let Some(positions) = index.by_ledger.get(key.as_str()) {
-            pool.extend(positions.iter().copied());
-        }
-    }
-    for position in pool {
-        let voucher = &window.vouchers[position];
-        let same_date = voucher.date() == proposal.date();
-        let same_amount = voucher.magnitude.numeric_eq(&proposal.magnitude);
-        let same_party = party
-            .compare_keys
-            .iter()
-            .any(|key| voucher.ledger_keys.contains(key));
-        let rule = match (same_date, same_party, same_amount) {
-            (true, true, true) => CandidateRule::SameDatePartyAmount,
-            (_, true, true) => CandidateRule::SamePartyAmount,
-            (true, false, true) => CandidateRule::SameDateAmount,
-            (true, true, false) => CandidateRule::SameDateParty,
-            _ => continue,
-        };
-        keep_strongest(&mut found, position, rule);
-    }
+    let found = resemblances(proposal, party, window, index, &number_matches);
 
     if found.is_empty() {
         // Nothing resembled it — but an absence is only evidence when every
@@ -1417,6 +1413,55 @@ fn decide(
         PresenceStatus::PossiblyPresent(undecided(reason, (candidates, total))),
         touched,
     )
+}
+
+/// Every book voucher this proposal resembles, strongest rule per voucher.
+///
+/// Extracted because the *touched* set it produces is needed even on paths that
+/// return before resemblance can decide anything. A collision returns early
+/// with only its colliding positions, and `unmatched_book_vouchers` promises to
+/// count rows no proposal "matched or even resembled" — so a row this proposal
+/// plainly resembles must not be counted there merely because a collision
+/// outranked the resemblance. The scan is indexed, and the paths that need it
+/// early are collisions, which are rare.
+fn resemblances(
+    proposal: &ProposedVoucher,
+    party: &PartyResolution,
+    window: &BookWindow,
+    index: &WindowIndex<'_>,
+    number_matches: &[usize],
+) -> BTreeMap<usize, CandidateRule> {
+    let mut found: BTreeMap<usize, CandidateRule> = BTreeMap::new();
+    for position in number_matches {
+        keep_strongest(&mut found, *position, CandidateRule::SharedVoucherNumber);
+    }
+    let mut pool: BTreeSet<usize> = BTreeSet::new();
+    if let Some(positions) = index.by_date.get(proposal.date()) {
+        pool.extend(positions.iter().copied());
+    }
+    for key in &party.compare_keys {
+        if let Some(positions) = index.by_ledger.get(key.as_str()) {
+            pool.extend(positions.iter().copied());
+        }
+    }
+    for position in pool {
+        let voucher = &window.vouchers[position];
+        let same_date = voucher.date() == proposal.date();
+        let same_amount = voucher.magnitude.numeric_eq(&proposal.magnitude);
+        let same_party = party
+            .compare_keys
+            .iter()
+            .any(|key| voucher.ledger_keys.contains(key));
+        let rule = match (same_date, same_party, same_amount) {
+            (true, true, true) => CandidateRule::SameDatePartyAmount,
+            (_, true, true) => CandidateRule::SamePartyAmount,
+            (true, false, true) => CandidateRule::SameDateAmount,
+            (true, true, false) => CandidateRule::SameDateParty,
+            _ => continue,
+        };
+        keep_strongest(&mut found, position, rule);
+    }
+    found
 }
 
 /// Turns an identity match into a status. A cancelled or optional voucher
