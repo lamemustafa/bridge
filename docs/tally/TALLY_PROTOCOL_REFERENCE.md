@@ -1437,10 +1437,16 @@ bad voucher does not matter:
    discarded. `Import Exceptions` *may* also carry
    *"Mismatch in total amount between Credit and Debit entries"* — that was the message on the one
    sales invoice measured, and an absent entry is not evidence that the write succeeded.
-3. **If the read-back was complete — party and tax ledgers present — you are done.** That element
-   works for this invoice type; record it and stop. Do **not** delete a good voucher to try the
-   other element: the alternate may be the discarded shape, and you would be trading a correct
-   voucher for a malformed one.
+3. **If the read-back matches the voucher you intended, you are done.** Record the element and
+   stop. Do **not** delete a good voucher to try the other element: the alternate may be the
+   discarded shape, and you would be trading a correct voucher for a malformed one.
+
+   **"Party and tax ledgers are present" is not that comparison.** It proves the outer list was
+   accepted and nothing more — amounts, signs, bill allocations and inventory fields can still be
+   missing or rewritten, and §12a.4 lists eight rewrites that each reported clean counters. Compare
+   the read-back against the **intended state** field by field, as
+   `docs/adr/0004-tally-write-safety.md` requires. A subset check recorded as "this element works"
+   becomes the evidence someone else builds a batch on.
 4. **Only if the read-back showed the discard**, remove it with `ACTION="Delete"` by `REMOTEID`
    (§9.12b), re-send with the other element, and **read that back too** — the second attempt is
    as unproven as the first, and stopping after sending it leaves the question open and possibly
@@ -1530,9 +1536,14 @@ Four further observations, each measured:
    > **Until that is settled: send the source document's own tax.** If Tally stores what it
    > receives — the possibility this evidence cannot rule out — then recomputing tax per line
    > *replaces* the invoice's figures with different ones wherever the two methods diverge, which
-   > is a worse outcome than either rounding convention. Recompute only when there is no source
-   > figure to carry, and then sum per line rather than taxing the total, because that is what the
-   > measured voucher ended up holding.
+   > is a worse outcome than either rounding convention.
+   >
+   > **When there is no source figure, this evidence does not tell you which formula to use.** The
+   > A/B supplied the tax, so it establishes nothing about how a missing one should be synthesised;
+   > per-line and on-total are equally unsupported here. Do not silently pick one — **fail closed
+   > and ask**, or record explicitly which convention the run chose so the difference is
+   > attributable later. The per-line figure is what the measured voucher ended up holding, which
+   > is a reason to prefer it *if you must choose* and not a reason to believe it is right.
 
    The settling probe is one variable: send a tax amount differing from **both** methods and read
    back what is stored.
