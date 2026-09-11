@@ -137,6 +137,7 @@ jobs:
       - run: python3 scripts/collect-macos-test-crashes.test.py
       - run: python3 scripts/retain-macos-test-binaries.test.py
       - run: python3 scripts/bank_statement_import.test.py
+      - run: python3 scripts/sanitise-bbox-capture.test.py
 
   tally-portable:
     name: Tally portable core

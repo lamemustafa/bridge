@@ -6,7 +6,7 @@ prints on every statement regardless of who the customer is. Everything else is
 substituted, so a value that was never anticipated is fabricated by default
 rather than kept by default.
 """
-import re, sys, pathlib
+import re, sys, pathlib, unicodedata
 
 TEMPLATE = set("""
 Page No .: Account Branch Address City State Phone no. OD Limit Currency Email
@@ -57,7 +57,42 @@ def _fake_date(token):
         _dates[token] = f"{day:02d}/08/{tail}"
     return _dates[token]
 
-SEP = re.compile(r"([^A-Za-z0-9]+)")
+def _is_token_char(character):
+    """Letters, digits and combining marks are customer text; the rest separates.
+
+    This has to be a *Unicode* rule. The previous split was `[^A-Za-z0-9]+`,
+    under which every character of a Devanagari, Gujarati, Tamil or Bengali name
+    landed in the separator class, the whole name reached `_scrub_plain`'s final
+    branch, and it was copied **verbatim** into a fixture the banner then
+    described as fully sanitised. Measured before the fix: four scripts came
+    through whole, and `Café Naïve` kept its `é` and `ï`. This repository is
+    public, so that is the failure that matters most in this file.
+
+    Marks are included deliberately, and `str.isalnum()` is why the bug survived
+    this long: a combining vowel sign is category `Mn`, which is neither a letter
+    nor a digit, so `"श्री".isalnum()` is **False** while `"श".isalnum()` is True.
+    Any rule that asks "is this alphanumeric?" splits an Indic word into letters
+    and separators. `\\w` has the same hole.
+    """
+    return unicodedata.category(character)[0] in "LNM"
+
+
+def _split_tokens(text):
+    """Alternating runs of token characters and separators, token runs first-ish.
+
+    Returns runs rather than a regex split so the rule above is the definition
+    rather than a character class that has to be kept in step with it.
+    """
+    runs = []
+    for character in text:
+        kind = _is_token_char(character)
+        if runs and runs[-1][0] == kind:
+            runs[-1][1].append(character)
+        else:
+            runs.append((kind, [character]))
+    return [(kind, "".join(run)) for kind, run in runs]
+
+
 ALPHA = "ZQXVWKJYBGFHLMNPRSTDC"
 ENTITY = re.compile(r"&(?:amp|lt|gt|quot|apos|#\d+|#x[0-9A-Fa-f]+);")
 _seen = {}
@@ -76,6 +111,14 @@ def _fake_token(token):
 
     So: digits map to digits, letters to letters, and a run of X is left alone
     because it is a masking convention rather than anybody's data.
+
+    **Non-ASCII letters and marks are replaced with ASCII letters**, one per code
+    point, so length and "this is a word" survive but the script does not. That
+    is a deliberate trade: no parser in this repository branches on script, and
+    fabricating in-script would mean generating valid Devanagari or Tamil, which
+    is a lot of machinery to preserve a property nothing reads. Worth knowing if
+    you capture a statement whose names are not in Latin script — the fixture
+    will exercise your boundary logic but will not look like the original.
 
     Stable per distinct input, so a counterparty appearing on two rows still
     appears twice — the repeat structure is what mapping and suspense logic
@@ -100,24 +143,47 @@ def _fake_token(token):
             else letter
             for character in token)
         if suffix and len(candidate) > 1:
-            # Vary the tail so a second pass over the alphabet cannot repeat a
-            # replacement already issued for a token of this shape — but vary it
-            # *within its own character class*. Shape is the whole point: a
-            # digit run that gains a trailing letter stops being a reference,
-            # and the boundary parsers this fixture exists to exercise read
-            # exactly that distinction.
-            last = candidate[-1]
-            if last == "X":
-                replacement = last
-            elif last.isdigit():
-                replacement = str((suffix % 9) + 1)
-            elif last.islower():
-                replacement = ALPHA[suffix % len(ALPHA)].lower()
-            else:
-                replacement = ALPHA[suffix % len(ALPHA)]
-            candidate = candidate[:-1] + replacement
+            # Vary one character so a second pass over the alphabet cannot
+            # repeat a replacement already issued for a token of this shape —
+            # but vary it *within its own character class*. Shape is the whole
+            # point: a digit run that gains a trailing letter stops being a
+            # reference, and the boundary parsers this fixture exists to
+            # exercise read exactly that distinction.
+            #
+            # Vary the last character that is *not* an X, not simply the last.
+            # An X is held fixed because it is a masking convention rather than
+            # data — and when that met "vary the tail" on a token ending in X,
+            # the two rules cancelled: the tail was pinned, the only freedom
+            # left was the 21 letters of ALPHA, and the 22nd such token reused a
+            # replacement. Measured: 5 collisions in 200 three-letter tokens,
+            # which merges two counterparties in the fixture and makes a
+            # mapping-identity regression pass.
+            at = next(
+                (i for i in range(len(candidate) - 1, -1, -1) if candidate[i] != "X"),
+                None,
+            )
+            if at is not None:
+                last = candidate[at]
+                if last.isdigit():
+                    replacement = str((suffix % 9) + 1)
+                elif last.islower():
+                    replacement = ALPHA[suffix % len(ALPHA)].lower()
+                else:
+                    replacement = ALPHA[suffix % len(ALPHA)]
+                candidate = candidate[:at] + replacement + candidate[at + 1:]
         if candidate not in _taken:
             break
+    else:
+        # The loop finished without finding a free replacement. Previously it
+        # fell out here and used the last candidate anyway, so exhaustion looked
+        # exactly like success and two counterparties quietly became one. A
+        # sanitiser that cannot keep them apart must say so: the alternative is
+        # a fixture that is wrong in a way no later check can detect.
+        raise SystemExit(
+            f"sanitise: no distinct replacement left for a token shaped like "
+            f"{'X' * len(token)} after {10_000} attempts. The fixture would merge "
+            f"two distinct values into one. Widen ALPHA or shorten the capture."
+        )
     _seen[token] = candidate
     _taken.add(candidate)
     return candidate
@@ -162,14 +228,15 @@ def _scrub_plain(text):
             _days[text] = f"{len(_days) % 28 + 1:02d}"
         return _days[text]
     out = []
-    for piece in SEP.split(text):
-        if not piece:
-            continue
-        if piece in TEMPLATE or not piece.strip():
+    for is_token, piece in _split_tokens(text):
+        if piece in TEMPLATE:
             out.append(piece)
-        elif piece.isalnum():
+        elif is_token:
             out.append(_fake_token(piece))
         else:
+            # Separators only: punctuation, spaces, symbols. Nothing reaches
+            # this branch that could be a name, which is the whole change —
+            # previously an Indic name arrived here and was passed through.
             out.append(piece)
     return "".join(out)
 
