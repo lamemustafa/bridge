@@ -132,6 +132,7 @@ jobs:
           toolchain: 1.96.0
       - run: node scripts/check-ci-workflow-consistency.mjs
       - run: node scripts/check-protocol-section-numbers.mjs
+      - run: node scripts/check-protocol-section-numbers.test.mjs
       - run: node --test scripts/prune-package-compiler-cache.test.mjs
       - run: python3 scripts/collect-macos-test-crashes.test.py
       - run: python3 scripts/retain-macos-test-binaries.test.py

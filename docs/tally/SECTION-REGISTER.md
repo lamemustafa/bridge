@@ -60,9 +60,39 @@ Two residuals, both worth knowing:
 
    **Retitling is not renumbering, and is allowed.** Citations point at the number, so changing a
    heading's words breaks nothing — and it is sometimes the point of a change, as when a title
-   states a narrow case in general-sounding words. The gate fails on a heading that turns up under
-   a *different* number, not on one whose wording changed.
-3. **Claiming a number says nothing about Tally.** Whether the behaviour a section describes is
+   states a narrow case in general-sounding words. That includes retitling a section to words
+   another section already uses: two headings may share a title, and the reference has such a pair
+   today.
+
+   **The gate tests whether a merged *number* is still there**, not whether a heading kept its
+   words. Identifying sections by title needs a section to have an identity apart from its number,
+   and the only candidate — the title — fails three ways: a Setext heading carries its number
+   inside its text, retitling and renumbering together makes the old title vanish, and two sections
+   sharing a title make retitling either one look like a move.
+
+3. **A merged number may not be removed either.** `see §9.7` breaks the same way whether 9.7 was
+   renumbered, retitled into a different number, or deleted outright, so the gate treats all three
+   alike. In practice this costs nothing: no number has ever disappeared from the reference.
+
+   If a section genuinely must go, **leave its number in place with a line saying where the content
+   went** — a redirect heading. The citation still lands, and the reader gets to the replacement.
+   Deleting the heading leaves them at a number that no longer exists, with nothing to follow.
+
+4. **Do not exchange two numbers. Nothing enforces this.** Swap them and both are still present,
+   so the gate sees nothing, while every citation to either lands on the other's content.
+
+   Catching it needs a section to be recognisable apart from its number, and the only candidate is
+   its title — which is mutable, and that is fatal rather than awkward: **a title moving from one
+   number to another is exactly what a swap and a legitimate retitle chain both look like.** Rename
+   `10 Alpha` to `10 Beta` and `20 Beta` to `20 Gamma` and `Beta` has vacated 20 and occupied 10,
+   with nothing moved.
+
+   Three attempts were made and each produced a false positive on a legitimate edit — firing on any
+   retitle; then blind to a swap of two sections whose titles each appear twice; then firing on the
+   retitle chain above. A gate that blocks legitimate documentation edits gets bypassed or switched
+   off, which costs more than the gap. So this is a **third residual**, alongside the stale green
+   check and the two unmerged PRs: known, written down, and not pretended away.
+5. **Claiming a number says nothing about Tally.** Whether the behaviour a section describes is
    verified, and to what scope, is settled in the reference itself and in its evidence blocks. The
    confidence markers are the reference's job and cannot be summarised anywhere else without
    losing them.
