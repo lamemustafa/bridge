@@ -21,6 +21,18 @@
 //!   already the crate's [`is_tally_reserved_root`], which this reuses rather
 //!   than re-deriving — a second copy would be a second thing to get wrong.
 //!
+//! **The hop itself is matched exactly, not normalized.** Tally matches master
+//! names by exact codepoint, and a `PARENT` is emitted verbatim from the group
+//! `NAME` it refers to, so within one coherent snapshot the two are identical
+//! bytes — measured across both captured companies in this tree: 21 distinct
+//! `PARENT` values, every one an exact match to a group `NAME` except the
+//! reserved root, and not a single case- or whitespace-only near match. A pair
+//! that differs is therefore not a spelling variant to be helpfully resolved;
+//! it is an incoherent or cross-snapshot pair, and resolving it would admit a
+//! ledger on evidence that does not hold. Only the terminating `RESERVEDNAME`
+//! is compared loosely, and only because a caller's own list of identities is
+//! hand-written rather than read from Tally.
+//!
 //! Every outcome that is not a reserved identity is an [`AncestryGap`]. A
 //! caller decides what each gap means for its own question; none of them is an
 //! answer, and an incomplete group collection therefore refuses rather than
@@ -69,7 +81,7 @@ impl GroupIndex {
     pub fn build(groups: impl IntoIterator<Item = TallyNamedMaster>) -> Self {
         let mut by_name: BTreeMap<String, Vec<TallyNamedMaster>> = BTreeMap::new();
         for group in groups {
-            let key = normalize(&group.name);
+            let key = group.name.clone();
             if !key.is_empty() {
                 by_name.entry(key).or_default().push(group);
             }
@@ -94,7 +106,7 @@ impl GroupIndex {
     /// the walk passes through it, so a caller may repeat this value back to a
     /// user without redacting it.
     pub fn reserved_ancestor(&self, parent: Option<&str>) -> Result<&str, AncestryGap> {
-        let mut current = normalize(parent.ok_or(AncestryGap::NoParent)?);
+        let mut current = parent.ok_or(AncestryGap::NoParent)?.to_string();
         let mut visited = BTreeSet::new();
         // Each hop consumes one distinct group; the visited set bounds the walk
         // independently, so this only guards a pathological index.
@@ -123,15 +135,11 @@ impl GroupIndex {
             current = group
                 .parent
                 .nonempty_returned_text()
-                .map(normalize)
-                .unwrap_or_default();
+                .unwrap_or_default()
+                .to_string();
         }
         Err(AncestryGap::Exhausted)
     }
-}
-
-fn normalize(value: &str) -> String {
-    value.trim().to_ascii_lowercase()
 }
 
 #[cfg(test)]
@@ -234,6 +242,32 @@ mod tests {
         assert_eq!(
             looping.reserved_ancestor(Some("Loop")),
             Err(AncestryGap::Cycle)
+        );
+    }
+
+    #[test]
+    fn a_hop_that_differs_only_by_case_or_space_is_absent_not_resolved() {
+        // Measured across both captured companies: 21 distinct PARENT values,
+        // every one an exact match to a group NAME except the reserved root,
+        // and no case- or whitespace-only near match anywhere. So a pair that
+        // differs is an incoherent or cross-snapshot pair, and resolving it
+        // would admit a ledger on evidence that does not hold.
+        let tree = tree();
+        for near in [
+            "bank accounts",
+            "BANK ACCOUNTS",
+            " Bank Accounts",
+            "Bank Accounts ",
+        ] {
+            assert_eq!(
+                tree.reserved_ancestor(Some(near)),
+                Err(AncestryGap::GroupAbsent),
+                "{near:?}"
+            );
+        }
+        assert_eq!(
+            tree.reserved_ancestor(Some("Bank Accounts")),
+            Ok("Bank Accounts")
         );
     }
 

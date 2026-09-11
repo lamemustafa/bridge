@@ -900,10 +900,15 @@ non-zero `EXCEPTIONS` as failure on its own, without waiting for an error string
 ### 9.13 Payment, Receipt and Contra — the bank-statement voucher shapes
 
 **VERIFIED 2026-09-10 (licensed TallyPrime 7.1 Gold; five files imported by hand through
-Gateway of Tally → Import → Vouchers).** 148 vouchers in total. `CREATED` equalled the voucher
-count on every file with zero errors and zero exceptions, and each affected bank ledger
-reproduced, on readback, the debit total, credit total and closing balance its own statement
-printed.
+Gateway of Tally → Import → Vouchers).** **157 vouchers** in total, counted from the retained
+files themselves: **147** of the three bank types across four files — a 1-voucher pilot, 61
+Payments with 54 Receipts, 3 Contras, and 20 Payments with 8 Receipts — plus **10** reallocation
+Journals in a fifth. `CREATED` equalled the voucher count on every file with zero errors and zero
+exceptions, and each affected bank ledger reproduced, on readback, the debit total, credit total
+and closing balance its own statement printed.
+
+*(The session record headlined 148. That figure does not reconcile with its own per-file table
+or with the artifacts, both of which give 157; the count above is taken from the files.)*
 
 **A bank statement cannot be expressed as Journals.** Booking bank lines as Journals reconciles
 arithmetically and misfiles every one of them: wrong voucher register, wrong day book grouping,
