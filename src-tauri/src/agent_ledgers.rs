@@ -290,6 +290,11 @@ mod tests {
         // bytes Tally actually sent rather than against a fixture written from the
         // same understanding as the parser. A hand-authored response can encode a
         // wrong vocabulary in both places and agree with itself.
+        //
+        // All FIVE recognised spellings are now covered. UT Tax and Cess were
+        // absent from this book, so two ledgers carrying those heads were created
+        // and the capture retaken -- they are no longer accepted on the strength of
+        // a hand-written table alone.
         let parsed = parse_native_party_ledger_master_records_with_evidence(
             &captured_live_ledger_masters(),
             "ae1490be-52c5-4544-9ffc-4b7da85f9797",
@@ -311,10 +316,12 @@ mod tests {
             recognised,
             vec![
                 ("CGST".to_string(), GstDutyHead::Cgst),
+                ("Cess".to_string(), GstDutyHead::Cess),
                 ("IGST".to_string(), GstDutyHead::Igst),
                 ("State Tax".to_string(), GstDutyHead::StateTax),
+                ("UT Tax".to_string(), GstDutyHead::UtTax),
             ],
-            "the live spellings must classify exactly as the vocabulary claims"
+            "EVERY recognised spelling must be backed by bytes Tally actually sent"
         );
 
         // The state head really is spelled `State Tax` on the wire, not `SGST`.
