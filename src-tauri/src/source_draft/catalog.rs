@@ -233,6 +233,17 @@ pub(super) fn require_current_catalog_binding(
 /// Preserve company-verification failures that have an existing source-draft
 /// catalog result. Every other verification refusal remains a scope refusal:
 /// this service cannot safely infer a more specific source-draft result.
+///
+/// `error.code` is an `&str`, not an enum, so the compiler cannot force this match to
+/// stay exhaustive the way `classify_transport_error` in `standard_ledger_catalog.rs`
+/// can be for `TallyTransportError`. The nine codes below are exactly the ones
+/// `tally_runtime_command_error` (`src-tauri/src/commands.rs`) can emit -- a string
+/// contract enforced only by this comment and by
+/// `catalogue_company_verification_preserves_typed_error_codes`. Each is listed and
+/// classified individually, including the two that fall to `scope_invalid`
+/// (`company_base_currency_changed`, `tally_company_context_failed`): both are genuine
+/// company-scope problems, so that is a deliberate choice, not a fallthrough. The `_`
+/// arm is a documented conservative default for any other code, current or future.
 fn company_verification_error_code(error: &crate::commands::TallyCommandError) -> &'static str {
     match error.code {
         "endpoint_unreachable"
@@ -241,6 +252,13 @@ fn company_verification_error_code(error: &crate::commands::TallyCommandError) -
         | "tally_runtime_temporarily_unavailable" => "source_draft_catalogue_transport_failed",
         "response_validation_failed" => "source_draft_catalogue_malformed_response",
         "untrusted_discovery_limit_exceeded" => "source_draft_catalogue_bounds_invalid",
+        // The endpoint configuration was never valid enough to evaluate a company at
+        // all -- reporting this as an invalid company selection tells the operator to
+        // fix the wrong thing.
+        "endpoint_configuration_invalid" => "source_draft_catalogue_endpoint_invalid",
+        "company_base_currency_changed" | "tally_company_context_failed" => {
+            "source_draft_catalogue_scope_invalid"
+        }
         _ => "source_draft_catalogue_scope_invalid",
     }
 }
@@ -899,15 +917,30 @@ mod tests {
             "source_draft_catalogue_bounds_invalid"
         );
 
+        // A code `tally_runtime_command_error` does not emit: exercises the documented
+        // conservative default, not one of the nine classified codes.
         assert_eq!(
             company_verification_error_code(&command_error("reviewed_company_scope_changed")),
             "source_draft_catalogue_scope_invalid"
         );
 
+        // The endpoint was never valid, so no company was ever evaluated -- this must not
+        // read as an invalid company selection.
         assert_eq!(
             company_verification_error_code(&command_error("endpoint_configuration_invalid")),
-            "source_draft_catalogue_scope_invalid"
+            "source_draft_catalogue_endpoint_invalid"
         );
+
+        // Genuine company-scope problems: deliberately `scope_invalid`, not a fallthrough.
+        for code in [
+            "company_base_currency_changed",
+            "tally_company_context_failed",
+        ] {
+            assert_eq!(
+                company_verification_error_code(&command_error(code)),
+                "source_draft_catalogue_scope_invalid"
+            );
+        }
     }
 
     #[tokio::test]

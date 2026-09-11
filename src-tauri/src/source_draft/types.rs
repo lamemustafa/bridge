@@ -176,6 +176,10 @@ pub(super) fn error(code: &'static str) -> SourceDraftCommandError {
             "The existing-ledger capture is no longer current for this draft or company.",
             "Load existing ledgers again before selecting a target.",
         ),
+        "source_draft_catalogue_endpoint_invalid" => (
+            "The configured Tally endpoint is invalid, so Bridge never evaluated the company selection.",
+            "Check the Tally endpoint configuration (host, port, loopback) in Bridge settings, then load existing ledgers again.",
+        ),
         "source_draft_catalogue_read_failed" => (
             "Bridge could not read a complete current existing-ledger list.",
             "Check Tally and retry the read; no target was applied.",

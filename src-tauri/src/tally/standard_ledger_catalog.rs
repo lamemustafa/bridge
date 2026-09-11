@@ -118,11 +118,11 @@ pub(crate) async fn read_standard_ledger_catalog(
 }
 
 fn classify_runtime_catalogue_error(error: anyhow::Error) -> StandardLedgerCatalogReadError {
-    if error
+    if let Some(transport_error) = error
         .chain()
-        .any(|cause| cause.downcast_ref::<TallyTransportError>().is_some())
+        .find_map(|cause| cause.downcast_ref::<TallyTransportError>())
     {
-        return StandardLedgerCatalogReadError::Transport;
+        return classify_transport_error(transport_error);
     }
     if error
         .chain()
@@ -137,6 +137,39 @@ fn classify_runtime_catalogue_error(error: anyhow::Error) -> StandardLedgerCatal
         return StandardLedgerCatalogReadError::CompanyIdentityMismatch;
     }
     StandardLedgerCatalogReadError::Transport
+}
+
+/// `TallyTransportError` is not `#[non_exhaustive]`, so this is written to stay exhaustive on
+/// purpose: a variant added later must fail to compile here, not silently inherit `Transport`
+/// through a catch-all the way `ResponseTooLarge` and `InvalidEncoding` used to. Those two are
+/// response-side validation failures -- Tally was reached and answered, and the answer failed
+/// validation -- so telling the operator to check connectivity and retry is wrong; a retry
+/// reproduces the same answer. The dividing question is whether retrying could plausibly
+/// succeed: `ResponseTruncated` and `ResponseReadFailed` are answers cut short in transit, which
+/// a retry may well fix, so they stay `Transport` even though Tally did respond.
+fn classify_transport_error(error: &TallyTransportError) -> StandardLedgerCatalogReadError {
+    match error {
+        TallyTransportError::EndpointInvalid { .. }
+        | TallyTransportError::PolicyInvalid { .. }
+        | TallyTransportError::ClientInitializationFailed
+        | TallyTransportError::RequestTooLarge { .. }
+        | TallyTransportError::ConnectionFailed
+        | TallyTransportError::RequestTimedOut
+        | TallyTransportError::RequestFailed
+        | TallyTransportError::HttpStatus { .. }
+        | TallyTransportError::ResponseTruncated
+        | TallyTransportError::ResponseReadFailed => StandardLedgerCatalogReadError::Transport,
+        TallyTransportError::ResponseTooLarge { .. } => {
+            StandardLedgerCatalogReadError::BoundsViolation
+        }
+        // An encoding Bridge cannot decode and one Tally encoded wrongly are the
+        // same situation to the operator: a complete answer that cannot be read,
+        // reproduced exactly by retrying.
+        TallyTransportError::UnsupportedContentEncoding
+        | TallyTransportError::InvalidEncoding { .. } => {
+            StandardLedgerCatalogReadError::MalformedResponse
+        }
+    }
 }
 
 fn sha256(bytes: &[u8]) -> String {
@@ -167,6 +200,76 @@ mod tests {
                 CompanyIdentityBracketError::AbsentOrAmbiguous,
             )),
             StandardLedgerCatalogReadError::CompanyIdentityMismatch
+        );
+    }
+
+    /// Every `TallyTransportError` variant, named explicitly rather than sampled, so a
+    /// variant this test does not know about cannot pass silently -- the match in
+    /// `classify_transport_error` would fail to compile first.
+    #[test]
+    fn catalog_read_failure_classifier_splits_transport_from_response_validation() {
+        let request_side = [
+            TallyTransportError::EndpointInvalid { code: "test" },
+            TallyTransportError::PolicyInvalid { code: "test" },
+            TallyTransportError::ClientInitializationFailed,
+            TallyTransportError::RequestTooLarge { limit: 1 },
+            TallyTransportError::ConnectionFailed,
+            TallyTransportError::RequestTimedOut,
+            TallyTransportError::RequestFailed,
+            TallyTransportError::HttpStatus { status: 500 },
+            TallyTransportError::ResponseTruncated,
+            TallyTransportError::ResponseReadFailed,
+        ];
+        for variant in request_side {
+            assert_eq!(
+                classify_transport_error(&variant),
+                StandardLedgerCatalogReadError::Transport,
+                "expected {variant:?} to remain the transport code"
+            );
+        }
+
+        assert_eq!(
+            classify_transport_error(&TallyTransportError::ResponseTooLarge {
+                limit: 1,
+                declared_by_peer: true,
+            }),
+            StandardLedgerCatalogReadError::BoundsViolation
+        );
+        // Both encoding faults are complete answers Bridge cannot read, so both are
+        // malformed responses rather than outages a retry might clear.
+        for variant in [
+            TallyTransportError::UnsupportedContentEncoding,
+            TallyTransportError::InvalidEncoding { code: "test" },
+        ] {
+            assert_eq!(
+                classify_transport_error(&variant),
+                StandardLedgerCatalogReadError::MalformedResponse,
+                "expected {variant:?} to report an unusable response, not an outage"
+            );
+        }
+
+        // A genuine request-side failure -- Tally was never reached at all -- must still
+        // surface as the transport code end to end, through the anyhow chain.
+        assert_eq!(
+            classify_runtime_catalogue_error(anyhow::Error::new(
+                TallyTransportError::RequestFailed
+            )),
+            StandardLedgerCatalogReadError::Transport
+        );
+        assert_eq!(
+            classify_runtime_catalogue_error(anyhow::Error::new(
+                TallyTransportError::ResponseTooLarge {
+                    limit: 1,
+                    declared_by_peer: true,
+                }
+            )),
+            StandardLedgerCatalogReadError::BoundsViolation
+        );
+        assert_eq!(
+            classify_runtime_catalogue_error(anyhow::Error::new(
+                TallyTransportError::InvalidEncoding { code: "test" }
+            )),
+            StandardLedgerCatalogReadError::MalformedResponse
         );
     }
 
