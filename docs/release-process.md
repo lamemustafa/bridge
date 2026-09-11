@@ -166,20 +166,38 @@ absence is invisible. The matrix is worse: a dropped claim leaves no trace at al
    not in your result is being deleted, and nothing downstream will say so.
 4. Regenerate: if the pin *set* changed, `seal-surface` first as described above,
    then the ordinary three; otherwise just the ordinary three.
-5. Run the gate, and **check the pin count against the union you computed in step
-   3** -- the gate cannot do this for you. `rehash-surface` also reports its
-   changed-entry count, which is a check on your own reasoning: if you edited the
-   cap and added one pin, expect exactly two.
+5. **Recompute `MAX_SURFACE_FILES` from the reconciled pin count** -- do not carry
+   a number derived from either side's cap. See the note on the cap below; it does
+   not necessarily conflict, and when it does not, the arithmetic is silently wrong.
+6. Run the gate, and **check the pin count against the union you computed in step
+   3** -- the gate cannot do this for you.
+
+   `rehash-surface` also reports a changed-entry count, which is a check on your
+   reasoning **once you know what it counts**: only entries already in the list
+   whose digest on disk differs from the digest recorded. A newly added entry whose
+   digest you computed from disk is therefore **not** counted -- it already matches.
+   So adding one pin and raising the cap normally reports **one**: the tool's own
+   pinned source, changed by the cap edit. It reports two only if the new entry was
+   added with a placeholder digest, which is a legitimate way to do it but a
+   different one. Reconcile the number with how you added the pin; do not adjust a
+   digest to reach an expected count.
 
 A rebase carrying several commits that touch pinned files needs this at **each**
 commit that does, not once at the end. CI gates the final tree, but a history whose
 intermediate commits do not gate is not bisectable.
 
-**Two branches will conflict on `MAX_SURFACE_FILES` by construction.** The
-convention is to pin exactly the count in use, so any branch adding a pin must
-raise it, and any two such branches collide on that line. That is expected, and the
-cap is the only line that should collide -- the cap *test* derives its size from the
-constant precisely so that raising the cap does not also rewrite the test.
+**`MAX_SURFACE_FILES` is the line most likely to be silently wrong, and it is worse
+when it does NOT conflict.** The convention is to pin exactly the count in use, so
+any branch adding a pin must raise it. If two branches start from the same cap and
+each add one pin, both change it from N to N+1 -- an **identical edit**, which git
+merges automatically without ever showing you a conflict. The reconciled surface
+then holds N+2 pins against a cap of N+1, and step 4 fails with
+`surface_file_count_invalid`.
+
+That failure is loud, so it is not dangerous; what is misleading is expecting a
+conflict to prompt you. Recompute the cap from the reconciled pin count every time,
+whether or not git stopped to ask. The cap *test* derives its size from the constant
+precisely so that changing the cap does not also rewrite the test.
 
 Two further constraints apply:
 
