@@ -614,7 +614,9 @@ fn conflicting_identifiers_outrank_a_byte_exact_name_but_a_shared_one_does_not()
         ["BETA 11111111", "GAMMA 22222222", "ACME"]
     );
 
-    // The shared-identifier case must keep binding.
+    // The shared-identifier case must keep binding: one identifier reached the
+    // master the name spells along with its sibling, and the name separates
+    // them.
     let shared = ledgers(&[
         "MB PARTY DELTA (5550001009)",
         "MB PARTY EPSILON (5550001009)",
@@ -622,6 +624,19 @@ fn conflicting_identifiers_outrank_a_byte_exact_name_but_a_shared_one_does_not()
     assert_eq!(
         bind_one_name(&shared, "MB PARTY DELTA (5550001009)").bound_name(),
         Some("MB PARTY DELTA (5550001009)")
+    );
+
+    // The mixed case, which a union test answers wrongly: the exact master is
+    // in the union because its own number is one of the identifiers, while a
+    // second identifier plainly reaches somewhere else. Provenance per
+    // identifier is the only thing that separates this from the shared case.
+    let mixed = ledgers(&["ACME 11111111", "BETA 22222222"]);
+    let source =
+        SourceEntity::with_identifier_hints(0, "ACME 11111111", ["22222222"]).expect("valid");
+    let report = bound(&mixed, &[source]);
+    assert_eq!(
+        reason(&report.entities()[0]),
+        UnboundReason::IdentifierNameConflict
     );
 }
 

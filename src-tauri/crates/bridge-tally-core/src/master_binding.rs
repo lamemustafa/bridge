@@ -809,14 +809,21 @@ fn bind_one(catalog: &MasterCatalog, entity: &SourceEntity, budget: &mut usize) 
     // Rule one: the identifier is the key, the name is a hint. A name
     // comparison on a pair that carries a decisive identifier is not merely
     // weaker evidence, it is actively misleading.
+    // Which masters *each* identifier reached, not merely which masters were
+    // reached. Flattening the two loses the only fact that separates a number
+    // shared by several masters from several numbers pointing at different
+    // ones, and those need opposite answers.
+    let mut per_identifier: Vec<BTreeSet<usize>> = Vec::new();
     let mut identifier_matches = BTreeSet::new();
     let mut identifier_conflict = false;
     for identifier in &entity.identifiers {
         if let Some(holders) = catalog.by_identifier.get(identifier) {
-            if holders.len() > 1 {
+            let reached = holders.iter().copied().collect::<BTreeSet<_>>();
+            if reached.len() > 1 {
                 identifier_conflict = true;
             }
-            identifier_matches.extend(holders.iter().copied());
+            identifier_matches.extend(reached.iter().copied());
+            per_identifier.push(reached);
         }
     }
 
@@ -833,13 +840,21 @@ fn bind_one(catalog: &MasterCatalog, entity: &SourceEntity, budget: &mut usize) 
     //
     // Found by seeding two live ledgers that share an embedded number. No
     // fabricated fixture had produced the combination.
-    // A byte-exact name survives an identifier that is merely *shared* — the
-    // ambiguous set still contains the master the name spells, so the name is
-    // what separates it from its siblings. It does not survive identifiers that
-    // all point somewhere else: that is conflicting evidence, however many of
-    // them there are, and preferring the name silently discards it.
-    let identifier_points_elsewhere = !identifier_matches.is_empty()
-        && exact.is_some_and(|index| !identifier_matches.contains(&index));
+    // A byte-exact name survives an identifier that is merely *shared*: that
+    // one identifier reached the master the name spells along with its
+    // siblings, and the name is what separates them. It does not survive an
+    // identifier that reached somewhere else entirely — that is disagreement,
+    // and preferring the name silently discards it.
+    //
+    // The test is per identifier, not over their union. Asking whether the
+    // union contains the exact master answers the shared case correctly and the
+    // mixed case wrongly: `ACME 11111111` with a hint reaching `BETA 22222222`
+    // has the exact master in the union while one identifier plainly disagrees.
+    let identifier_points_elsewhere = exact.is_some_and(|index| {
+        per_identifier
+            .iter()
+            .any(|reached| !reached.contains(&index))
+    });
     let status = if identifier_points_elsewhere {
         unresolved_status(
             catalog,
