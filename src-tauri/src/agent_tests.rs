@@ -1463,6 +1463,77 @@ fn voucher_window_rejects_out_of_range_rows_and_requires_a_wider_empty_check() {
 }
 
 #[test]
+fn a_nonempty_window_is_corroborated_rather_than_assumed_complete() {
+    // `WindowRead::Complete` used to be asserted for any nonempty response.
+    // A silently short read is indistinguishable from a full one by
+    // inspection — every row it returns is well-formed and inside the window —
+    // and the voucher it omits reads as `Absent`, which is the verdict that
+    // authorizes importing a voucher the book already holds.
+    let narrow = [
+        json!({"date":"20260901","guid":"g-1"}),
+        json!({"date":"20260902","guid":"g-2"}),
+    ];
+
+    // The wider read agrees, and rows outside the window are irrelevant to it.
+    assert_eq!(
+        corroborate_nonempty_voucher_window(
+            &narrow,
+            &[
+                json!({"date":"20260831","guid":"g-0"}),
+                json!({"date":"20260901","guid":"g-1"}),
+                json!({"date":"20260902","guid":"g-2"}),
+                json!({"date":"20260903","guid":"g-3"}),
+            ],
+            "20260901",
+            "20260902",
+        ),
+        (false, None)
+    );
+
+    // The wider read saw a voucher inside the window that the narrow read did
+    // not. That is the short read, and it must not become a verdict.
+    assert_eq!(
+        corroborate_nonempty_voucher_window(
+            &narrow,
+            &[
+                json!({"date":"20260901","guid":"g-1"}),
+                json!({"date":"20260901","guid":"g-9"}),
+                json!({"date":"20260902","guid":"g-2"}),
+            ],
+            "20260901",
+            "20260902",
+        ),
+        (true, Some("window_short_read"))
+    );
+
+    // A row carrying no identity cannot be compared, so it is refused rather
+    // than assumed equal — on either side.
+    for (rows, widened) in [
+        (&narrow[..], &[json!({"date":"20260901"})][..]),
+        (&[json!({"date":"20260901"})][..], &narrow[..]),
+    ] {
+        assert_eq!(
+            corroborate_nonempty_voucher_window(rows, widened, "20260901", "20260902"),
+            (true, Some("window_identity_unreadable"))
+        );
+    }
+
+    // Same identities, different multiplicity, is still a disagreement.
+    assert_eq!(
+        corroborate_nonempty_voucher_window(
+            &[json!({"date":"20260901","guid":"g-1"})],
+            &[
+                json!({"date":"20260901","guid":"g-1"}),
+                json!({"date":"20260902","guid":"g-1"}),
+            ],
+            "20260901",
+            "20260902",
+        ),
+        (true, Some("window_short_read"))
+    );
+}
+
+#[test]
 fn empty_voucher_window_corroboration_handles_all_three_control_branches() {
     assert_eq!(
         corroborate_empty_voucher_window(

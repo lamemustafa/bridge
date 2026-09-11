@@ -513,10 +513,13 @@ fn plans(steps: Vec<Step>) -> Vec<ScenarioPlan> {
 fn presence_plans() -> Vec<ScenarioPlan> {
     let catalogue = catalogue_xml();
     let mut steps = vec![Step::Company, Step::Status, Step::Company, Step::Status];
-    // Catalogue, then the voucher window, then the catalogue again: the
-    // verdict is built from two observations and the second read proves the
-    // first still holds.
+    // Catalogue, the voucher window, the *wider* window that corroborates it,
+    // then the catalogue again: the verdict is built from observations that
+    // each prove the one before them still holds. The wider read returns the
+    // same rows here, so the identities inside the window agree and the read
+    // is complete.
     steps.extend(paired_read(&catalogue));
+    steps.extend(paired_read(&window_xml()));
     steps.extend(paired_read(&window_xml()));
     steps.extend(paired_read(&catalogue));
     plans(steps)
@@ -604,7 +607,13 @@ async fn a_live_shaped_cycle_separates_present_undecided_and_absent() {
         "complete"
     );
     let observed = simulator.finish().expect("requests");
-    assert_eq!(observed.len(), 22);
+    // Twenty-two before corroborating nonempty windows, twenty-eight after.
+    // The six extra are one *paired* read, which is what a corroborating read
+    // costs in this adapter -- company, payload, status, payload, status,
+    // company -- not the two that one more request would suggest. Pinned so
+    // the cost stays a decision rather than a drift, and pinned at what it
+    // measures rather than at what it was first estimated to be.
+    assert_eq!(observed.len(), 28);
 }
 
 /// The admission contract this tool enforces lives in `agent_catalog.rs`, and
@@ -738,6 +747,8 @@ async fn a_ledger_missing_from_the_catalogue_fails_closed() {
     let catalogue = catalogue_xml();
     let mut steps = vec![Step::Company, Step::Status, Step::Company, Step::Status];
     steps.extend(paired_read(&catalogue));
+    steps.extend(paired_read(&unlisted));
+    // The nonempty window is corroborated by a wider read before the verdict.
     steps.extend(paired_read(&unlisted));
     steps.extend(paired_read(&catalogue));
     let simulator = SequenceSimulator::spawn(plans(steps)).expect("simulator");

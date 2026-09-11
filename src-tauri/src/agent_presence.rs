@@ -124,20 +124,34 @@ impl Server {
             // An empty window is only an empty window once the existing
             // corroboration says so. Anything less becomes `WindowIncomplete`
             // at the crate boundary rather than a report full of "absent".
+            // Completeness is corroborated, never assumed, and that holds
+            // whether or not the window had rows in it. An empty read is
+            // checked against a wider read and the company high-water mark; a
+            // nonempty read is checked against a wider read on Tally's own
+            // identities. A silently short response looks exactly like a full
+            // one, and the verdict it produces -- `Absent` -- is what
+            // authorises importing a voucher the book already holds.
             let mut read = WindowRead::Complete;
-            let mut reason = None;
-            if rows.is_empty() {
-                let (read_evidence, partial, corroboration) = self
-                    .corroborate_empty_voucher_read(&identity, &company.name, &from, &to, None)
-                    .await?;
-                accumulate(&mut accumulated, read_evidence);
-                reason = corroboration;
-                if partial {
-                    read = WindowRead::Partial;
-                    if let Some(evidence) = accumulated.as_mut() {
-                        evidence.state = "partial";
-                        evidence.reason_code = corroboration.map(str::to_string);
-                    }
+            let (read_evidence, partial, reason) = if rows.is_empty() {
+                self.corroborate_empty_voucher_read(&identity, &company.name, &from, &to, None)
+                    .await?
+            } else {
+                self.corroborate_nonempty_voucher_read(
+                    &identity,
+                    &company.name,
+                    &from,
+                    &to,
+                    None,
+                    &rows,
+                )
+                .await?
+            };
+            accumulate(&mut accumulated, read_evidence);
+            if partial {
+                read = WindowRead::Partial;
+                if let Some(evidence) = accumulated.as_mut() {
+                    evidence.state = "partial";
+                    evidence.reason_code = reason.map(str::to_string);
                 }
             }
 

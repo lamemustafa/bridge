@@ -155,6 +155,39 @@ fn accumulate_evidence(target: &mut Option<Evidence>, next: Evidence) {
 }
 
 impl Server {
+    /// The nonempty counterpart of `corroborate_empty_voucher_read`: one wider
+    /// read, compared against what the narrow read reported for the same range.
+    ///
+    /// It costs a second read on every window that has vouchers in it. The empty
+    /// path already paid that, and the alternative is asserting completeness
+    /// from a response that cannot show it.
+    pub(super) async fn corroborate_nonempty_voucher_read(
+        &self,
+        identity: &VerifiedCompanyIdentity,
+        company: &str,
+        from: &str,
+        to: &str,
+        ledger: Option<&str>,
+        rows: &[Value],
+    ) -> Result<(Evidence, bool, Option<&'static str>), ToolFailure> {
+        let (wider_from, wider_to) = widened_window(from, to)?;
+        let wider_request = render_agent_vouchers(company, &wider_from, &wider_to, None)?;
+        let (wider_xml, evidence) = self.post_read(identity, wider_request).await?;
+        let outcome = async {
+            let wider_rows = validate_then_filter_voucher_rows(
+                parse_agent_rows(&wider_xml, identity.company_guid())?,
+                &wider_from,
+                &wider_to,
+                ledger,
+            )?;
+            let (partial, reason) =
+                corroborate_nonempty_voucher_window(rows, &wider_rows, from, to);
+            Ok((evidence.clone(), partial, reason))
+        }
+        .await;
+        outcome.map_err(|failure: ToolFailure| failure.with_prior_evidence(evidence))
+    }
+
     pub(super) async fn corroborate_empty_voucher_read(
         &self,
         identity: &VerifiedCompanyIdentity,
