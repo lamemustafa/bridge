@@ -276,7 +276,8 @@ on the demo company.
 | `VoucherType` | 24 | |
 | `Voucher` | 150 (whole book) | See §5 for date scoping |
 
-**UNVERIFIED:** stock items, godowns, cost centres, currencies, units, budgets — never probed.
+**UNVERIFIED:** godowns, cost centres, currencies, units, budgets — never probed. Stock items
+are unprobed *as a collection read*; for writing them inside an invoice see §9.12.
 
 ---
 
@@ -1120,6 +1121,45 @@ same message: `CURRENCYFORMALNAME`, `FORMALNAME`, `MAILINGNAME`, `EXPANDEDSYMBOL
 `CURRENCYMAILINGNAME`, and a combination with `DECIMALPLACES`/`DECIMALSYMBOL`/`ISSUFFIX`/
 `HASSPACE`.
 
+### 9.11d `SVCURRENTCOMPANY` cannot be trusted as a write guard — **TRAP**
+
+**VERIFIED 2026-09-10 (licensed TallyPrime 7.1 Gold, hand import through the UI).** A
+`Vouchers` import carried an `<SVCURRENTCOMPANY>` whose value had two letters of the company
+name transposed. It did not match the loaded company. The voucher was **created in the loaded
+company** — `CREATED=1`, `ERRORS=0`, `EXCEPTIONS=0`, no `LINEERROR` — and confirmed present in
+the day book. 147 further vouchers imported the same way.
+
+**This does not generalise to every mismatched name, and the difference matters.** A separate
+measurement (2026-08-19, TallyPrime 7.1, port 9001) sent a voucher import naming a company that
+**existed but was not loaded**, and it **failed closed** with
+`LINEERROR: Could not set 'SVCurrentCompany' to '<name>'`. Two distinct cases:
+
+| the name refers to | observed |
+|---|---|
+| a company that exists but is not loaded | fails closed, names the problem |
+| a company that matches nothing | imports into the loaded company |
+
+A plausible reading is that Tally refuses when it can see a company it is being asked to switch
+to and cannot, and ignores a name resolving to nothing. **That is a hypothesis.** The 2026-09-10
+box's company list was never enumerated, so "matches nothing" is inferred from the transposition,
+not established. Settling it needs one session: enumerate the companies, then import twice —
+once naming an existing-but-unloaded company, once naming a string known to match nothing.
+
+**What is established, and it is enough to design against:**
+
+1. **`SVCURRENTCOMPANY` is not a guard.** There is a verified case where a name that did not
+   match the loaded company still posted into it. It cannot prove a write landed where it was
+   aimed, and the failure is invisible — the import succeeds and looks correct.
+2. **The dangerous case is the likely one.** A typo, a renamed company or a year-suffixed name
+   is the ordinary operator error, and that is the shape that passed. The shape that fails
+   closed is the rarer, more deliberate one.
+3. **Establish identity before the write and confirm after it.** Read the company and compare
+   the GUID (§9.11a), then read the posted voucher back. This is what the read path already
+   does via GUID binding; the write path needs the same discipline.
+
+Bridge's own import header carries this element, so none of this is specific to hand-built
+files.
+
 ### 9.10a Second pass 2026-07-30 — path and financial year solved, currency formal name still open
 
 **Two of the three unknowns are now VERIFIED**, and the failure mode moved from
@@ -1334,6 +1374,143 @@ at all, so the currency schema may already be solved and simply masked by the al
 setup step; Bridge's users already have companies. This is worth completing only if
 unattended provisioning becomes a requirement. It is **not** on Bridge's critical path, and
 the remaining unknown is the one field that no export can reveal.
+
+### 9.12 Item invoices — `ALLLEDGERENTRIES.LIST` is silently DISCARDED — **TRAP**
+
+**PARTIAL 2026-09-10 (licensed TallyPrime 7.1 Gold, hand import through Gateway of Tally >
+Import > Vouchers, into a live book).** Read the marker: this document defines VERIFIED as a
+captured live request *and response*, and a desktop-UI import produces no gateway response. The
+payload and the read-back voucher are the evidence; the HTTP exchange is not. **The same payload
+has not been replayed through the XML gateway**, so nothing below establishes what the gateway
+returns — only what Tally stores. Everything measured is a stored-state observation and holds as
+such.
+
+This is the first item-invoice write recorded here; §5's inventory note still stands for reads,
+and units, godowns and batches remain unprobed.
+
+A sales invoice was sent as `ISINVOICE=Yes` / `OBJVIEW="Invoice Voucher View"` with the party and
+two GST ledgers in **`ALLLEDGERENTRIES.LIST`** — correct for every accounting voucher, and the
+element every other write in this document uses — plus item lines in `ALLINVENTORYENTRIES.LIST`.
+
+Tally **created the voucher** and kept the inventory half exactly as sent: both item lines, the
+quantity, the rate, and a service line carrying an amount with no quantity. It **discarded all
+three ledger entries**. The stored voucher had a blank party, no CGST, no SGST, and a total of
+just the item lines — a one-sided sales voucher, credited to a sales ledger with no debit
+anywhere.
+
+**In an invoice voucher the element is `LEDGERENTRIES.LIST`.** Re-sent unchanged except for that
+element name, the voucher posted correctly.
+
+This is §9.2's silent-discard family in its widest form yet: not one field, the entire accounting
+half. **The UI import summary named no problem** — the discard surfaced only in Tally's own
+`Import Exceptions` report, as *"Mismatch in total amount between Credit and Debit entries"*. What
+the **gateway** counters report for this payload is untested; do not assume they are silent too.
+Either way the §9.2 rule covers it: read the voucher back.
+
+> **RULE (sales item invoices): `ALLLEDGERENTRIES.LIST` for an accounting voucher,
+> `LEDGERENTRIES.LIST` for a sales invoice voucher (`ISINVOICE=Yes`). The wrong element is
+> accepted, not refused.**
+
+**Scope.** One sales invoice, one company, one Gold instance. The other `ISINVOICE=Yes` shapes —
+purchase, debit note, credit note — are **UNVERIFIED** and this section prescribes nothing for
+them. There is a reason to expect them to match (the element belongs to the invoice *view*, not to
+the voucher type) and that is a hypothesis, not a default.
+
+**Procedure for the first write of an untested invoice type**, which costs one voucher and settles
+it: send a single voucher, then read it back. If the party and tax ledgers are missing and the
+stored total is the inventory lines alone, the element was discarded — check `Import Exceptions`
+for *"Mismatch in total amount between Credit and Debit entries"*, remove the voucher with
+`ACTION="Delete"` by `REMOTEID` (§9.12b) and re-send with the other element. Record the answer
+here. Do not send a batch of a new invoice type before that single voucher has been read back.
+
+**`Import Exceptions` accumulates across imports.** The same report also listed 25 unrelated
+`Duplicate Voucher No.` entries from that book's earlier history, and the Gateway was already
+flagging data exceptions before the import ran. **Its counts are not attributable to your import**
+— read the dates and voucher numbers before concluding anything.
+
+### 9.12a The shape that works
+
+```xml
+<VOUCHER VCHTYPE="…" ACTION="Create" OBJVIEW="Invoice Voucher View" REMOTEID="…">
+ <DATE>…</DATE><EFFECTIVEDATE>…</EFFECTIVEDATE>
+ <VOUCHERTYPENAME>…</VOUCHERTYPENAME><VOUCHERNUMBER>…</VOUCHERNUMBER>
+ <PARTYLEDGERNAME>…</PARTYLEDGERNAME><BASICBASEPARTYNAME>…</BASICBASEPARTYNAME>
+ <PERSISTEDVIEW>Invoice Voucher View</PERSISTEDVIEW><ISINVOICE>Yes</ISINVOICE>
+ <LEDGERENTRIES.LIST>                       <!-- party: debit, negative -->
+  <LEDGERNAME>…</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-336.67</AMOUNT>
+  <BILLALLOCATIONS.LIST>
+   <NAME>…invoice no…</NAME><BILLTYPE>New Ref</BILLTYPE><AMOUNT>-336.67</AMOUNT>
+  </BILLALLOCATIONS.LIST>
+ </LEDGERENTRIES.LIST>
+ <LEDGERENTRIES.LIST>…each tax ledger: credit, positive…</LEDGERENTRIES.LIST>
+ <ALLINVENTORYENTRIES.LIST>
+  <STOCKITEMNAME>…</STOCKITEMNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+  <RATE>244.91/Nos</RATE><ACTUALQTY>1 Nos</ACTUALQTY><BILLEDQTY>1 Nos</BILLEDQTY>
+  <AMOUNT>244.91</AMOUNT>
+  <ACCOUNTINGALLOCATIONS.LIST>                <!-- per line; no voucher-level sales ledger -->
+   <LEDGERNAME>…sales ledger…</LEDGERNAME>
+   <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>244.91</AMOUNT>
+  </ACCOUNTINGALLOCATIONS.LIST>
+ </ALLINVENTORYENTRIES.LIST>
+</VOUCHER>
+```
+
+Four further observations, each measured:
+
+1. **Every inventory line needs its own `ACCOUNTINGALLOCATIONS.LIST`** naming the sales ledger and
+   repeating the line amount. There is no voucher-level sales-ledger element.
+2. **A service line carries an amount and no quantity** — omit `RATE`, `ACTUALQTY` and `BILLEDQTY`
+   entirely and the line posts with a blank quantity, matching hand entry.
+3. **The party line needs `BILLALLOCATIONS.LIST` / `New Ref`**, or the amount lands On Account and
+   cannot be aged (§9.x bill-wise behaviour applies unchanged). **Preflight `ISBILLWISEON=Yes` on
+   the party ledger first — it is mandatory, not advisory.** §12a.4 row 5 records that an
+   allocation on a ledger with `ISBILLWISEON=No` is *silently discarded* and the entry stores with
+   no allocations at all. Sending `New Ref` does not by itself prevent an unaged amount: on a
+   non-bill-wise party the invoice posts and the reference is gone.
+
+   Two boundaries on that. The discard is 12a.4's measurement on an **accounting** voucher, not on
+   this invoice shape — it is the reason the preflight is mandatory, and it is not a measurement of
+   invoice behaviour. And 12a.4's "every one reported `CREATED=1, ERRORS=0, EXCEPTIONS=0`" is a
+   **gateway** observation about accounting vouchers; what the counters say for a non-bill-wise
+   *invoice*, through either path, is **UNVERIFIED**. Preflight the ledger; do not rely on any
+   counter to tell you afterwards.
+4. **Tax rounds per line, then sums.** An invoice with 7,165.07 taxable at 9% stores **644.84**, not
+   the 644.86 that 9% of the total gives — 644.84 being the sum of per-line rounded tax. **Compute
+   tax per line and sum; do not tax the invoice total.**
+
+   **PARTIAL — the mechanism is measured, the magnitude is not.** One invoice was measured, and two
+   paise is that invoice's discrepancy, not a bound. Taxing the total is not always wrong (two
+   ₹100 lines at 9% agree under either method) and when it is wrong the error is not capped at two
+   paise — each line contributes up to half a paisa of rounding, so the worst case grows with the
+   line count. So: never derive a validation tolerance from the ₹0.02 here. Compare against the sum
+   of per-line rounded tax, which is exact, rather than allowing a fixed slack.
+
+The whole voucher must still sum to zero across `LEDGERENTRIES` **and** `ALLINVENTORYENTRIES`.
+
+### 9.12b `ACTION="Delete"` by `REMOTEID` — confirmed working on a live book
+
+The one-sided voucher above was removed with `ACTION="Delete"` keyed by the **client-supplied**
+`REMOTEID`, and a corrected voucher created in its place. That is the first live confirmation of
+the Delete + Create path §9.7 argues for, outside the lab.
+
+Worth noting against `IMPLEMENTATION_GUIDE.md` §3.3a, which records that Tally overwrites the
+attribute with a value of its own: the client-supplied string still **worked as a delete key**
+afterwards. Whatever the export shows, the value you sent remains addressable.
+
+**`Alter` is UNVERIFIED on this profile — not ruled out.** This experiment exercised only `Delete`.
+The `Alter` failures on record (§9.6, and `IMPLEMENTATION_GUIDE.md` §3.1) came from an
+Education/Edit Log instance, and §3.1a says itself that every alter attempt targeted vouchers
+outside the company's current period, which may be the whole explanation — it calls for an
+in-period licensed retest before concluding Alter is unavailable. Nothing here promotes that result
+to a licensed conclusion. Use Delete + Create because it is the path that is confirmed, not because
+`Alter` is known to fail.
+
+**Whether an operator-entered voucher can be deleted this way is UNVERIFIED.** The intuitive limit
+— "no `REMOTEID` you supplied, so no key" — does not follow: `IMPLEMENTATION_GUIDE.md` §3.3a
+records that Tally assigns its own `REMOTEID` to every voucher and exports it, and the native
+voucher parser requires the attribute on every returned voucher. So an exported Tally-generated
+`REMOTEID` is a candidate key that has simply not been tried. **Test a delete against an operator
+voucher's exported ID before telling anyone that hand correction is their only option.**
 
 ## 10. Change detection
 

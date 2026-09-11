@@ -1,0 +1,378 @@
+<!--
+  pdftotext -bbox-layout output from a real HDFC current-account statement, with every
+  customer value replaced and the geometry untouched.
+
+  What is real: the page size, every xMin/yMin/xMax/yMax, the word and line
+  breaks, the entity encoding, and the bank's own template vocabulary (column
+  headers, field labels, transaction-mode tags, the page footer). That is the
+  part a template change or a pdftotext change would break, and the part a
+  hand-written fixture cannot honestly reproduce.
+
+  What is fabricated: every other token. Sanitisation is allowlist-only, so a
+  token survives verbatim only if it is vocabulary the bank prints for every
+  customer; anything unanticipated is fabricated by default rather than kept by
+  default. Distinct source tokens map to distinct fabricated ones in
+  first-appearance order, so repeats and name/reference structure survive while
+  the substitution is not a cipher over the original text. Character shape is
+  preserved — digits stay digits, a run of X stays a run of X — because the
+  parsers find the end of a counterparty name by recognising the shape of the
+  field after it.
+
+  Dates are remapped rather than digit-substituted, since a digit substitution
+  produces 11/22/33, which is not a calendar date. A whole date becomes a
+  consecutive day of one synthetic month. A date split across words — SBI
+  stacks "31" over "Jul" over "2026" in one cell — is remapped piecewise: the
+  month name is template vocabulary and stays, the day is remapped into 01..28
+  so it remains valid in any month, and every four-digit year becomes the same
+  fixed synthetic year — fixed, so it is the same for every capture and says
+  nothing about which statement this one came from.
+
+  Amounts are fabricated and therefore do NOT form a balance chain. This
+  fixture proves parsing, which is what a layout regression breaks; reconcile()
+  is proved separately against row fixtures.
+-->
+<page width="638.000000" height="842.000000">
+<word xMin="292.034000" yMin="19.953000" xMax="307.586000" yMax="27.153000">Page</word>
+<word xMin="309.586000" yMin="19.953000" xMax="319.362000" yMax="27.153000">No</word>
+<word xMin="321.362000" yMin="19.953000" xMax="325.586000" yMax="27.153000">.:</word>
+<word xMin="327.586000" yMin="19.953000" xMax="331.586000" yMax="27.153000">01</word>
+<word xMin="340.157000" yMin="53.301000" xMax="367.261000" yMax="60.501000">Account</word>
+<word xMin="369.261000" yMin="53.301000" xMax="392.365000" yMax="60.501000">Branch</word>
+<word xMin="396.849000" yMin="53.301000" xMax="399.073000" yMax="60.501000">:</word>
+<word xMin="402.518000" yMin="53.301000" xMax="431.846000" yMax="60.501000">ZZZZZ</word>
+<word xMin="433.846000" yMin="53.301000" xMax="436.510000" yMax="60.501000">-</word>
+<word xMin="438.510000" yMin="53.301000" xMax="471.838000" yMax="60.501000">QQQQQQ</word>
+<word xMin="473.838000" yMin="53.301000" xMax="498.278000" yMax="60.501000">XXXXX</word>
+<word xMin="500.278000" yMin="53.301000" xMax="528.726000" yMax="60.501000">VVVVVV</word>
+<word xMin="340.157000" yMin="62.001000" xMax="366.373000" yMax="69.201000">Address</word>
+<word xMin="396.849000" yMin="62.001000" xMax="399.073000" yMax="69.201000">:</word>
+<word xMin="402.518000" yMin="62.001000" xMax="410.518000" yMax="69.201000">02</word>
+<word xMin="412.518000" yMin="62.001000" xMax="447.622000" yMax="69.201000">WWWWWWW</word>
+<word xMin="449.622000" yMin="62.001000" xMax="484.950000" yMax="69.201000">KKKKKK,</word>
+<word xMin="402.518000" yMin="70.701000" xMax="425.182000" yMax="77.901000">JJJJ</word>
+<word xMin="427.182000" yMin="70.701000" xMax="438.734000" yMax="77.901000">YY</word>
+<word xMin="440.734000" yMin="70.701000" xMax="461.406000" yMax="77.901000">9,GGG</word>
+<word xMin="463.406000" yMin="70.701000" xMax="476.734000" yMax="77.901000">FFF</word>
+<word xMin="478.734000" yMin="70.701000" xMax="508.294000" yMax="77.901000">HHHHHH,</word>
+<word xMin="402.518000" yMin="79.401000" xMax="435.846000" yMax="86.601000">QQQQQQ</word>
+<word xMin="437.846000" yMin="79.401000" xMax="462.286000" yMax="86.601000">XXXXX</word>
+<word xMin="464.286000" yMin="79.401000" xMax="492.734000" yMax="86.601000">VVVVVV</word>
+<word xMin="340.157000" yMin="88.101000" xMax="353.941000" yMax="95.301000">City</word>
+<word xMin="396.849000" yMin="88.101000" xMax="399.073000" yMax="95.301000">:</word>
+<word xMin="402.518000" yMin="88.101000" xMax="431.846000" yMax="95.301000">ZZZZZ</word>
+<word xMin="433.846000" yMin="88.101000" xMax="457.846000" yMax="95.301000">444444</word>
+<word xMin="340.157000" yMin="96.801000" xMax="356.157000" yMax="104.001000">State</word>
+<word xMin="396.849000" yMin="96.801000" xMax="399.073000" yMax="104.001000">:</word>
+<word xMin="402.518000" yMin="96.801000" xMax="449.182000" yMax="104.001000">MMMMMMMMM</word>
+<word xMin="340.157000" yMin="105.501000" xMax="360.157000" yMax="112.701000">Phone</word>
+<word xMin="362.157000" yMin="105.501000" xMax="372.157000" yMax="112.701000">no.</word>
+<word xMin="396.849000" yMin="105.501000" xMax="399.073000" yMax="112.701000">:</word>
+<word xMin="402.518000" yMin="105.501000" xMax="468.742000" yMax="112.701000">66666666/77777777</word>
+<word xMin="340.157000" yMin="114.201000" xMax="351.709000" yMax="121.401000">OD</word>
+<word xMin="353.709000" yMin="114.201000" xMax="371.493000" yMax="121.401000">Limit</word>
+<word xMin="396.849000" yMin="114.201000" xMax="399.073000" yMax="121.401000">:</word>
+<word xMin="402.518000" yMin="114.201000" xMax="416.518000" yMax="121.401000">8.99</word>
+<word xMin="340.157000" yMin="122.901000" xMax="369.925000" yMax="130.101000">Currency</word>
+<word xMin="396.849000" yMin="122.901000" xMax="399.073000" yMax="130.101000">:</word>
+<word xMin="402.518000" yMin="122.901000" xMax="416.294000" yMax="130.101000">INR</word>
+<word xMin="340.157000" yMin="131.601000" xMax="359.269000" yMax="138.801000">Email</word>
+<word xMin="396.849000" yMin="131.601000" xMax="399.073000" yMax="138.801000">:</word>
+<word xMin="402.518000" yMin="131.601000" xMax="520.318000" yMax="138.801000">TTTTTTTTTTTT@DDDDD.CCC</word>
+<word xMin="340.157000" yMin="140.301000" xMax="354.829000" yMax="147.501000">Cust</word>
+<word xMin="356.829000" yMin="140.301000" xMax="365.269000" yMax="147.501000">ID</word>
+<word xMin="396.849000" yMin="140.301000" xMax="399.073000" yMax="147.501000">:</word>
+<word xMin="402.518000" yMin="140.301000" xMax="438.518000" yMax="147.501000">444444442</word>
+<word xMin="340.157000" yMin="149.001000" xMax="367.261000" yMax="156.201000">Account</word>
+<word xMin="369.261000" yMin="149.001000" xMax="379.037000" yMax="156.201000">No</word>
+<word xMin="396.849000" yMin="149.001000" xMax="399.073000" yMax="156.201000">:</word>
+<word xMin="402.518000" yMin="149.001000" xMax="458.518000" yMax="156.201000">55555555555552</word>
+<word xMin="464.518000" yMin="149.001000" xMax="492.070000" yMax="156.201000">CAGEN</word>
+<word xMin="340.157000" yMin="157.701000" xMax="353.493000" yMax="164.901000">X/V</word>
+<word xMin="355.493000" yMin="157.701000" xMax="372.821000" yMax="164.901000">Open</word>
+<word xMin="374.821000" yMin="157.701000" xMax="389.925000" yMax="164.901000">Date</word>
+<word xMin="396.849000" yMin="157.701000" xMax="399.073000" yMax="164.901000">:</word>
+<word xMin="402.518000" yMin="157.701000" xMax="438.966000" yMax="164.901000">01/08/2026</word>
+<word xMin="340.157000" yMin="166.401000" xMax="367.261000" yMax="173.601000">Account</word>
+<word xMin="369.261000" yMin="166.401000" xMax="388.821000" yMax="173.601000">Status</word>
+<word xMin="396.849000" yMin="166.401000" xMax="399.073000" yMax="173.601000">:</word>
+<word xMin="402.518000" yMin="166.401000" xMax="427.846000" yMax="173.601000">Regular</word>
+<word xMin="340.157000" yMin="175.450100" xMax="379.095200" yMax="182.020100">RTGS/NEFT</word>
+<word xMin="380.920200" yMin="175.450100" xMax="396.337800" yMax="182.020100">IFSC</word>
+<word xMin="396.849000" yMin="175.101000" xMax="399.073000" yMax="182.301000">:</word>
+<word xMin="402.518000" yMin="175.101000" xMax="451.854000" yMax="182.301000">WWWW8888882</word>
+<word xMin="475.854000" yMin="175.101000" xMax="496.302000" yMax="182.301000">MICR</word>
+<word xMin="498.302000" yMin="175.101000" xMax="500.526000" yMax="182.301000">:</word>
+<word xMin="502.526000" yMin="175.101000" xMax="538.526000" yMax="182.301000">999999992</word>
+<word xMin="340.157000" yMin="183.870000" xMax="363.261000" yMax="191.070000">Branch</word>
+<word xMin="365.261000" yMin="183.870000" xMax="382.149000" yMax="191.070000">Code</word>
+<word xMin="396.849000" yMin="183.870000" xMax="399.073000" yMax="191.070000">:</word>
+<word xMin="402.518000" yMin="183.870000" xMax="414.518000" yMax="191.070000">112</word>
+<word xMin="340.157000" yMin="192.570000" xMax="367.261000" yMax="199.770000">Account</word>
+<word xMin="369.261000" yMin="192.570000" xMax="385.701000" yMax="199.770000">Type</word>
+<word xMin="396.849000" yMin="192.570000" xMax="399.073000" yMax="199.770000">:</word>
+<word xMin="402.518000" yMin="192.570000" xMax="415.406000" yMax="199.770000">BIZ</word>
+<word xMin="417.406000" yMin="192.570000" xMax="434.734000" yMax="199.770000">LITE</word>
+<word xMin="436.734000" yMin="192.570000" xMax="456.294000" yMax="199.770000">PLUS</word>
+<word xMin="458.294000" yMin="192.570000" xMax="496.958000" yMax="199.770000">ACCOUNT</word>
+<word xMin="498.958000" yMin="192.570000" xMax="519.838000" yMax="199.770000">WITH</word>
+<word xMin="521.838000" yMin="192.570000" xMax="579.174000" yMax="199.770000">YYYYYYQ(3332)</word>
+<word xMin="34.015000" yMin="91.618000" xMax="49.799000" yMax="98.818000">G/F.</word>
+<word xMin="57.799000" yMin="91.618000" xMax="83.135000" yMax="98.818000">HHHHQ</word>
+<word xMin="85.135000" yMin="91.618000" xMax="118.903000" yMax="98.818000">LLLLLQ</word>
+<word xMin="120.903000" yMin="91.618000" xMax="167.567000" yMax="98.818000">MMMMMMMMMQ</word>
+<word xMin="34.015000" yMin="103.252000" xMax="57.127000" yMax="110.452000">NNNNQ</word>
+<word xMin="59.127000" yMin="103.252000" xMax="97.791000" yMax="110.452000">PPPPPPPQ</word>
+<word xMin="99.791000" yMin="103.252000" xMax="111.791000" yMax="110.452000">222</word>
+<word xMin="113.791000" yMin="103.252000" xMax="128.007000" yMax="110.452000">SSQ</word>
+<word xMin="130.007000" yMin="103.252000" xMax="153.119000" yMax="110.452000">TTTTQ</word>
+<word xMin="34.015000" yMin="114.886000" xMax="75.335000" yMax="122.086000">DDDDDDDQ</word>
+<word xMin="77.335000" yMin="114.886000" xMax="106.663000" yMax="122.086000">CCCCCQ</word>
+<word xMin="108.663000" yMin="114.886000" xMax="137.103000" yMax="122.086000">ZZZZX</word>
+<word xMin="34.015000" yMin="126.520000" xMax="36.015000" yMax="133.720000">.</word>
+<word xMin="34.015000" yMin="138.154000" xMax="63.343000" yMax="145.354000">ZZZZZ</word>
+<word xMin="65.343000" yMin="138.154000" xMax="89.343000" yMax="145.354000">444444</word>
+<word xMin="34.015000" yMin="149.788000" xMax="80.679000" yMax="156.988000">MMMMMMMMM</word>
+<word xMin="82.679000" yMin="149.788000" xMax="105.335000" yMax="156.988000">QQQQX</word>
+<word xMin="34.015000" yMin="167.091000" xMax="56.231000" yMax="174.291000">JOINT</word>
+<word xMin="58.231000" yMin="167.091000" xMax="95.119000" yMax="174.291000">HOLDERS</word>
+<word xMin="97.119000" yMin="167.091000" xMax="99.343000" yMax="174.291000">:</word>
+<word xMin="34.015000" yMin="193.666000" xMax="72.239000" yMax="200.866000">Nomination</word>
+<word xMin="74.239000" yMin="193.666000" xMax="76.463000" yMax="200.866000">:</word>
+<word xMin="80.463000" yMin="193.666000" xMax="114.679000" yMax="200.866000">Registered</word>
+<word xMin="34.015000" yMin="216.343000" xMax="51.351000" yMax="223.543000">From</word>
+<word xMin="55.351000" yMin="216.343000" xMax="57.575000" yMax="223.543000">:</word>
+<word xMin="61.575000" yMin="216.343000" xMax="98.023000" yMax="223.543000">02/08/2026</word>
+<word xMin="340.157000" yMin="213.909000" xMax="388.157000" yMax="224.709000">Statement</word>
+<word xMin="391.157000" yMin="213.909000" xMax="401.153000" yMax="224.709000">of</word>
+<word xMin="404.153000" yMin="213.909000" xMax="441.473000" yMax="224.709000">account</word>
+<word xMin="154.023000" yMin="216.343000" xMax="162.911000" yMax="223.543000">To</word>
+<word xMin="166.911000" yMin="216.343000" xMax="169.135000" yMax="223.543000">:</word>
+<word xMin="173.135000" yMin="216.343000" xMax="209.583000" yMax="223.543000">03/08/2026</word>
+<word xMin="39.909000" yMin="234.391000" xMax="55.901000" yMax="241.591000">Date</word>
+<word xMin="144.183000" yMin="234.391000" xMax="178.399000" yMax="241.591000">Narration</word>
+<word xMin="33.681000" yMin="252.061000" xMax="62.129000" yMax="259.261000">04/08/26</word>
+<word xMin="72.031000" yMin="252.061000" xMax="176.471000" yMax="259.261000">IMPS-999999999993-VVVVVX</word>
+<word xMin="178.471000" yMin="252.061000" xMax="243.799000" yMax="259.261000">MMMMMMMMMQ-WWWX</word>
+<word xMin="283.525000" yMin="234.391000" xMax="328.189000" yMax="241.591000">Chq./Ref.No.</word>
+<word xMin="361.503000" yMin="234.391000" xMax="381.503000" yMax="241.591000">Value</word>
+<word xMin="383.503000" yMin="234.391000" xMax="391.943000" yMax="241.591000">Dt</word>
+<word xMin="288.598000" yMin="252.061000" xMax="352.598000" yMax="259.261000">3333333333333333</word>
+<word xMin="362.499000" yMin="252.061000" xMax="390.947000" yMax="259.261000">04/08/26</word>
+<word xMin="405.322000" yMin="234.391000" xMax="446.658000" yMax="241.591000">Withdrawal</word>
+<word xMin="448.658000" yMin="234.391000" xMax="465.762000" yMax="241.591000">Amt.</word>
+<word xMin="491.054000" yMin="234.391000" xMax="516.830000" yMax="241.591000">Deposit</word>
+<word xMin="518.830000" yMin="234.391000" xMax="535.934000" yMax="241.591000">Amt.</word>
+<word xMin="516.187000" yMin="252.061000" xMax="548.187000" yMax="259.261000">43,553.99</word>
+<word xMin="564.281000" yMin="234.391000" xMax="590.065000" yMax="241.591000">Closing</word>
+<word xMin="592.065000" yMin="234.391000" xMax="619.177000" yMax="241.591000">Balance</word>
+<word xMin="590.705000" yMin="252.061000" xMax="626.705000" yMax="259.261000">663,773.83</word>
+<word xMin="72.031000" yMin="269.261000" xMax="198.671000" yMax="276.461000">-XXXXXXXX9993-LLLLLLLLLLX</word>
+<word xMin="33.681000" yMin="286.461000" xMax="62.129000" yMax="293.661000">04/08/26</word>
+<word xMin="72.031000" yMin="286.461000" xMax="88.919000" yMax="293.661000">ACH</word>
+<word xMin="90.919000" yMin="286.461000" xMax="99.359000" yMax="293.661000">D-</word>
+<word xMin="101.359000" yMin="286.461000" xMax="110.695000" yMax="293.661000">TP</word>
+<word xMin="112.695000" yMin="286.461000" xMax="129.583000" yMax="293.661000">ACH</word>
+<word xMin="131.583000" yMin="286.461000" xMax="239.575000" yMax="293.661000">MMMMMMMMMMMMX-3333333333</word>
+<word xMin="288.598000" yMin="286.461000" xMax="352.598000" yMax="293.661000">4444444444444443</word>
+<word xMin="362.499000" yMin="286.461000" xMax="390.947000" yMax="293.661000">04/08/26</word>
+<word xMin="438.235000" yMin="286.461000" xMax="470.235000" yMax="293.661000">53,883.99</word>
+<word xMin="594.705000" yMin="286.461000" xMax="626.705000" yMax="293.661000">73,993.83</word>
+<word xMin="33.681000" yMin="303.661000" xMax="62.129000" yMax="310.861000">04/08/26</word>
+<word xMin="72.031000" yMin="303.661000" xMax="240.719000" yMax="310.861000">UPI-CCCX-1111111114@UPI-QQQQ2222224-3334</word>
+<word xMin="288.598000" yMin="303.661000" xMax="352.598000" yMax="310.861000">4444444444444444</word>
+<word xMin="362.499000" yMin="303.661000" xMax="390.947000" yMax="310.861000">04/08/26</word>
+<word xMin="442.235000" yMin="303.661000" xMax="470.235000" yMax="310.861000">5,664.99</word>
+<word xMin="594.705000" yMin="303.661000" xMax="626.705000" yMax="310.861000">74,993.83</word>
+<word xMin="288.598000" yMin="338.061000" xMax="352.598000" yMax="345.261000">8888888888888884</word>
+<word xMin="362.499000" yMin="338.061000" xMax="390.947000" yMax="345.261000">04/08/26</word>
+<word xMin="438.235000" yMin="338.061000" xMax="470.235000" yMax="345.261000">94,664.99</word>
+<word xMin="594.705000" yMin="338.061000" xMax="626.705000" yMax="345.261000">14,993.83</word>
+<word xMin="288.598000" yMin="372.461000" xMax="352.598000" yMax="379.661000">2222222222222224</word>
+<word xMin="362.499000" yMin="372.461000" xMax="390.947000" yMax="379.661000">04/08/26</word>
+<word xMin="442.235000" yMin="372.461000" xMax="470.235000" yMax="379.661000">3,444.99</word>
+<word xMin="594.705000" yMin="372.461000" xMax="626.705000" yMax="379.661000">54,774.83</word>
+<word xMin="288.598000" yMin="441.261000" xMax="352.598000" yMax="448.461000">7777777777777774</word>
+<word xMin="362.499000" yMin="441.261000" xMax="390.947000" yMax="448.461000">05/08/26</word>
+<word xMin="290.598000" yMin="492.861000" xMax="350.598000" yMax="500.061000">888888888888884</word>
+<word xMin="362.499000" yMin="492.861000" xMax="390.947000" yMax="500.061000">06/08/26</word>
+<word xMin="288.158000" yMin="527.261000" xMax="352.598000" yMax="534.461000">SS99999999999994</word>
+<word xMin="362.499000" yMin="527.261000" xMax="390.947000" yMax="534.461000">06/08/26</word>
+<word xMin="281.486000" yMin="561.661000" xMax="352.598000" yMax="568.861000">TTTTT11111111114</word>
+<word xMin="362.499000" yMin="561.661000" xMax="390.947000" yMax="568.861000">06/08/26</word>
+<word xMin="434.235000" yMin="561.661000" xMax="470.235000" yMax="568.861000">224,664.99</word>
+<word xMin="590.705000" yMin="561.661000" xMax="626.705000" yMax="568.861000">334,445.83</word>
+<word xMin="281.486000" yMin="630.461000" xMax="352.598000" yMax="637.661000">QQQQQ55555555555</word>
+<word xMin="362.499000" yMin="630.461000" xMax="390.947000" yMax="637.661000">07/08/26</word>
+<word xMin="434.235000" yMin="630.461000" xMax="470.235000" yMax="637.661000">224,664.99</word>
+<word xMin="598.705000" yMin="630.461000" xMax="626.705000" yMax="637.661000">6,445.83</word>
+<word xMin="288.598000" yMin="682.061000" xMax="352.598000" yMax="689.261000">7777777777777775</word>
+<word xMin="362.499000" yMin="682.061000" xMax="390.947000" yMax="689.261000">08/08/26</word>
+<word xMin="442.235000" yMin="682.061000" xMax="470.235000" yMax="689.261000">1,995.99</word>
+<word xMin="598.705000" yMin="682.061000" xMax="626.705000" yMax="689.261000">2,225.83</word>
+<word xMin="288.598000" yMin="750.861000" xMax="352.598000" yMax="758.061000">3333333333333335</word>
+<word xMin="362.499000" yMin="750.861000" xMax="390.947000" yMax="758.061000">09/08/26</word>
+<word xMin="72.031000" yMin="320.861000" xMax="145.359000" yMax="328.061000">44444445-FFFFFFW</word>
+<word xMin="147.359000" yMin="320.861000" xMax="170.031000" yMax="328.061000">FROM</word>
+<word xMin="172.031000" yMin="320.861000" xMax="198.695000" yMax="328.061000">HHHHW</word>
+<word xMin="33.681000" yMin="338.061000" xMax="62.129000" yMax="345.261000">04/08/26</word>
+<word xMin="72.031000" yMin="338.061000" xMax="241.343000" yMax="345.261000">UPI-XXXXXX7775-MMMM8888885-999999999995-</word>
+<word xMin="72.031000" yMin="355.261000" xMax="110.695000" yMax="362.461000">FFFFFFW</word>
+<word xMin="112.695000" yMin="355.261000" xMax="135.367000" yMax="362.461000">FROM</word>
+<word xMin="137.367000" yMin="355.261000" xMax="164.031000" yMax="362.461000">HHHHW</word>
+<word xMin="33.681000" yMin="372.461000" xMax="62.129000" yMax="379.661000">04/08/26</word>
+<word xMin="72.031000" yMin="372.461000" xMax="112.919000" yMax="379.661000">UPI-HHHHQ</word>
+<word xMin="114.919000" yMin="372.461000" xMax="148.687000" yMax="379.661000">LLLLLQ</word>
+<word xMin="68.031000" yMin="389.661000" xMax="181.383000" yMax="396.861000">PPPPPPW-RRRRRW.LLLLLQ@S</word>
+<word xMin="72.031000" yMin="406.861000" xMax="223.135000" yMax="414.061000">TW-DDDD5555555-666666666665-FFFFFFW</word>
+<word xMin="225.135000" yMin="406.861000" xMax="247.807000" yMax="414.061000">FROM</word>
+<word xMin="74.031000" yMin="424.061000" xMax="100.695000" yMax="431.261000">HHHHW</word>
+<word xMin="33.681000" yMin="441.261000" xMax="62.129000" yMax="448.461000">05/08/26</word>
+<word xMin="72.031000" yMin="441.261000" xMax="164.471000" yMax="448.461000">77777777777776-TPT-QQK</word>
+<word xMin="166.471000" yMin="441.261000" xMax="247.359000" yMax="448.461000">FFFFFFW-XXXXXXX</word>
+<word xMin="516.187000" yMin="441.261000" xMax="548.187000" yMax="448.461000">16,664.99</word>
+<word xMin="590.705000" yMin="441.261000" xMax="626.705000" yMax="448.461000">226,774.83</word>
+<word xMin="68.031000" yMin="458.461000" xMax="75.143000" yMax="465.661000">G</word>
+<word xMin="72.031000" yMin="475.661000" xMax="135.591000" yMax="482.861000">KKKKKKKKKKKK</word>
+<word xMin="33.681000" yMin="492.861000" xMax="62.129000" yMax="500.061000">06/08/26</word>
+<word xMin="72.031000" yMin="492.861000" xMax="86.695000" yMax="500.061000">EMI</word>
+<word xMin="88.695000" yMin="492.861000" xMax="124.695000" yMax="500.061000">444444446</word>
+<word xMin="126.695000" yMin="492.861000" xMax="143.583000" yMax="500.061000">YYK</word>
+<word xMin="145.583000" yMin="492.861000" xMax="202.031000" yMax="500.061000">B6666666666666</word>
+<word xMin="204.031000" yMin="492.861000" xMax="232.031000" yMax="500.061000">7777776</word>
+<word xMin="438.235000" yMin="492.861000" xMax="470.235000" yMax="500.061000">86,996.99</word>
+<word xMin="590.705000" yMin="492.861000" xMax="626.705000" yMax="500.061000">116,336.83</word>
+<word xMin="72.031000" yMin="510.061000" xMax="96.031000" yMax="517.261000">333336</word>
+<word xMin="33.681000" yMin="527.261000" xMax="62.129000" yMax="534.461000">06/08/26</word>
+<word xMin="72.031000" yMin="527.261000" xMax="92.031000" yMax="534.461000">NEFT</word>
+<word xMin="94.031000" yMin="527.261000" xMax="186.919000" yMax="534.461000">CR-PPPP4PP4446-RRRRRRK</word>
+<word xMin="188.919000" yMin="527.261000" xMax="242.695000" yMax="534.461000">MMMMMMMMMQ-F</word>
+<word xMin="516.187000" yMin="527.261000" xMax="548.187000" yMax="534.461000">66,776.99</word>
+<word xMin="590.705000" yMin="527.261000" xMax="626.705000" yMax="534.461000">886,445.83</word>
+<word xMin="72.031000" yMin="544.461000" xMax="92.919000" yMax="551.661000">CCCK</word>
+<word xMin="94.919000" yMin="544.461000" xMax="128.687000" yMax="551.661000">LLLLLQ</word>
+<word xMin="130.687000" yMin="544.461000" xMax="244.455000" yMax="551.661000">MMMMMMMMMQ-SS99999999999994</word>
+<word xMin="33.681000" yMin="561.661000" xMax="62.129000" yMax="568.861000">06/08/26</word>
+<word xMin="72.031000" yMin="561.661000" xMax="92.031000" yMax="568.861000">NEFT</word>
+<word xMin="94.031000" yMin="561.661000" xMax="178.903000" yMax="568.861000">DR-ZZZZ1111117-QQQQJ</word>
+<word xMin="180.903000" yMin="561.661000" xMax="248.439000" yMax="568.861000">XXXXXXXXXXXXX-</word>
+<word xMin="72.031000" yMin="578.861000" xMax="112.247000" yMax="586.061000">VVVVVVJ,</word>
+<word xMin="68.031000" yMin="596.061000" xMax="208.919000" yMax="603.261000">WWJ-TTTTT11111111114-KK66K66667</word>
+<word xMin="72.031000" yMin="613.261000" xMax="132.031000" yMax="620.461000">777777777777777</word>
+<word xMin="33.681000" yMin="630.461000" xMax="62.129000" yMax="637.661000">07/08/26</word>
+<word xMin="72.031000" yMin="630.461000" xMax="92.031000" yMax="637.661000">NEFT</word>
+<word xMin="94.031000" yMin="630.461000" xMax="182.023000" yMax="637.661000">DR-YYYY8888887-BBBBBJ</word>
+<word xMin="184.023000" yMin="630.461000" xMax="249.799000" yMax="637.661000">GGGGGGJ-FFFFJ</word>
+<word xMin="72.031000" yMin="647.661000" xMax="85.583000" yMax="654.861000">HJ,</word>
+<word xMin="87.583000" yMin="647.661000" xMax="248.471000" yMax="654.861000">WWJ-QQQQQ55555555555-LL44L4444444447</word>
+<word xMin="72.031000" yMin="664.861000" xMax="112.031000" yMax="672.061000">5555555557</word>
+<word xMin="33.681000" yMin="682.061000" xMax="62.129000" yMax="689.261000">08/08/26</word>
+<word xMin="72.031000" yMin="682.061000" xMax="119.583000" yMax="689.261000">UPI-NNNNNJ</word>
+<word xMin="121.583000" yMin="682.061000" xMax="168.255000" yMax="689.261000">PPPPPPPPJ</word>
+<word xMin="68.031000" yMin="699.261000" xMax="156.727000" yMax="706.461000">CCC-R888888887@SSJ-</word>
+<word xMin="72.031000" yMin="716.461000" xMax="217.359000" yMax="723.661000">TTTT1TTTTTJ-222222222227-FFFFFFW</word>
+<word xMin="219.359000" yMin="716.461000" xMax="242.031000" yMax="723.661000">FROM</word>
+<word xMin="244.031000" yMin="716.461000" xMax="254.255000" yMax="723.661000">CJ</word>
+<word xMin="72.031000" yMin="733.661000" xMax="88.471000" yMax="740.861000">ZZY</word>
+<word xMin="33.681000" yMin="750.861000" xMax="62.129000" yMax="758.061000">09/08/26</word>
+<word xMin="72.031000" yMin="750.861000" xMax="164.471000" yMax="758.061000">77777777777776-TPT-QQK</word>
+<word xMin="166.471000" yMin="750.861000" xMax="247.359000" yMax="758.061000">FFFFFFW-XXXXXXX</word>
+<word xMin="512.187000" yMin="750.861000" xMax="548.187000" yMax="758.061000">558,664.99</word>
+<word xMin="590.705000" yMin="750.861000" xMax="626.705000" yMax="758.061000">226,225.83</word>
+<word xMin="28.346000" yMin="785.745000" xMax="53.843000" yMax="793.845000">HDFC</word>
+<word xMin="56.093000" yMin="785.745000" xMax="82.094000" yMax="793.845000">BANK</word>
+<word xMin="84.344000" yMin="785.745000" xMax="124.349000" yMax="793.845000">LIMITED</word>
+<word xMin="28.346000" yMin="795.737000" xMax="57.242000" yMax="802.937000">*Closing</word>
+<word xMin="59.242000" yMin="795.737000" xMax="83.674000" yMax="802.937000">balance</word>
+<word xMin="85.674000" yMin="795.737000" xMax="112.338000" yMax="802.937000">includes</word>
+<word xMin="114.338000" yMin="795.737000" xMax="132.114000" yMax="802.937000">funds</word>
+<word xMin="134.114000" yMin="795.737000" xMax="167.874000" yMax="802.937000">earmarked</word>
+<word xMin="169.874000" yMin="795.737000" xMax="179.202000" yMax="802.937000">for</word>
+<word xMin="181.202000" yMin="795.737000" xMax="195.426000" yMax="802.937000">hold</word>
+<word xMin="197.426000" yMin="795.737000" xMax="208.978000" yMax="802.937000">and</word>
+<word xMin="210.978000" yMin="795.737000" xMax="242.074000" yMax="802.937000">uncleared</word>
+<word xMin="244.074000" yMin="795.737000" xMax="261.850000" yMax="802.937000">funds</word>
+</page>
+<page width="638.000000" height="842.000000">
+<word xMin="34.015000" yMin="216.343000" xMax="51.351000" yMax="223.543000">From</word>
+<word xMin="55.351000" yMin="216.343000" xMax="57.575000" yMax="223.543000">:</word>
+<word xMin="61.575000" yMin="216.343000" xMax="98.023000" yMax="223.543000">02/08/2026</word>
+<word xMin="340.157000" yMin="213.909000" xMax="388.157000" yMax="224.709000">Statement</word>
+<word xMin="391.157000" yMin="213.909000" xMax="401.153000" yMax="224.709000">of</word>
+<word xMin="404.153000" yMin="213.909000" xMax="441.473000" yMax="224.709000">account</word>
+<word xMin="154.023000" yMin="216.343000" xMax="162.911000" yMax="223.543000">To</word>
+<word xMin="166.911000" yMin="216.343000" xMax="169.135000" yMax="223.543000">:</word>
+<word xMin="173.135000" yMin="216.343000" xMax="209.583000" yMax="223.543000">03/08/2026</word>
+<word xMin="74.031000" yMin="232.447000" xMax="100.695000" yMax="239.647000">HHHHW</word>
+<word xMin="33.681000" yMin="249.647000" xMax="62.129000" yMax="256.847000">10/08/26</word>
+<word xMin="72.031000" yMin="249.647000" xMax="92.031000" yMax="256.847000">NEFT</word>
+<word xMin="94.031000" yMin="249.647000" xMax="221.807000" yMax="256.847000">DR-XXXX6XXXXXX-VVY-VVVVVVJ,</word>
+<word xMin="281.486000" yMin="249.647000" xMax="352.598000" yMax="256.847000">WWWWW88888888888</word>
+<word xMin="362.499000" yMin="249.647000" xMax="390.947000" yMax="256.847000">10/08/26</word>
+<word xMin="434.235000" yMin="249.647000" xMax="470.235000" yMax="256.847000">998,118.99</word>
+<word xMin="598.705000" yMin="249.647000" xMax="626.705000" yMax="256.847000">4,338.48</word>
+<word xMin="288.598000" yMin="301.247000" xMax="352.598000" yMax="308.447000">5555555555555558</word>
+<word xMin="362.499000" yMin="301.247000" xMax="390.947000" yMax="308.447000">11/08/26</word>
+<word xMin="289.808000" yMin="758.767000" xMax="299.136000" yMax="765.967000">Dr</word>
+<word xMin="301.136000" yMin="758.767000" xMax="322.472000" yMax="765.967000">Count</word>
+<word xMin="360.674000" yMin="758.767000" xMax="370.002000" yMax="765.967000">Cr</word>
+<word xMin="372.002000" yMin="758.767000" xMax="393.338000" yMax="765.967000">Count</word>
+<word xMin="68.031000" yMin="266.847000" xMax="106.695000" yMax="274.047000">WWJ-HHY</word>
+<word xMin="72.031000" yMin="284.047000" xMax="234.255000" yMax="291.247000">LL77777777778-MM88M88888888888888888888</word>
+<word xMin="33.681000" yMin="301.247000" xMax="62.129000" yMax="308.447000">11/08/26</word>
+<word xMin="72.031000" yMin="301.247000" xMax="176.471000" yMax="308.447000">IMPS-999999999998-VVVVVX</word>
+<word xMin="178.471000" yMin="301.247000" xMax="243.799000" yMax="308.447000">MMMMMMMMMQ-WWWX</word>
+<word xMin="516.187000" yMin="301.247000" xMax="548.187000" yMax="308.447000">48,118.99</word>
+<word xMin="594.705000" yMin="301.247000" xMax="626.705000" yMax="308.447000">18,228.48</word>
+<word xMin="72.031000" yMin="318.447000" xMax="173.335000" yMax="325.647000">-XXXXXXXX9993-LLLLLQ</word>
+<word xMin="72.031000" yMin="714.047000" xMax="76.031000" yMax="721.247000">01</word>
+<word xMin="68.031000" yMin="746.943000" xMax="130.821000" yMax="755.943000">STATEMENT</word>
+<word xMin="133.321000" yMin="746.943000" xMax="186.641000" yMax="755.943000">SUMMARY</word>
+<word xMin="191.641000" yMin="746.943000" xMax="198.301000" yMax="755.943000">:-</word>
+<word xMin="132.346000" yMin="758.767000" xMax="161.690000" yMax="765.967000">Opening</word>
+<word xMin="163.690000" yMin="758.767000" xMax="190.802000" yMax="765.967000">Balance</word>
+<word xMin="424.937000" yMin="758.767000" xMax="446.713000" yMax="765.967000">Sssssy</word>
+<word xMin="501.113000" yMin="758.767000" xMax="526.441000" yMax="765.967000">Tttttty</word>
+<word xMin="572.057000" yMin="758.767000" xMax="597.841000" yMax="765.967000">Closing</word>
+<word xMin="599.841000" yMin="758.767000" xMax="611.401000" yMax="765.967000">Ddy</word>
+<word xMin="28.346000" yMin="785.745000" xMax="53.843000" yMax="793.845000">HDFC</word>
+<word xMin="56.093000" yMin="785.745000" xMax="82.094000" yMax="793.845000">BANK</word>
+<word xMin="84.344000" yMin="785.745000" xMax="124.349000" yMax="793.845000">LIMITED</word>
+<word xMin="28.346000" yMin="795.737000" xMax="57.242000" yMax="802.937000">*Closing</word>
+<word xMin="59.242000" yMin="795.737000" xMax="83.674000" yMax="802.937000">balance</word>
+<word xMin="85.674000" yMin="795.737000" xMax="112.338000" yMax="802.937000">includes</word>
+<word xMin="114.338000" yMin="795.737000" xMax="132.114000" yMax="802.937000">funds</word>
+<word xMin="134.114000" yMin="795.737000" xMax="167.874000" yMax="802.937000">earmarked</word>
+<word xMin="169.874000" yMin="795.737000" xMax="179.202000" yMax="802.937000">for</word>
+<word xMin="181.202000" yMin="795.737000" xMax="195.426000" yMax="802.937000">hold</word>
+<word xMin="197.426000" yMin="795.737000" xMax="208.978000" yMax="802.937000">and</word>
+<word xMin="210.978000" yMin="795.737000" xMax="242.074000" yMax="802.937000">uncleared</word>
+<word xMin="244.074000" yMin="795.737000" xMax="261.850000" yMax="802.937000">funds</word>
+</page>
+<page width="638.000000" height="842.000000">
+<word xMin="34.015000" yMin="216.343000" xMax="51.351000" yMax="223.543000">From</word>
+<word xMin="55.351000" yMin="216.343000" xMax="57.575000" yMax="223.543000">:</word>
+<word xMin="61.575000" yMin="216.343000" xMax="98.023000" yMax="223.543000">02/08/2026</word>
+<word xMin="340.157000" yMin="213.909000" xMax="388.157000" yMax="224.709000">Statement</word>
+<word xMin="391.157000" yMin="213.909000" xMax="401.153000" yMax="224.709000">of</word>
+<word xMin="404.153000" yMin="213.909000" xMax="441.473000" yMax="224.709000">account</word>
+<word xMin="154.023000" yMin="216.343000" xMax="162.911000" yMax="223.543000">To</word>
+<word xMin="166.911000" yMin="216.343000" xMax="169.135000" yMax="223.543000">:</word>
+<word xMin="173.135000" yMin="216.343000" xMax="209.583000" yMax="223.543000">03/08/2026</word>
+<word xMin="145.574000" yMin="229.447000" xMax="177.574000" yMax="236.647000">68,779.83</word>
+<word xMin="83.130000" yMin="287.791000" xMax="119.122000" yMax="294.991000">Generated</word>
+<word xMin="121.122000" yMin="287.791000" xMax="134.458000" yMax="294.991000">On:</word>
+<word xMin="138.458000" yMin="287.791000" xMax="180.234000" yMax="294.991000">89-Sep-9999</word>
+<word xMin="182.234000" yMin="287.791000" xMax="200.898000" yMax="294.991000">19:29</word>
+<word xMin="302.140000" yMin="229.447000" xMax="310.140000" yMax="236.647000">03</word>
+<word xMin="262.427000" yMin="287.791000" xMax="298.419000" yMax="294.991000">Generated</word>
+<word xMin="300.419000" yMin="287.791000" xMax="312.419000" yMax="294.991000">By:</word>
+<word xMin="314.419000" yMin="287.791000" xMax="350.419000" yMax="294.991000">333333339</word>
+<word xMin="375.005996" yMin="229.447000" xMax="379.005996" yMax="236.647000">04</word>
+<word xMin="417.824996" yMin="229.447000" xMax="453.824996" yMax="236.647000">449,559.69</word>
+<word xMin="495.776996" yMin="229.447000" xMax="531.776996" yMax="236.647000">889,999.99</word>
+<word xMin="575.728996" yMin="229.447000" xMax="607.728996" yMax="236.647000">39,119.48</word>
+<word xMin="440.993000" yMin="287.791000" xMax="479.217000" yMax="294.991000">Requesting</word>
+<word xMin="481.217000" yMin="287.791000" xMax="506.553000" yMax="294.991000">Branch</word>
+<word xMin="508.553000" yMin="287.791000" xMax="528.993000" yMax="294.991000">Code:</word>
+<word xMin="530.993000" yMin="287.791000" xMax="547.441000" yMax="294.991000">NET</word>
+</page>
