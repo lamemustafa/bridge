@@ -1247,18 +1247,24 @@ fn master_identity_key(value: &str) -> String {
 /// symmetric replacement in a shared key. It lives in `master_binding_keys`,
 /// on the master side only, which is the side the evidence is about.
 ///
-/// One step here is not on that list: NFC. Canonical equivalence is a property
-/// of how the same characters may be encoded, not a claim about which names
-/// Tally treats as one, and distinguishing two encodings of an identical name
-/// would be distinguishing something no operator can see or type differently.
+/// **Canonical equivalence is not folded here, and that one is measured rather
+/// than merely unverified.** A voucher naming a UI-created `Cafe\u{301}...`
+/// ledger in its canonically equivalent NFD spelling was rejected —
+/// `EXCEPTIONS=1`, `LINEERROR`, ledger does not exist — while the NFC spelling
+/// created it. Tally stores a master name as the bytes that made it and matches
+/// on exact codepoints, so NFC and NFD spellings are *different masters*.
+/// Folding them together here would resolve a source name onto a master Tally
+/// itself keeps apart. It reads like decoding rather than folding, which is
+/// exactly why it nearly stayed.
+///
 /// Every other unverified step — the reverse hyphen direction, collapsed
 /// whitespace runs, leading whitespace, Unicode dash variants, non-ASCII case —
-/// is deliberately absent. They are not lost: `master_identity_key` still
-/// carries them, and everything it reaches is offered as a candidate.
+/// is deliberately absent too. None is lost: `master_identity_key` carries them
+/// all, and everything it reaches is offered as a candidate.
 fn verified_fold(value: &str) -> String {
     // One trailing space, because one is what was sent.
     let value = value.strip_suffix(' ').unwrap_or(value);
-    value.nfc().collect::<String>().to_ascii_lowercase()
+    value.to_ascii_lowercase()
 }
 
 /// The keys a **master** name answers to.

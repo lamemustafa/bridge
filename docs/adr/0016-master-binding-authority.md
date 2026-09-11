@@ -205,6 +205,21 @@ marks everything else UNVERIFIED and states the rule this section now follows �
   everything it reaches is offered as a `NormalizedEqual` candidate for a human
   to confirm.
 
+**One transformation is not merely unverified — it is measured wrong, and it is
+the one that nearly slipped through.** Canonical equivalence looks like decoding
+rather than folding: NFC and NFD spell the same characters, and no operator can
+type them differently on purpose. But Tally stores a master name as the bytes
+that created it and matches on exact codepoints. A voucher naming a UI-created
+ledger in its canonically equivalent NFD spelling was **rejected** —
+`EXCEPTIONS=1`, `LINEERROR`, ledger does not exist — while the NFC spelling
+created it (measured 2026-08-19, TallyPrime 7.1). So they are different masters
+to Tally, and folding them here would resolve a source name onto a master Tally
+itself keeps apart. NFC stays in the wide fold, where it can only suggest.
+
+The general lesson is worth more than the case: **a step that reads like
+decoding deserves the same evidence as a step that reads like folding.** This
+one survived two reviews of the fold by not looking like part of it.
+
 **Trimming a source name is not part of either fold.** `SourceEntity` trims
 what the document gave it, at the boundary, because leading and trailing space
 in extracted text is transcription noise; an observed master name is retained
@@ -240,9 +255,10 @@ This fold is deliberately **separate from the general comparison key**, which is
 shared with other contracts for voucher numbers and voucher-type names. §9.4b
 says nothing about those, and widening the shared fold to serve masters would be
 the "never to make one caller's case pass" this ADR warns against. One fold per
-notion of sameness, each named for the question it answers. Nothing else binds. There is no edit distance, no
-phonetic key, no token stemming, and no similarity threshold anywhere in the
-implementation.
+notion of sameness, each named for the question it answers.
+
+**Nothing else binds.** There is no edit distance, no phonetic key, no token
+stemming, and no similarity threshold anywhere in the implementation.
 
 ### 4. Near-misses produce candidates and never resolve
 

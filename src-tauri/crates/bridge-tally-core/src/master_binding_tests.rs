@@ -677,6 +677,37 @@ fn a_name_in_another_script_does_not_shed_its_letters_into_a_code() {
 }
 
 #[test]
+fn two_encodings_of_one_name_are_two_masters_to_tally_and_so_to_this() {
+    // Measured 2026-08-19 on TallyPrime 7.1: a voucher naming a UI-created
+    // ledger in its canonically equivalent NFD spelling was rejected with
+    // `EXCEPTIONS=1` and a LINEERROR saying the ledger does not exist, while
+    // the NFC spelling created it. Tally stores the bytes it was given and
+    // matches on exact codepoints, so these are different masters to Tally and
+    // must be different masters here.
+    //
+    // This is stronger than the UNVERIFIED rows in §9.4b's table: folding it
+    // is not unproven, it is proven wrong. It reads like decoding rather than
+    // folding, which is why it nearly stayed in the resolving fold.
+    let precomposed = "Caf\u{e9} Traders";
+    let decomposed = "Cafe\u{301} Traders";
+    let catalog = ledgers(&[precomposed, "Beta Supply"]);
+    let binding = bind_one_name(&catalog, decomposed);
+    assert_eq!(
+        binding.bound_name(),
+        None,
+        "an NFD source name resolved onto an NFC master Tally keeps apart"
+    );
+    // The wide fold still reaches it, so an operator sees the one master worth
+    // looking at rather than nothing at all.
+    assert_eq!(candidate_names(&binding), [precomposed]);
+    // And the spelling Tally would actually match still binds.
+    assert_eq!(
+        bind_one_name(&catalog, precomposed).bound_name(),
+        Some(precomposed)
+    );
+}
+
+#[test]
 fn a_report_bounds_its_own_candidate_allocation() {
     // A per-entity cap does not bound a report: the clones exist the moment it
     // is built, and a consumer capping its own copy afterwards bounds only the
