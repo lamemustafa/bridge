@@ -39,6 +39,7 @@ import pathlib
 import stat
 import sys
 import tempfile
+import types
 
 SCRIPT = pathlib.Path(__file__).resolve().parent / "bank_statement_import.py"
 #: never a credential — only ever compared for identity, or fed to an
@@ -119,6 +120,37 @@ HDFC_PAGE = page(
     (190, [(2, 60, "03/08/26"), (72, 200, "UPI-GHOST-g@z-ZZZZ0001-999999999999-X"),
            (402, 460, "1.00"), (562, 620, "8,498.50")]),
 )
+
+# The same HDFC geometry, carrying ACH rows whose narration wraps at the cell
+# edge in each of the three places a wrap can land. The point of parsing these
+# rather than handing `party()` a narration string is that the **spacing is
+# produced by the parser**, not by the test: `narr_spaced` is built in
+# `parse_pages` by space-joining a wrapped cell's lines, so a test that writes
+# `"...-12345 67890"` itself proves only that the regex matches what the test
+# thinks the parser emits. Neither capture contains an ACH narration and one
+# cannot be obtained on demand, which is the case the constructed level exists
+# for.
+ACH_WRAP_HEADER = (
+    (52, [(340, 380, "Account"), (382, 396, "No"), (397, 400, ":"),
+          (403, 470, "00000000001234")]),
+    (100, [(5, 30, "Date"), (72, 120, "Narration"), (282, 340, "Chq./Ref.No."),
+           (360, 380, "Value"), (382, 396, "Dt"), (402, 452, "Withdrawal"),
+           (454, 474, "Amt."), (482, 522, "Deposit"), (524, 544, "Amt."),
+           (562, 600, "Closing"), (602, 640, "Balance")]),
+)
+
+
+def ach_wrap_page(first_line, continuation):
+    """One ACH row whose narration wraps onto a second line at the 240 edge."""
+    return page(
+        *ACH_WRAP_HEADER,
+        (120, [(2, 60, "01/08/26"), (72, 238, first_line),
+               (282, 350, "0000123456789012"), (360, 398, "01/08/26"),
+               (402, 460, "1,000.00"), (562, 620, "9,000.00")]),
+        (132, [(72, 200, continuation)]),
+        (170, [(28, 60, "HDFC"), (62, 95, "BANK"), (97, 140, "LIMITED")]),
+    )
+
 
 # An SBI page: date 0-85, value date 85-140, narration 140-220 (wrap edge 220),
 # ref 220-299 (wrap edge 299), branch 299-356, debit 356-441, credit 441-506.
@@ -610,8 +642,35 @@ def test_mapping_key_survives_non_ascii_scripts(m):
     # vowel signs — dropping combining marks would be the same bug one layer down
     names = ["पार्टी", "पारटी", "ஏபிசி", "কোম্পানি"]
     assert len({m._key(n) for n in names}) == len(names)
-    # and the ASCII behaviour is unchanged
-    assert m._key("A & B") == m._key("AB") == "AB"
+
+
+def test_mapping_key_keeps_punctuation_significant(m):
+    """`_key` folds whitespace and nothing else.
+
+    This assertion used to read `_key("A & B") == _key("AB") == "AB"` — the
+    defect written down as a contract. Dropping punctuation collapsed genuinely
+    different names onto one mapping row, and while `load_mapping` refuses two
+    *mapping rows* that collide, nothing refuses a **statement** party colliding
+    with a row written for somebody else: one candidate, no ambiguity to reject,
+    and the transaction posts to a ledger the operator never chose for it.
+
+    Removing it was measured rather than assumed. Across the 23 distinct parties
+    in the delivered manifests, none carried punctuation the old key dropped,
+    and the one real merge — the cell-wrap case below — is unaffected.
+    """
+    apart = [("A & B", "AB"), ("S.K. Minerals", "SK Minerals"),
+             ("M/s Mercury", "Ms Mercury"), ("Shree-Ram Traders", "Shree Ram Traders")]
+    for left, right in apart:
+        assert m._key(left) != m._key(right), f"{left!r} and {right!r} must stay apart"
+
+    # ...while the reason the key is loose at all still holds: one payee, split
+    # two ways by the PDF cell wrap, measured on the delivered HDFC statement.
+    assert m._key("MERCURYM ANUFACTURERS") == m._key("MERCURYMANUFACTURERS")
+    assert m._key("ZEPHYR MANUFACTURING") == m._key("ZEPHYRMANUFACTURING")
+
+    # Case still folds, and nothing else is touched.
+    assert m._key("m/s mercury") == m._key("M/S MERCURY")
+    assert m._key("A&B") == "A&B"
 
 
 def test_mapping_key_ignores_wrap_spacing(m):
@@ -633,23 +692,35 @@ def test_mapping_refuses_ambiguous_input(m):
         # report a clean, balanced, entirely suspense-bound import
         refuses(m, "mapping_headers_missing", m.load_mapping,
                 mapping_file(directory, "name,ledger,treatment\nA,L,auto\n"))
-        # two different counterparties collapsing to one key: last row would win
+        # two different counterparties collapsing to one key: last row would win.
+        # They must collide under the key `_key` actually computes — spacing
+        # only. `A & B` / `AB` was the old example and no longer collides,
+        # which is the point of the change, not a gap here.
         refuses(m, "mapping_key_collision", m.load_mapping,
                 mapping_file(directory, "party,ledger,treatment\n"
-                                        "A & B,Ledger One,auto\n"
-                                        "AB,Ledger Two,auto\n"))
+                                        "ZEPHYR MANUFACTURING,Ledger One,auto\n"
+                                        "ZEPHYRMANUFACTURING,Ledger Two,auto\n"))
         # ... but an identical instruction spelled two ways is not a conflict
         mapping = m.load_mapping(mapping_file(
-            directory, "party,ledger,treatment\nA & B,One,auto\nAB,One,auto\n"))
-        assert mapping[m._key("AB")] == ("One", "auto")
+            directory, "party,ledger,treatment\n"
+                       "ZEPHYR MANUFACTURING,One,auto\nZEPHYRMANUFACTURING,One,auto\n"))
+        assert mapping[m._key("ZEPHYRMANUFACTURING")] == ("One", "auto")
+        # and two names that differ only in punctuation are now simply two rows
+        two = m.load_mapping(mapping_file(
+            directory, "party,ledger,treatment\nA & B,One,auto\nAB,Two,auto\n"))
+        assert two[m._key("A & B")] == ("One", "auto")
+        assert two[m._key("AB")] == ("Two", "auto")
         # a Contra's other leg must be a real bank/cash ledger
         refuses(m, "contra_without_ledger", m.load_mapping,
                 mapping_file(directory, "party,ledger,treatment\nOWN,,contra\n"))
         refuses(m, "unknown_treatment", m.load_mapping,
                 mapping_file(directory, "party,ledger,treatment\nA,L,transfer\n"))
-        # a name with no letters or digits at all would bucket with every other
-        refuses(m, "unusable_mapping_key", m.load_mapping,
-                mapping_file(directory, "party,ledger,treatment\n---,L,auto\n"))
+        # `---` used to reduce to an empty key and was refused for it. With the
+        # key folding whitespace only it is an ordinary name, and the empty-key
+        # case is unreachable — `_squash` drops a whitespace-only party first.
+        assert m.load_mapping(
+            mapping_file(directory, "party,ledger,treatment\n---,L,auto\n"))[m._key("---")] \
+            == ("L", "auto")
         # two columns normalising to one name: the later silently wins, and if
         # it is blank the row is skipped and its transactions fall to suspense
         refuses(m, "mapping_headers_duplicated", m.load_mapping,
@@ -686,17 +757,32 @@ def test_build_treatments(m):
     # the voucher still standing in the book. Omission is not deletion.
     assert manifest[1]["remoteid"]
     assert manifest[2]["suspense"] == "YES"
-    assert "reallocate from Suspense" in manifest[2]["narration"]
+    # names the suspense ledger the operator configured, not the word "Suspense"
+    assert "reallocate from SUSPENSE ACC" in manifest[2]["narration"]
     # an unmapped party keeps the statement's own spelling in the narration so it
     # can still be identified later
     assert "GHOST" in manifest[2]["narration"]
 
 
-def test_suspense_is_compared_the_way_tally_compares_it(m):
-    """3.3b: Tally resolves 'suspense-acc' and 'SUSPENSE ACC' to one master. An
-    exact compare would post to suspense while reporting the row as resolved and
-    dropping the operator's warning — the row would vanish from the suspense
-    count it exists to appear in."""
+def test_a_row_landing_in_suspense_is_flagged_loosely_and_named_exactly(m):
+    """Two separate contracts, and the second is the one that was wrong.
+
+    **Flagging is loose on purpose.** A mapping naming the suspense ledger in a
+    different spelling must still raise the operator's warning; an exact compare
+    would report the row as resolved and drop it from the suspense count it
+    exists to appear in. Over-flagging costs a look.
+
+    **The message must name the ledger actually written.** This used to say
+    "reallocate from Suspense" unconditionally, which is an instruction that
+    cannot be followed when the fold over-flags: `_ledger_key` is looser than
+    §9.4b in six ways, so a mapping to `A-B` against a suspense master named
+    `A B` is flagged while the voucher is posted to `A-B`. The operator was sent
+    to search a ledger the voucher had never been in. Naming the real
+    destination makes a false positive cost a look rather than a wrong search.
+
+    This test no longer claims Tally resolves the two spellings to one master.
+    §9.4b marks that direction UNVERIFIED, and nothing offline can know it.
+    """
     bank = m.HDFC()
     rows = [{"date": "01/08/26", "narr": "UPI-ALPHA-9@x-ABCD0001-111111111111-P",
              "ref": "1", "dr": "10.00", "cr": "", "bal": "990.00"}]
@@ -704,6 +790,18 @@ def test_suspense_is_compared_the_way_tally_compares_it(m):
     _, manifest = m.build(rows, bank, "Co", "Bank", "SUSPENSE ACC", mapping, "ACC")
     assert manifest[0]["suspense"] == "YES"
     assert "UNIDENTIFIED" in manifest[0]["narration"]
+    # the ledger the voucher was actually written to, not the word "Suspense"
+    assert "reallocate from suspense-acc" in manifest[0]["narration"], manifest[0]["narration"]
+    assert manifest[0]["dr_ledger"] == "suspense-acc"
+
+    # the over-flagging case the old wording could not describe: an unverified
+    # fold equates the mapped ledger with the suspense master, and the voucher
+    # goes to the mapped one
+    mapping = {m._key("ALPHA"): ("A-B", "auto")}
+    _, manifest = m.build(rows, bank, "Co", "Bank", "A B", mapping, "ACC")
+    assert manifest[0]["suspense"] == "YES"
+    assert "reallocate from A-B" in manifest[0]["narration"], manifest[0]["narration"]
+    assert manifest[0]["dr_ledger"] == "A-B"
 
 
 def test_remoteid_is_derived_from_the_transaction(m):
@@ -840,7 +938,7 @@ def test_output_files_are_owner_only(m):
         path = pathlib.Path(directory) / "out.xml"
         path.write_text("stale", encoding="utf-8")
         os.chmod(path, 0o644)
-        m._write_private(path, "<ENVELOPE/>")
+        m.write_outputs([(path, "<ENVELOPE/>")])
         assert path.read_text(encoding="utf-8") == "<ENVELOPE/>"
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
@@ -940,6 +1038,63 @@ def test_ach_party_ends_at_the_final_bank_reference(m):
     # The reference is still the delimiter, not part of the name.
     assert "1234567890" not in party("ACH D- TP ACH UNIT-7 METALS-1234567890")
 
+    # This branch reads `narr_spaced`, which keeps the PDF's spacing, and a cell
+    # wrap lands wherever the column edge falls — inside the reference as
+    # readily as between fields, the same way `HDF CH01206262147` wraps in the
+    # UTR branch. Anchoring on `\d+$` made every wrapped reference UNRESOLVED,
+    # which the earlier over-greedy pattern had handled: the first fix for the
+    # boundary traded one failure for another.
+    assert party("ACH D- TP ACH ACME TRADERS-12345 67890") == "ACME TRADERS"
+    assert party("ACH D- TP ACH STUDIO-54 INDUSTRIES-12345 67890") == "STUDIO-54 INDUSTRIES"
+    assert party("ACH D- TP ACH UNIT-7 METALS-12 345 67890") == "UNIT-7 METALS"
+
+
+def test_a_wrapped_ach_reference_survives_the_parser(m):
+    """The assertions above hand `party()` a narration the *test* spaced, so on
+    their own they prove only that the regex matches what the test believes the
+    parser emits. Here the spacing is the parser's: the row is bbox words at the
+    real column geometry, `parse_pages` splits the narration cell at the 240
+    edge and space-joins the lines into `narr_spaced`, and only then does
+    `party()` see it.
+
+    Measured through `parse_pages`, a wrap lands in three distinguishable
+    places, and the two readings of the cell disagree about which is right:
+
+        wrap inside the reference   narr_spaced 'ACME TRADERS-12345 67890'
+        wrap between name words     narr        'NORTHWINDTRADERS-1234567890'  (welded)
+        wrap inside a name word     narr_spaced 'NORTHWIND TRAD ERS-...'       (split)
+
+    The first two are why this branch reads `narr_spaced` *and* why the
+    reference pattern has to tolerate internal spaces: `narr` keeps the
+    reference intact but welds two words of a name together, so neither reading
+    alone resolves both rows. The third is a residual — a wrap inside a single
+    word leaves a space `narr_spaced` cannot distinguish from a real one — and
+    it is asserted here so it is a recorded limitation rather than a surprise.
+    """
+    def one(first, continuation):
+        rows = m.parse_pages([ach_wrap_page(first, continuation)], m.HDFC())
+        assert len(rows) == 1, rows
+        return rows[0]
+
+    # 1. the wrap falls inside the reference
+    row = one("ACH D- TP ACH ACME TRADERS-12345", "67890")
+    assert row["narr_spaced"] == "ACH D- TP ACH ACME TRADERS-12345 67890", row
+    assert m.HDFC.party(m.HDFC, row) == "ACME TRADERS"
+    # the de-wrapped reading is the one that keeps the reference whole
+    assert row["narr"] == "ACH D- TP ACH ACME TRADERS-1234567890", row
+
+    # 2. the wrap falls between two words of the name — `narr` welds them, which
+    #    is why this branch cannot simply read `narr` and anchor on `\d+$`
+    row = one("ACH D- TP ACH NORTHWIND", "TRADERS-1234567890")
+    assert row["narr"] == "ACH D- TP ACH NORTHWINDTRADERS-1234567890", row
+    assert m.HDFC.party(m.HDFC, row) == "NORTHWIND TRADERS"
+
+    # 3. residual: a wrap inside one word of the name leaves a space that
+    #    `narr_spaced` cannot tell from a real one. Recorded, not fixed — the
+    #    reading that would get this right is the one that fails case 2.
+    row = one("ACH D- TP ACH NORTHWIND TRAD", "ERS-1234567890")
+    assert m.HDFC.party(m.HDFC, row) == "NORTHWIND TRAD ERS", row
+
 
 def test_a_zero_in_one_amount_column_is_still_two_sided(m):
     """`if debit and credit` asked whether both were **non-zero**. A row filling
@@ -1018,6 +1173,300 @@ def test_case_only_output_aliases_are_caught_once_the_xml_exists(m):
         assert "same file" in str(refusal)
         # and the XML the run already wrote is still intact
         assert pathlib.Path(args.out).read_text() == "<xml/>"
+
+
+@contextlib.contextmanager
+def pretending_windows(m):
+    """Run a block with the importer believing it is on Windows.
+
+    Every Windows guard in this file is dead code on the machine that runs CI
+    for it, and a guard whose branch never executes reports the same zero
+    failures whether it works or is broken. These tests drive the branch. What
+    they do *not* prove is ACL behaviour — no POSIX host can — only that the
+    refusals fire, in the right order, and that the create is exclusive.
+
+    This rebinds the importer module's own `os`, rather than setting
+    `os.name = "nt"` on the real module: that is global, and `pathlib` reads it
+    to decide whether `Path` is a `WindowsPath`, so every path this tool builds
+    became uninstantiable on a POSIX host. Yields the shim, so a test can also
+    make one call on it lie.
+    """
+    class WindowsOs:
+        name = "nt"
+
+        def __getattr__(self, attribute):
+            return getattr(os, attribute)
+
+    was, shim = m.os, WindowsOs()
+    m.os = shim
+    try:
+        yield shim
+    finally:
+        m.os = was
+
+
+def test_windows_refuses_to_claim_a_privacy_it_cannot_deliver(m):
+    """POSIX modes do not restrict a file on Windows, so writing one and
+    reporting `mode 0600` would be a false claim rather than a weaker one."""
+    with tempfile.TemporaryDirectory() as directory, pretending_windows(m):
+        target = str(pathlib.Path(directory, "out.xml"))
+        refusal = refuses(m, "cannot_restrict_on_windows",
+                          m.write_outputs, [(target, "<xml/>")], False)
+        assert "--accept-inherited-permissions" in str(refusal)
+        assert not pathlib.Path(target).exists(), "refused, so nothing may be written"
+        # with the acknowledgement, a fresh path is written
+        m.write_outputs([(target, "<xml/>")], True)
+        assert pathlib.Path(target).read_text() == "<xml/>"
+        # ...and the second attempt refuses, because an overwrite would keep the
+        # existing file's ACL rather than inheriting the directory's
+        refuses(m, "existing_target_on_windows", m.write_outputs, [(target, "<new/>")], True)
+        assert pathlib.Path(target).read_text() == "<xml/>", "refused, so not truncated"
+
+
+def test_a_windows_target_appearing_after_the_check_is_not_truncated(m):
+    """The check and the create must be one operation.
+
+    `os.path.exists(path)` followed by an `O_CREAT | O_TRUNC` open is a race: a
+    file arriving in the gap was truncated anyway, destroying a file whose ACL
+    the operator never acknowledged, and the run reported success. Driven here
+    by making the existence check lie, which is what losing the race looks like
+    from inside the process.
+    """
+    with tempfile.TemporaryDirectory() as directory, pretending_windows(m) as shim:
+        target = pathlib.Path(directory, "out.xml")
+        target.write_text("someone else's file")
+        # the gap between check and create: the check says the path is free and
+        # the filesystem disagrees
+        shim.path = types.SimpleNamespace(exists=lambda path: False)
+        refusal = refuses(m, "existing_target_on_windows",
+                          m.write_outputs, [(str(target), "<xml/>")], True)
+        assert "already exists" in str(refusal)
+        assert target.read_text() == "someone else's file", "O_EXCL must not truncate"
+
+
+def test_both_windows_destinations_are_checked_before_either_is_written(m):
+    """A new `--out` with an existing `--manifest` used to write the XML and
+    then refuse the manifest, leaving a partial result — and the refusal's
+    remedy ("remove it and re-run") then failed on the XML the failed run had
+    just created. Preflight judges both before anything is written."""
+    class Args:
+        pdf = mapping = None
+        company = confirm_open_company = "Some Company"
+        dry_run = False
+        date_from = date_to = None
+        accept_inherited_permissions = True
+
+    with tempfile.TemporaryDirectory() as directory, pretending_windows(m):
+        args = Args()
+        args.out = str(pathlib.Path(directory, "new.xml"))
+        args.manifest = str(pathlib.Path(directory, "existing.csv"))
+        pathlib.Path(args.manifest).write_text("old manifest")
+
+        refusal = refuses(m, "existing_target_on_windows", m.preflight, args)
+        assert "existing.csv" in str(refusal), refusal
+        # the whole point: the XML was not written first
+        assert not pathlib.Path(args.out).exists(), \
+            "preflight refused, so the run must not have written the other target"
+        assert pathlib.Path(args.manifest).read_text() == "old manifest"
+
+
+def test_a_dry_run_does_not_judge_destinations_it_will_not_write(m):
+    """`--dry-run` returns before opening either destination, so refusing the
+    run over an ACL acknowledgement or an existing file made the preview
+    unusable on Windows for the one command an operator wants to preview —
+    their real one, flags and all."""
+    class Args:
+        pdf = mapping = None
+        company = confirm_open_company = "Some Company"
+        date_from = date_to = None
+        opening = expect_closing = "1000.00"
+        expect_debits = expect_credits = "0.00"
+        accept_inherited_permissions = False  # the flag a real preview omits
+
+    with tempfile.TemporaryDirectory() as directory, pretending_windows(m):
+        args = Args()
+        args.out = str(pathlib.Path(directory, "result.xml"))
+        args.manifest = str(pathlib.Path(directory, "manifest.csv"))
+        pathlib.Path(args.manifest).write_text("already here")
+
+        args.dry_run = True
+        m.preflight(args)  # must not raise: nothing will be written
+        assert not pathlib.Path(args.out).exists()
+
+        # ...and the same command without --dry-run is still refused, or this
+        # test would pass against a preflight that checks nothing at all.
+        args.dry_run = False
+        refuses(m, "cannot_restrict_on_windows", m.preflight, args)
+
+
+def test_no_output_is_written_unless_every_destination_was_claimed(m):
+    """Creating each file at its own write site left a partial result: with a
+    new `--out` and the manifest taken between preflight and the write, the XML
+    was written and the manifest then refused. Both destinations are claimed
+    before either payload is written, and a failed claim rolls the set back."""
+    with tempfile.TemporaryDirectory() as directory, pretending_windows(m):
+        first = pathlib.Path(directory, "first.xml")
+        second = pathlib.Path(directory, "second.csv")
+        second.write_text("someone else's file")
+        refuses(m, "existing_target_on_windows", m.write_outputs,
+                [(str(first), "<xml/>"), (str(second), "row\n")], True)
+        assert not first.exists(), "the first target must be rolled back, not left behind"
+        assert second.read_text() == "someone else's file"
+
+    # The rollback removes only what this call created. A POSIX run overwrites
+    # by design, so the second claim succeeds and both are written.
+    with tempfile.TemporaryDirectory() as directory:
+        first = pathlib.Path(directory, "first.xml")
+        second = pathlib.Path(directory, "second.csv")
+        m.write_outputs([(str(first), "<xml/>"), (str(second), "row\n")])
+        assert first.read_text() == "<xml/>" and second.read_text() == "row\n"
+        assert stat.S_IMODE(first.stat().st_mode) == 0o600
+
+
+def test_a_failed_run_does_not_destroy_the_previous_output(m):
+    """The rollback must not be worse than the failure it cleans up after.
+
+    Claiming an existing POSIX destination with `O_TRUNC` emptied it *at claim
+    time*, so a later failure rolled back by unlinking a file whose contents the
+    run had already destroyed — leaving the operator with neither the previous
+    output nor a new one. An existing destination is staged and renamed into
+    place only once every payload is written.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        existing = pathlib.Path(directory, "previous.xml")
+        existing.write_text("the previous run's output")
+        unwritable = str(pathlib.Path(directory, "missing-dir", "second.csv"))
+
+        try:
+            m.write_outputs([(str(existing), "<new/>"), (unwritable, "row\n")])
+            raise AssertionError("the second destination cannot be opened")
+        except (OSError, m.Refusal):
+            pass
+
+        assert existing.exists(), "the previous output was deleted by the rollback"
+        assert existing.read_text() == "the previous run's output", \
+            "the previous output was truncated before the run could commit"
+        # nothing staged is left lying around next to it
+        assert sorted(p.name for p in pathlib.Path(directory).iterdir()) == \
+            ["previous.xml"], sorted(p.name for p in pathlib.Path(directory).iterdir())
+
+    # and when every target does succeed, an existing destination is replaced
+    with tempfile.TemporaryDirectory() as directory:
+        existing = pathlib.Path(directory, "previous.xml")
+        existing.write_text("old")
+        other = pathlib.Path(directory, "new.csv")
+        m.write_outputs([(str(existing), "<new/>"), (str(other), "row\n")])
+        assert existing.read_text() == "<new/>"
+        assert other.read_text() == "row\n"
+        assert stat.S_IMODE(existing.stat().st_mode) == 0o600
+        assert sorted(p.name for p in pathlib.Path(directory).iterdir()) == \
+            ["new.csv", "previous.xml"]
+
+
+def test_a_case_insensitive_collision_is_refused_before_anything_is_written(m):
+    """`--out Result.xml --manifest result.XML` is one file on a case-insensitive
+    volume. The lexical preflight cannot see it and `samefile` needs both paths
+    to exist, so this used to be caught only *after* the XML had been written
+    and the manifest had truncated it. Both destinations are now created empty
+    first, which is when the filesystem can answer."""
+    class Args:
+        pdf = mapping = None
+
+    with tempfile.TemporaryDirectory() as directory:
+        probe = pathlib.Path(directory, "Aa.probe")
+        probe.write_text("")
+        if not pathlib.Path(directory, "aa.probe").exists():
+            return  # case-sensitive volume
+        probe.unlink()
+
+        args = Args()
+        args.out = str(pathlib.Path(directory, "Result.xml"))
+        args.manifest = str(pathlib.Path(directory, "result.XML"))
+        refuses(m, "path_collision", m.write_outputs,
+                [(args.out, "<xml/>"), (args.manifest, "row\n")], False,
+                lambda: m._check_paths(args))
+        # neither payload reached the disk, and the rollback left nothing
+        assert not pathlib.Path(args.out).exists(), "rolled back"
+
+
+def test_an_ach_reference_must_be_reference_shaped(m):
+    """"Hyphen then digits" does not distinguish a bank reference from a name.
+    `STUDIO-54` resolved to `STUDIO`, and so did `STUDIO-5 4` once the pattern
+    tolerated a wrap — so a mapping for `STUDIO` silently posted a `STUDIO-54`
+    transaction to the wrong ledger. A reference-length run of digits is
+    required; anything shorter is UNRESOLVED and reaches suspense, where an
+    operator sees it."""
+    def party(narr):
+        return m.HDFC.party(m.HDFC, {"narr": narr, "narr_spaced": narr})
+
+    # a name's own hyphenated number is never a delimiter.
+    #
+    # The last four are the ones that killed a *reasoned* threshold. An earlier
+    # version required six digits, arguing that a number inside a name is a unit
+    # or a year and so at most four — which overlooked the most ordinary six
+    # digits in an Indian address. A PIN code is six, and is routinely printed
+    # with a space, so `ACME-400 001` resolved to `ACME`. The rule is now the
+    # observed reference length, not an argument about where a gap ought to sit.
+    for tail in ["STUDIO-54", "UNIT-7", "SHOP-2024", "STUDIO-5 4", "SHOP-1 2 3",
+                 "ACME-400 001", "ACME-400001", "TRADERS-560 034", "CORP-110001"]:
+        assert party(f"ACH D- TP ACH {tail}") == "UNRESOLVED", tail
+
+    # ...and a run that is merely *long* is not a reference either. Only the
+    # observed length is one; anything else reaches suspense.
+    for digits in ["123456789", "12345678901", "123456789012"]:
+        assert party(f"ACH D- TP ACH ACME-{digits}") == "UNRESOLVED", digits
+
+    # a real reference still is, wrapped or not — including a wrap immediately
+    # after the delimiter, where the line ends at the hyphen itself
+    for tail, expected in [
+        ("STUDIO-54 INDUSTRIES-1234567890", "STUDIO-54 INDUSTRIES"),
+        ("ACME TRADERS-12345 67890", "ACME TRADERS"),
+        ("ACME TRADERS- 1234567890", "ACME TRADERS"),
+        ("STUDIO-54 INDUSTRIES- 1234567890", "STUDIO-54 INDUSTRIES"),
+        ("UNIT-7 METALS-12 345 67890", "UNIT-7 METALS"),
+    ]:
+        assert party(f"ACH D- TP ACH {tail}") == expected, tail
+
+
+def test_ledger_key_folds_exactly_what_its_docstring_claims(m):
+    """`_ledger_key` is looser than §9.4b, and the docstring says so with a
+    table. Pin the table, because the hazard here is not the behaviour — it
+    fails safe at all three call sites — but somebody copying the function into
+    a binder on the strength of a docstring that used to call it "Tally's own
+    master-name identity".
+
+    A change in either direction should be deliberate: tightening it breaks the
+    verified rows, loosening it adds a row Tally has never been shown to fold.
+    """
+    same = lambda a, b: m._ledger_key(a) == m._ledger_key(b)
+
+    # VERIFIED by 9.4b — these must keep folding.
+    assert same("bridge probe ledger a", "BRIDGE PROBE LEDGER A")
+    assert same("BRIDGE PROBE LEDGER A", "BRIDGE-PROBE-LEDGER-A")
+    assert same("A B ", "A B")
+
+    # UNVERIFIED by 9.4b, folded here anyway. Safe only because nothing in this
+    # tool resolves against a master list; recorded so it cannot drift silently.
+    assert same("A-B", "A B"), "the reverse hyphen direction"
+    assert same("A  B", "A B"), "internal whitespace run"
+    assert same("  A B", "A B"), "leading whitespace"
+    # ...and the three the first version of this table missed, because they are
+    # properties of `.upper()` and `_squash` rather than of anything written in
+    # `_ledger_key`. A table that lists only the deliberate folds understates
+    # the function to exactly the reader most likely to copy it.
+    assert same("A   ", "A"), "arbitrary trailing whitespace, not one space"
+    assert same("straße", "STRASSE"), "str.upper() is Unicode, not ASCII, and changes length"
+    assert same("A\tB", "A B"), "tab folds to a space"
+    assert same("A\u00a0B", "A B"), "NBSP folds to a space"
+
+    # Must stay apart. Only the first was measured as rejected; the rest were
+    # never sent at all, and this fold happening to keep them apart is not
+    # evidence that Tally does.
+    assert not same("ZZ Ram AND Sons", "ZZ Ram & Sons"), "measured: rejected"
+    assert not same("AB", "A & B"), "deleting & was never measured either way"
+    assert not same("A_B", "A B")
+    assert not same("A/B", "A B")
+    assert not same("A\u2013B", "A B"), "en dash is not an ASCII hyphen"
 
 
 def main():

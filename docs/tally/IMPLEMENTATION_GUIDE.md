@@ -666,9 +666,19 @@ yields `On Account`, which carries no bill identity.
 
 ### 3.4 There is no natural voucher idempotency — **narrowed by §3.3a**
 
-Re-sending an identical payload with the same voucher number created a **second voucher**.
-Combined with §3.3, the fingerprint + embedded-key dedupe is the only thing standing between
-a crash-retry and a duplicated client voucher.
+Re-sending an identical payload with the same voucher number created a **second voucher**. There
+is no natural idempotency: voucher number is not a key.
+
+**What the heading's "narrowed" means.** §3.3a since established that a byte-identical repeat under
+the same `REMOTEID` is an **upsert** on the qualified Journal path — `CREATED=0, ALTERED=1`, no
+duplicate. So on that path a crash-retry of the *same file* is safe on its own, and the sentence
+that used to stand here — that the fingerprint plus an embedded key is "the only thing" preventing a
+duplicate — is no longer true where §3.3a applies.
+
+It is still true everywhere §3.3a does not reach, and that is most places: a **different** payload
+under the same key is untested (it may overwrite, partially update or duplicate), as is any
+non-Journal voucher type, any other SKU, and a retry across a Tally restart or a company boundary.
+Name which case you are in before relying on either mechanism.
 
 ### 3.4a Undefined UDF fields are silently discarded — **the plan's primary idempotency key does not work as written**
 
@@ -707,9 +717,25 @@ Unicode and punctuation cases). The plan already names a narration-suffix fallba
 evidence that fallback is the *primary* option until a UDF-with-inline-TDL request is
 demonstrated end to end.
 
-**Caveat:** narration is user-editable, so it can never be trusted alone. The
-`(date, amount, ledger-set, voucher-type)` fingerprint remains mandatory secondary dedupe
-regardless of which carrier wins.
+**Caveat:** narration is user-editable, so it can never be trusted alone.
+
+**But the fingerprint is not the answer to that, and this paragraph used to say it was.** A
+`(date, amount, ledger-set, voucher-type)` tuple cannot distinguish a retry from a *legitimate
+second payment* — a recurring standing instruction, or two invoices settled to one supplier on one
+day, produce the identical tuple. Mandating it as dedupe "regardless of which carrier wins"
+therefore suppresses real vouchers, which is a silent under-write: the money moved and the book
+does not say so. §3.3a states the same thing from the other side, and this section contradicted it.
+
+Use it as a **flag for a human**, never as an automatic suppressor:
+
+| Signal | What it supports |
+| --- | --- |
+| `REMOTEID` upsert (§3.3a) | duplicate prevention, on the byte-identical Journal path only |
+| narration marker (§6.2) | attribution — which client write produced which voucher |
+| date/amount/ledger tuple | "these look alike, a human should check" — **not** a dedupe decision |
+
+None of the three is sufficient alone, and they do different jobs. Adding them together does not
+produce a safe automatic rule; it produces a pipeline whose failures are harder to attribute.
 
 **Eight forms tested — all discarded.** The reserved-index hypothesis (UDF numbers 1–29 are
 reserved for Default TDL) was tested and disproven:
@@ -740,9 +766,18 @@ a thorough negative across every documented shape found.
 > the same document had already discarded.
 
 **Therefore, for Phase 4 as currently scoped:** `NARRATION` is the only proven carrier for a
-client-generated key, and the `(date, amount, ledger-set, voucher-type)` fingerprint is not a
-secondary safeguard but a **co-primary** mechanism, because narration is user-editable and can
-be destroyed between write and readback.
+client-generated key, and it is user-editable, so it can be destroyed between write and readback.
+
+The conclusion drawn from that here used to be that the `(date, amount, ledger-set, voucher-type)`
+fingerprint is **co-primary** rather than secondary. Withdrawn: promoting it does not make it able
+to do the job. The tuple is identical for a legitimate recurring or same-day repeat payment, so as
+an automatic dedupe it suppresses real vouchers no matter which tier it is placed in — see §3.4a.
+
+What follows instead is narrower and less comfortable: **there is no proven automatic
+write-confirmation mechanism for Phase 4.** `REMOTEID` upsert covers a byte-identical repeat on the
+Journal path (§3.3a) and nothing beyond it; a destroyed narration marker leaves a write
+unattributable, and the honest response to that is to stop and ask a human, not to substitute a
+signal that cannot tell the two cases apart.
 
 ### 3.5 Identity after write
 
