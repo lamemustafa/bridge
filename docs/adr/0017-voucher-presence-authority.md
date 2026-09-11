@@ -90,7 +90,12 @@ consumed as-is:
   party-independent rules are all that remain and `Absent` stays available.
 
 Three further conditions withhold `Absent` before any of that, and they share
-one shape: **the source offered nothing the decisive rules could use.** A
+one shape: **a field the rules would otherwise have used was not supplied.**
+Note what that does *not* cover — a voucher type numbered `Automatic` has no
+decisive key at all, so a proposal under it withheld nothing and its `Absent`
+stands on the resemblance rules having found nothing, which is exactly what
+`Absent` claims. The withholding is for evidence that was available and is
+missing, never for evidence that does not exist. A
 proposal that names no party (`PartyNotSupplied`) leaves an absence resting on
 date and amount, the pair this contract says collides. A proposal under a
 `Manual` declaration that supplies no voucher number
