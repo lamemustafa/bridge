@@ -39,6 +39,12 @@ const reference = fileURLToPath(
 // a heading at all, and counting one there fails CI over an example.
 const HEADING = /^ {0,3}(#{2,6})\s+((?:\d+[a-z]?)(?:\.\d+[a-z]?)*)(?=[\s.:—-]|$)/;
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+// A Setext heading is a line of text with `===` or `---` under it, and it is a
+// heading at levels 1 and 2. Ignoring the form entirely would let
+// `9.14 New section` + an underline duplicate an existing number while this
+// gate reported success.
+const SETEXT_UNDERLINE = /^ {0,3}(=+|-+)\s*$/;
+const SETEXT_NUMBER = /^ {0,3}((?:\d+[a-z]?)(?:\.\d+[a-z]?)*)(?=[\s.:—-]|$)/;
 
 // Diagnostics are bounded. A malformed or generated reference can carry very
 // many duplicates, or one very long heading, and CI evidence that does not fit
@@ -84,10 +90,20 @@ function titleOf(line) {
 const lines = readFileSync(reference, "utf8").split("\n");
 const occurrences = new Map();
 let fence = null;
+function record(number, line, text) {
+  if (!occurrences.has(number)) occurrences.set(number, []);
+  occurrences.get(number).push({ line, text: text.trim() });
+}
 lines.forEach((line, index) => {
   const rail = FENCE.exec(line);
   if (rail) {
     if (fence === null) {
+      // A backtick fence's info string may not contain a backtick — CommonMark
+      // says so, and Markdown does not open a block for one. Treating it as an
+      // opener suppressed every heading until the next bare closer, so a
+      // duplicate inside that span passed CI unseen.
+      const info = line.slice(line.indexOf(rail[1]) + rail[1].length);
+      if (rail[1][0] === "`" && info.includes("`")) return;
       fence = rail[1];
       return;
     }
@@ -103,11 +119,20 @@ lines.forEach((line, index) => {
     return;
   }
   if (fence !== null) return;
+
+  // Setext: this line underlines the one before it, which is then the heading.
+  // A blank line cannot be a Setext heading, and neither can an ATX one.
+  if (SETEXT_UNDERLINE.test(line) && index > 0) {
+    const above = lines[index - 1];
+    if (above.trim() && !HEADING.test(above)) {
+      const numbered = SETEXT_NUMBER.exec(above.trim());
+      if (numbered) record(numbered[1], index, above);
+    }
+    return;
+  }
+
   const found = HEADING.exec(line);
-  if (!found) return;
-  const number = found[2];
-  if (!occurrences.has(number)) occurrences.set(number, []);
-  occurrences.get(number).push({ line: index + 1, text: line.trim() });
+  if (found) record(found[2], index + 1, line);
 });
 
 if (!occurrences.size) {
