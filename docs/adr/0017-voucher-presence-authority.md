@@ -340,8 +340,20 @@ two distinct events — a row ordinal within a re-downloaded window, say — tur
 different voucher**, which lands on the same side of the ledger as a false
 `Present`: no duplicate to see, no exception raised, nothing to find later. A
 consumer acting on `Absent` inherits that risk from the writer, not from this
-report. Any key proposed for that writer should be tested against both the
-re-download case and the overlapping-window case before it is trusted.
+report.
+
+Any key proposed for that writer has to be exercised against two cases, and
+**they are not symmetric in cost** — which decides what to do about each:
+
+- **Re-download.** The same window fetched twice collides two different events
+  onto one key, so one silently overwrites the other. That lands on the same
+  side as a false `Present`, and it is a reason to **refuse the key outright**.
+- **Overlapping window.** Two fetches that share rows split one event across
+  two keys, so it posts twice. That is a visible, correctable duplicate — the
+  side this design already tolerates, and a reason to fix the key rather than
+  reject it.
+
+Both must be tested. Only the first disqualifies.
 
 The cost of this posture is operator review time. That is the intended cost:
 the middle is where a human is genuinely faster than any rule, and the
