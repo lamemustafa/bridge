@@ -288,6 +288,25 @@ check(
     f"produced {sorted(produced)} which collides with a reserved source token",
 )
 
+# Short tokens are somebody's too. A length cutoff excused two-letter values —
+# initials — and that exemption was itself a leak: with sources `AA` and `ZZ`,
+# `AA` was replaced by `ZZ` and the customer's own `ZZ` then stood in the fixture
+# verbatim. Only a short run of *digits* is exempt, which is where the
+# starvation the cutoff existed to prevent actually lives.
+fresh = load()
+fresh.reserve_source_tokens("AA ZZ QQ")
+produced = [fresh._scrub_plain(word) for word in ["AA", "ZZ", "QQ"]]
+check(
+    "a two-letter source token is reserved against fabrication",
+    not ({"AA", "ZZ", "QQ"} & set(produced)),
+    f"produced {produced}, which contains a source token verbatim",
+)
+check(
+    "a short run of digits is still exempt, or the digit shapes starve",
+    not fresh._identifying("7") and not fresh._identifying("70")
+    and fresh._identifying("ZZ") and fresh._identifying("700"),
+)
+
 # Symbols and format characters are customer text too. The category rule that
 # fixed the Indic-script leak still passed anything that was not a letter, digit
 # or mark straight through, so an emoji in a merchant name reached the fixture.

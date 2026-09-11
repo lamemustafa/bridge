@@ -134,18 +134,33 @@ _next = {}
 DIGITS = "123456789"
 
 
-# Only tokens this long are reserved. Below it a token carries no identity — a
-# lone `7` is not anybody's data — and reserving them is actively harmful: a
-# one-digit token has nine possible replacements in total, a statement contains
-# most of the ten digits somewhere, and reserving all of them left the shape
-# with nothing to allocate. Measured: reserving every token made the sanitiser
-# abort on its own committed HDFC fixture with "no distinct replacement left for
-# a token shaped like 9".
+# Below this length a *numeric* token carries no identity, and reserving one is
+# actively harmful: a one-digit token has nine possible replacements in total, a
+# statement contains most of the ten digits somewhere, and reserving all of them
+# left the shape with nothing to allocate. Measured — reserving every token made
+# the sanitiser abort on its own committed HDFC fixture with "no distinct
+# replacement left for a token shaped like 9".
 #
-# Three is the threshold the documented leak scan in USAGE already uses, so the
-# rule the allocator enforces and the rule an operator checks by hand are the
-# same rule.
+# Three is also the threshold the documented leak scan in USAGE uses.
 IDENTIFYING_LENGTH = 3
+
+
+def _identifying(token):
+    """Whether this token is worth reserving against fabrication.
+
+    Length alone was the wrong rule, and the exemption it granted was a leak.
+    Excusing everything under three characters excused **short letter tokens**,
+    which are somebody's initials: with sources `AA` and `ZZ`, `AA` was replaced
+    by `ZZ` and the customer's own `ZZ` then stood in the fixture verbatim. The
+    starvation the cutoff existed to prevent was never about letters — a
+    two-letter shape has 400 replacements — it was about digits, where the
+    alphabet is nine wide and the source contains most of it.
+
+    So the exemption is narrowed to what actually starves: a short run of
+    digits, which is a lone `7` in the middle of a reference and nobody's data.
+    Anything containing a letter is reserved at any length.
+    """
+    return not (token.isdigit() and len(token) < IDENTIFYING_LENGTH)
 
 
 def reserve_source_tokens(text):
@@ -159,7 +174,7 @@ def reserve_source_tokens(text):
     `main` makes a pass over the kept words before it scrubs any of them.
     """
     for is_token, piece in _split_tokens(_decode_numeric_entities(text)):
-        if is_token and len(piece) >= IDENTIFYING_LENGTH:
+        if is_token and _identifying(piece):
             _source.add(piece.upper())
 
 
