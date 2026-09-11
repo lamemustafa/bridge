@@ -597,7 +597,7 @@ neither is:
   flow in `docs/agent/README.md` are for.
 - **An independent attribution marker stays.** The returned *attribute* does not echo the client
   key — but the key itself survives in any field Tally does not own. The committed capture
-  `fixtures/agent/native-namespaced-journal.utf16le.xml` returns it inside `NARRATION` as
+  `src-tauri/crates/bridge-tally-protocol/tests/fixtures/agent/native-namespaced-journal.utf16le.xml` returns it inside `NARRATION` as
   `[BRIDGE:9c8d8de4-…]`, which is why Bridge's verifier reaches `posted_verified` only through a
   narration-tagged match. A date/ledger/amount fingerprint is **not** a substitute: a recurring or
   duplicate same-day payment already gives that tuple, so a pre-existing voucher stands in for a
