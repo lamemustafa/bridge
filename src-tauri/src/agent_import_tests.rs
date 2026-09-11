@@ -1640,6 +1640,14 @@ async fn built_batch_guidance_matches_the_saved_native_admission() {
                 .any(|warning| warning.contains("Regrouping a ledger afterwards")),
             "stale-classification warning leaked into a Journal-only batch: {warnings:?}"
         );
+        // The release-evidence warning is bank-gated too: §9.13's licensed
+        // 7.1 Gold measurement has nothing to do with a Journal-only batch.
+        assert!(
+            !warnings
+                .iter()
+                .any(|warning| warning.contains("measured on licensed TallyPrime 7.1 Gold only")),
+            "release-evidence warning leaked into a Journal-only batch: {warnings:?}"
+        );
         assert_eq!(simulator.finish().unwrap().len(), 32);
     }
 }

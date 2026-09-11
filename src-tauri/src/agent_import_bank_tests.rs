@@ -588,6 +588,14 @@ async fn a_payment_and_receipt_batch_builds_against_the_captured_masters() {
             .any(|warning| warning.contains("Regrouping a ledger afterwards")),
         "stale-classification warning missing from a bank batch: {warnings:?}"
     );
+    // §9.13's measured slice is one licensed instance; this batch's own
+    // observed profile rides beside it rather than being asserted as a match.
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("measured on licensed TallyPrime 7.1 Gold only")),
+        "release-evidence warning missing from a bank batch: {warnings:?}"
+    );
     assert!(
         warnings
             .iter()
@@ -893,6 +901,99 @@ fn a_counterparty_that_cannot_be_classified_is_refused() {
     );
     assert!(refusals.ledgers.is_empty());
     assert_eq!(refusals.legs, 0);
+}
+
+#[test]
+fn a_known_non_money_reserved_identity_is_still_admitted_as_a_counterparty() {
+    // Regression: NON_MONEY_RESERVED_GROUPS must not narrow admission for the
+    // identities it already knows about. `Sundry Debtors` is one of the 25
+    // observed non-money identities, captured in both companies, and a party
+    // resolving to it is exactly the ordinary case the counterparty leg exists
+    // to pass.
+    let masters = observed(&under("Sundry Debtors"), captured_demo_groups());
+    assert_eq!(
+        masters.classify("Probe Ledger"),
+        CashBankState::OtherReservedGroup {
+            reserved_group: "Sundry Debtors".into()
+        }
+    );
+    assert!(LegRequirement::Counterparty.admits(&masters.classify("Probe Ledger")));
+    // And the same holds through the full batch path: a real captured party
+    // under Sundry Creditors funds nothing and is admitted as a counterparty.
+    let masters = observed(&captured_demo_ledger_parents(), captured_demo_groups());
+    let refusals = cash_bank_refusals(
+        &demo_batch(
+            "Payment",
+            "Gujarat Poly Industries",
+            "HDFC Bank Current Account",
+        ),
+        &masters,
+        200_000,
+    );
+    assert!(
+        refusals.ledgers.is_empty(),
+        "a known non-money counterparty must still be admitted: {:?}",
+        refusals.ledgers
+    );
+}
+
+#[test]
+fn an_unknown_reserved_identity_is_refused_as_a_counterparty_rather_than_admitted() {
+    // An identity in neither table is unknown, not non-money — see
+    // NON_MONEY_RESERVED_GROUPS's doc comment. Before this change the final
+    // `None` arm of `classify` read any such identity as proof of "holds no
+    // money", which would admit it here. The invented RESERVEDNAME below is
+    // deliberately not one of the 28 either captured company exhibits.
+    let mut groups = captured_demo_groups();
+    groups.push(TallyNamedMaster {
+        name: "Escrow Holdback A/c".into(),
+        parent: PartyLedgerMasterFieldObservation::Returned("Current Liabilities".into()),
+        reserved_name: Some("Escrow Holdback A/c".into()),
+    });
+    let mut ledgers = captured_demo_ledger_parents();
+    ledgers.push(("Retention Party".into(), Some("Escrow Holdback A/c".into())));
+    let masters = observed(&ledgers, groups);
+    let state = masters.classify("Retention Party");
+    assert_eq!(state.state(), "not_established");
+    assert!(
+        state.detail().contains("no captured response exhibits"),
+        "unexpected detail: {}",
+        state.detail()
+    );
+    assert!(
+        !LegRequirement::Counterparty.admits(&state),
+        "an unknown reserved identity must not be admitted as a counterparty"
+    );
+    let refusals = cash_bank_refusals(
+        &demo_batch("Payment", "Retention Party", "HDFC Bank Current Account"),
+        &masters,
+        200_000,
+    );
+    assert_eq!(
+        refusals.legs, 1,
+        "an unknown counterparty refuses the build"
+    );
+    assert_eq!(refusals.ledgers.len(), 1);
+    let refused = &refusals.ledgers[0];
+    assert_eq!(refused["requires"], "not_cash_bank");
+    assert_eq!(refused["state"], "not_established");
+    let because = refused["refused_because"].as_str().unwrap();
+    // Distinguishes it from the money-side refusal in two ways: the wording
+    // names a counterparty specifically, and it never suggests a Contra —
+    // this ledger is not known money, only unclassified, and advising a
+    // Contra about a ledger nobody has classified would be wrong.
+    assert!(because.contains("no captured response exhibits"));
+    assert!(because.contains("could not be classified either way"));
+    assert!(!because.contains("Contra"));
+    // The money-side refusal for the very same unresolved identity carries
+    // only the bare detail sentence, with none of the counterparty wrapping —
+    // that difference is what "distinguishes the refusal" means here.
+    let money_refusal = LegRequirement::Money
+        .refusal(&state, "Payment")
+        .expect("money side also refuses an unresolved identity");
+    assert!(!money_refusal.contains("could not be classified either way"));
+    assert!(!money_refusal.contains("counterparty"));
+    assert_eq!(money_refusal, state.detail());
 }
 
 #[test]

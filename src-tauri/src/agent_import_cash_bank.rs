@@ -78,6 +78,65 @@ const MONEY_RESERVED_GROUPS: &[(&str, Admission)] = &[
     ("Bank OCC A/c", Admission::NoCapturedGroup),
 ];
 
+/// Every reserved Tally group identity captured, across both committed
+/// companies, that has been observed to hold no money.
+///
+/// This is the observed predefined set, not a guess at the rest of Tally's
+/// group taxonomy: each entry is one of the 28 `RESERVEDNAME` values the two
+/// captured `List of Groups` responses actually exhibit
+/// (`group_snapshot_aarav.xml`, `group_snapshot_wr2.xml`), minus the three
+/// money identities already in [`MONEY_RESERVED_GROUPS`]. An identity that
+/// appears in neither table is not thereby non-money — it is unknown, and
+/// unknown is exactly what a captured predefined-group domain cannot rule
+/// out. `Bank OCC A/c` is the standing proof of that: it is a real Tally
+/// predefined *money* group, documented by Tally itself, and it appears in
+/// neither captured company. Nothing about the shape of a `RESERVEDNAME`
+/// distinguishes a captured money identity from an uncaptured one, so an
+/// identity's absence from this table is never read as evidence it belongs on
+/// the money side either — it is read as no evidence at all.
+///
+/// That is why an unknown identity is refused rather than admitted as a
+/// counterparty. The two mistakes this module can make are not symmetric: a
+/// money ledger misjudged onto the money leg makes Tally reject the import
+/// outright — loud, and caught at the point of failure. A money ledger
+/// misjudged onto the counterparty leg is accepted, and what actually happens
+/// is that the voucher's real shape — a Contra — gets filed into the Payment
+/// or Receipt register instead, which Tally accepts without complaint and
+/// which surfaces later, if at all, as a reconciliation problem with no
+/// pointer back to this build. The silent failure earns the stricter rule:
+/// an identity this table has not observed refuses rather than passes.
+///
+/// Held in Tally's own spelling (with a literal `&`, not `&amp;` — the
+/// fixtures carry the XML-escaped form) and normalized at comparison time, so
+/// the matched entry is directly reportable.
+const NON_MONEY_RESERVED_GROUPS: &[&str] = &[
+    "Branch / Divisions",
+    "Capital Account",
+    "Current Assets",
+    "Current Liabilities",
+    "Deposits (Asset)",
+    "Direct Expenses",
+    "Direct Incomes",
+    "Duties & Taxes",
+    "Fixed Assets",
+    "Indirect Expenses",
+    "Indirect Incomes",
+    "Investments",
+    "Loans & Advances (Asset)",
+    "Loans (Liability)",
+    "Misc. Expenses (ASSET)",
+    "Provisions",
+    "Purchase Accounts",
+    "Reserves & Surplus",
+    "Sales Accounts",
+    "Secured Loans",
+    "Stock-in-Hand",
+    "Sundry Creditors",
+    "Sundry Debtors",
+    "Suspense A/c",
+    "Unsecured Loans",
+];
+
 /// Why a money group is or is not admitted. The two refusals are not the same
 /// gap, and an operator told the wrong one goes looking for a capture that
 /// already exists.
@@ -292,8 +351,20 @@ impl ObservedMasters {
                 reserved_group,
                 gap: admission.gap(),
             },
-            None => CashBankState::OtherReservedGroup {
-                reserved_group: reserved.to_string(),
+            None if NON_MONEY_RESERVED_GROUPS
+                .iter()
+                .any(|candidate| normalize(candidate) == normalized) =>
+            {
+                CashBankState::OtherReservedGroup {
+                    reserved_group: reserved.to_string(),
+                }
+            }
+            // Neither table exhibits this identity. Silence here is not
+            // evidence of anything — see NON_MONEY_RESERVED_GROUPS's doc
+            // comment — so this refuses instead of assuming the domain of
+            // captured predefined groups is closed.
+            None => CashBankState::NotEstablished {
+                reason: "The group's reserved identity is one no captured response exhibits, so it establishes neither that the ledger holds money nor that it does not.",
             },
         }
     }

@@ -1076,6 +1076,14 @@ fn build_import_guidance(
     let stale_classification_warning = bank_types.then_some(
         "This file's Payment, Receipt and Contra split came from the group collection read during this build. Regrouping a ledger afterwards is an ordinary Tally operation and would silently make the voucher type wrong — a counterparty moved under a cash or bank group should have become a Contra. verify_import compares the entries as built, not current ancestry, so nothing catches it later. If any master changed since this batch was built, discard it and build again.",
     );
+    // The qualified slice is §9.13's, measured on one licensed instance. This
+    // repo's settled position — see `observe_import_profile`'s own comment —
+    // is that a release or tier label is evidence recorded on this path, not
+    // a categorical admission gate, so a build against a different release or
+    // tier is reported here rather than refused or vouched for.
+    let release_evidence_warning = bank_types.then_some(
+        "The Payment, Receipt and Contra file shapes were measured on licensed TallyPrime 7.1 Gold only. This endpoint's observed product, release, tier and mode are returned beside this batch. Release and tier are recorded as evidence on this path rather than used as an admission gate, so a build against a different release is neither refused nor proven.",
+    );
     let allocation_warning = names_a_counterparty.then_some(
         "This batch names a counterparty on a Payment or Receipt and carries no bill allocation, so each amount lands On Account. If that ledger is configured for bill-wise accounting, the entry will need allocating in Tally afterwards; Bridge does not read that configuration and cannot warn per ledger.",
     );
@@ -1085,6 +1093,7 @@ fn build_import_guidance(
             .chain(std::iter::once(company_identity_warning))
             .chain(repeat_warning)
             .chain(stale_classification_warning)
+            .chain(release_evidence_warning)
             .chain(allocation_warning)
             .collect::<Vec<_>>())
     };
