@@ -872,7 +872,7 @@ def test_output_files_are_owner_only(m):
         path = pathlib.Path(directory) / "out.xml"
         path.write_text("stale", encoding="utf-8")
         os.chmod(path, 0o644)
-        m._write_private(path, "<ENVELOPE/>")
+        m.write_outputs([(path, "<ENVELOPE/>")])
         assert path.read_text(encoding="utf-8") == "<ENVELOPE/>"
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
@@ -1145,15 +1145,15 @@ def test_windows_refuses_to_claim_a_privacy_it_cannot_deliver(m):
     with tempfile.TemporaryDirectory() as directory, pretending_windows(m):
         target = str(pathlib.Path(directory, "out.xml"))
         refusal = refuses(m, "cannot_restrict_on_windows",
-                          m._write_private, target, "<xml/>", False)
+                          m.write_outputs, [(target, "<xml/>")], False)
         assert "--accept-inherited-permissions" in str(refusal)
         assert not pathlib.Path(target).exists(), "refused, so nothing may be written"
         # with the acknowledgement, a fresh path is written
-        m._write_private(target, "<xml/>", True)
+        m.write_outputs([(target, "<xml/>")], True)
         assert pathlib.Path(target).read_text() == "<xml/>"
         # ...and the second attempt refuses, because an overwrite would keep the
         # existing file's ACL rather than inheriting the directory's
-        refuses(m, "existing_target_on_windows", m._write_private, target, "<new/>", True)
+        refuses(m, "existing_target_on_windows", m.write_outputs, [(target, "<new/>")], True)
         assert pathlib.Path(target).read_text() == "<xml/>", "refused, so not truncated"
 
 
@@ -1173,7 +1173,7 @@ def test_a_windows_target_appearing_after_the_check_is_not_truncated(m):
         # the filesystem disagrees
         shim.path = types.SimpleNamespace(exists=lambda path: False)
         refusal = refuses(m, "existing_target_on_windows",
-                          m._write_private, str(target), "<xml/>", True)
+                          m.write_outputs, [(str(target), "<xml/>")], True)
         assert "already exists" in str(refusal)
         assert target.read_text() == "someone else's file", "O_EXCL must not truncate"
 
@@ -1202,6 +1202,111 @@ def test_both_windows_destinations_are_checked_before_either_is_written(m):
         assert not pathlib.Path(args.out).exists(), \
             "preflight refused, so the run must not have written the other target"
         assert pathlib.Path(args.manifest).read_text() == "old manifest"
+
+
+def test_a_dry_run_does_not_judge_destinations_it_will_not_write(m):
+    """`--dry-run` returns before opening either destination, so refusing the
+    run over an ACL acknowledgement or an existing file made the preview
+    unusable on Windows for the one command an operator wants to preview —
+    their real one, flags and all."""
+    class Args:
+        pdf = mapping = None
+        company = confirm_open_company = "Some Company"
+        date_from = date_to = None
+        opening = expect_closing = "1000.00"
+        expect_debits = expect_credits = "0.00"
+        accept_inherited_permissions = False  # the flag a real preview omits
+
+    with tempfile.TemporaryDirectory() as directory, pretending_windows(m):
+        args = Args()
+        args.out = str(pathlib.Path(directory, "result.xml"))
+        args.manifest = str(pathlib.Path(directory, "manifest.csv"))
+        pathlib.Path(args.manifest).write_text("already here")
+
+        args.dry_run = True
+        m.preflight(args)  # must not raise: nothing will be written
+        assert not pathlib.Path(args.out).exists()
+
+        # ...and the same command without --dry-run is still refused, or this
+        # test would pass against a preflight that checks nothing at all.
+        args.dry_run = False
+        refuses(m, "cannot_restrict_on_windows", m.preflight, args)
+
+
+def test_no_output_is_written_unless_every_destination_was_claimed(m):
+    """Creating each file at its own write site left a partial result: with a
+    new `--out` and the manifest taken between preflight and the write, the XML
+    was written and the manifest then refused. Both destinations are claimed
+    before either payload is written, and a failed claim rolls the set back."""
+    with tempfile.TemporaryDirectory() as directory, pretending_windows(m):
+        first = pathlib.Path(directory, "first.xml")
+        second = pathlib.Path(directory, "second.csv")
+        second.write_text("someone else's file")
+        refuses(m, "existing_target_on_windows", m.write_outputs,
+                [(str(first), "<xml/>"), (str(second), "row\n")], True)
+        assert not first.exists(), "the first target must be rolled back, not left behind"
+        assert second.read_text() == "someone else's file"
+
+    # The rollback removes only what this call created. A POSIX run overwrites
+    # by design, so the second claim succeeds and both are written.
+    with tempfile.TemporaryDirectory() as directory:
+        first = pathlib.Path(directory, "first.xml")
+        second = pathlib.Path(directory, "second.csv")
+        m.write_outputs([(str(first), "<xml/>"), (str(second), "row\n")])
+        assert first.read_text() == "<xml/>" and second.read_text() == "row\n"
+        assert stat.S_IMODE(first.stat().st_mode) == 0o600
+
+
+def test_a_case_insensitive_collision_is_refused_before_anything_is_written(m):
+    """`--out Result.xml --manifest result.XML` is one file on a case-insensitive
+    volume. The lexical preflight cannot see it and `samefile` needs both paths
+    to exist, so this used to be caught only *after* the XML had been written
+    and the manifest had truncated it. Both destinations are now created empty
+    first, which is when the filesystem can answer."""
+    class Args:
+        pdf = mapping = None
+
+    with tempfile.TemporaryDirectory() as directory:
+        probe = pathlib.Path(directory, "Aa.probe")
+        probe.write_text("")
+        if not pathlib.Path(directory, "aa.probe").exists():
+            return  # case-sensitive volume
+        probe.unlink()
+
+        args = Args()
+        args.out = str(pathlib.Path(directory, "Result.xml"))
+        args.manifest = str(pathlib.Path(directory, "result.XML"))
+        refuses(m, "path_collision", m.write_outputs,
+                [(args.out, "<xml/>"), (args.manifest, "row\n")], False,
+                lambda: m._check_paths(args))
+        # neither payload reached the disk, and the rollback left nothing
+        assert not pathlib.Path(args.out).exists(), "rolled back"
+
+
+def test_an_ach_reference_must_be_reference_shaped(m):
+    """"Hyphen then digits" does not distinguish a bank reference from a name.
+    `STUDIO-54` resolved to `STUDIO`, and so did `STUDIO-5 4` once the pattern
+    tolerated a wrap — so a mapping for `STUDIO` silently posted a `STUDIO-54`
+    transaction to the wrong ledger. A reference-length run of digits is
+    required; anything shorter is UNRESOLVED and reaches suspense, where an
+    operator sees it."""
+    def party(narr):
+        return m.HDFC.party(m.HDFC, {"narr": narr, "narr_spaced": narr})
+
+    # a name's own hyphenated number is never a delimiter
+    for tail in ["STUDIO-54", "UNIT-7", "SHOP-2024", "STUDIO-5 4", "SHOP-1 2 3"]:
+        assert party(f"ACH D- TP ACH {tail}") == "UNRESOLVED", tail
+
+    # a real reference still is, wrapped or not — including a wrap immediately
+    # after the delimiter, where the line ends at the hyphen itself
+    for tail, expected in [
+        ("STUDIO-54 INDUSTRIES-1234567890", "STUDIO-54 INDUSTRIES"),
+        ("ACME TRADERS-12345 67890", "ACME TRADERS"),
+        ("ACME TRADERS- 1234567890", "ACME TRADERS"),
+        ("STUDIO-54 INDUSTRIES- 1234567890", "STUDIO-54 INDUSTRIES"),
+        ("UNIT-7 METALS-12 345 6789", "UNIT-7 METALS"),
+    ]:
+        assert party(f"ACH D- TP ACH {tail}") == expected, tail
 
 
 def main():

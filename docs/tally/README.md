@@ -63,30 +63,43 @@ capability from assumption, and a completed request from a verified snapshot.
 Behaviour of the **bank's PDF and of `pdftotext`**, not of Tally — so it is recorded here
 rather than in [`TALLY_PROTOCOL_REFERENCE.md`](./TALLY_PROTOCOL_REFERENCE.md), whose stated
 purpose is how the XML gateway behaves and whose confidence markers mean a captured request
-and response. There is no gateway exchange to capture for any of this. Same discipline:
-state the evidence, and never record a claim without saying what it rests on.
+and response. There is no gateway exchange to capture for any of this.
 
-Code that encodes one of these cites the finding by number instead of restating it.
+Same discipline, and the same three markers `AGENTS.md` P6 requires, read against this
+subject rather than against a live Tally:
+
+| Marker | Meaning here |
+| --- | --- |
+| **VERIFIED** | Seen in a real statement — present in a committed `pdftotext` capture. |
+| **PARTIAL** | The mechanism is verified; this particular instance is reproduced at the real column geometry on a constructed page, not observed in a real narration. |
+| **UNVERIFIED** | A judgement made to separate two cases, not a measurement. Do not build on it without checking. |
+
+A finding carries one marker per claim, because the claims in one finding do not all rest on
+the same evidence. Code that encodes one cites it by number instead of restating it.
 
 #### S1. A narration cell wraps at the column edge, and the wrap can fall inside a reference number
 
-**Evidence: measured through `parse_pages` on constructed pages at the real HDFC column
-geometry** (`test_a_wrapped_ach_reference_survives_the_parser`). The underlying wrap is
-visible in the committed HDFC capture, where a UPI reference is split across two lines of
-the narration cell.
+**VERIFIED — the wrap itself.** The committed HDFC capture splits a UPI reference across two
+lines of the narration cell. That file is real `pdftotext` output, sanitised.
+
+**PARTIAL — the same wrap in an ACH narration.** Neither capture contains an ACH narration, so
+this is reproduced through `parse_pages` on a constructed page at the real HDFC column
+geometry (`test_a_wrapped_ach_reference_survives_the_parser`). The mechanism is the cell
+wrap above, which is verified; what is not observed is a real ACH row wrapping.
 
 `parse_pages` keeps two readings of every wrapped text cell, and **neither is correct for
-every row**:
+every row** (VERIFIED — these are measured outputs, not predictions):
 
 | Where the wrap falls | `narr` (de-wrapped) | `narr_spaced` (space-joined) |
 | --- | --- | --- |
-| inside the reference | reference intact ✅ | `...-12345 67890` |
-| between two words of the name | `NORTHWINDTRADERS` — welded ❌ | name intact ✅ |
-| inside one word of the name | word intact ✅ | `TRAD ERS` — split ❌ |
+| inside the reference | reference intact | `...-12345 67890` |
+| between two words of the name | `NORTHWINDTRADERS` — welded | name intact |
+| inside one word of the name | word intact | `TRAD ERS` — split |
 
-Name extraction therefore reads `narr_spaced`, and any pattern that treats a trailing
-reference as a delimiter must tolerate internal spaces in it — `\d[\d\s]*`, not `\d+$`.
-Anchoring on `\d+$` makes every wrapped reference `UNRESOLVED`.
+Name extraction therefore reads `narr_spaced`, and any pattern treating a trailing reference
+as a delimiter must tolerate spaces **inside** it and **immediately after the delimiter** —
+the line can end at the hyphen itself, giving `ACME TRADERS- 1234567890`. Anchoring on
+`\d+$` makes every wrapped reference `UNRESOLVED`.
 
 **Residual:** row 3. A wrap inside a single word leaves a space `narr_spaced` cannot tell
 from a real one, and the reading that would get it right is the one that fails row 2. The
@@ -95,14 +108,26 @@ test so it is a recorded limitation rather than a surprise.
 
 #### S2. HDFC prints an ACH counterparty between `TP ACH` and the final bank reference
 
-**Evidence: observed in real HDFC narrations; the parsing rule is asserted end-to-end** in
-`test_ach_party_ends_at_the_final_bank_reference`. Shape: `ACH D- TP ACH <name>-<reference>`.
+**VERIFIED — the shape.** `ACH D- TP ACH <name>-<reference>` appears in the committed HDFC
+capture, carrying a ten-digit reference.
 
-The delimiter is the **final** hyphen-plus-digits, not the first: a name may legitimately
-contain a hyphenated number (`STUDIO-54`, `UNIT-7`). A non-greedy boundary resolved
-`ACH D- TP ACH STUDIO-54 INDUSTRIES-1234567890` to `STUDIO`, and a mapping row for `STUDIO`
-then silently posts an unrelated counterparty's transaction to that ledger. Combined with
-S1, the reference is `(\d[\d\s]*)$` and the match is greedy.
+**VERIFIED — the delimiter is the *final* hyphen-plus-digits, not the first.** A name may
+legitimately contain a hyphenated number (`STUDIO-54`, `UNIT-7`). A non-greedy boundary
+resolved `ACH D- TP ACH STUDIO-54 INDUSTRIES-1234567890` to `STUDIO`, and a mapping row for
+`STUDIO` then silently posts an unrelated counterparty to that ledger. Asserted in
+`test_ach_party_ends_at_the_final_bank_reference`.
+
+**UNVERIFIED — the six-digit minimum (`ACH_REFERENCE_DIGITS`) that separates a reference from
+a name's own number.** "Hyphen then digits" does not distinguish them, so `STUDIO-54` and the
+wrapped `STUDIO-5 4` both resolved to `STUDIO`. The threshold is a judgement about the *gap*:
+a number inside a name is a unit, a street or a year, so at most four digits, while the only
+references actually observed run to ten. Six sits between with margin, and one capture is not
+a distribution. **Do not build on the exact number.** Anything shorter is `UNRESOLVED` and
+reaches suspense, which is the direction to fail in — an unrecognised narration costs a look,
+a misattributed one does not announce itself.
+
+**Residual:** a counterparty whose name genuinely ends in a hyphen and six or more digits is
+still split at that hyphen. Nothing in the narration distinguishes that case.
 
 The architectural decisions are recorded in:
 

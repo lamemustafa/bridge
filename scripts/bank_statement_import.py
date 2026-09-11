@@ -88,6 +88,7 @@ of this tool is posted to a real book.
 """
 
 import argparse
+import contextlib
 import csv
 import datetime
 import decimal
@@ -364,6 +365,24 @@ class SBI(Bank):
         return "TXN", ""
 
 
+# The fewest digits a trailing run must have before it counts as an ACH bank
+# reference rather than part of the counterparty's name. Chosen for the **gap**
+# rather than fitted to a sample: a number inside a name is a unit, a street or
+# a year, so at most four digits (`STUDIO-54`, `UNIT-7`, `SHOP-2024`), while the
+# references observed in real narrations run to ten. Six sits between them with
+# margin on both sides.
+#
+# Residual, stated so it is not mistaken for a guarantee: a counterparty whose
+# name genuinely ends in a hyphen and six or more digits is still split at that
+# hyphen. Nothing in the narration distinguishes that case.
+ACH_REFERENCE_DIGITS = 6
+# `-\s*` before the run, and `\s*` between its digits: the cell wraps wherever
+# the column edge falls, which includes immediately after the delimiter. See
+# finding S1.
+ACH_PARTY = re.compile(
+    r"^ACH D-\s*TP ACH (.+)-\s*((?:\d\s*){%d,})$" % ACH_REFERENCE_DIGITS)
+
+
 class HDFC(Bank):
     """HDFC Bank current-account statement."""
 
@@ -488,7 +507,18 @@ class HDFC(Bank):
         # Greedy binds the name to the *last* qualifying reference: `(.+)`
         # prefers the longest match, and `ACME TRADERS-12345` fails because the
         # character after it is a space rather than a hyphen.
-        found = re.match(r"^ACH D-\s*TP ACH (.+)-(\d[\d\s]*)$", narr)
+        #
+        # The **digit count is part of the shape**, and it has to be, because
+        # "hyphen then digits" alone does not distinguish a bank reference from
+        # an ordinary name. `ACH D- TP ACH STUDIO-54` resolved to `STUDIO` and
+        # `ACH D- TP ACH STUDIO-5 4` — a name whose number wrapped at the column
+        # edge — did too, so a mapping for `STUDIO` silently posted a `STUDIO-54`
+        # transaction to the wrong ledger. Requiring a reference-length run of
+        # digits leaves both as UNRESOLVED, which routes them to suspense where
+        # an operator sees them. That is the direction to fail in: an
+        # unrecognised narration costs a look, a misattributed one does not
+        # announce itself at all.
+        found = ACH_PARTY.match(narr)
         if found:
             return _squash(found.group(1))
         for prefix, label in (("EMI ", "EMI"), ("DEBIT CARD", "DEBIT CARD FEE")):
@@ -1316,7 +1346,7 @@ def windows_destination_refusal(path, accept_inherited):
     destination before the run writes anything, because refusing the manifest
     after the XML has been written leaves a partial result whose remedy —
     remove the manifest and re-run — then fails on the XML the failed run
-    created. `_write_private` applies it again at the moment of the write,
+    created. `_open_private` applies it again at the moment of the create,
     because a preflight result is a fact about the past: between the check and
     the create, another process can put a file there.
     """
@@ -1343,8 +1373,8 @@ def windows_destination_refusal(path, accept_inherited):
     return None
 
 
-def _write_private(path, text, accept_inherited=False):
-    """Create output files readable only by their owner, where the OS allows it.
+def _open_private(path, accept_inherited=False):
+    """Create one output file readable only by its owner, and return the handle.
 
     The XML and the manifest carry counterparty names, amounts, an account
     label and every narration in the statement. On a shared host the default
@@ -1362,12 +1392,49 @@ def _write_private(path, text, accept_inherited=False):
     exclusive = os.name == "nt"
     flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
     try:
-        handle = os.open(path, flags, 0o600)
+        return os.open(path, flags, 0o600)
     except FileExistsError:
         raise _existing_target_on_windows(path) from None
-    with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
-        stream.write(text)
-    os.chmod(path, 0o600)  # an existing file keeps its old mode through O_CREAT
+
+
+def write_outputs(targets, accept_inherited=False, after_claim=None):
+    """Claim **every** destination, then write them. All of them or none.
+
+    `targets` is [(path, text), ...] in the order they should be reported.
+    `after_claim` runs once every destination exists and is still empty; raising
+    from it rolls the whole set back.
+
+    Creating each file at its own write site left a partial result that the
+    refusal's own remedy could not clear: with `--out` new and `--manifest`
+    taken, the XML was written, the manifest was refused, and "remove it and
+    re-run" then failed on the XML the failed run had just created. Preflight
+    narrowed that to a race — another process taking the manifest between the
+    check and the write — but did not close it, because the two creates were
+    still independent events with the first payload written in between.
+
+    Claiming both handles up front makes the second failure happen while the
+    first file is still empty and still this run's to remove, so the rollback is
+    safe: nothing else can have put content there. A crossed pair of concurrent
+    invocations now has one of them lose its claim and clean up, rather than
+    both half-succeeding.
+    """
+    claimed = []
+    try:
+        for path, _ in targets:
+            claimed.append((path, _open_private(path, accept_inherited)))
+        if after_claim is not None:
+            after_claim()
+    except BaseException:
+        # Only files this call created are removed, and each is still empty.
+        for path, handle in claimed:
+            os.close(handle)
+            with contextlib.suppress(OSError):
+                os.unlink(path)
+        raise
+    for (path, text), (_, handle) in zip(targets, claimed):
+        with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
+            stream.write(text)
+        os.chmod(path, 0o600)  # an existing file keeps its old mode through O_CREAT
 
 
 def _check_paths(args):
@@ -1447,12 +1514,19 @@ def preflight(args):
     # write time meant a run with a new `--out` and an existing `--manifest`
     # wrote the XML, then refused the manifest: a partial result whose stated
     # remedy — remove the manifest and re-run — immediately failed on the XML
-    # the failed run had just created. `_write_private` re-checks at the create.
-    for path in (args.out, args.manifest):
-        if path:
-            refusal = windows_destination_refusal(path, args.accept_inherited_permissions)
-            if refusal:
-                raise refusal
+    # the failed run had just created. `_claim_destinations` re-checks at the
+    # create, where it can be atomic.
+    #
+    # Not under `--dry-run`, which returns before opening either destination.
+    # These checks are about writing a file; refusing a preview that would write
+    # nothing made `--dry-run` unusable on Windows for exactly the command an
+    # operator wants to preview — their real one, flags and all.
+    if not args.dry_run:
+        for path in (args.out, args.manifest):
+            if path:
+                refusal = windows_destination_refusal(path, args.accept_inherited_permissions)
+                if refusal:
+                    raise refusal
 
     window = tuple(_cli_date(value, flag) for value, flag in
                    ((args.date_from, "--from"), (args.date_to, "--to")))
@@ -1497,12 +1571,14 @@ def verify_against_statement(rows, bank, expected):
     return totals
 
 
-def _write_csv(path, records, accept_inherited=False):
+def _manifest_csv(records):
+    """The manifest as text. Separated from writing it so both payloads exist
+    before either destination is claimed."""
     writer_target = io.StringIO()
     writer = csv.DictWriter(writer_target, fieldnames=list(MANIFEST_COLUMNS))
     writer.writeheader()
     writer.writerows(records)
-    _write_private(path, writer_target.getvalue(), accept_inherited)
+    return writer_target.getvalue()
 
 
 def _print_dry_run(manifest):
@@ -1672,20 +1748,24 @@ def main(argv=None):
     print(f"\n{count} vouchers; {skipped} skipped as already carried elsewhere")
     print(f"  bank ledger out {outward:,}  in {inward:,}")
     print(f"  suspense vouchers {sum(1 for record in manifest if record['suspense'])}")
+    targets = []
     if args.out:
-        _write_private(args.out, xml_text, args.accept_inherited_permissions)
-        # Re-run the collision check now that the XML exists. The check before
-        # the run can only compare the two output paths lexically, because
-        # `samefile` needs both to exist — and a lexical compare is
-        # case-sensitive while the volume may not be, so `--out Result.xml
-        # --manifest result.XML` passed, the XML was written, and the manifest
-        # then truncated it with both success lines printed. Asking the
-        # filesystem here costs one call and refuses before anything is lost.
-        _check_paths(args)
-        print(f"  wrote {args.out} (mode 0600)")
+        targets.append((args.out, xml_text))
     if args.manifest:
-        _write_csv(args.manifest, manifest, args.accept_inherited_permissions)
-        print(f"  wrote {args.manifest} (mode 0600)")
+        targets.append((args.manifest, _manifest_csv(manifest)))
+    if targets:
+        # `after_claim` re-runs the collision check once both destinations
+        # exist. The check before the run can only compare the two paths
+        # lexically, because `samefile` needs both to exist — and a lexical
+        # compare is case-sensitive while the volume may not be, so
+        # `--out Result.xml --manifest result.XML` passed it. Asking the
+        # filesystem here costs one call, and now happens while both files are
+        # still **empty**: previously the XML had already been written and the
+        # manifest truncated it, with both success lines printed.
+        write_outputs(targets, args.accept_inherited_permissions,
+                      after_claim=lambda: _check_paths(args))
+        for path, _ in targets:
+            print(f"  wrote {path} (mode 0600)")
     _print_operator_notes(args.company, skipped)
     return 0
 
