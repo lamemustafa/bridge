@@ -39,6 +39,7 @@ import pathlib
 import stat
 import sys
 import tempfile
+import types
 
 SCRIPT = pathlib.Path(__file__).resolve().parent / "bank_statement_import.py"
 #: never a credential — only ever compared for identity, or fed to an
@@ -119,6 +120,37 @@ HDFC_PAGE = page(
     (190, [(2, 60, "03/08/26"), (72, 200, "UPI-GHOST-g@z-ZZZZ0001-999999999999-X"),
            (402, 460, "1.00"), (562, 620, "8,498.50")]),
 )
+
+# The same HDFC geometry, carrying ACH rows whose narration wraps at the cell
+# edge in each of the three places a wrap can land. The point of parsing these
+# rather than handing `party()` a narration string is that the **spacing is
+# produced by the parser**, not by the test: `narr_spaced` is built in
+# `parse_pages` by space-joining a wrapped cell's lines, so a test that writes
+# `"...-12345 67890"` itself proves only that the regex matches what the test
+# thinks the parser emits. Neither capture contains an ACH narration and one
+# cannot be obtained on demand, which is the case the constructed level exists
+# for.
+ACH_WRAP_HEADER = (
+    (52, [(340, 380, "Account"), (382, 396, "No"), (397, 400, ":"),
+          (403, 470, "00000000001234")]),
+    (100, [(5, 30, "Date"), (72, 120, "Narration"), (282, 340, "Chq./Ref.No."),
+           (360, 380, "Value"), (382, 396, "Dt"), (402, 452, "Withdrawal"),
+           (454, 474, "Amt."), (482, 522, "Deposit"), (524, 544, "Amt."),
+           (562, 600, "Closing"), (602, 640, "Balance")]),
+)
+
+
+def ach_wrap_page(first_line, continuation):
+    """One ACH row whose narration wraps onto a second line at the 240 edge."""
+    return page(
+        *ACH_WRAP_HEADER,
+        (120, [(2, 60, "01/08/26"), (72, 238, first_line),
+               (282, 350, "0000123456789012"), (360, 398, "01/08/26"),
+               (402, 460, "1,000.00"), (562, 620, "9,000.00")]),
+        (132, [(72, 200, continuation)]),
+        (170, [(28, 60, "HDFC"), (62, 95, "BANK"), (97, 140, "LIMITED")]),
+    )
+
 
 # An SBI page: date 0-85, value date 85-140, narration 140-220 (wrap edge 220),
 # ref 220-299 (wrap edge 299), branch 299-356, debit 356-441, credit 441-506.
@@ -951,6 +983,53 @@ def test_ach_party_ends_at_the_final_bank_reference(m):
     assert party("ACH D- TP ACH UNIT-7 METALS-12 345 6789") == "UNIT-7 METALS"
 
 
+def test_a_wrapped_ach_reference_survives_the_parser(m):
+    """The assertions above hand `party()` a narration the *test* spaced, so on
+    their own they prove only that the regex matches what the test believes the
+    parser emits. Here the spacing is the parser's: the row is bbox words at the
+    real column geometry, `parse_pages` splits the narration cell at the 240
+    edge and space-joins the lines into `narr_spaced`, and only then does
+    `party()` see it.
+
+    Measured through `parse_pages`, a wrap lands in three distinguishable
+    places, and the two readings of the cell disagree about which is right:
+
+        wrap inside the reference   narr_spaced 'ACME TRADERS-12345 67890'
+        wrap between name words     narr        'NORTHWINDTRADERS-1234567890'  (welded)
+        wrap inside a name word     narr_spaced 'NORTHWIND TRAD ERS-...'       (split)
+
+    The first two are why this branch reads `narr_spaced` *and* why the
+    reference pattern has to tolerate internal spaces: `narr` keeps the
+    reference intact but welds two words of a name together, so neither reading
+    alone resolves both rows. The third is a residual — a wrap inside a single
+    word leaves a space `narr_spaced` cannot distinguish from a real one — and
+    it is asserted here so it is a recorded limitation rather than a surprise.
+    """
+    def one(first, continuation):
+        rows = m.parse_pages([ach_wrap_page(first, continuation)], m.HDFC())
+        assert len(rows) == 1, rows
+        return rows[0]
+
+    # 1. the wrap falls inside the reference
+    row = one("ACH D- TP ACH ACME TRADERS-12345", "67890")
+    assert row["narr_spaced"] == "ACH D- TP ACH ACME TRADERS-12345 67890", row
+    assert m.HDFC.party(m.HDFC, row) == "ACME TRADERS"
+    # the de-wrapped reading is the one that keeps the reference whole
+    assert row["narr"] == "ACH D- TP ACH ACME TRADERS-1234567890", row
+
+    # 2. the wrap falls between two words of the name — `narr` welds them, which
+    #    is why this branch cannot simply read `narr` and anchor on `\d+$`
+    row = one("ACH D- TP ACH NORTHWIND", "TRADERS-1234567890")
+    assert row["narr"] == "ACH D- TP ACH NORTHWINDTRADERS-1234567890", row
+    assert m.HDFC.party(m.HDFC, row) == "NORTHWIND TRADERS"
+
+    # 3. residual: a wrap inside one word of the name leaves a space that
+    #    `narr_spaced` cannot tell from a real one. Recorded, not fixed — the
+    #    reading that would get this right is the one that fails case 2.
+    row = one("ACH D- TP ACH NORTHWIND TRAD", "ERS-1234567890")
+    assert m.HDFC.party(m.HDFC, row) == "NORTHWIND TRAD ERS", row
+
+
 def test_a_zero_in_one_amount_column_is_still_two_sided(m):
     """`if debit and credit` asked whether both were **non-zero**. A row filling
     both columns with one of them `0.00` is a column-geometry failure, and it
@@ -1028,6 +1107,101 @@ def test_case_only_output_aliases_are_caught_once_the_xml_exists(m):
         assert "same file" in str(refusal)
         # and the XML the run already wrote is still intact
         assert pathlib.Path(args.out).read_text() == "<xml/>"
+
+
+@contextlib.contextmanager
+def pretending_windows(m):
+    """Run a block with the importer believing it is on Windows.
+
+    Every Windows guard in this file is dead code on the machine that runs CI
+    for it, and a guard whose branch never executes reports the same zero
+    failures whether it works or is broken. These tests drive the branch. What
+    they do *not* prove is ACL behaviour — no POSIX host can — only that the
+    refusals fire, in the right order, and that the create is exclusive.
+
+    This rebinds the importer module's own `os`, rather than setting
+    `os.name = "nt"` on the real module: that is global, and `pathlib` reads it
+    to decide whether `Path` is a `WindowsPath`, so every path this tool builds
+    became uninstantiable on a POSIX host. Yields the shim, so a test can also
+    make one call on it lie.
+    """
+    class WindowsOs:
+        name = "nt"
+
+        def __getattr__(self, attribute):
+            return getattr(os, attribute)
+
+    was, shim = m.os, WindowsOs()
+    m.os = shim
+    try:
+        yield shim
+    finally:
+        m.os = was
+
+
+def test_windows_refuses_to_claim_a_privacy_it_cannot_deliver(m):
+    """POSIX modes do not restrict a file on Windows, so writing one and
+    reporting `mode 0600` would be a false claim rather than a weaker one."""
+    with tempfile.TemporaryDirectory() as directory, pretending_windows(m):
+        target = str(pathlib.Path(directory, "out.xml"))
+        refusal = refuses(m, "cannot_restrict_on_windows",
+                          m._write_private, target, "<xml/>", False)
+        assert "--accept-inherited-permissions" in str(refusal)
+        assert not pathlib.Path(target).exists(), "refused, so nothing may be written"
+        # with the acknowledgement, a fresh path is written
+        m._write_private(target, "<xml/>", True)
+        assert pathlib.Path(target).read_text() == "<xml/>"
+        # ...and the second attempt refuses, because an overwrite would keep the
+        # existing file's ACL rather than inheriting the directory's
+        refuses(m, "existing_target_on_windows", m._write_private, target, "<new/>", True)
+        assert pathlib.Path(target).read_text() == "<xml/>", "refused, so not truncated"
+
+
+def test_a_windows_target_appearing_after_the_check_is_not_truncated(m):
+    """The check and the create must be one operation.
+
+    `os.path.exists(path)` followed by an `O_CREAT | O_TRUNC` open is a race: a
+    file arriving in the gap was truncated anyway, destroying a file whose ACL
+    the operator never acknowledged, and the run reported success. Driven here
+    by making the existence check lie, which is what losing the race looks like
+    from inside the process.
+    """
+    with tempfile.TemporaryDirectory() as directory, pretending_windows(m) as shim:
+        target = pathlib.Path(directory, "out.xml")
+        target.write_text("someone else's file")
+        # the gap between check and create: the check says the path is free and
+        # the filesystem disagrees
+        shim.path = types.SimpleNamespace(exists=lambda path: False)
+        refusal = refuses(m, "existing_target_on_windows",
+                          m._write_private, str(target), "<xml/>", True)
+        assert "already exists" in str(refusal)
+        assert target.read_text() == "someone else's file", "O_EXCL must not truncate"
+
+
+def test_both_windows_destinations_are_checked_before_either_is_written(m):
+    """A new `--out` with an existing `--manifest` used to write the XML and
+    then refuse the manifest, leaving a partial result — and the refusal's
+    remedy ("remove it and re-run") then failed on the XML the failed run had
+    just created. Preflight judges both before anything is written."""
+    class Args:
+        pdf = mapping = None
+        company = confirm_open_company = "Some Company"
+        dry_run = False
+        date_from = date_to = None
+        accept_inherited_permissions = True
+
+    with tempfile.TemporaryDirectory() as directory, pretending_windows(m):
+        args = Args()
+        args.out = str(pathlib.Path(directory, "new.xml"))
+        args.manifest = str(pathlib.Path(directory, "existing.csv"))
+        pathlib.Path(args.manifest).write_text("old manifest")
+
+        refusal = refuses(m, "existing_target_on_windows", m.preflight, args)
+        assert "existing.csv" in str(refusal), refusal
+        # the whole point: the XML was not written first
+        assert not pathlib.Path(args.out).exists(), \
+            "preflight refused, so the run must not have written the other target"
+        assert pathlib.Path(args.manifest).read_text() == "old manifest"
 
 
 def main():

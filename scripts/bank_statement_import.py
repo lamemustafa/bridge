@@ -480,25 +480,14 @@ class HDFC(Bank):
                 return "UNRESOLVED"
             # UPI-XXXXXX4230-... is a masked account, not a payee name
             return "UNNAMED" if re.fullmatch(r"[X]+\d*", candidate) else candidate
-        # Greedy, anchored at the end: the delimiter is the **final** bank
-        # reference, not the first hyphen followed by digits. Non-greedy stopped
-        # at the first one, so `ACH D- TP ACH STUDIO-54 INDUSTRIES-1234567890`
-        # resolved to `STUDIO` — and a mapping for `STUDIO` then silently posts
-        # an unrelated counterparty's transaction to that ledger. A name
-        # containing a hyphenated number is ordinary (`STUDIO-54`, `UNIT-7`).
+        # Shape and delimiter: finding S2 in `docs/tally/README.md`
+        # ("Statement-layout findings"). Internal spaces in the reference, and
+        # why this branch reads `narr_spaced` rather than `narr`: finding S1
+        # there, which also records the residual neither reading resolves.
         #
-        # The reference may carry **internal spaces**, so it is `\d[\d\s]*`
-        # rather than `\d+`. This branch reads `narr_spaced`, the form that
-        # keeps the PDF's spacing, and a cell wrap lands wherever the column
-        # edge falls — inside the reference as readily as between fields. It is
-        # the same phenomenon as `HDF CH01206262147` in the UTR branch. A `\d+$`
-        # anchor turned `ACME TRADERS-12345 67890` into UNRESOLVED, which the
-        # earlier unanchored pattern had resolved correctly: fixing the
-        # over-greedy boundary had quietly traded one failure for another.
-        #
-        # Greedy still binds the name to the *last* qualifying reference:
-        # `(.+)` prefers the longest match, and `ACME TRADERS-12345` fails
-        # because the character after it is a space rather than a hyphen.
+        # Greedy binds the name to the *last* qualifying reference: `(.+)`
+        # prefers the longest match, and `ACME TRADERS-12345` fails because the
+        # character after it is a space rather than a hyphen.
         found = re.match(r"^ACH D-\s*TP ACH (.+)-(\d[\d\s]*)$", narr)
         if found:
             return _squash(found.group(1))
@@ -1304,35 +1293,43 @@ def read_password(env=None, interactive=None):
     return getpass.getpass("statement PDF password: ")
 
 
-def _write_private(path, text, accept_inherited=False):
-    """Create output files readable only by their owner, where the OS allows it.
+def _existing_target_on_windows(path):
+    # The acknowledgement covers the *directory* the operator checked with
+    # `icacls`. It does not cover a file that is already there: an overwrite
+    # keeps that file's existing DACL rather than inheriting the directory's,
+    # and `os.chmod` cannot restrict it. So an operator can follow the
+    # instruction exactly and still overwrite a file readable by other
+    # principals — with the tool reporting success.
+    return Refusal(
+        "existing_target_on_windows",
+        f"{path} already exists. On Windows an overwrite keeps the file's "
+        "own ACL, not the directory's, so checking the directory says "
+        "nothing about this file. Delete it (or choose a new name) and "
+        "re-run, so the new file inherits the ACL you checked.",
+    )
 
-    The XML and the manifest carry counterparty names, amounts, an account
-    label and every narration in the statement. On a shared host the default
-    022 umask would publish all of it as mode 0644.
+
+def windows_destination_refusal(path, accept_inherited):
+    """Why this destination cannot be written on Windows, or None.
+
+    One rule, applied twice on purpose. `preflight` applies it to **every**
+    destination before the run writes anything, because refusing the manifest
+    after the XML has been written leaves a partial result whose remedy —
+    remove the manifest and re-run — then fails on the XML the failed run
+    created. `_write_private` applies it again at the moment of the write,
+    because a preflight result is a fact about the past: between the check and
+    the create, another process can put a file there.
     """
-    if os.name == "nt" and accept_inherited and os.path.exists(path):
-        # The acknowledgement covers the *directory* the operator checked with
-        # `icacls`. It does not cover a file that is already there: `O_TRUNC`
-        # keeps that file's existing DACL rather than inheriting the
-        # directory's, and `os.chmod` cannot restrict it. So an operator can
-        # follow the instruction exactly and still overwrite a file readable by
-        # other principals — with the tool reporting success.
-        raise Refusal(
-            "existing_target_on_windows",
-            f"{path} already exists. On Windows an overwrite keeps the file's "
-            "own ACL, not the directory's, so checking the directory says "
-            "nothing about this file. Delete it (or choose a new name) and "
-            "re-run, so the new file inherits the ACL you checked.",
-        )
-    if os.name == "nt" and not accept_inherited:
+    if os.name != "nt":
+        return None
+    if not accept_inherited:
         # On Windows `os.chmod` toggles the read-only attribute and the mode
         # argument to `os.open` is ignored; the file inherits the directory's
-        # ACL. So the guarantee in this docstring is simply false there, and a
-        # file carrying account numbers, counterparties, amounts and every
-        # narration would be readable by anyone the directory allows — while the
-        # tool reported it as owner-only. Refuse rather than reassure.
-        raise Refusal(
+        # ACL. So the owner-only guarantee is simply false there, and a file
+        # carrying account numbers, counterparties, amounts and every narration
+        # would be readable by anyone the directory allows — while the tool
+        # reported it as owner-only. Refuse rather than reassure.
+        return Refusal(
             "cannot_restrict_on_windows",
             f"{path}: this tool writes owner-only files, and POSIX modes do not "
             "do that on Windows — the output would inherit the directory's ACL "
@@ -1341,7 +1338,33 @@ def _write_private(path, text, accept_inherited=False):
             "--accept-inherited-permissions, which records that you have "
             "checked and makes the claim your own rather than this tool's.",
         )
-    handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    if os.path.exists(path):
+        return _existing_target_on_windows(path)
+    return None
+
+
+def _write_private(path, text, accept_inherited=False):
+    """Create output files readable only by their owner, where the OS allows it.
+
+    The XML and the manifest carry counterparty names, amounts, an account
+    label and every narration in the statement. On a shared host the default
+    022 umask would publish all of it as mode 0644.
+    """
+    refusal = windows_destination_refusal(path, accept_inherited)
+    if refusal:
+        raise refusal
+    # `O_EXCL` on Windows, so "must not already exist" is decided by the
+    # filesystem at create time rather than by a preceding `os.path.exists`.
+    # With the check separated from the create, a file appearing in between was
+    # still opened `O_TRUNC` — truncating a file whose ACL the operator never
+    # checked, and reporting success. On POSIX an overwrite is permitted and
+    # the mode argument is honoured, so `O_TRUNC` stays.
+    exclusive = os.name == "nt"
+    flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
+    try:
+        handle = os.open(path, flags, 0o600)
+    except FileExistsError:
+        raise _existing_target_on_windows(path) from None
     with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
         stream.write(text)
     os.chmod(path, 0o600)  # an existing file keeps its old mode through O_CREAT
@@ -1420,6 +1443,16 @@ def preflight(args):
             "generated document, or --dry-run to review the mapping without writing.",
         )
     _check_paths(args)
+    # Both destinations, before either is written. Judging them one at a time at
+    # write time meant a run with a new `--out` and an existing `--manifest`
+    # wrote the XML, then refused the manifest: a partial result whose stated
+    # remedy — remove the manifest and re-run — immediately failed on the XML
+    # the failed run had just created. `_write_private` re-checks at the create.
+    for path in (args.out, args.manifest):
+        if path:
+            refusal = windows_destination_refusal(path, args.accept_inherited_permissions)
+            if refusal:
+                raise refusal
 
     window = tuple(_cli_date(value, flag) for value, flag in
                    ((args.date_from, "--from"), (args.date_to, "--to")))

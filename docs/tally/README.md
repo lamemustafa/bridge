@@ -58,6 +58,52 @@ capability from assumption, and a completed request from a verified snapshot.
   No statement, password, ledger name or account number lives in this repository — all are
   supplied at run time.
 
+### Statement-layout findings
+
+Behaviour of the **bank's PDF and of `pdftotext`**, not of Tally — so it is recorded here
+rather than in [`TALLY_PROTOCOL_REFERENCE.md`](./TALLY_PROTOCOL_REFERENCE.md), whose stated
+purpose is how the XML gateway behaves and whose confidence markers mean a captured request
+and response. There is no gateway exchange to capture for any of this. Same discipline:
+state the evidence, and never record a claim without saying what it rests on.
+
+Code that encodes one of these cites the finding by number instead of restating it.
+
+#### S1. A narration cell wraps at the column edge, and the wrap can fall inside a reference number
+
+**Evidence: measured through `parse_pages` on constructed pages at the real HDFC column
+geometry** (`test_a_wrapped_ach_reference_survives_the_parser`). The underlying wrap is
+visible in the committed HDFC capture, where a UPI reference is split across two lines of
+the narration cell.
+
+`parse_pages` keeps two readings of every wrapped text cell, and **neither is correct for
+every row**:
+
+| Where the wrap falls | `narr` (de-wrapped) | `narr_spaced` (space-joined) |
+| --- | --- | --- |
+| inside the reference | reference intact ✅ | `...-12345 67890` |
+| between two words of the name | `NORTHWINDTRADERS` — welded ❌ | name intact ✅ |
+| inside one word of the name | word intact ✅ | `TRAD ERS` — split ❌ |
+
+Name extraction therefore reads `narr_spaced`, and any pattern that treats a trailing
+reference as a delimiter must tolerate internal spaces in it — `\d[\d\s]*`, not `\d+$`.
+Anchoring on `\d+$` makes every wrapped reference `UNRESOLVED`.
+
+**Residual:** row 3. A wrap inside a single word leaves a space `narr_spaced` cannot tell
+from a real one, and the reading that would get it right is the one that fails row 2. The
+information needed to separate them is not carried past `_dewrap`. Asserted in the contract
+test so it is a recorded limitation rather than a surprise.
+
+#### S2. HDFC prints an ACH counterparty between `TP ACH` and the final bank reference
+
+**Evidence: observed in real HDFC narrations; the parsing rule is asserted end-to-end** in
+`test_ach_party_ends_at_the_final_bank_reference`. Shape: `ACH D- TP ACH <name>-<reference>`.
+
+The delimiter is the **final** hyphen-plus-digits, not the first: a name may legitimately
+contain a hyphenated number (`STUDIO-54`, `UNIT-7`). A non-greedy boundary resolved
+`ACH D- TP ACH STUDIO-54 INDUSTRIES-1234567890` to `STUDIO`, and a mapping row for `STUDIO`
+then silently posts an unrelated counterparty's transaction to that ledger. Combined with
+S1, the reference is `(\d[\d\s]*)$` and the match is greedy.
+
 The architectural decisions are recorded in:
 
 - [Transport negotiation](../adr/0001-tally-transport-negotiation.md)
