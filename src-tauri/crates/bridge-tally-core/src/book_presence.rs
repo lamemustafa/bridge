@@ -1175,8 +1175,9 @@ fn decide(
         })
         .unwrap_or_default();
 
-    // A verdict decided before rule three still *reached* whatever it
-    // resembles, and the observations count what no proposal came near.
+    // A verdict decided before rule three — an identity match as much as a
+    // collision — still *reached* whatever it resembles, and the observations
+    // count only what no proposal came near.
     let with_resemblances = |touched: BTreeSet<usize>| {
         let mut touched = touched;
         touched.extend(resemblances(proposal, party, window, index, &number_matches).into_keys());
@@ -1216,20 +1217,23 @@ fn decide(
                 if number_selects_another {
                     let mut touched = BTreeSet::from([matches[0]]);
                     touched.insert(number_matches[0]);
-                    let (mut candidates, mut found) =
-                        candidates_from(window, matches, CandidateRule::SharedRemoteId);
-                    let (by_number, number_found) = candidates_from(
-                        window,
-                        &number_matches,
-                        CandidateRule::SharedVoucherNumber,
-                    );
-                    candidates.extend(by_number);
-                    candidates.truncate(MAX_CANDIDATES_PER_PROPOSAL);
-                    found += number_found;
+                    // Both sides go through one ranked constructor. Appending
+                    // and truncating could drop the number side wholesale when
+                    // the REMOTEID side alone filled the cap — hiding half of
+                    // the disagreement this status exists to report.
+                    let mut entries = matches
+                        .iter()
+                        .map(|position| (*position, CandidateRule::SharedRemoteId))
+                        .chain(
+                            number_matches
+                                .iter()
+                                .map(|position| (*position, CandidateRule::SharedVoucherNumber)),
+                        )
+                        .collect::<Vec<_>>();
                     return shell(
                         PresenceStatus::PossiblyPresent(undecided(
                             UndecidedReason::IdentityConflict,
-                            (candidates, found),
+                            candidates_ranked(window, &mut entries),
                         )),
                         with_resemblances(touched),
                     );
@@ -1241,7 +1245,7 @@ fn decide(
                         &window.vouchers[matches[0]],
                         PresenceBasis::RemoteId,
                     ),
-                    BTreeSet::from([matches[0]]),
+                    with_resemblances(BTreeSet::from([matches[0]])),
                 );
             }
             return shell(
@@ -1333,7 +1337,7 @@ fn decide(
             }
             return shell(
                 settled(proposal, party, matched, PresenceBasis::ManualVoucherNumber),
-                touched,
+                with_resemblances(touched),
             );
         }
     }
@@ -1393,24 +1397,9 @@ fn decide(
     // Ordered as (position, rule) pairs before anything is cloned: the order is
     // rule-then-key and only the retained prefix needs a key at all.
     let mut ordered = found.into_iter().collect::<Vec<_>>();
-    ordered.sort_by(|(left_position, left_rule), (right_position, right_rule)| {
-        left_rule.rank().cmp(&right_rule.rank()).then_with(|| {
-            window.vouchers[*left_position]
-                .key()
-                .cmp(window.vouchers[*right_position].key())
-        })
-    });
-    let total = ordered.len();
-    let candidates = ordered
-        .into_iter()
-        .take(MAX_CANDIDATES_PER_PROPOSAL)
-        .map(|(position, rule)| PresenceCandidate {
-            book_key: window.vouchers[position].key().to_string(),
-            rule,
-        })
-        .collect::<Vec<_>>();
+    let ranked = candidates_ranked(window, &mut ordered);
     shell(
-        PresenceStatus::PossiblyPresent(undecided(reason, (candidates, total))),
+        PresenceStatus::PossiblyPresent(undecided(reason, ranked)),
         touched,
     )
 }
@@ -1534,8 +1523,11 @@ fn differences(
         if comparison_key(observed) != comparison_key(catalog_name) {
             differences.push(Difference {
                 field: DifferenceField::Party,
-                proposed: Some(catalog_name.clone()),
-                observed: Some(observed.to_string()),
+                // Bounded for the same reason the observation labels are: a
+                // response can drop whole rows but cannot shrink one, and the
+                // comparison above already used the full values.
+                proposed: Some(label(catalog_name)),
+                observed: Some(label(observed)),
             });
         }
     }
@@ -1626,28 +1618,49 @@ fn keep_strongest(
         .or_insert(rule);
 }
 
-/// Builds the *retained* candidates and reports how many there were.
+/// Builds the *retained* candidates, ordered, and reports how many there were.
 ///
-/// A dense window can hold thousands of vouchers sharing one manual number, and
-/// every one of them used to be cloned into a `PresenceCandidate` before the
-/// response cap discarded all but twenty-five. At the admitted bounds that is
-/// millions of string clones to produce a bounded answer, so the cap is applied
-/// **before** the clone and the true count is carried alongside it rather than
-/// recovered from the vector's length.
+/// Two properties, and the second is why this is one function rather than
+/// three call sites. **Ordering is part of the contract** — rule, then book key
+/// — so a dense collision exposes the same subset however Tally happened to
+/// order its rows, and a reviewer comparing two runs of an unchanged book does
+/// not see a different twenty-five. And the cap is applied **before** the
+/// clone: a window can hold thousands of vouchers on one number, and cloning
+/// them all to discard all but twenty-five is millions of allocations for a
+/// bounded answer. Sorting `(position, rule)` pairs allocates nothing.
+fn candidates_ranked(
+    window: &BookWindow,
+    entries: &mut [(usize, CandidateRule)],
+) -> (Vec<PresenceCandidate>, usize) {
+    entries.sort_by(|(left, left_rule), (right, right_rule)| {
+        left_rule.rank().cmp(&right_rule.rank()).then_with(|| {
+            window.vouchers[*left]
+                .key()
+                .cmp(window.vouchers[*right].key())
+        })
+    });
+    let found = entries.len();
+    let retained = entries
+        .iter()
+        .take(MAX_CANDIDATES_PER_PROPOSAL)
+        .map(|(position, rule)| PresenceCandidate {
+            book_key: window.vouchers[*position].key().to_string(),
+            rule: *rule,
+        })
+        .collect();
+    (retained, found)
+}
+
 fn candidates_from(
     window: &BookWindow,
     positions: &[usize],
     rule: CandidateRule,
 ) -> (Vec<PresenceCandidate>, usize) {
-    let retained = positions
+    let mut entries = positions
         .iter()
-        .take(MAX_CANDIDATES_PER_PROPOSAL)
-        .map(|position| PresenceCandidate {
-            book_key: window.vouchers[*position].key().to_string(),
-            rule,
-        })
-        .collect();
-    (retained, positions.len())
+        .map(|position| (*position, rule))
+        .collect::<Vec<_>>();
+    candidates_ranked(window, &mut entries)
 }
 
 fn undecided(

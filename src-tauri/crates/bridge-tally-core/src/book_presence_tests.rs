@@ -2115,3 +2115,119 @@ fn a_pathological_book_key_is_refused_rather_than_truncated() {
     })
     .is_ok());
 }
+
+/// Candidate order is part of the contract, so the same book must yield the
+/// same twenty-five whatever order Tally happened to return its rows in. The
+/// cap is applied after ranking, never to an arbitrary source prefix.
+#[test]
+fn a_capped_collision_list_does_not_depend_on_the_rows_arriving_order() {
+    let keys: Vec<&'static str> = (1..=40)
+        .map(|index| Box::leak(format!("book-{index:03}").into_boxed_str()) as &'static str)
+        .collect();
+    let listed = |order: Vec<&'static str>| {
+        let rows: Vec<BookRow> = order
+            .into_iter()
+            .enumerate()
+            .map(|(offset, key)| {
+                BookRow::new(
+                    key,
+                    if offset % 2 == 0 {
+                        "20260812"
+                    } else {
+                        "20260813"
+                    },
+                    "AA0118",
+                )
+            })
+            .collect();
+        let window = window(&rows);
+        let proposals = [ProposalRow::new(0, "20260812", "AA0118").build()];
+        let report = run(
+            &window,
+            &catalog(),
+            &numbering(NumberingMethod::Manual),
+            &proposals,
+        );
+        let undecided = only(&report).undecided().expect("undecided").clone();
+        assert_eq!(undecided.reason, UndecidedReason::BookNumberCollision);
+        assert_eq!(undecided.candidate_count, 40);
+        undecided
+            .candidates
+            .iter()
+            .map(|candidate| candidate.book_key.clone())
+            .collect::<Vec<_>>()
+    };
+    let ascending = listed(keys.clone());
+    let reversed = listed(keys.into_iter().rev().collect());
+    assert_eq!(ascending.len(), MAX_CANDIDATES_PER_PROPOSAL);
+    assert_eq!(
+        ascending, reversed,
+        "the same book must expose the same candidates whatever order its rows arrive in"
+    );
+    // And the retained slice is the ordered prefix, not an arbitrary one.
+    let mut sorted = ascending.clone();
+    sorted.sort();
+    assert_eq!(ascending, sorted);
+}
+
+/// A proposal that settles by identity still *reached* whatever else it
+/// resembles. `unmatched_book_vouchers` counts only what no proposal came
+/// near, so a resembled row must not appear there because another row
+/// happened to carry the identity.
+#[test]
+fn an_identity_match_still_counts_what_it_resembled() {
+    let window = window(&[
+        BookRow::new("book-1", "20260812", "AA0118"),
+        // Same date, party and amount, different number: resembled, not matched.
+        BookRow::new("book-2", "20260812", "AA0777"),
+    ]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118").build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    assert_eq!(only(&report).present_book_key(), Some("book-1"));
+    assert_eq!(
+        report.observations().unmatched_book_vouchers,
+        0,
+        "book-2 was resembled even though book-1 carried the identity"
+    );
+}
+
+/// The echoed party names are diagnostics a person reads, and a response can
+/// drop whole rows but cannot shrink one. The comparison that produced the
+/// difference used the full values; only the echo is bounded.
+#[test]
+fn an_echoed_party_difference_is_bounded() {
+    let long: &'static str = Box::leak(
+        format!("Bravo {}", "o".repeat(MAX_OBSERVATION_LABEL_CHARS + 40)).into_boxed_str(),
+    );
+    let names = [
+        "Alpha Traders",
+        long,
+        "Sales Account",
+        "Output CGST 9%",
+        "Output SGST 9%",
+    ];
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118").party_field(long)]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118").build()];
+    let report = run(
+        &window,
+        &catalog_of(&names),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let PresenceStatus::Present { differences, .. } = &only(&report).status else {
+        panic!("expected Present");
+    };
+    let party = differences
+        .iter()
+        .find(|difference| difference.field == DifferenceField::Party)
+        .expect("party difference");
+    assert_eq!(
+        party.observed.as_deref().map(|value| value.chars().count()),
+        Some(MAX_OBSERVATION_LABEL_CHARS)
+    );
+}

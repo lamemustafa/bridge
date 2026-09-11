@@ -600,3 +600,90 @@ async fn a_live_shaped_cycle_separates_present_undecided_and_absent() {
     let observed = simulator.finish().expect("requests");
     assert_eq!(observed.len(), 22);
 }
+
+/// The admission contract this tool enforces lives in `agent_catalog.rs`, and
+/// that file is **not** in the compatibility surface — so an edit confined to
+/// it could loosen what a caller may send while the sealed digest and the
+/// evidence beneath it stayed unchanged.
+///
+/// The numeric bounds are safe already: the schema references constants that
+/// live in pinned files. What an unpinned edit could change is the *structure*
+/// — dropping `additionalProperties`, widening the numbering enum, removing a
+/// required field. So the structure is asserted here, in a pinned file, which
+/// makes a silent loosening fail a test rather than pass a seal.
+///
+/// Pinning `agent_catalog.rs` instead would also work and is strictly
+/// stronger, but it is a shared decision rather than this lane's: that file is
+/// edited by every tool change, so pinning it makes every such change reseal,
+/// and it would move this PR's `MAX_SURFACE_FILES` arithmetic that the merge
+/// order already depends on.
+#[test]
+fn the_admission_contract_cannot_be_loosened_without_failing_something() {
+    let definitions = tool_definitions(true, false);
+    let schema = definitions
+        .as_array()
+        .and_then(|tools| tools.iter().find(|tool| tool["name"] == "voucher_presence"))
+        .expect("voucher_presence tool")["inputSchema"]
+        .clone();
+    let voucher = &schema["properties"]["vouchers"]["items"];
+    let numbering = &schema["properties"]["numbering"]["items"];
+
+    // Nothing undeclared may be sent, at any level.
+    for object in [
+        &schema,
+        voucher,
+        numbering,
+        &voucher["properties"]["entries"]["items"],
+    ] {
+        assert_eq!(
+            object["additionalProperties"],
+            json!(false),
+            "an undeclared property would be accepted here"
+        );
+    }
+    // The three numbering methods are the vocabulary; a fourth would mean the
+    // crate's `Unknown` fallback silently absorbed it.
+    assert_eq!(
+        numbering["properties"]["numbering_method"]["enum"],
+        json!(["manual", "automatic", "unknown"])
+    );
+    // A proposal without entries has no magnitude, and one without a date or
+    // type cannot be placed in a window.
+    assert_eq!(
+        voucher["required"],
+        json!(["date", "voucher_type", "entries"])
+    );
+    assert_eq!(
+        numbering["required"],
+        json!(["voucher_type", "numbering_method"])
+    );
+    assert_eq!(
+        voucher["properties"]["entries"]["items"]["required"],
+        json!(["ledger", "amount"])
+    );
+    // REMOTEID matching is unreachable from the shipped read, so the input
+    // stays absent rather than accepted-and-degraded.
+    assert!(voucher["properties"].get("remote_id").is_none());
+    // Every bound the parser relies on is still stated, since the parser reads
+    // them from here rather than restating them.
+    for (path, expected) in [
+        (
+            &voucher["properties"]["voucher_type"]["maxLength"],
+            agent_import::MAX_MASTER_NAME_CHARS,
+        ),
+        (
+            &voucher["properties"]["voucher_number"]["maxLength"],
+            agent_import::MAX_MASTER_NAME_CHARS,
+        ),
+        (
+            &voucher["properties"]["party"]["maxLength"],
+            agent_import::MAX_MASTER_NAME_CHARS,
+        ),
+    ] {
+        assert_eq!(path.as_u64(), Some(expected as u64));
+    }
+    assert_eq!(
+        voucher["properties"]["entries"]["maxItems"].as_u64(),
+        Some(MAX_PRESENCE_ENTRIES as u64)
+    );
+}
