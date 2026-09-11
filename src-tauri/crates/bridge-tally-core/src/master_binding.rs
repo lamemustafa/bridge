@@ -1330,7 +1330,16 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
         }
         let masked_here = is_mask_punctuated(token) || is_mask_alphabetic(token);
         let masked = masked_here || previous_was_mask;
-        previous_was_mask = masked_here;
+        // A token carrying no alphanumeric content is a delimiter, not a value,
+        // and a delimiter between a mask and its suffix does not unmask it:
+        // `XXXX - 12345678` says exactly what `XXXX 12345678` says. Clearing
+        // the state here let a `-` or a `/` walk the suffix out as a whole
+        // account number.
+        if masked_here {
+            previous_was_mask = true;
+        } else if token.chars().any(char::is_alphanumeric) {
+            previous_was_mask = false;
+        }
         let canonical = token
             .chars()
             .filter(|character| character.is_ascii_alphanumeric())
@@ -1338,21 +1347,26 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
             .collect::<String>();
         let digits = canonical.chars().filter(char::is_ascii_digit).count();
         let letters = canonical.chars().filter(char::is_ascii_alphabetic).count();
-        // Canonicalization keeps only ASCII, so a name written in another
-        // script and fused to an ASCII suffix yields a code the name never
-        // contained: a Devanagari party name followed by `AB12345678`
-        // canonicalized to `AB12345678` and reached an unrelated
-        // `Bank AB12345678`, while the ASCII-spelled `PartyAB12345678` did not.
-        // A token identifies by its whole shape or not at all, and that rule
-        // has to hold in every script or the boundary is an ASCII boundary
-        // wearing a general name.
-        let foreign_letters = token
+        // Canonicalization keeps ASCII, and so does the digit-run split below.
+        // Everything else in a token is silently discarded, and what survives
+        // is a code or a number the name never contained: a Devanagari party
+        // name fused to `AB12345678` yielded `AB12345678`, and `12345678`
+        // followed by Devanagari digits yielded `12345678` — each reaching an
+        // unrelated master that the same shape spelled in ASCII never would.
+        //
+        // Guarding "non-ASCII letters" was the first attempt and was too
+        // narrow: `char::is_alphabetic` is false for a Devanagari digit, so the
+        // numerals walked straight through it. The admitted set is positive
+        // instead — ASCII, plus the dash variants this module already treats as
+        // separators — because the question is not which scripts exist but
+        // which characters canonicalization is entitled to drop.
+        let foreign_content = token
             .chars()
-            .any(|character| !character.is_ascii() && character.is_alphabetic());
+            .any(|character| !character.is_ascii() && !DASH_VARIANTS.contains(&character));
         if canonical.len() >= MIN_CODE_IDENTIFIER_CHARS
             && digits >= MIN_CODE_IDENTIFIER_DIGITS
             && letters >= 2
-            && !foreign_letters
+            && !foreign_content
             && !masked
             && !is_period(token)
             && !is_masked(&canonical)
@@ -1372,7 +1386,7 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
         // here carry Devanagari, Tamil and Bengali ledger names, and an
         // ASCII-only guard read `पार्टी12345678` as digits standing alone,
         // binding a party to an unrelated `Bank 12345678`.
-        if token.chars().any(char::is_alphabetic) || masked {
+        if token.chars().any(char::is_alphabetic) || masked || foreign_content {
             continue;
         }
         for run in token.split(|character: char| {

@@ -674,6 +674,39 @@ fn a_name_in_another_script_does_not_shed_its_letters_into_a_code() {
         entity(&format!("{party} AB12345678")).identifiers().len(),
         1
     );
+
+    // Letters were the first guard and were too narrow: `char::is_alphabetic`
+    // is false for a Devanagari digit, so non-ASCII numerals walked through it
+    // and canonicalization dropped them just the same. The numeric branch had
+    // the identical hole, which no thread named — a trailing run of Devanagari
+    // digits is not alphabetic either, so the ASCII digits before it were
+    // emitted as a whole account number.
+    let digits = "\u{967}\u{968}\u{969}";
+    for fused in [
+        format!("Purchases AB{digits}12345678"),
+        format!("Purchases 12345678{digits}"),
+        format!("Purchases {digits}12345678"),
+    ] {
+        assert!(
+            entity(&fused).identifiers().is_empty(),
+            "{fused} manufactured an identifier out of what canonicalization dropped"
+        );
+    }
+    let bank = ledgers(&["Bank AB12345678", "Bank 12345678", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&bank, &format!("Purchases AB{digits}12345678")).bound_name(),
+        None
+    );
+    assert_eq!(
+        bind_one_name(&bank, &format!("Purchases 12345678{digits}")).bound_name(),
+        None
+    );
+    // The dash variants stay admitted: this module already folds them as
+    // separators, and a punctuated code must still agree with a plain one.
+    assert_eq!(
+        entity("Item PH\u{2011}01AB00").identifiers(),
+        entity("Item PH01AB00").identifiers()
+    );
 }
 
 #[test]
@@ -897,6 +930,32 @@ fn a_masked_value_identifies_nothing() {
     );
     // A suffix shaped as a code is no less hidden than one shaped as a number.
     assert!(entity("Purchases XXXX AB12345678").identifiers().is_empty());
+    // A delimiter between the mask and its suffix does not unmask it. Reading
+    // the state token by token, a `-` reset it and the suffix walked out.
+    for punctuated in [
+        "Purchases XXXX - 12345678",
+        "Purchases **** / 12345678",
+        "Purchases XXXX . 12345678",
+        "Purchases XXXX - - 12345678",
+    ] {
+        assert!(
+            entity(punctuated).identifiers().is_empty(),
+            "{punctuated} exposed its suffix as an identifier"
+        );
+    }
+    let separated = ledgers(&["Sales XXXX - 12345678", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&separated, "Purchases XXXX - 12345678").bound_name(),
+        None
+    );
+    // An ordinary word after a mask does end it, or nothing downstream of one
+    // could ever identify anything again.
+    assert_eq!(
+        entity("Purchases XXXX Invoice 5550001001")
+            .identifiers()
+            .len(),
+        1
+    );
     // Ordinary words are not masks, however repetitive: only a run of one
     // repeated letter is, and one letter alone is an ordinary word.
     assert_eq!(entity("Purchases Unit 5550001001").identifiers().len(), 1);

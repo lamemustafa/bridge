@@ -130,13 +130,28 @@ identifying a space away than joined: `XXXX 12345678` is the same statement as
 spellings and for both identifier shapes. Two unrelated ledgers sharing a masked
 last-eight must reach a near-miss, never a bind.
 
-**A code is a code only in the script it is written in.** Canonical form keeps
-ASCII alphanumerics alone, so a name in another script fused to an ASCII suffix
-would shed its letters and yield a code the name never contained, binding a
-party to an unrelated bank where the ASCII spelling of the same shape did not.
-A token holding non-ASCII letters yields no code. This rule has to hold in every
-script or the boundary is an ASCII boundary wearing a general name, and the
-books this binder reads carry Devanagari, Tamil and Bengali ledger names.
+A token carrying no alphanumeric content is a **delimiter**, and a delimiter
+does not end a mask: `XXXX - 12345678` says what `XXXX 12345678` says. Reading
+the mask state token by token let a single `-` or `/` clear it and walk the
+suffix out as a whole account number. An ordinary word does end a mask, or
+nothing downstream of one could identify anything again.
+
+**An identifier may only be built from characters the token actually has.**
+Canonical form keeps ASCII alphanumerics, and the digit-run split keeps ASCII
+digits, so anything else in a token is discarded in silence — and what survives
+is an identifier the name never contained. A name in another script fused to
+`AB12345678` yielded that code and reached an unrelated bank; `12345678`
+followed by Devanagari numerals yielded that number and did the same. In both
+cases the ASCII spelling of the same shape never would.
+
+So the admitted set is **positive**: a token yields an identifier only if it is
+ASCII apart from the dash variants this module already folds as separators.
+Guarding "non-ASCII letters" was the first attempt and was too narrow —
+`char::is_alphabetic` is false for a Devanagari digit — which is the second time
+in this module an ASCII-shaped class silently decided a non-ASCII question. The
+question is not which scripts exist; it is which characters canonicalization is
+entitled to drop. The books this binder reads carry Devanagari, Tamil and
+Bengali ledger names, so the boundary is reached rather than theoretical.
 
 **Period labels are recognized by their numbers, not their words.** A token is
 a period when every number in it reads as a year or a small ordinal — which
