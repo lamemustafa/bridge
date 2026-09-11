@@ -6,7 +6,7 @@ prints on every statement regardless of who the customer is. Everything else is
 substituted, so a value that was never anticipated is fabricated by default
 rather than kept by default.
 """
-import re, sys, pathlib, unicodedata
+import re, sys, pathlib
 
 TEMPLATE = set("""
 Page No .: Account Branch Address City State Phone no. OD Limit Currency Email
@@ -58,23 +58,34 @@ def _fake_date(token):
     return _dates[token]
 
 def _is_token_char(character):
-    """Letters, digits and combining marks are customer text; the rest separates.
+    """Only ASCII punctuation and ASCII whitespace separate. Everything else is
+    customer text until the TEMPLATE allowlist says otherwise.
 
-    This has to be a *Unicode* rule. The previous split was `[^A-Za-z0-9]+`,
-    under which every character of a Devanagari, Gujarati, Tamil or Bengali name
-    landed in the separator class, the whole name reached `_scrub_plain`'s final
-    branch, and it was copied **verbatim** into a fixture the banner then
-    described as fully sanitised. Measured before the fix: four scripts came
-    through whole, and `Café Naïve` kept its `é` and `ï`. This repository is
-    public, so that is the failure that matters most in this file.
+    Stated as "what may pass through", not "what is a letter", because this is
+    the one predicate standing between a real statement and a **public**
+    repository and the rest of the file is allowlist-only. A rule shaped as
+    "these categories are data" leaks by default: whatever it forgets is copied
+    verbatim. This shape refuses by default, and what it forgets is fabricated.
 
-    Marks are included deliberately, and `str.isalnum()` is why the bug survived
-    this long: a combining vowel sign is category `Mn`, which is neither a letter
-    nor a digit, so `"श्री".isalnum()` is **False** while `"श".isalnum()` is True.
-    Any rule that asks "is this alphanumeric?" splits an Indic word into letters
-    and separators. `\\w` has the same hole.
+    It has been wrong twice, in the same direction both times:
+
+      * `[^A-Za-z0-9]+` put every character of a Devanagari, Gujarati, Tamil or
+        Bengali name in the separator class, so four scripts reached
+        `_scrub_plain`'s pass-through branch whole, and `Café Naïve` kept its
+        `é` and `ï`.
+      * `unicodedata.category(c)[0] in "LNM"` fixed those and still leaked
+        anything that is not a letter, digit or mark. Measured: the merchant
+        name `👩🏽‍💻 Consulting` kept its emoji (`So`), its skin-tone modifier
+        (`Sk`) and its zero-width joiner (`Cf`); `Café ☕ Ltd` kept the `☕`; and
+        a soft hyphen survived inside a word.
+
+    So: an ASCII character that is not alphanumeric is structure — the spaces,
+    hyphens and slashes the fixture needs intact. Everything else, including
+    every non-ASCII symbol, format character and space, is fabricated. A rupee
+    sign or an em dash is fabricated too, which is the intended trade: this file
+    keeps what it recognises and invents the rest.
     """
-    return unicodedata.category(character)[0] in "LNM"
+    return not (ord(character) < 128 and not character.isalnum())
 
 
 def _split_tokens(text):
@@ -106,6 +117,53 @@ ALPHA = "ZQVWKJYBGFHLMNPRSTDC"
 ENTITY = re.compile(r"&(?:amp|lt|gt|quot|apos|#\d+|#x[0-9A-Fa-f]+);")
 _seen = {}
 _taken = set()
+# Every token the capture itself contains, collected before any allocation.
+_source = set()
+# Next index to try for each shape, so allocation is O(1) per token rather than
+# a rescan of everything already issued.
+_next = {}
+# Digits 1-9, not 0-9: a leading zero changes what a reference looks like, and
+# several parsers strip them.
+DIGITS = "123456789"
+
+
+# Only tokens this long are reserved. Below it a token carries no identity — a
+# lone `7` is not anybody's data — and reserving them is actively harmful: a
+# one-digit token has nine possible replacements in total, a statement contains
+# most of the ten digits somewhere, and reserving all of them left the shape
+# with nothing to allocate. Measured: reserving every token made the sanitiser
+# abort on its own committed HDFC fixture with "no distinct replacement left for
+# a token shaped like 9".
+#
+# Three is the threshold the documented leak scan in USAGE already uses, so the
+# rule the allocator enforces and the rule an operator checks by hand are the
+# same rule.
+IDENTIFYING_LENGTH = 3
+
+
+def reserve_source_tokens(text):
+    """Record the tokens the source contains, before anything is fabricated.
+
+    A fabricated token that happens to equal a *different* customer token puts
+    that customer's text in the fixture verbatim. Nothing downstream can tell
+    that apart from a leak — including this file's own contract test, whose rule
+    is "no token of the input may appear in the output" — so the allocator has
+    to know the whole input before it issues the first replacement. That is why
+    `main` makes a pass over the kept words before it scrubs any of them.
+    """
+    for is_token, piece in _split_tokens(text):
+        if is_token and len(piece) >= IDENTIFYING_LENGTH:
+            _source.add(piece)
+
+
+def _shape_of(token):
+    """The classes this token's replacement must reproduce, as a key."""
+    return "".join(
+        "X" if character == "X"
+        else "9" if character.isdigit()
+        else "a" if character.islower()
+        else "A"
+        for character in token)
 
 
 def _fake_token(token):
@@ -121,7 +179,7 @@ def _fake_token(token):
     So: digits map to digits, letters to letters, and a run of X is left alone
     because it is a masking convention rather than anybody's data.
 
-    **Non-ASCII letters and marks are replaced with ASCII letters**, one per code
+    **Every non-ASCII character is replaced with an ASCII letter**, one per code
     point, so length and "this is a word" survive but the script does not. That
     is a deliberate trade: no parser in this repository branches on script, and
     fabricating in-script would mean generating valid Devanagari or Tamil, which
@@ -133,70 +191,72 @@ def _fake_token(token):
     appears twice — the repeat structure is what mapping and suspense logic
     reads. Keyed on first-appearance order rather than on the characters, so
     this is not a cipher over the original text.
+
+    **Allocation counts in every free position**, not in one.
+
+    The previous version built a candidate out of one repeated character and
+    then varied a single tail position, which made the space `len(ALPHA)` wide
+    by the tail and nothing else. For letters that was 400 three-letter
+    replacements; for **digits it was 81, whatever the length** — so 82 distinct
+    twelve-digit UPI references exhausted it and the run aborted, on a shape
+    whose real space is 9**12. Measured before this change: exit after 81 of 200.
+    Widening ALPHA, which the old exhaustion message suggested, could not have
+    helped an all-digit token at all.
+
+    Counting across the free positions makes the space the product of the
+    per-position alphabets, which is the whole of what shape-preservation
+    allows.
     """
     if token in _seen:
         return _seen[token]
-    # Distinct inputs must get distinct outputs, or the fixture collapses two
-    # counterparties into one and a parser regression involving name boundaries
-    # or mapping identity stays green. A single repeated character runs out
-    # after `len(ALPHA)` tokens of the same shape, so widen the replacement
-    # until it is unused.
-    for attempt in range(len(_seen), len(_seen) + 10_000):
-        letter = ALPHA[attempt % len(ALPHA)]
-        digit = str((attempt % 9) + 1)
-        suffix = attempt // len(ALPHA)
-        candidate = "".join(
-            character if character == "X"
-            else digit if character.isdigit()
-            else letter.lower() if character.islower()
-            else letter
-            for character in token)
-        if suffix and len(candidate) > 1:
-            # Vary one character so a second pass over the alphabet cannot
-            # repeat a replacement already issued for a token of this shape —
-            # but vary it *within its own character class*. Shape is the whole
-            # point: a digit run that gains a trailing letter stops being a
-            # reference, and the boundary parsers this fixture exists to
-            # exercise read exactly that distinction.
-            #
-            # Vary the last character the *source* did not mask, not simply the
-            # last. An X is held fixed because it is a masking convention rather
-            # than data — and when that met "vary the tail" on a token ending in
-            # X, the two rules cancelled: the tail was pinned, the only freedom
-            # left was the letters of ALPHA, and the 22nd such token reused a
-            # replacement. Measured: 5 collisions in 200 three-letter tokens,
-            # which merges two counterparties in the fixture and makes a
-            # mapping-identity regression pass.
-            #
-            # Read the mask off `token`, not off `candidate`: only the source
-            # says where a mask was. Asking the candidate conflated a pinned X
-            # with a fabricated one and skipped a position that was free.
-            at = next(
-                (i for i in range(len(token) - 1, -1, -1) if token[i] != "X"),
-                None,
-            )
-            if at is not None:
-                last = candidate[at]
-                if last.isdigit():
-                    replacement = str((suffix % 9) + 1)
-                elif last.islower():
-                    replacement = ALPHA[suffix % len(ALPHA)].lower()
-                else:
-                    replacement = ALPHA[suffix % len(ALPHA)]
-                candidate = candidate[:at] + replacement + candidate[at + 1:]
-        if candidate not in _taken:
+    positions = [index for index, character in enumerate(token) if character != "X"]
+    if not positions:
+        # Entirely a masking convention. There is no data here to fabricate, and
+        # a run of X is exactly what the parsers look for.
+        return token
+
+    alphabets = [
+        DIGITS if token[index].isdigit()
+        else ALPHA.lower() if token[index].islower()
+        else ALPHA
+        for index in positions
+    ]
+    total = 1
+    for alphabet in alphabets:
+        total *= len(alphabet)
+
+    shape = _shape_of(token)
+    index = _next.get(shape, 0)
+    candidate = None
+    while index < total:
+        digits, built = index, list(token)
+        for position, alphabet in zip(reversed(positions), reversed(alphabets)):
+            built[position] = alphabet[digits % len(alphabet)]
+            digits //= len(alphabet)
+        index += 1
+        built = "".join(built)
+        # Three ways a candidate is unusable, and they are different failures:
+        # equal to this token, or to any other token the capture contains, means
+        # customer text would sit in the fixture verbatim; already taken means
+        # two counterparties would merge.
+        if built != token and built not in _source and built not in _taken:
+            candidate = built
             break
-    else:
-        # The loop finished without finding a free replacement. Previously it
-        # fell out here and used the last candidate anyway, so exhaustion looked
-        # exactly like success and two counterparties quietly became one. A
-        # sanitiser that cannot keep them apart must say so: the alternative is
-        # a fixture that is wrong in a way no later check can detect.
+    if candidate is None:
+        # Previously the search fell out of its loop and used the last candidate
+        # anyway, so exhaustion looked exactly like success and two
+        # counterparties quietly became one. A sanitiser that cannot keep them
+        # apart must say so: the alternative is a fixture that is wrong in a way
+        # no later check can detect.
         raise SystemExit(
             f"sanitise: no distinct replacement left for a token shaped like "
-            f"{'X' * len(token)} after {10_000} attempts. The fixture would merge "
-            f"two distinct values into one. Widen ALPHA or shorten the capture."
+            f"{shape} — all {total} of them are already issued, equal to a token "
+            f"the capture contains, or equal to the token being replaced. The "
+            f"fixture would merge two distinct values into one, or copy one "
+            f"through. Shorten the capture, or widen this shape's alphabet "
+            f"(ALPHA for letters, DIGITS for digits)."
         )
+    _next[shape] = index
     _seen[token] = candidate
     _taken.add(candidate)
     return candidate
@@ -311,23 +371,40 @@ BANNER_TEMPLATE = """<!--
 """
 
 
-def main(source, destination, keep, bank):
-    """keep: [(page_index, [(y_min, y_max), ...]), ...] regions to retain."""
-    pages = pathlib.Path(source).read_text().split("<page ")[1:]
-    chunks = []
+WORD = re.compile(
+    r'<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">(.*?)</word>',
+    re.S)
+
+
+def _kept_words(pages, keep):
+    """Every word inside a retained region, page by page."""
     for page_index, spans in keep:
         page = pages[page_index]
         head = page[:page.index(">") + 1]
-        kept = []
-        for match in re.finditer(
-                r'<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">(.*?)</word>',
-                page, re.S):
-            x0, y0, x1, y1, body = match.groups()
-            if not any(low <= float(y0) <= high for low, high in spans):
-                continue
-            kept.append(f'<word xMin="{x0}" yMin="{y0}" xMax="{x1}" yMax="{y1}">'
-                        f'{scrub(body)}</word>')
-        chunks.append("<page " + head + "\n" + "\n".join(kept) + "\n</page>")
+        words = [match.groups() for match in WORD.finditer(page)
+                 if any(low <= float(match.group(2)) <= high for low, high in spans)]
+        yield head, words
+
+
+def main(source, destination, keep, bank):
+    """keep: [(page_index, [(y_min, y_max), ...]), ...] regions to retain."""
+    pages = pathlib.Path(source).read_text().split("<page ")[1:]
+    regions = list(_kept_words(pages, keep))
+    # Two passes, and the first one has to be complete before the second starts.
+    # A replacement is only safe once the allocator knows every token the
+    # capture contains: otherwise a fabricated value can equal some *other*
+    # customer token, which puts that customer's text in the fixture verbatim
+    # and is indistinguishable from a leak.
+    for _, words in regions:
+        for *_, body in words:
+            reserve_source_tokens(body)
+    chunks = [
+        "<page " + head + "\n"
+        + "\n".join(f'<word xMin="{x0}" yMin="{y0}" xMax="{x1}" yMax="{y1}">'
+                    f'{scrub(body)}</word>' for x0, y0, x1, y1, body in words)
+        + "\n</page>"
+        for head, words in regions
+    ]
     pathlib.Path(destination).write_text(
         BANNER_TEMPLATE.format(bank=bank) + "\n".join(chunks) + "\n", encoding="utf-8")
     print(f"wrote {destination}: "

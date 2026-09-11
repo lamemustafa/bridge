@@ -13,11 +13,15 @@ expected string only tests the cases somebody thought of.
 
 Run: python3 scripts/sanitise-bbox-capture.test.py
 """
+import contextlib
 import importlib.util
+import io
 import itertools
 import pathlib
+import re
 import string
 import sys
+import tempfile
 import unicodedata
 
 sys.dont_write_bytecode = True  # a stale .pyc silently re-runs the old rule
@@ -207,34 +211,220 @@ check(
     stopped or f"{tail}",
 )
 
-# Exhaustion must be loud. A three-character token has 20 letters x 20 tails of
-# room, so 2,000 of them genuinely cannot be told apart — and the only safe
-# answer is to stop. Previously the search fell out of its loop and reused the
-# last candidate, so running out looked exactly like succeeding.
-many = ["".join(t) for t in itertools.product(string.ascii_uppercase, repeat=3)][:2000]
+# Exhaustion must be loud, and it must still be *reachable*. A `?XX` token has
+# exactly one free position, so its whole space is the 20 letters of ALPHA and
+# 26 such sources genuinely cannot be told apart — the only safe answer is to
+# stop. Previously the search fell out of its loop and reused the last
+# candidate, so running out looked exactly like succeeding.
+#
+# Deliberately a **masked** shape rather than three plain letters. Allocation
+# now counts in every free position, so `AAA` has 20**3 = 8,000 replacements and
+# the 2,000 tokens this case used to feed no longer exhaust anything. Leaving it
+# that way would have quietly turned a guard into a test that can never fail.
 fresh = load()
 try:
-    for word in many:
+    for word in [f"{c}XX" for c in string.ascii_uppercase]:
         fresh._scrub_plain(word)
     check("exhausting the replacement space refuses", False, "it returned instead")
 except SystemExit as stop:
     check("exhausting the replacement space refuses", "no distinct replacement" in str(stop), str(stop))
+
+# ...and the space that *is* available must actually be reachable. The old
+# allocator built a candidate from one repeated character and varied a single
+# tail position, so a digit shape had 9 x 9 = 81 replacements no matter how long
+# it was. Measured on a fresh sanitiser before this change: a run of distinct
+# twelve-digit UPI references exited after 81 of 200, on a shape whose real
+# space is 9**12. The old exhaustion message advised widening ALPHA, which
+# cannot help an all-digit token at all.
+references = [str(10 ** 11 + n) for n in range(500)]
+values, stopped = scrub_all(load(), references)
+check(
+    "500 distinct twelve-digit references all get replacements",
+    stopped is None and len(set(values)) == len(references),
+    stopped or f"{len(references) - len(set(values))} collision(s)",
+)
+check(
+    "and each is still twelve digits",
+    len(values) == len(references)
+    and all(len(v) == 12 and v.isdigit() for v in values),
+)
+
+# A fabricated value must never *be* a customer value. Two ways that happened,
+# and both put customer text in a public fixture verbatim while every other
+# check stayed green.
+#
+# First: the replacement for a token could equal that same token. The allocator
+# started from a fixed point in its space, so on a fresh run the very first
+# three-letter source got `ZZZ` — and `_scrub_plain("ZZZ")` returned `ZZZ`.
+# Same for `111111111111`, which is the shape of every UPI reference.
+for word in ["ZZZ", "111111111111", "ZZ", "Z"]:
+    fresh = load()
+    check(
+        f"a replacement is never the token it replaces ({word!r})",
+        fresh._scrub_plain(word) != word,
+        f"-> copied through verbatim",
+    )
+
+# Second: a replacement issued for one token could equal a *different* token the
+# same capture contains. That is the customer's text in the fixture just as
+# surely, and nothing downstream can tell it from a leak — including this file's
+# own "no token of the input appears in the output" rule. So the allocator is
+# told the whole input first.
+fresh = load()
+fresh.reserve_source_tokens("ZZZ QQQ VVV WWW KKK")
+produced = {fresh._scrub_plain(word) for word in ["AAA", "BBB", "CCC", "DDD", "EEE"]}
+check(
+    "a replacement is never some other source token either",
+    not (produced & {"ZZZ", "QQQ", "VVV", "WWW", "KKK"}),
+    f"produced {sorted(produced)} which collides with a reserved source token",
+)
+
+# Symbols and format characters are customer text too. The category rule that
+# fixed the Indic-script leak still passed anything that was not a letter, digit
+# or mark straight through, so an emoji in a merchant name reached the fixture.
+for label, text in [
+    ("an emoji sequence", "\U0001F469\U0001F3FD‍\U0001F4BB Consulting"),
+    ("a symbol", "Cafe ☕ Ltd"),
+    ("a soft hyphen inside a word", "AB­CD"),
+    ("a non-breaking space", "AB CD"),
+]:
+    fresh = load()
+    out = fresh._scrub_plain(text)
+    survivors = [c for c in text if ord(c) > 127 and c in out]
+    check(
+        f"nothing non-ASCII survives {label}",
+        not survivors,
+        f"{text!r} -> {out!r} kept {survivors!r}",
+    )
+    check(
+        f"...and length is preserved for {label}",
+        len(out) == len(text),
+        f"{len(text)} -> {len(out)}",
+    )
 
 # A masked account is a convention, not data, and the parsers read the X run.
 out = m._scrub_plain("XXXXXXXX1234")
 check("an X run is left alone", out.startswith("XXXXXXXX"), f"-> {out!r}")
 check("the digits behind an X run are replaced", out != "XXXXXXXX1234", f"-> {out!r}")
 
-# The committed fixtures are the artefact this script produced. If any real
-# non-ASCII word is sitting in one, it got there through the hole above.
+# The committed fixtures are the artefact this script produced, so the rules are
+# checked against *them* and not only against the module. Widened from "no
+# non-ASCII letters or marks" to **no non-ASCII at all**, which is the artefact
+# form of the symbol rule above: the category test that only looked for `L` and
+# `M` would have reported these files clean with an emoji or a `☕` sitting in
+# one. The banner promises the capture's own *encoding* is preserved, and
+# `pdftotext` writes entities rather than raw bytes for anything exotic, so a
+# stray non-ASCII character here is customer text that escaped, not template.
+#
+# Scoped to the `<word>` bodies, which is the captured document. The banner
+# above them is prose this repository wrote and it contains em dashes; checking
+# the whole file would fail on those and say nothing about the capture.
+WORD_BODY = re.compile(r"<word[^>]*>(.*?)</word>", re.S)
 for fixture in sorted(pathlib.Path(__file__).with_name("fixtures").glob("*-bbox-capture.xml")):
-    text = fixture.read_text(encoding="utf-8")
-    exotic = sorted({c for c in text if ord(c) > 127 and unicodedata.category(c)[0] in "LM"})
+    bodies = WORD_BODY.findall(fixture.read_text(encoding="utf-8"))
+    assert bodies, f"{fixture.name}: no words matched — this check is checking nothing"
+    exotic = sorted({c for body in bodies for c in body if ord(c) > 127})
     check(
-        f"{fixture.name} carries no non-ASCII letters or marks",
+        f"{fixture.name} carries nothing non-ASCII ({len(bodies)} words)",
         not exotic,
-        f"found {exotic}",
+        f"found {exotic} ({[unicodedata.category(c) for c in exotic]})",
     )
+
+# End to end, over the committed captures, through `main` — the CLI path, with
+# the two-pass reservation actually running. Everything above tests a function;
+# this tests the artefact the tool produces, which is the thing that gets
+# committed to a public repository.
+#
+# The rule: **no identifying token of the input may appear in the output**, with
+# two pass-throughs that are deliberate and have to be named rather than waved
+# at: the fixed synthetic year, and a run of `X`, which is a masking convention
+# and is preserved on purpose.
+#
+# The input tokens are recomputed **here**, from the fixture, rather than read
+# out of the module's `_source`. Reading `_source` made this vacuous: deleting
+# the reservation pass from `main` leaves that set empty, the intersection is
+# then empty too, and the check reported success against the exact defect it
+# exists to catch. Mutation-tested both ways round now.
+#
+# This case also found a real defect that no unit test did. Reserving *every*
+# source token starved the short shapes — a one-digit token has nine possible
+# replacements, a statement contains most of the ten digits, and the sanitiser
+# aborted on its own committed fixture with "no distinct replacement left for a
+# token shaped like 9". Hence `IDENTIFYING_LENGTH`.
+def identifying_tokens(module, bodies):
+    return {
+        piece
+        for body in bodies
+        for is_token, piece in module._split_tokens(body)
+        if is_token and len(piece) >= module.IDENTIFYING_LENGTH
+    }
+
+
+for fixture in sorted(pathlib.Path(__file__).with_name("fixtures").glob("*-bbox-capture.xml")):
+    for page in (0, 1):
+        fresh = load()
+        pages = fixture.read_text(encoding="utf-8").split("<page ")[1:]
+        if page >= len(pages):
+            continue
+        keep = [(page, [(0.0, 10_000.0)])]
+        consumed = identifying_tokens(
+            fresh,
+            [body for _, words in fresh._kept_words(pages, keep) for *_, body in words],
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            destination = str(pathlib.Path(directory, "out.xml"))
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    fresh.main(str(fixture), destination, keep, "regression")
+            except SystemExit as stop:
+                check(f"{fixture.name} page {page} re-sanitises", False, str(stop))
+                continue
+            produced = identifying_tokens(
+                fresh, WORD_BODY.findall(pathlib.Path(destination).read_text()))
+        # A comparison against an empty input set proves nothing.
+        check(
+            f"{fixture.name} page {page} has identifying tokens to check",
+            len(consumed) > 10,
+            f"only {len(consumed)}",
+        )
+        deliberate = {fresh.SYNTHETIC_YEAR}
+        survivors = sorted(
+            (produced & consumed) - deliberate - fresh.TEMPLATE
+            - {token for token in produced if set(token) == {"X"}}
+        )
+        check(
+            f"{fixture.name} page {page}: no identifying source token is fabricated",
+            not survivors,
+            f"{survivors}",
+        )
+
+# KNOWN DEFECT, recorded here because it cannot be fixed from inside this
+# repository. Both committed captures were produced by the *old* alphabet, which
+# contained `X`, so some of their pure-`X` tokens are fabricated letter runs
+# rather than source masks — breaking the invariant asserted above that an `X`
+# in a replacement means the source was masked there.
+#
+# It is not a leak: those tokens are fabricated either way. It is a fidelity
+# defect. The parsers find a masked account by reading a run of `X`, so a
+# fabricated run makes the fixture present a masked field where the real
+# statement had an ordinary word.
+#
+# The evidence is unambiguous on one line. The branch address reads
+# `ZZZZZ - QQQQQQ XXXXX VVVVVV`: four consecutive fabricated words in the old
+# ALPHA's own order, `Z`, `Q`, `X`, `V`. The third is fabricated, not masked.
+#
+# There is deliberately **no assertion here**, because none of the three honest
+# options is a passing test:
+#   * it cannot be detected in general — a fabricated `XXXXX` and a real mask
+#     are the same five bytes;
+#   * it cannot be repaired by re-running this script on the fixture, which
+#     would preserve those `X` runs as masks, the very thing that is wrong;
+#   * it cannot be repaired by hand without authoring a capture by hand, which
+#     `AGENTS.md` P1 forbids for exactly this class of reason.
+#
+# Regenerating from the original `pdftotext` output is the fix, and only whoever
+# holds those statements can do it. Until then, treat a pure-`X` token in these
+# two files — one with no digits in it — as possibly fabricated.
 
 if failures:
     print(f"\n{len(failures)} failing contract(s)")
