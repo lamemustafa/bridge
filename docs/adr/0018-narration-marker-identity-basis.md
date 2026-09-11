@@ -78,15 +78,23 @@ allocation this contract has already had to correct twice.
 ### 3. One marker, and it must be identifying
 
 A book voucher yields an identity marker only when its narration carries
-**exactly one** well-formed `[BRIDGE:…]` occurrence *and* that occurrence
-parses as a canonical UUID. Everything else — two markers, a malformed one, or
-a well-formed legacy caller label — yields **no identity**.
+**exactly one** well-formed `[BRIDGE:…]` occurrence *and* that occurrence is a
+UUID of the version the writer stamps. Everything else — two markers, a
+malformed one, or a well-formed legacy caller label — yields **no identity**.
 
 Both halves fail closed, for different reasons. Two markers mean the voucher
 claims two imports, which is the middle case ADR 0017 forbids resolving; the
 import path already treats it as an error (`import_verification_tag_ambiguous`)
 rather than taking the first. A non-UUID marker is a legacy-scheme write, and
 §1 is exactly the reason it must not decide.
+
+The **version** is checked and not only the spelling, because a transaction
+label may legally *be* UUID-shaped: `valid_txn_id` admits hex and hyphens, so a
+legacy-scheme write could carry a canonical v4 and a spelling check alone would
+have called it batch-derived. `import_identity` builds through
+`Uuid::Builder::from_custom_bytes`, which stamps version 8 and the RFC 4122
+variant, so requiring those rejects the whole impersonable class rather than
+the fraction of it that happens to look wrong.
 
 Such a voucher is still a Bridge write, and losing that fact silently would be
 its own defect. So the window reports `unidentified_bridge_writes`: a count of

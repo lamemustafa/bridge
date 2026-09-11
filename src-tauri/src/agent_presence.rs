@@ -311,11 +311,24 @@ fn observed_marker(narration: Option<&str>) -> ObservedMarker<'_> {
     }
 }
 
-/// Whether a marker has the exact shape `import_identity` writes. Parsing
-/// alone is not enough: `Uuid` accepts several spellings, and only the one the
-/// writer emits can have come from a batch-derived identity.
+/// Whether a marker has the exact shape `import_identity` writes.
+///
+/// Parsing alone is not enough, and neither is the canonical spelling. The
+/// writer builds its identity with `Uuid::Builder::from_custom_bytes`, which
+/// stamps **version 8** and the RFC 4122 variant into the bytes it is given,
+/// so a value that carries any other version cannot have come from it.
+///
+/// That matters because a caller's transaction label may legally be
+/// UUID-shaped: `valid_txn_id` admits hex and hyphens, so a legacy-scheme
+/// write could put a canonical v4 UUID in a narration and this would have
+/// called it batch-derived. Checking the version rejects that whole class
+/// rather than the fraction of it that happens to look wrong.
 fn is_batch_derived(identity: &str) -> bool {
-    uuid::Uuid::parse_str(identity).is_ok_and(|parsed| parsed.to_string() == identity)
+    uuid::Uuid::parse_str(identity).is_ok_and(|parsed| {
+        parsed.to_string() == identity
+            && parsed.get_version() == Some(uuid::Version::Custom)
+            && parsed.get_variant() == uuid::Variant::RFC4122
+    })
 }
 
 fn parse_numbering(args: &Value) -> Result<NumberingDeclaration, String> {

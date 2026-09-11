@@ -1291,6 +1291,18 @@ fn a_legacy_caller_label_is_never_an_identity() {
             "{label} is a caller label, not a batch-derived identity"
         );
     }
+    // Nor is a canonical UUID of some *other* version. `valid_txn_id` admits
+    // hex and hyphens, so a legacy-scheme write could legally have put a v4
+    // UUID in a narration; only the version the writer stamps can have come
+    // from the writer.
+    assert_eq!(
+        observed_marker(Some(&narration_with(
+            "550e8400-e29b-41d4-a716-446655440000"
+        ))),
+        ObservedMarker::Unidentified,
+        "a canonical v4 UUID is not something import_identity can emit"
+    );
+
     // Nor is a UUID spelled some other way than the writer spells it.
     let identity = agent_import::import_identity(BATCH, "txn-001").to_string();
     for spelling in [
