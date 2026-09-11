@@ -113,6 +113,10 @@ def _split_tokens(text):
 # 19 of them had been issued to sources with no mask in that position at all.
 # Excluding X makes an X in a replacement mean exactly one thing — the source
 # was masked there — so the shapes no longer compete.
+# The shortest run of `X` that `bank_statement_import` will treat as a masked
+# account (`[Xx]{4,}\d*`). Below this a run of `X` is data, not a convention.
+MASK_MIN_XS = 4
+
 ALPHA = "ZQVWKJYBGFHLMNPRSTDC"
 # Markup escapes: syntax, held out and restored untouched.
 STRUCTURAL_ENTITY = re.compile(r"&(?:amp|lt|gt|quot|apos);")
@@ -233,9 +237,16 @@ def _fake_token(token):
         return _seen[token]
     positions = [index for index, character in enumerate(token) if character != "X"]
     if not positions:
-        # Entirely a masking convention. There is no data here to fabricate, and
-        # a run of X is exactly what the parsers look for.
-        return token
+        # An all-`X` token is only a masking convention if it is the shape the
+        # parsers actually look for. `bank_statement_import` requires
+        # `[Xx]{4,}\d*` to call something a masked account, so a bare `X` or
+        # `XX` is not a mask — it is a customer value that happens to be the
+        # letter X, an initial for instance. Returning those verbatim copied
+        # source text into the fixture and bypassed `reserve_source_tokens`
+        # entirely, which is the one check that exists to stop exactly that.
+        if len(token) >= MASK_MIN_XS:
+            return token
+        positions = list(range(len(token)))
 
     alphabets = [
         DIGITS if token[index].isdigit()
@@ -438,7 +449,13 @@ def _kept_words(pages, keep):
 
 def main(source, destination, keep, bank):
     """keep: [(page_index, [(y_min, y_max), ...]), ...] regions to retain."""
-    pages = pathlib.Path(source).read_text().split("<page ")[1:]
+    # `pdftotext` emits UTF-8. `read_text()` without an encoding decodes with
+    # the host's locale, so on a Windows Python whose locale is not UTF-8 a raw
+    # `Café` becomes mojibake with extra code points and Indic bytes raise
+    # `UnicodeDecodeError` before sanitisation runs at all. Neither CI nor the
+    # unit cases reach this boundary: CI is ubuntu-only, and the Unicode tests
+    # call `_scrub_plain` with strings that are already decoded.
+    pages = pathlib.Path(source).read_text(encoding="utf-8").split("<page ")[1:]
     regions = list(_kept_words(pages, keep))
     # Two passes, and the first one has to be complete before the second starts.
     # A replacement is only safe once the allocator knows every token the
