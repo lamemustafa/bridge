@@ -36,6 +36,14 @@
 //! is compared loosely, and only because a caller's own list of identities is
 //! hand-written rather than read from Tally.
 //!
+//! **One asymmetry to be aware of, and it is upstream of here.** A ledger's
+//! `PARENT` reaches this walk verbatim, but a *group's* `PARENT` is trimmed by
+//! the native group reader before it arrives, so a group-to-group hop still
+//! absorbs surrounding whitespace that a ledger-to-group hop now refuses. No
+//! captured response exhibits such a value, and closing it means untrimming a
+//! field the outstandings party classifier also consumes — so it belongs with
+//! the unification of that third walk rather than ahead of it.
+//!
 //! Every outcome that is not a reserved identity is an [`AncestryGap`]. A
 //! caller decides what each gap means for its own question; none of them is an
 //! answer, and an incomplete group collection therefore refuses rather than

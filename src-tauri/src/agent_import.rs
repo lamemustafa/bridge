@@ -463,7 +463,7 @@ impl Server {
                             "refused_ledgers":refusals.ledgers, "refused_leg_count":refusals.legs,
                             "refused_ledgers_omitted":refusals.omitted,
                             "group_evidence_sha256":evidence.response_sha256,
-                            "next_step":"Each refused leg names its ledger and why. A leg marked cash_bank must reach Bank Accounts or Cash-in-Hand — the credit on a Payment, the debit on a Receipt, both legs on a Contra. A leg marked not_cash_bank must be established as holding no money: any money group there means the voucher is really a Contra, and an unresolvable group is refused too because it cannot be established either way. Bridge admits a money group only where a captured ledger sits under it, so an overdraft or cash-credit ledger is refused on either side for now. Correct the payload or the ledger's group in Tally, then build a new batch. No file was written."
+                            "next_step":"No file was written. Each refused leg says which ledger and why: cash_bank must reach Bank Accounts or Cash-in-Hand, not_cash_bank must reach a group holding no money, and an unresolvable group is refused either way. Fix the payload or the ledger's group, then build again. Raise BRIDGE_AGENT_MAX_BYTES if refused_ledgers_omitted is above zero."
                         }}),
                         evidence: accumulated.clone(),
                         company_guid: Some(payload.company_guid),
