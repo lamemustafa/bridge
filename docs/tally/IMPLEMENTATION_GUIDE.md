@@ -610,6 +610,10 @@ licensed or standard TallyPrime.
 
 So Tally normalises **case and separators** and is otherwise **exact on letters**.
 
+> **Promoted to `TALLY_PROTOCOL_REFERENCE.md` §9.4b**, which is where observed gateway behaviour
+> belongs and which carries the consequences for a writer. This entry stays as the measurement
+> record; the reference is authoritative if they ever disagree.
+
 **A missing ledger rejects the voucher and does NOT auto-create the master.** Verified: ledger
 count unchanged at 87 across every test, with `LINEERROR: Ledger 'X' does not exist`.
 

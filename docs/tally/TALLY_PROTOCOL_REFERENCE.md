@@ -727,7 +727,16 @@ data unless the integrator prevents it.
 
 **That measurement stands; the conclusion drawn from it did not.** This section was headed *"No
 natural idempotency for vouchers"*, and it was read — including by me, repeatedly — as saying no
-idempotency mechanism exists. `IMPLEMENTATION_GUIDE.md` §3.3a supersedes that reading:
+idempotency mechanism exists.
+
+Note what that means about the failure. This document was never *wrong*: **§9.8's scope
+clarification has carried the upsert result since 2026-09-06**, with the counters and the file
+SHA, and links `IMPLEMENTATION_GUIDE.md` §3.3a. The defect was navigational — the narrow case
+stated under a heading that reads as the general one, five sections earlier, with no pointer to the
+exception. A reader who lands here stops here. That is the whole reason a cross-reference is worth
+as much as a measurement.
+
+§3.3a supersedes the general reading:
 
 ```
 import #1  REMOTEID="…-001"  ->  CREATED=1  ALTERED=0
@@ -841,6 +850,48 @@ establish that every omitted ledger field is preserved on every Tally version or
 synthetic read responses and the exact native master/balance/group responses are retained in
 the repository's `master_fields_lab` fixtures; every request in the lab run was bracketed by a
 200 `/status` response and every write was explicitly scoped to the lab company.
+
+### 9.4b Master-name matching: case- and separator-insensitive, otherwise exact
+
+**VERIFIED 2026-07-30** — recorded in `IMPLEMENTATION_GUIDE.md` §3.3a's sibling §3.3b since then,
+and promoted here because it is observed gateway behaviour and this document is where behaviour
+lives. Measured against a ledger named `BRIDGE-PROBE-LEDGER-A` and one named `ZZ Ram & Sons Pvt Ltd`:
+
+| Supplied name | Result |
+| --- | --- |
+| exact | **matched** |
+| lowercase | **matched** |
+| trailing space | **matched** |
+| `BRIDGE PROBE LEDGER A` (hyphens → spaces) | **matched** |
+| `ZZ Ram AND Sons Pvt Ltd` (`AND` for `&`) | **rejected** |
+| `ZZ Ram & Sons` (missing suffix word) | **rejected** |
+| `ZZ Ram & Son Pvt Ltd` (singular for plural) | **rejected** |
+| entirely different name | **rejected** |
+
+Tally normalises **case and separators**, and is otherwise **exact on letters**. The canonical form
+is therefore: upper-case, hyphen becomes space, collapse whitespace, trim.
+
+> **RULE: wherever the question is "will Tally treat these as the same master?", compare on that
+> canonical form — never on string equality, and never on a looser fold.**
+
+Both directions are live hazards, and they fail in opposite ways:
+
+- **Too strict** (plain `==`) silently rejects a name Tally would have accepted. A binder that
+  compared exactly refused **16 of 16** hyphenated masters on a real book, all of them near-misses
+  it should have bound; and a tool comparing its suspense ledger exactly posted to suspense while
+  reporting the row as resolved, dropping it from the very report it existed to appear in.
+- **Too loose** (stripping every non-alphanumeric, say) merges masters Tally keeps apart — `A & B`
+  and `AB` are different ledgers. A fold used for *lookup* may be looser than this deliberately, but
+  it must then refuse an ambiguous result rather than pick one.
+
+**Consequence for anything that generates a file.** Abbreviation, symbol expansion and
+pluralisation are **not** normalised away: `AND` for `&`, a missing suffix word and a singular for a
+plural are all rejected. Those have to be resolved *before* the file is generated — no amount of
+comparison at write time recovers a name the operator shortened.
+
+**Scope.** One licensed instance, ledgers. Whether stock items, groups and voucher types match by
+the same rule is **UNVERIFIED**; §3.3b says nothing about voucher numbers either, and a fold shared
+between master names and voucher numbers is assuming something nobody has measured.
 
 ### 9.5 Identity after write
 
