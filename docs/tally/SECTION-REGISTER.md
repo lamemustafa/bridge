@@ -57,6 +57,11 @@ Two residuals, both worth knowing:
 2. **Never renumber a merged section.** Other documents and commit messages cite these numbers; if
    two land on the same one, the *later* arrival moves. `KNOWN_DUPLICATES` in the gate exists for
    collisions that predate it, and nothing may be added there to get a new one through.
+
+   **Retitling is not renumbering, and is allowed.** Citations point at the number, so changing a
+   heading's words breaks nothing — and it is sometimes the point of a change, as when a title
+   states a narrow case in general-sounding words. The gate fails on a heading that turns up under
+   a *different* number, not on one whose wording changed.
 3. **Claiming a number says nothing about Tally.** Whether the behaviour a section describes is
    verified, and to what scope, is settled in the reference itself and in its evidence blocks. The
    confidence markers are the reference's job and cannot be summarised anywhere else without
