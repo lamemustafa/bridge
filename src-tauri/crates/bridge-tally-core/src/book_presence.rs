@@ -62,6 +62,9 @@ pub const MAX_BOOK_KEY_CHARS: usize = 128;
 /// two fields are **recognition labels**, not keys: a group's identity is its
 /// `book_keys`, which are bounded by count.
 pub const MAX_OBSERVATION_LABEL_CHARS: usize = 128;
+/// Appended to an echoed value that was longer than its bound, so a reader can
+/// tell a shortened value from a whole one. See `label`.
+pub const SHORTENED: char = '\u{2026}';
 /// Longest accepted text field, in characters. This bounds pathological input;
 /// it is not a claim about what Tally accepts.
 pub const MAX_TEXT_CHARS: usize = 16_384;
@@ -1611,15 +1614,21 @@ fn observe(
 /// as one identical pair sitting beside a claim that they differ. The marker
 /// does not recover the distinction -- nothing at this bound can -- but it
 /// keeps the report from asserting something false about what it is showing.
+///
+/// It is appended *outside* `MAX_OBSERVATION_LABEL_CHARS` rather than taking a
+/// character of content to make room, and that is deliberate. Spending a
+/// character would make two values differing at exactly the bound serialize
+/// identically -- turning a difference that was visible before this marker
+/// existed into one that is not, which is the failure the marker is here to
+/// prevent, reintroduced one position earlier. The constant bounds the echoed
+/// *value*; one character of annotation on top of it bounds nothing worth
+/// bounding.
 fn label(value: &str) -> String {
     if value.chars().count() <= MAX_OBSERVATION_LABEL_CHARS {
         return value.to_string();
     }
-    let mut bounded: String = value
-        .chars()
-        .take(MAX_OBSERVATION_LABEL_CHARS - 1)
-        .collect();
-    bounded.push('\u{2026}');
+    let mut bounded: String = value.chars().take(MAX_OBSERVATION_LABEL_CHARS).collect();
+    bounded.push(SHORTENED);
     bounded
 }
 

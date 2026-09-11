@@ -1992,8 +1992,10 @@ fn book_observation_labels_are_bounded() {
     let group = &report.observations().duplicate_numbers[0];
     assert_eq!(
         group.voucher_number.chars().count(),
-        MAX_OBSERVATION_LABEL_CHARS
+        MAX_OBSERVATION_LABEL_CHARS + 1,
+        "the whole bound of content, plus the marker that says it was applied"
     );
+    assert!(group.voucher_number.ends_with(SHORTENED));
     // The group's identity is its keys, which are bounded by count, not by the
     // label that helps a human recognise it.
     assert_eq!(group.book_keys, vec!["book-1", "book-2"]);
@@ -2233,8 +2235,59 @@ fn an_echoed_party_difference_is_bounded() {
         .expect("party difference");
     assert_eq!(
         party.observed.as_deref().map(|value| value.chars().count()),
-        Some(MAX_OBSERVATION_LABEL_CHARS)
+        // The bound, plus the one character that says it was applied.
+        Some(MAX_OBSERVATION_LABEL_CHARS + 1)
     );
+}
+
+/// The marker must not cost a character of content.
+///
+/// Spending one to stay inside the bound would make two values differing at
+/// exactly the bound serialize identically — converting a difference that was
+/// visible before the marker existed into one that is not. That is the failure
+/// the marker exists to prevent, reintroduced one position earlier, and it
+/// would be quieter than the bug it replaced: the report would still say the
+/// two differ, and now also say it had shortened them, while showing one
+/// string. Both are true statements and the reader still cannot see it.
+#[test]
+fn the_shortening_marker_does_not_cost_a_character_of_content() {
+    let shared = "o".repeat(MAX_OBSERVATION_LABEL_CHARS - 1);
+    // Identical for the whole bound but the final character inside it.
+    let proposed: &'static str = Box::leak(format!("{shared}A tail").into_boxed_str());
+    let observed: &'static str = Box::leak(format!("{shared}B tail").into_boxed_str());
+    let names = [
+        "Alpha Traders",
+        proposed,
+        "Sales Account",
+        "Output CGST 9%",
+        "Output SGST 9%",
+    ];
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118").party_field(observed)]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .party(proposed)
+        .build()];
+    let report = run(
+        &window,
+        &catalog_of(&names),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let PresenceStatus::Present { differences, .. } = &only(&report).status else {
+        panic!("expected Present");
+    };
+    let party = differences
+        .iter()
+        .find(|difference| difference.field == DifferenceField::Party)
+        .expect("party difference");
+    assert_ne!(
+        party.proposed, party.observed,
+        "a difference inside the bound must still be visible in the echo"
+    );
+    for shown in [&party.proposed, &party.observed] {
+        assert!(shown
+            .as_deref()
+            .is_some_and(|value| value.ends_with(SHORTENED)));
+    }
 }
 
 /// Bounding must not quietly turn a true difference into a false display.
@@ -2288,8 +2341,8 @@ fn a_difference_bounded_on_both_sides_says_the_values_were_shortened() {
         );
         assert_eq!(
             shown.chars().count(),
-            MAX_OBSERVATION_LABEL_CHARS,
-            "the marker is inside the bound, not added to it"
+            MAX_OBSERVATION_LABEL_CHARS + 1,
+            "the whole bound of content, plus the marker"
         );
     }
 }
