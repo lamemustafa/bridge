@@ -251,8 +251,8 @@ def test_parse_real_hdfc_capture(m):
     # the following field is resolved too. That defect was in this very capture
     # and survived the assertion above; it took running the tool against the
     # unsanitised statement to see it.
-    assert party_digest(rows, bank) == "2f42f460caf687fd", [bank.party(r) for r in rows]
-    assert reference_digest(rows, bank) == "b94b21c1acb8665c", \
+    assert party_digest(rows, bank) == "f079dbf8cc126ee0", [bank.party(r) for r in rows]
+    assert reference_digest(rows, bank) == "25ddb159d0c3e2b7", \
         [bank.reference(r) for r in rows]
 
     # a narration wrapped across four printed lines, rejoined in full. Asserted
@@ -260,16 +260,15 @@ def test_parse_real_hdfc_capture(m):
     # to insert a space, and only the complete string pins every one of those
     # decisions.
     assert rows[4]["narr"] == (
-        "UPI-HHHHQ LLLLLQ PPPPPPW-RRRRRW.LLLLLQ@S TW-DDDD5555555-"
-        "666666666665-FFFFFFW FROMHHHHW")
-    assert bank.party(rows[4]) == "HHHHQ LLLLLQ PPPPPPW"
+        'UPI-ZZZZW ZZZZZK ZZZZZZW-ZZZZZB.ZZZZZK@K ZQ-ZZZZ1111114-111111111113-ZZZZZZV FROMZZZZG')
+    assert bank.party(rows[4]) == 'ZZZZW ZZZZZK ZZZZZZW'
     # ... and its 12-digit reference survived the wrap intact
-    assert bank.reference(rows[4]) == ("UPI", "666666666665")
+    assert bank.reference(rows[4]) == ('UPI', '111111111113')
     # and every other row's wrap decisions, which no readable assertion reaches
-    assert narration_digest(rows) == "69baa6880aa21374", [r["narr"] for r in rows]
+    assert narration_digest(rows) == "4c1a76b6a6f582c5", [r["narr"] for r in rows]
 
     # row-scoped columns land where the geometry says, not one column over
-    assert rows[0]["ref"] == "3333333333333333"
+    assert rows[0]["ref"] == '1111111111111111'
     assert rows[0]["vdt"] == "04/08/26"
 
     # row-scoped columns: every row has exactly one amount side and a balance
@@ -287,11 +286,11 @@ def test_parse_real_hdfc_capture(m):
     assert m.parse_pages(pages[:2], bank) == rows, "page 3 must contribute nothing"
 
     # the account number is bound from the header block, not from the table
-    m.require_account_match(pages, bank, "HDFC CA xx5552")
+    m.require_account_match(pages, bank, "HDFC CA xx1111")
     # every one of these is a real number printed in this capture's header —
     # phone, customer id, IFSC digits, MICR, postcode — and every one passed
     # before the binding was narrowed to the account-number line
-    for wrong in ("xx4444", "xx7777", "xx8888", "xx9999", "xx9876"):
+    for wrong in ("xx1112", "xx1113", "xx1114", "xx1115", "xx9876"):
         refuses(m, "account_not_in_statement", m.require_account_match,
                 pages, bank, f"HDFC CA {wrong}")
 
@@ -305,8 +304,8 @@ def test_parse_real_sbi_capture(m):
     rows = m.parse_pages(pages, bank)
     assert len(rows) == 3, len(rows)
     assert not [r for r in rows if bank.party(r) == "UNRESOLVED"]
-    assert party_digest(rows, bank) == "4fca5c5f6aae3a32", [bank.party(r) for r in rows]
-    assert reference_digest(rows, bank) == "d182b3e4a6c42fcd", \
+    assert party_digest(rows, bank) == "9182a433650d104c", [bank.party(r) for r in rows]
+    assert reference_digest(rows, bank) == "52f8f2b555195dae", \
         [bank.reference(r) for r in rows]
 
     for row in rows:
@@ -318,9 +317,9 @@ def test_parse_real_sbi_capture(m):
 
     # the reference is space-tolerant because the producer breaks it mid-token
     assert bank.reference(rows[0])[0] == "UPI"
-    assert bank.reference(rows[0])[1].startswith("444266666662")
-    assert narration_digest(rows) == "e1e4b49bb2624060", [r["narr"] for r in rows]
-    assert rows[0]["ref"] == "TRANSFER TO 5555555555203 /"
+    assert bank.reference(rows[0])[1].startswith('111111111111')
+    assert narration_digest(rows) == "949f0d93d6c532ab", [r["narr"] for r in rows]
+    assert rows[0]["ref"] == 'TRANSFER TO 1111111111203 /'
     m.require_account_match(pages, bank, "SBI CA xx1111")
     refuses(m, "account_not_in_statement", m.require_account_match,
             pages, bank, "SBI CA xx9876")
@@ -415,14 +414,14 @@ def test_account_identity_comes_from_the_statement(m):
     pages = capture("hdfc-bbox-capture.xml")
     # different valid tails, same account, same returned number
     numbers = {m.require_account_match(pages, bank, tail)
-               for tail in ("HDFC CA xx5552", "xx55552", "5555555555552")}
-    assert numbers == {"55555555555552"}, numbers
+               for tail in ("HDFC CA xx1111", "xx11111", "1111111111111")}
+    assert numbers == {"11111111111111"}, numbers
 
     row = {"date": "01/08/26", "narr": "UPI-ALPHA-9@x-ABCD0001-111111111111-P",
            "ref": "1", "dr": "10.00", "cr": "", "bal": "990.00"}
     keys = {m.build([row], bank, "Co", "Bank", "SUSP", {}, tail,
                     account=m.require_account_match(pages, bank, tail))[1][0]["remoteid"]
-            for tail in ("HDFC CA xx5552", "xx55552", "5555555555552")}
+            for tail in ("HDFC CA xx1111", "xx11111", "1111111111111")}
     assert len(keys) == 1, keys
 
     # a tail short enough to match two numbers on that line is refused rather
