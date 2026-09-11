@@ -56,24 +56,49 @@ fn ordinary_vouchers_reject_missing_or_empty_core_fields_before_selection() {
 }
 
 #[test]
-fn movement_profile_fetches_the_flags_required_by_accounting_admission() {
-    let request = render_agent_vouchers("Book", "20260901", "20260902", None).unwrap();
-    let mut reader = quick_xml::Reader::from_str(&request);
-    let mut fields = Vec::new();
-    loop {
-        match reader.read_event().unwrap() {
-            quick_xml::events::Event::Start(event) if event.name().as_ref() == b"FETCH" => {
-                fields = String::from_utf8_lossy(&reader.read_text(event.name()).unwrap())
-                    .split(',')
-                    .map(str::to_string)
-                    .collect();
+fn voucher_profiles_fetch_accounting_state_and_bill_allocations() {
+    for request in [
+        render_agent_vouchers("Book", "20260901", "20260902", None).unwrap(),
+        render_agent_changed_vouchers("Book", 1, 2),
+    ] {
+        let mut reader = quick_xml::Reader::from_str(&request);
+        let mut fields = Vec::new();
+        loop {
+            match reader.read_event().unwrap() {
+                quick_xml::events::Event::Start(event) if event.name().as_ref() == b"FETCH" => {
+                    fields = String::from_utf8_lossy(&reader.read_text(event.name()).unwrap())
+                        .split(',')
+                        .map(str::to_string)
+                        .collect();
+                }
+                quick_xml::events::Event::Eof => break,
+                _ => {}
             }
-            quick_xml::events::Event::Eof => break,
-            _ => {}
         }
-    }
-    for field in ["ISCANCELLED", "ISOPTIONAL"] {
-        assert!(fields.iter().any(|value| value == field), "missing {field}");
+        for field in [
+            "ISCANCELLED",
+            "ISOPTIONAL",
+            // The allocation wildcard, NOT the three curated children. Curating
+            // NAME/BILLTYPE/AMOUNT silently drops BILLTYPE on `On Account`
+            // allocations, which then arrive as amount-only placeholders that are
+            // indistinguishable from an entry with no allocation -- so a real
+            // allocation is lost with nothing reporting it. Measured on
+            // TallyPrime 7.1 Silver: 6 of 144 allocations, recovered by the
+            // wildcard for 1.12x the payload against 7.3x for
+            // `ALLLEDGERENTRIES.*`. See AGENT_VOUCHER_FETCH.
+            "ALLLEDGERENTRIES.BILLALLOCATIONS.*",
+        ] {
+            assert!(fields.iter().any(|value| value == field), "missing {field}");
+        }
+        for curated in [
+            "ALLLEDGERENTRIES.BILLALLOCATIONS.NAME",
+            "ALLLEDGERENTRIES.BILLALLOCATIONS.BILLTYPE",
+        ] {
+            assert!(
+                !fields.iter().any(|value| value == curated),
+                "{curated} must not be curated back in: it drops On Account types"
+            );
+        }
     }
     let xml = voucher_collection_xml().replace(
         "<GUID>",

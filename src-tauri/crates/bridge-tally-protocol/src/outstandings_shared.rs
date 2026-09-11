@@ -31,6 +31,28 @@ use serde::{Deserialize, Serialize};
 use crate::tolerant_xml::sanitize_invalid_numeric_references;
 use crate::xml_read_profiles::ValidatedCompanyName;
 
+/// Whether a `BILLALLOCATIONS.LIST` row that carries no `BILLTYPE` is one of
+/// Tally's placeholder containers, and may be ignored.
+///
+/// Tally emits placeholder allocation containers -- empty, or carrying only an
+/// `AMOUNT` -- for ledger entries that have no typed bill allocation. They are
+/// ordinary output rather than malformed input, and they hold no bill identity
+/// to record, so a reader ignores the row and continues.
+///
+/// A row that names a bill but omits its type is a different thing: a partially
+/// populated allocation. Guessing its type would invent an allocation the book
+/// does not contain, so that case fails closed.
+///
+/// This rule lives here, rather than at either boundary, because restating it
+/// is how it was got wrong. The voucher-scan boundary admitted placeholders
+/// while the agent read path required `BILLTYPE` unconditionally -- and because
+/// an amount-only row is not empty, one such row aborted an entire `vouchers`
+/// read with `bill_allocation_field_missing` instead of being skipped. Both
+/// boundaries now call this.
+pub fn bill_allocation_without_type_is_placeholder(name: Option<&str>) -> bool {
+    !name.is_some_and(|value| !value.trim().is_empty())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutstandingsError {
     InvalidDateWindow,
@@ -752,5 +774,30 @@ mod tests {
             ))),
             Ok(())
         );
+    }
+}
+
+#[cfg(test)]
+mod bill_allocation_admission_tests {
+    use super::bill_allocation_without_type_is_placeholder;
+
+    #[test]
+    fn an_untyped_row_with_no_name_is_a_placeholder() {
+        for name in [None, Some(""), Some("   ")] {
+            assert!(
+                bill_allocation_without_type_is_placeholder(name),
+                "{name:?} carries no bill identity, so the row is a placeholder"
+            );
+        }
+    }
+
+    #[test]
+    fn an_untyped_row_that_names_a_bill_is_not_a_placeholder() {
+        for name in [Some("SET-INV-001"), Some("  SET-INV-001  ")] {
+            assert!(
+                !bill_allocation_without_type_is_placeholder(name),
+                "{name:?} names a bill, so the missing type is malformed input"
+            );
+        }
     }
 }
