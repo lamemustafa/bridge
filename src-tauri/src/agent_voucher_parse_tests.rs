@@ -90,6 +90,56 @@ fn reference_bearing_bill_allocation_with_empty_name_fails_closed() {
     );
 }
 
+const WILDCARD_ALLOCATION_COMPANY_GUID: &str = "ae1490be-52c5-4544-9ffc-4b7da85f9797";
+
+fn captured_wildcard_allocation_vouchers() -> String {
+    let bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-billallocations-wildcard.utf16le.xml"
+    );
+    String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn allocation_wildcard_response_parses_and_types_on_account() {
+    // Captured live from TallyPrime 7.1 Silver with
+    // ALLLEDGERENTRIES.BILLALLOCATIONS.* -- the shape this profile now requests.
+    // Curating NAME/BILLTYPE/AMOUNT instead DROPS BILLTYPE on On Account
+    // allocations, so they arrive as amount-only placeholders and are skipped,
+    // losing real allocations silently. This fixture is the proof that the
+    // wildcard restores the type, and that the extra sibling elements Tally
+    // returns inside the allocation do not disturb the parse.
+    let captured = captured_wildcard_allocation_vouchers();
+    let rows = parse_agent_rows(&captured, WILDCARD_ALLOCATION_COMPANY_GUID)
+        .expect("the allocation wildcard response must parse");
+
+    let allocations: Vec<&serde_json::Value> = rows
+        .iter()
+        .flat_map(|row| row["amounts"].as_array().unwrap())
+        .flat_map(|amount| amount["bill_allocations"].as_array().unwrap())
+        .collect();
+
+    assert!(
+        allocations
+            .iter()
+            .any(|allocation| allocation["bill_type"] == "On Account"
+                && allocation["reference"] == json!({"kind": "on_account"})),
+        "On Account must arrive typed and explicitly unnamed, not as a placeholder"
+    );
+    assert!(
+        allocations
+            .iter()
+            .any(|allocation| allocation["bill_type"] == "New Ref"
+                && allocation["reference"]["kind"] == "named"),
+        "a reference-bearing allocation must keep its name"
+    );
+}
+
 #[test]
 fn amount_only_bill_allocation_placeholder_is_ignored_not_refused() {
     // Tally emits an amount-only container for a ledger entry with no typed

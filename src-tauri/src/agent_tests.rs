@@ -78,11 +78,26 @@ fn voucher_profiles_fetch_accounting_state_and_bill_allocations() {
         for field in [
             "ISCANCELLED",
             "ISOPTIONAL",
-            "ALLLEDGERENTRIES.BILLALLOCATIONS.NAME",
-            "ALLLEDGERENTRIES.BILLALLOCATIONS.BILLTYPE",
-            "ALLLEDGERENTRIES.BILLALLOCATIONS.AMOUNT",
+            // The allocation wildcard, NOT the three curated children. Curating
+            // NAME/BILLTYPE/AMOUNT silently drops BILLTYPE on `On Account`
+            // allocations, which then arrive as amount-only placeholders that are
+            // indistinguishable from an entry with no allocation -- so a real
+            // allocation is lost with nothing reporting it. Measured on
+            // TallyPrime 7.1 Silver: 6 of 144 allocations, recovered by the
+            // wildcard for 1.12x the payload against 7.3x for
+            // `ALLLEDGERENTRIES.*`. See AGENT_VOUCHER_FETCH.
+            "ALLLEDGERENTRIES.BILLALLOCATIONS.*",
         ] {
             assert!(fields.iter().any(|value| value == field), "missing {field}");
+        }
+        for curated in [
+            "ALLLEDGERENTRIES.BILLALLOCATIONS.NAME",
+            "ALLLEDGERENTRIES.BILLALLOCATIONS.BILLTYPE",
+        ] {
+            assert!(
+                !fields.iter().any(|value| value == curated),
+                "{curated} must not be curated back in: it drops On Account types"
+            );
         }
     }
     let xml = voucher_collection_xml().replace(
