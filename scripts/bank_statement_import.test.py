@@ -114,7 +114,7 @@ HDFC_PAGE = page(
            (192, 230, "EXPORTS-MUM-ZZZZZ00000000000-BB"),
            (282, 350, "ZZZZZ00000000000"), (360, 398, "02/08/26"),
            (402, 460, "2,500.50"), (562, 620, "8,499.50")]),
-    (170, [(100, 140, "HDFC"), (142, 175, "BANK"), (177, 220, "LIMITED")]),
+    (170, [(28, 60, "HDFC"), (62, 95, "BANK"), (97, 140, "LIMITED")]),
     # below the footer: must not be read
     (190, [(2, 60, "03/08/26"), (72, 200, "UPI-GHOST-g@z-ZZZZ0001-999999999999-X"),
            (402, 460, "1.00"), (562, 620, "8,498.50")]),
@@ -219,8 +219,8 @@ def test_parse_real_hdfc_capture(m):
     # the following field is resolved too. That defect was in this very capture
     # and survived the assertion above; it took running the tool against the
     # unsanitised statement to see it.
-    assert party_digest(rows, bank) == "e3f7e87a3b0ee37f", [bank.party(r) for r in rows]
-    assert reference_digest(rows, bank) == "5397aeea8be588eb", \
+    assert party_digest(rows, bank) == "2f42f460caf687fd", [bank.party(r) for r in rows]
+    assert reference_digest(rows, bank) == "b94b21c1acb8665c", \
         [bank.reference(r) for r in rows]
 
     # a narration wrapped across four printed lines, rejoined in full. Asserted
@@ -228,13 +228,13 @@ def test_parse_real_hdfc_capture(m):
     # to insert a space, and only the complete string pins every one of those
     # decisions.
     assert rows[4]["narr"] == (
-        "UPI-HHHHH LLLLLL PPPPPPP-RRRRRR.LLLLLL@S TT-DDDD5555555-"
-        "666666666666-FFFFFFF FROMHHHHH")
-    assert bank.party(rows[4]) == "HHHHH LLLLLL PPPPPPP"
+        "UPI-HHHHQ LLLLLQ PPPPPPW-RRRRRW.LLLLLQ@S TW-DDDD5555555-"
+        "666666666665-FFFFFFW FROMHHHHW")
+    assert bank.party(rows[4]) == "HHHHQ LLLLLQ PPPPPPW"
     # ... and its 12-digit reference survived the wrap intact
-    assert bank.reference(rows[4]) == ("UPI", "666666666666")
+    assert bank.reference(rows[4]) == ("UPI", "666666666665")
     # and every other row's wrap decisions, which no readable assertion reaches
-    assert narration_digest(rows) == "af1efe3b11615e22", [r["narr"] for r in rows]
+    assert narration_digest(rows) == "69baa6880aa21374", [r["narr"] for r in rows]
 
     # row-scoped columns land where the geometry says, not one column over
     assert rows[0]["ref"] == "3333333333333333"
@@ -255,7 +255,7 @@ def test_parse_real_hdfc_capture(m):
     assert m.parse_pages(pages[:2], bank) == rows, "page 3 must contribute nothing"
 
     # the account number is bound from the header block, not from the table
-    m.require_account_match(pages, bank, "HDFC CA xx5555")
+    m.require_account_match(pages, bank, "HDFC CA xx5552")
     # every one of these is a real number printed in this capture's header —
     # phone, customer id, IFSC digits, MICR, postcode — and every one passed
     # before the binding was narrowed to the account-number line
@@ -273,8 +273,8 @@ def test_parse_real_sbi_capture(m):
     rows = m.parse_pages(pages, bank)
     assert len(rows) == 3, len(rows)
     assert not [r for r in rows if bank.party(r) == "UNRESOLVED"]
-    assert party_digest(rows, bank) == "c5fe29a8186a900d", [bank.party(r) for r in rows]
-    assert reference_digest(rows, bank) == "77c010016a189596", \
+    assert party_digest(rows, bank) == "4fca5c5f6aae3a32", [bank.party(r) for r in rows]
+    assert reference_digest(rows, bank) == "d182b3e4a6c42fcd", \
         [bank.reference(r) for r in rows]
 
     for row in rows:
@@ -286,9 +286,9 @@ def test_parse_real_sbi_capture(m):
 
     # the reference is space-tolerant because the producer breaks it mid-token
     assert bank.reference(rows[0])[0] == "UPI"
-    assert bank.reference(rows[0])[1].startswith("444466666666")
-    assert narration_digest(rows) == "5f94f41973401703", [r["narr"] for r in rows]
-    assert rows[0]["ref"] == "TRANSFER TO 5555555555503 /"
+    assert bank.reference(rows[0])[1].startswith("444266666662")
+    assert narration_digest(rows) == "e1e4b49bb2624060", [r["narr"] for r in rows]
+    assert rows[0]["ref"] == "TRANSFER TO 5555555555203 /"
     m.require_account_match(pages, bank, "SBI CA xx1111")
     refuses(m, "account_not_in_statement", m.require_account_match,
             pages, bank, "SBI CA xx9876")
@@ -369,16 +369,44 @@ def test_account_binding(m):
             [page((10, [(2, 60, "nothing")]))], hdfc, "HDFC CA xx1234")
 
 
-def test_account_identity_ignores_label_spelling(m):
-    """The label feeds the REMOTEID, so two spellings of one account must not
-    turn one transaction into two vouchers."""
-    assert m.account_digits("HDFC CA xx1234") == m.account_digits("HDFC xx1234") == "1234"
+def test_account_identity_comes_from_the_statement(m):
+    """The REMOTEID is keyed on the account number the statement prints, not on
+    the operator's label.
+
+    A label is free-form: `HDFC CA xx1234`, `HDFC xx1234` and `xx001234` all name
+    one account and reduce to three different strings. Any of them keying the
+    digest gives every transaction a new REMOTEID, and re-importing duplicates
+    the whole statement — the failure the digest exists to prevent, reached
+    through the label.
+    """
     bank = m.HDFC()
+    pages = capture("hdfc-bbox-capture.xml")
+    # different valid tails, same account, same returned number
+    numbers = {m.require_account_match(pages, bank, tail)
+               for tail in ("HDFC CA xx5552", "xx55552", "5555555555552")}
+    assert numbers == {"55555555555552"}, numbers
+
     row = {"date": "01/08/26", "narr": "UPI-ALPHA-9@x-ABCD0001-111111111111-P",
            "ref": "1", "dr": "10.00", "cr": "", "bal": "990.00"}
-    _, first = m.build([row], bank, "Co", "Bank", "SUSP", {}, "HDFC CA xx1234")
-    _, again = m.build([row], bank, "Co", "Bank", "SUSP", {}, "HDFC xx1234")
-    assert first[0]["remoteid"] == again[0]["remoteid"]
+    keys = {m.build([row], bank, "Co", "Bank", "SUSP", {}, tail,
+                    account=m.require_account_match(pages, bank, tail))[1][0]["remoteid"]
+            for tail in ("HDFC CA xx5552", "xx55552", "5555555555552")}
+    assert len(keys) == 1, keys
+
+    # a tail short enough to match two numbers on that line is refused rather
+    # than resolved to whichever came first. HDFC prints a product code beside
+    # the account number, so two numbers on that line is the documented residual
+    # of this binding rather than a hypothetical.
+    refuses(m, "unbindable_account", m.require_account_match, pages, bank, "xx55")
+    two_numbers = page(
+        (52, [(340, 380, "Account"), (382, 396, "No"), (397, 400, ":"),
+              (403, 470, "00000000001234"), (474, 520, "99001234")]),
+        (100, [(5, 30, "Date"), (72, 120, "Narration")]),
+    )
+    refuses(m, "ambiguous_account_match", m.require_account_match,
+            [two_numbers], bank, "xx1234")
+    # ... and a tail long enough to pick one of them is accepted
+    assert m.require_account_match([two_numbers], bank, "xx0000001234") == "00000000001234"
 
 
 # --------------------------------------------------------------------------- #
@@ -571,6 +599,21 @@ def mapping_file(directory, text):
     return path
 
 
+def test_mapping_key_survives_non_ascii_scripts(m):
+    """An ASCII-only key reduces a name written entirely in Devanagari, Tamil or
+    Bengali to the empty string, so every such party shares one key and a book
+    with two of them posts both to whichever was mapped first — with no
+    collision left for `load_mapping` to refuse. The demo company this project
+    reads carries ledgers in all three scripts."""
+    assert m._key("पार्टी")
+    # distinct names stay distinct, including ones differing only in their
+    # vowel signs — dropping combining marks would be the same bug one layer down
+    names = ["पार्टी", "पारटी", "ஏபிசி", "কোম্পানি"]
+    assert len({m._key(n) for n in names}) == len(names)
+    # and the ASCII behaviour is unchanged
+    assert m._key("A & B") == m._key("AB") == "AB"
+
+
 def test_mapping_key_ignores_wrap_spacing(m):
     with tempfile.TemporaryDirectory() as directory:
         path = mapping_file(directory,
@@ -604,6 +647,13 @@ def test_mapping_refuses_ambiguous_input(m):
                 mapping_file(directory, "party,ledger,treatment\nOWN,,contra\n"))
         refuses(m, "unknown_treatment", m.load_mapping,
                 mapping_file(directory, "party,ledger,treatment\nA,L,transfer\n"))
+        # a name with no letters or digits at all would bucket with every other
+        refuses(m, "unusable_mapping_key", m.load_mapping,
+                mapping_file(directory, "party,ledger,treatment\n---,L,auto\n"))
+        # two columns normalising to one name: the later silently wins, and if
+        # it is blank the row is skipped and its transactions fall to suspense
+        refuses(m, "mapping_headers_duplicated", m.load_mapping,
+                mapping_file(directory, "party,Party,ledger,treatment\nA,,L,auto\n"))
         # capitalised or padded headers pass the header check; the records must
         # be normalised too, or every row reads empty and the whole mapping is
         # discarded into suspense while the run reports success
@@ -707,29 +757,44 @@ def test_empty_selection_is_not_a_successful_import(m):
     rows = [{"date": "01/08/26", "narr": "UPI-A-9@x-ABCD0001-111111111111-P",
              "ref": "1", "dr": "10.00", "cr": "", "bal": "990.00"}]
     refuses(m, "empty_selection", m.build, rows, bank, "Co", "Bank", "SUSP", {}, "AC1234",
-            datetime.date(2025, 1, 1), datetime.date(2025, 12, 31))
+            date_from=datetime.date(2025, 1, 1), date_to=datetime.date(2025, 12, 31))
 
 
 def test_a_transaction_naming_the_bank_is_not_the_footer(m):
-    """The footer anchor is a subset test, so a payment whose counterparty is
-    the bank itself carries HDFC BANK LIMITED — and would end the page, dropping
-    that row and every row after it."""
+    """The footer anchor is a subset test, so any line carrying its words ends
+    the page — including a payment whose counterparty is the bank itself, which
+    drops that row and every row after it.
+
+    The guard is that a line opening a transaction is a transaction whatever
+    else it says, so the date wins and the anchor only breaks ties.
+
+    The tokenisation below is contrived: these narrations join fields with
+    hyphens, so a payee "HDFC BANK LIMITED" usually tokenises as "…-HDFC",
+    "BANK", "LIMITED-…" and only the middle word is bare. A bare trailing-hyphen
+    token followed by a space does occur (the real capture carries "ACH D- TP
+    ACH …"), so this is reachable rather than impossible — and the guard costs
+    one comparison either way.
+    """
     bank = m.HDFC()
     tricky = page(
         (100, [(5, 30, "Date"), (72, 120, "Narration"), (282, 340, "Chq./Ref.No."),
                (402, 452, "Withdrawal"), (562, 600, "Closing")]),
-        (120, [(2, 60, "01/08/26"), (72, 200, "NEFT DR-ZZZZ1-HDFC BANK LIMITED-"),
-               (205, 230, "MUM-ZZZZZ00000000000-B"),
+        (120, [(2, 60, "01/08/26"), (72, 110, "TPT-"), (112, 150, "HDFC"),
+               (152, 185, "BANK"), (187, 230, "LIMITED"),
                (282, 350, "0000000000000001"), (402, 460, "10.00"),
                (562, 620, "990.00")]),
         (140, [(2, 60, "02/08/26"), (72, 200, "UPI-BETA-b@z-ZZZZ1-222222222222-P"),
                (282, 350, "0000000000000002"), (402, 460, "20.00"),
                (562, 620, "970.00")]),
-        (170, [(100, 140, "HDFC"), (142, 175, "BANK"), (177, 220, "LIMITED")]),
+        (170, [(28, 60, "HDFC"), (62, 95, "BANK"), (97, 140, "LIMITED")]),
+        (190, [(2, 60, "03/08/26"), (72, 200, "UPI-GHOST-g@z-ZZZZ1-333333333333-X"),
+               (402, 460, "1.00"), (562, 620, "969.00")]),
     )
     rows = m.parse_pages([tricky], bank)
     assert len(rows) == 2, [r["narr"] for r in rows]
-    assert bank.party(rows[0]) == "HDFC BANK LIMITED"
+    assert "HDFC BANK LIMITED" in rows[0]["narr_spaced"]
+    # the real footer, printed from the left margin, still ended the page
+    assert "GHOST" not in " ".join(r["narr"] for r in rows)
 
 
 def test_output_files_are_owner_only(m):

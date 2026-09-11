@@ -59,7 +59,9 @@ def _fake_date(token):
 
 SEP = re.compile(r"([^A-Za-z0-9]+)")
 ALPHA = "ZQXVWKJYBGFHLMNPRSTDC"
+ENTITY = re.compile(r"&(?:amp|lt|gt|quot|apos|#\d+|#x[0-9A-Fa-f]+);")
 _seen = {}
+_taken = set()
 
 
 def _fake_token(token):
@@ -80,20 +82,68 @@ def _fake_token(token):
     reads. Keyed on first-appearance order rather than on the characters, so
     this is not a cipher over the original text.
     """
-    if token not in _seen:
-        index = len(_seen)
-        letter = ALPHA[index % len(ALPHA)]
-        digit = str((index % 9) + 1)
-        _seen[token] = "".join(
+    if token in _seen:
+        return _seen[token]
+    # Distinct inputs must get distinct outputs, or the fixture collapses two
+    # counterparties into one and a parser regression involving name boundaries
+    # or mapping identity stays green. A single repeated character runs out
+    # after `len(ALPHA)` tokens of the same shape, so widen the replacement
+    # until it is unused.
+    for attempt in range(len(_seen), len(_seen) + 10_000):
+        letter = ALPHA[attempt % len(ALPHA)]
+        digit = str((attempt % 9) + 1)
+        suffix = attempt // len(ALPHA)
+        candidate = "".join(
             character if character == "X"
             else digit if character.isdigit()
             else letter.lower() if character.islower()
             else letter
             for character in token)
-    return _seen[token]
+        if suffix and len(candidate) > 1:
+            # Vary the tail so a second pass over the alphabet cannot repeat a
+            # replacement already issued for a token of this shape — but vary it
+            # *within its own character class*. Shape is the whole point: a
+            # digit run that gains a trailing letter stops being a reference,
+            # and the boundary parsers this fixture exists to exercise read
+            # exactly that distinction.
+            last = candidate[-1]
+            if last == "X":
+                replacement = last
+            elif last.isdigit():
+                replacement = str((suffix % 9) + 1)
+            elif last.islower():
+                replacement = ALPHA[suffix % len(ALPHA)].lower()
+            else:
+                replacement = ALPHA[suffix % len(ALPHA)]
+            candidate = candidate[:-1] + replacement
+        if candidate not in _taken:
+            break
+    _seen[token] = candidate
+    _taken.add(candidate)
+    return candidate
 
 
 def scrub(text):
+    """Sanitise one word's text, preserving XML entity syntax.
+
+    `&amp;` is one character in the document and four in the file. Splitting on
+    non-alphanumerics treats `amp` as customer text and rewrites the word to
+    something like `Z&qqq;X` — no longer valid bbox XML, and no longer the
+    parsing behaviour the real bytes exercise. Entities are held out, the text
+    around them is scrubbed, and they go back exactly as they were.
+    """
+    parts = ENTITY.split(text)
+    if len(parts) > 1:
+        entities = ENTITY.findall(text)
+        out = [_scrub_plain(parts[0])]
+        for entity, rest in zip(entities, parts[1:]):
+            out.append(entity)
+            out.append(_scrub_plain(rest))
+        return "".join(out)
+    return _scrub_plain(text)
+
+
+def _scrub_plain(text):
     if DATE.match(text):
         return _fake_date(text)
     if YEAR.match(text):

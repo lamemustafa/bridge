@@ -95,6 +95,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unicodedata
 import xml.etree.ElementTree as ET
 
 D = decimal.Decimal
@@ -437,7 +438,14 @@ class HDFC(Bank):
             narr, "UPI-", lambda p: bool(re.fullmatch(r"\d{12,}", p)), back=1)
 
     def party(self, row):
-        narr = row["narr"]
+        # the space-preserving reading, not the de-wrapped one. `parse_pages`
+        # keeps both precisely so names and references can disagree about a
+        # wrap: de-wrapping is what keeps a split reference intact, and it is
+        # also what welds `ACME INDUSTRIES` into `ACMEINDUSTRIES`. SBI's
+        # `party` has always read this form; HDFC's read the other, against the
+        # module's own stated rule. On a real statement that cost the correct
+        # spelling of a counterparty appearing twice.
+        narr = row.get("narr_spaced") or row["narr"]
         if re.match(r"^IMPS-\d+-", narr):
             # IMPS-<ref>-<name…>-<bank code>-…; the name ends at the bank code
             # the masked account is the marker: a name can be four capitals
@@ -523,8 +531,19 @@ def _key(text):
     both spellings must reach the same mapping row. The cost is that it can
     also collapse two *different* names — `load_mapping` refuses a file where
     that happens rather than letting one silently win.
+
+    Unicode-aware rather than `[A-Z0-9]`. An ASCII class reduces a name written
+    entirely in Devanagari, Tamil or Bengali to the empty string, and every such
+    party then shares one key — a book with two of them posts both to whichever
+    was mapped first, with no collision left to refuse. The demo company this
+    project reads carries ledgers in all three scripts.
+
+    Marks are kept as well as letters and digits: `str.isalnum` is false for a
+    combining matra, so dropping those would collapse Indic names that differ
+    only in their vowel signs — the same bug one layer down.
     """
-    return re.sub(r"[^A-Z0-9]", "", text.upper())
+    return "".join(character for character in text.upper()
+                   if unicodedata.category(character)[0] in "LNM")
 
 
 def _ledger_key(name):
@@ -592,12 +611,21 @@ def parse_pages(pages, bank):
             cells = {}
             for x0, _, x1, _, text in group:
                 cells.setdefault(bank.column_of(x0, x1), []).append((x0, x1, text))
-            started = bank.is_row_start(cells)
-            # A footer anchor is a *subset* test, so a transaction whose
-            # counterparty is the bank itself carries "HDFC BANK LIMITED" and
-            # would end the page — dropping that row and every row after it. A
-            # line that opens a transaction is a transaction, whatever else it
+            # A footer anchor is a *subset* test, so any line carrying its words
+            # ends the page — including a transaction whose counterparty is the
+            # bank itself, which would drop that row and every row after it.
+            # A line that opens a transaction is a transaction whatever else it
             # says, so the date decides and the anchor only breaks the ties.
+            #
+            # Residual, and why it is left: a wrapped *continuation* line has no
+            # date, so this guard does not cover one that carried the anchor
+            # words. Reaching that needs all of them as separate tokens, and
+            # these narrations join fields with hyphens — a payee "HDFC BANK
+            # LIMITED" tokenises as "…-HDFC", "BANK", "LIMITED-…", so only the
+            # middle word is ever bare. Geometry does not separate the two
+            # either: the real "STATEMENT SUMMARY" footer centres inside the
+            # narration column, exactly where a continuation sits.
+            started = bank.is_row_start(cells)
             if not started and bank.bottom_anchors and _matches(group, bank.bottom_anchors):
                 break
             if started:
@@ -660,12 +688,7 @@ def account_number_runs(pages, bank):
 
 
 def account_digits(account_tail):
-    """The canonical account identity: the digits of the operator's label.
-
-    `HDFC CA xx1234` and `HDFC xx1234` name one account and must reduce to one
-    value, because this feeds the REMOTEID — two spellings of a free-form label
-    must not turn one transaction into two vouchers on re-import.
-    """
+    """The digits of the operator's free-form label, for matching only."""
     return re.sub(r"\D", "", account_tail)
 
 
@@ -704,7 +727,8 @@ def require_account_match(pages, bank, account_tail):
             "account number could not be located. The layout has changed, or this "
             f"is not a {bank.name.upper()} statement.",
         )
-    if not any(run.endswith(digits) for run in runs):
+    matched = [run for run in runs if run.endswith(digits)]
+    if not matched:
         raise Refusal(
             "account_not_in_statement",
             f"no number ending {digits} appears on this statement's account-number "
@@ -712,6 +736,15 @@ def require_account_match(pages, bank, account_tail):
             "--account-tail, or the account digits were mistyped. Refusing to "
             "post it anywhere.",
         )
+    if len(set(matched)) > 1:
+        raise Refusal(
+            "ambiguous_account_match",
+            f"{digits} matches more than one number on the account-number line "
+            f"({', '.join(sorted(set(matched)))}); lengthen --account-tail.",
+        )
+    # the statement's own account number, not the operator's label — see
+    # `_remote_id`
+    return matched[0]
 
 
 _AMOUNT = re.compile(r"\d+(\.\d{1,2})?")
@@ -917,7 +950,17 @@ def load_mapping(path):
         return mapping
     with open(path, newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
-        headers = {(name or "").strip().lower() for name in (reader.fieldnames or ())}
+        normalised = [(name or "").strip().lower() for name in (reader.fieldnames or ())]
+        repeated = sorted({name for name in normalised if normalised.count(name) > 1})
+        if repeated:
+            raise Refusal(
+                "mapping_headers_duplicated",
+                f"{path}: column(s) {', '.join(repeated)} appear more than once once case "
+                "and surrounding space are ignored. One silently overwrites the other, and "
+                "if the survivor is blank the row is skipped and its transactions fall to "
+                "suspense while the run reports success.",
+            )
+        headers = set(normalised)
         missing = [name for name in MAPPING_COLUMNS if name not in headers]
         if missing:
             raise Refusal(
@@ -954,6 +997,12 @@ def load_mapping(path):
             # differently in two printings of the same name ("ZEPHYRM ANUFACTURING"
             # vs "ZEPHYRMANUFACTURING"), and both must reach the same ledger
             key = _key(party)
+            if not key:
+                raise Refusal(
+                    "unusable_mapping_key",
+                    f"{path} line {line}: {party!r} reduces to an empty key, which every "
+                    "other such name would share.",
+                )
             if key in mapping and mapping[key] != (ledger, treatment):
                 first_party, first_line = origin[key]
                 raise Refusal(
@@ -969,7 +1018,7 @@ def load_mapping(path):
     return mapping
 
 
-def _remote_id(account_tail, date, row, bank):
+def _remote_id(account, date, row, bank):
     """Idempotency key derived from the transaction, not from its position.
 
     3.3a makes a repeated REMOTEID an *upsert*, so this key decides two
@@ -984,14 +1033,17 @@ def _remote_id(account_tail, date, row, bank):
     balance in particular makes two genuinely identical same-day payments
     distinguishable, because the second lands on a different balance.
 
-    Nothing operator-controlled may enter this. `--account-tail` is a free-form
-    label, so `HDFC CA xx1234` and `HDFC xx1234` are the same account spelled
-    two ways; only its digits are used, in both the digest and the prefix.
-    Otherwise regenerating a file with a tidied-up label would give every
-    transaction a new key and duplicate the whole statement on re-import.
+    Nothing operator-controlled may enter this. The account identity comes from
+    the **statement**, not from `--account-tail`: that flag is a free-form label,
+    and `HDFC CA xx1234`, `HDFC xx1234` and `xx001234` all name one account while
+    reducing to three different strings. Any of them would give every
+    transaction a new key and duplicate the whole statement on re-import — which
+    is the failure the digest exists to prevent, reintroduced through the label.
+    `require_account_match` returns the number it matched, and that is what is
+    used here.
     """
     material = "\0".join((
-        account_digits(account_tail),
+        account,
         date.isoformat(),
         (row.get(bank.debit_column) or "").strip(),
         (row.get(bank.credit_column) or "").strip(),
@@ -999,7 +1051,7 @@ def _remote_id(account_tail, date, row, bank):
         _squash(row.get(bank.narration_column, "")),
     ))
     digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:12].upper()
-    return f"AC{account_digits(account_tail)}-{date.strftime('%Y%m%d')}-{digest}"
+    return f"AC{account}-{date.strftime('%Y%m%d')}-{digest}"
 
 
 MANIFEST_COLUMNS = ("row", "date", "voucher_type", "amount", "dr_ledger", "cr_ledger",
@@ -1019,13 +1071,19 @@ def _manifest_row(**values):
 
 
 def build(rows, bank, company, bank_ledger, suspense, mapping, account_tail,
-          date_from=None, date_to=None):
+          account=None, date_from=None, date_to=None):
     """Vouchers and a manifest row per statement row, in printed order.
 
     The manifest is not a log. It is the operator's record of what each voucher
     was made from and, through `remoteid`, the only way to remove one
     afterwards — including for rows this run deliberately did not emit.
+
+    `account_tail` is the operator's label and appears only in narrations, where
+    it is for a human to read. `account` is the number `require_account_match`
+    read off the statement, and it is what the REMOTEID is keyed on — a label
+    can be respelled, an account number cannot.
     """
+    account = account or account_digits(account_tail)
     vouchers, manifest, seen = [], [], {}
     for index, row in enumerate(rows, 1):
         raw_date = f"{row[bank.date_column]}".strip()
@@ -1062,7 +1120,7 @@ def build(rows, bank, company, bank_ledger, suspense, mapping, account_tail,
             manifest.append(_manifest_row(
                 row=index, date=date.isoformat(), voucher_type="SKIPPED",
                 amount=f"{amount:.2f}", party=party,
-                remoteid=_remote_id(account_tail, date, row, bank),
+                remoteid=_remote_id(account, date, row, bank),
                 narration="excluded: carried by the other account's contra"))
             continue
         kind = "Contra" if treatment == "contra" else ("Payment" if outward else "Receipt")
@@ -1078,7 +1136,7 @@ def build(rows, bank, company, bank_ledger, suspense, mapping, account_tail,
         )
         if unidentified:
             narration += " | UNIDENTIFIED - reallocate from Suspense"
-        remote_id = _remote_id(account_tail, date, row, bank)
+        remote_id = _remote_id(account, date, row, bank)
         if remote_id in seen:
             raise Refusal(
                 "duplicate_remoteid",
@@ -1410,7 +1468,7 @@ def main(argv=None):
 
     bank = BANKS[args.bank]()
     rows, pages = parse(pathlib.Path(args.pdf), read_password(), bank)
-    require_account_match(pages, bank, args.account_tail)
+    account = require_account_match(pages, bank, args.account_tail)
     closing = reconcile(rows, bank, expected["opening"], expected["closing"])
     totals = verify_against_statement(rows, bank, expected)
     print(f"parsed {len(rows)} rows; running balance reproduced on every row")
@@ -1419,7 +1477,7 @@ def main(argv=None):
 
     vouchers, manifest = build(
         rows, bank, args.company, args.bank_ledger, args.suspense,
-        load_mapping(args.mapping), args.account_tail, *window,
+        load_mapping(args.mapping), args.account_tail, account, *window,
     )
     if args.dry_run:
         _print_dry_run(manifest)
