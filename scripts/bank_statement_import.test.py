@@ -797,6 +797,42 @@ def test_a_transaction_naming_the_bank_is_not_the_footer(m):
     assert "GHOST" not in " ".join(r["narr"] for r in rows)
 
 
+def test_dry_run_groups_by_mapping_key(m):
+    """The dry run is the list the operator writes the mapping from, so it must
+    group the way the mapping is read.
+
+    One counterparty reaches it under two spellings whenever the wrap heuristic
+    decides differently on two lines — a real statement showed one payee as both
+    `MERCURY MANUFACTURERS` and `MERCURY M ANUFACTURERS`. Those are one mapping
+    row, and listing them as two invites the operator to write two rows and then
+    wonder why the second never fires.
+    """
+    manifest = [
+        m._manifest_row(party="MERCURY MANUFACTURERS", voucher_type="Receipt",
+                        amount="60000.00", suspense="YES"),
+        m._manifest_row(party="MERCURY M ANUFACTURERS", voucher_type="Receipt",
+                        amount="220000.00", suspense="YES"),
+        m._manifest_row(party="AMBIKA INDUSTRIES", voucher_type="Receipt",
+                        amount="1000.00", suspense="YES"),
+    ]
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        m._print_dry_run(manifest)
+    report = printed.getvalue()
+
+    # one row for the two spellings, carrying their combined total
+    assert "280,000.00" in report
+    assert "220,000.00" not in report and "60,000.00" not in report
+    # ... labelled with the spelling the bank printed. A wrap can only insert a
+    # space, never remove one, so the lower word count is the original — even
+    # though the other spelling carries more value.
+    lines = [line for line in report.splitlines() if line.startswith("MERCURY")]
+    assert lines and lines[0].startswith("MERCURY MANUFACTURERS"), lines
+    # and the variant is still named, so it stays findable in the statement
+    assert "also printed as MERCURY M ANUFACTURERS" in report
+    assert "AMBIKA INDUSTRIES" in report
+
+
 def test_output_files_are_owner_only(m):
     """The XML and manifest carry counterparties, amounts and every narration;
     the default 022 umask would publish them as 0644 on a shared host."""

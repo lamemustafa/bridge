@@ -1379,13 +1379,43 @@ def _write_csv(path, records):
 
 
 def _print_dry_run(manifest):
-    totals = {}
+    """The list the operator writes the mapping from, grouped the way the mapping
+    is read.
+
+    Grouped on `_key`, not on the printed name. One counterparty can reach this
+    list under two spellings — the wrap heuristic decides per line whether a
+    space survives, so a real statement showed one payee as both
+    `MERCURY MANUFACTURERS` and `MERCURY M ANUFACTURERS`. Those are one mapping
+    row, because `_key` collapses them, and listing them as two invites the
+    operator to write two rows and then wonder why the second never fires.
+
+    The spelling shown is the one with the **fewest words**, then the most
+    value. Fewest words is not a guess: a cell wrap can only ever insert a space
+    that the printed name did not have, never remove one, so between
+    `MERCURY MANUFACTURERS` and `MERCURY M ANUFACTURERS` the shorter word count
+    is the one the bank printed. The others are named beneath it, so an operator
+    searching the statement for a variant still finds it here.
+    """
+    grouped = {}
     for record in manifest:
-        key = (record["party"], record["voucher_type"], record["suspense"])
-        totals[key] = totals.get(key, D(0)) + D(record["amount"])
+        key = (_key(record["party"]), record["voucher_type"], record["suspense"])
+        bucket = grouped.setdefault(key, {"total": D(0), "spellings": {}})
+        amount = D(record["amount"])
+        bucket["total"] += amount
+        bucket["spellings"][record["party"]] = (
+            bucket["spellings"].get(record["party"], D(0)) + amount)
+
     print(f"\n{'COUNTERPARTY':<34}{'TYPE':<10}{'TOTAL':>14}  SUSPENSE")
-    for (party, kind, suspense), total in sorted(totals.items(), key=lambda kv: -kv[1]):
-        print(f"{party[:33]:<34}{kind:<10}{total:>14,}  {suspense}")
+    for (_, kind, suspense), bucket in sorted(
+            grouped.items(), key=lambda item: -item[1]["total"]):
+        spellings = sorted(bucket["spellings"].items(), key=lambda kv: -kv[1])
+        shown = min(spellings, key=lambda kv: (len(kv[0].split()), -kv[1]))[0]
+        spellings = [entry for entry in spellings if entry[0] != shown]
+        print(f"{shown[:33]:<34}{kind:<10}{bucket['total']:>14,}  {suspense}")
+        for variant, _amount in spellings:
+            print(f"  also printed as {variant[:60]}")
+    print("\nOne line per mapping row: spellings that differ only in spacing or "
+          "punctuation\nare one counterparty, and one row in the CSV covers them.")
 
 
 def _print_operator_notes(company, skipped):
