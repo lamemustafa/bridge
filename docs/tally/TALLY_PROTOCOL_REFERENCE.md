@@ -876,7 +876,21 @@ are in the book and a naive check qualifies the path for the next batch. What it
 - a **company-pinned** read of the same date range before and after, complete enough that an empty
   result is distinguishable from an unfiltered one (read a range you know holds other vouchers, and
   confirm those still come back);
-- the voucher count moving by exactly the expected amount across the pair.
+- the voucher count moving by exactly the expected amount across the pair;
+- **the original's own identity absent from the after-read** — capture its `GUID` and `MASTERID`
+  *before* sending the delete, and confirm those exact values are gone, not merely that one fewer
+  voucher came back.
+
+That last bullet is the one the others cannot cover, and it is the failure this procedure exists to
+detect. **The thing being qualified is the selector.** If `REMOTEID` selected the wrong voucher,
+the response still says `DELETED=1`, the count still falls by one, the read is still complete — and
+the original is still in the book while the procedure records the selector as working. Every
+count-based check is satisfied by *a* deletion; only an identity check is satisfied by *the right*
+one.
+
+The same reasoning rules out identifying the original by its date, amount or ledger set: a
+destructive selector that hit a similar voucher passes that comparison too. Use the identity Tally
+assigned.
 
 ### 9.4 Master re-create is a silent Alter
 
@@ -930,8 +944,34 @@ Stated that narrowly on purpose. "Normalises separators" reads as *separators ge
 skimming implementer folds underscores, slashes and en dashes together — binding a voucher to the
 wrong ledger. One separator was measured, in one direction. The table below marks every row.
 
-> **RULE: wherever the question is "will Tally treat these as the same master?", compare on a
-> canonical form — never on string equality, and never on a looser fold.**
+> **RULE: wherever the question is "will Tally treat these as the same master?", ask an
+> asymmetric predicate `accepts(supplied, stored)` — never string equality, never a looser fold,
+> and never a canonical form.**
+
+**Why not a canonical form.** `canon(x) == canon(y)` is symmetric by construction: it cannot hold
+in one direction and not the other. The one separator result here *is* directional — a space was
+supplied where the master carried a hyphen, and the reverse was never sent — so any canonical form
+expressing it also asserts the direction that was not measured, and binds `A-B` to a master named
+`A B` on no evidence. The table below marks that row UNVERIFIED and a canonical form quietly
+overrides it.
+
+The predicate that says exactly what was measured, and nothing more:
+
+```text
+accepts(supplied, stored):
+    s = ascii_casefold(supplied).rstrip(" ")      # one trailing space, VERIFIED
+    m = ascii_casefold(stored)
+    return s == m                                 # exact, VERIFIED
+        or s == m.replace("-", " ")               # space supplied for stored hyphen, VERIFIED
+```
+
+The asymmetry is the whole point of the second clause: the substitution is applied to the **stored**
+name, so `stored="A-B"` accepts `supplied="A B"`, while `stored="A B"` does **not** accept
+`supplied="A-B"`. Exact matching survives because the first clause runs unchanged.
+
+If the reverse direction is later measured, one clause is added and the table row changes. Until
+then a directional predicate fails the way this section wants — it may refuse a pair Tally would
+have accepted, which a human sees, rather than binding one Tally would reject.
 
 **What that canonical form may safely contain, and what it may not.** Only three transformations
 were measured: ASCII case folding, **one** trailing space, and a hyphen matching a single space.
@@ -993,9 +1033,17 @@ Both directions are live hazards, and they fail in opposite ways:
   compared exactly refused **16 of 16** hyphenated masters on a real book, all of them near-misses
   it should have bound; and a tool comparing its suspense ledger exactly posted to suspense while
   reporting the row as resolved, dropping it from the very report it existed to appear in.
-- **Too loose** (stripping every non-alphanumeric, say) merges masters Tally keeps apart — `A & B`
-  and `AB` are different ledgers. A fold used for *lookup* may be looser than this deliberately, but
-  it must then refuse an ambiguous result rather than pick one.
+- **Too loose** (stripping every non-alphanumeric, say) may merge masters Tally keeps apart. The
+  standing example is `A & B` against `AB` — and it is **hypothetical**: whether Tally treats those
+  as one master is UNVERIFIED, for the reason two paragraphs above (§3.3b replaced `&` with `AND`
+  and never tested deleting it). Stating it as fact here would make a resolver refuse, or demand
+  confirmation for, a unique match Tally may well accept — the too-strict failure, arrived at
+  through the too-loose warning.
+
+  What *is* established is the shape of the risk, and it does not need the example to be true: a
+  fold used for *lookup* may be looser than §3.3b deliberately, but it must then refuse an
+  ambiguous result rather than pick one, and a sole candidate under a loose fold is not a
+  resolution.
 
 **Consequence for anything that generates a file.** Abbreviation, symbol expansion and
 pluralisation are **not** normalised away: `AND` for `&`, a missing suffix word and a singular for a
