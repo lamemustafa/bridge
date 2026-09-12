@@ -423,6 +423,10 @@ human-approved batch — this ADR does not move.
   qualified ledger-catalogue and `vouchers` window reads, refuses to build a
   window from a partial read, and shapes the report through the same party-name
   marking and egress redaction as every other read result.
+- **Catalog coverage is byte-exact.** The typed boundary retains each observed
+  ledger and party spelling separately from its folded resemblance key, and
+  rejects a window whose exact spelling is absent from the catalog. A candidate
+  fold can never stand in for coverage.
 - **The verdict is built from two independently timed reads, so the catalogue
   is corroborated after the window.** A ledger renamed between them would let a
   proposal bind the old name while the rows carry the new one, removing the
