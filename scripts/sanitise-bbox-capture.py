@@ -45,6 +45,13 @@ DATE = re.compile(r"^(\d{2})/(\d{2})/(\d{2}(?:\d{2})?)$")
 _dates = {}
 
 
+class EvidenceRefusal(SystemExit):
+    """A stable, machine-checkable reason why a fixture cannot be emitted."""
+    def __init__(self, category):
+        self.category = category
+        super().__init__(f"sanitise: {category}")
+
+
 def _fake_date(token):
     """Dates are remapped, not digit-substituted.
 
@@ -496,11 +503,11 @@ def _kept_words(pages, keep):
 def _load_parser(bank_name):
     """Load one of the parsers used to qualify a generated fixture."""
     if bank_name not in ("hdfc", "sbi"):
-        raise SystemExit("sanitise: BANK must be one of: hdfc, sbi")
+        raise EvidenceRefusal("unsupported_parser_profile")
     path = pathlib.Path(__file__).with_name("bank_statement_import.py")
     spec = importlib.util.spec_from_file_location("sanitise_bank_parser", path)
     if spec is None or spec.loader is None:
-        raise SystemExit("sanitise: cannot load the selected bank parser")
+        raise EvidenceRefusal("parser_unavailable")
     parser = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(parser)
     return parser, parser.BANKS[bank_name]()
@@ -509,17 +516,17 @@ def _load_parser(bank_name):
 def _assert_party_partition(source_keys, output_keys, bank_name):
     """Require a two-way, one-to-one mapping of party equivalence classes."""
     if not source_keys or len(source_keys) != len(output_keys):
-        raise SystemExit(f"sanitise: {bank_name} party evidence is empty or misaligned")
+        raise EvidenceRefusal("party_evidence_empty_or_misaligned")
     source_to_output, output_to_source = {}, {}
     for index, (source, output) in enumerate(zip(source_keys, output_keys)):
-        if not source or not output or source in ("UNRESOLVED", "UNNAMED") or output in ("UNRESOLVED", "UNNAMED"):
-            raise SystemExit(f"sanitise: {bank_name} party evidence is underdetermined at row {index}")
+        if not source or not output or source.upper() in ("UNRESOLVED", "UNNAMED") or output.upper() in ("UNRESOLVED", "UNNAMED"):
+            raise EvidenceRefusal("party_evidence_underdetermined")
         old = source_to_output.setdefault(source, output)
         reverse = output_to_source.setdefault(output, source)
         if old != output:
-            raise SystemExit(f"sanitise: {bank_name} party partition split at row {index}")
+            raise EvidenceRefusal("party_partition_split")
         if reverse != source:
-            raise SystemExit(f"sanitise: {bank_name} party partition merged at row {index}")
+            raise EvidenceRefusal("party_partition_merged")
 
 
 def _validate_parser_evidence(parser, bank, source_pages, output_pages, bank_name):
@@ -528,9 +535,9 @@ def _validate_parser_evidence(parser, bank, source_pages, output_pages, bank_nam
         source_rows = parser.parse_pages(source_pages, bank)
         output_rows = parser.parse_pages(output_pages, bank)
     except (KeyError, IndexError, TypeError, ValueError, decimal.InvalidOperation) as error:
-        raise SystemExit(f"sanitise: {bank_name} parser evidence is invalid: {type(error).__name__}") from error
+        raise EvidenceRefusal("parser_evidence_invalid") from error
     if not source_rows or not output_rows or len(source_rows) != len(output_rows):
-        raise SystemExit(f"sanitise: {bank_name} parser evidence is empty or misaligned")
+        raise EvidenceRefusal("parser_evidence_empty_or_misaligned")
 
     source_dates, output_dates = [], []
     source_keys, output_keys = [], []
@@ -549,18 +556,20 @@ def _validate_parser_evidence(parser, bank, source_pages, output_pages, bank_nam
                         parser.D(value)
             source_ref = bank.reference(source)
             output_ref = bank.reference(output)
-            source_shape = (bool(source.get(bank.debit_column)), bool(source.get(bank.credit_column)),
+            source_shape = (sum(bool(source.get(column)) for column in (bank.debit_column, bank.credit_column)) == 1,
                             bool(source.get(bank.balance_column)), source_ref[0], len(str(source_ref[1])))
-            output_shape = (bool(output.get(bank.debit_column)), bool(output.get(bank.credit_column)),
+            output_shape = (sum(bool(output.get(column)) for column in (bank.debit_column, bank.credit_column)) == 1,
                             bool(output.get(bank.balance_column)), output_ref[0], len(str(output_ref[1])))
+            if not source_shape[0] or not source_shape[1] or not output_shape[0] or not output_shape[1]:
+                raise EvidenceRefusal("accounting_row_incomplete")
             if source_shape != output_shape:
-                raise SystemExit(f"sanitise: {bank_name} amount/reference alignment failed at row {index}")
+                raise EvidenceRefusal("accounting_row_shape_misaligned")
             source_keys.append(parser._key(bank.party(source)))
             output_keys.append(parser._key(bank.party(output)))
         except SystemExit:
             raise
         except (KeyError, IndexError, TypeError, ValueError, decimal.InvalidOperation) as error:
-            raise SystemExit(f"sanitise: {bank_name} row alignment failed at row {index}: {type(error).__name__}") from error
+            raise EvidenceRefusal("row_alignment_invalid") from error
 
     _assert_party_partition(source_dates, output_dates, bank_name)
     _assert_party_partition(source_keys, output_keys, bank_name)

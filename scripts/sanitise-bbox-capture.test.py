@@ -60,21 +60,21 @@ for label, source, output, expected in (
     rejected = False
     try:
         m._assert_party_partition(source, output, "sbi")
-    except SystemExit:
-        rejected = True
+    except m.EvidenceRefusal as refusal:
+        rejected = refusal.category in {"party_partition_merged", "party_partition_split", "party_evidence_underdetermined"}
     check(label, rejected is (not expected))
 
 try:
     m._load_parser("regression")
-except SystemExit:
-    check("unsupported parser profile rejects", True)
+except m.EvidenceRefusal as refusal:
+    check("unsupported parser profile rejects", refusal.category == "unsupported_parser_profile")
 else:
     check("unsupported parser profile rejects", False)
 
 try:
     m._validate_parser_evidence(*m._load_parser("sbi"), [], [], "sbi")
-except SystemExit:
-    check("empty parser evidence rejects", True)
+except m.EvidenceRefusal as refusal:
+    check("empty parser evidence rejects", refusal.category == "parser_evidence_empty_or_misaligned")
 else:
     check("empty parser evidence rejects", False)
 
@@ -323,14 +323,55 @@ short_capture = pathlib.Path(__file__).with_name("fixtures") / "sbi-bbox-capture
 with tempfile.TemporaryDirectory() as directory:
     destination = pathlib.Path(directory) / "short-mask-fabricated.xml"
     fresh = load()
-    with contextlib.redirect_stdout(io.StringIO()):
-        fresh.main(str(short_capture), str(destination), [(0, [(0, 10000)])], "sbi")
-    short_box = (143.66, 701.384, 183.68, 712.484)
-    words = {tuple(map(float, match.groups()[:4])): match.group(5)
-             for match in fresh.WORD.finditer(destination.read_text(encoding="utf-8"))}
-    check("capture writer fabricates the measured short IMPS mask",
-          short_box in words and "X" not in words[short_box].upper(),
-          repr(words.get(short_box)))
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            fresh.main(str(short_capture), str(destination), [(0, [(0, 10000)])], "sbi")
+    except SystemExit as refusal:
+        check("short-mask capture refuses underdetermined generated party",
+              type(refusal).__name__ == "EvidenceRefusal"
+              and refusal.category == "party_evidence_underdetermined", getattr(refusal, "category", ""))
+        check("short-mask refusal emits no destination", not destination.exists())
+    else:
+        short_box = (143.66, 701.384, 183.68, 712.484)
+        words = {tuple(map(float, match.groups()[:4])): match.group(5)
+                 for match in fresh.WORD.finditer(destination.read_text(encoding="utf-8"))}
+        check("capture writer fabricates the measured short IMPS mask",
+              short_box in words and "X" not in words[short_box].upper(),
+              repr(words.get(short_box)))
+
+# Boundary controls use unchanged captured geometry: a crop without an
+# accounting side is incomplete, a supported-but-wrong profile cannot parse it,
+# and unequal page sets cannot be compared. Every refusal leaves no output.
+with tempfile.TemporaryDirectory() as directory:
+    destination = pathlib.Path(directory) / "refused.xml"
+    try:
+        m.main(str(pathlib.Path(__file__).with_name("fixtures") / "hdfc-bbox-capture.xml"),
+               str(destination), [(1, [(220.0, 250.0)])], "hdfc")
+    except SystemExit as refusal:
+        check("cropped accounting row refuses",
+              type(refusal).__name__ == "EvidenceRefusal"
+              and refusal.category == "parser_evidence_empty_or_misaligned", getattr(refusal, "category", ""))
+        check("cropped accounting row emits no destination", not destination.exists())
+    else:
+        check("cropped accounting row refuses", False)
+    try:
+        m.main(str(short_capture), str(destination), [(0, [(0, 10000)])], "hdfc")
+    except SystemExit as refusal:
+        check("wrong supported parser refuses",
+              type(refusal).__name__ == "EvidenceRefusal"
+              and refusal.category == "parser_evidence_empty_or_misaligned")
+        check("wrong parser emits no destination", not destination.exists())
+    else:
+        check("wrong supported parser refuses", False)
+    parser, bank = m._load_parser("sbi")
+    pages = short_capture.read_text(encoding="utf-8").split("<page ")[1:]
+    try:
+        m._validate_parser_evidence(parser, bank, pages, [], "sbi")
+    except SystemExit as refusal:
+        check("row-count mismatch refuses",
+              isinstance(refusal, m.EvidenceRefusal) and refusal.category == "parser_evidence_empty_or_misaligned")
+    else:
+        check("row-count mismatch refuses", False)
 
 # The invariant the case above turns on, asserted directly so it cannot be
 # undone by editing one string. A replacement character that is an X must mean
@@ -674,7 +715,8 @@ for fixture in sorted(pathlib.Path(__file__).with_name("fixtures").glob("*-bbox-
                 expected_refusal = fixture.name.startswith("hdfc-") and page == 0
                 check(f"{fixture.name} page {page} expected refusal" if expected_refusal
                       else f"{fixture.name} page {page} re-sanitises",
-                      expected_refusal, str(stop))
+                      expected_refusal and type(stop).__name__ == "EvidenceRefusal"
+                      and stop.category == "party_evidence_underdetermined", str(stop))
                 if expected_refusal:
                     check(f"{fixture.name} page {page} refusal emits no destination",
                           not pathlib.Path(destination).exists())
