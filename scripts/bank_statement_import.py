@@ -1751,20 +1751,27 @@ def _pinned_original_still_has_one_link(record):
         )
 
 
-def _pinned_backup_still_has_one_link(record):
-    """Refuse a rollback copy that acquired an unlocatable hard-link alias."""
+def _require_single_owned_link(record, description, alias_category):
+    """Refuse an owned output that moved or gained an unlocatable alias."""
     stat_result = os.fstat(record["pin"])
     if ((stat_result.st_dev, stat_result.st_ino) != record["identity"]
             or stat_result.st_nlink == 0):
         raise Refusal(
             "output_path_changed",
-            f"{record['path']} rollback copy changed before replacement",
+            f"{record['path']} {description} changed before commit",
         )
     if stat_result.st_nlink != 1:
-        raise Refusal(
-            "rollback_backup_has_multiple_links",
-            f"{record['path']}: rollback copy gained a hard-link alias before replacement",
+        error = Refusal(
+            alias_category,
+            f"{record['path']}: {description} gained a hard-link alias before commit",
         )
+        _append_cleanup_detail(
+            error, f"{description} has an unknown hard-link alias; it may retain output bytes")
+        raise error
+
+
+def _pinned_backup_still_has_one_link(record):
+    _require_single_owned_link(record, "rollback copy", "rollback_backup_has_multiple_links")
 
 
 def _copy_private_backup(source_path, original_identity, backup_handle):
@@ -2008,7 +2015,7 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
     changes the path again after that check remains outside this CLI's locking
     authority.
     """
-    claimed, staged, replaced, new_outputs = [], [], [], []
+    claimed, staged, replaced = [], [], []
     # A record is the one ownership authority for a pathname: cleanup may
     # unlink it only while its identity still equals record["identity"].
     pending_backup = None
@@ -2029,6 +2036,9 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                     dir=os.path.dirname(real_path),
                     prefix=os.path.basename(real_path) + ".", suffix=".part")
                 record = _owned_path(temporary, handle, created=True)
+                record["supplied_path"] = path
+                record["canonical_path"] = real_path
+                record["cleanup_path"] = temporary
                 claimed.append(record)
                 staged.append({"temporary": record, "supplied_path": path,
                                "real_path": real_path,
@@ -2046,7 +2056,6 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 record["cleanup_path"] = canonical_path
                 record["path"] = supplied_path
                 claimed.append(record)
-                new_outputs.append(record)
                 try:
                     claimed_path_changed = (
                         str(pathlib.Path(supplied_path).resolve()) != canonical_path
@@ -2108,21 +2117,15 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                     "output_path_changed",
                     f"{supplied_path} staged output changed before replacement",
                 )
+            _require_single_owned_link(
+                temporary, "staged output", "staged_output_has_multiple_links")
             if _entry_identity(pending_swap["backup"]["path"]) != \
                     pending_swap["backup"]["identity"]:
                 raise Refusal(
                     "output_path_changed",
                     f"{supplied_path} rollback copy changed before replacement",
                 )
-            try:
-                _pinned_backup_still_has_one_link(pending_swap["backup"])
-            except Refusal as error:
-                if error.category == "rollback_backup_has_multiple_links":
-                    _append_cleanup_detail(
-                        error,
-                        "rollback copy has an unknown hard-link alias; it may retain prior output bytes",
-                    )
-                raise
+            _pinned_backup_still_has_one_link(pending_swap["backup"])
             # The first pin checked that the original was single-linked. A
             # backup hook can still add an alias before the commit boundary;
             # recheck this pinned inode so replacement never detaches a new
@@ -2133,13 +2136,14 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             replaced.append(pending_swap)
             pending_swap = None
         # Keep this after every staged filesystem operation and before the
-        # committed boundary. Any changed new path still rolls back swaps.
-        for record in new_outputs:
+        # committed boundary. Revalidate every fresh and replaced destination:
+        # an earlier swap can be invalidated while a later backup is prepared.
+        for record in claimed:
             supplied_path = record["supplied_path"]
             canonical_path = record["canonical_path"]
             try:
                 changed = (str(pathlib.Path(supplied_path).resolve()) != canonical_path
-                           or _entry_identity(supplied_path) != record["identity"]
+                           or _file_identity(supplied_path) != record["identity"]
                            or _entry_identity(canonical_path) != record["identity"])
             except (FileNotFoundError, OSError):
                 changed = True
@@ -2148,6 +2152,14 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                     "output_path_changed",
                     f"{supplied_path} changed before commit; no output was committed",
                 )
+            _require_single_owned_link(record, "output", "output_has_multiple_links")
+        # Earlier rollback copies can also be changed during later swaps.
+        # A commit may retire them only while their ownership remains proved.
+        for swap in replaced:
+            backup = swap["backup"]
+            if _entry_identity(backup["path"]) != backup["identity"]:
+                raise Refusal("output_path_changed", "rollback copy changed before commit")
+            _pinned_backup_still_has_one_link(backup)
         # Final path validation is the boundary between rollback and committed
         # cleanup. Keep it in this same handler so an interrupt before cleanup
         # starts cannot skip both recovery paths.

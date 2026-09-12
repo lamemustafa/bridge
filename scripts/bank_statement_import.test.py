@@ -2947,6 +2947,131 @@ def test_new_output_changed_during_later_swap_rolls_back_existing_output(m):
         assert list(root.iterdir()) == [existing]
 
 
+def test_staged_output_hard_link_before_commit_refuses_and_reports_alias(m):
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination, alias = root / "output.xml", root / "alias.xml"
+        destination.write_text("old bytes")
+        def link_staged():
+            staged, = root.glob("output.xml.*.part")
+            os.link(staged, alias)
+        refusal = refuses(m, "staged_output_has_multiple_links", m.write_outputs,
+                          [(str(destination), "new bytes")], False, link_staged)
+        assert "unknown hard-link alias" in str(refusal.code)
+        assert destination.read_text() == "old bytes"
+        assert alias.read_text() == "new bytes"
+        assert not list(root.glob("*.part"))
+        assert not list(root.glob("*.bak"))
+
+
+def test_fresh_output_hard_link_before_commit_refuses_and_reports_alias(m):
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination, alias = root / "output.xml", root / "alias.xml"
+        refusal = refuses(m, "output_has_multiple_links", m.write_outputs,
+                          [(str(destination), "new bytes")], False,
+                          lambda: os.link(destination, alias))
+        assert "unknown hard-link alias" in str(refusal.code)
+        assert not destination.exists()
+        assert alias.read_text() == "new bytes"
+
+
+def test_staged_parent_rename_reports_unlocated_output(m):
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root, moved = pathlib.Path(directory) / "before", pathlib.Path(directory) / "after"
+        root.mkdir()
+        destination = root / "output.xml"
+        destination.write_text("old bytes")
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            try:
+                m.write_outputs([(str(destination), "new bytes")],
+                                after_claim=lambda: root.rename(moved))
+                raise AssertionError("missing backup parent must fail")
+            except FileNotFoundError as error:
+                detail = stderr.getvalue() + "\n".join(getattr(error, "__notes__", []))
+                assert "owned output could not be located after cleanup" in detail
+        staged, = moved.glob("output.xml.*.part")
+        assert staged.read_text() == "new bytes"
+        assert (moved / "output.xml").read_text() == "old bytes"
+
+
+def test_earlier_replacement_is_revalidated_after_later_swap(m):
+    for change in ("replace", "unlink", "symlink"):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            first, second, foreign = root / "first.xml", root / "second.xml", root / "foreign.xml"
+            first.write_text("old first")
+            second.write_text("old second")
+            foreign.write_text("foreign bytes")
+            supplied = root / "first-link.xml" if change == "symlink" else first
+            if change == "symlink":
+                supplied.symlink_to(first)
+            real_replace = m.os.replace
+            changed_first = []
+            def replace_then_change_first(source, destination):
+                result = real_replace(source, destination)
+                if (str(source).endswith(".part")
+                        and pathlib.Path(destination).resolve() == second.resolve()):
+                    changed_first.append(change)
+                    if change == "replace":
+                        real_replace(foreign, first)
+                    elif change == "unlink":
+                        first.unlink()
+                    else:
+                        supplied.unlink()
+                        supplied.symlink_to(foreign)
+                return result
+            m.os.replace = replace_then_change_first
+            try:
+                refusal = refuses(m, "output_path_changed", m.write_outputs,
+                                  [(str(supplied), "new first"), (str(second), "new second")])
+            finally:
+                m.os.replace = real_replace
+            assert changed_first == [change], "interleave must run after the second swap"
+            assert second.read_text() == "old second"
+            assert "owned output could not be located after cleanup" not in str(refusal.code)
+            if change == "replace":
+                assert first.read_text() == "foreign bytes"
+            elif change == "unlink":
+                assert not first.exists()
+            else:
+                assert first.read_text() == "old first"
+                assert supplied.read_text() == "foreign bytes"
+
+
+def test_earlier_backup_alias_is_revalidated_after_later_swap(m):
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second, alias = root / "first.xml", root / "second.xml", root / "alias.xml"
+        first.write_text("old first")
+        second.write_text("old second")
+        real_replace = m.os.replace
+        linked = []
+        def replace_then_link_first_backup(source, destination):
+            result = real_replace(source, destination)
+            if (str(source).endswith(".part")
+                    and pathlib.Path(destination).resolve() == second.resolve()):
+                backup, = root.glob("first.xml.*.bak")
+                os.link(backup, alias)
+                linked.append(True)
+            return result
+        m.os.replace = replace_then_link_first_backup
+        try:
+            refusal = refuses(m, "rollback_backup_has_multiple_links", m.write_outputs,
+                              [(str(first), "new first"), (str(second), "new second")])
+        finally:
+            m.os.replace = real_replace
+        assert linked == [True]
+        assert "unknown hard-link alias" in str(refusal.code)
+        assert first.read_text() == "old first"
+        assert second.read_text() == "old second"
+        assert alias.read_text() == "old first"
+        assert not list(root.glob("*.bak"))
+
+
 def main():
     module = load()
     for name, test in sorted(globals().items()):
