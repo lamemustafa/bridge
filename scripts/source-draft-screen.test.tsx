@@ -278,7 +278,7 @@ test("groups and lists a catalogue of realistic size without losing the narrowin
       unbound_reason: null,
       candidates: [],
       candidate_count: 0,
-      candidates_truncated: false,
+      candidate_listing: "listed",
     }],
   };
   mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(large);
@@ -324,7 +324,7 @@ test("keeps the binding result visible beside a saved target nobody has re-read"
       unbound_reason: "master_binding_near_miss",
       candidates: ["Existing target"],
       candidate_count: 1,
-      candidates_truncated: false,
+      candidate_listing: "listed",
     }],
   };
   mocks.invoke.mockResolvedValueOnce(savedTarget).mockResolvedValueOnce(refused);
@@ -414,7 +414,7 @@ test("lists the bound ledger first without selecting it, and keeps the whole cat
       unbound_reason: null,
       candidates: [],
       candidate_count: 0,
-      candidates_truncated: false,
+      candidate_listing: "listed",
     }],
   };
   mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(boundCatalog);
@@ -458,7 +458,7 @@ test("names the refusal when the name and the identifier point at different ledg
       unbound_reason: "master_binding_identifier_name_conflict",
       candidates: ["Alpha placeholder", "Gamma placeholder"],
       candidate_count: 2,
-      candidates_truncated: false,
+      candidate_listing: "listed",
     }],
   };
   mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(conflictCatalog);
@@ -491,7 +491,7 @@ test("distinguishes the two other refusals that are not weak matches", async () 
         unbound_reason: reason,
         candidates: ["Alpha placeholder", "Gamma placeholder"],
         candidate_count: 2,
-        candidates_truncated: false,
+        candidate_listing: "listed",
       }],
     });
     const host = document.createElement("div");
@@ -562,7 +562,7 @@ test("a refusal reason survives the candidate listing being dropped", async () =
       unbound_reason: "master_binding_identifier_name_conflict",
       candidates: [],
       candidate_count: 6,
-      candidates_truncated: true,
+      candidate_listing: "truncated",
     }],
   });
   const host = document.createElement("div");
@@ -592,7 +592,7 @@ test("choosing a target stops the screen saying nothing was chosen, without hidi
       unbound_reason: "master_binding_identifier_name_conflict",
       candidates: ["Alpha placeholder", "Gamma placeholder"],
       candidate_count: 2,
-      candidates_truncated: false,
+      candidate_listing: "listed",
     }],
   };
   // Selecting a target goes through the apply path, which re-reads: the draft
@@ -640,7 +640,7 @@ test("an empty list because the report ran out of room is not a family the name 
       unbound_reason: "master_binding_near_miss",
       candidates: [],
       candidate_count: 7,
-      candidates_truncated: true,
+      candidate_listing: "truncated",
     }],
   };
   mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(exhaustedCatalog);
@@ -667,7 +667,7 @@ test("lists candidates first for a near miss and states that nothing was chosen"
       unbound_reason: "master_binding_near_miss",
       candidates: ["Alpha placeholder", "Gamma placeholder"],
       candidate_count: 2,
-      candidates_truncated: false,
+      candidate_listing: "listed",
     }],
   };
   mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(nearMissCatalog);
@@ -699,7 +699,7 @@ test("reports a truncated candidate list truthfully and falls back to the flat c
       unbound_reason: "master_binding_near_miss",
       candidates: ["Alpha placeholder"],
       candidate_count: 40,
-      candidates_truncated: true,
+      candidate_listing: "truncated",
     }],
   };
   mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(truncatedCatalog);
@@ -728,7 +728,7 @@ test("a source line that separates no ledger says so instead of counting nothing
       unbound_reason: "master_binding_no_discriminating_candidate",
       candidates: [],
       candidate_count: 120,
-      candidates_truncated: true,
+      candidate_listing: "truncated",
     }],
   };
   mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(familyCatalog);

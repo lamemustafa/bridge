@@ -316,6 +316,23 @@ impl Candidates {
         }
     }
 
+    /// Which of the four states this is, as the one word the serialized form
+    /// already tags it with.
+    ///
+    /// A projection that flattens this enum needs the state itself, not a
+    /// reconstruction of it: inferring "withheld" from an empty listing beside
+    /// a nonzero count told an operator the report had run out of room when it
+    /// had deliberately declined to slice a family. The word is the same one
+    /// `#[serde(tag = "listing")]` emits, and a test holds the two together.
+    pub fn listing(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Listed { .. } => "listed",
+            Self::Truncated { .. } => "truncated",
+            Self::Withheld { .. } => "withheld",
+        }
+    }
+
     /// Masters found before any truncation or withholding.
     pub fn found(&self) -> usize {
         match self {

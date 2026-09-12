@@ -137,15 +137,21 @@ function catalogBindingSummary(binding: SourceDraftCatalogBinding | null, total:
   const shown = binding.candidates.length;
   if (shown === 0) {
     // Two different facts arrive here with an empty list and a nonzero count,
-    // and they call for opposite actions. A withheld family is the binder
+    // and they call for opposite actions. A **withheld** family is the binder
     // refusing to print an arbitrary slice of ledgers this name cannot separate
     // — slicing put the right one out of view about a third of the time across
     // sixteen live catalogues: `TALLY_PROTOCOL_REFERENCE.md` §9.4c states the
     // rule, `TEST_CORPUS.md` §9.1 carries the counts and their scope — and a
-    // fuller source name fixes it. Budget exhaustion is
-    // this report running out of room on earlier rows; the source name is fine
-    // and nothing the operator writes here would change it.
-    if (binding.unbound_reason === "master_binding_no_discriminating_candidate") {
+    // fuller source name fixes it. A **truncated** listing is this report
+    // running out of room on earlier rows; the source name is fine and nothing
+    // the operator writes here would change it.
+    //
+    // Which one it is now arrives in the DTO. It used to be inferred from the
+    // refusal reason, which named only the one withheld shape this screen knew
+    // about; a family withheld under `identifier_conflict` reached the budget
+    // sentence and told the operator the report had run out of room when it
+    // had not.
+    if (binding.candidate_listing === "withheld") {
       return `This source line matches ${binding.candidate_count} existing ledgers and tells them apart from none of them, so none is listed. Use a fuller source name, or choose from the full list of ${total}.`;
     }
     // Why it refused survives the listing being dropped. Returning only the
@@ -153,7 +159,7 @@ function catalogBindingSummary(binding: SourceDraftCatalogBinding | null, total:
     // had just been fixed to show — the same defect, one branch over.
     return `${catalogRefusalLead(binding.unbound_reason)} ${binding.candidate_count} existing ledgers are involved, but this report ran out of room to list them. Choose from the full list of ${total}.`;
   }
-  const listed = binding.candidates_truncated ? `${shown} of ${binding.candidate_count}` : `${shown}`;
+  const listed = binding.candidate_listing === "truncated" ? `${shown} of ${binding.candidate_count}` : `${shown}`;
   const lead = catalogRefusalLead(binding.unbound_reason);
   return `${lead} Nothing is chosen; ${listed} possible ${shown === 1 ? "ledger is" : "ledgers are"} listed first, and the full list of ${total} follows.`;
 }

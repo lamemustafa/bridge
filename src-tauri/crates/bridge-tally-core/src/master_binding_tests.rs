@@ -2352,3 +2352,33 @@ fn a_number_typed_into_a_master_name_finds_it_from_any_source_name() {
         );
     }
 }
+
+#[test]
+fn the_listing_word_is_the_one_the_wire_carries() {
+    // `listing()` exists so a projection need not reconstruct the state from
+    // an empty list and a count. If it drifted from the serde tag, a consumer
+    // reading the DTO and a consumer reading the JSON would disagree about the
+    // same binding — so they are asserted against each other, not assumed.
+    let candidate = Candidate {
+        catalog_name: "Alpha Supply".to_string(),
+        rule: CandidateRule::ExactName,
+    };
+    for candidates in [
+        Candidates::None,
+        Candidates::Listed {
+            listed: vec![candidate.clone()],
+        },
+        Candidates::Truncated {
+            listed: vec![candidate],
+            found: 9,
+        },
+        Candidates::Withheld { found: 9 },
+    ] {
+        let json = serde_json::to_value(&candidates).expect("candidates serialize");
+        assert_eq!(
+            json.get("listing").and_then(serde_json::Value::as_str),
+            Some(candidates.listing()),
+            "the accessor and the wire tag disagree about {candidates:?}"
+        );
+    }
+}

@@ -77,7 +77,10 @@ export type SourceDraftCatalogBinding = {
   unbound_reason: string | null;
   candidates: string[];
   candidate_count: number;
-  candidates_truncated: boolean;
+  /** "none" | "listed" | "truncated" | "withheld" — the core's own word for
+   *  this state, carried rather than inferred: an empty list beside a nonzero
+   *  count is a withheld family or an exhausted budget, and they differ. */
+  candidate_listing: string;
 };
 
 export type SourceDraftCatalogTargets = {

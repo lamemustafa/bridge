@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use bridge_tally_core::master_binding::{
-    self, BindingBasis, BindingStatus, MasterCatalog, MasterClass, SourceEntity,
+    self, BindingBasis, BindingStatus, Candidates, MasterCatalog, MasterClass, SourceEntity,
 };
 use bridge_tally_protocol::{StandardLedgerCatalog, StandardLedgerCatalogBinding};
 
@@ -82,7 +82,12 @@ pub(crate) struct SourceDraftCatalogBinding {
     pub(crate) unbound_reason: Option<&'static str>,
     pub(crate) candidates: Vec<String>,
     pub(crate) candidate_count: usize,
-    pub(crate) candidates_truncated: bool,
+    /// Which of the four candidate states this is, in the word the core type
+    /// already tags its serialized form with. Carried rather than inferred: an
+    /// empty listing beside a nonzero count is two different results — a family
+    /// deliberately not sliced, and a report that ran out of room — and they
+    /// call for opposite things from the operator.
+    pub(crate) candidate_listing: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -187,7 +192,7 @@ fn source_entry_bindings(
                     unbound_reason: None,
                     candidates: Vec::new(),
                     candidate_count: 0,
-                    candidates_truncated: false,
+                    candidate_listing: Candidates::None.listing(),
                 },
                 BindingStatus::Ambiguous(unresolved) | BindingStatus::Unmatched(unresolved) => {
                     SourceDraftCatalogBinding {
@@ -196,11 +201,12 @@ fn source_entry_bindings(
                         bound_target: None,
                         bound_basis: None,
                         unbound_reason: Some(unresolved.reason.safe_reason_code()),
-                        // The screen distinguishes the three cases from
-                        // `candidate_count` against an empty list and is tested
-                        // on each, so the DTO stays flat and this projection is
-                        // the only place the typed shape is flattened.
-                        candidates_truncated: unresolved.candidates.is_incomplete(),
+                        // The state travels; it is not reconstructed on the
+                        // other side. Deriving it from an empty list and a
+                        // count could not tell a withheld family from an
+                        // exhausted budget, and told the operator the report
+                        // had run out of room when it had declined to slice.
+                        candidate_listing: unresolved.candidates.listing(),
                         candidates: unresolved
                             .candidates
                             .listed()

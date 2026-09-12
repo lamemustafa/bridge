@@ -4,8 +4,8 @@
       "bound_basis": "exact_name",
       "bound_target": "Cash",
       "candidate_count": 0,
+      "candidate_listing": "none",
       "candidates": [],
-      "candidates_truncated": false,
       "entry_position": 1,
       "row_position": 1,
       "unbound_reason": null
@@ -14,8 +14,8 @@
       "bound_basis": "normalized_name",
       "bound_target": "WR2 Sales",
       "candidate_count": 0,
+      "candidate_listing": "none",
       "candidates": [],
-      "candidates_truncated": false,
       "entry_position": 2,
       "row_position": 1,
       "unbound_reason": null
@@ -24,10 +24,10 @@
       "bound_basis": null,
       "bound_target": null,
       "candidate_count": 1,
+      "candidate_listing": "listed",
       "candidates": [
         "Profit & Loss A/c"
       ],
-      "candidates_truncated": false,
       "entry_position": 3,
       "row_position": 1,
       "unbound_reason": "master_binding_near_miss"
