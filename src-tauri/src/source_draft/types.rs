@@ -52,6 +52,11 @@ pub(crate) struct SourceDraftDto {
     /// recent catalog read. This carries no catalog identity or GUID and is
     /// deliberately absent from saved drafts.
     pub(crate) current_catalog_bindings: Vec<SourceDraftCurrentCatalogBinding>,
+    /// Echoes the draft's current catalog generation, so a later invalidation
+    /// request can name the generation it means to clear rather than
+    /// whichever one happens to be active by the time it is processed. See
+    /// `SourceDraftCatalogInvalidateRequest`.
+    pub(crate) catalog_generation: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
