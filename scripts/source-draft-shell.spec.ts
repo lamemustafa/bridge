@@ -14,6 +14,7 @@ test("local proposals survive shell navigation and save without source or Tally 
       // The backend always emits this list; an empty one means no target in this
       // draft is currently bound to a live catalog read.
       current_catalog_bindings: [],
+      catalog_generation: 0,
     };
     const calls: { command: string; args: unknown }[] = [];
     Object.assign(window, { sourceDraftCalls: calls });
