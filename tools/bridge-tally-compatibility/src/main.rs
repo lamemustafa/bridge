@@ -438,31 +438,52 @@ mod tests {
     }
 
     #[cfg(unix)]
+    fn run_output_mode_child(test_name: &str, umask: &str, marker: &str) {
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("umask {umask}; exec \"$@\""))
+            .arg("sh")
+            .arg(std::env::current_exe().unwrap())
+            .arg(test_name)
+            .arg("--exact")
+            .env("BRIDGE_COMPAT_UMASK_CHILD", marker)
+            .status()
+            .expect("spawn controlled-umask child");
+        assert!(status.success());
+    }
+
+    #[cfg(unix)]
     #[test]
     fn output_file_preserves_existing_destination_mode() {
-        assert_existing_destination_mode();
-        assert_new_destination_mode(0o644);
+        if std::env::var_os("BRIDGE_COMPAT_UMASK_CHILD").as_deref()
+            == Some(std::ffi::OsStr::new("022"))
+        {
+            assert_existing_destination_mode();
+            assert_new_destination_mode(0o644);
+            return;
+        }
+        run_output_mode_child(
+            "tests::output_file_preserves_existing_destination_mode",
+            "022",
+            "022",
+        );
     }
 
     #[cfg(unix)]
     #[test]
     fn output_file_preserves_existing_mode_under_restrictive_umask() {
-        if std::env::var_os("BRIDGE_COMPAT_UMASK_CHILD").is_some() {
+        if std::env::var_os("BRIDGE_COMPAT_UMASK_CHILD").as_deref()
+            == Some(std::ffi::OsStr::new("077"))
+        {
             assert_existing_destination_mode();
             assert_new_destination_mode(0o600);
             return;
         }
-        let status = std::process::Command::new("sh")
-            .arg("-c")
-            .arg("umask 077; exec \"$@\"")
-            .arg("sh")
-            .arg(std::env::current_exe().unwrap())
-            .arg("--exact")
-            .arg("tests::output_file_preserves_existing_mode_under_restrictive_umask")
-            .env("BRIDGE_COMPAT_UMASK_CHILD", "1")
-            .status()
-            .expect("spawn restrictive-umask child");
-        assert!(status.success());
+        run_output_mode_child(
+            "tests::output_file_preserves_existing_mode_under_restrictive_umask",
+            "077",
+            "077",
+        );
     }
 
     #[test]
