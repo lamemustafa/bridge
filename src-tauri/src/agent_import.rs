@@ -455,7 +455,7 @@ impl Server {
                     payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
                         "state":"refused", "reason":"masters_not_exact", "masters":report,
                         "catalogue_evidence_sha256":sha256_json(&catalogue),
-                        "next_step":"For each near-miss, an operator must select a candidate, update the payload to that chosen exact live spelling, then run validate_masters again before building a new batch. Do not copy a candidate automatically. No file was written."
+                        "next_step":master_recovery_guidance(&report)
                     }}),
                     evidence: accumulated.clone(),
                     company_guid: Some(payload.company_guid),
@@ -1707,6 +1707,23 @@ fn master_match_json(binding: &EntityBinding) -> Value {
                     .collect::<Vec<_>>(),
             })
         }
+    }
+}
+
+fn master_recovery_guidance(report: &[Value]) -> &'static str {
+    if report.iter().any(|master| {
+        master["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("identifier"))
+    }) {
+        "For identifier conflicts, correct the source identity or explicitly select against the complete observed catalogue; use the exact_live_spelling from a fresh validate_masters result before building again. Do not copy a candidate automatically. No file was written."
+    } else if report
+        .iter()
+        .any(|master| master["match_state"] == "missing")
+    {
+        "For missing ledgers, correct the source spelling or have an operator create the legitimate missing ledger externally, then run validate_masters again before building. Do not create or choose a ledger automatically. No file was written."
+    } else {
+        "For near-misses, have an operator select the intended ledger and use its exact live spelling, then run validate_masters again before building. Do not copy a candidate automatically. No file was written."
     }
 }
 

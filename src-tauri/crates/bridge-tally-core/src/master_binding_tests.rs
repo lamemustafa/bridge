@@ -1939,6 +1939,41 @@ fn candidate_order_is_rule_then_name_and_never_a_ranking() {
 }
 
 #[test]
+fn bounded_listing_keeps_narrow_evidence_before_long_same_rule_names() {
+    let narrow = "A/B";
+    // The wider candidate sorts first lexicographically (`-` precedes `/`),
+    // so the old downstream name sort hid the narrow holder.
+    let long = "A-".to_string() + &"x".repeat(1020);
+    let catalog = ledgers(&[narrow, &long]);
+    let source = entity("A");
+    let mut budget = 8_192;
+    let status = super::unresolved_from(
+        &catalog,
+        &source,
+        UnboundReason::NearMiss,
+        vec![
+            (0, CandidateRule::NormalizedEqual),
+            (1, CandidateRule::NormalizedEqual),
+        ],
+        2,
+        super::CountEvidence {
+            largest_withheld: None,
+            withheld_count_is_lower_bound: false,
+        },
+        &mut budget,
+    );
+    let listed = match &status {
+        BindingStatus::Ambiguous(unresolved) => unresolved.candidates.listed(),
+        _ => panic!("near miss must remain unresolved"),
+    };
+    assert_eq!(
+        listed.first().expect("narrow candidate").catalog_name,
+        narrow
+    );
+    assert_eq!(listed.len(), 2);
+}
+
+#[test]
 fn the_report_does_not_depend_on_the_order_the_book_returned() {
     let forward = ledgers(&["ALPHA SALE", "ALPHA SALES", "SALES - ALPHA", "Beta Supply"]);
     let reversed = ledgers(&["Beta Supply", "SALES - ALPHA", "ALPHA SALES", "ALPHA SALE"]);

@@ -1615,6 +1615,19 @@ fn nothing_defensible_is_reported_missing_with_no_candidate() {
     assert!(matched["candidates"].as_array().unwrap().is_empty());
 }
 
+#[test]
+fn import_recovery_guidance_names_the_state_and_next_safe_read() {
+    let identifier =
+        serde_json::json!({"reason":"master_binding_identifier_conflict", "match_state":"near_miss"});
+    assert!(master_recovery_guidance(&[identifier]).contains("exact_live_spelling"));
+    let missing =
+        serde_json::json!({"reason":"master_binding_no_candidate", "match_state":"missing"});
+    assert!(master_recovery_guidance(&[missing]).contains("legitimate missing ledger"));
+    let near_miss =
+        serde_json::json!({"reason":"master_binding_near_miss", "match_state":"near_miss"});
+    assert!(master_recovery_guidance(&[near_miss]).contains("exact live spelling"));
+}
+
 #[tokio::test]
 async fn import_bounds_distinct_ledger_names_before_tally_without_reducing_voucher_limit() {
     let mut repeated = payload();

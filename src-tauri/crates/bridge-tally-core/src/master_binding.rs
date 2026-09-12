@@ -1347,7 +1347,7 @@ fn unresolved_status(
         // equality was observed, which left the operator reading the two facts
         // that disagreed without being told one of them was exact.
         candidates.retain(|(candidate, _)| *candidate != index);
-        candidates.push((index, CandidateRule::ExactName));
+        candidates.insert(0, (index, CandidateRule::ExactName));
     }
     unresolved_from(
         catalog,
@@ -1372,8 +1372,13 @@ fn unresolved_from(
     count_evidence: CountEvidence<'_>,
     budget: &mut usize,
 ) -> BindingStatus {
-    let mut ordered = candidates;
-    ordered.sort_by(|left, right| candidate_order(catalog, left, right));
+    // `collect_candidates` has already applied the bounded presentation order,
+    // including the narrower binding-key holders before wider-only candidates.
+    // Keep that order through the byte budget: sorting again by name here can
+    // spend the budget on a long wide candidate and hide the narrow evidence.
+    // Exact-name evidence is inserted at the front by `unresolved_status`, so
+    // the rule precedence remains explicit without discarding same-rule order.
+    let ordered = candidates;
     let (found, count_is_lower_bound) = candidate_count(
         masters_found,
         &ordered,
@@ -1726,28 +1731,14 @@ fn collect_candidates(
                     .is_ok()
                     .cmp(&binding_matches.binary_search(&left.0).is_ok())
             })
-            .then_with(|| catalog.entries[left.0].name.cmp(&catalog.entries[right.0].name))
+            .then_with(|| {
+                catalog.entries[left.0]
+                    .name
+                    .cmp(&catalog.entries[right.0].name)
+            })
     });
     listed.truncate(MAX_CANDIDATES_PER_ENTITY);
     (listed, found)
-}
-
-/// How candidates are ordered wherever they are ordered: by the rule that
-/// reached them, then by the master's name.
-///
-/// Defined once because `collect_candidates` truncates in this order and
-/// `unresolved_from` sorts in it, and a disagreement between the two would
-/// silently drop a candidate that should have been listed.
-fn candidate_order(
-    catalog: &MasterCatalog,
-    left: &(usize, CandidateRule),
-    right: &(usize, CandidateRule),
-) -> std::cmp::Ordering {
-    left.1.rank().cmp(&right.1.rank()).then_with(|| {
-        catalog.entries[left.0]
-            .name
-            .cmp(&catalog.entries[right.0].name)
-    })
 }
 
 /// A name is retained **verbatim**, on both sides.

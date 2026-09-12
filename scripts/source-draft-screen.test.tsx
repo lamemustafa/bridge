@@ -896,9 +896,37 @@ test("a family withheld under a different reason is not reported as a full repor
   await act(async () => button(host, "Load existing ledgers").click());
 
   expect(host.textContent).toContain("matches at least 30 existing ledgers and tells them apart from none of them, so none is listed");
-  expect(host.textContent).toContain("The identifiers in this source line do not agree on one existing ledger");
-  expect(host.textContent).toContain("either one of them appears in several, or they point at different ones");
+  expect(host.textContent).toContain("Review it against the complete observed catalogue and confirm the intended identity before choosing");
+  expect(host.textContent).not.toContain("Use a fuller source name");
   expect(host.textContent).not.toContain("ran out of room");
+  root.unmount();
+});
+
+test("identifier conflict guidance survives a truncated list with an outside candidate", async () => {
+  const mixedConflict = {
+    ...catalog,
+    targets: ["Outside candidate", "DN Party 001", "DN Party 002"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: null,
+      bound_basis: null,
+      unbound_reason: "master_binding_identifier_conflict",
+      candidates: ["Outside candidate"],
+      candidate_count: 31,
+      candidate_count_is_lower_bound: true,
+      candidate_listing: "truncated",
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(mixedConflict);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "mixed-identifier-conflict" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  expect(host.textContent).toContain("Review it against the complete observed catalogue and confirm the intended identity before choosing");
+  expect(host.textContent).toContain("full list of 3");
+  expect(host.textContent).not.toContain("Use a fuller source name");
   root.unmount();
 });
 
