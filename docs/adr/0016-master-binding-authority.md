@@ -301,10 +301,11 @@ Candidates are capped at `MAX_CANDIDATES_PER_ENTITY` (25). The core retains
 `candidate_count`, listing state and `Candidates::count_is_lower_bound()`.
 The MCP and desktop projections expose `candidate_count_is_lower_bound`: true
 means the number is a conservative lower bound and must be shown as "at least N".
-A withheld or core-truncated listing does not establish an exact union count.
-A later consumer-only copy cap can shorten a complete listing while retaining
-an exact count; `candidates_truncated` alone therefore does not describe count
-precision.
+The core sets it only when unmaterialized identifier families prevent an exact
+union count. A withheld prefix family or a core-truncated list can retain an
+exact union count; listing completeness and count precision are separate facts.
+A later consumer-only copy cap can likewise shorten a complete listing while
+retaining an exact count.
 
 ### 4a. An empty candidate list is three different facts, and the producer says which
 
@@ -315,11 +316,11 @@ things to anyone deciding what to do next:
 | --- | --- |
 | `NoCandidate` | no master resembles this name at all |
 | `NoDiscriminatingCandidate` | at least `candidate_count` masters resemble it when the count is a lower bound, and none is separable — **many exist**, none is worth showing |
-| any, with `candidates_truncated` | the list was cut, by the per-entity cap or by the report's aggregate byte budget |
+| any, with `candidate_listing: "truncated"` | the list was cut, by the per-entity cap or by the report's aggregate byte budget |
 
 So `candidates.is_empty()` alone answers nothing. The disambiguators are
 `reason`, `candidate_count`, `candidate_count_is_lower_bound` and
-`candidates_truncated`, and a consumer that
+`candidate_listing`, and a consumer that
 reads the empty vector as "nothing exists" is wrong in two cases out of three.
 
 This is stated here, in the producer's contract, rather than left to each

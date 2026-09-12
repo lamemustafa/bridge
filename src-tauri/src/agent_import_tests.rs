@@ -1532,7 +1532,9 @@ fn master_match_bounds_suggestions_before_copying_names_and_preserves_ambiguity(
         "master_binding_no_discriminating_candidate"
     );
     assert_eq!(matched["candidate_count"], 100);
-    assert_eq!(matched["candidate_count_is_lower_bound"], true);
+    // The prefix family was fully materialized even though its names are
+    // deliberately withheld from the listing, so this is an exact union.
+    assert_eq!(matched["candidate_count_is_lower_bound"], false);
     assert_eq!(matched["candidates_truncated"], true);
     assert!(matched["candidates"].as_array().unwrap().is_empty());
     // A family inside the bound is still listed in full.

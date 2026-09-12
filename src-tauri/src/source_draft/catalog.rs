@@ -98,9 +98,9 @@ pub(crate) struct SourceDraftCatalogBinding {
     pub(crate) unbound_reason: Option<&'static str>,
     pub(crate) candidates: Vec<String>,
     pub(crate) candidate_count: usize,
-    /// `true` when the core could only establish a lower bound because part
-    /// of the candidate evidence was withheld or truncated. The number must
-    /// then be rendered as "at least N" rather than as an exact total.
+    /// `true` when unmaterialized identifier families prevent the core from
+    /// establishing an exact union. A withheld or truncated listing can still
+    /// have an exact count; only this flag requires rendering "at least N".
     pub(crate) candidate_count_is_lower_bound: bool,
     /// Which of the four candidate states this is, in the word the core type
     /// already tags its serialized form with. Carried rather than inferred: an
