@@ -12,6 +12,7 @@
 //! path that owns identity.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
 use unicode_normalization::UnicodeNormalization;
@@ -51,12 +52,17 @@ pub const MAX_CANDIDATES_PER_ENTITY: usize = 25;
 /// can carry tens of thousands of entries that each list 25 long names, and the
 /// clones exist the moment the report is built. A consumer capping its own copy
 /// afterwards bounds only the second copy. This is spent in entity order;
-/// entities past it report their true `candidate_count` with no candidates
-/// listed and truncation flagged.
+/// entities past it report their `candidate_count` with no candidates listed
+/// and truncation flagged. Consumers must inspect
+/// `Candidates::count_is_lower_bound` before presenting that count as exact.
 pub const MAX_REPORT_CANDIDATE_BYTES: usize = 256 * 1024;
 /// Most identifiers one name may carry. Exceeding it is refused, never
 /// truncated.
 pub const MAX_IDENTIFIERS_PER_NAME: usize = 32;
+/// Maximum holder-membership probes spent proving that skipped identifier
+/// families are nested. Exhausting this budget keeps the count a lower bound;
+/// it must never turn a large-family check into an unbounded per-entity walk.
+const MAX_WITHHELD_FAMILY_PROBES: usize = 256;
 /// Digits a numeric run needs before it is treated as an identifier. Eight
 /// excludes a year, a rate, a house number and a masked last-four; a mobile,
 /// an account number and a customer code all clear it.
@@ -313,11 +319,15 @@ pub enum Candidates {
     Truncated {
         listed: Vec<Candidate>,
         found: usize,
+        count_is_lower_bound: bool,
     },
     /// A family this name reaches and separates none of: counted, and
     /// deliberately not listed, because an arbitrary slice of it put the right
     /// master out of view about a third of the time against live books.
-    Withheld { found: usize },
+    Withheld {
+        found: usize,
+        count_is_lower_bound: bool,
+    },
 }
 
 impl Candidates {
@@ -330,12 +340,51 @@ impl Candidates {
         }
     }
 
-    /// Masters found before any truncation or withholding.
+    /// Which of the four states this is, as the one word the serialized form
+    /// already tags it with.
+    ///
+    /// A projection that flattens this enum needs the state itself, not a
+    /// reconstruction of it: inferring "withheld" from an empty listing beside
+    /// a nonzero count told an operator the report had run out of room when it
+    /// had deliberately declined to slice a family. The word is the same one
+    /// `#[serde(tag = "listing")]` emits, and a test holds the two together.
+    pub fn listing(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Listed { .. } => "listed",
+            Self::Truncated { .. } => "truncated",
+            Self::Withheld { .. } => "withheld",
+        }
+    }
+
+    /// Masters found before any truncation or withholding. The value is a
+    /// lower bound only when unmaterialized identifier families prevent their
+    /// union from being counted; use
+    /// [`Self::count_is_lower_bound`] before presenting it as exact.
     pub fn found(&self) -> usize {
         match self {
             Self::None => 0,
             Self::Listed { listed } => listed.len(),
-            Self::Truncated { found, .. } | Self::Withheld { found } => *found,
+            Self::Truncated { found, .. } | Self::Withheld { found, .. } => *found,
+        }
+    }
+
+    /// Whether `found()` is conservative because large identifier families are
+    /// not expanded, so their overlapping union cannot be counted without
+    /// materializing it. Listing truncation alone does not make a count
+    /// inexact: prefix and report-cap results can retain an exact union while
+    /// showing only part of it.
+    pub fn count_is_lower_bound(&self) -> bool {
+        match self {
+            Self::None | Self::Listed { .. } => false,
+            Self::Truncated {
+                count_is_lower_bound,
+                ..
+            }
+            | Self::Withheld {
+                count_is_lower_bound,
+                ..
+            } => *count_is_lower_bound,
         }
     }
 
@@ -727,6 +776,7 @@ pub struct MasterCatalog {
     by_key: BTreeMap<String, Vec<usize>>,
     by_binding_key: BTreeMap<String, Vec<usize>>,
     by_identifier: BTreeMap<Identifier, Vec<usize>>,
+    identifier_family_ids: BTreeMap<Identifier, usize>,
     by_token: BTreeMap<String, Vec<usize>>,
     common_tokens: BTreeSet<String>,
 }
@@ -795,6 +845,34 @@ impl MasterCatalog {
                 by_token.entry(token.clone()).or_default().push(index);
             }
         }
+        debug_assert!(
+            by_identifier.values().all(|holders| holders.is_sorted()),
+            "identifier holder lists are built in entry order"
+        );
+
+        // Assign equal *withheld* holder sets one family id once, while the
+        // catalog is being built. Only a set larger than a candidate list can
+        // be withheld, and binding never asks a smaller set for a family id;
+        // omitting them avoids sorting and cloning every ordinary identifier
+        // in a large catalog. The remaining sort compares already-built index
+        // values exactly, so a hash collision cannot make two different
+        // families look equal.
+        let mut family_order = by_identifier
+            .iter()
+            .filter(|(_, holders)| holders.len() > MAX_CANDIDATES_PER_ENTITY)
+            .map(|(identifier, holders)| (identifier, holders.as_slice()))
+            .collect::<Vec<_>>();
+        family_order.sort_by_key(|(_, holders)| *holders);
+        let mut identifier_family_ids = BTreeMap::new();
+        let mut next_family_id = 0_usize;
+        let mut previous_holders: Option<&[usize]> = None;
+        for (identifier, holders) in family_order {
+            if previous_holders.is_some_and(|previous| previous != holders) {
+                next_family_id += 1;
+            }
+            identifier_family_ids.insert(identifier.clone(), next_family_id);
+            previous_holders = Some(holders);
+        }
 
         // A token carried by a large share of the catalog says nothing about
         // which master is meant. The threshold is measured from the catalog
@@ -831,6 +909,7 @@ impl MasterCatalog {
             by_key,
             by_binding_key,
             by_identifier,
+            identifier_family_ids,
             by_token,
             common_tokens,
         })
@@ -900,43 +979,20 @@ pub fn bind(
         }
     }
     let mut budget = MAX_REPORT_CANDIDATE_BYTES;
-    // Which source keys actually repeat, decided before any of them is bound.
-    //
-    // A first-come cap made the memo's protection depend on **source order**:
+    // Which *memo keys* actually repeat, decided before any candidate search
+    // runs. A first-come cap made the memo's protection depend on source order:
     // 1,024 distinct cheap misses at the head of a draft filled it, and the
-    // repeated expensive key behind them was then never cached — the stall the
-    // memo exists to prevent, reachable by reordering the same rows. Counting
-    // first removes the ordering entirely, and caches only what a second row
-    // will ask for again.
+    // repeated expensive key behind them was then never cached.
     //
-    // Counted on the **whole** determinant of a memo entry, not on the name
-    // alone. The memo is keyed by the source key *and* the masters the
-    // identifiers reached, so counting `key` by itself called every hint
-    // variant of one name repeated: 1,024 singleton variants of `Acme Branch`
-    // then filled the memo with entries nothing would ask for twice, and a key
-    // that genuinely repeated behind them could no longer be inserted — the
-    // stall the memo exists to prevent, reached by a different door than the
-    // source-order one.
-    //
-    // The identifiers are the source-side determinant of those masters: the
-    // same key with the same identifiers always produces the same memo key
-    // against a given catalog. The converse does not hold — two different
-    // identifier sets can reach the same masters — so this counts no pair as
-    // repeated that is not, and at worst declines to cache one that is.
-    //
-    // This borrows the keys rather than cloning them, so it costs no more than
-    // the entity list it is counting.
-    let mut repeats: BTreeMap<(&str, &[Identifier]), usize> = BTreeMap::new();
-    for entity in entities {
-        *repeats
-            .entry((entity.key.as_str(), entity.identifiers.as_slice()))
-            .or_insert(0) += 1;
-    }
-    let repeated = repeats
-        .into_iter()
-        .filter(|(_, count)| *count > 1)
-        .map(|(key, _)| key)
-        .collect::<BTreeSet<_>>();
+    // The key is both source folds plus the masters its identifiers reached,
+    // not the raw identifier list. Different unmatched hints all reach the
+    // same empty set, so proxy-counting the raw lists re-ran their one
+    // expensive candidate search once per row. Both folds are necessary:
+    // `collect_candidates` also reads `binding_key` for a `NormalizedEqual`
+    // candidate. Fingerprints keep this prepass bounded by
+    // `MAX_SOURCE_ENTITIES` without holding another owned key/set per entity;
+    // the memo itself remains capped and checks the full key before reuse.
+    let repeated = repeated_candidate_memo_fingerprints(catalog, entities);
 
     let mut memo = SearchMemo {
         seen: CandidateMemo::new(),
@@ -953,8 +1009,7 @@ pub fn bind(
 }
 
 /// What `collect_candidates` produced for one distinct source name, keyed by
-/// the only two things it reads: the source key, and the masters the entity's
-/// identifiers reached.
+/// the two source folds and the masters the entity's identifiers reached.
 ///
 /// A draft may repeat one ledger name across its rows, and the search is not
 /// cheap when it does: a truncated name against a large prefix family
@@ -965,7 +1020,15 @@ pub fn bind(
 /// candidate list it holds — a draft of 40,000 *distinct* names would trade the
 /// stall for the memory the aggregate bounds elsewhere exist to prevent. The
 /// repeated-name case, which is the one that stalls, needs very few entries.
-type CandidateMemo = BTreeMap<(String, BTreeSet<usize>), (Vec<(usize, CandidateRule)>, usize)>;
+/// Named rather than positional: the memo size guard must continue to measure
+/// the identifier-holder set when the two source folds evolve independently.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct CandidateMemoKey {
+    key: String,
+    binding_key: String,
+    identifier_matches: BTreeSet<usize>,
+}
+type CandidateMemo = BTreeMap<CandidateMemoKey, (Vec<(usize, CandidateRule)>, usize)>;
 
 /// One run's search scratch: what has already been computed, and which source
 /// keys a second row will ask for again. Carried together because they are one
@@ -979,17 +1042,25 @@ struct IdentifierEvidence<'a> {
     exact: Option<usize>,
     /// Every master the entity's identifiers reached.
     matches: &'a BTreeSet<usize>,
-    /// A **lower bound** on how many masters share this entity's identifiers,
-    /// counted without expanding the families that were skipped: the largest
-    /// skipped family, plus the listed masters that are not in it. Present so a
-    /// withheld listing can still say how many masters are involved.
-    withheld_holders: usize,
+    /// The largest identifier family that was deliberately not materialized.
+    /// Its members remain available for bounded membership checks when the
+    /// candidate union is counted.
+    largest_withheld: Option<&'a [usize]>,
+    /// Whether more than one distinct skipped family may overlap the largest.
+    withheld_count_is_lower_bound: bool,
 }
 
-struct SearchMemo<'a> {
+struct CountEvidence<'a> {
+    largest_withheld: Option<&'a [usize]>,
+    withheld_count_is_lower_bound: bool,
+}
+
+struct SearchMemo {
     seen: CandidateMemo,
-    /// The (source key, identifiers) pairs a second row will ask for again.
-    repeated: BTreeSet<(&'a str, &'a [Identifier])>,
+    /// Fingerprints of the full memo keys a later entity will ask for again.
+    /// A collision can retain one otherwise-singleton result, but can never
+    /// reuse it: `seen` remains keyed by the complete value.
+    repeated: BTreeSet<u64>,
 }
 
 const MAX_CANDIDATE_MEMO_ENTRIES: usize = 1_024;
@@ -998,7 +1069,7 @@ fn bind_one(
     catalog: &MasterCatalog,
     entity: &SourceEntity,
     budget: &mut usize,
-    memo: &mut SearchMemo<'_>,
+    memo: &mut SearchMemo,
 ) -> EntityBinding {
     let exact = catalog.by_name.get(&entity.name).copied();
 
@@ -1013,11 +1084,9 @@ fn bind_one(
     let mut identifier_matches = BTreeSet::new();
     let mut identifier_conflict = false;
     let mut large_holder_points_elsewhere = false;
-    // How many masters a skipped family actually held. The set is not built,
-    // but the *count* is the one thing a reader still needs: without it a
-    // withheld family reported `found() == 0` and `listing: "none"`, telling
-    // the operator nothing shares the identifier when hundreds do.
-    let mut withheld_holders = 0_usize;
+    // Keep references rather than cloning large holder vectors. Distinct
+    // skipped families are the only source of unknown overlap in this union.
+    let mut withheld_families: Vec<(&[usize], usize)> = Vec::new();
     // The holders of the largest skipped family, kept by reference so the count
     // below can ask which listed masters are *not* in it. Nothing is cloned.
     let mut largest_withheld: Option<&Vec<usize>> = None;
@@ -1032,8 +1101,18 @@ fn bind_one(
             // before the candidate memo is even consulted.
             if holders.len() > MAX_CANDIDATES_PER_ENTITY {
                 identifier_conflict = true;
-                if holders.len() > withheld_holders {
-                    withheld_holders = holders.len();
+                let family_id = catalog
+                    .identifier_family_ids
+                    .get(identifier)
+                    .copied()
+                    .expect("identifier index has a family id");
+                if !withheld_families
+                    .iter()
+                    .any(|(_, existing_id)| *existing_id == family_id)
+                {
+                    withheld_families.push((holders.as_slice(), family_id));
+                }
+                if largest_withheld.is_none_or(|family| holders.len() > family.len()) {
                     largest_withheld = Some(holders);
                 }
                 // Skipping the expansion must not skip the *question* the
@@ -1043,7 +1122,7 @@ fn bind_one(
                 // materialization. Dropping it made the invariant
                 // size-dependent: a hint pointing entirely elsewhere let the
                 // exact name bind, but only once the family grew past the cap.
-                if exact.is_some_and(|index| !holders.contains(&index)) {
+                if exact.is_some_and(|index| holders.binary_search(&index).is_err()) {
                     large_holder_points_elsewhere = true;
                 }
                 continue;
@@ -1059,33 +1138,13 @@ fn bind_one(
         }
     }
 
-    // One family's size is not the size of their union. An entity carrying two
-    // identifiers — one held by thirty masters and skipped, one reaching a
-    // thirty-first — reported thirty, because the larger of the two counts
-    // ignores every master the other identifier listed.
-    //
-    // The listed masters that are *not* in the skipped family are disjoint from
-    // it, so adding them is sound and costs nothing but a lookup: the union is
-    // never built, which is the whole point of skipping. It stays a **lower
-    // bound** — two disjoint skipped families are still counted as the larger
-    // alone — and that is what `Candidates::Withheld` means. Over-counting
-    // would be worse than under-counting here: two identifiers can be held by
-    // overlapping families, so summing their sizes would state a number of
-    // masters that do not exist.
-    let withheld_holders = match largest_withheld {
-        Some(family) => {
-            // `by_identifier` is filled by pushing entry indices in ascending
-            // order, so each holder list is sorted and a membership test is a
-            // bisection rather than a scan of up to a whole catalog.
-            debug_assert!(family.is_sorted(), "holder lists are built in order");
-            withheld_holders
-                + identifier_matches
-                    .iter()
-                    .filter(|index| family.binary_search(index).is_err())
-                    .count()
-        }
-        None => withheld_holders,
-    };
+    // A single skipped family can be counted exactly once the bounded
+    // candidate set is known. Multiple distinct skipped families may overlap;
+    // retain the larger family as the lower-bound floor and mark the count
+    // uncertain without allocating their union.
+    let largest_withheld = largest_withheld.map(Vec::as_slice);
+    let withheld_count_is_lower_bound = withheld_families_are_not_nested(&withheld_families);
+    debug_assert!(withheld_families.len() <= MAX_IDENTIFIERS_PER_NAME);
 
     // An identifier shared by two masters, and an entity whose identifiers
     // reach two masters, are the same refusal: the operator has a naming
@@ -1124,7 +1183,8 @@ fn bind_one(
             IdentifierEvidence {
                 exact,
                 matches: &identifier_matches,
-                withheld_holders,
+                largest_withheld,
+                withheld_count_is_lower_bound,
             },
             budget,
             memo,
@@ -1145,7 +1205,8 @@ fn bind_one(
             IdentifierEvidence {
                 exact,
                 matches: &identifier_matches,
-                withheld_holders,
+                largest_withheld,
+                withheld_count_is_lower_bound,
             },
             budget,
             memo,
@@ -1186,7 +1247,8 @@ fn bind_one(
                 IdentifierEvidence {
                     exact,
                     matches: &identifier_matches,
-                    withheld_holders,
+                    largest_withheld,
+                    withheld_count_is_lower_bound,
                 },
                 budget,
                 memo,
@@ -1198,7 +1260,8 @@ fn bind_one(
                 IdentifierEvidence {
                     exact,
                     matches: &identifier_matches,
-                    withheld_holders,
+                    largest_withheld,
+                    withheld_count_is_lower_bound,
                 },
                 budget,
                 memo,
@@ -1218,7 +1281,11 @@ fn bind_one(
                     entity,
                     reason,
                     candidates,
-                    masters_found.max(withheld_holders),
+                    masters_found,
+                    CountEvidence {
+                        largest_withheld,
+                        withheld_count_is_lower_bound,
+                    },
                     budget,
                 )
             }
@@ -1232,18 +1299,52 @@ fn bind_one(
     }
 }
 
+/// Returns whether the union of skipped holder families may exceed its largest
+/// member. Membership checks are deliberately budgeted: a proof of containment
+/// is cheap for the usual small family, while an adversarial 20,000-entry family
+/// cannot force a source row to walk every holder. An exhausted proof remains a
+/// lower bound, which is the safe direction for an operator-facing count.
+fn withheld_families_are_not_nested(families: &[(&[usize], usize)]) -> bool {
+    let Some((largest, largest_id)) = families.iter().max_by_key(|(holders, _)| holders.len())
+    else {
+        return false;
+    };
+    let mut probes_left = MAX_WITHHELD_FAMILY_PROBES;
+    for (family, family_id) in families {
+        if *family_id == *largest_id {
+            continue;
+        }
+        if family.len() > largest.len() {
+            return true;
+        }
+        for holder in *family {
+            if probes_left == 0 {
+                return true;
+            }
+            probes_left -= 1;
+            #[cfg(test)]
+            WITHHELD_FAMILY_PROBES.with(|count| count.set(count.get() + 1));
+            if largest.binary_search(holder).is_err() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn unresolved_status(
     catalog: &MasterCatalog,
     entity: &SourceEntity,
     reason: UnboundReason,
     evidence: IdentifierEvidence<'_>,
     budget: &mut usize,
-    memo: &mut SearchMemo<'_>,
+    memo: &mut SearchMemo,
 ) -> BindingStatus {
     let IdentifierEvidence {
         exact,
         matches: identifier_matches,
-        withheld_holders,
+        largest_withheld,
+        withheld_count_is_lower_bound,
     } = evidence;
     let (mut candidates, masters_found) =
         remembered_candidates(catalog, entity, identifier_matches, memo);
@@ -1261,7 +1362,11 @@ fn unresolved_status(
         entity,
         reason,
         candidates,
-        masters_found.max(withheld_holders),
+        masters_found,
+        CountEvidence {
+            largest_withheld,
+            withheld_count_is_lower_bound,
+        },
         budget,
     )
 }
@@ -1272,16 +1377,24 @@ fn unresolved_from(
     reason: UnboundReason,
     candidates: Vec<(usize, CandidateRule)>,
     masters_found: usize,
+    count_evidence: CountEvidence<'_>,
     budget: &mut usize,
 ) -> BindingStatus {
     let mut ordered = candidates;
     ordered.sort_by(|left, right| candidate_order(catalog, left, right));
+    let (found, count_is_lower_bound) = candidate_count(
+        masters_found,
+        &ordered,
+        count_evidence.largest_withheld,
+        count_evidence.withheld_count_is_lower_bound,
+    );
     // The variant is derived here, in one place, from the same facts that chose
     // the reason — so "empty" can never mean something the variant does not say.
     let candidates = if ordered.is_empty() {
-        if masters_found > 0 {
+        if found > 0 {
             Candidates::Withheld {
-                found: masters_found,
+                found,
+                count_is_lower_bound,
             }
         } else {
             Candidates::None
@@ -1300,9 +1413,13 @@ fn unresolved_from(
                 })
             })
             .collect::<Vec<_>>();
-        let found = masters_found.max(capped);
+        let found = found.max(capped);
         if listed.len() < found {
-            Candidates::Truncated { listed, found }
+            Candidates::Truncated {
+                listed,
+                found,
+                count_is_lower_bound,
+            }
         } else {
             Candidates::Listed { listed }
         }
@@ -1319,6 +1436,32 @@ fn unresolved_from(
     }
 }
 
+/// Count a materialized candidate set against one borrowed withheld family.
+/// The candidate vector is capped, so `masters_found > candidates.len()` means
+/// there are additional unmaterialized name candidates whose overlap with the
+/// large identifier family is unknown. No large family is copied or walked.
+fn candidate_count(
+    masters_found: usize,
+    candidates: &[(usize, CandidateRule)],
+    largest_withheld: Option<&[usize]>,
+    withheld_count_is_lower_bound: bool,
+) -> (usize, bool) {
+    let Some(family) = largest_withheld else {
+        return (masters_found, false);
+    };
+    let outside_family = candidates
+        .iter()
+        .filter(|(index, _)| family.binary_search(index).is_err())
+        .count();
+    let known_union = family.len() + outside_family;
+    let uncertain = withheld_count_is_lower_bound || masters_found > candidates.len();
+    if uncertain {
+        (known_union.max(masters_found), true)
+    } else {
+        (known_union, false)
+    }
+}
+
 /// `collect_candidates` behind its memo, and the only way to reach it.
 ///
 /// The first version of this memo sat inside `unresolved_status`, which reaches
@@ -1330,12 +1473,18 @@ fn remembered_candidates(
     catalog: &MasterCatalog,
     entity: &SourceEntity,
     identifier_matches: &BTreeSet<usize>,
-    memo: &mut SearchMemo<'_>,
+    memo: &mut SearchMemo,
 ) -> (Vec<(usize, CandidateRule)>, usize) {
-    let key = (entity.key.clone(), identifier_matches.clone());
+    let key = CandidateMemoKey {
+        key: entity.key.clone(),
+        binding_key: entity.binding_key.clone(),
+        identifier_matches: identifier_matches.clone(),
+    };
     if let Some(remembered) = memo.seen.get(&key) {
         return remembered.clone();
     }
+    let fingerprint =
+        candidate_memo_fingerprint(&key.key, &key.binding_key, &key.identifier_matches);
     let computed = collect_candidates(catalog, entity, identifier_matches);
     // Entry *count* alone does not bound a memo whose keys and values are
     // themselves collections, so the key is still size-tested. The **value** is
@@ -1346,14 +1495,55 @@ fn remembered_candidates(
     // search the memo exists for, and a name reaching twenty thousand masters
     // through shared tokens re-ran it once per row.
     debug_assert!(computed.0.len() <= MAX_CANDIDATES_PER_ENTITY);
-    let worth_holding = memo
-        .repeated
-        .contains(&(entity.key.as_str(), entity.identifiers.as_slice()))
-        && key.1.len() <= MAX_CANDIDATES_PER_ENTITY;
+    let worth_holding = memo.repeated.contains(&fingerprint)
+        && key.identifier_matches.len() <= MAX_CANDIDATES_PER_ENTITY;
     if worth_holding && memo.seen.len() < MAX_CANDIDATE_MEMO_ENTRIES {
         memo.seen.insert(key, computed.clone());
     }
     computed
+}
+
+/// Counts derived memo keys before candidate collection so a repeated key is
+/// retained from its first computation, independent of source order. The
+/// identifier pass here mirrors the memo key's existing definition: holders
+/// too large to materialize do not enter `identifier_matches` there either.
+fn repeated_candidate_memo_fingerprints(
+    catalog: &MasterCatalog,
+    entities: &[SourceEntity],
+) -> BTreeSet<u64> {
+    let mut occurrences = BTreeMap::<u64, usize>::new();
+    for entity in entities {
+        let fingerprint = candidate_memo_fingerprint_for_entity(catalog, entity);
+        *occurrences.entry(fingerprint).or_insert(0) += 1;
+    }
+    occurrences
+        .into_iter()
+        .filter_map(|(fingerprint, count)| (count > 1).then_some(fingerprint))
+        .collect()
+}
+
+fn candidate_memo_fingerprint_for_entity(catalog: &MasterCatalog, entity: &SourceEntity) -> u64 {
+    let mut identifier_matches = BTreeSet::new();
+    for identifier in &entity.identifiers {
+        if let Some(holders) = catalog.by_identifier.get(identifier) {
+            if holders.len() <= MAX_CANDIDATES_PER_ENTITY {
+                identifier_matches.extend(holders.iter().copied());
+            }
+        }
+    }
+    candidate_memo_fingerprint(&entity.key, &entity.binding_key, &identifier_matches)
+}
+
+fn candidate_memo_fingerprint(
+    key: &str,
+    binding_key: &str,
+    identifier_matches: &BTreeSet<usize>,
+) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut hasher);
+    binding_key.hash(&mut hasher);
+    identifier_matches.hash(&mut hasher);
+    hasher.finish()
 }
 
 // Counts holder sets actually materialized, for the same reason as the search
@@ -1373,6 +1563,12 @@ thread_local! {
 #[cfg(test)]
 thread_local! {
     pub(crate) static CANDIDATE_SEARCHES: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static WITHHELD_FAMILY_PROBES: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
 }
 
