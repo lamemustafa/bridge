@@ -1761,8 +1761,15 @@ def _cleanup_owned_path(record, failures):
     required for that platform-specific branch.
     """
     if os.name == "nt":
+        # Windows requires closing before unlinking.  A close can report an
+        # error after releasing the descriptor, so decide whether its
+        # pathname diagnostic remains only after the unlink outcome is known.
+        failure_start = len(failures)
         _close_owned_path(record, failures)
-        _unlink_for_cleanup(record.get("cleanup_path", record["path"]), record["identity"], failures)
+        outcome = _unlink_for_cleanup(
+            record.get("cleanup_path", record["path"]), record["identity"], failures)
+        if outcome == "removed":
+            del failures[failure_start:]
     else:
         cleanup_path = record.get("cleanup_path", record["path"])
         failure_start = len(failures)
@@ -1810,8 +1817,9 @@ def _restore_metadata(handle, metadata):
     current = os.fstat(handle)
     if (current.st_uid, current.st_gid) != (metadata["uid"], metadata["gid"]):
         os.fchown(handle, metadata["uid"], metadata["gid"])
-    os.fchmod(handle, metadata["mode"])
-    os.utime(handle, ns=(metadata["atime_ns"], metadata["mtime_ns"]))
+    # The private backup is writable.  Restore extended attributes before the
+    # final mode: Linux requires write permission for xattr changes, including
+    # removal of attributes introduced by the staged output.
     original_xattrs = metadata["xattrs"]
     if original_xattrs is not None:
         for name in os.listxattr(handle):
@@ -1819,6 +1827,8 @@ def _restore_metadata(handle, metadata):
                 os.removexattr(handle, name)
         for name, value in original_xattrs.items():
             os.setxattr(handle, name, value)
+    os.utime(handle, ns=(metadata["atime_ns"], metadata["mtime_ns"]))
+    os.fchmod(handle, metadata["mode"])
 
 
 def _pinned_original_still_has_one_link(record):
@@ -1945,6 +1955,18 @@ def _restore_backup(swap, failures, metadata_scope_warnings):
         return
     restored = False
     try:
+        _pinned_backup_still_has_one_link(backup_record)
+    except Refusal:
+        # Keep the original failure escaping.  The private backup is still
+        # named here, but its unknown alias may retain prior statement bytes;
+        # moving it back would make that alias a live copy of the destination.
+        failures.append(
+            f"unknown hard-link alias may retain rollback bytes: {backup}")
+        return
+    except OSError:
+        failures.append(backup)
+        return
+    try:
         if _entry_identity(backup) != backup_identity:
             failures.append(backup)
             return
@@ -1998,7 +2020,7 @@ def _append_cleanup_detail(error, message):
 
 def _note_cleanup_failures(error, failures):
     if failures:
-        retained = ", ".join(sorted(set(failures)))
+        retained = ", ".join(sorted({str(failure) for failure in failures}))
         message = "output cleanup or rollback failed; retained path(s): " + retained
         _append_cleanup_detail(error, message)
 
@@ -2133,6 +2155,23 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 if refusal:
                     raise refusal
                 real_path = os.path.realpath(path)
+                # Commit the existing inode before any staging syscall makes
+                # a visible sibling.  A replacement before this open is the
+                # requested current path; a replacement after it is detected
+                # before this run has authority to create or swap output.
+                original_handle = _open_regular_output(real_path, None)
+                original = _owned_path(real_path, original_handle, created=False)
+                original_identity = original["identity"]
+                state = {"temporary": None, "supplied_path": path,
+                         "real_path": real_path,
+                         "original_identity": original_identity,
+                         "original": original}
+                staged.append(state)
+                if _file_identity(real_path) != original_identity:
+                    raise Refusal(
+                        "output_path_changed",
+                        f"{path} changed while it was being claimed",
+                    )
                 handle, temporary = tempfile.mkstemp(
                     dir=os.path.dirname(real_path),
                     prefix=os.path.basename(real_path) + ".", suffix=".part")
@@ -2141,29 +2180,7 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 record["canonical_path"] = real_path
                 record["cleanup_path"] = temporary
                 claimed.append(record)
-                # Pin the original inode at first claim and retain this
-                # descriptor through payload generation and commit. A later
-                # path replacement must not be able to recycle the recorded
-                # identity and make the backup read from foreign bytes.
-                original_handle = _open_regular_output(real_path, None)
-                original = _owned_path(real_path, original_handle, created=False)
-                original_identity = original["identity"]
-                state = {"temporary": record, "supplied_path": path,
-                         "real_path": real_path,
-                         "original_identity": original_identity,
-                         "original": original}
-                # The descriptor is the authoritative original identity. The
-                # path must still lead to that inode when the claim commits;
-                # if it changed after open, retain no authority to overwrite
-                # the replacement. A change before open is indistinguishable
-                # from the path state when this claim began; without a lock,
-                # no later operation can establish that it was foreign.
-                staged.append(state)
-                if _file_identity(real_path) != original_identity:
-                    raise Refusal(
-                        "output_path_changed",
-                        f"{path} changed while it was being claimed",
-                    )
+                state["temporary"] = record
             else:
                 supplied_path = path
                 canonical_path = _resolve_output_path(supplied_path)

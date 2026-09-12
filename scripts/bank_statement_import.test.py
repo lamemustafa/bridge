@@ -3545,6 +3545,142 @@ def test_earlier_replacement_is_revalidated_after_later_swap(m):
                 assert supplied.read_text() == "foreign bytes"
 
 
+def test_rollback_keeps_an_aliased_earlier_backup_after_a_later_swap_failure(m):
+    """Recovery must not restore an old copy after it gained an unknown alias."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second, alias = root / "first.xml", root / "second.xml", root / "alias.xml"
+        first.write_text("old first")
+        second.write_text("old second")
+        real_replace = m.os.replace
+
+        def swap_first_alias_backup_then_fail_second(source, destination):
+            if (str(source).endswith(".part")
+                    and pathlib.Path(destination).resolve() == second.resolve()):
+                raise OSError("controlled later swap failure")
+            result = real_replace(source, destination)
+            if (str(source).endswith(".part")
+                    and pathlib.Path(destination).resolve() == first.resolve()):
+                backup, = root.glob("first.xml.*.bak")
+                os.link(backup, alias)
+            return result
+
+        m.os.replace = swap_first_alias_backup_then_fail_second
+        try:
+            try:
+                m.write_outputs([(str(first), "new first"), (str(second), "new second")])
+                raise AssertionError("the controlled later failure must escape")
+            except OSError as error:
+                notes = "\n".join(getattr(error, "__notes__", []))
+                assert "unknown hard-link alias may retain rollback bytes" in notes
+        finally:
+            m.os.replace = real_replace
+
+        backup, = root.glob("first.xml.*.bak")
+        assert first.read_text() == "new first"
+        assert second.read_text() == "old second"
+        assert backup.read_text() == alias.read_text() == "old first"
+
+
+def test_existing_destination_is_pinned_before_staging_side_effects(m):
+    """A mkstemp-time replacement is foreign because the original pin predates it."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination, foreign = root / "output.xml", root / "foreign.xml"
+        destination.write_text("old bytes")
+        foreign.write_text("foreign bytes")
+        real_mkstemp, real_replace = m.tempfile.mkstemp, m.os.replace
+        fired = False
+
+        def replace_from_part_mkstemp(*args, **kwargs):
+            nonlocal fired
+            handle, path = real_mkstemp(*args, **kwargs)
+            if kwargs.get("suffix") == ".part" and not fired:
+                fired = True
+                real_replace(foreign, destination)
+            return handle, path
+
+        m.tempfile.mkstemp = replace_from_part_mkstemp
+        try:
+            refuses(m, "output_path_changed", m.write_outputs,
+                    [(str(destination), "new bytes")])
+        finally:
+            m.tempfile.mkstemp = real_mkstemp
+
+        assert fired
+        assert destination.read_text() == "foreign bytes"
+        assert sorted(path.name for path in root.iterdir()) == ["output.xml"]
+
+
+def test_windows_modeled_close_after_effect_then_unlink_has_no_stale_retention(m):
+    """Model the Windows close-before-unlink order; Windows filesystem proof is separate."""
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "fresh.xml"
+        handle = m._open_private(path)
+        record = m._owned_path(path, handle, created=True)
+        real_close, real_name = m.os.close, m.os.name
+        fired, failures = False, []
+
+        def close_then_error(candidate):
+            nonlocal fired
+            real_close(candidate)
+            if candidate == handle and not fired:
+                fired = True
+                raise OSError("controlled close after effect")
+
+        m.os.close, m.os.name = close_then_error, "nt"
+        try:
+            m._cleanup_owned_path(record, failures)
+        finally:
+            m.os.close, m.os.name = real_close, real_name
+
+        assert fired
+        assert failures == []
+        assert not path.exists()
+
+
+def test_rollback_restores_xattrs_before_a_readonly_final_mode(m):
+    """Linux xattrs need the backup's temporary write permission during rollback."""
+    if os.name != "posix" or not hasattr(os, "setxattr"):
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        first.write_text("old first")
+        second.write_text("old second")
+        name, value = "user.bridge_readonly_rollback", b"original xattr"
+        try:
+            os.setxattr(first, name, value)
+        except OSError:
+            return
+        first.chmod(0o400)
+        real_replace = m.os.replace
+
+        def fail_second_swap(source, destination):
+            if str(source).endswith(".part") and pathlib.Path(destination) == second:
+                raise OSError("controlled second swap failure")
+            return real_replace(source, destination)
+
+        m.os.replace = fail_second_swap
+        try:
+            try:
+                m.write_outputs([(str(first), "new first"), (str(second), "new second")])
+                raise AssertionError("the controlled second swap failure must escape")
+            except OSError as error:
+                assert "controlled second swap failure" in str(error)
+        finally:
+            m.os.replace = real_replace
+
+        assert first.read_text() == "old first"
+        assert stat.S_IMODE(first.stat().st_mode) == 0o400
+        assert os.getxattr(first, name) == value
+        assert second.read_text() == "old second"
+
+
 def test_earlier_backup_alias_is_revalidated_after_later_swap(m):
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
@@ -3568,11 +3704,11 @@ def test_earlier_backup_alias_is_revalidated_after_later_swap(m):
         finally:
             m.os.replace = real_replace
         assert linked == [True]
-        assert "unknown hard-link alias" in str(refusal.code)
-        assert first.read_text() == "old first"
+        assert "unknown hard-link alias may retain rollback bytes" in str(refusal.code)
+        backup, = root.glob("first.xml.*.bak")
+        assert first.read_text() == "new first"
         assert second.read_text() == "old second"
-        assert alias.read_text() == "old first"
-        assert not list(root.glob("*.bak"))
+        assert backup.read_text() == alias.read_text() == "old first"
 
 
 def main():
