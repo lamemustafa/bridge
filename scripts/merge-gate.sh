@@ -157,12 +157,25 @@ elif grep -q 'Completed' <<<"$row"; then
   # strengthened — but a ground commit has to be created AFTER the review it is
   # impersonating, and that is checkable. Require the reviewed row to postdate
   # the head commit.
-  review_at=$(grep -oE 'datetime="[^"]+"' <<<"$row" | head -1 | sed 's/datetime="//;s/"//')
-  head_at=$(gh api "repos/$REPO/commits/$head" --jq '.commit.committer.date' 2>/dev/null)
-  if [ -n "$review_at" ] && [ -n "$head_at" ] && [[ "$review_at" < "$head_at" ]]; then
-    bad "review at $review_at predates head commit $short ($head_at) — it cannot have seen it"
+  # An earlier revision compared the review's timestamp against the head
+  # commit's committer date. That defence is VOID: `GIT_COMMITTER_DATE` is set
+  # by whoever creates the commit, so an author grinding a prefix can also
+  # backdate it. A check an attacker can satisfy is worse than no check,
+  # because it reads as coverage.
+  #
+  # What IS sound is uniqueness. If a colliding commit was ground and pushed,
+  # both commits are in the PR, so more than one of its commits shares the
+  # prefix. Count them.
+  sharing=$(gh api --paginate "repos/$REPO/pulls/$PR/commits" --jq '.[].sha' 2>/dev/null \
+            | { grep -c "^$short" || true; })
+  if [ "$sharing" -gt 1 ]; then
+    bad "$sharing commits in this PR share the prefix $short — the review row cannot say which it read"
   else
-    good "review completed on $short${review_at:+ at $review_at}"
+    good "review completed on $short (prefix unique among this PR's commits)"
+    # Stated, not hidden: a seven-hex prefix is 28 bits. Uniqueness within the
+    # PR does not exclude a collision created elsewhere and force-pushed as the
+    # sole commit. Closing that needs Codex to publish a full SHA; until then
+    # this rule is a deterrent, not a proof.
   fi
 else
   # Running, Failed, Errored — none of these is a review. A failed review run
@@ -226,7 +239,10 @@ fi
 #    gate does — but it catches the whole observed failure, which is a reseal
 #    that never ran.
 SURFACE=docs/tally/compatibility/compatibility-surface.json
-changed=$(gh pr view "$PR" --repo "$REPO" --json files -q '.files[].path' 2>/dev/null)
+# `gh pr view --json files` hard-codes `files(first: 100)`, so a PR touching more
+# than 100 files silently returns a partial list — and a pinned file outside that
+# page reads as untouched. Use the paginated REST endpoint.
+changed=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename' 2>/dev/null)
 if [ -z "$changed" ]; then
   bad "could not list changed files for the pin-freshness check"
 else
@@ -234,7 +250,14 @@ else
            | tr -d '\n' | base64 --decode 2>/dev/null \
            | jq -r '[.. | objects | select(has("path")) | .path] | .[]' 2>/dev/null)
   if [ -z "$pinned" ]; then
-    say "note" "no compatibility surface at this head — pin-freshness check skipped"
+    # "I could not read the manifest" and "there is no manifest" are different
+    # statements, and only one of them is about the repository. Distinguish by
+    # asking whether the path exists at all; anything else fails closed.
+    if gh api "repos/$REPO/contents/$SURFACE?ref=$head" --jq '.sha' >/dev/null 2>&1; then
+      bad "the compatibility surface exists at this head but could not be read or parsed — refusing rather than skipping"
+    else
+      say "note" "no compatibility surface at this head — pin-freshness check does not apply"
+    fi
   else
     touched=$(comm -12 <(sort -u <<<"$pinned") <(sort -u <<<"$changed") | grep -v "^$SURFACE$" | head -20)
     if [ -z "$touched" ]; then
@@ -285,7 +308,11 @@ else
   # is always `+++ b/<path>` or `+++ /dev/null`, so match those and nothing
   # else — a payload line that merely starts with `++` is content, and must
   # reach the scan rather than being mistaken for a header.
-  raw_added=$(grep '^+' <<<"$diff" | grep -vE '^\+\+\+ (b/|/dev/null)')
+  # A filename is content too. The header lines are dropped from the scan, so a
+  # file whose BASENAME carries an identifier passed with safe contents. Add the
+  # destination paths back as their own scannable text.
+  added_paths=$(grep -E '^\+\+\+ b/' <<<"$diff" | sed 's|^+++ b/||')
+  raw_added=$(printf '%s\n%s\n' "$(grep '^+' <<<"$diff" | grep -vE '^\+\+\+ (b/|/dev/null)')" "$added_paths")
   added=$(sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/<uuid>/g' <<<"$raw_added" \
           | sed -E 's/[0-9a-fA-F]{32,}/<digest>/g')
   # Exemptions are REPORTED, never silent. Stripping generated-looking values
@@ -312,9 +339,24 @@ else
   # Case-insensitively: a GSTIN or PAN written in lower or mixed case is the
   # same identifier, and prose is exactly where it would be written that way.
   # The placeholder list is applied to the UPPERCASED form for the same reason.
-  hits=$(grep -Eio '[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]{3}|[A-Z]{5}[0-9]{4}[A-Z]|[6-9][0-9]{9}' <<<"$added" \
-          | tr '[:lower:]' '[:upper:]' | sort -u | { grep -cvE "$placeholder" || true; })
-  runs=$(grep -Eo '[0-9]{11,18}' <<<"$added" | sort -u | { grep -cvE "$placeholder" || true; })
+  # A phone number is written `+91 98765 43210`, `(98765) 43210`, `98765-43210`.
+  # Scanning contiguous digits only, every segment falls under both thresholds
+  # and the line reads clean.
+  #
+  # Stripping ALL separators to make a projection was the first fix and it was
+  # wrong: it joined two adjacent dates into a sixteen-digit run and `CE_ADR_
+  # 0016_E` into a PAN shape, inventing eight findings on a diff that had none.
+  # A gate that cries wolf gets ignored, which costs more than this catches.
+  #
+  # So: permit separators only INSIDE a phone-shaped run, then re-check the
+  # result really is a ten-digit Indian mobile. Nothing outside that shape is
+  # joined, so no unrelated numbers are fused.
+  squashed=$(grep -Eo '[6-9][0-9]{4}[][()+. _-]{0,3}[0-9]{5}' <<<"$added" \
+             | sed -E 's/[][()+. _-]//g' | grep -E '^[6-9][0-9]{9}$' || true)
+  hits=$(grep -Eio '[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]{3}|[A-Z]{5}[0-9]{4}[A-Z]|[6-9][0-9]{9}' <<<"$added
+$squashed" | tr '[:lower:]' '[:upper:]' | sort -u | { grep -cvE "$placeholder" || true; })
+  runs=$(grep -Eo '[0-9]{11,18}' <<<"$added
+$squashed" | sort -u | { grep -cvE "$placeholder" || true; })
   if [ "$hits" -eq 0 ] && [ "$runs" -eq 0 ]; then
     good "added lines carry no identifier shapes and no unexplained long digit runs"
   else
