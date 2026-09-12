@@ -1344,23 +1344,26 @@ more variants, same method, same readback and deletion:
 | `  mb-pilot/alpha  (5550001001) ` | all five at once | **matched** |
 | `  mb probe  ledger a ` against `MB-PROBE-LEDGER-A` | case + space-for-hyphen + surrounding + run | **matched** |
 
-All eight posted against the intended master, confirmed by day-book readback. **So the folds
-compose**, and a canonical form applying every measured transformation before comparing is
-licensed by measurement rather than by extrapolation from the single-axis rows.
+All eight posted against the intended master, confirmed by day-book readback. **So the listed
+supplied-to-master transformations compose in those measured directions.** That does not license
+a canonical form: it compares symmetrically and would assert a reverse comparison the probe did
+not send.
 
-**What this says.** On licensed 7.1 Silver, Tally treats **space, hyphen and slash** as interchangeable
-separators, collapses internal whitespace runs, ignores leading and trailing whitespace, folds
-**ASCII** case, and is otherwise **exact on codepoints**.
+**What this says.** On licensed 7.1 Silver, the recorded supplied-to-master comparisons accept the
+listed space/hyphen alternatives and the one **slash-candidate to space-master** alternative,
+collapse the measured internal whitespace run, ignore the measured leading and trailing whitespace,
+and fold the measured **ASCII** case. The reverse slash comparison was not sent. Cross-spellings
+involving slash therefore require exact codepoints unless that direction is separately measured.
 
-> **RULE: separators fold, and the set is `space`, `-`, `/` — nothing else.** An en dash and an
-> underscore are ordinary characters to Tally and are **not** separators, so a fold that treats
-> "punctuation" or "separators" as a class is wider than the gateway and will merge masters it
-> keeps apart.
+> **RULE: use only the recorded directional alternatives; do not fold separators into a canonical
+> form.** The slash result is candidate `/` against master space, not the reverse. An en dash and
+> an underscore were rejected in their recorded directions, so a fold that treats punctuation or
+> separators as a class is wider than the gateway and will merge masters it keeps apart.
 
 That is the trap §9.4b warned about, arriving from the other side: the danger was never only that
-a reader would fold too much, it was that "normalises separators" names no particular set. Two of
-the four separators tested are folded and two are not, and nothing about their appearance predicts
-which.
+a reader would fold too much, it was that "normalises separators" hides both the particular
+substitutions and their directions. Nothing about a separator's appearance predicts which comparison
+the gateway accepts.
 
 **Canonical equivalence is still refused**, consistent with the exact-codepoint finding recorded
 elsewhere in this document: an NFD spelling of an NFC ledger does not resolve. A fold that
