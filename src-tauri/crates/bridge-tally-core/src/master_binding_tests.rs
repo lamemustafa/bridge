@@ -2618,6 +2618,30 @@ fn disjoint_withheld_identifier_families_are_marked_as_a_lower_bound() {
 }
 
 #[test]
+fn identical_withheld_identifier_families_are_counted_once() {
+    let names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Twinned Party {index:03} (5550007777) (5550008888)"))
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let entity =
+        SourceEntity::with_identifier_hints(0, "Zeta Holdings", ["5550007777", "5550008888"])
+            .expect("valid");
+
+    let binding = bound(&catalog, &[entity])
+        .entities()
+        .first()
+        .cloned()
+        .expect("one entity in, one binding out");
+    let unresolved = binding.unresolved().expect("identifier conflict");
+    assert_eq!(
+        unresolved.candidates.found(),
+        MAX_CANDIDATES_PER_ENTITY + 5,
+        "identical holder sets are one family"
+    );
+    assert!(!unresolved.candidates.count_is_lower_bound());
+}
+
+#[test]
 fn unmatched_hint_variants_share_one_memo_key_and_compute_once() {
     let names = (0..60)
         .map(|index| format!("Acme Branch {index:05}"))

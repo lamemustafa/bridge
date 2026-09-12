@@ -772,6 +772,7 @@ pub struct MasterCatalog {
     by_key: BTreeMap<String, Vec<usize>>,
     by_binding_key: BTreeMap<String, Vec<usize>>,
     by_identifier: BTreeMap<Identifier, Vec<usize>>,
+    identifier_family_ids: BTreeMap<Identifier, usize>,
     by_token: BTreeMap<String, Vec<usize>>,
     common_tokens: BTreeSet<String>,
 }
@@ -845,6 +846,28 @@ impl MasterCatalog {
             "identifier holder lists are built in entry order"
         );
 
+        // Assign equal holder sets one family id once, while the catalog is
+        // being built. Binding then compares these small ids rather than
+        // walking a potentially huge withheld holder vector for every source
+        // entity. The sort is a one-time construction cost and compares the
+        // already-built index values exactly, so a hash collision cannot make
+        // two different families look equal.
+        let mut family_order = by_identifier
+            .iter()
+            .map(|(identifier, holders)| (identifier, holders.as_slice()))
+            .collect::<Vec<_>>();
+        family_order.sort_by_key(|(_, holders)| *holders);
+        let mut identifier_family_ids = BTreeMap::new();
+        let mut next_family_id = 0_usize;
+        let mut previous_holders: Option<&[usize]> = None;
+        for (identifier, holders) in family_order {
+            if previous_holders.is_some_and(|previous| previous != holders) {
+                next_family_id += 1;
+            }
+            identifier_family_ids.insert(identifier.clone(), next_family_id);
+            previous_holders = Some(holders);
+        }
+
         // A token carried by a large share of the catalog says nothing about
         // which master is meant. The threshold is measured from the catalog
         // rather than a built-in word list, so it carries no language or
@@ -880,6 +903,7 @@ impl MasterCatalog {
             by_key,
             by_binding_key,
             by_identifier,
+            identifier_family_ids,
             by_token,
             common_tokens,
         })
@@ -1056,7 +1080,7 @@ fn bind_one(
     let mut large_holder_points_elsewhere = false;
     // Keep references rather than cloning large holder vectors. Distinct
     // skipped families are the only source of unknown overlap in this union.
-    let mut withheld_families: Vec<&Vec<usize>> = Vec::new();
+    let mut withheld_families: Vec<usize> = Vec::new();
     // The holders of the largest skipped family, kept by reference so the count
     // below can ask which listed masters are *not* in it. Nothing is cloned.
     let mut largest_withheld: Option<&Vec<usize>> = None;
@@ -1071,11 +1095,13 @@ fn bind_one(
             // before the candidate memo is even consulted.
             if holders.len() > MAX_CANDIDATES_PER_ENTITY {
                 identifier_conflict = true;
-                if !withheld_families
-                    .iter()
-                    .any(|family| std::ptr::eq(*family, holders))
-                {
-                    withheld_families.push(holders);
+                let family_id = catalog
+                    .identifier_family_ids
+                    .get(identifier)
+                    .copied()
+                    .expect("identifier index has a family id");
+                if !withheld_families.contains(&family_id) {
+                    withheld_families.push(family_id);
                 }
                 if largest_withheld.is_none_or(|family| holders.len() > family.len()) {
                     largest_withheld = Some(holders);
