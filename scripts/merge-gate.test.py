@@ -102,7 +102,7 @@ if args[:2] == ["pr", "view"]:
             "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
             "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10)"
         )
-    one_file = scenario in {"files-empty", "formatted-phone", "formatted-phone-grouped", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "all-a-pan", "masked-pan", "quoted-path", "control-path"}
+    one_file = scenario in {"files-empty", "formatted-phone", "formatted-phone-grouped", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path"}
     selected_base = new_head if scenario == "base-oid-mismatch" else base
     emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
@@ -140,6 +140,15 @@ elif args[:2] == ["pr", "diff"]:
     elif scenario == "formatted-phone-grouped":
         phone = "6" + "98 765-4321"
         emit(f"diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic {phone}\n")
+    elif scenario in {"phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized"}:
+        phones = {
+            "phone-space": "69876 54321",
+            "phone-dot": "6987.654.321",
+            "phone-plus": "69876+54321",
+            "phone-underscore": "6987_654_321",
+            "phone-parenthesized": "(69876) 54321",
+        }
+        emit(f"diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic {phones[scenario]}\n")
     elif scenario == "metadata-only":
         emit("diff --git a/docs/example.md b/docs/example.md\nsimilarity index 100%\nrename from docs/example.md\nrename to docs/example.md\n")
     elif scenario == "metadata-incomplete":
@@ -161,6 +170,12 @@ elif args[:2] == ["pr", "diff"]:
         emit('diff --git "a/docs/caf\\303\\251.md" "b/docs/caf\\303\\251.md"\n--- "a/docs/caf\\303\\251.md"\n+++ "b/docs/caf\\303\\251.md"\n@@ -0,0 +1 @@\n+safe text\n')
     elif scenario == "separated-dates":
         emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+2026-09-12 2026-09-13\n")
+    elif scenario == "separated-dates-new-year":
+        emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+0101-2026 0201-2026\n")
+    elif scenario == "separated-dates-year-month":
+        emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 @@\n+2025-09-11 2025-09-12\n")
+    elif scenario == "adr-identifier":
+        emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+CE_ADR_0016_E\n")
     elif scenario == "surface-unpins":
         emit("diff --git a/src/example.rs b/src/example.rs\n--- a/src/example.rs\n+++ b/src/example.rs\n@@ -0,0 +1 @@\n+safe text\n"
              "diff --git a/docs/tally/compatibility/compatibility-surface.json b/docs/tally/compatibility/compatibility-surface.json\n"
@@ -267,7 +282,7 @@ elif args and args[0] == "api":
     elif "/pulls/321/files" in joined:
         if scenario == "files-empty":
             emit([[]])
-        elif scenario in {"formatted-phone", "formatted-phone-grouped"}:
+        elif scenario in {"formatted-phone", "formatted-phone-grouped", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized"}:
             emit([[{"filename": "docs/contact.md", "status": "added", "additions": 1, "deletions": 0}]])
         elif scenario == "path-id":
             path_id = "ABCDE" + "1234" + "F"
@@ -284,7 +299,7 @@ elif args and args[0] == "api":
             emit([[{"filename": "docs/example.md", "status": "modified", "additions": 2, "deletions": 0}]])
         elif scenario == "hunk-binary-literal":
             emit([[{"filename": "docs/example.md", "status": "modified", "additions": 1, "deletions": 0}]])
-        elif scenario in {"all-a-pan", "masked-pan", "separated-dates"}:
+        elif scenario in {"all-a-pan", "masked-pan", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier"}:
             emit([[{"filename": "docs/example.md", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "quoted-path":
             emit([[{"filename": "docs/café.md", "status": "added", "additions": 1, "deletions": 0}]])
@@ -438,6 +453,11 @@ class MergeGateControls(unittest.TestCase):
     def test_grouped_formatted_phone_is_scanned(self):
         self.assert_blocked("formatted-phone-grouped", "privacy scan found")
 
+    def test_separated_indian_mobile_styles_are_scanned(self):
+        for scenario in ("phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized"):
+            with self.subTest(scenario=scenario):
+                self.assert_blocked(scenario, "privacy scan found")
+
     def test_header_shaped_added_payload_is_still_scanned(self):
         self.assert_blocked("hunk-header-phone", "privacy scan found")
 
@@ -451,6 +471,18 @@ class MergeGateControls(unittest.TestCase):
 
     def test_unrelated_separator_groups_are_not_fused_into_a_phone(self):
         result = self.run_gate("separated-dates")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_new_year_date_ranges_are_not_fused_into_a_phone(self):
+        result = self.run_gate("separated-dates-new-year")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_year_month_date_ranges_are_not_fused_into_a_phone(self):
+        result = self.run_gate("separated-dates-year-month")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_adr_identifier_with_underscores_remains_clean(self):
+        result = self.run_gate("adr-identifier")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_destination_path_is_scanned(self):
