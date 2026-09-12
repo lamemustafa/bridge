@@ -87,7 +87,7 @@ export type SourceDraftCatalogBinding = {
   /** "none" | "listed" | "truncated" | "withheld" — the core's own word for
    *  this state, carried rather than inferred: an empty list beside a nonzero
    *  count is a withheld family or an exhausted budget, and they differ. */
-  candidate_listing: string;
+  candidate_listing: "none" | "listed" | "truncated" | "withheld";
 };
 
 export type SourceDraftCatalogTargets = {
