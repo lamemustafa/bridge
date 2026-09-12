@@ -123,11 +123,11 @@
     },
     {
       "path": "src-tauri/Cargo.lock",
-      "sha256": "b89de1a745a8ef32477eada8fc4fce0733758bc7b9ebe40ecf88e577b2bb6f23"
+      "sha256": "1b6484e09fa0cc08355dfc0cccda5abbbb4651426081401ab63caccf372b5245"
     },
     {
       "path": "src-tauri/Cargo.toml",
-      "sha256": "8cfb5dd2f70487efd46742809883c78ae8782dce9ec239e6d74cbfec989577ac"
+      "sha256": "2914df522809bc855c092f16dd1ae75b6766bf5bf0a223a1de482795233dde79"
     },
     {
       "path": "src-tauri/crates/bridge-tally-core/Cargo.toml",
@@ -862,5 +862,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "a59f859a5c76df36027e728ca7466b72d67d7304f51aa0d42b029f3555cea334"
+  "manifest_sha256": "af1557e5c452ac4d094558d5dcefea83bc223927cb9357ab96ac7ffe1fb86967"
 }
