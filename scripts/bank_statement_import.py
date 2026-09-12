@@ -1665,7 +1665,7 @@ def _cleanup_owned_path(record, failures):
         cleanup_path = record.get("cleanup_path", record["path"])
         failure_start = len(failures)
         outcome = _unlink_for_cleanup(cleanup_path, record["identity"], failures)
-        if outcome == "reclaimed":
+        if outcome == "reclaimed" and "cleanup_path" in record:
             # A foreign claimant of the stale name is not a retained path of
             # this output. Keep any earlier diagnostics, but replace this
             # pathname with the separate pinned-inode conclusion below.
@@ -1754,7 +1754,8 @@ def _pinned_original_still_has_one_link(record):
 def _pinned_backup_still_has_one_link(record):
     """Refuse a rollback copy that acquired an unlocatable hard-link alias."""
     stat_result = os.fstat(record["pin"])
-    if (stat_result.st_dev, stat_result.st_ino) != record["identity"]:
+    if ((stat_result.st_dev, stat_result.st_ino) != record["identity"]
+            or stat_result.st_nlink == 0):
         raise Refusal(
             "output_path_changed",
             f"{record['path']} rollback copy changed before replacement",

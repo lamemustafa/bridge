@@ -2287,6 +2287,43 @@ def test_cleanup_keeps_a_reclaimed_owned_path(m):
         assert failures == [str(owned)]
 
 
+def test_pinned_backup_reclaimed_path_retains_cleanup_diagnostic(m):
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "rollback.bak"
+        moved = pathlib.Path(directory) / "moved.bak"
+        path.write_text("prior output")
+        identity = m._entry_identity(path)
+        handle = os.open(path, os.O_RDONLY)
+        record = {"path": path, "identity": identity, "pin": handle}
+        path.rename(moved)
+        path.write_text("foreign bytes")
+        failures = []
+        m._cleanup_owned_path(record, failures)
+        assert failures == [str(path)]
+        assert record["pin"] is None
+        assert path.read_text() == "foreign bytes"
+        assert moved.read_text() == "prior output"
+
+
+def test_unlinked_pinned_backup_does_not_claim_a_hard_link_alias(m):
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "rollback.bak"
+        path.write_text("prior output")
+        identity = m._entry_identity(path)
+        handle = os.open(path, os.O_RDONLY)
+        try:
+            path.unlink()
+            refusal = refuses(m, "output_path_changed", m._pinned_backup_still_has_one_link,
+                              {"path": path, "identity": identity, "pin": handle})
+            assert "hard-link alias" not in str(refusal.code)
+        finally:
+            os.close(handle)
+
+
 def test_fresh_output_parent_rename_reports_an_unlocated_owned_descriptor(m):
     """A parent rename preserves a newly created inode under a name cleanup
     cannot discover. The failure must disclose that fact rather than calling
