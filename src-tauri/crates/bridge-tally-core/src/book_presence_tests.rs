@@ -3199,3 +3199,109 @@ fn a_number_collision_still_reaches_what_it_only_resembled() {
         "book-3 was plainly resembled; the collision must not hide that"
     );
 }
+
+#[test]
+fn raw_proposal_budget_counts_all_entry_work_before_conversion() {
+    let entries = vec![
+        ObservedEntry {
+            ledger: "L",
+            amount: "1"
+        };
+        2_000
+    ];
+    let input = ProposedVoucherInput {
+        position: 0,
+        date: "20260812",
+        voucher_type: "Receipt",
+        voucher_number: Some("1"),
+        remote_id: None,
+        party: None,
+        entries: &entries,
+    };
+    let mut budget = RawProposalBudget::default();
+    for _ in 0..50 {
+        budget.admit(input).expect("100,000 entries are admitted");
+    }
+    assert_eq!(
+        budget.admit(input),
+        Err(PresenceError::ProposalRawEntryWorkTooLarge)
+    );
+}
+
+#[test]
+fn raw_proposal_budget_counts_metadata_bytes_before_conversion() {
+    let metadata = "x".repeat(MAX_PROPOSAL_RAW_BYTES - "20260812".len() - "Receipt".len());
+    let input = ProposedVoucherInput {
+        position: 0,
+        date: "20260812",
+        voucher_type: "Receipt",
+        voucher_number: None,
+        remote_id: None,
+        party: Some(&metadata),
+        entries: &[],
+    };
+    let mut budget = RawProposalBudget::default();
+    budget.admit(input).expect("exact byte limit");
+    let next = ProposedVoucherInput {
+        position: 1,
+        voucher_number: Some("12345678"),
+        ..input
+    };
+    assert_eq!(
+        budget.admit(next),
+        Err(PresenceError::ProposalRawBytesTooLarge)
+    );
+}
+
+#[test]
+fn raw_observation_budget_counts_retained_voucher_metadata() {
+    let key = "x".repeat(MAX_WINDOW_RAW_ENTRY_BYTES);
+    let observation = ObservedVoucher {
+        key: &key,
+        date: "20260812",
+        voucher_type: "Receipt",
+        voucher_number: None,
+        remote_id: None,
+        party: None,
+        entries: &[],
+        cancelled: false,
+        optional: false,
+    };
+    let mut budget = RawObservationBudget::default();
+    assert_eq!(
+        budget.admit_observation(&observation),
+        Err(PresenceError::WindowRawEntryBytesTooLarge)
+    );
+}
+
+#[test]
+fn proposal_batch_rejects_duplicate_source_positions_before_conversion() {
+    let rows = [ObservedEntry {
+        ledger: "L",
+        amount: "1",
+    }];
+    let inputs = [
+        ProposedVoucherInput {
+            position: 7,
+            date: "20260812",
+            voucher_type: "Receipt",
+            voucher_number: Some("1"),
+            remote_id: None,
+            party: None,
+            entries: &rows,
+        },
+        ProposedVoucherInput {
+            position: 7,
+            date: "20260812",
+            voucher_type: "Receipt",
+            voucher_number: Some("2"),
+            remote_id: None,
+            party: None,
+            entries: &rows,
+        },
+    ];
+    assert_eq!(
+        ProposedVoucher::from_inputs(inputs),
+        Err(PresenceError::DuplicateProposalPosition)
+    );
+}

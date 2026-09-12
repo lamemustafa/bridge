@@ -49,6 +49,11 @@ pub const MAX_ENTRIES_PER_VOUCHER: usize = 2_000;
 pub const MAX_WINDOW_RAW_ENTRY_WORK: usize = 100_000;
 /// Aggregate raw entry bytes admitted before parsing, cloning, or folding them.
 pub const MAX_WINDOW_RAW_ENTRY_BYTES: usize = 4 * 1024 * 1024;
+/// Proposal input shares the same aggregate work and byte ceilings as a book
+/// window.  Admission happens while the borrowed input is still raw, before
+/// decimal parsing or any string is cloned.
+pub const MAX_PROPOSAL_RAW_ENTRY_WORK: usize = MAX_WINDOW_RAW_ENTRY_WORK;
+pub const MAX_PROPOSAL_RAW_BYTES: usize = MAX_WINDOW_RAW_ENTRY_BYTES;
 /// Most distinct voucher-to-ledger memberships retained across one window.
 ///
 /// `WindowIndex` must retain every membership once more to find party
@@ -137,6 +142,12 @@ pub enum PresenceError {
     ProposalsEmpty,
     #[error("proposed voucher list exceeded its bound")]
     TooManyProposals,
+    #[error("two proposed vouchers carried the same source position")]
+    DuplicateProposalPosition,
+    #[error("proposed voucher raw entries exceeded their aggregate bound")]
+    ProposalRawEntryWorkTooLarge,
+    #[error("proposed voucher raw metadata exceeded its aggregate byte bound")]
+    ProposalRawBytesTooLarge,
     #[error("proposal and book window comparison work exceeded its bound")]
     ComparisonWorkTooLarge,
     #[error("voucher entry list was empty")]
@@ -190,6 +201,9 @@ impl PresenceError {
             Self::WindowDoesNotCover => "presence_window_does_not_cover",
             Self::ProposalsEmpty => "presence_proposals_empty",
             Self::TooManyProposals => "presence_proposals_too_many",
+            Self::DuplicateProposalPosition => "presence_duplicate_proposal_position",
+            Self::ProposalRawEntryWorkTooLarge => "presence_proposal_raw_entry_work_too_large",
+            Self::ProposalRawBytesTooLarge => "presence_proposal_raw_bytes_too_large",
             Self::ComparisonWorkTooLarge => "presence_comparison_work_too_large",
             Self::EntriesEmpty => "presence_entries_empty",
             Self::TooManyEntries => "presence_entries_too_many",
@@ -299,6 +313,91 @@ pub struct ProposedVoucherInput<'a> {
     pub entries: &'a [ObservedEntry<'a>],
 }
 
+/// Aggregate admission for a proposal batch.  The input is borrowed so this
+/// check runs before parsing decimals and before `ProposedVoucher` clones any
+/// metadata.  Callers that accept external proposal batches must use this
+/// boundary rather than constructing a large converted vector first.
+#[derive(Debug, Default)]
+pub struct RawProposalBudget {
+    proposals: usize,
+    entries: usize,
+    entry_bytes: usize,
+    metadata_bytes: usize,
+}
+
+impl RawProposalBudget {
+    pub fn admit(&mut self, input: ProposedVoucherInput<'_>) -> Result<(), PresenceError> {
+        self.admit_parts(
+            input.position,
+            input.date,
+            input.voucher_type,
+            input.voucher_number,
+            input.remote_id,
+            input.party,
+            input
+                .entries
+                .iter()
+                .map(|entry| (entry.ledger, entry.amount)),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn admit_parts<'a>(
+        &mut self,
+        _position: usize,
+        date: &'a str,
+        voucher_type: &'a str,
+        voucher_number: Option<&'a str>,
+        remote_id: Option<&'a str>,
+        party: Option<&'a str>,
+        entries: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> Result<(), PresenceError> {
+        self.proposals = self
+            .proposals
+            .checked_add(1)
+            .ok_or(PresenceError::TooManyProposals)?;
+        if self.proposals > MAX_PROPOSED_VOUCHERS {
+            return Err(PresenceError::TooManyProposals);
+        }
+        let metadata = [
+            date,
+            voucher_type,
+            voucher_number.unwrap_or_default(),
+            remote_id.unwrap_or_default(),
+            party.unwrap_or_default(),
+        ];
+        let metadata_bytes = metadata
+            .iter()
+            .try_fold(0usize, |total, value| total.checked_add(value.len()))
+            .ok_or(PresenceError::ProposalRawBytesTooLarge)?;
+        self.metadata_bytes = self
+            .metadata_bytes
+            .checked_add(metadata_bytes)
+            .ok_or(PresenceError::ProposalRawBytesTooLarge)?;
+        if self.metadata_bytes > MAX_PROPOSAL_RAW_BYTES {
+            return Err(PresenceError::ProposalRawBytesTooLarge);
+        }
+        for (ledger, amount) in entries {
+            self.entries = self
+                .entries
+                .checked_add(1)
+                .ok_or(PresenceError::ProposalRawEntryWorkTooLarge)?;
+            if self.entries > MAX_PROPOSAL_RAW_ENTRY_WORK {
+                return Err(PresenceError::ProposalRawEntryWorkTooLarge);
+            }
+            self.entry_bytes = self
+                .entry_bytes
+                .checked_add(ledger.len())
+                .and_then(|total| total.checked_add(amount.len()))
+                .ok_or(PresenceError::ProposalRawBytesTooLarge)?;
+            if self.entry_bytes > MAX_PROPOSAL_RAW_BYTES {
+                return Err(PresenceError::ProposalRawBytesTooLarge);
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BookVoucher {
     key: String,
@@ -399,7 +498,14 @@ pub struct ProposedVoucher {
 }
 
 impl ProposedVoucher {
-    pub fn new(input: ProposedVoucherInput<'_>) -> Result<Self, PresenceError> {
+    #[allow(dead_code)]
+    pub(crate) fn new(input: ProposedVoucherInput<'_>) -> Result<Self, PresenceError> {
+        let mut budget = RawProposalBudget::default();
+        budget.admit(input)?;
+        Self::new_admitted(input)
+    }
+
+    fn new_admitted(input: ProposedVoucherInput<'_>) -> Result<Self, PresenceError> {
         let date =
             TallyDate::parse(input.date.to_string()).map_err(|_| PresenceError::DateInvalid)?;
         let voucher_type = validated_text(input.voucher_type)?;
@@ -420,6 +526,23 @@ impl ProposedVoucher {
             type_key,
             number_key,
         })
+    }
+
+    /// Convert a raw proposal batch only after one aggregate admission pass.
+    pub fn from_inputs<'a>(
+        inputs: impl IntoIterator<Item = ProposedVoucherInput<'a>>,
+    ) -> Result<Vec<Self>, PresenceError> {
+        let mut budget = RawProposalBudget::default();
+        let mut positions = BTreeSet::new();
+        let mut converted = Vec::new();
+        for input in inputs {
+            budget.admit(input)?;
+            if !positions.insert(input.position) {
+                return Err(PresenceError::DuplicateProposalPosition);
+            }
+            converted.push(Self::new_admitted(input)?);
+        }
+        Ok(converted)
     }
 
     pub fn date(&self) -> &str {
@@ -464,9 +587,61 @@ pub struct RawObservationBudget {
     vouchers: usize,
     entries: usize,
     bytes: usize,
+    metadata_bytes: usize,
 }
 
 impl RawObservationBudget {
+    #[allow(clippy::too_many_arguments)]
+    pub fn admit_fields<'a>(
+        &mut self,
+        key: &'a str,
+        date: &'a str,
+        voucher_type: &'a str,
+        voucher_number: Option<&'a str>,
+        remote_id: Option<&'a str>,
+        party: Option<&'a str>,
+        entries: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> Result<(), PresenceError> {
+        let metadata = [
+            key,
+            date,
+            voucher_type,
+            voucher_number.unwrap_or_default(),
+            remote_id.unwrap_or_default(),
+            party.unwrap_or_default(),
+        ];
+        let metadata_bytes = metadata
+            .iter()
+            .try_fold(0usize, |total, value| total.checked_add(value.len()))
+            .ok_or(PresenceError::WindowRawEntryBytesTooLarge)?;
+        self.metadata_bytes = self
+            .metadata_bytes
+            .checked_add(metadata_bytes)
+            .ok_or(PresenceError::WindowRawEntryBytesTooLarge)?;
+        if self.metadata_bytes > MAX_WINDOW_RAW_ENTRY_BYTES {
+            return Err(PresenceError::WindowRawEntryBytesTooLarge);
+        }
+        self.admit(entries)
+    }
+
+    pub fn admit_observation(
+        &mut self,
+        observation: &ObservedVoucher<'_>,
+    ) -> Result<(), PresenceError> {
+        self.admit_fields(
+            observation.key,
+            observation.date,
+            observation.voucher_type,
+            observation.voucher_number,
+            observation.remote_id,
+            observation.party,
+            observation
+                .entries
+                .iter()
+                .map(|entry| (entry.ledger, entry.amount)),
+        )
+    }
+
     pub fn admit<'a>(
         &mut self,
         entries: impl IntoIterator<Item = (&'a str, &'a str)>,
@@ -512,12 +687,7 @@ impl BookWindow {
         let mut budget = RawObservationBudget::default();
         let mut vouchers = Vec::new();
         for observation in observations {
-            budget.admit(
-                observation
-                    .entries
-                    .iter()
-                    .map(|entry| (entry.ledger, entry.amount)),
-            )?;
+            budget.admit_observation(&observation)?;
             vouchers.push(BookVoucher::observed(observation)?);
         }
         Self::observed(from, to, read, remote_id_evidence, vouchers)
@@ -1032,6 +1202,13 @@ impl<'a> PresenceRequest<'a> {
         }
         if proposals.len() > MAX_PROPOSED_VOUCHERS {
             return Err(PresenceError::TooManyProposals);
+        }
+        let mut positions = BTreeSet::new();
+        if proposals
+            .iter()
+            .any(|proposal| !positions.insert(proposal.position()))
+        {
+            return Err(PresenceError::DuplicateProposalPosition);
         }
         let comparisons = proposals
             .len()

@@ -276,8 +276,10 @@ padding is a transport artefact; internal whitespace, case and punctuation are
 them so fails toward the noisy direction — a non-match withholds a decisive
 identity result rather than treating two distinct invoices as the same one.
 
-Voucher *types* keep the master key, because a voucher type is a Tally master
-and §3.3b measured that case.
+Voucher *types* preserve the source spelling exactly. No case, whitespace, or
+separator folding is qualified for voucher types; the type must match the
+declared numbering spelling exactly. The master-name comparison key is for
+ledger names only, and must not be reused for voucher types.
 
 A manual number decides only
 **within an observed voucher type** — numbers are a per-type series, so a match
