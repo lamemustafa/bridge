@@ -297,23 +297,54 @@ it records what was observed).
 suppression is measured from the catalog rather than from a built-in word list,
 which keeps it free of language and domain assumptions.
 
-Candidates are capped at `MAX_CANDIDATES_PER_ENTITY` (25) with the true
-`candidate_count` and an explicit `candidates_truncated` flag retained, so a
-truncated list is never mistaken for a short one.
+Candidates are capped at `MAX_CANDIDATES_PER_ENTITY` (25). The core retains
+`candidate_count`, listing state and `Candidates::count_is_lower_bound()`.
+The MCP and desktop projections expose `candidate_count_is_lower_bound`: true
+means the number is a conservative lower bound and must be shown as "at least N".
+The core sets it only when unmaterialized identifier families prevent an exact
+union count. A withheld prefix family or a core-truncated list can retain an
+exact union count; listing completeness and count precision are separate facts.
+A later consumer-only copy cap can likewise shorten a complete listing while
+retaining an exact count.
 
 ### 4a. An empty candidate list is three different facts, and the producer says which
 
 `candidates` can be empty for three unrelated reasons, and they mean opposite
 things to anyone deciding what to do next:
 
-| `reason` | what empty means |
-| --- | --- |
-| `NoCandidate` | no master resembles this name at all |
-| `NoDiscriminatingCandidate` | `candidate_count` masters resemble it and none is separable — **many exist**, none is worth showing |
-| any, with `candidates_truncated` | the list was cut, by the per-entity cap or by the report's aggregate byte budget |
+**Key the row on the listing state, not on the reason.** Withholding is not the
+property of one reason: a source identifier held by more than
+`MAX_CANDIDATES_PER_ENTITY` masters is withheld under `IdentifierConflict`, and a
+name reaching a family it cannot separate is withheld under
+`NoDiscriminatingCandidate`. A consumer that keys on the reason misses the first.
+
+**The state has three names, one per boundary.** The core enum is reachable as
+`Candidates::listing()`; the **MCP** result carries it as `listing`; the
+**desktop** DTO carries it as `candidate_listing`. The four words are identical
+everywhere — `none`, `listed`, `truncated`, `withheld` — so the table below is
+keyed on the word, and each consumer reads it from the field its own boundary
+emits. Naming one boundary's field as though it were universal is how the last
+version of this table sent a consumer looking for something that does not exist.
+
+| listing state | what empty means | which `reason` |
+| --- | --- | --- |
+| `none` | no master resembles this name at all | `NoCandidate` |
+| `withheld` | **many exist**, the binder declined to print an arbitrary slice, and `candidate_count` says how many | either `NoDiscriminatingCandidate` or `IdentifierConflict` |
+| `truncated` | the list was cut, by the per-entity cap or by the report's aggregate byte budget | any |
+
+`candidate_count` is exact unless `candidate_count_is_lower_bound` says
+otherwise. A skipped identifier family alone is a single set, and its size is
+its length. Multiple skipped families are also exact when the binder proves,
+within its 256 membership-probe budget, that every smaller family is contained
+in the largest. The count is a lower bound when that containment proof finds an
+outside member or exhausts its budget. Independently, a skipped identifier
+family beside name candidates is a lower bound only when unlisted name
+candidates leave their overlap unknown; when every name candidate is
+materialized, the binder counts the known members outside the family exactly.
 
 So `candidates.is_empty()` alone answers nothing. The disambiguators are
-`reason`, `candidate_count` and `candidates_truncated`, and a consumer that
+`reason`, `candidate_count`, `candidate_count_is_lower_bound` and the listing
+state under whichever of its three names the boundary emits, and a consumer that
 reads the empty vector as "nothing exists" is wrong in two cases out of three.
 
 This is stated here, in the producer's contract, rather than left to each
@@ -345,12 +376,16 @@ for it measured its own cost at about thirty lines and reported that the change
 made its code better rather than merely compatible — a hand-assembled
 disjunction became an exhaustive match.
 
-**The fix stops at the crate boundary, and says so.** The MCP result carries an
-explicit `listing` discriminator, because a model is precisely the caller that
-would read an empty array as "no such ledger exists". The desktop DTO stays
-flat: its screen already distinguishes the three cases and is tested on each, so
-flattening there is a projection with a tested consumer rather than an
-ambiguity. Neither boundary has the compiler behind it — this protects Rust
+**The fix stops at the crate boundary, and says so.** Both projections now carry
+an explicit discriminator — `listing` on the MCP result, `candidate_listing` on
+the desktop DTO — because a model is precisely the caller that would read an
+empty array as "no such ledger exists", and the preparation screen turned out to
+be another. The desktop DTO was flat until it was not: it carried a
+`candidates_truncated` boolean, which is `is_incomplete()` and so could not tell
+a withheld family from an exhausted budget. That flattening was defended here as
+"a projection with a tested consumer"; the tests were real and tested the wrong
+thing, because the DTO could not express the distinction they would have had to
+make. Neither boundary has the compiler behind it — this protects Rust
 consumers, and the projections are the two places where that protection ends.
 
 ### 5. Status vocabulary

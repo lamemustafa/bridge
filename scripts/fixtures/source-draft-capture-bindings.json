@@ -1,0 +1,59 @@
+{
+  "bindings": [
+    {
+      "bound_basis": "exact_name",
+      "bound_target": "Cash",
+      "candidate_count": 0,
+      "candidate_count_is_lower_bound": false,
+      "candidate_listing": "none",
+      "candidates": [],
+      "entry_position": 1,
+      "row_position": 1,
+      "unbound_reason": null
+    },
+    {
+      "bound_basis": "normalized_name",
+      "bound_target": "WR2 Sales",
+      "candidate_count": 0,
+      "candidate_count_is_lower_bound": false,
+      "candidate_listing": "none",
+      "candidates": [],
+      "entry_position": 2,
+      "row_position": 1,
+      "unbound_reason": null
+    },
+    {
+      "bound_basis": null,
+      "bound_target": null,
+      "candidate_count": 1,
+      "candidate_count_is_lower_bound": false,
+      "candidate_listing": "listed",
+      "candidates": [
+        "Profit & Loss A/c"
+      ],
+      "entry_position": 3,
+      "row_position": 1,
+      "unbound_reason": "master_binding_near_miss"
+    }
+  ],
+  "bindings_state": "complete",
+  "capture_id": "00000000-0000-4000-8000-0000000000c0",
+  "evidence": {
+    "bytes": 13060,
+    "request_sha256": "46afed275173ae5371c24dbc18ea9998663b03d5e7b6eefc69c1ebfbe2ffb2a0",
+    "response_sha256": "f354993704f0feddc27a46d73b4ca10787b6028d9f385d8323994b18e5b34e0f",
+    "state": "complete"
+  },
+  "source_sha256": "41c4de4324e0eb03c46b92aee7b0be0a0a1ff29feb63ffc3b8435cce559810aa",
+  "targets": [
+    "Bridge Nested Debtor WR4",
+    "Café NFD2 Probe WR3",
+    "Café Naïve Traders",
+    "Café NFD Probe WR3",
+    "Cash",
+    "Profit & Loss A/c",
+    "WR2 Sales",
+    "WR2 XML Café Naïve Ledger 01A01A2F",
+    "नमस्ते ट्रेडर्स"
+  ]
+}

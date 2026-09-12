@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
 import React, { act } from "react";
 import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
@@ -52,6 +53,7 @@ const catalog = {
   capture_id: "00000000-0000-4000-8000-000000000099",
   source_sha256: draft.source_sha256,
   targets: ["Existing target"],
+  bindings_state: "complete" as const,
   evidence: { request_sha256: "b".repeat(64), response_sha256: "c".repeat(64), bytes: 100, state: "complete" as const },
 };
 
@@ -258,6 +260,179 @@ test("clears saved status when a proposal changes after saving", async () => {
   root.unmount();
 });
 
+test("groups and lists a synthetic stress catalogue without losing the narrowing", async () => {
+  // Synthetic stress bound only: these generated targets exercise narrowing
+  // and rendering at 2,000 entries. They are not a captured catalogue and do
+  // not establish a live company's ledger count or production performance.
+  const bulk = Array.from({ length: 2_000 }, (_, index) => `Bulk placeholder ledger ${String(index).padStart(4, "0")}`);
+  const large = {
+    ...catalog,
+    targets: [...bulk, "Existing target"].sort(),
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: "Existing target",
+      bound_basis: "exact_name",
+      unbound_reason: null,
+      candidates: [],
+      candidate_count: 0,
+      candidate_count_is_lower_bound: false,
+      candidate_listing: "listed",
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(large);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  const target = host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!;
+  const groups = Array.from(target.querySelectorAll("optgroup"));
+  expect(groups.map((group) => group.label)).toEqual(["Matched to this source line", "All 2001 existing ledgers"]);
+  // The match leads, alone, out of two thousand and one.
+  expect(Array.from(groups[0].querySelectorAll("option")).map((option) => option.value)).toEqual(["Existing target"]);
+  // And the whole catalogue is still there: narrowing is a shortcut through
+  // the list, never a restriction on it, at any size.
+  expect(groups[1].querySelectorAll("option")).toHaveLength(2_001);
+  expect(target.value).toBe("");
+  root.unmount();
+});
+
+test("says so when the operator chooses a different ledger from the one binding matched", async () => {
+  // A choice settles what the operator wants; it does not settle a
+  // disagreement. Suppressing the summary whenever a `bound_target` merely
+  // existed meant choosing B where the capture defended A left nothing on
+  // screen saying the two differed — while the adjacent line said the target
+  // had been re-read and bound, which reads as agreement.
+  const twoTargets = {
+    ...catalog,
+    targets: ["Bound target", "Other target"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: "Bound target",
+      bound_basis: "exact_name",
+      unbound_reason: null,
+      candidates: [],
+      candidate_count: 0,
+      candidate_count_is_lower_bound: false,
+      candidate_listing: "none",
+    }],
+  };
+  const applied = {
+    ...draft,
+    revision: 2,
+    rows: draft.rows.map((item, index) => index === 0 ? {
+      ...item,
+      proposal: { ...item.proposal, entries: [{ ...item.proposal.entries[0], ledger: "Other target" }] },
+    } : item),
+    current_catalog_bindings: [{ row_position: 1, entry_position: 1 }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(twoTargets).mockResolvedValueOnce(applied);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  const target = host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!;
+  await act(async () => setValue(target, "Other target"));
+  expect(target.value).toBe("Other target");
+  expect(host.textContent).toContain("This current-session target was re-read and bound.");
+  // The disagreement survives the choice, and says which ledger it was about.
+  expect(host.textContent).toContain("Automatic binding matched Bound target for this source line, not the ledger chosen here.");
+  root.unmount();
+});
+
+test("says nothing extra when the operator chooses the ledger binding matched", async () => {
+  // The other half: agreement is silence. A summary repeating the binding
+  // beside an identical choice is noise, and it is why the suppression exists.
+  const agreeing = {
+    ...catalog,
+    targets: ["Bound target", "Other target"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: "Bound target",
+      bound_basis: "exact_name",
+      unbound_reason: null,
+      candidates: [],
+      candidate_count: 0,
+      candidate_count_is_lower_bound: false,
+      candidate_listing: "none",
+    }],
+  };
+  const applied = {
+    ...draft,
+    revision: 2,
+    rows: draft.rows.map((item, index) => index === 0 ? {
+      ...item,
+      proposal: { ...item.proposal, entries: [{ ...item.proposal.entries[0], ledger: "Bound target" }] },
+    } : item),
+    current_catalog_bindings: [{ row_position: 1, entry_position: 1 }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(agreeing).mockResolvedValueOnce(applied);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  const target = host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!;
+  await act(async () => setValue(target, "Bound target"));
+  expect(target.value).toBe("Bound target");
+  expect(host.textContent).not.toContain("Automatic binding matched");
+  root.unmount();
+});
+
+test("keeps the binding result visible beside a saved target nobody has re-read", async () => {
+  // `entry.ledger` alone is not a choice. A saved target from an earlier
+  // session leaves `catalogSelections` empty, the control shows nothing
+  // selected, and the status line calls the value unverified — so a summary
+  // that took any persisted string for a current-session selection contradicted
+  // both of its own neighbours, and withheld the result the operator needed to
+  // judge the saved value against this capture.
+  const savedTarget = {
+    ...draft,
+    rows: draft.rows.map((item, index) => index === 0 ? {
+      ...item,
+      proposal: { ...item.proposal, entries: [{ ...item.proposal.entries[0], ledger: "Existing target" }] },
+    } : item),
+  };
+  const refused = {
+    ...catalog,
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: null,
+      bound_basis: null,
+      unbound_reason: "master_binding_near_miss",
+      candidates: ["Existing target"],
+      candidate_count: 1,
+      candidate_count_is_lower_bound: false,
+      candidate_listing: "listed",
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(savedTarget).mockResolvedValueOnce(refused);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  // Nothing is selected, and all three statements agree about that.
+  expect(host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")?.value).toBe("");
+  expect(host.textContent).toContain("Saved unverified target: Existing target.");
+  // The summary's unselected branch, in full: the refusal, the candidate count
+  // and the guidance. Keyed on `entry.ledger` the "chosen" branch fired instead
+  // and dropped the last two, so asserting only the refusal lead would pass
+  // either way — both branches open with it.
+  expect(host.textContent).toContain("No single ledger matched this source line. Nothing is chosen; 1 possible ledger is listed first, and the full list of 1 follows.");
+  expect(host.textContent).not.toContain("Automatic binding did not resolve this line.");
+  root.unmount();
+});
+
 test("requires an explicit current-session re-read before treating a saved matching target as selected, then clears and reloads it", async () => {
   const savedTarget = {
     ...draft,
@@ -313,6 +488,544 @@ test("requires an explicit current-session re-read before treating a saved match
     request: { draft_id: draft.draft_id, ...catalogScope },
   });
   expect(host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")?.value).toBe("");
+  root.unmount();
+});
+
+test("lists the bound ledger first without selecting it, and keeps the whole catalogue reachable", async () => {
+  const boundCatalog = {
+    ...catalog,
+    targets: ["Alpha placeholder", "Beta placeholder", "Gamma placeholder"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: "Beta placeholder",
+      bound_basis: "identifier" as const,
+      unbound_reason: null,
+      candidates: [],
+      candidate_count: 0,
+      candidate_count_is_lower_bound: false,
+      candidate_listing: "listed",
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(boundCatalog);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  const target = host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!;
+  // Narrowing must never choose. A pre-selected value is an auto-resolution.
+  expect(target.value).toBe("");
+  const groups = Array.from(target.querySelectorAll("optgroup")).map((group) => group.label);
+  expect(groups).toEqual(["Matched to this source line", "All 3 existing ledgers"]);
+  const matched = Array.from(target.querySelectorAll("optgroup")[0].querySelectorAll("option")).map((option) => option.value);
+  expect(matched).toEqual(["Beta placeholder"]);
+  // The full catalogue stays reachable; narrowing is a shortcut, not a filter.
+  const all = Array.from(target.querySelectorAll("optgroup")[1].querySelectorAll("option")).map((option) => option.value);
+  expect(all).toEqual(["Alpha placeholder", "Beta placeholder", "Gamma placeholder"]);
+  // `identifier` covers a numeric run and an alphanumeric code alike, and the
+  // DTO does not say which. Claiming "a number" was wrong for every ledger that
+  // carries a registration or part code instead.
+  expect(host.textContent).toContain("Listed first because an identifier inside the ledger name matches this source line.");
+  expect(host.textContent).not.toContain("a number inside");
+  expect(host.textContent).not.toContain("recommended");
+  root.unmount();
+});
+
+test("names the refusal when the name and the identifier point at different ledgers", async () => {
+  // The one refusal where the operator has something to act on: both sides are
+  // strong and they disagree. Flattened into the generic near-miss sentence, it
+  // read as an ordinary weak match and the disagreement never reached anyone.
+  const conflictCatalog = {
+    ...catalog,
+    targets: ["Alpha placeholder", "Beta placeholder", "Gamma placeholder"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: null,
+      bound_basis: null,
+      unbound_reason: "master_binding_identifier_name_conflict",
+      candidates: ["Alpha placeholder", "Gamma placeholder"],
+      candidate_count: 2,
+      candidate_count_is_lower_bound: false,
+      candidate_listing: "listed",
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(conflictCatalog);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  expect(host.textContent).toContain("matches one existing ledger exactly, while an identifier inside it matches a different one");
+  expect(host.textContent).not.toContain("No single ledger matched this source line");
+  // Still a refusal: nothing is chosen, and the whole catalogue stays reachable.
+  expect(host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")?.value).toBe("");
+  root.unmount();
+});
+
+test("distinguishes the two other refusals that are not weak matches", async () => {
+  for (const [reason, phrase] of [
+    ["master_binding_identifier_conflict", "do not agree on one existing ledger"],
+    ["master_binding_name_ambiguous", "spaces against hyphens or slashes are set aside"],
+  ] as const) {
+    mocks.invoke.mockReset();
+    mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce({
+      ...catalog,
+      targets: ["Alpha placeholder", "Beta placeholder", "Gamma placeholder"],
+      bindings: [{
+        row_position: 1,
+        entry_position: 1,
+        bound_target: null,
+        bound_basis: null,
+        unbound_reason: reason,
+        candidates: ["Alpha placeholder", "Gamma placeholder"],
+        candidate_count: 2,
+        candidate_count_is_lower_bound: false,
+        candidate_listing: "listed",
+      }],
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+    await act(async () => button(host, "Choose source XML").click());
+    await act(async () => button(host, "Load existing ledgers").click());
+    expect(host.textContent).toContain(phrase);
+    root.unmount();
+    host.remove();
+  }
+});
+
+test("the picker groups a real captured catalogue, not a shape the test invented", async () => {
+  // Every other test here writes both the catalogue and its bindings, so they
+  // show the component agrees with an assumed response. This one reads
+  // `scripts/fixtures/source-draft-capture-bindings.json`, which is the DTO the
+  // **producer** emits from a `StandardLedgerCatalogV1` response captured on
+  // licensed TallyPrime 7.1 — nine real ledger names, including Devanagari, an
+  // `&` name, and an NFD ledger beside NFC ones.
+  //
+  // The Rust test `the_binder_meets_a_real_catalogue_through_the_production_parse`
+  // asserts that same file against what the binder actually produces, so the
+  // two halves cannot drift: if the producer changes, that test fails rather
+  // than leaving this one asserting a shape nothing emits.
+  const captured = JSON.parse(
+    readFileSync("scripts/fixtures/source-draft-capture-bindings.json", "utf8"),
+  ) as SourceDraftCatalogTargets;
+
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(captured);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  const target = host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!;
+  // Narrowing never chooses, on a real catalogue as on a fabricated one.
+  expect(target.value).toBe("");
+  const groups = Array.from(target.querySelectorAll("optgroup")).map((group) => group.label);
+  expect(groups).toEqual(["Matched to this source line", `All ${captured.targets.length} existing ledgers`]);
+  expect(
+    Array.from(target.querySelectorAll("optgroup")[0].querySelectorAll("option")).map((option) => option.value),
+  ).toEqual(["Cash"]);
+
+  // The whole captured catalogue stays reachable, Devanagari and all.
+  const all = Array.from(target.querySelectorAll("optgroup")[1].querySelectorAll("option")).map((option) => option.value);
+  expect(all).toEqual(captured.targets);
+  expect(all.some((name) => /^[\u0900-\u097F]/.test(name))).toBe(true);
+
+  expect(host.textContent).toContain("Listed first because the exact ledger name matches this source line.");
+  root.unmount();
+});
+
+test("a refusal reason survives the candidate listing being dropped", async () => {
+  // The budget-exhaustion branch returned only the budget sentence, which
+  // re-hid the strong disagreement the neighbouring branch had just been fixed
+  // to show. Same defect, one branch over: a conflict arriving with no room to
+  // list its candidates is still a conflict.
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce({
+    ...catalog,
+    targets: ["Alpha placeholder", "Beta placeholder"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: null,
+      bound_basis: null,
+      unbound_reason: "master_binding_identifier_name_conflict",
+      candidates: [],
+      candidate_count: 6,
+      candidate_count_is_lower_bound: true,
+      candidate_listing: "truncated",
+    }],
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  expect(host.textContent).toContain("matches one existing ledger exactly, while an identifier inside it matches a different one");
+  expect(host.textContent).toContain("ran out of room to list them");
+  root.unmount();
+});
+
+test("choosing a target stops the screen saying nothing was chosen, without hiding why", async () => {
+  // The refusal summary kept rendering beneath a selected target, saying
+  // "nothing is chosen" directly beside the line telling the operator their
+  // target was re-read and bound. The reason still matters after the choice —
+  // an identifier and a name pointing at different ledgers is grounds to check
+  // it — so it survives in the past tense rather than being hidden.
+  const conflicted = {
+    ...catalog,
+    targets: ["Alpha placeholder", "Beta placeholder", "Gamma placeholder"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: null,
+      bound_basis: null,
+      unbound_reason: "master_binding_identifier_name_conflict",
+      candidates: ["Alpha placeholder", "Gamma placeholder"],
+      candidate_count: 2,
+      candidate_count_is_lower_bound: false,
+      candidate_listing: "listed",
+    }],
+  };
+  // Selecting a target goes through the apply path, which re-reads: the draft
+  // it returns is what puts the ledger on the entry.
+  const chosen = {
+    ...draft,
+    revision: 2,
+    rows: draft.rows.map((item, index) => index === 0 ? {
+      ...item,
+      proposal: { ...item.proposal, entries: [{ ...item.proposal.entries[0], ledger: "Alpha placeholder" }] },
+    } : item),
+    current_catalog_bindings: [{ row_position: 1, entry_position: 1 }],
+  };
+  mocks.invoke
+    .mockResolvedValueOnce(draft)
+    .mockResolvedValueOnce(conflicted)
+    .mockResolvedValueOnce(chosen);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  expect(host.textContent).toContain("Nothing is chosen;");
+
+  await act(async () => setValue(host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!, "Alpha placeholder"));
+  expect(host.textContent).not.toContain("Nothing is chosen;");
+  expect(host.textContent).toContain("Automatic binding did not resolve this line.");
+  expect(host.textContent).toContain("they disagree");
+  root.unmount();
+});
+
+test("an empty list because the report ran out of room is not a family the name cannot separate", async () => {
+  // Both arrive with an empty list and a nonzero count, and they call for
+  // opposite actions. A withheld family is fixed by a fuller source name;
+  // budget exhaustion on earlier rows is not fixed by anything written here,
+  // and telling the operator to rewrite the name would be a wild goose chase.
+  const exhaustedCatalog = {
+    ...catalog,
+    targets: ["Alpha placeholder", "Beta placeholder"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: null,
+      bound_basis: null,
+      unbound_reason: "master_binding_near_miss",
+      candidates: [],
+      candidate_count: 7,
+      candidate_count_is_lower_bound: true,
+      candidate_listing: "truncated",
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(exhaustedCatalog);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  expect(host.textContent).toContain("ran out of room to list them");
+  expect(host.textContent).not.toContain("tells them apart from none of them");
+  expect(host.textContent).not.toContain("Use a fuller source name");
+  root.unmount();
+});
+
+test("lists candidates first for a near miss and states that nothing was chosen", async () => {
+  const nearMissCatalog = {
+    ...catalog,
+    targets: ["Alpha placeholder", "Beta placeholder", "Gamma placeholder"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: null,
+      bound_basis: null,
+      unbound_reason: "master_binding_near_miss",
+      candidates: ["Alpha placeholder", "Gamma placeholder"],
+      candidate_count: 2,
+      candidate_count_is_lower_bound: false,
+      candidate_listing: "listed",
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(nearMissCatalog);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  const target = host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!;
+  expect(target.value).toBe("");
+  const groups = Array.from(target.querySelectorAll("optgroup")).map((group) => group.label);
+  expect(groups).toEqual(["Possible for this source line", "All 3 existing ledgers"]);
+  const possible = Array.from(target.querySelectorAll("optgroup")[0].querySelectorAll("option")).map((option) => option.value);
+  expect(possible).toEqual(["Alpha placeholder", "Gamma placeholder"]);
+  expect(host.textContent).toContain("No single ledger matched this source line. Nothing is chosen; 2 possible ledgers are listed first, and the full list of 3 follows.");
+  root.unmount();
+});
+
+test("reports a truncated candidate list truthfully and falls back to the flat catalogue without bindings", async () => {
+  const truncatedCatalog = {
+    ...catalog,
+    targets: ["Alpha placeholder", "Beta placeholder"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: null,
+      bound_basis: null,
+      unbound_reason: "master_binding_near_miss",
+      candidates: ["Alpha placeholder"],
+      candidate_count: 40,
+      candidate_count_is_lower_bound: true,
+      candidate_listing: "truncated",
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(truncatedCatalog);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  expect(host.textContent).toContain("1 of at least 40 possible ledger is listed first");
+  root.unmount();
+});
+
+test("does not turn an empty nonzero candidate list into a budget claim", async () => {
+  for (const listing of ["none", "listed"] as const) {
+    const emptyListing = {
+      ...catalog,
+      targets: ["Alpha placeholder", "Beta placeholder"],
+      bindings: [{
+        row_position: 1,
+        entry_position: 1,
+        bound_target: null,
+        bound_basis: null,
+        unbound_reason: "master_binding_near_miss",
+        candidates: [],
+        candidate_count: 4,
+        candidate_count_is_lower_bound: false,
+        candidate_listing: listing,
+      }],
+    };
+    mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(emptyListing);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = await mount(host, { catalogScope, catalogScopeKey: `empty-${listing}` });
+    await act(async () => button(host, "Choose source XML").click());
+    await act(async () => button(host, "Load existing ledgers").click());
+    expect(host.textContent).toContain("Candidate details are unavailable. Choose from the full list of 2.");
+    expect(host.textContent).not.toContain("ran out of room");
+    expect(host.textContent).not.toContain("0 possible");
+    root.unmount();
+  }
+});
+
+test("unknown candidate listing values fail safely at runtime", async () => {
+  const unknownListing = {
+    ...catalog,
+    targets: ["Alpha placeholder"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: null,
+      bound_basis: null,
+      unbound_reason: "master_binding_near_miss",
+      candidates: [],
+      candidate_count: 3,
+      candidate_count_is_lower_bound: false,
+      candidate_listing: "future_state" as never,
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(unknownListing);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "unknown-listing" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  expect(host.textContent).toContain("Candidate details are unavailable. Choose from the full list of 1.");
+  expect(host.textContent).not.toContain("ran out of room");
+  root.unmount();
+});
+
+test("a family withheld under a different reason is not reported as a full report", async () => {
+  // The second withheld shape. An identifier held by more masters than a
+  // candidate list may show is withheld under `identifier_conflict`, not under
+  // `no_discriminating_candidate` — and inferring the state from the reason
+  // knew only the latter, so this one fell to the budget sentence and told the
+  // operator the report had run out of room when it had declined to slice.
+  // The two sentences give opposite advice, so this is not a wording defect.
+  const withheldFamily = {
+    ...catalog,
+    targets: ["DN Party 001", "DN Party 002", "DN Party 003"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: null,
+      bound_basis: null,
+      unbound_reason: "master_binding_identifier_conflict",
+      candidates: [],
+      candidate_count: 30,
+      candidate_count_is_lower_bound: true,
+      candidate_listing: "withheld",
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(withheldFamily);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  expect(host.textContent).toContain("matches at least 30 existing ledgers and tells them apart from none of them, so none is listed");
+  expect(host.textContent).toContain("Review it against the complete observed catalogue and confirm the intended identity before choosing");
+  expect(host.textContent).not.toContain("Use a fuller source name");
+  expect(host.textContent).not.toContain("ran out of room");
+  root.unmount();
+});
+
+test("identifier conflict guidance survives a truncated list with an outside candidate", async () => {
+  const mixedConflict = {
+    ...catalog,
+    targets: ["Outside candidate", "DN Party 001", "DN Party 002"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: null,
+      bound_basis: null,
+      unbound_reason: "master_binding_identifier_conflict",
+      candidates: ["Outside candidate"],
+      candidate_count: 31,
+      candidate_count_is_lower_bound: true,
+      candidate_listing: "truncated",
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(mixedConflict);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "mixed-identifier-conflict" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  expect(host.textContent).toContain("Review it against the complete observed catalogue and confirm the intended identity before choosing");
+  expect(host.textContent).toContain("full list of 3");
+  expect(host.textContent).not.toContain("Use a fuller source name");
+  root.unmount();
+});
+
+test("a materialized withheld family keeps its exact count", async () => {
+  // Listing state and count precision are independent: a full prefix-family
+  // union may deliberately withhold names without making its count an estimate.
+  const withheldFamily = {
+    ...catalog,
+    targets: ["DN Party 001", "DN Party 002", "DN Party 003"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: null,
+      bound_basis: null,
+      unbound_reason: "master_binding_no_discriminating_candidate",
+      candidates: [],
+      candidate_count: 30,
+      candidate_count_is_lower_bound: false,
+      candidate_listing: "withheld",
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(withheldFamily);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  expect(host.textContent).toContain("matches 30 existing ledgers and tells them apart from none of them, so none is listed");
+  expect(host.textContent).not.toContain("matches at least 30 existing ledgers");
+  root.unmount();
+});
+
+test("a source line that separates no ledger says so instead of counting nothing", async () => {
+  // The state the live measurement made necessary: the name reaches a whole
+  // family and tells none of them apart, so listing an arbitrary slice would
+  // put the right one out of view. The old copy printed "0 possible ledgers
+  // are listed first", which is a count of nothing.
+  const familyCatalog = {
+    ...catalog,
+    targets: ["DN Party 001", "DN Party 002", "DN Party 003"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: null,
+      bound_basis: null,
+      unbound_reason: "master_binding_no_discriminating_candidate",
+      candidates: [],
+      candidate_count: 120,
+      candidate_count_is_lower_bound: true,
+      candidate_listing: "withheld",
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(familyCatalog);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  expect(host.textContent).toContain("matches at least 120 existing ledgers and tells them apart from none of them, so none is listed");
+  expect(host.textContent).not.toContain("0 possible");
+  expect(host.textContent).not.toContain("listed first;");
+  const target = host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!;
+  // No misleading "Possible" heading over an empty group, and the full list stays.
+  const groups = Array.from(target.querySelectorAll("optgroup")).map((group) => group.label);
+  expect(groups).toEqual(["Existing ledgers"]);
+  expect(Array.from(target.querySelectorAll("option")).map((option) => option.value))
+    .toEqual(["", "DN Party 001", "DN Party 002", "DN Party 003"]);
+  root.unmount();
+});
+
+test("a capture whose narrowing could not run says so rather than looking unnarrowed", async () => {
+  const unavailable = { ...catalog, bindings: [], bindings_state: "unavailable" as const };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(unavailable);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  expect(host.textContent).toContain("could not narrow this source's lines, so every row lists the full catalogue");
+  root.unmount();
+});
+
+test("a capture without bindings still renders the whole catalogue and claims nothing", async () => {
+  // An older capture, or one the backend could not narrow, must not lose the
+  // list the operator came for.
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(catalog);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  const target = host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!;
+  const groups = Array.from(target.querySelectorAll("optgroup")).map((group) => group.label);
+  expect(groups).toEqual(["Existing ledgers"]);
+  expect(Array.from(target.querySelectorAll("option")).map((option) => option.value)).toEqual(["", "Existing target"]);
+  expect(host.textContent).not.toContain("listed first");
   root.unmount();
 });
 
