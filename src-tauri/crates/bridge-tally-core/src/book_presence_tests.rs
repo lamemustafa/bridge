@@ -1881,6 +1881,7 @@ fn an_aggregately_truncated_candidate_list_withholds_absent() {
             candidates: master_binding::Candidates::Truncated {
                 listed: Vec::new(),
                 found: 7,
+                count_is_lower_bound: false,
             },
         }),
     };
