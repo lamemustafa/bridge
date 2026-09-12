@@ -203,6 +203,7 @@ if [ "$protection_status" -ne 0 ]; then
   required_contexts=""
 elif ! jq -e '
   type == "object" and
+  (.strict | type == "boolean" and . == true) and
   ((.contexts // []) | type == "array" and all(.[]; type == "string" and length > 0)) and
   ((.checks // []) | type == "array" and all(.[]; type == "object" and (.context | type == "string" and length > 0)))
 ' <<<"$protection" >/dev/null 2>&1; then
@@ -277,11 +278,13 @@ if [ "$check_runs_status" -ne 0 ] || ! jq -e --arg head "$head" '
     (.total_count | type == "number" and floor == . and . >= 0) and
     (.check_runs | type == "array" and all(.[];
       type == "object" and
+      (.id | type == "number" and floor == . and . >= 0) and
       (.name | type == "string" and length > 0) and
       (.head_sha | type == "string" and test("^[0-9a-fA-F]{40}$") and . == $head)
     ))) and
   ((map(.total_count) | unique | length) == 1) and
-  ((map(.check_runs | length) | add) == .[0].total_count)
+  ((map(.check_runs | length) | add) == .[0].total_count) and
+  ((map(.check_runs) | add | map(.id) | unique | length) == .[0].total_count)
 ' <<<"$check_runs" >/dev/null 2>&1; then
   unknown "could not validate complete head-bound check-run evidence"
 else
@@ -563,7 +566,8 @@ body_section_has_content() {
     function template_prompt(line, lower) {
       lower = tolower(line)
       return lower == "what concrete user or maintainer workflow changes, and why now?" ||
-             lower ~ /^-[[:space:]]*exact candidate sha:[[:space:]]*$/ ||
+             lower ~ /^-[[:space:]]*\[[xX]\][[:space:]]/ ||
+             lower ~ /^-[[:space:]]*exact candidate sha:/ ||
              lower ~ /^-[[:space:]]*commands and results[[:space:]]*\(.*\):[[:space:]]*$/ ||
              lower ~ /^-[[:space:]]*captured\/fixture\/live scope and known limitations:[[:space:]]*$/ ||
              lower ~ /^-[[:space:]]*manual\/ui evidence[[:space:]]*\(.*\):[[:space:]]*$/
@@ -576,9 +580,15 @@ body_section_has_content() {
         waiting = 1
         next
       }
-      if (waiting && $0 ~ /[^[:space:]]/) {
-        if ($0 !~ /^[[:space:]]*#/ && $0 !~ /^[[:space:]]*<!--/ && !template_prompt($0)) { found = 1; exit }
+      if ($0 ~ /^[[:space:]]*#/) {
         waiting = 0
+        next
+      }
+      if (waiting && $0 ~ /[^[:space:]]/) {
+        if ($0 ~ /^[[:space:]]*<!--/) next
+        if (template_prompt($0)) next
+        found = 1
+        exit
       }
     }
     END { exit(found ? 0 : 1) }
@@ -630,6 +640,18 @@ else
     unknown "PR reports $changed_files_expected changed files beyond the REST files API cap"
   elif [ "$changed_count" -ne "$changed_files_expected" ] || [ "$unique_changed_count" -ne "$changed_count" ]; then
     unknown "changed-file response has $changed_count unique records; PR metadata reports $changed_files_expected"
+  fi
+fi
+
+# Existing workflow changes require the rollback and migration-compatibility
+# notes mandated by the project review flow. The complete REST file set, rather
+# than the rendered diff, is the authority for this conditional requirement.
+if [ -s "$changed_records" ] && awk -F '\t' '$2 != "removed" && $1 ~ /^\.github\/workflows\//' "$changed_records" | grep -q .; then
+  if ! body_section_has_content "$prbody" 'rollback notes|rollback'; then
+    bad "workflow change lacks non-empty rollback notes"
+  fi
+  if ! body_section_has_content "$prbody" 'migration compatibility|migration impact'; then
+    bad "workflow change lacks non-empty migration compatibility notes"
   fi
 fi
 
@@ -837,16 +859,22 @@ $added"
     done <<<"$matches"
     printf '%s\n' "$count"
   }
-  # Join separators only inside a mobile-shaped run. A global separator-free
-  # projection fuses unrelated values and creates false identifiers.
+  # Join separators only inside recognised identifier shapes. A global
+  # separator-free projection fuses unrelated values and creates false
+  # identifiers, including adjacent date fragments. Alongside mobile numbers,
+  # accept only 4-4-4 and 4-4-4-4 grouped long-number forms.
   phone_status=0
   phone_matches=$(grep -Eo '(^|[^[:alnum:]])[6-9]([ ()+._-]{0,3}[0-9]){9}([^[:alnum:]]|$)' <<<"$redacted") || phone_status=$?
-  if [ "$phone_status" -gt 1 ]; then
-    unknown "formatted phone scan expression failed"
+  grouped_number_status=0
+  grouped_number_matches=$(grep -Eo '(^|[^[:alnum:]])[0-9]{4}([ ._-])[0-9]{4}\2[0-9]{4}(\2[0-9]{4})?([^[:alnum:]]|$)' <<<"$redacted") || grouped_number_status=$?
+  if [ "$phone_status" -gt 1 ] || [ "$grouped_number_status" -gt 1 ]; then
+    unknown "formatted identifier scan expression failed"
   fi
   normalized_phone=$(sed -E 's/[^0-9]//g' <<<"$phone_matches")
+  normalized_grouped_numbers=$(sed -E 's/[^0-9]//g' <<<"$grouped_number_matches")
   scan_shapes="$redacted
-$normalized_phone"
+$normalized_phone
+$normalized_grouped_numbers"
   hits_status=0
   hits=$(count_nonplaceholder '[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]{3}|[A-Z]{5}[0-9]{4}[A-Z]|[6-9][0-9]{9}' "$scan_shapes") || hits_status=$?
   runs_status=0
@@ -917,13 +945,13 @@ if [ -n "$base_tip" ]; then
 fi
 
 echo
-if [ "$uncertain" -ne 0 ]; then
-  echo "INDETERMINATE — do not merge until the missing evidence is obtained"
-  exit 2
-fi
 if [ "$fail" -ne 0 ]; then
   echo "MUST NOT MERGE"
   exit 1
+fi
+if [ "$uncertain" -ne 0 ]; then
+  echo "INDETERMINATE — do not merge until the missing evidence is obtained"
+  exit 2
 fi
 
 echo "MAY MERGE — bind the merge to the reviewed head and validated base:"
