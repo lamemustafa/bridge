@@ -143,7 +143,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-core/src/master_binding.rs",
-      "sha256": "774b41d6606482b9826605701e6146ea46b9b463aa6d1cb43f5a053f55ac569d"
+      "sha256": "855b08a54fee4ac9e6c0f7a5f9a0b78ecf84e0cb254d9e76da6c16266355d9d1"
     },
     {
       "path": "src-tauri/crates/bridge-tally-core/src/pack_models.rs",
@@ -850,5 +850,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "8f8019fc85e37f3dcf44912a6c4033ee917fa6edee33d37015016083232a0135"
+  "manifest_sha256": "3aaecf0ca6770812530274cd455c08a69c4e414b6ab242c7869d9a548cbf69fd"
 }
