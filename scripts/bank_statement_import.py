@@ -1540,21 +1540,21 @@ def _unlink_for_cleanup(path, owned_identity, failures):
             # if it still exists without making a claim about foreign bytes.
             if os.path.lexists(path):
                 failures.append(str(path))
-            return True
+            return "reclaimed"
         os.unlink(path)
-        return True
+        return "removed"
     except FileNotFoundError:
         # A caller holding a descriptor can distinguish this from a successful
         # unlink.  In particular, a parent-directory rename leaves the owned
         # inode live at an unknown relative name rather than making it safe to
         # call cleanup complete.
-        return False
+        return "missing"
     except OSError:
         # A filesystem call can report an error after taking effect. Only retain
         # the path when reconciliation shows bytes may still be present.
         if os.path.lexists(path):
             failures.append(str(path))
-        return True
+        return "uncertain"
 
 
 def _open_regular_output(path, expected_identity):
@@ -1663,15 +1663,23 @@ def _cleanup_owned_path(record, failures):
         _unlink_for_cleanup(record.get("cleanup_path", record["path"]), record["identity"], failures)
     else:
         cleanup_path = record.get("cleanup_path", record["path"])
-        located = _unlink_for_cleanup(cleanup_path, record["identity"], failures)
-        if not located and "cleanup_path" in record:
+        failure_start = len(failures)
+        outcome = _unlink_for_cleanup(cleanup_path, record["identity"], failures)
+        if outcome == "reclaimed":
+            # A foreign claimant of the stale name is not a retained path of
+            # this output. Keep any earlier diagnostics, but replace this
+            # pathname with the separate pinned-inode conclusion below.
+            del failures[failure_start:]
+        if outcome in ("missing", "reclaimed") and "cleanup_path" in record:
             # The descriptor still proves this is our fresh output, but a
             # stale parent pathname cannot say where it went. Do not turn a
             # missing entry into a successful cleanup or invent a replacement
             # path; a parent-directory rename is outside this CLI's namespace
             # authority and needs an operator-visible recovery fact.
             try:
-                if _fd_identity(record["pin"]) == record["identity"]:
+                stat_result = os.fstat(record["pin"])
+                if ((stat_result.st_dev, stat_result.st_ino) == record["identity"]
+                        and stat_result.st_nlink > 0):
                     failures.append(
                         f"owned output could not be located after cleanup: {record['path']}"
                     )
@@ -2108,10 +2116,11 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             try:
                 _pinned_backup_still_has_one_link(pending_swap["backup"])
             except Refusal as error:
-                _append_cleanup_detail(
-                    error,
-                    "rollback copy has an unknown hard-link alias; it may retain prior output bytes",
-                )
+                if error.category == "rollback_backup_has_multiple_links":
+                    _append_cleanup_detail(
+                        error,
+                        "rollback copy has an unknown hard-link alias; it may retain prior output bytes",
+                    )
                 raise
             # The first pin checked that the original was single-linked. A
             # backup hook can still add an alias before the commit boundary;

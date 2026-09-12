@@ -2313,6 +2313,36 @@ def test_fresh_output_parent_rename_reports_an_unlocated_owned_descriptor(m):
         assert retained.read_text() == "new bytes"
 
 
+def test_fresh_output_parent_rename_with_foreign_replacement_reports_only_owned_uncertainty(m):
+    """A stale name can be reclaimed after its parent moves. Cleanup must not
+    remove or present that foreign file as the location of our pinned output."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory) / "before"
+        moved = pathlib.Path(directory) / "after"
+        root.mkdir()
+        destination = root / "output.xml"
+
+        def rename_parent_and_reclaim_old_name():
+            os.rename(root, moved)
+            root.mkdir()
+            destination.write_text("foreign bytes")
+
+        try:
+            m.write_outputs(
+                [(str(destination), "new bytes")], after_claim=rename_parent_and_reclaim_old_name)
+            raise AssertionError("a moved fresh output must refuse before commit")
+        except m.Refusal as refusal:
+            assert refusal.category == "output_path_changed"
+            detail = str(refusal.code)
+            assert "owned output could not be located after cleanup" in detail
+            assert "retained path(s): " + str(destination) not in detail
+
+        assert destination.read_text() == "foreign bytes"
+        assert (moved / "output.xml").read_text() == "new bytes"
+
+
 def test_writer_refuses_when_the_private_backup_path_is_reclaimed(m):
     """The commit boundary must still name this run's backup; if it does not,
     do not overwrite the destination without a recoverable owned copy."""
@@ -2777,8 +2807,9 @@ def test_new_output_unlink_after_claim_refuses_and_cleans_owned_canonical_path(m
         destination = pathlib.Path(directory) / "output.xml"
         def unlink_after_claim():
             destination.unlink()
-        refuses(m, "output_path_changed", m.write_outputs,
-                [(str(destination), "new bytes")], False, unlink_after_claim)
+        refusal = refuses(m, "output_path_changed", m.write_outputs,
+                          [(str(destination), "new bytes")], False, unlink_after_claim)
+        assert "owned output could not be located after cleanup" not in str(refusal.code)
         assert not destination.exists()
 
 
