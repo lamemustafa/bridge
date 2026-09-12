@@ -543,9 +543,9 @@ human-approved batch — this ADR does not move.
   `PossiblyPresent` into an `Absent` — a visible, deletable duplicate — and can
   never turn an `Absent` into a `Present`, which is the silent direction. That
   is the asymmetry of §7 holding under a rule that is not yet proven.
-- Presence is pure computation over already-observed data, so P1's live-evidence
-  requirement is satisfied upstream by the two reads that produce its input. Its
-  own tests are fabricated from a placeholder alphabet: they establish the
+- Presence is pure computation over already-observed data, but P1's live-evidence
+  requirement remains unmet: the two reads do not establish source completeness.
+  Its own tests are fabricated from a placeholder alphabet: they establish the
   behaviour of the rules, and are not, and may not be presented as, evidence
   about any Tally instance.
 

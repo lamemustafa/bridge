@@ -1785,7 +1785,7 @@ fn observe(
         if duplicate_numbers.len() >= MAX_DUPLICATE_NUMBER_GROUPS {
             continue;
         }
-        let mut ordered = positions.iter().copied().collect::<Vec<_>>();
+        let mut ordered = positions.to_vec();
         ordered.sort_by(|left, right| {
             window.vouchers[*left]
                 .key()
@@ -1808,11 +1808,12 @@ fn observe(
         });
     }
 
-    let unbalanced: Vec<&BookVoucher> = window
+    let mut unbalanced: Vec<&BookVoucher> = window
         .vouchers
         .iter()
         .filter(|voucher| !voucher.balanced())
         .collect();
+    unbalanced.sort_by(|left, right| left.key().cmp(right.key()));
 
     let unmatched_book_vouchers = window
         .vouchers

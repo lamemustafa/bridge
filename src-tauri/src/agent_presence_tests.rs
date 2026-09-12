@@ -153,6 +153,10 @@ fn the_published_schema_names_the_three_numbering_methods_and_its_bounds() {
     );
     // The tool reads; it must not be annotated as a write.
     assert!(tool.get("annotations").is_none());
+    let description = tool["description"].as_str().expect("tool description");
+    assert!(description.contains("manual"));
+    assert!(description.contains("presence_window_incomplete"));
+    assert!(!description.contains("REMOTEID"));
 }
 
 /// `remote_id` is no longer an accepted input: the shipped read cannot fetch
