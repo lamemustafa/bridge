@@ -83,9 +83,13 @@ colliding pair surfaces in the unbound list where an operator can see it.
 Failing a whole read to report one collision would block all the work it was
 performed for.
 
-`MasterClass` is `Ledger` or `StockItem`. Both classes failed in practice, the
-rules are identical for both, and the class is carried only so a report cannot
-be applied to the wrong catalog.
+`MasterClass` is `Ledger` or `StockItem`. Both classes failed in practice and
+the identifier rules are identical for both, but **the name fold is not**:
+§9.4d measured ledgers, and whether a stock item matches by the same rule was
+never sent. So a folded stock-item name may *suggest* and may not resolve —
+byte equality is unaffected, since it needs no fold. The class is carried both
+so a report cannot be applied to the wrong catalog and because the evidence
+behind the two differs.
 
 ### 2. The identifier is the key; the name is a hint
 

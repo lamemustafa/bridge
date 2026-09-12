@@ -1050,6 +1050,133 @@ fn an_identifier_held_by_a_whole_family_is_a_conflict_without_expanding_it() {
 }
 
 #[test]
+fn a_hint_pointing_elsewhere_outranks_an_exact_name_at_any_family_size() {
+    // The large-holder skip added for cost made this invariant size-dependent:
+    // below the cap the holder set was built and `identifier_points_elsewhere`
+    // saw that it did not contain the exact master; above the cap the set was
+    // skipped, the signal went with it, and the exact name bound while the
+    // hint pointed entirely elsewhere. Skipping the expansion must not skip
+    // the question the expansion was asked.
+    let mut names = vec!["Alpha Traders".to_string()];
+    names.extend(
+        (0..MAX_CANDIDATES_PER_ENTITY + 5)
+            .map(|index| format!("Other Party {index:03} (5550008888)")),
+    );
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let source =
+        SourceEntity::with_identifier_hints(0, "Alpha Traders", ["5550008888"]).expect("valid");
+    let report = bound(&catalog, &[source]);
+    let binding = &report.entities()[0];
+    assert_eq!(
+        binding.bound_name(),
+        None,
+        "a byte-exact name bound while its hint pointed at a different family"
+    );
+    assert_eq!(reason(binding), UnboundReason::IdentifierNameConflict);
+
+    // Below the cap the same shape already behaved; both sides of the boundary
+    // are asserted so the fix cannot regress on one of them alone.
+    let mut small = vec!["Alpha Traders".to_string()];
+    small.extend((0..3).map(|index| format!("Other Party {index:03} (5550008888)")));
+    let small = MasterCatalog::new(MasterClass::Ledger, &small).expect("valid");
+    let source =
+        SourceEntity::with_identifier_hints(0, "Alpha Traders", ["5550008888"]).expect("valid");
+    let report = bound(&small, &[source]);
+    assert_eq!(
+        reason(&report.entities()[0]),
+        UnboundReason::IdentifierNameConflict
+    );
+}
+
+#[test]
+fn a_date_range_is_dates_even_after_its_separator_is_removed() {
+    // `20250911-20250912` fuses to sixteen digits, which is no length
+    // `is_plausible_date` recognizes, and `is_period` reads neither half as a
+    // year range. So a date *range* walked through a guard a single date does
+    // not — the fusing is what hid the components, so they are checked first.
+    for range in [
+        "20250911-20250912",
+        "20250911/20250912",
+        "01012026-02012026",
+        "20250911-20250912-20250913",
+    ] {
+        assert!(
+            entity(&format!("Purchases {range}"))
+                .identifiers()
+                .is_empty(),
+            "{range} was treated as an identifier"
+        );
+    }
+    let catalog = ledgers(&["Sales 20250911-20250912", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&catalog, "Purchases 20250911-20250912").bound_name(),
+        None,
+        "a shared date range must not bind two unrelated ledgers"
+    );
+    // A punctuated account number is untouched: no component reads as a date.
+    assert_eq!(entity("Party 5550001-002").identifiers().len(), 1);
+}
+
+#[test]
+fn a_stock_item_may_suggest_on_a_fold_but_not_resolve_on_one() {
+    // §9.4d measured **ledgers**. Whether stock items match by the same rule
+    // was never sent, so the same folded pair that resolves for a ledger may
+    // only be offered for a stock item.
+    let folded = ["Sales-Item", "Beta Supply"];
+    let ledger = MasterCatalog::new(MasterClass::Ledger, folded).expect("valid");
+    assert_eq!(
+        bind_one_name(&ledger, "sales item").bound_name(),
+        Some("Sales-Item")
+    );
+
+    let items = MasterCatalog::new(MasterClass::StockItem, folded).expect("valid");
+    let source = SourceEntity::new(0, "sales item").expect("valid");
+    let report = bind(&items, &[source]).expect("valid");
+    let binding = &report.entities()[0];
+    assert_eq!(
+        binding.bound_name(),
+        None,
+        "a stock item resolved on an unmeasured fold"
+    );
+    assert_eq!(candidate_names(binding), ["Sales-Item"]);
+
+    // Byte equality needs no fold and is unaffected by the class.
+    let exact = SourceEntity::new(0, "Sales-Item").expect("valid");
+    let report = bind(&items, &[exact]).expect("valid");
+    assert_eq!(report.entities()[0].bound_name(), Some("Sales-Item"));
+}
+
+#[test]
+fn a_repeated_key_is_remembered_however_many_distinct_ones_precede_it() {
+    // The entry cap made the memo's protection depend on **source order**:
+    // enough distinct cheap misses at the head of a draft filled it, and the
+    // repeated expensive key behind them was then never cached — the stall the
+    // memo exists to prevent, reachable by reordering the same rows.
+    let names = (0..60)
+        .map(|index| format!("Acme Branch {index:05}"))
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+
+    let mut entities = (0..MAX_CANDIDATE_MEMO_ENTRIES)
+        .map(|index| SourceEntity::new(index, &format!("Distinct Miss {index:05}")).expect("valid"))
+        .collect::<Vec<_>>();
+    entities.extend((0..4).map(|offset| {
+        SourceEntity::new(MAX_CANDIDATE_MEMO_ENTRIES + offset, "Acme Branch").expect("valid")
+    }));
+
+    super::CANDIDATE_SEARCHES.with(|count| count.set(0));
+    let report = bound(&catalog, &entities);
+    let searches = super::CANDIDATE_SEARCHES.with(std::cell::Cell::get);
+    assert_eq!(report.totals().requested, MAX_CANDIDATE_MEMO_ENTRIES + 4);
+    // One search for the repeated key, not four. The distinct misses each cost
+    // one of their own, so the total is bounded by the distinct count plus one.
+    assert!(
+        searches <= MAX_CANDIDATE_MEMO_ENTRIES + 1,
+        "the repeated key was searched more than once: {searches} searches"
+    );
+}
+
+#[test]
 fn a_report_bounds_its_own_candidate_allocation() {
     // A per-entity cap does not bound a report: the clones exist the moment it
     // is built, and a consumer capping its own copy afterwards bounds only the
