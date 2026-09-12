@@ -284,6 +284,23 @@ for context in ("XXXXXX1234", "IMPS/P2A/ABC-XXXXXX1234-NAME", "ACCT XXXXXX1234 E
     )
 
 
+# Exercise the narrowed rule through the actual capture writer. This unchanged
+# SBI capture has one measured short IMPS mask at the recorded word box. New
+# capture output intentionally fabricates its Xs; retaining the old fixture is
+# still necessary for that parser-shape regression.
+short_capture = pathlib.Path(__file__).with_name("fixtures") / "sbi-bbox-capture.xml"
+with tempfile.TemporaryDirectory() as directory:
+    destination = pathlib.Path(directory) / "short-mask-fabricated.xml"
+    fresh = load()
+    with contextlib.redirect_stdout(io.StringIO()):
+        fresh.main(str(short_capture), str(destination), [(0, [(0, 10000)])], "SBI")
+    short_box = (143.66, 701.384, 183.68, 712.484)
+    words = {tuple(map(float, match.groups()[:4])): match.group(5)
+             for match in fresh.WORD.finditer(destination.read_text(encoding="utf-8"))}
+    check("capture writer fabricates the measured short IMPS mask",
+          short_box in words and "X" not in words[short_box].upper(),
+          repr(words.get(short_box)))
+
 # The invariant the case above turns on, asserted directly so it cannot be
 # undone by editing one string. A replacement character that is an X must mean
 # "the source was masked here" and nothing else; the moment X is also a letter

@@ -451,9 +451,12 @@ BANNER_TEMPLATE = """<!--
   default. Distinct source tokens map to distinct fabricated ones in
   first-appearance order, so repeats and name/reference structure survive while
   the substitution is not a cipher over the original text. Character shape is
-  preserved — digits stay digits, a run of X stays a run of X — because the
+  preserved — digits stay digits and whole-token masks with at least four Xs
+  retain those Xs — because the
   parsers find the end of a counterparty name by recognising the shape of the
-  field after it.
+  field after it. Shorter X-plus-digit forms are fabricated even inside IMPS.
+  A regenerated capture therefore does not preserve that contextual mask shape;
+  the existing captured short-mask parser evidence must be retained separately.
 
   Dates are remapped rather than digit-substituted, since a digit substitution
   produces 11/22/33, which is not a calendar date. A whole date becomes a
