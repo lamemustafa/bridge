@@ -1339,18 +1339,20 @@ more variants, same method, same readback and deletion:
 | `  mb-pilot/alpha  (5550001001) ` | all five at once | **matched** |
 | `  mb probe  ledger a ` against `MB-PROBE-LEDGER-A` | case + space-for-hyphen + surrounding + run | **matched** |
 
-All eight posted against the intended master, confirmed by day-book readback. **So the folds
-compose**, and a canonical form applying every measured transformation before comparing is
-licensed by measurement rather than by extrapolation from the single-axis rows.
+All eight posted against the intended master, confirmed by day-book readback.
 
-**What this says.** On licensed 7.1, Tally treats **space, hyphen and slash** as interchangeable
-separators, collapses internal whitespace runs, ignores leading and trailing whitespace, folds
-**ASCII** case, and is otherwise **exact on codepoints**.
+**Superseded interpretation, 2026-09-12.** The rows above remain the scoped Silver 7.1
+observations. They do **not** license a generic symmetric or canonical separator fold: the
+measured slash direction is a slash in the supplied name reaching a space in the live master;
+the reverse direction was not sent. A scope-free binder must therefore keep all folded spellings
+candidate-only and require operator selection plus exact revalidation. The earlier statements
+that `space`, `-`, and `/` are interchangeable, or that a canonical form is licensed, are
+withdrawn as binding authority rather than erased from the probe history.
 
-> **RULE: separators fold, and the set is `space`, `-`, `/` — nothing else.** An en dash and an
-> underscore are ordinary characters to Tally and are **not** separators, so a fold that treats
-> "punctuation" or "separators" as a class is wider than the gateway and will merge masters it
-> keeps apart.
+**What remains measured in this scope.** The listed forward slash-to-space case, the recorded
+hyphen and whitespace cases, and the rejected en dash, underscore, abbreviation, suffix, and
+NFD cases are observations of this one operation. They do not generalize across product, tier,
+object class, direction, or caller.
 
 That is the trap §9.4b warned about, arriving from the other side: the danger was never only that
 a reader would fold too much, it was that "normalises separators" names no particular set. Two of

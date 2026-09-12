@@ -293,17 +293,6 @@ pub enum BindingBasis {
     ExactName,
 }
 
-/// Historical wire values retained solely for decoding archived binding records.
-/// Current [`BindingStatus::Bound`] uses [`BindingBasis`], which deliberately
-/// has no folded variant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HistoricalBindingBasis {
-    Identifier,
-    ExactName,
-    NormalizedName,
-}
-
 /// The masters worth showing, and — in the variant itself — what an absence of
 /// them means.
 ///
@@ -436,8 +425,9 @@ pub struct Unresolved {
 ///   acting on a binding re-reads and revalidates through the admission path
 ///   that owns identity; nothing here is a lease on the book.
 /// - **Not that the name may be written as given.** Only `ExactName` is byte
-///   equality. `HistoricalBindingBasis` retains old wire values separately;
-///   current folded names are candidates. An `Identifier` bind means
+///   equality. Binding reports have no core persistence reader, so current
+///   `BindingBasis` deliberately rejects historical folded wire values; current
+///   folded names are candidates. An `Identifier` bind means
 ///   the payload and live name can differ, and Bridge's write gate admits
 ///   `exact` only — use `catalog_name`, not what was requested.
 /// - **Not that this is the right master in business terms.** It establishes
@@ -1645,9 +1635,9 @@ fn collect_candidates(
     let binding_matches = catalog
         .by_binding_key
         .get(&entity.binding_key)
-        .cloned()
-        .unwrap_or_default();
-    for index in &binding_matches {
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    for index in binding_matches {
         offer(*index, CandidateRule::NormalizedEqual);
     }
     if withheld.is_empty() {
@@ -1724,10 +1714,19 @@ fn collect_candidates(
     // Preserve its candidates before the bounded listing drops wider-only ones;
     // this is visibility, never authority or a similarity score.
     listed.sort_by(|left, right| {
-        binding_matches
-            .contains(&right.0)
-            .cmp(&binding_matches.contains(&left.0))
-            .then_with(|| candidate_order(catalog, left, right))
+        // Candidate-rule precedence is unchanged: an identifier still leads a
+        // folded suggestion. Within the same rule, a binary-searchable narrow
+        // holder gets the bounded slot before a wider-only holder.
+        left.1
+            .rank()
+            .cmp(&right.1.rank())
+            .then_with(|| {
+                binding_matches
+                    .binary_search(&right.0)
+                    .is_ok()
+                    .cmp(&binding_matches.binary_search(&left.0).is_ok())
+            })
+            .then_with(|| catalog.entries[left.0].name.cmp(&catalog.entries[right.0].name))
     });
     listed.truncate(MAX_CANDIDATES_PER_ENTITY);
     (listed, found)

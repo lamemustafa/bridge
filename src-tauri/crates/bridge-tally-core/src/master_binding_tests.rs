@@ -411,12 +411,23 @@ fn a_narrow_fold_candidate_survives_a_wide_fold_cap() {
             .collect::<String>();
         names.push(format!("{}{}", &spelling[..spelling.len() - 'Ζ'.len_utf8()], "/ζ"));
     }
+    names.extend([
+        "Identifier Alpha (5550001234)".to_string(),
+        "Identifier Beta (5550001234)".to_string(),
+    ]);
     let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid catalog");
-    let binding = bind_one_name(&catalog, "ΑΒΓΔΕ/Ζ");
+    let source = SourceEntity::with_identifier_hints(0, "ΑΒΓΔΕ/Ζ", ["5550001234"])
+        .expect("valid source");
+    let binding = bound(&catalog, &[source]).entities()[0].clone();
     let candidates = binding.unresolved().expect("candidate-only fold").candidates.listed();
     assert_eq!(candidates.len(), MAX_CANDIDATES_PER_ENTITY);
-    assert_eq!(candidates[0].catalog_name, "ΑΒΓΔΕ Ζ");
-    assert_eq!(candidates[0].rule, CandidateRule::NormalizedEqual);
+    assert_eq!(candidates[0].catalog_name, "Identifier Alpha (5550001234)");
+    assert_eq!(candidates[1].catalog_name, "Identifier Beta (5550001234)");
+    assert!(candidates[..2]
+        .iter()
+        .all(|candidate| candidate.rule == CandidateRule::SharedIdentifier));
+    assert_eq!(candidates[2].catalog_name, "ΑΒΓΔΕ Ζ");
+    assert_eq!(candidates[2].rule, CandidateRule::NormalizedEqual);
 }
 
 #[test]
@@ -2146,11 +2157,8 @@ fn a_bound_status_serializes_without_a_score_field() {
 }
 
 #[test]
-fn historical_normalized_basis_is_not_a_current_bound_basis() {
+fn historical_normalized_basis_is_rejected_by_current_bindings() {
     assert!(serde_json::from_str::<BindingBasis>("\"normalized_name\"").is_err());
-    let historical: HistoricalBindingBasis = serde_json::from_str("\"normalized_name\"")
-        .expect("older retained binding basis remains readable");
-    assert_eq!(historical, HistoricalBindingBasis::NormalizedName);
 }
 
 // ---------------------------------------------------------------------------
