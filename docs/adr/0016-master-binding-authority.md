@@ -333,9 +333,14 @@ version of this table sent a consumer looking for something that does not exist.
 | `truncated` | the list was cut, by the per-entity cap or by the report's aggregate byte budget | any |
 
 `candidate_count` is exact unless `candidate_count_is_lower_bound` says
-otherwise, which happens only where an unmaterialized union prevents an exact
-total: two or more skipped identifier families, or one beside masters the name
-reached. One skipped family alone is a single set, and its size is its length.
+otherwise. A skipped identifier family alone is a single set, and its size is
+its length. Multiple skipped families are also exact when the binder proves,
+within its 256 membership-probe budget, that every smaller family is contained
+in the largest. The count is a lower bound when that containment proof finds an
+outside member or exhausts its budget. Independently, a skipped identifier
+family beside name candidates is a lower bound only when unlisted name
+candidates leave their overlap unknown; when every name candidate is
+materialized, the binder counts the known members outside the family exactly.
 
 So `candidates.is_empty()` alone answers nothing. The disambiguators are
 `reason`, `candidate_count`, `candidate_count_is_lower_bound` and the listing

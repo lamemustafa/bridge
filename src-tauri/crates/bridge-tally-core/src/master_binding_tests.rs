@@ -1282,6 +1282,27 @@ fn a_withheld_family_still_reports_how_many_share_the_identifier() {
 }
 
 #[test]
+fn only_withheld_identifier_holder_sets_receive_family_ids() {
+    let names = (0..MAX_CANDIDATES_PER_ENTITY + 1)
+        .map(|index| format!("Party {index:03} (5550007777)"))
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let shared_identifier = entity("Source (5550007777)")
+        .identifiers()
+        .first()
+        .cloned()
+        .expect("valid identifier");
+
+    assert_eq!(catalog.identifier_family_ids.len(), 1);
+    assert!(catalog
+        .identifier_family_ids
+        .contains_key(&shared_identifier));
+    assert!(catalog.identifier_family_ids.iter().all(|(identifier, _)| {
+        catalog.by_identifier[identifier].len() > MAX_CANDIDATES_PER_ENTITY
+    }));
+}
+
+#[test]
 fn nested_withheld_identifier_families_have_an_exact_union_count() {
     let names = (0..MAX_CANDIDATES_PER_ENTITY + 1)
         .map(|index| {
@@ -1293,14 +1314,14 @@ fn nested_withheld_identifier_families_have_an_exact_union_count() {
         })
         .collect::<Vec<_>>();
     let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
-    let source = SourceEntity::with_identifier_hints(
-        0,
-        "Zeta Holdings",
-        ["5550007777", "5550008888"],
-    )
-    .expect("valid");
+    let source =
+        SourceEntity::with_identifier_hints(0, "Zeta Holdings", ["5550007777", "5550008888"])
+            .expect("valid");
     let report = bound(&catalog, &[source]);
-    let candidates = &report.entities()[0].unresolved().expect("unbound").candidates;
+    let candidates = &report.entities()[0]
+        .unresolved()
+        .expect("unbound")
+        .candidates;
     assert_eq!(candidates.found(), MAX_CANDIDATES_PER_ENTITY + 1);
     assert!(!candidates.count_is_lower_bound());
 }
@@ -1317,16 +1338,16 @@ fn an_unprovable_large_nested_family_remains_a_lower_bound() {
         })
         .collect::<Vec<_>>();
     let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
-    let source = SourceEntity::with_identifier_hints(
-        0,
-        "Zeta Holdings",
-        ["5550007777", "5550008888"],
-    )
-    .expect("valid");
+    let source =
+        SourceEntity::with_identifier_hints(0, "Zeta Holdings", ["5550007777", "5550008888"])
+            .expect("valid");
     super::WITHHELD_FAMILY_PROBES.with(|count| count.set(0));
     let report = bound(&catalog, &[source]);
     let probes = super::WITHHELD_FAMILY_PROBES.with(std::cell::Cell::get);
-    let candidates = &report.entities()[0].unresolved().expect("unbound").candidates;
+    let candidates = &report.entities()[0]
+        .unresolved()
+        .expect("unbound")
+        .candidates;
     assert_eq!(candidates.found(), 300);
     assert!(candidates.count_is_lower_bound());
     assert_eq!(probes, 256, "nested-family proof exceeded its hard budget");

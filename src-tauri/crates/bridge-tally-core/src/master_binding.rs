@@ -850,14 +850,16 @@ impl MasterCatalog {
             "identifier holder lists are built in entry order"
         );
 
-        // Assign equal holder sets one family id once, while the catalog is
-        // being built. Binding then compares these small ids rather than
-        // walking a potentially huge withheld holder vector for every source
-        // entity. The sort is a one-time construction cost and compares the
-        // already-built index values exactly, so a hash collision cannot make
-        // two different families look equal.
+        // Assign equal *withheld* holder sets one family id once, while the
+        // catalog is being built. Only a set larger than a candidate list can
+        // be withheld, and binding never asks a smaller set for a family id;
+        // omitting them avoids sorting and cloning every ordinary identifier
+        // in a large catalog. The remaining sort compares already-built index
+        // values exactly, so a hash collision cannot make two different
+        // families look equal.
         let mut family_order = by_identifier
             .iter()
+            .filter(|(_, holders)| holders.len() > MAX_CANDIDATES_PER_ENTITY)
             .map(|(identifier, holders)| (identifier, holders.as_slice()))
             .collect::<Vec<_>>();
         family_order.sort_by_key(|(_, holders)| *holders);
