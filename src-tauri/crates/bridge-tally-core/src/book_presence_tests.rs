@@ -378,11 +378,23 @@ fn an_undeclared_numbering_method_is_an_error_not_a_default() {
 }
 
 #[test]
-fn declaring_one_voucher_type_two_ways_is_refused() {
+fn differently_spelled_voucher_types_have_independent_declarations() {
+    let declaration = NumberingDeclaration::new([
+        ("Sales", NumberingMethod::Manual),
+        ("sales", NumberingMethod::Automatic),
+    ])
+    .expect("distinct exact type names");
+    assert!(declaration.declares("Sales"));
+    assert!(declaration.declares("sales"));
+    assert!(!declaration.declares(" SALES "));
+}
+
+#[test]
+fn conflicting_declarations_of_the_same_exact_voucher_type_are_refused() {
     assert_eq!(
         NumberingDeclaration::new([
             ("Sales", NumberingMethod::Manual),
-            ("sales", NumberingMethod::Automatic),
+            ("Sales", NumberingMethod::Automatic),
         ])
         .expect_err("conflict"),
         PresenceError::NumberingMethodConflict
@@ -693,6 +705,30 @@ fn a_present_voucher_reports_a_party_the_book_disagrees_with() {
         .find(|difference| difference.field == DifferenceField::Party)
         .expect("party difference");
     assert_eq!(party.proposed.as_deref(), Some("Alpha Traders"));
+    assert_eq!(party.observed.as_deref(), Some("Bravo Industries"));
+}
+
+#[test]
+fn a_party_difference_echoes_the_source_spelling_not_its_catalog_binding() {
+    let window =
+        window(&[BookRow::new("book-1", "20260812", "AA0118").party_field("Bravo Industries")]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .party("alpha traders")
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let PresenceStatus::Present { differences, .. } = &only(&report).status else {
+        panic!("expected Present");
+    };
+    let party = differences
+        .iter()
+        .find(|difference| difference.field == DifferenceField::Party)
+        .expect("party difference");
+    assert_eq!(party.proposed.as_deref(), Some("alpha traders"));
     assert_eq!(party.observed.as_deref(), Some("Bravo Industries"));
 }
 
@@ -1277,11 +1313,98 @@ fn observed_input_refuses_blank_unsafe_and_invalid_fields() {
 }
 
 #[test]
+fn a_window_bounds_aggregate_ledger_memberships_before_indexing() {
+    let ledgers = (0..MAX_ENTRIES_PER_VOUCHER)
+        .map(|position| Box::leak(format!("Ledger {position:04}").into_boxed_str()) as &'static str)
+        .collect::<Vec<_>>();
+    let entries = ledgers
+        .iter()
+        .map(|ledger| ObservedEntry {
+            ledger,
+            amount: "1.00",
+        })
+        .collect::<Vec<_>>();
+    let vouchers = (0..(MAX_WINDOW_LEDGER_MEMBERSHIPS / MAX_ENTRIES_PER_VOUCHER + 1))
+        .map(|position| {
+            BookVoucher::observed(ObservedVoucher {
+                key: Box::leak(format!("book-{position:03}").into_boxed_str()),
+                date: "20260812",
+                voucher_type: "Sales",
+                voucher_number: None,
+                remote_id: None,
+                party: None,
+                marker: ObservedMarker::Absent,
+                entries: &entries,
+                cancelled: false,
+                optional: false,
+            })
+            .expect("voucher below its own entry limit")
+        })
+        .collect();
+    assert_eq!(
+        BookWindow::observed(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers,
+        })
+        .expect_err("derived index membership budget"),
+        PresenceError::WindowLedgerMembershipsTooMany
+    );
+}
+
+#[test]
+fn a_window_bounds_aggregate_ledger_key_bytes_before_indexing() {
+    let ledgers = (0..(MAX_WINDOW_LEDGER_KEY_BYTES / MAX_TEXT_CHARS + 1))
+        .map(|position| {
+            Box::leak(format!("{position:04}{}", "x".repeat(MAX_TEXT_CHARS - 4)).into_boxed_str())
+                as &'static str
+        })
+        .collect::<Vec<_>>();
+    let entries = ledgers
+        .iter()
+        .map(|ledger| ObservedEntry {
+            ledger,
+            amount: "1.00",
+        })
+        .collect::<Vec<_>>();
+    let voucher = BookVoucher::observed(ObservedVoucher {
+        key: "book-1",
+        date: "20260812",
+        voucher_type: "Sales",
+        voucher_number: None,
+        remote_id: None,
+        party: None,
+        marker: ObservedMarker::Absent,
+        entries: &entries,
+        cancelled: false,
+        optional: false,
+    })
+    .expect("voucher below its own bounds");
+    assert_eq!(
+        BookWindow::observed(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers: vec![voucher],
+        })
+        .expect_err("derived index key-byte budget"),
+        PresenceError::WindowLedgerKeyBytesTooLarge
+    );
+}
+
+#[test]
 fn every_error_carries_a_distinct_stable_reason_code() {
     let codes = [
         PresenceError::WindowIncomplete,
         PresenceError::WindowRangeInvalid,
         PresenceError::WindowTooLarge,
+        PresenceError::WindowLedgerMembershipsTooMany,
+        PresenceError::WindowLedgerKeyBytesTooLarge,
         PresenceError::WindowVoucherOutsideRange,
         PresenceError::WindowDuplicateVoucherKey,
         PresenceError::WindowDoesNotCover,
@@ -1300,7 +1423,7 @@ fn every_error_carries_a_distinct_stable_reason_code() {
     .iter()
     .map(PresenceError::safe_reason_code)
     .collect::<BTreeSet<_>>();
-    assert_eq!(codes.len(), 17);
+    assert_eq!(codes.len(), 19);
     assert!(codes.iter().all(|code| code.starts_with("presence_")));
 }
 
@@ -2126,6 +2249,43 @@ fn two_numbers_differing_only_in_case_are_two_numbers() {
         &spaced,
     );
     assert_eq!(only(&report).present_book_key(), None);
+
+    let composed = window(&[BookRow::new("book-1", "20260812", "Caf\u{00e9}-0118")]);
+    let decomposed = [ProposalRow::new(0, "20260812", "Cafe\u{0301}-0118")
+        .party("Bravo Industries")
+        .rows(vec![
+            ["Bravo Industries", "-4200.00"],
+            ["Sales Account", "4200.00"],
+        ])
+        .build()];
+    let report = run(
+        &composed,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &decomposed,
+    );
+    assert_eq!(
+        only(&report).present_book_key(),
+        None,
+        "Unicode composition is part of a voucher number until Tally proves otherwise"
+    );
+}
+
+#[test]
+fn a_manual_number_does_not_decide_across_differently_spelled_voucher_types() {
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118")]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .voucher_type("sales")
+        .build()];
+    let declaration =
+        NumberingDeclaration::new([("sales", NumberingMethod::Manual)]).expect("numbering");
+    let report = run(&window, &catalog(), &declaration, &proposals);
+    assert!(!only(&report).voucher_type_observed);
+    assert_eq!(only(&report).present_book_key(), None);
+    assert_eq!(
+        reason(only(&report)),
+        UndecidedReason::VoucherTypeNotObserved
+    );
 }
 
 /// Under a `Manual` declaration the number is the one key that can decide, so
@@ -2740,6 +2900,41 @@ fn two_proposals_claiming_one_marker_decide_nothing() {
     for entry in report.vouchers() {
         assert_eq!(reason(entry), UndecidedReason::NarrationMarkerCollision);
     }
+}
+
+#[test]
+fn a_remote_id_collision_retains_each_narration_marker_match() {
+    let window = window(&[
+        BookRow::new("book-1", "20260812", "AA0118").marker(MARKER_A),
+        BookRow::new("book-2", "20260813", "AA0119").marker(MARKER_B),
+    ]);
+    let proposals = [
+        ProposalRow::new(0, "20260812", "AA0118")
+            .remote_id("shared-source-id")
+            .marker(MARKER_A)
+            .build(),
+        ProposalRow::new(1, "20260813", "AA0119")
+            .remote_id("shared-source-id")
+            .marker(MARKER_B)
+            .build(),
+    ];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Automatic),
+        &proposals,
+    );
+    for (entry, expected_key) in report.vouchers().iter().zip(["book-1", "book-2"]) {
+        assert_eq!(reason(entry), UndecidedReason::RemoteIdCollision);
+        let undecided = entry.undecided().expect("collision");
+        assert_eq!(undecided.candidate_count, 1);
+        assert_eq!(undecided.candidates[0].book_key, expected_key);
+        assert_eq!(
+            undecided.candidates[0].rule,
+            CandidateRule::SharedNarrationMarker
+        );
+    }
+    assert_eq!(report.observations().unmatched_book_vouchers, 0);
 }
 
 /// Three identity signals mean three ways to disagree. A marker selecting one

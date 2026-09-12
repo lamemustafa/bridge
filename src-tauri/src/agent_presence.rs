@@ -122,6 +122,26 @@ impl Server {
                 None,
             )?;
 
+            // The window is independent evidence about which ledgers exist.
+            // A row posting to an unlisted ledger proves the first catalogue
+            // short, regardless of whether a later window qualification could
+            // have authorised a verdict. Refuse before the nonempty hold so
+            // this distinct source defect remains visible without a redundant
+            // paired catalogue read.
+            for row in &rows {
+                let entry_ledgers = row["amounts"]
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|entry| entry["ledger"].as_str());
+                for ledger in row["party"].as_str().into_iter().chain(entry_ledgers) {
+                    if catalog.exact(ledger).is_none() {
+                        return Err("ledger_catalogue_incomplete".to_string().into());
+                    }
+                }
+            }
+
             // A window can only license `Absent` when its cardinality is
             // independently established. The existing empty-window control
             // can establish that narrow case. A nonempty response has no
@@ -147,6 +167,16 @@ impl Server {
             } else if let Some(evidence) = accumulated.as_mut() {
                 evidence.state = "partial";
                 evidence.reason_code = reason.map(str::to_string);
+                // The adapter has no source-side cardinality for nonempty
+                // windows. A later catalogue reread cannot change the fixed
+                // `Partial` state into a complete observation, so avoid the
+                // extra endpoint load and fail with the evidence already in
+                // hand. A future qualified nonempty path can continue to the
+                // paired-snapshot checks below.
+                return Err(PresenceError::WindowIncomplete
+                    .safe_reason_code()
+                    .to_string()
+                    .into());
             }
 
             // The verdict is built from two independently timed observations,
@@ -171,28 +201,6 @@ impl Server {
                 || before != after
             {
                 return Err("ledger_snapshot_drifted".to_string().into());
-            }
-
-            // The window is independent evidence about which ledgers exist,
-            // and it is already in hand. A ledger the book posts to but the
-            // catalogue never listed proves the catalogue short -- both reads
-            // agreeing only proves they agree. Left unchecked, a proposal
-            // naming that ledger binds `Unmatched`, every party rule declines
-            // to run, and an `Absent` is authorised off a comparison that was
-            // never possible. That is the failure this whole contract exists
-            // to prevent, so it fails closed here rather than being reported.
-            for row in &rows {
-                let entry_ledgers = row["amounts"]
-                    .as_array()
-                    .map(Vec::as_slice)
-                    .unwrap_or_default()
-                    .iter()
-                    .filter_map(|entry| entry["ledger"].as_str());
-                for ledger in row["party"].as_str().into_iter().chain(entry_ledgers) {
-                    if catalog.exact(ledger).is_none() {
-                        return Err("ledger_catalogue_incomplete".to_string().into());
-                    }
-                }
             }
 
             let observed = rows

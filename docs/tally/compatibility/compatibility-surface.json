@@ -139,7 +139,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-core/src/book_presence.rs",
-      "sha256": "62163f96780f8ba0881d7de51c1c792154776296fa1033164f2e8e3516dec0bd"
+      "sha256": "4f2c1ab6f00d283e7b7b94f33559fdc8805a3d4888381f7d19cbd5cfbb6aa462"
     },
     {
       "path": "src-tauri/crates/bridge-tally-core/src/lib.rs",
@@ -347,11 +347,11 @@
     },
     {
       "path": "src-tauri/src/agent_presence.rs",
-      "sha256": "730cdd0f5468d12ad762ac436e27951cdd12f710a64365205f1b92889983cd07"
+      "sha256": "13fdccf9d3cd9338ddf0236a3193d25fd1c5b599999a738b6c9caa31bd13a947"
     },
     {
       "path": "src-tauri/src/agent_presence_tests.rs",
-      "sha256": "792940e4c74f3e21f106d90e92b2cbd805ef40cd57d9f6027889080d85ae62f3"
+      "sha256": "e2107336f41822a54adeb3df44f11cf2191e9d5a311bc32f86f820e03e16e863"
     },
     {
       "path": "src-tauri/src/agent_read_profiles.rs",
@@ -866,5 +866,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "293821cac4f25a41f28580b0441cd75ce9dd893f449cdc956900b19e85087f8c"
+  "manifest_sha256": "c99a17b560e049028247acc6528c16e6e2df046cc569127de7a7795fee6f0489"
 }
