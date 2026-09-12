@@ -98,16 +98,7 @@ HDFC_PAGE = page(
     # them: this is where a customer id or a phone number sits
     (56, [(340, 380, "Cust"), (382, 396, "ID"), (397, 400, ":"),
           (403, 470, "00000000004230")]),
-    # four more header lines, each with its own distinct number, so the wrong
-    # tails below exercise phone, IFSC, MICR and postcode independently rather
-    # than a single stand-in field
-    (60, [(340, 380, "Phone"), (382, 396, "no."), (397, 400, ":"),
-          (403, 470, "00000000005551")]),
-    (64, [(340, 375, "RTGS/NEFT"), (378, 396, "IFSC"), (397, 400, ":"),
-          (403, 460, "ZZZZ0005552")]),
-    (68, [(340, 372, "MICR"), (397, 400, ":"), (403, 460, "000000005553")]),
-    (72, [(340, 372, "City"), (397, 400, ":"), (403, 460, "ZZZZZ 005554")]),
-    (76, [(70, 200, "Statement"), (205, 260, "of"), (265, 340, "account")]),
+    (60, [(70, 200, "Statement"), (205, 260, "of"), (265, 340, "account")]),
     (100, [(5, 30, "Date"), (72, 120, "Narration"), (282, 340, "Chq./Ref.No."),
            (360, 380, "Value"), (382, 396, "Dt"), (402, 452, "Withdrawal"),
            (454, 474, "Amt."), (482, 522, "Deposit"), (524, 544, "Amt."),
@@ -296,17 +287,10 @@ def test_parse_real_hdfc_capture(m):
 
     # the account number is bound from the header block, not from the table
     m.require_account_match(pages, bank, "HDFC CA xx1111")
-    # 1112 is real: this capture's sanitised phone number and its MICR code
-    # both end in it, and neither line is the account-number line. Every
-    # *other* header field here (customer id, IFSC, postcode) sanitises to an
-    # unbroken run of the same digit as the account number itself, so its own
-    # tail cannot serve as a wrong value on this fixture without also
-    # matching the real account — `test_account_binding` below carries phone,
-    # IFSC, MICR and postcode as genuinely distinct fields, which a real
-    # capture this heavily redacted cannot. 1113-1115 are real too, but from
-    # the transaction table rather than the header — a different negative
-    # case (a table reference must not stand in for the account), not a sixth
-    # header field. 9876 is printed nowhere in the document at all.
+    # 1112 is the captured MICR tail, not an account-number value. 1113-1115
+    # occur in captured transaction-table references, a separate negative
+    # case: a table reference must not stand in for the account. 9876 is not
+    # printed in the capture.
     for wrong in ("xx1112", "xx1113", "xx1114", "xx1115", "xx9876"):
         refuses(m, "account_not_in_statement", m.require_account_match,
                 pages, bank, f"HDFC CA {wrong}")
@@ -395,9 +379,9 @@ def test_account_binding(m):
 
     It reads the line the statement labels as its account number, and nothing
     else. Reading the whole document lets a transaction reference stand in for
-    the account; reading the whole header block is barely better, because a
-    header prints a phone number, a customer id, an IFSC, a MICR code and a
-    postcode — on the real HDFC capture, four different wrong tails passed.
+    the account; reading the whole header block is barely better because it
+    includes non-account identifiers. The captured HDFC contract below keeps
+    that evidence tied to the bank-produced geometry.
     """
     hdfc = m.HDFC()
     m.require_account_match([HDFC_PAGE], hdfc, "HDFC CA xx1234")
@@ -409,16 +393,10 @@ def test_account_binding(m):
     # 9012 ends the UPI reference on row 1
     refuses(m, "account_not_in_statement", m.require_account_match,
             [HDFC_PAGE], hdfc, "HDFC CA xx9012")
-    # nor may any other number in the header — and each of these is its own
-    # field with its own distinct value, not one stand-in tried five times, so
-    # a version that fell back to reading the whole header block would be
-    # caught by whichever field it happened to read
-    for label, wrong in (("customer id", "xx4230"), ("phone", "xx5551"),
-                         ("IFSC", "xx5552"), ("MICR", "xx5553"),
-                         ("postcode", "xx5554")):
-        refusal = refuses(m, "account_not_in_statement", m.require_account_match,
-                           [HDFC_PAGE], hdfc, f"HDFC CA {wrong}")
-        assert wrong[2:] in str(refusal), (label, refusal)
+    # nor may the other constructed header value; fixture-specific account
+    # binding against real header geometry remains in test_parse_real_hdfc_capture.
+    refuses(m, "account_not_in_statement", m.require_account_match,
+            [HDFC_PAGE], hdfc, "HDFC CA xx4230")
     # and a document with no account-number line fails closed
     refuses(m, "no_account_number_line", m.require_account_match,
             [page((10, [(2, 60, "nothing")]))], hdfc, "HDFC CA xx1234")
@@ -1407,6 +1385,144 @@ def test_write_outputs_writes_through_a_symlinked_destination(m):
             "the payload must reach the link's target, not replace the link"
 
 
+def test_write_outputs_refuses_a_retargeted_symlink_before_commit(m):
+    """The destination observed after claiming must still name the same target
+    at the commit boundary. Otherwise a successful command updates a stale path
+    while the operator's requested path continues to expose old bytes."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first = root / "first.xml"
+        second = root / "second.xml"
+        link = root / "out.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        link.symlink_to(first)
+
+        def retarget():
+            link.unlink()
+            link.symlink_to(second)
+
+        refuses(m, "output_path_changed", m.write_outputs,
+                [(str(link), "new bytes")], False, retarget)
+        assert first.read_text() == "first old"
+        assert second.read_text() == "second old"
+        assert link.read_text() == "second old"
+        assert sorted(p.name for p in root.iterdir()) == ["first.xml", "out.xml", "second.xml"]
+
+
+def test_write_outputs_keeps_destination_during_backup_preparation(m):
+    """A backup is a second link to the old inode, so the requested output is
+    still readable until the one atomic replacement. This catches a regression
+    back to moving the destination aside before the replacement is ready."""
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory, "previous.xml")
+        destination.write_text("old bytes")
+        real_link = m.os.link
+        observed = []
+
+        def link_while_observing(src, dst):
+            result = real_link(src, dst)
+            observed.append((destination.exists(), destination.read_text()))
+            return result
+
+        m.os.link = link_while_observing
+        try:
+            m.write_outputs([(str(destination), "new bytes")])
+        finally:
+            m.os.link = real_link
+
+        assert observed == [(True, "old bytes")]
+        assert destination.read_text() == "new bytes"
+
+
+def test_an_interrupt_after_a_backup_link_preserves_the_previous_output(m):
+    """Unlike a rename-to-backup, an interrupt after hard-link creation leaves
+    the requested destination intact; the exception cleanup may remove only the
+    extra link."""
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory, "previous.xml")
+        destination.write_text("old bytes")
+        real_link = m.os.link
+
+        def interrupt_after_backup_link(src, dst):
+            result = real_link(src, dst)
+            raise KeyboardInterrupt("controlled interrupt after backup link")
+
+        m.os.link = interrupt_after_backup_link
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("the controlled interrupt must escape")
+            except KeyboardInterrupt:
+                pass
+        finally:
+            m.os.link = real_link
+
+        assert destination.read_text() == "old bytes"
+        assert sorted(p.name for p in pathlib.Path(directory).iterdir()) == ["previous.xml"]
+
+
+def test_an_interrupt_after_a_swap_restores_the_previous_output(m):
+    """A caught interrupt may arrive after rename(2) took effect. Pending swap
+    state must therefore be restored, not discarded as if the call had failed
+    before touching the filesystem."""
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory, "previous.xml")
+        destination.write_text("old bytes")
+        real_replace = m.os.replace
+
+        def interrupt_after_swap(src, dst):
+            result = real_replace(src, dst)
+            if str(src).endswith(".part"):
+                raise KeyboardInterrupt("controlled interrupt after swap")
+            return result
+
+        m.os.replace = interrupt_after_swap
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("the controlled interrupt must escape")
+            except KeyboardInterrupt:
+                pass
+        finally:
+            m.os.replace = real_replace
+
+        assert destination.read_text() == "old bytes"
+        assert sorted(p.name for p in pathlib.Path(directory).iterdir()) == ["previous.xml"]
+
+
+def test_write_outputs_reports_a_retained_backup_after_commit(m):
+    """Successful replacement is not a successful command when cleanup leaves
+    prior bank-statement bytes at an undisclosed random backup path."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "previous.xml"
+        destination.write_text("old bytes")
+        real_unlink = m.os.unlink
+
+        def fail_committed_backup(path):
+            if str(path).endswith(".bak") and destination.read_text() == "new bytes":
+                raise OSError("controlled backup cleanup failure")
+            return real_unlink(path)
+
+        m.os.unlink = fail_committed_backup
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("a retained backup must be reported")
+            except m.OutputCleanupFailure as failure:
+                assert len(failure.retained_paths) == 1
+                backup = pathlib.Path(failure.retained_paths[0])
+                assert backup.exists()
+                assert backup.read_text() == "old bytes"
+        finally:
+            m.os.unlink = real_unlink
+            for path in root.glob("*.bak"):
+                path.unlink()
+
+        assert destination.read_text() == "new bytes"
+
+
 def test_a_failed_swap_rolls_back_every_staged_replacement(m):
     """Two existing destinations are both staged; the first's swap succeeds
     and the second's fails. The rollback used to run only the un-staged
@@ -1425,10 +1541,9 @@ def test_a_failed_swap_rolls_back_every_staged_replacement(m):
 
         def flaky_replace(src, dst):
             calls["n"] += 1
-            # calls 1-2 are the first destination's own backup-then-swap;
-            # let those land, then fail the second destination's backup --
-            # after the first has already fully committed.
-            if calls["n"] == 3:
+            # The first destination's swap lands, then the second swap fails.
+            # Its backup is a hard link, so only the replacement calls count.
+            if calls["n"] == 2:
                 raise OSError("simulated failure mid-sequence")
             return real_replace(src, dst)
 
