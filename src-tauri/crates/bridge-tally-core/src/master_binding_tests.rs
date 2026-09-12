@@ -2527,6 +2527,68 @@ fn a_single_withheld_identifier_family_has_an_exact_count() {
 }
 
 #[test]
+fn a_single_withheld_family_counts_an_outside_name_candidate_exactly() {
+    let mut names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Shared Party {index:03} (5550007777)"))
+        .collect::<Vec<_>>();
+    names.push("Zeta Supplier".to_string());
+    let family = MAX_CANDIDATES_PER_ENTITY + 5;
+    let catalog = MasterCatalog::new(MasterClass::StockItem, &names).expect("valid");
+    let entity = SourceEntity::with_identifier_hints(0, "Zeta", ["5550007777"]).expect("valid");
+
+    let binding = bound(&catalog, &[entity])
+        .entities()
+        .first()
+        .cloned()
+        .expect("one entity in, one binding out");
+    let unresolved = binding.unresolved().expect("identifier conflict");
+    assert_eq!(unresolved.candidates.found(), family + 1);
+    assert!(!unresolved.candidates.count_is_lower_bound());
+}
+
+#[test]
+fn a_name_candidate_inside_one_withheld_family_is_not_double_counted() {
+    let names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Shared Party {index:03} (5550007777)"))
+        .collect::<Vec<_>>();
+    let family = names.len();
+    let catalog = MasterCatalog::new(MasterClass::StockItem, &names).expect("valid");
+    let entity =
+        SourceEntity::with_identifier_hints(0, "shared party 00 (5550007777)", []).expect("valid");
+
+    let binding = bound(&catalog, &[entity])
+        .entities()
+        .first()
+        .cloned()
+        .expect("one entity in, one binding out");
+    let unresolved = binding.unresolved().expect("near miss");
+    assert_eq!(unresolved.candidates.found(), family);
+    assert!(!unresolved.candidates.count_is_lower_bound());
+}
+
+#[test]
+fn an_unlisted_name_family_keeps_a_withheld_count_as_a_lower_bound() {
+    let mut names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Shared Party {index:03} (5550007777)"))
+        .collect::<Vec<_>>();
+    names.extend(
+        (0..MAX_CANDIDATES_PER_ENTITY + 5).map(|index| format!("Zeta Supplier {index:02}")),
+    );
+    let catalog = MasterCatalog::new(MasterClass::StockItem, &names).expect("valid");
+    let entity =
+        SourceEntity::with_identifier_hints(0, "Zeta Supplier", ["5550007777"]).expect("valid");
+
+    let binding = bound(&catalog, &[entity])
+        .entities()
+        .first()
+        .cloned()
+        .expect("one entity in, one binding out");
+    let unresolved = binding.unresolved().expect("identifier conflict");
+    assert_eq!(unresolved.candidates.listing(), "withheld");
+    assert!(unresolved.candidates.count_is_lower_bound());
+}
+
+#[test]
 fn disjoint_withheld_identifier_families_are_marked_as_a_lower_bound() {
     let mut names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
         .map(|index| format!("Alpha Party {index:03} (5550007777)"))

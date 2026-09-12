@@ -1001,13 +1001,11 @@ struct IdentifierEvidence<'a> {
     exact: Option<usize>,
     /// Every master the entity's identifiers reached.
     matches: &'a BTreeSet<usize>,
-    /// A **lower bound** on how many masters share this entity's identifiers,
-    /// counted without expanding the families that were skipped: the largest
-    /// skipped family, plus the listed masters that are not in it. Present so a
-    /// withheld listing can still say how many masters are involved.
-    withheld_holders: usize,
-    /// Whether multiple distinct unmaterialized families leave their union
-    /// uncertain. A single skipped family plus materialized matches is exact.
+    /// The largest identifier family that was deliberately not materialized.
+    /// Its members remain available for bounded membership checks when the
+    /// candidate union is counted.
+    largest_withheld: Option<&'a [usize]>,
+    /// Whether more than one distinct skipped family may overlap the largest.
     withheld_count_is_lower_bound: bool,
 }
 
@@ -1040,11 +1038,6 @@ fn bind_one(
     let mut identifier_matches = BTreeSet::new();
     let mut identifier_conflict = false;
     let mut large_holder_points_elsewhere = false;
-    // How many masters a skipped family actually held. The set is not built,
-    // but the *count* is the one thing a reader still needs: without it a
-    // withheld family reported `found() == 0` and `listing: "none"`, telling
-    // the operator nothing shares the identifier when hundreds do.
-    let mut withheld_holders = 0_usize;
     // Keep references rather than cloning large holder vectors. Distinct
     // skipped families are the only source of unknown overlap in this union.
     let mut withheld_families: Vec<&Vec<usize>> = Vec::new();
@@ -1062,11 +1055,13 @@ fn bind_one(
             // before the candidate memo is even consulted.
             if holders.len() > MAX_CANDIDATES_PER_ENTITY {
                 identifier_conflict = true;
-                if !withheld_families.iter().any(|family| *family == holders) {
+                if !withheld_families
+                    .iter()
+                    .any(|family| std::ptr::eq(*family, holders))
+                {
                     withheld_families.push(holders);
                 }
-                if holders.len() > withheld_holders {
-                    withheld_holders = holders.len();
+                if largest_withheld.is_none_or(|family| holders.len() > family.len()) {
                     largest_withheld = Some(holders);
                 }
                 // Skipping the expansion must not skip the *question* the
@@ -1100,36 +1095,13 @@ fn bind_one(
         }
     }
 
-    // One family's size is not the size of their union. An entity carrying two
-    // identifiers — one held by thirty masters and skipped, one reaching a
-    // thirty-first — must count the fully materialized master too.
-    //
-    // The listed masters that are *not* in the skipped family are disjoint from
-    // it, so adding them is sound and costs nothing but a lookup: the union is
-    // never built, which is the whole point of skipping. One skipped family is
-    // therefore exact; two distinct skipped families may overlap, so they are
-    // counted conservatively as the larger alone. `Candidates::Withheld`
-    // records that no individual names were listed; its separate precision
-    // flag records only that latter lower-bound case.
-    // Over-counting
-    // would be worse than under-counting here: two identifiers can be held by
-    // overlapping families, so summing their sizes would state a number of
-    // masters that do not exist.
-    let withheld_holders = match largest_withheld {
-        Some(family) => {
-            // `by_identifier` is filled by pushing entry indices in ascending
-            // order, so each holder list is sorted and a membership test is a
-            // bisection rather than a scan of up to a whole catalog.
-            debug_assert!(family.is_sorted(), "holder lists are built in order");
-            withheld_holders
-                + identifier_matches
-                    .iter()
-                    .filter(|index| family.binary_search(index).is_err())
-                    .count()
-        }
-        None => withheld_holders,
-    };
+    // A single skipped family can be counted exactly once the bounded
+    // candidate set is known. Multiple distinct skipped families may overlap;
+    // retain the larger family as the lower-bound floor and mark the count
+    // uncertain without allocating their union.
+    let largest_withheld = largest_withheld.map(Vec::as_slice);
     let withheld_count_is_lower_bound = withheld_families.len() > 1;
+    debug_assert!(withheld_families.len() <= MAX_IDENTIFIERS_PER_NAME);
 
     // An identifier shared by two masters, and an entity whose identifiers
     // reach two masters, are the same refusal: the operator has a naming
@@ -1168,7 +1140,7 @@ fn bind_one(
             IdentifierEvidence {
                 exact,
                 matches: &identifier_matches,
-                withheld_holders,
+                largest_withheld,
                 withheld_count_is_lower_bound,
             },
             budget,
@@ -1190,7 +1162,7 @@ fn bind_one(
             IdentifierEvidence {
                 exact,
                 matches: &identifier_matches,
-                withheld_holders,
+                largest_withheld,
                 withheld_count_is_lower_bound,
             },
             budget,
@@ -1232,7 +1204,7 @@ fn bind_one(
                 IdentifierEvidence {
                     exact,
                     matches: &identifier_matches,
-                    withheld_holders,
+                    largest_withheld,
                     withheld_count_is_lower_bound,
                 },
                 budget,
@@ -1245,7 +1217,7 @@ fn bind_one(
                 IdentifierEvidence {
                     exact,
                     matches: &identifier_matches,
-                    withheld_holders,
+                    largest_withheld,
                     withheld_count_is_lower_bound,
                 },
                 budget,
@@ -1266,7 +1238,8 @@ fn bind_one(
                     entity,
                     reason,
                     candidates,
-                    masters_found.max(withheld_holders),
+                    masters_found,
+                    largest_withheld,
                     withheld_count_is_lower_bound,
                     budget,
                 )
@@ -1292,7 +1265,7 @@ fn unresolved_status(
     let IdentifierEvidence {
         exact,
         matches: identifier_matches,
-        withheld_holders,
+        largest_withheld,
         withheld_count_is_lower_bound,
     } = evidence;
     let (mut candidates, masters_found) =
@@ -1311,7 +1284,8 @@ fn unresolved_status(
         entity,
         reason,
         candidates,
-        masters_found.max(withheld_holders),
+        masters_found,
+        largest_withheld,
         withheld_count_is_lower_bound,
         budget,
     )
@@ -1323,17 +1297,24 @@ fn unresolved_from(
     reason: UnboundReason,
     candidates: Vec<(usize, CandidateRule)>,
     masters_found: usize,
-    count_is_lower_bound: bool,
+    largest_withheld: Option<&[usize]>,
+    withheld_count_is_lower_bound: bool,
     budget: &mut usize,
 ) -> BindingStatus {
     let mut ordered = candidates;
     ordered.sort_by(|left, right| candidate_order(catalog, left, right));
+    let (found, count_is_lower_bound) = candidate_count(
+        masters_found,
+        &ordered,
+        largest_withheld,
+        withheld_count_is_lower_bound,
+    );
     // The variant is derived here, in one place, from the same facts that chose
     // the reason — so "empty" can never mean something the variant does not say.
     let candidates = if ordered.is_empty() {
-        if masters_found > 0 {
+        if found > 0 {
             Candidates::Withheld {
-                found: masters_found,
+                found,
                 count_is_lower_bound,
             }
         } else {
@@ -1353,7 +1334,7 @@ fn unresolved_from(
                 })
             })
             .collect::<Vec<_>>();
-        let found = masters_found.max(capped);
+        let found = found.max(capped);
         if listed.len() < found {
             Candidates::Truncated {
                 listed,
@@ -1373,6 +1354,33 @@ fn unresolved_from(
         BindingStatus::Unmatched(unresolved)
     } else {
         BindingStatus::Ambiguous(unresolved)
+    }
+}
+
+/// Count a materialized candidate set against one borrowed withheld family.
+/// The candidate vector is capped, so `masters_found > candidates.len()` means
+/// there are additional unmaterialized name candidates whose overlap with the
+/// large identifier family is unknown. No large family is copied or walked.
+fn candidate_count(
+    masters_found: usize,
+    candidates: &[(usize, CandidateRule)],
+    largest_withheld: Option<&[usize]>,
+    withheld_count_is_lower_bound: bool,
+) -> (usize, bool) {
+    let Some(family) = largest_withheld else {
+        return (masters_found, false);
+    };
+    debug_assert!(family.is_sorted(), "holder lists are built in order");
+    let outside_family = candidates
+        .iter()
+        .filter(|(index, _)| family.binary_search(index).is_err())
+        .count();
+    let known_union = family.len() + outside_family;
+    let uncertain = withheld_count_is_lower_bound || masters_found > candidates.len();
+    if uncertain {
+        (known_union.max(masters_found), true)
+    } else {
+        (known_union, false)
     }
 }
 
