@@ -1402,10 +1402,9 @@ habits, not against real operator input.
 
 ### 9.5 Identity after write
 
-**VERIFIED.** `LASTMID` is **0** on successful master creates — unusable for master identity;
-read masters back by name. `LASTVCHID` is populated for vouchers and usable,
-subject to a foreign-writer cross-check. `LASTVCHID` also accepts non-numeric text without
-error when parsed back, so validate it.
+**VERIFIED.** `LASTMID` is **0** on successful master creates, so this counter does not
+identify the created master. `LASTVCHID` is populated for vouchers. Non-numeric
+`LASTVCHID` text is also accepted without error when parsed back.
 
 For the implementation's readback identity policy, see `IMPLEMENTATION_GUIDE.md` §3.6
 and `PROMPT_PLAYBOOK.md` Phase 4 step 4. Their prescriptions are separate from this observation.
