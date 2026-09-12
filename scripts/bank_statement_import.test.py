@@ -2702,7 +2702,7 @@ def test_committed_new_output_close_failure_is_not_a_retained_backup(m):
                 m.write_outputs([(str(destination), "new bytes")])
                 raise AssertionError("the controlled close failure must escape")
             except m.OutputDescriptorCloseFailure as failure:
-                assert failure.output_paths == (str(destination),)
+                assert failure.output_paths == (str(destination.resolve()),)
                 assert "prior output retained" not in str(failure)
         finally:
             m._owned_path, m.os.close = real_owned, real_close
@@ -2733,7 +2733,6 @@ def test_new_output_parent_retarget_refuses_and_preserves_foreign_path(m):
         destination = root / "linked" / "output.xml"
         (root / "linked").symlink_to(original, target_is_directory=True)
         def retarget_parent():
-            destination.unlink()
             (root / "linked").unlink()
             (root / "linked").symlink_to(foreign, target_is_directory=True)
         refuses(m, "output_path_changed", m.write_outputs,
@@ -2771,6 +2770,54 @@ def test_new_output_claim_inspection_failure_cleans_owned_path(m):
         finally:
             m._file_identity = real_identity
         assert not destination.exists()
+
+
+def test_new_output_parent_retarget_during_open_cleans_actual_created_path(m):
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        original, foreign = root / "original", root / "foreign"
+        original.mkdir()
+        foreign.mkdir()
+        link = root / "linked"
+        link.symlink_to(original, target_is_directory=True)
+        foreign_destination = foreign / "output.xml"
+        foreign_destination.write_text("foreign bytes")
+        real_open = m._open_private
+        def retarget_open(path, accept_inherited):
+            link.unlink()
+            link.symlink_to(foreign, target_is_directory=True)
+            return real_open(path, accept_inherited)
+        m._open_private = retarget_open
+        try:
+            refuses(m, "output_path_changed", m.write_outputs,
+                    [(str(link / "output.xml"), "new bytes")])
+        finally:
+            m._open_private = real_open
+        assert not (original / "output.xml").exists()
+        assert foreign_destination.read_text() == "foreign bytes"
+
+
+def test_new_output_changed_during_later_swap_rolls_back_existing_output(m):
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        fresh, existing = root / "fresh.xml", root / "existing.xml"
+        existing.write_text("old bytes")
+        real_replace = m.os.replace
+        def replace_then_unlink(source, destination):
+            result = real_replace(source, destination)
+            if pathlib.Path(destination).resolve() == existing.resolve() and str(source).endswith(".part"):
+                fresh.unlink()
+            return result
+        m.os.replace = replace_then_unlink
+        try:
+            refuses(m, "output_path_changed", m.write_outputs,
+                    [(str(fresh), "new fresh"), (str(existing), "new existing")])
+        finally:
+            m.os.replace = real_replace
+        assert not fresh.exists()
+        assert existing.read_text() == "old bytes"
+        assert list(root.iterdir()) == [existing]
+
 
 def main():
     module = load()

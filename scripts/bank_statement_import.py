@@ -1635,12 +1635,12 @@ def _close_owned_path(record, failures):
         try:
             cleanup_path = record.get("cleanup_path", record["path"])
             if _entry_identity(cleanup_path) == record["identity"]:
-                failures.append(record["path"])
+                failures.append(cleanup_path)
         except FileNotFoundError:
             pass
         except OSError:
-            if os.path.lexists(record.get("cleanup_path", record["path"])):
-                failures.append(record["path"])
+            if os.path.lexists(cleanup_path):
+                failures.append(cleanup_path)
 
 
 def _cleanup_owned_path(record, failures):
@@ -1990,7 +1990,7 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             else:
                 supplied_path = path
                 canonical_path = str(pathlib.Path(supplied_path).resolve())
-                handle = _open_private(path, accept_inherited)
+                handle = _open_private(canonical_path, accept_inherited)
                 # Keep cleanup on the canonical inode path captured before the
                 # open. The supplied spelling remains an authority that must
                 # still resolve to that same inode at commit time.
@@ -2093,7 +2093,7 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                     "output_path_changed",
                     f"{supplied_path} changed before commit; no output was committed",
                 )
-        # The final replacement is the boundary between rollback and committed
+        # Final path validation is the boundary between rollback and committed
         # cleanup. Keep it in this same handler so an interrupt before cleanup
         # starts cannot skip both recovery paths.
         committed = True
