@@ -616,10 +616,15 @@ Implement — write core (masters):
    existing `foo`, `accepts(FOO, foo)` is false — so reusing it as the
    detector misses exactly the collision it exists to catch. The
    detector folds SYMMETRICALLY and deliberately over-wide:
-   case-insensitive both ways; hyphen and space interchangeable both
-   ways; leading and trailing whitespace ignored; internal whitespace
-   runs collapsed; **and NFC/NFD canonical equivalents treated as
-   colliding.** That last row matters most and is the one most easily
+   case-insensitive both ways; hyphen, **slash** and space
+   interchangeable both ways; leading and trailing whitespace ignored;
+   internal whitespace runs collapsed; **and NFC/NFD canonical
+   equivalents treated as colliding.** Slash is load-bearing and easy to
+   omit because §9.4b never sent one: §9.4d measures a **slash supplied
+   against a space-bearing master** as MATCHED on licensed 7.1, so a
+   requested `A/B` reaches an existing `A B` — and a detector folding
+   only hyphen and space lets that pass to a `Create` that overwrites
+   it. That last row matters most and is the one most easily
    left out: §9.4b's exact-codepoint result came from an **EDU**
    instance, so a licensed SKU that folds canonical equivalence is not
    excluded — and an NFD request beside an existing NFC master would
@@ -651,7 +656,17 @@ Implement — write core (masters):
    posted against. That is observed write behaviour on the SKU this
    project writes to, for **ledgers**.
    So: for **ledgers on licensed 7.1**, match under §9.4d's measured
-   rows. For **every other master type** — stock items, groups, voucher
+   rows — **and each row is DIRECTIONAL exactly as written.** The left
+   column is what the integration supplies; the right is what the master
+   carries. `a slash where the master has a space` is MATCHED; the
+   reverse — supplying a space against a master carrying `/` — has no
+   row and is **UNVERIFIED**, so the binder must not accept it. Hyphen
+   is the exception that proves the shape: §9.4d carries *both*
+   directions for it as separate rows, which is why both may be bound.
+   **The reverse of a measured row is not a measured row.** Reading the
+   table as a set of equivalences rather than a set of directed
+   observations is how an unmeasured direction gets bound.
+   For **every other master type** — stock items, groups, voucher
    types — §9.4d measured nothing, so match on **exact codepoints** and
    let a case or separator difference fail loudly.
    **A compatibility result cannot widen this.** `compatibility/README`
