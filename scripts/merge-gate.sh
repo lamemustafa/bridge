@@ -619,11 +619,13 @@ if [ "$files_status" -ne 0 ] || ! jq -e '
       type == "object" and
       ((.filename | type) == "string") and (.filename | length > 0) and (.filename | test("[\u0000-\u001F\u007F]") | not) and
       ((.status | type) == "string") and (.status | length > 0) and
+      ((.previous_filename? // null) == null or (((.previous_filename | type) == "string") and ((.previous_filename | length) > 0) and ((.previous_filename | test("[\u0000-\u001F\u007F]")) | not))) and
       ((.additions | type) == "number") and (.additions | floor == . and . >= 0) and
       ((.deletions | type) == "number") and (.deletions | floor == . and . >= 0))) or
    all(.[]; type == "object" and
       ((.filename | type) == "string") and (.filename | length > 0) and (.filename | test("[\u0000-\u001F\u007F]") | not) and
       ((.status | type) == "string") and (.status | length > 0) and
+      ((.previous_filename? // null) == null or (((.previous_filename | type) == "string") and ((.previous_filename | length) > 0) and ((.previous_filename | test("[\u0000-\u001F\u007F]")) | not))) and
       ((.additions | type) == "number") and (.additions | floor == . and . >= 0) and
       ((.deletions | type) == "number") and (.deletions | floor == . and . >= 0)))
 ' <<<"$files" >/dev/null 2>&1; then
@@ -646,7 +648,15 @@ fi
 # Existing workflow changes require the rollback and migration-compatibility
 # notes mandated by the project review flow. The complete REST file set, rather
 # than the rendered diff, is the authority for this conditional requirement.
-if [ -s "$changed_records" ] && awk -F '\t' '$2 != "removed" && $1 ~ /^\.github\/workflows\//' "$changed_records" | grep -q .; then
+workflow_change=0
+if [ -n "$files_status" ] && [ "$files_status" -eq 0 ]; then
+  workflow_change=$(jq -r '
+    (if all(.[]; type == "array") then flatten else . end) |
+    any(.[]; (.filename | startswith(".github/workflows/")) or
+              ((.previous_filename? // "") | startswith(".github/workflows/")))
+  ' <<<"$files")
+fi
+if [ "$workflow_change" = "true" ]; then
   if ! body_section_has_content "$prbody" 'rollback notes|rollback'; then
     bad "workflow change lacks non-empty rollback notes"
   fi
