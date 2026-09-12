@@ -14,8 +14,8 @@ use bridge_tally_transport::TallyTransportError;
 
 use super::{
     agent_read_request::AgentReadRequest,
-    connection::NativeReportPairDrift,
-    runtime::{BracketStageTransportFailure, CompanyIdentityBracketError, TallyRuntime},
+    connection::{NativeReportPairDrift, PairedNativeReportResponseFailure},
+    runtime::{CompanyIdentityBracketError, TallyRuntime},
     TallyConfig, VerifiedCompanyIdentity,
 };
 
@@ -118,21 +118,22 @@ pub(crate) async fn read_standard_ledger_catalog(
 }
 
 fn classify_runtime_catalogue_error(error: anyhow::Error) -> StandardLedgerCatalogReadError {
-    // A `BracketStageTransportFailure` marks a transport fault from the identity
-    // bracket around this read, not from the catalogue request itself -- see that
-    // type. It must be caught before the variant-only split below, or a bracket
-    // failure would inherit `BoundsViolation`/`MalformedResponse` and claim the
-    // existing-ledger list is bad when the catalogue request never ran, or already
-    // succeeded before the closing bracket failed.
-    if error
-        .chain()
-        .any(|cause| cause.is::<BracketStageTransportFailure>())
-    {
-        return StandardLedgerCatalogReadError::Transport;
-    }
+    // The bounds/malformed split below applies only when a
+    // `PairedNativeReportResponseFailure` marks the error chain -- i.e. the
+    // failure came from one of the two POST responses the paired catalogue
+    // request itself makes. Everything untagged -- the identity bracket
+    // around this read, both health checks between and after the pair, and
+    // any stage added later -- falls through to the conservative `Transport`
+    // code at the bottom of this function. This is inverted from tagging
+    // every non-response stage on purpose: enumerating stages to exclude is
+    // unbounded, since there is always another stage, while a positive
+    // marker on the one response actually being classified means a stage
+    // added later inherits the safe code automatically instead of silently
+    // inheriting a confidently wrong one.
     if let Some(transport_error) = error
         .chain()
-        .find_map(|cause| cause.downcast_ref::<TallyTransportError>())
+        .find_map(|cause| cause.downcast_ref::<PairedNativeReportResponseFailure>())
+        .and_then(PairedNativeReportResponseFailure::transport_error)
     {
         return classify_transport_error(transport_error);
     }
@@ -261,71 +262,76 @@ mod tests {
         }
 
         // A genuine request-side failure -- Tally was never reached at all -- must still
-        // surface as the transport code end to end, through the anyhow chain.
+        // surface as the transport code end to end, through the anyhow chain, whether or
+        // not it is tagged as a paired-report response (see the marker-gating test below
+        // for the untagged/tagged response-side contrast this end-to-end path exists for).
         assert_eq!(
             classify_runtime_catalogue_error(anyhow::Error::new(
                 TallyTransportError::RequestFailed
             )),
             StandardLedgerCatalogReadError::Transport
         );
-        assert_eq!(
-            classify_runtime_catalogue_error(anyhow::Error::new(
-                TallyTransportError::ResponseTooLarge {
-                    limit: 1,
-                    declared_by_peer: true,
-                }
-            )),
-            StandardLedgerCatalogReadError::BoundsViolation
-        );
-        assert_eq!(
-            classify_runtime_catalogue_error(anyhow::Error::new(
-                TallyTransportError::InvalidEncoding { code: "test" }
-            )),
-            StandardLedgerCatalogReadError::MalformedResponse
-        );
     }
 
-    /// The whole point of `BracketStageTransportFailure`: the identical
-    /// `TallyTransportError` variant must classify differently depending on which
-    /// stage produced it. A bracket failure proves nothing about the catalogue
-    /// response it never received (or received fine, before the closing bracket
-    /// failed), so it must not inherit the catalogue request's bounds/malformed
-    /// split -- see `BracketStageTransportFailure` and `classify_runtime_catalogue_error`.
+    /// The whole point of `PairedNativeReportResponseFailure`: the identical
+    /// `TallyTransportError` variant must classify differently depending on whether it
+    /// is marked as a paired native-report response failure. An untagged transport error
+    /// -- what a bracket read or one of the two health checks around the pair now
+    /// produces -- proves nothing about the shape of a catalogue response, since it
+    /// either predates that response or never touched it, so it must not inherit the
+    /// bounds/malformed split; only the marker earns that split. See
+    /// `PairedNativeReportResponseFailure` and `classify_runtime_catalogue_error`.
     #[test]
-    fn bracket_stage_transport_failures_stay_generic_while_catalogue_request_failures_split() {
+    fn catalogue_response_marker_gates_the_bounds_malformed_split() {
         for variant in [
             TallyTransportError::ResponseTooLarge {
                 limit: 1,
                 declared_by_peer: true,
             },
             TallyTransportError::InvalidEncoding { code: "test" },
+            TallyTransportError::UnsupportedContentEncoding,
         ] {
-            let bracket_failure =
-                BracketStageTransportFailure::new(anyhow::Error::new(variant.clone()));
+            // Untagged: what a bracket read or a health-check failure now looks like.
+            // Must stay the generic transport code even though the variant matches a
+            // response-side split further down.
             assert_eq!(
-                classify_runtime_catalogue_error(anyhow::Error::new(bracket_failure)),
+                classify_runtime_catalogue_error(anyhow::Error::new(variant.clone())),
                 StandardLedgerCatalogReadError::Transport,
-                "expected a bracket-stage {variant:?} to stay the generic transport code"
+                "expected an untagged {variant:?} to stay the generic transport code"
             );
 
-            // The same variant, raised by the catalogue request itself rather than the
-            // identity bracket, still gets the finer split.
+            // The same variant, tagged as having come from a paired-report response,
+            // gets the finer split.
             let expected = match variant {
                 TallyTransportError::ResponseTooLarge { .. } => {
                     StandardLedgerCatalogReadError::BoundsViolation
                 }
-                TallyTransportError::InvalidEncoding { .. } => {
+                TallyTransportError::InvalidEncoding { .. }
+                | TallyTransportError::UnsupportedContentEncoding => {
                     StandardLedgerCatalogReadError::MalformedResponse
                 }
                 _ => unreachable!(),
             };
             let description = format!("{variant:?}");
+            let tagged = PairedNativeReportResponseFailure::new(anyhow::Error::new(variant));
             assert_eq!(
-                classify_runtime_catalogue_error(anyhow::Error::new(variant)),
+                classify_runtime_catalogue_error(anyhow::Error::new(tagged)),
                 expected,
-                "expected a catalogue-request {description} to keep its specific code"
+                "expected a paired-report-tagged {description} to get its specific code"
             );
         }
+
+        // A genuine request-side variant, tagged as though it were a paired-report
+        // response, must still surface as the generic transport code: the marker only
+        // gates the split, and `classify_transport_error` itself keeps request-side
+        // variants at `Transport` regardless of tagging.
+        let tagged_request_failure = PairedNativeReportResponseFailure::new(anyhow::Error::new(
+            TallyTransportError::RequestFailed,
+        ));
+        assert_eq!(
+            classify_runtime_catalogue_error(anyhow::Error::new(tagged_request_failure)),
+            StandardLedgerCatalogReadError::Transport
+        );
     }
 
     #[test]

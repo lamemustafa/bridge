@@ -191,6 +191,80 @@ pub(crate) enum LedgerOpeningCoverageRead {
 #[error("Tally native report changed between paired reads")]
 pub(crate) struct NativeReportPairDrift;
 
+/// Tags a failure as coming from one of the two POST responses inside
+/// `fetch_native_report_paired_with_evidence` -- the paired native report
+/// request itself, never the health checks bracketing it or any stage
+/// outside this function. A catalogue read's classifier applies its
+/// bounds/malformed split only when this marker is present in the error
+/// chain; everything untagged -- the identity bracket, both health checks,
+/// and any stage added later -- falls back to the conservative `Transport`
+/// code by default. That inversion is deliberate: tagging every non-response
+/// stage is unbounded (there is always another stage to remember), while a
+/// positive marker on the one response that is actually being classified
+/// means a stage added later inherits the safe code automatically instead of
+/// silently inheriting a confidently wrong one.
+///
+/// Deliberately `transparent`: `tally_runtime_command_error` classifies some
+/// failures by substring-matching `error.to_string()`, which is the *top-level*
+/// message, so any wrapper with a message of its own silently rewrites how
+/// every reader's errors classify. A message naming this stage would have
+/// contained "report", whose "port" substring routes straight to
+/// `endpoint_configuration_invalid` -- telling operators their endpoint is
+/// misconfigured when a connection merely dropped. Forwarding Display leaves
+/// every existing message byte-identical and adds only a type to downcast to.
+#[derive(Debug)]
+pub(crate) struct PairedNativeReportResponseFailure(anyhow::Error);
+
+// Display and Error are written out rather than derived because this marker has
+// to be invisible in two different ways at once, and no single derive gives
+// both.
+//
+// Display forwards: `tally_runtime_command_error` classifies some failures by
+// substring-matching `error.to_string()`, which is the *top-level* message, so a
+// marker with a message of its own silently rewrites how every reader's errors
+// classify. A message naming this stage would have contained "report", whose
+// "port" substring routes to `endpoint_configuration_invalid` -- blaming the
+// endpoint configuration for a dropped connection.
+//
+// `source` returns the wrapped error's own head rather than delegating to its
+// source. `#[error(transparent)]` would delegate, which skips the head and hides
+// the `TallyTransportError` from everything that downcasts while walking the
+// chain. Returning the head keeps the chain exactly as it was, with this marker
+// inserted ahead of it rather than replacing anything.
+impl std::fmt::Display for PairedNativeReportResponseFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, formatter)
+    }
+}
+
+impl std::error::Error for PairedNativeReportResponseFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.0.as_ref())
+    }
+}
+
+impl PairedNativeReportResponseFailure {
+    /// Only constructor: forces every paired-report response failure through
+    /// this one marking point rather than each call site improvising its own
+    /// wrap. `pub(crate)` so tests outside this module can construct a
+    /// tagged failure directly rather than driving a real request.
+    pub(crate) fn new(error: anyhow::Error) -> Self {
+        Self(error)
+    }
+
+    /// The `TallyTransportError` behind this marker, if any. Looked up
+    /// through the wrapped `anyhow::Error`'s own chain rather than the outer
+    /// error's chain: nesting an `anyhow::Error` behind `#[source]` does not
+    /// expose the wrapped error as its own link when walked through
+    /// `std::error::Error::source()`, only through `anyhow::Error::chain()`
+    /// on that inner value directly.
+    pub(crate) fn transport_error(&self) -> Option<&TallyTransportError> {
+        self.0
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<TallyTransportError>())
+    }
+}
+
 /// Outcome of a paired native-report read. `Drifted` means the two reads
 /// disagreed, so the book moved between them and no total may be reported.
 pub(crate) enum NativePairedRead {
@@ -1355,7 +1429,8 @@ impl TallyClient {
     ) -> anyhow::Result<(String, usize, String)> {
         let (first, first_bytes, first_sha256) = self
             .post_xml_with_encoded_bytes(request_xml.clone())
-            .await?;
+            .await
+            .map_err(|error| anyhow::Error::new(PairedNativeReportResponseFailure::new(error)))?;
         let mut evidence =
             RuntimeReadEvidence::single(&request_xml, first_sha256.clone(), first_bytes);
         let result = async {
@@ -1365,7 +1440,10 @@ impl TallyClient {
                 .context("Tally health check between paired native report reads failed")?;
             let (second, second_bytes, second_sha256) = self
                 .post_xml_with_encoded_bytes(request_xml.clone())
-                .await?;
+                .await
+                .map_err(|error| {
+                    anyhow::Error::new(PairedNativeReportResponseFailure::new(error))
+                })?;
             if first_bytes == second_bytes && first_sha256 == second_sha256 {
                 evidence.bytes = evidence.bytes.saturating_add(second_bytes);
             } else {
