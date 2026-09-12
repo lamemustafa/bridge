@@ -101,9 +101,11 @@ date and amount, the pair this contract says collides. A proposal under a
 `Manual` declaration that supplies no voucher number
 (`ManualNumberNotSupplied`) has withheld the one key that could decide. And a
 proposal carrying a `REMOTEID` the window never read
-(`RemoteIdEvidenceUnavailable`) had its strongest key skipped. None of these
-blocks `Present` — identity still settles where it can; only the *absence*
-claim is withheld, and supplying the missing field is what makes it available.
+(`RemoteIdEvidenceUnavailable`) had its strongest key skipped. Missing party
+and number cases do not block `Present` when another identity settles it.
+Unread `REMOTEID` does: a manual-number match becomes `PossiblyPresent`, because
+the two identity channels could contradict. In every case the *absence* claim
+is withheld; supplying the missing evidence is what makes it available.
 
 Two binding outcomes withhold `Absent` outright: `NoDiscriminatingCandidate`
 (a name family that is deliberately not listed) and a truncated candidate list.
@@ -444,11 +446,12 @@ human-approved batch — this ADR does not move.
   copies of every bound in the tree, and the copy that drifts is the one nobody
   is looking at. The helper lives beside the existing validator so the next
   tool with a nested schema reuses it rather than restating anything.
-- Voucher-type names fold through `master_binding::comparison_key`. Voucher
-  numbers have a separate, deliberately narrower key: NFC plus outer transport
-  whitespace trimming only. Internal whitespace, case, and punctuation remain
-  content until voucher-number evidence establishes an equivalence; a broader
-  master-name fold could manufacture `Present` for two distinct invoices.
+- Voucher-type names preserve their validated spelling exactly: they are Tally
+  identity, not master names. Voucher numbers have a separate, deliberately
+  narrower key: outer transport whitespace trimming only. Internal whitespace,
+  case, punctuation, and Unicode form remain content until voucher-number
+  evidence establishes an equivalence; a broader fold could manufacture
+  `Present` for two distinct invoices.
 - **The desktop source-draft flow is deliberately not wired yet, and the reason
   is a shape gap rather than a scheduling one.** A draft row carries a
   `source_remote_id`, a date, a voucher type and entries — but no voucher
