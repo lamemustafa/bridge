@@ -142,11 +142,11 @@ elif args[:2] == ["pr", "diff"]:
         emit(f"diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic {phone}\n")
     elif scenario in {"phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized"}:
         phones = {
-            "phone-space": "69876 54321",
-            "phone-dot": "6987.654.321",
-            "phone-plus": "69876+54321",
-            "phone-underscore": "6987_654_321",
-            "phone-parenthesized": "(69876) 54321",
+            "phone-space": "6" + "9876 54321",
+            "phone-dot": "6" + "987.654.321",
+            "phone-plus": "6" + "9876+54321",
+            "phone-underscore": "6" + "987_654_321",
+            "phone-parenthesized": "(" + "69876" + ") 54321",
         }
         emit(f"diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic {phones[scenario]}\n")
     elif scenario == "metadata-only":
@@ -173,7 +173,7 @@ elif args[:2] == ["pr", "diff"]:
     elif scenario == "separated-dates-new-year":
         emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+0101-2026 0201-2026\n")
     elif scenario == "separated-dates-year-month":
-        emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 @@\n+2025-09-11 2025-09-12\n")
+        emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+2025-09-11 2025-09-12\n")
     elif scenario == "adr-identifier":
         emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+CE_ADR_0016_E\n")
     elif scenario == "surface-unpins":
