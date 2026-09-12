@@ -127,7 +127,7 @@
     },
     {
       "path": "src-tauri/Cargo.toml",
-      "sha256": "d4071736b6a6e5cc10f8252c36c0de2cfc48de6c01a03da8e0cb95dfeed240f2"
+      "sha256": "2914df522809bc855c092f16dd1ae75b6766bf5bf0a223a1de482795233dde79"
     },
     {
       "path": "src-tauri/crates/bridge-tally-core/Cargo.toml",
@@ -375,7 +375,7 @@
     },
     {
       "path": "src-tauri/src/commands.rs",
-      "sha256": "90042cbf26b7100fba05566bcc3cd04a175c8a08ed6d5986eeff0f958a1368bf"
+      "sha256": "c95d5d9ad52137f5808a2dbdbae5ed40e3cfc5365e0ba36fadb1f4ebd85bbbb7"
     },
     {
       "path": "src-tauri/src/commands_trial_balance.rs",
@@ -583,7 +583,7 @@
     },
     {
       "path": "src-tauri/src/source_draft/catalog.rs",
-      "sha256": "866278aebea501f52c8c98961dff0f6e85ebd283ba8549a43ba16de50fc9adbd"
+      "sha256": "a4711dd09fabc3701dbdf37b02a08f7e02ed1ec500bae6e58468166c209c112f"
     },
     {
       "path": "src-tauri/src/source_draft/files.rs",
@@ -595,7 +595,7 @@
     },
     {
       "path": "src-tauri/src/source_draft/types.rs",
-      "sha256": "d429f3835e1fe81397e770ef9f00bfe7aff5b9b9e89ffaf241bfc5b3cf10449a"
+      "sha256": "0ac8c57debd6465a63284ed9389b8f27a3b9082f843ddd54438f809a6845755a"
     },
     {
       "path": "src-tauri/src/source_draft_xml.rs",
@@ -627,7 +627,7 @@
     },
     {
       "path": "src-tauri/src/tally/connection.rs",
-      "sha256": "e2916482c40666083f0315f6d9ee4915304d831ab496fb6936a44484c270735d"
+      "sha256": "76abe63f9b2e8b1fdea9b8b98d818d5e03195f0c50fcfb67d0d6b8fc01e7059b"
     },
     {
       "path": "src-tauri/src/tally/connector.rs",
@@ -659,7 +659,7 @@
     },
     {
       "path": "src-tauri/src/tally/standard_ledger_catalog.rs",
-      "sha256": "7a832241c36c14b26ca2039fad9a53ca6657ced8f458346fd72bd4367ab62dac"
+      "sha256": "a027cd4679100560266c19bd0f58f016d78ec5e20bd192da0f0d8f0ddf37fc87"
     },
     {
       "path": "src-tauri/src/tally/tdl_engine.rs",
@@ -850,5 +850,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "f8d3a626673420ca7b27c3f47ec887a333e7ff8d65d6e7fd5299a6af0818a2ea"
+  "manifest_sha256": "8d3817d97f3a410a0ba9cfc3caff9bed93001b27a596900d5db8b01d83823db9"
 }
