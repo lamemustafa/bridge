@@ -1275,13 +1275,7 @@ fn unresolved_from(
     budget: &mut usize,
 ) -> BindingStatus {
     let mut ordered = candidates;
-    ordered.sort_by(|left, right| {
-        left.1.rank().cmp(&right.1.rank()).then_with(|| {
-            catalog.entries[left.0]
-                .name
-                .cmp(&catalog.entries[right.0].name)
-        })
-    });
+    ordered.sort_by(|left, right| candidate_order(catalog, left, right));
     // The variant is derived here, in one place, from the same facts that chose
     // the reason — so "empty" can never mean something the variant does not say.
     let candidates = if ordered.is_empty() {
@@ -1344,15 +1338,18 @@ fn remembered_candidates(
     }
     let computed = collect_candidates(catalog, entity, identifier_matches);
     // Entry *count* alone does not bound a memo whose keys and values are
-    // themselves collections. Caching a large result would retain exactly what
-    // recomputing it costs, multiplied by the cap — trading a stall for the
-    // memory the aggregate bounds elsewhere exist to prevent. A large result is
-    // cheap to recompute relative to what holding it costs, so it is not held.
+    // themselves collections, so the key is still size-tested. The **value** is
+    // not, any more: `collect_candidates` now returns at most
+    // `MAX_CANDIDATES_PER_ENTITY` candidates, so every result is small enough
+    // to hold. Refusing to hold large ones read as prudence and was the
+    // opposite — it excluded from the memo exactly the expensive repeated
+    // search the memo exists for, and a name reaching twenty thousand masters
+    // through shared tokens re-ran it once per row.
+    debug_assert!(computed.0.len() <= MAX_CANDIDATES_PER_ENTITY);
     let worth_holding = memo
         .repeated
         .contains(&(entity.key.as_str(), entity.identifiers.as_slice()))
-        && key.1.len() <= MAX_CANDIDATES_PER_ENTITY
-        && computed.0.len() <= MAX_CANDIDATES_PER_ENTITY;
+        && key.1.len() <= MAX_CANDIDATES_PER_ENTITY;
     if worth_holding && memo.seen.len() < MAX_CANDIDATE_MEMO_ENTRIES {
         memo.seen.insert(key, computed.clone());
     }
@@ -1434,6 +1431,27 @@ fn collect_candidates(
     for index in catalog.by_key.get(&entity.key).into_iter().flatten() {
         offer(*index, CandidateRule::NormalizedEqual);
     }
+    // The masters that *caused* a name ambiguity are the ones the resolving
+    // fold collided, and they are not always reachable from the wide key: the
+    // wide fold replaces `-` but not `/`, so `AB/CD` and `AB CD` are one master
+    // to `verified_fold` and two to `master_identity_key`. Listing only the
+    // wide key's holders reported an ambiguity with a complete-looking list of
+    // one, omitting the master the operator was being asked to choose between.
+    //
+    // Taking the holders from the index the reason was decided on is right
+    // regardless of how the two folds relate. Widening `master_identity_key` to
+    // fold `/` as well would fix this one example, change prefix families,
+    // token sets and memo keys across the whole module on the strength of it,
+    // and still leave the candidate list assembled from a key that is not the
+    // one the ambiguity was found in.
+    for index in catalog
+        .by_binding_key
+        .get(&entity.binding_key)
+        .into_iter()
+        .flatten()
+    {
+        offer(*index, CandidateRule::NormalizedEqual);
+    }
     if withheld.is_empty() {
         for index in &extending {
             offer(*index, CandidateRule::CatalogPrefix);
@@ -1489,7 +1507,42 @@ fn collect_candidates(
         .len();
     // Indices, not names — cloning every match before the cap and the budget
     // discarded most of the work, once per entry of an admitted draft.
-    (best.into_iter().collect(), found)
+    let mut listed = best.into_iter().collect::<Vec<_>>();
+    // Capped **here**, in the order the caller sorts into, rather than
+    // downstream after the whole union has been returned. Two reasons, and the
+    // second is the one that was biting:
+    //
+    // 1. The return value was unbounded. A name reaching a large family through
+    //    shared tokens built a vector of that whole family per source row, of
+    //    which at most `MAX_CANDIDATES_PER_ENTITY` survive.
+    // 2. The memo refused to hold a result larger than that cap, so exactly the
+    //    expensive repeated search was the one never remembered, and a draft
+    //    repeating that name re-ran it once per row. Bounding the result makes
+    //    every result cacheable, which is what the memo was for.
+    //
+    // `found` is computed above from the full union, so the count an operator
+    // sees is unaffected by the cap; only the listing is.
+    listed.sort_by(|left, right| candidate_order(catalog, left, right));
+    listed.truncate(MAX_CANDIDATES_PER_ENTITY);
+    (listed, found)
+}
+
+/// How candidates are ordered wherever they are ordered: by the rule that
+/// reached them, then by the master's name.
+///
+/// Defined once because `collect_candidates` truncates in this order and
+/// `unresolved_from` sorts in it, and a disagreement between the two would
+/// silently drop a candidate that should have been listed.
+fn candidate_order(
+    catalog: &MasterCatalog,
+    left: &(usize, CandidateRule),
+    right: &(usize, CandidateRule),
+) -> std::cmp::Ordering {
+    left.1.rank().cmp(&right.1.rank()).then_with(|| {
+        catalog.entries[left.0]
+            .name
+            .cmp(&catalog.entries[right.0].name)
+    })
 }
 
 /// A name is retained **verbatim**, on both sides.
@@ -1731,7 +1784,17 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
             && digits >= MIN_CODE_IDENTIFIER_DIGITS
             && letters >= 2
             && !foreign_content
+            // A separator works in both directions, so the date guard has to
+            // run on both spellings. Removing `-` can *reveal* a date —
+            // `2025-09-11` becomes `20250911` — and it can just as easily
+            // *hide* two: `DATED20250911-20250912` fuses into one sixteen-digit
+            // run that reads as no date at all, and `is_period` does not see it
+            // either, because its eight-digit case admits a year followed by a
+            // year and `0911` is neither. A date range then identified, and a
+            // period label is the one thing two unrelated masters most reliably
+            // share.
             && !carries_plausible_date(&canonical)
+            && !carries_plausible_date(token)
             && !masked
             && !is_period(token)
             && !is_masked(&canonical)
@@ -1960,6 +2023,19 @@ fn part_reads_as_period(canonical: &str, any_number: &mut bool) -> bool {
 /// because its eight-digit case admits a year followed by a year and `0911` is
 /// neither. Two unrelated ledgers sharing a fused date label then bound to each
 /// other on it.
+///
+/// **This is spelling-specific, deliberately, and it is not the general rule.**
+/// It is called on both the raw token and its canonical form because removing a
+/// separator can reveal a date and can equally hide two, and those are two
+/// different maximal-run decompositions. A partly separated range such as
+/// `2025-0911-2025-0912` still escapes all three date guards, and the obvious
+/// generalization — scanning every eight-digit *window* of the token's
+/// concatenated digits — was considered and rejected: a sixteen-digit account
+/// number containing a date-shaped window would then be refused, and that is a
+/// strong identifier being thrown away to catch a label. Erring toward refusal
+/// is right when the alternative is a wrong-party bind; it is not right when it
+/// costs the identifiers this module exists to use. If a better rule is found,
+/// it belongs here, replacing all three.
 fn carries_plausible_date(canonical: &str) -> bool {
     canonical
         .split(|character: char| !character.is_ascii_digit())

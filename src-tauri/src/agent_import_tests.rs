@@ -1508,9 +1508,12 @@ fn one_master_match(wanted: &str, catalogue: &[&str]) -> Value {
         .iter()
         .map(|name| (*name).to_string())
         .collect::<Vec<_>>();
-    master_report(&[wanted.to_string()], &catalogue)
-        .expect("fabricated catalogue binds")
-        .remove(0)
+    master_report(
+        &source_entities(&[wanted.to_string()]).expect("fabricated name parses"),
+        &catalogue,
+    )
+    .expect("fabricated catalogue binds")
+    .remove(0)
 }
 
 #[test]
@@ -1559,7 +1562,7 @@ fn a_catalogue_that_was_never_read_refuses_instead_of_reporting_everything_missi
     // of the one failed engagement, so an empty catalogue must not look like
     // an answer. P5: nothing-found and request-failed stay distinguishable.
     assert_eq!(
-        master_report(&["Bank".to_string()], &[]),
+        master_report(&source_entities(&["Bank".to_string()]).expect("valid"), &[]),
         Err("master_catalog_empty".to_string())
     );
 }
