@@ -1362,6 +1362,29 @@ fn aggregate_proposal_window_resemblance_work_is_refused() {
 }
 
 #[test]
+fn weighted_party_fanout_is_bounded_below_the_pair_product_limit() {
+    let names = (0..25)
+        .map(|i| Box::leak(format!("Party Key {i}").into_boxed_str()) as &'static str)
+        .collect::<Vec<_>>();
+    let rows = (0..999)
+        .map(|i| BookRow::new(Box::leak(format!("book-{i}").into_boxed_str()), "20260812", "N")
+            .rows(names.iter().map(|name| [*name, "0.00"]).collect())
+            .party_field(names[0])
+            .build())
+        .collect::<Vec<_>>();
+    let observed = BookWindow::observed("20260801", "20260831", WindowRead::Complete, RemoteIdEvidence::Observed, rows).expect("window");
+    let proposals = (0..500).map(|i| ProposalRow::new(i, "20260812", "P").party("Party").build()).collect::<Vec<_>>();
+    assert!(proposals.len() * observed.vouchers().len() < MAX_PRESENCE_COMPARISONS);
+    let keys = names.iter().map(|name| comparison_key(name)).collect::<BTreeSet<_>>();
+    assert_eq!(keys.len(), 25, "fixture must retain every party fanout key");
+    let parties = vec![PartyResolution { outcome: PartyOutcome::Ambiguous { reason: "test".into(), candidate_count: 25 }, compare_keys: keys, incomplete: false }; proposals.len()];
+    let index = WindowIndex::build(&observed);
+    let work = resemblance_work_units(&proposals, &parties, &index).expect("count");
+    assert!(work > MAX_PRESENCE_WORK_UNITS, "weighted fanout must exceed admission bound");
+    assert_eq!(PresenceRequest::new(&observed, &catalog_of(&names), &numbering(NumberingMethod::Manual), &proposals).expect_err("real admission refuses"), PresenceError::ComparisonWorkTooLarge);
+}
+
+#[test]
 fn a_stock_item_catalog_cannot_be_used_to_compare_parties() {
     let catalog = MasterCatalog::new(MasterClass::StockItem, LEDGERS).expect("catalog");
     let window = window(&[]);
@@ -1878,6 +1901,18 @@ fn a_number_match_contradicted_by_a_different_remote_id_does_not_settle() {
         &numbering(NumberingMethod::Manual),
         &proposals,
     );
+    let entry = only(&report);
+    assert!(entry.present_book_key().is_none());
+    assert_eq!(reason(entry), UndecidedReason::IdentityConflict);
+}
+
+#[test]
+fn a_number_match_without_the_proposed_observed_remote_id_does_not_settle() {
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118")]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .remote_id("previous-id")
+        .build()];
+    let report = run(&window, &catalog(), &numbering(NumberingMethod::Manual), &proposals);
     let entry = only(&report);
     assert!(entry.present_book_key().is_none());
     assert_eq!(reason(entry), UndecidedReason::IdentityConflict);

@@ -1425,6 +1425,25 @@ fn decide(
         }
     }
 
+    // A supplied REMOTEID is observed evidence even when no book row carries it.
+    // Do not let a coincident manual number settle a row whose matched book voucher
+    // lacks that supplied identity; NotRead remains withheld by `skipped_evidence`.
+    if window.remote_id_evidence() == RemoteIdEvidence::Observed
+        && proposal.remote_id.is_some()
+        && proposal.remote_id.as_deref().map_or(false, |key| index.by_remote_id.get(key).map_or(true, Vec::is_empty))
+        && method == NumberingMethod::Manual
+        && number_matches.len() == 1
+        && window.vouchers[number_matches[0]].remote_id.is_none()
+    {
+        return shell(
+            PresenceStatus::PossiblyPresent(undecided(
+                UndecidedReason::IdentityConflict,
+                candidates_from(window, &number_matches, CandidateRule::SharedVoucherNumber),
+            )),
+            with_resemblances(number_matches.iter().copied().collect()),
+        );
+    }
+
     // Rule two: a voucher number is identity only where the numbering method
     // preserves it (§9.8), and only when it is unique on both sides.
     //
@@ -1478,7 +1497,7 @@ fn decide(
             // settled in the number's favour — the same rule ADR 0016
             // applies to an identifier contradicting an exact name.
             let contradicted = match (proposal.remote_id.as_deref(), matched.remote_id.as_deref()) {
-                (Some(proposed), Some(observed)) => proposed != observed,
+                (Some(proposed), observed) => observed != Some(proposed),
                 _ => false,
             };
             if remote_id_unverifiable {
