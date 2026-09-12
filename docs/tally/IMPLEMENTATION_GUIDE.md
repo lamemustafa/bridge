@@ -827,9 +827,13 @@ payment no matter which carrier is missing.
 
 ### 3.5 Identity after write
 
-`LASTMID` is **0** on successful master creates — unusable. Read masters back by normalised
-name. `LASTVCHID` is populated for vouchers and usable, subject to a foreign-writer
-cross-check. It also accepts non-numeric text without error when parsed back, so validate it.
+`LASTMID` is **0** on successful master creates — unusable. Read masters back by name — and
+**normalised never means NFC/NFD-normalised**: §9.4b measured Tally matching on exact
+codepoints, so normalising before comparing resolves an NFD create onto a distinct
+pre-existing NFC master and promotes the wrong object. Which name rule applies is the
+SCOPE GATE's question (`PROMPT_PLAYBOOK.md` Phase 4 step 4); on an unqualified licensed SKU
+it is exact codepoints and nothing else. `LASTVCHID` is populated for vouchers and usable,
+subject to a foreign-writer cross-check. It also accepts non-numeric text without error when parsed back, so validate it.
 
 ### 3.6 Master re-create is a silent Alter
 
