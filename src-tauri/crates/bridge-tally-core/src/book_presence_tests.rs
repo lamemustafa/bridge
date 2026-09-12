@@ -202,7 +202,21 @@ fn run(
     numbering: &NumberingDeclaration,
     proposals: &[ProposedVoucher],
 ) -> PresenceReport {
-    let request = PresenceRequest::new(window, catalog, numbering, proposals).expect("request");
+    // These rule tests name only the ledgers relevant to their assertion. The
+    // public boundary now requires a complete catalog, so complete that test
+    // fixture from the already-observed window rather than weakening the
+    // boundary every test reaches through this helper.
+    let mut names = catalog.names().map(str::to_owned).collect::<Vec<_>>();
+    names.extend(
+        window
+            .vouchers()
+            .iter()
+            .flat_map(|voucher| voucher.ledger_keys.iter().cloned()),
+    );
+    names.sort();
+    names.dedup();
+    let complete_catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("complete catalog");
+    let request = PresenceRequest::new(window, &complete_catalog, numbering, proposals).expect("request");
     assess(&request)
 }
 
@@ -848,7 +862,7 @@ fn candidates_are_ordered_by_rule_then_key_and_never_by_similarity() {
 // --- party matching is master_binding -----------------------------------
 
 #[test]
-fn a_party_binds_on_an_embedded_identifier_before_any_name() {
+fn a_complete_catalogue_keeps_an_embedded_identifier_ambiguity_unresolved() {
     let names = [
         "Alpha (5550000001)",
         "Alpha Traders",
@@ -880,10 +894,14 @@ fn a_party_binds_on_an_embedded_identifier_before_any_name() {
         &proposals,
     );
     let entry = only(&report);
+    // Completing the catalogue with the observed window spelling introduces a
+    // second holder for this identifier. That is genuine ambiguity, not a
+    // reason to omit the observed ledger from exact coverage.
     assert_eq!(
         entry.party,
-        PartyOutcome::Bound {
-            catalog_name: "Alpha (5550000001)".to_string()
+        PartyOutcome::Ambiguous {
+            reason: "master_binding_identifier_conflict".to_string(),
+            candidate_count: 3,
         }
     );
     assert_eq!(
