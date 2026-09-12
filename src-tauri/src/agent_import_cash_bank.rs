@@ -6,7 +6,7 @@
 //! own name says which ledgers those are, so this walks the observed group
 //! ancestry to a *reserved* group identity.
 //!
-//! Two observed facts drive the shape of that walk, both recorded in §8.2a and
+//! Two observed facts drive the shape of that walk, both recorded in §8.2b and
 //! measured on the captured Group collections in this tree:
 //!
 //! * a group's visible `NAME` is mutable and a predefined group can be renamed
@@ -176,7 +176,7 @@ pub(super) enum CashBankState {
     ///
     /// The name here is safe to repeat back in a refusal without redaction,
     /// and only because of where it comes from: this variant is constructed
-    /// solely from a *non-empty* `RESERVEDNAME`, which §8.2a establishes is
+    /// solely from a *non-empty* `RESERVEDNAME`, which §8.2b establishes is
     /// Tally's own predefined identity. A user-created group carries an empty
     /// one and the walk keeps climbing, so a book's own naming never reaches
     /// here. Widen that construction and this becomes a leak.

@@ -9,7 +9,7 @@
 //! refused while a classifier answers one ledger at a time.
 //!
 //! Every rule below is a measured property of Tally's group model, recorded in
-//! `docs/tally/TALLY_PROTOCOL_REFERENCE.md` §8.2a:
+//! `docs/tally/TALLY_PROTOCOL_REFERENCE.md` §8.2b:
 //!
 //! * **Classify by `RESERVEDNAME`, never by `NAME`.** A predefined group can be
 //!   renamed over XML while its reserved identity survives, so a rule written

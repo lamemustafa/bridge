@@ -281,7 +281,7 @@ fn a_padded_parent_does_not_resolve_to_a_group_it_does_not_name() {
 
 #[test]
 fn a_renamed_predefined_group_still_classifies_by_its_reserved_identity() {
-    // Section 8.2a measured a predefined group being renamed over XML while
+    // Section 8.2b measured a predefined group being renamed over XML while
     // RESERVEDNAME kept its original identity. Classification must survive it.
     let mut groups = captured_groups();
     let bank = groups

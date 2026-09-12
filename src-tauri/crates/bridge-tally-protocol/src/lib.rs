@@ -174,9 +174,9 @@ impl PartyLedgerMasterFieldObservation {
     }
 }
 
-/// Sensitive ledger-master observations read only by the dedicated
-/// party/ledger workbook path. Ordinary ledger reads never request or retain
-/// these values.
+/// Sensitive and compliance ledger-master observations read only by the
+/// dedicated party/ledger master path. Ordinary ledger reads never request or
+/// retain these values.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct PartyLedgerMasterFields {
     pub income_tax_number: PartyLedgerMasterFieldObservation,
@@ -192,6 +192,123 @@ pub struct PartyLedgerMasterFields {
     pub phone: PartyLedgerMasterFieldObservation,
     pub state: PartyLedgerMasterFieldObservation,
     pub address: PartyLedgerMasterFieldObservation,
+    /// Tally's ledger `TAXTYPE`, retained verbatim so callers can distinguish
+    /// a GST ledger with no duty head from a ledger that is not GST-classified.
+    pub tax_type: PartyLedgerMasterFieldObservation,
+    /// Tally's ledger `GSTDUTYHEAD`, classified only against the measured
+    /// vocabulary while retaining the source spelling for every returned head.
+    pub gst_duty_head: GstDutyHeadObservation,
+}
+
+/// The GST duty-head classification observed on one ledger master.
+///
+/// Tally's vocabulary is deliberately not normalised: for example, the state
+/// head is `"State Tax"`, not `"SGST"`. `raw` therefore remains exactly as
+/// returned, and any value outside the measured set is surfaced explicitly.
+///
+/// The measured spellings, the `TAXTYPE` interaction and its four states, the two
+/// wire shapes of absence, and the instance scope are recorded in
+/// `docs/tally/TALLY_PROTOCOL_REFERENCE.md` §8.3. That section is canonical; this
+/// type implements it and should not become a second account of the protocol.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(tag = "observation", rename_all = "snake_case")]
+pub enum GstDutyHeadObservation {
+    Recognized {
+        raw: String,
+        head: GstDutyHead,
+    },
+    Unrecognized {
+        raw: String,
+    },
+    /// `TAXTYPE` was observed and is not the literal GST tax type; this is
+    /// distinct from a GST ledger whose duty-head field was absent.
+    NotTaxLedger {
+        tax_type: String,
+    },
+    /// A duty head arrived on a ledger whose observed `TAXTYPE` is NOT GST --
+    /// for example `<TAXTYPE>Others</TAXTYPE><GSTDUTYHEAD>CGST</GSTDUTYHEAD>`.
+    /// The two fields contradict each other, so neither is asserted: the head is
+    /// not recognised and the ledger is not reported as a tax ledger. Both raw
+    /// values are retained so a reviewer can see what was actually returned.
+    Contradictory {
+        tax_type: String,
+        raw: String,
+    },
+    #[default]
+    Absent,
+}
+
+impl GstDutyHeadObservation {
+    pub fn from_observations(
+        tax_type: &PartyLedgerMasterFieldObservation,
+        duty_head: &PartyLedgerMasterFieldObservation,
+    ) -> Self {
+        // Tally renders an absent duty head both by omitting the element and as
+        // an explicit empty one; both mean the same thing here.
+        let head = match duty_head {
+            PartyLedgerMasterFieldObservation::Returned(raw) if !raw.is_empty() => Some(raw),
+            _ => None,
+        };
+        // Observed AND not GST. An unobserved or empty TAXTYPE is not evidence
+        // that the ledger is non-GST, so it does not contradict a duty head.
+        let non_gst = match tax_type {
+            PartyLedgerMasterFieldObservation::Returned(value)
+                if !value.is_empty() && value != "GST" =>
+            {
+                Some(value)
+            }
+            _ => None,
+        };
+
+        match (head, non_gst) {
+            // A head on a ledger that is explicitly not a GST ledger is a
+            // contradictory response. Recognising it releases the contradiction
+            // as valid compliance data, which is the one outcome this type was
+            // introduced to prevent.
+            (Some(raw), Some(tax_type)) => Self::Contradictory {
+                tax_type: tax_type.clone(),
+                raw: raw.clone(),
+            },
+            (Some(raw), None) => match raw.as_str() {
+                "CGST" => Self::Recognized {
+                    raw: raw.clone(),
+                    head: GstDutyHead::Cgst,
+                },
+                "IGST" => Self::Recognized {
+                    raw: raw.clone(),
+                    head: GstDutyHead::Igst,
+                },
+                "State Tax" => Self::Recognized {
+                    raw: raw.clone(),
+                    head: GstDutyHead::StateTax,
+                },
+                "UT Tax" => Self::Recognized {
+                    raw: raw.clone(),
+                    head: GstDutyHead::UtTax,
+                },
+                "Cess" => Self::Recognized {
+                    raw: raw.clone(),
+                    head: GstDutyHead::Cess,
+                },
+                _ => Self::Unrecognized { raw: raw.clone() },
+            },
+            (None, Some(tax_type)) => Self::NotTaxLedger {
+                tax_type: tax_type.clone(),
+            },
+            (None, None) => Self::Absent,
+        }
+    }
+}
+
+/// The exact GST duty-head vocabulary measured for ledger masters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GstDutyHead {
+    Cgst,
+    Igst,
+    StateTax,
+    UtTax,
+    Cess,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -2829,6 +2946,7 @@ fn parse_native_ledger_collection_row_with_master_fields(
     let mut response_company_guid_seen = false;
     let mut master_fields = PartyLedgerMasterFields::default();
     let mut master_fields_seen = HashSet::new();
+    let mut gst_duty_head = PartyLedgerMasterFieldObservation::NotObserved;
     loop {
         match reader.read_event()? {
             Event::Start(child) => match child.name().as_ref().to_ascii_uppercase().as_slice() {
@@ -3000,6 +3118,20 @@ fn parse_native_ledger_collection_row_with_master_fields(
                     &mut master_fields_seen,
                     &mut master_fields.address,
                 )?,
+                b"TAXTYPE" => retain_party_ledger_master_scalar(
+                    reader,
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.tax_type,
+                )?,
+                b"GSTDUTYHEAD" => retain_party_ledger_master_scalar(
+                    reader,
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut gst_duty_head,
+                )?,
                 _ => {
                     let child_name = child.name().as_ref().to_vec();
                     reader.read_to_end(QName(&child_name).to_owned())?;
@@ -3107,6 +3239,18 @@ fn parse_native_ledger_collection_row_with_master_fields(
                     &mut master_fields_seen,
                     &mut master_fields.address,
                 )?,
+                b"TAXTYPE" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.tax_type,
+                )?,
+                b"GSTDUTYHEAD" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut gst_duty_head,
+                )?,
                 _ => {}
             },
             Event::End(end) if end.name().as_ref().eq_ignore_ascii_case(b"LEDGER") => break,
@@ -3140,6 +3284,8 @@ fn parse_native_ledger_collection_row_with_master_fields(
     if !parent_seen {
         anyhow::bail!("native ledger row omitted PARENT");
     }
+    master_fields.gst_duty_head =
+        GstDutyHeadObservation::from_observations(&master_fields.tax_type, &gst_duty_head);
     Ok(ParsedNativeLedgerCollectionRow {
         ledger,
         fields: master_fields,
@@ -3155,6 +3301,80 @@ struct ParsedNativeLedgerCollectionRow {
     identities: ParsedSourceIdentities,
     alter_id: Option<String>,
     response_company_guid: Option<String>,
+}
+
+/// Read a scalar that must be a scalar: any child element is a malformed response.
+///
+/// `read_flattened_optional_text` counts nesting depth and keeps collecting text, so
+/// `<GSTDUTYHEAD><VALUE>CGST</VALUE></GSTDUTYHEAD>` flattens to `CGST` and is released
+/// as a recognised duty head. For a field that only ever carries a scalar, and whose
+/// value drives a classification, an unexpected shape has to fail at the boundary
+/// rather than become compliance data.
+///
+/// Used for `TAXTYPE` and `GSTDUTYHEAD`, the two inputs to
+/// [`GstDutyHeadObservation::from_observations`]. The other retained master fields keep
+/// the flattening reader: they are recorded, not classified, and narrowing them is a
+/// separate decision from this one.
+fn read_scalar_rejecting_nested_markup(
+    reader: &mut Reader<&[u8]>,
+    name: QName<'_>,
+) -> anyhow::Result<Option<String>> {
+    let expected = name.as_ref().to_ascii_uppercase();
+    let mut parts = Vec::new();
+    loop {
+        match reader.read_event()? {
+            Event::Start(child) | Event::Empty(child) => {
+                let child = String::from_utf8_lossy(child.name().as_ref()).to_ascii_uppercase();
+                anyhow::bail!("party/ledger master scalar contained nested markup <{child}>");
+            }
+            Event::Text(text) => {
+                let decoded = text.decode()?;
+                let value = quick_xml::escape::unescape(&decoded)?;
+                let value = value.trim();
+                if !value.is_empty() {
+                    parts.push(value.to_owned());
+                }
+            }
+            Event::CData(text) => {
+                let value = text.decode()?;
+                let value = value.trim();
+                if !value.is_empty() {
+                    parts.push(value.to_owned());
+                }
+            }
+            Event::End(end) => {
+                if end.name().as_ref().to_ascii_uppercase() != expected {
+                    anyhow::bail!("party/ledger master field closed unexpectedly");
+                }
+                break;
+            }
+            Event::Eof => anyhow::bail!("party/ledger master field ended before it closed"),
+            _ => {}
+        }
+    }
+    Ok((!parts.is_empty()).then(|| parts.join("\n")))
+}
+
+/// Retain a classification-driving field, refusing nested markup. See
+/// [`read_scalar_rejecting_nested_markup`].
+fn retain_party_ledger_master_scalar(
+    reader: &mut Reader<&[u8]>,
+    element: &quick_xml::events::BytesStart<'_>,
+    retain: bool,
+    seen: &mut HashSet<Vec<u8>>,
+    target: &mut PartyLedgerMasterFieldObservation,
+) -> anyhow::Result<()> {
+    validate_only_attributes(element, &[b"TYPE"])?;
+    let name = element.name();
+    let key = name.as_ref().to_ascii_uppercase();
+    if !seen.insert(key) {
+        anyhow::bail!("native ledger row repeated a party/ledger master field");
+    }
+    let value = read_scalar_rejecting_nested_markup(reader, name)?;
+    if retain {
+        *target = PartyLedgerMasterFieldObservation::Returned(value.unwrap_or_default());
+    }
+    Ok(())
 }
 
 fn retain_party_ledger_master_field(

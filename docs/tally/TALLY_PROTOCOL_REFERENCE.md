@@ -576,7 +576,8 @@ Fail closed or quarantine. Cause not established.
   curated `BILLALLOCATIONS.NAME/.BILLTYPE/.AMOUNT` shape is **not trustworthy for
   outstandings**: it returned empty names and misreported real `New Ref` / `Agst Ref`
   allocations as `On Account`. Guide §2.4a records the A/B proof and the one allowed
-  wildcard exception.
+  wildcard exception. **§8.2a below measures a second, narrower loss on an instance
+  where §2.4a's corruption does not reproduce, and the cheaper fetch that avoids it.**
 - **Two levels do not.** `ALLLEDGERENTRIES.RATEDETAILS.GSTRATE` returns zero elements, as do
   `ALLLEDGERENTRIES.RATEDETAILS.*` and `ALLLEDGERENTRIES.RATEDETAILS`. The data exists —
   the same window under `ALLLEDGERENTRIES.*` yields 56 `GSTRATE` elements.
@@ -652,7 +653,58 @@ company profile described here. It does **not** establish that other releases,
 modes, or Group shapes emit the field; Bridge must continue to fail closed when
 the response lacks or mismatches the selected company GUID.
 
-### 8.2a `RESERVEDNAME` is a group's rename-proof identity, and `NAME` is not — **VERIFIED 2026-08-20**
+### 8.2a Curated `BILLALLOCATIONS` drops the `On Account` type — **VERIFIED 2026-09-11; single instance**
+
+**Scope: TallyPrime 7.1 Silver, licensed, `education_mode: false`, one company, 144 allocations.**
+This does **not** reproduce §2.4a's corruption and does **not** supersede it.
+
+Three FETCH shapes, same instance, same window, same filter:
+
+| Fetch | `New Ref` | `Agst Ref` | `On Account` | `BILLTYPE` absent | Bytes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `BILLALLOCATIONS.{NAME,BILLTYPE,AMOUNT}` (curated) | 31 | 1 | **0** | 112 | 150,512 |
+| `ALLLEDGERENTRIES.BILLALLOCATIONS.*` | 31 | 1 | **6** | 106 | 168,051 |
+| `ALLLEDGERENTRIES.*` (wildcard) | 31 | 1 | **6** | 106 | 1,103,107 |
+
+Named allocations: 32 in all three. So here the curated path does **not** collapse `New Ref` or
+`Agst Ref` — all 32 survive intact. What it does is silently omit `BILLTYPE` on the six
+`On Account` allocations, which then arrive as **amount-only containers**.
+
+**Why that is worse than a missing field.** An amount-only container is indistinguishable from a
+ledger entry that has no allocation at all, and Tally emits such placeholders legitimately. A
+reader cannot tell "unattributed money against this entry" from "nothing here" — so the correct
+handling of a placeholder, ignoring it, deletes a real allocation and reports nothing. A boundary
+that *rejects* untyped rows fails loudly; one that *skips* them, which is right for genuine
+placeholders, turns this into silent loss. Both boundaries are defensible alone.
+
+**`ALLLEDGERENTRIES.BILLALLOCATIONS.*` recovers what the entry wildcard recovers**, at **1.12×**
+the curated payload against **7.3×**, introducing no element type the parser did not already
+receive — the allocation's children are the same set either way.
+
+**But Bridge's agent reads use `ALLLEDGERENTRIES.*` anyway, deliberately.** The narrower shape is
+measured equivalent *here* and untested on the instance §2.4a describes, which is the one where
+curated allocation paths misreport `New Ref`/`Agst Ref` as `On Account`. The asymmetry decides it:
+if the narrow shape is wrong there, a reader silently receives incorrect bill types on compliance
+data; if the wide shape costs too much, that is loud, measurable and fixable. An unverified
+narrowing is not worth a payload saving when the failure mode is silently-wrong evidence.
+
+Use the narrower shape only where the payload genuinely binds and the instance is known good.
+A read that **discards** allocations should fetch neither — Bridge's `ledger_movement` profile
+omits them entirely rather than paying for data its result type drops.
+
+**What is still unknown.** Whether `BILLALLOCATIONS.*` also cures §2.4a's `New Ref`/`Agst Ref`
+corruption **on the affected instance** is untested — nobody in reach has that book. Until someone
+runs this three-way A/B there, §2.4a's rule stands for outstandings specifically: bill-level
+outstandings needs `ALLLEDGERENTRIES.*`. This section says only that the allocation wildcard is
+strictly more faithful than the curated triple and strictly cheaper than the entry wildcard.
+
+**How the loss was nearly missed**, because the method generalises: a first A/B bucketed
+allocations with no `BILLTYPE` as "(none)" on both sides and compared the buckets. The wildcard's
+typed `On Account` rows sat inside the curated side's "(none)" pile, the tallies matched exactly,
+and the conclusion published was "identical". A comparison whose categories can absorb the
+difference cannot detect the difference — count the absent case as its own bucket.
+
+### 8.2b `RESERVEDNAME` is a group's rename-proof identity, and `NAME` is not — **VERIFIED 2026-08-20**
 
 **Why this matters:** any rule of the form "ledgers under Sundry Debtors are parties" or
 "ledgers under Bank Accounts hold money" is written against a name a user is free to change.
@@ -685,6 +737,61 @@ group's `PARENT` is the control-marked reserved root of §1.1, not the word `Pri
 > exactly this.
 
 ---
+
+### 8.3 GST duty head — the vocabulary is irregular and `TAXTYPE` qualifies it — **VERIFIED 2026-09-12; single instance**
+
+**Scope: TallyPrime 7.1 Silver, licensed, one company, 28 ledger masters.** Captured from
+`List of Ledgers` with `FETCH … TAXTYPE, GSTDUTYHEAD`, retained as
+`tests/fixtures/agent/native-ledger-masters-duty-heads.utf16le.xml`.
+
+**The measured vocabulary, verbatim on the wire:**
+
+| `GSTDUTYHEAD` | meaning |
+| --- | --- |
+| `CGST` | central tax |
+| `IGST` | integrated tax |
+| `State Tax` | state tax — **NOT** `SGST` |
+| `UT Tax` | union-territory tax |
+| `Cess` | cess |
+
+`SGST` never appears. The state head is spelled `State Tax`, which is why the set is enumerated
+rather than pattern-matched, and why an unrecognised spelling is surfaced with its raw value
+instead of being normalised into a neighbour.
+
+**`TAXTYPE` qualifies the head and the two can contradict.** Four states, and all four are
+distinguishable only because both fields are read:
+
+| `TAXTYPE` | `GSTDUTYHEAD` | classification |
+| --- | --- | --- |
+| `GST`, or not observed | one of the five | recognised |
+| `GST`, or not observed | anything else, non-empty | unrecognised, raw value retained |
+| observed, non-`GST` (e.g. `Others`) | absent or empty | not a tax ledger |
+| observed, non-`GST` | non-empty | **contradictory — neither is asserted** |
+
+The last row is a response contradicting itself. Classifying head-first recognises it and never
+consults `TAXTYPE`, which releases the contradiction as valid compliance data. Only an **observed**
+non-`GST` tax type contradicts: an absent or empty `TAXTYPE` is not evidence that the ledger is
+non-GST, and treating it as such would refuse real GST ledgers on any version that omits the field.
+
+**Absence has two wire shapes and they mean the same thing.** This instance **omits**
+`GSTDUTYHEAD` entirely for non-GST ledgers — 0 self-closing elements across 28 masters — while a
+committed capture elsewhere in the repository carries `<GSTDUTYHEAD/>`. A reader that treats only
+one shape as absent classifies ordinary ledgers wrongly on the other.
+
+**Nested markup is refused, not flattened.** A scalar reader that counts depth and concatenates
+child text turns `<GSTDUTYHEAD><VALUE>CGST</VALUE></GSTDUTYHEAD>` into a recognised `CGST`. Both
+fields here are read with a scalar reader that rejects any child element, because an unexpected
+response shape must fail at the boundary rather than become compliance data.
+
+**The head is settable at CREATE and silently not settable at ALTER.** Measured both ways. An
+`ACTION="Create"` master import carrying `TAXTYPE` and `GSTDUTYHEAD` returns `CREATED=2 ALTERED=0
+ERRORS=0` and the values read back set. An `ACTION="Alter"` against an existing ledger returns
+`ALTERED=1 ERRORS=0` — a success — and the field stays empty. An earlier note of ours recorded only
+the second and concluded the head "cannot be set by import", which was an alter-time observation
+written as an import-time rule.
+
+**Not established:** whether these five spellings hold across Tally versions or localisations. The
+capture is one instance. An unrecognised value is therefore surfaced, never guessed.
 
 ## 9. Writes (import)
 
@@ -1444,7 +1551,7 @@ exactly the bank-to-bank Payment the counterparty rule exists to catch. The prac
 that an overdraft or cash-credit book cannot be imported through Bridge yet — one
 `List of Ledgers` read against such a book promotes `Bank OD A/c` and removes it.
 
-Classification walks the ledger's group ancestry through `RESERVEDNAME` per §8.2a, so a renamed
+Classification walks the ledger's group ancestry through `RESERVEDNAME` per §8.2b, so a renamed
 predefined group still classifies. A book whose money ledger sits under a group the Group
 collection does not carry at all is refused the same way.
 
@@ -2928,6 +3035,6 @@ UI. Deletion was not exercised at all. Per P6, neither may be built upon.
 | 2026-08-02 | Added §12a from a live measurement session: built-in named reports (qualifying §2.2), per-kind ageing semantics, the two ageing methods, eight import rewrites (extending §9), configuration as a non-diagnostic, the unallocated remainder and its recovery, the `Company` collection ignoring `SVCURRENTCOMPANY` (qualifying §9.11), and a linear volume model with a cheap pre-flight count. |
 | 2026-08-22 | Updated §5.3 with the observed Education `{1,2,31}` boundary rule and the limited TallyPrime Silver arbitrary-day observations; this settles #115 item 1 for the recorded profile. |
 | 2026-08-28 | Added §8.1's read-only ledger-master field-presence observation and explicit public-fixture privacy boundary. |
-| 2026-09-10 | Added §9.13's Payment/Receipt/Contra import shapes from a licensed 7.1 Gold bank-statement import, and §8.2a's `RESERVEDNAME` group-identity rule that its cash/bank gate is built on. |
+| 2026-09-10 | Added §9.13's Payment/Receipt/Contra import shapes from a licensed 7.1 Gold bank-statement import, and §8.2b's `RESERVEDNAME` group-identity rule that its cash/bank gate is built on. |
 | 2026-09-11 | Extended §12a.9 to TallyPrime 7.1 licensed Silver and the `StandardLedgerCatalogV1` profile from a live rename/restore capture (VERIFIED), and recorded three structural facts with separate markers: ledger `RESERVEDNAME` follows the same reserved/not-reserved convention as groups, one of nine populated (VERIFIED), company-scoped ledger GUIDs (PARTIAL — verified on all nine rows of one company). XML-driven rename and deletion remain UNVERIFIED. A later revision the same day withdrew a `CMPINFO` alteration-counter claim that the committed fixtures did not support. |
 | 2026-09-11 | Narrowed §9.13's company-guard paragraph to match §9.11d: which *kind* of mismatched `SVCURRENTCOMPANY` posts silently is UNVERIFIED, so the classification by name shape was withdrawn, and the pre-write check was corrected from the GUID alone to the whole §9.11b identity tuple. |

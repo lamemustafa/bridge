@@ -21,6 +21,10 @@ pub(in crate::agent) fn is_voucher_entry_scalar(field: &str) -> bool {
     matches!(field, "LEDGERNAME" | "AMOUNT" | "ISDEEMEDPOSITIVE")
 }
 
+pub(in crate::agent) fn is_voucher_bill_allocation_scalar(field: &str) -> bool {
+    matches!(field, "NAME" | "BILLTYPE" | "AMOUNT")
+}
+
 /// Reserve one XML element, independently of text/entity event fragmentation.
 pub(in crate::agent) fn claim_agent_scalar(
     row: &mut BTreeMap<String, String>,
