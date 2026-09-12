@@ -162,6 +162,12 @@ Every verdict is therefore explicitly scoped to the window the report carries.
 book". A voucher keyed in September against an August window is not visible,
 and widening the window is the caller's decision, made in the open.
 
+Admission is also bounded before comparison: a request above **1,000,000**
+proposal/window pairs, or above **5,000,000** aggregate indexed resemblance
+work units, is refused as `ComparisonWorkTooLarge`. The second limit counts
+posting-list walks and party-key checks, so it still applies when the pair count
+is below one million but one party resolves to many candidate keys.
+
 ### 3. The numbering method is declared, and its absence is an error
 
 The decisive power of a voucher number depends entirely on the voucher type's
