@@ -760,6 +760,37 @@ mod tests {
             serde_json::to_value(&bindings).expect("bindings serialize"),
             "the committed fixture no longer matches what the binder emits"
         );
+
+        // The evidence fields are the capture's own, not placeholders. They
+        // come from the retained capture's metadata sidecar and from this
+        // source document's digest, and are asserted here so the fixture
+        // cannot quietly go back to zeros while still calling itself a
+        // capture. `capture_id` has no captured counterpart — it is minted
+        // locally per read — so it stays a fixed synthetic UUID.
+        let provenance: serde_json::Value = serde_json::from_str(include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ledger-catalogue.json"
+        ))
+        .expect("the capture's provenance sidecar parses");
+        assert_eq!(
+            committed["evidence"]["response_sha256"],
+            provenance["source_response_sha256"],
+            "the fixture no longer carries the captured response digest"
+        );
+        assert_eq!(
+            committed["evidence"]["request_sha256"],
+            provenance["source_request_sha256"],
+            "the fixture no longer carries the captured request digest"
+        );
+        assert_eq!(
+            committed["evidence"]["bytes"],
+            provenance["source_response_bytes"],
+            "the fixture no longer carries the captured response size"
+        );
+        assert_eq!(
+            committed["source_sha256"],
+            serde_json::Value::String(source.sha256.clone()),
+            "the fixture no longer carries this source document's digest"
+        );
     }
 
     #[test]
@@ -768,6 +799,10 @@ mod tests {
         // the pair the resolving fold must keep apart: Tally stores the bytes
         // it was given and matches on exact codepoints, so normalizing before
         // comparing would resolve one onto a master the gateway keeps apart.
+        // The premise is measured, not assumed: `TALLY_PROTOCOL_REFERENCE.md`
+        // §9.4d sent an NFD spelling at an NFC master on licensed 7.1 and
+        // Tally rejected it, which is the licensed re-run of §9.4b's
+        // Educational-scoped "otherwise exact" finding.
         let targets = captured_catalogue_names();
         let nfd = targets
             .iter()

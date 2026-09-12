@@ -611,15 +611,24 @@ function SourceDraftEditor({ row, disabled, catalog, catalogSelections, catalogI
             const entryId = (name: string) => fieldId(`entry-${index}-${name}`);
             const binding = catalogBindingFor(catalog, row.position, index + 1);
             const narrowed = narrowedTargets(binding);
+            // One predicate for "the operator chose this against the capture in
+            // front of them", used by the control, its status line and the
+            // summary alike. A saved `entry.ledger` from an earlier session is
+            // not that: the `<select>` shows it as unchosen and the status line
+            // calls it unverified, so a summary keyed on `entry.ledger` alone
+            // said the operator had chosen while its neighbours said they had
+            // not — and hid the binding result they still needed.
+            const selectedKey = catalogSelectionKey(row.position, index + 1);
+            const selectedNow = catalogSelections[selectedKey] === entry.ledger;
             const bindingSummary = catalog
-              ? catalogBindingSummary(binding, catalog.targets.length, Boolean(entry.ledger))
+              ? catalogBindingSummary(binding, catalog.targets.length, selectedNow)
               : null;
             return <div className="source-draft-entry" key={`${row.position}-${index}`}>
               <p><span>Source line {index + 1}</span>{sourceEntryLabel(row.entries[index] ?? { position: index, source_ledger: "", source_amount: "", source_polarity: "" })}</p>
               <div className="source-draft-field">
                 <label htmlFor={entryId("ledger")}>Existing target ledger</label>
                 {catalog ? <>
-                  <select id={entryId("ledger")} value={catalogSelections[catalogSelectionKey(row.position, index + 1)] === entry.ledger ? entry.ledger ?? "" : ""} onChange={(event) => event.target.value && onSelectExistingLedger(row.position, index + 1, event.target.value)} disabled={disabled}>
+                  <select id={entryId("ledger")} value={selectedNow ? entry.ledger ?? "" : ""} onChange={(event) => event.target.value && onSelectExistingLedger(row.position, index + 1, event.target.value)} disabled={disabled}>
                     <option value="">Choose existing ledger</option>
                     {narrowed.length > 0 && <optgroup label={binding?.bound_target ? "Matched to this source line" : "Possible for this source line"}>
                       {narrowed.map((target) => <option key={`narrowed-${target}`} value={target}>{displayCatalogTarget(target)}</option>)}
@@ -630,7 +639,7 @@ function SourceDraftEditor({ row, disabled, catalog, catalogSelections, catalogI
                     </optgroup>
                   </select>
                   {entry.ledger && <button className="secondary-action source-draft-clear-target" type="button" onClick={() => onClearExistingLedger(row.position, index + 1)} disabled={disabled}>Clear target</button>}
-                  <p className="source-draft-catalogue-state">{catalogSelections[catalogSelectionKey(row.position, index + 1)] === entry.ledger ? "This current-session target was re-read and bound. It remains an unapproved proposal." : catalogInvalidatedSelections[catalogSelectionKey(row.position, index + 1)] === entry.ledger ? `Tally changed after this target was bound. Saved unverified target: ${entry.ledger}. Select it to check it against this current capture.` : entry.ledger ? `Saved unverified target: ${entry.ledger}. Select it to check it against this current capture.` : "Choose a current existing ledger to make an unapproved proposal."}</p>
+                  <p className="source-draft-catalogue-state">{selectedNow ? "This current-session target was re-read and bound. It remains an unapproved proposal." : catalogInvalidatedSelections[selectedKey] === entry.ledger ? `Tally changed after this target was bound. Saved unverified target: ${entry.ledger}. Select it to check it against this current capture.` : entry.ledger ? `Saved unverified target: ${entry.ledger}. Select it to check it against this current capture.` : "Choose a current existing ledger to make an unapproved proposal."}</p>
                   {bindingSummary && <p className="source-draft-catalogue-state">{bindingSummary}</p>}
                 </> : <>
                   <input id={entryId("ledger")} placeholder="Unverified ledger name" value={entry.ledger ?? ""} onChange={(event) => onUpdateEntry(index, (current) => ({ ...current, ledger: emptyToNull(event.target.value) }))} disabled={disabled} />

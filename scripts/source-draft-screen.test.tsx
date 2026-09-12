@@ -259,6 +259,52 @@ test("clears saved status when a proposal changes after saving", async () => {
   root.unmount();
 });
 
+test("keeps the binding result visible beside a saved target nobody has re-read", async () => {
+  // `entry.ledger` alone is not a choice. A saved target from an earlier
+  // session leaves `catalogSelections` empty, the control shows nothing
+  // selected, and the status line calls the value unverified — so a summary
+  // that took any persisted string for a current-session selection contradicted
+  // both of its own neighbours, and withheld the result the operator needed to
+  // judge the saved value against this capture.
+  const savedTarget = {
+    ...draft,
+    rows: draft.rows.map((item, index) => index === 0 ? {
+      ...item,
+      proposal: { ...item.proposal, entries: [{ ...item.proposal.entries[0], ledger: "Existing target" }] },
+    } : item),
+  };
+  const refused = {
+    ...catalog,
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: null,
+      bound_basis: null,
+      unbound_reason: "master_binding_near_miss",
+      candidates: ["Existing target"],
+      candidate_count: 1,
+      candidates_truncated: false,
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(savedTarget).mockResolvedValueOnce(refused);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  // Nothing is selected, and all three statements agree about that.
+  expect(host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")?.value).toBe("");
+  expect(host.textContent).toContain("Saved unverified target: Existing target.");
+  // The summary's unselected branch, in full: the refusal, the candidate count
+  // and the guidance. Keyed on `entry.ledger` the "chosen" branch fired instead
+  // and dropped the last two, so asserting only the refusal lead would pass
+  // either way — both branches open with it.
+  expect(host.textContent).toContain("No single ledger matched this source line. Nothing is chosen; 1 possible ledger is listed first, and the full list of 1 follows.");
+  expect(host.textContent).not.toContain("Automatic binding did not resolve this line.");
+  root.unmount();
+});
+
 test("requires an explicit current-session re-read before treating a saved matching target as selected, then clears and reloads it", async () => {
   const savedTarget = {
     ...draft,
