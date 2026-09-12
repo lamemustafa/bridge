@@ -52,6 +52,13 @@ pub const MAX_ENTRIES_PER_VOUCHER: usize = 2_000;
 pub const MAX_WINDOW_LEDGER_MEMBERSHIPS: usize = 100_000;
 /// Most UTF-8 bytes in the distinct ledger comparison keys across one window.
 pub const MAX_WINDOW_LEDGER_KEY_BYTES: usize = 4 * 1024 * 1024;
+/// Most well-formed occurrences retained from one ambiguous narration.
+/// The raw input count is checked before any marker is cloned into its set.
+pub const MAX_AMBIGUOUS_MARKERS_PER_VOUCHER: usize = 64;
+/// Most retained ambiguous-marker memberships across one window.
+pub const MAX_WINDOW_AMBIGUOUS_MARKER_MEMBERSHIPS: usize = 100_000;
+/// Most UTF-8 bytes in retained ambiguous-marker keys across one window.
+pub const MAX_WINDOW_AMBIGUOUS_MARKER_KEY_BYTES: usize = 4 * 1024 * 1024;
 /// Most candidates retained per undecided proposal.
 pub const MAX_CANDIDATES_PER_PROPOSAL: usize = 25;
 /// Most duplicate-number groups listed in the book observations.
@@ -105,6 +112,10 @@ pub enum PresenceError {
     WindowLedgerMembershipsTooMany,
     #[error("book window ledger keys exceeded their aggregate byte bound")]
     WindowLedgerKeyBytesTooLarge,
+    #[error("book window ambiguous marker memberships exceeded their aggregate bound")]
+    WindowAmbiguousMarkerMembershipsTooMany,
+    #[error("book window ambiguous marker keys exceeded their aggregate byte bound")]
+    WindowAmbiguousMarkerKeyBytesTooLarge,
     #[error("book window carried a voucher dated outside its own range")]
     WindowVoucherOutsideRange,
     #[error("book window carried the same voucher key twice")]
@@ -133,6 +144,8 @@ pub enum PresenceError {
     EntriesEmpty,
     #[error("voucher entry list exceeded its bound")]
     TooManyEntries,
+    #[error("ambiguous narration marker occurrences exceeded their bound")]
+    TooManyAmbiguousMarkers,
     /// A voucher type whose numbering method nobody stated. Defaulting it
     /// would silently decide whether the only decisive key is usable.
     #[error("a proposed voucher type has no declared numbering method")]
@@ -171,6 +184,12 @@ impl PresenceError {
             Self::WindowTooLarge => "presence_window_too_large",
             Self::WindowLedgerMembershipsTooMany => "presence_window_ledger_memberships_too_many",
             Self::WindowLedgerKeyBytesTooLarge => "presence_window_ledger_key_bytes_too_large",
+            Self::WindowAmbiguousMarkerMembershipsTooMany => {
+                "presence_window_ambiguous_marker_memberships_too_many"
+            }
+            Self::WindowAmbiguousMarkerKeyBytesTooLarge => {
+                "presence_window_ambiguous_marker_key_bytes_too_large"
+            }
             Self::WindowVoucherOutsideRange => "presence_window_voucher_outside_range",
             Self::WindowDuplicateVoucherKey => "presence_window_duplicate_voucher_key",
             Self::WindowRemoteIdContradiction => "presence_window_remote_id_contradiction",
@@ -182,6 +201,7 @@ impl PresenceError {
             Self::ComparisonWorkTooLarge => "presence_comparison_work_too_large",
             Self::EntriesEmpty => "presence_entries_empty",
             Self::TooManyEntries => "presence_entries_too_many",
+            Self::TooManyAmbiguousMarkers => "presence_ambiguous_markers_too_many",
             Self::NumberingMethodUndeclared => "presence_numbering_method_undeclared",
             Self::NumberingMethodConflict => "presence_numbering_method_conflict",
             Self::NumberingDeclarationsTooMany => "presence_numbering_declarations_too_many",
@@ -366,10 +386,15 @@ impl BookVoucher {
             ObservedMarker::Absent | ObservedMarker::Unidentified(_) => None,
         };
         let ambiguous_markers = match input.marker {
-            ObservedMarker::Unidentified(markers) => markers
-                .iter()
-                .map(|marker| validated_text(marker))
-                .collect::<Result<BTreeSet<_>, _>>()?,
+            ObservedMarker::Unidentified(markers) => {
+                if markers.len() > MAX_AMBIGUOUS_MARKERS_PER_VOUCHER {
+                    return Err(PresenceError::TooManyAmbiguousMarkers);
+                }
+                markers
+                    .iter()
+                    .map(|marker| validated_text(marker))
+                    .collect::<Result<BTreeSet<_>, _>>()?
+            }
             _ => BTreeSet::new(),
         };
         let (magnitude, balanced, mut observed_ledgers, mut ledger_keys) =
@@ -545,6 +570,8 @@ impl BookWindow {
         let mut keys = BTreeSet::new();
         let mut ledger_memberships = 0usize;
         let mut ledger_key_bytes = 0usize;
+        let mut ambiguous_marker_memberships = 0usize;
+        let mut ambiguous_marker_key_bytes = 0usize;
         for voucher in &vouchers {
             if voucher.date() < from.as_str() || voucher.date() > to.as_str() {
                 return Err(PresenceError::WindowVoucherOutsideRange);
@@ -584,6 +611,23 @@ impl BookWindow {
                 .ok_or(PresenceError::WindowLedgerKeyBytesTooLarge)?;
             if ledger_key_bytes > MAX_WINDOW_LEDGER_KEY_BYTES {
                 return Err(PresenceError::WindowLedgerKeyBytesTooLarge);
+            }
+            ambiguous_marker_memberships = ambiguous_marker_memberships
+                .checked_add(voucher.ambiguous_markers.len())
+                .ok_or(PresenceError::WindowAmbiguousMarkerMembershipsTooMany)?;
+            if ambiguous_marker_memberships > MAX_WINDOW_AMBIGUOUS_MARKER_MEMBERSHIPS {
+                return Err(PresenceError::WindowAmbiguousMarkerMembershipsTooMany);
+            }
+            let voucher_marker_key_bytes = voucher
+                .ambiguous_markers
+                .iter()
+                .try_fold(0usize, |total, marker| total.checked_add(marker.len()))
+                .ok_or(PresenceError::WindowAmbiguousMarkerKeyBytesTooLarge)?;
+            ambiguous_marker_key_bytes = ambiguous_marker_key_bytes
+                .checked_add(voucher_marker_key_bytes)
+                .ok_or(PresenceError::WindowAmbiguousMarkerKeyBytesTooLarge)?;
+            if ambiguous_marker_key_bytes > MAX_WINDOW_AMBIGUOUS_MARKER_KEY_BYTES {
+                return Err(PresenceError::WindowAmbiguousMarkerKeyBytesTooLarge);
             }
         }
         Ok(Self {
@@ -1528,13 +1572,14 @@ fn decide(
     // unique, and `Present` went out for it while the marker actually named
     // two book vouchers -- exactly the middle case ambiguous-marker handling
     // exists to preserve, undone by counting only half of it.
+    let ambiguous_marker_matches = lookup(
+        proposal.narration_marker.as_deref(),
+        &index.by_ambiguous_marker,
+    );
     let marker_matches_with_ambiguous: Vec<usize> = marker_matches
         .iter()
         .copied()
-        .chain(lookup(
-            proposal.narration_marker.as_deref(),
-            &index.by_ambiguous_marker,
-        ))
+        .chain(ambiguous_marker_matches.iter().copied())
         .collect();
 
     // A collision on one identity cannot erase an already observed match on
@@ -1691,7 +1736,21 @@ fn decide(
     }
 
     if let Some(&(basis, position)) = selections.first() {
-        let touched = with_resemblances(selections.iter().map(|(_, at)| *at).collect());
+        // An ambiguous narration never becomes an identity selection. It still
+        // contradicts any identity selecting a *different* voucher: the
+        // proposal's exact marker was observed on that other voucher, and
+        // settling would discard it. Keep that occurrence in the candidate and
+        // touched sets for the operator who must decide between the rows.
+        let ambiguous_marker_conflict = ambiguous_marker_matches
+            .iter()
+            .any(|other| *other != position);
+        let touched = with_resemblances(
+            selections
+                .iter()
+                .map(|(_, at)| *at)
+                .chain(ambiguous_marker_matches.iter().copied())
+                .collect(),
+        );
         // Two selections can name the *same* book voucher by different rules
         // (`REMOTEID` and the marker both landing on A while the number
         // selects B): mapping every selection straight into a candidate would
@@ -1703,6 +1762,11 @@ fn decide(
             let mut found: BTreeMap<usize, CandidateRule> = BTreeMap::new();
             for &(basis, at) in &selections {
                 keep_strongest(&mut found, at, basis.candidate_rule());
+            }
+            if ambiguous_marker_conflict {
+                for &at in &ambiguous_marker_matches {
+                    keep_strongest(&mut found, at, CandidateRule::SharedNarrationMarker);
+                }
             }
             let mut entries = found.into_iter().collect::<Vec<_>>();
             candidates_ranked(window, &mut entries)
@@ -1721,7 +1785,8 @@ fn decide(
         // name. They can disagree two ways: by selecting different vouchers,
         // or by agreeing on one that names a different identity than the
         // proposal does.
-        if selections.iter().any(|&(_, other)| other != position)
+        if ambiguous_marker_conflict
+            || selections.iter().any(|&(_, other)| other != position)
             || contradicts(proposal, &window.vouchers[position])
         {
             return shell(

@@ -1618,6 +1618,144 @@ fn a_window_bounds_aggregate_ledger_key_bytes_before_indexing() {
 }
 
 #[test]
+fn an_ambiguous_narration_bounds_raw_occurrences_before_cloning() {
+    let markers = Box::leak(
+        (0..=MAX_AMBIGUOUS_MARKERS_PER_VOUCHER)
+            .map(|_| "marker")
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    ) as &'static [&'static str];
+    let entries = [
+        ObservedEntry {
+            ledger: "Alpha Traders",
+            amount: "-1.00",
+        },
+        ObservedEntry {
+            ledger: "Sales Account",
+            amount: "1.00",
+        },
+    ];
+    assert_eq!(
+        BookVoucher::observed(ObservedVoucher {
+            key: "book-1",
+            date: "20260812",
+            voucher_type: "Sales",
+            voucher_number: None,
+            remote_id: None,
+            party: None,
+            marker: ObservedMarker::Unidentified(markers),
+            entries: &entries,
+            cancelled: false,
+            optional: false,
+        })
+        .expect_err("raw marker count before a set clone"),
+        PresenceError::TooManyAmbiguousMarkers
+    );
+}
+
+#[test]
+fn a_window_bounds_aggregate_ambiguous_marker_memberships_before_indexing() {
+    let entries = [
+        ObservedEntry {
+            ledger: "Alpha Traders",
+            amount: "-1.00",
+        },
+        ObservedEntry {
+            ledger: "Sales Account",
+            amount: "1.00",
+        },
+    ];
+    let vouchers =
+        (0..(MAX_WINDOW_AMBIGUOUS_MARKER_MEMBERSHIPS / MAX_AMBIGUOUS_MARKERS_PER_VOUCHER + 1))
+            .map(|voucher_position| {
+                let markers = Box::leak(
+                    (0..MAX_AMBIGUOUS_MARKERS_PER_VOUCHER)
+                        .map(|marker_position| {
+                            Box::leak(
+                                format!("marker-{voucher_position:04}-{marker_position:02}")
+                                    .into_boxed_str(),
+                            ) as &'static str
+                        })
+                        .collect::<Vec<_>>()
+                        .into_boxed_slice(),
+                ) as &'static [&'static str];
+                BookVoucher::observed(ObservedVoucher {
+                    key: Box::leak(format!("book-{voucher_position:04}").into_boxed_str()),
+                    date: "20260812",
+                    voucher_type: "Sales",
+                    voucher_number: None,
+                    remote_id: None,
+                    party: None,
+                    marker: ObservedMarker::Unidentified(markers),
+                    entries: &entries,
+                    cancelled: false,
+                    optional: false,
+                })
+                .expect("voucher below its own ambiguous-marker bound")
+            })
+            .collect();
+    assert_eq!(
+        BookWindow::observed(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers,
+        })
+        .expect_err("derived marker membership budget"),
+        PresenceError::WindowAmbiguousMarkerMembershipsTooMany
+    );
+}
+
+#[test]
+fn a_window_bounds_aggregate_ambiguous_marker_key_bytes_before_indexing() {
+    let entries = [
+        ObservedEntry {
+            ledger: "Alpha Traders",
+            amount: "-1.00",
+        },
+        ObservedEntry {
+            ledger: "Sales Account",
+            amount: "1.00",
+        },
+    ];
+    let vouchers = (0..(MAX_WINDOW_AMBIGUOUS_MARKER_KEY_BYTES / MAX_TEXT_CHARS + 1))
+        .map(|position| {
+            let marker = Box::leak(
+                format!("{position:05}{}", "x".repeat(MAX_TEXT_CHARS - 5)).into_boxed_str(),
+            ) as &'static str;
+            let markers = Box::leak(vec![marker].into_boxed_slice()) as &'static [&'static str];
+            BookVoucher::observed(ObservedVoucher {
+                key: Box::leak(format!("book-{position:04}").into_boxed_str()),
+                date: "20260812",
+                voucher_type: "Sales",
+                voucher_number: None,
+                remote_id: None,
+                party: None,
+                marker: ObservedMarker::Unidentified(markers),
+                entries: &entries,
+                cancelled: false,
+                optional: false,
+            })
+            .expect("voucher below its own marker bounds")
+        })
+        .collect();
+    assert_eq!(
+        BookWindow::observed(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers,
+        })
+        .expect_err("derived marker key-byte budget"),
+        PresenceError::WindowAmbiguousMarkerKeyBytesTooLarge
+    );
+}
+
+#[test]
 fn every_error_carries_a_distinct_stable_reason_code() {
     let codes = [
         PresenceError::WindowIncomplete,
@@ -1625,6 +1763,8 @@ fn every_error_carries_a_distinct_stable_reason_code() {
         PresenceError::WindowTooLarge,
         PresenceError::WindowLedgerMembershipsTooMany,
         PresenceError::WindowLedgerKeyBytesTooLarge,
+        PresenceError::WindowAmbiguousMarkerMembershipsTooMany,
+        PresenceError::WindowAmbiguousMarkerKeyBytesTooLarge,
         PresenceError::WindowVoucherOutsideRange,
         PresenceError::WindowDuplicateVoucherKey,
         PresenceError::WindowDoesNotCover,
@@ -1632,6 +1772,7 @@ fn every_error_carries_a_distinct_stable_reason_code() {
         PresenceError::TooManyProposals,
         PresenceError::ComparisonWorkTooLarge,
         PresenceError::TooManyEntries,
+        PresenceError::TooManyAmbiguousMarkers,
         PresenceError::NumberingMethodUndeclared,
         PresenceError::NumberingMethodConflict,
         PresenceError::TextBlank,
@@ -3147,6 +3288,49 @@ fn a_marker_shared_with_an_ambiguous_voucher_decides_nothing() {
         2,
         "the marker occurs on two book vouchers, so it is not unique"
     );
+}
+
+/// An occurrence carried by an ambiguous narration is not an identity by
+/// itself, but it still contradicts a manual number that selected another row.
+/// Both rows must remain candidates and reached evidence for the operator.
+#[test]
+fn an_ambiguous_marker_on_another_voucher_blocks_a_manual_number_settlement() {
+    let window = window(&[
+        BookRow::new("book-a", "20260812", "AA0118"),
+        BookRow::new("book-b", "20260813", "BB0229").ambiguous_markers(&[MARKER_A, MARKER_B]),
+    ]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .marker(MARKER_A)
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert!(entry.present_book_key().is_none());
+    assert_eq!(reason(entry), UndecidedReason::IdentityConflict);
+    let undecided = entry.undecided().expect("identity conflict");
+    assert_eq!(undecided.candidate_count, 2);
+    assert_eq!(
+        undecided
+            .candidates
+            .iter()
+            .map(|candidate| candidate.book_key.as_str())
+            .collect::<Vec<_>>(),
+        vec!["book-b", "book-a"],
+        "marker and number evidence both remain visible"
+    );
+    assert_eq!(
+        undecided.candidates[0].rule,
+        CandidateRule::SharedNarrationMarker
+    );
+    assert_eq!(
+        undecided.candidates[1].rule,
+        CandidateRule::SharedVoucherNumber
+    );
+    assert_eq!(report.observations().unmatched_book_vouchers, 0);
 }
 
 /// Proposal-side uniqueness is checked before the book lookup, the same way it
