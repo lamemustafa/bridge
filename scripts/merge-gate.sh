@@ -275,12 +275,16 @@ else
   fi
   # The unified-diff file header is `+++ ` WITH A SPACE. Filtering `^+++`
   # discarded any added line whose own content starts with `++`, so
-  # `++ customer ABCDE1234F` produced no scannable text at all — a place to
-  # hide a value from the scan, in the scan's own input.
+  # an added line whose content began `++` produced no scannable text at all —
+  # a place to hide a value from the scan, in the scan's own input. (No example
+  # identifier in this comment: the scan reads its own file, and a literal that
+  # illustrates a leak pattern IS the pattern. This is the third time a comment
+  # here has flagged itself, which is the check working rather than failing.)
   # Identify the header STRUCTURALLY. `+++ ` alone is not enough: an added line
   # whose content begins with `++` produces exactly that prefix. Git's header
   # is always `+++ b/<path>` or `+++ /dev/null`, so match those and nothing
-  # else — `+++ customer ABCDE1234F` is content and must reach the scan.
+  # else — a payload line that merely starts with `++` is content, and must
+  # reach the scan rather than being mistaken for a header.
   raw_added=$(grep '^+' <<<"$diff" | grep -vE '^\+\+\+ (b/|/dev/null)')
   added=$(sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/<uuid>/g' <<<"$raw_added" \
           | sed -E 's/[0-9a-fA-F]{32,}/<digest>/g')
