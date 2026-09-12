@@ -3209,69 +3209,179 @@ fn raw_proposal_budget_counts_all_entry_work_before_conversion() {
         };
         2_000
     ];
-    let input = ProposedVoucherInput {
-        position: 0,
-        date: "20260812",
-        voucher_type: "Receipt",
-        voucher_number: Some("1"),
-        remote_id: None,
-        party: None,
-        entries: &entries,
+    let inputs = (0..50)
+        .map(|position| ProposedVoucherInput {
+            position,
+            date: "20260812",
+            voucher_type: "Receipt",
+            voucher_number: Some("1"),
+            remote_id: None,
+            party: None,
+            entries: &entries,
+        })
+        .collect::<Vec<_>>();
+    let admitted =
+        ProposedVoucher::from_inputs(inputs.iter().copied()).expect("exact 100,000 entries");
+    assert_eq!(admitted.as_slice().len(), 50);
+    let extra = [ObservedEntry {
+        ledger: "L",
+        amount: "not-an-amount",
+    }];
+    let next = ProposedVoucherInput {
+        position: 50,
+        entries: &extra,
+        ..inputs[0]
     };
-    let mut budget = RawProposalBudget::default();
-    for _ in 0..50 {
-        budget.admit(input).expect("100,000 entries are admitted");
-    }
     assert_eq!(
-        budget.admit(input),
+        inputs.iter().map(|v| v.entries.len()).sum::<usize>() + next.entries.len(),
+        MAX_PROPOSAL_RAW_ENTRY_WORK + 1
+    );
+    assert_eq!(
+        ProposedVoucher::from_inputs(inputs.into_iter().chain([next])),
         Err(PresenceError::ProposalRawEntryWorkTooLarge)
     );
 }
 
 #[test]
 fn raw_proposal_budget_counts_metadata_bytes_before_conversion() {
-    let metadata = "x".repeat(MAX_PROPOSAL_RAW_BYTES - "20260812".len() - "Receipt".len());
-    let input = ProposedVoucherInput {
-        position: 0,
-        date: "20260812",
-        voucher_type: "Receipt",
-        voucher_number: None,
-        remote_id: None,
-        party: Some(&metadata),
-        entries: &[],
-    };
-    let mut budget = RawProposalBudget::default();
-    budget.admit(input).expect("exact byte limit");
-    let next = ProposedVoucherInput {
-        position: 1,
-        voucher_number: Some("12345678"),
-        ..input
-    };
+    let rows = [ObservedEntry {
+        ledger: "L",
+        amount: "1",
+    }];
+    let metadata = "x".repeat(16_384 - "20260812".len() - "Receipt".len() - 1);
+    let extra_byte = format!("{metadata}x");
+    assert!(extra_byte.len() <= MAX_TEXT_CHARS);
+    let inputs = (0..256)
+        .map(|position| ProposedVoucherInput {
+            position,
+            date: "20260812",
+            voucher_type: "Receipt",
+            voucher_number: Some("1"),
+            remote_id: None,
+            party: Some(metadata.as_str()),
+            entries: &rows,
+        })
+        .collect::<Vec<_>>();
+    let total = inputs
+        .iter()
+        .map(|v| {
+            v.date.len()
+                + v.voucher_type.len()
+                + v.voucher_number.unwrap().len()
+                + v.party.unwrap().len()
+        })
+        .sum::<usize>();
+    assert_eq!(total, MAX_PROPOSAL_RAW_BYTES);
     assert_eq!(
-        budget.admit(next),
+        ProposedVoucher::from_inputs(inputs.iter().copied())
+            .expect("exact metadata limit")
+            .as_slice()
+            .len(),
+        256
+    );
+    let mut over = inputs;
+    over[255].party = Some(&extra_byte);
+    assert_eq!(
+        total + extra_byte.len() - metadata.len(),
+        MAX_PROPOSAL_RAW_BYTES + 1
+    );
+    assert_eq!(
+        ProposedVoucher::from_inputs(over),
         Err(PresenceError::ProposalRawBytesTooLarge)
     );
 }
 
 #[test]
 fn raw_observation_budget_counts_retained_voucher_metadata() {
-    let key = "x".repeat(MAX_WINDOW_RAW_ENTRY_BYTES);
-    let observation = ObservedVoucher {
-        key: &key,
-        date: "20260812",
-        voucher_type: "Receipt",
-        voucher_number: None,
-        remote_id: None,
-        party: None,
-        entries: &[],
-        cancelled: false,
-        optional: false,
-    };
-    let mut budget = RawObservationBudget::default();
+    let rows = [ObservedEntry {
+        ledger: "L",
+        amount: "1",
+    }];
+    let keys = (0..256)
+        .map(|position| format!("K{position:07}"))
+        .collect::<Vec<_>>();
+    let metadata = "x".repeat(16_384 - 8 - "20260812".len() - "Receipt".len());
+    let extra_byte = format!("{metadata}x");
+    assert!(extra_byte.len() <= MAX_TEXT_CHARS);
+    let inputs = keys
+        .iter()
+        .map(|key| ObservedVoucher {
+            key,
+            date: "20260812",
+            voucher_type: "Receipt",
+            voucher_number: None,
+            remote_id: Some(metadata.as_str()),
+            party: None,
+            entries: &rows,
+            cancelled: false,
+            optional: false,
+        })
+        .collect::<Vec<_>>();
+    let total = inputs
+        .iter()
+        .map(|v| v.key.len() + v.date.len() + v.voucher_type.len() + v.remote_id.unwrap().len())
+        .sum::<usize>();
+    assert_eq!(total, MAX_WINDOW_RAW_ENTRY_BYTES);
     assert_eq!(
-        budget.admit_observation(&observation),
+        BookWindow::from_observations(
+            "20260801",
+            "20260831",
+            WindowRead::Complete,
+            RemoteIdEvidence::Observed,
+            inputs.iter().copied()
+        )
+        .expect("exact metadata limit")
+        .vouchers()
+        .len(),
+        256
+    );
+    let mut over = inputs;
+    over[255].remote_id = Some(&extra_byte);
+    assert_eq!(
+        total + extra_byte.len() - metadata.len(),
+        MAX_WINDOW_RAW_ENTRY_BYTES + 1
+    );
+    assert_eq!(
+        BookWindow::from_observations(
+            "20260801",
+            "20260831",
+            WindowRead::Complete,
+            RemoteIdEvidence::Observed,
+            over
+        ),
         Err(PresenceError::WindowRawEntryBytesTooLarge)
     );
+}
+
+#[test]
+fn raw_proposal_batch_stops_an_unbounded_iterator_at_the_count_limit() {
+    let rows = [ObservedEntry {
+        ledger: "L",
+        amount: "1",
+    }];
+    let seen = std::cell::Cell::new(0);
+    let inputs = std::iter::from_fn(|| {
+        let position = seen.get();
+        assert!(
+            position <= MAX_PROPOSED_VOUCHERS,
+            "must stop after the first excess input"
+        );
+        seen.set(position + 1);
+        Some(ProposedVoucherInput {
+            position,
+            date: "20260812",
+            voucher_type: "Receipt",
+            voucher_number: None,
+            remote_id: None,
+            party: None,
+            entries: &rows,
+        })
+    });
+    assert_eq!(
+        ProposedVoucher::from_inputs(inputs),
+        Err(PresenceError::TooManyProposals)
+    );
+    assert_eq!(seen.get(), MAX_PROPOSED_VOUCHERS + 1);
 }
 
 #[test]
