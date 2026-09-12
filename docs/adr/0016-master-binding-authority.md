@@ -395,7 +395,7 @@ Per entity, exactly one of:
 
 | status | meaning |
 | --- | --- |
-| `Bound { catalog_name, basis }` | one master, decided by `Identifier`, `ExactName`, or `NormalizedName` |
+| `Bound { catalog_name, basis }` | one master, decided by `Identifier` or `ExactName` |
 | `Ambiguous { candidates, .. }` | more than one master is defensible, including every identifier conflict |
 | `Unmatched { candidates, .. }` | no rule produced a candidate |
 
@@ -441,12 +441,13 @@ voucher, creates no master, and dispatches nothing.
   `validate_masters` is re-expressed over the crate. `match_state` reports
   `exact`, `identifier`, `near_miss`, or `missing`; folded spellings remain
   `near_miss` candidates and `exact_live_spelling` appears only on a bound row.
-- `BindingBasis::NormalizedName` remains deserializable for historical records,
-  but current `bind` calls never emit it. Cached or retained bindings cannot
-  turn a folded suggestion into a target: selection still requires the explicit
-  operator apply path and a fresh exact catalog binding.
+- Current `BindingBasis` cannot construct or deserialize `NormalizedName`.
+  The core has no binding-report persistence reader; older captured report
+  JSON remains historical evidence, not a current binding input. Persisted
+  operator selections still use their existing separate catalogue-binding
+  representation and require a fresh exact catalogue check before use.
 - `build_import_xml` and the approved-post recheck still admit **`exact` only**.
-  The import file carries the name verbatim, so a normalized or identifier bind
+  The import file carries the name verbatim, so a folded candidate or identifier bind
   informs the operator without widening what may be written. This PR does not
   move the write gate.
 - The MCP result reports an unbound entity's `unresolved_identity` wrapped in
