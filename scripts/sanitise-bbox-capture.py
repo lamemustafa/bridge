@@ -6,6 +6,8 @@ prints on every statement regardless of who the customer is. Everything else is
 substituted, so a value that was never anticipated is fabricated by default
 rather than kept by default.
 """
+import decimal
+import importlib.util
 import re, sys, pathlib
 
 TEMPLATE = set("""
@@ -491,6 +493,79 @@ def _kept_words(pages, keep):
         yield head, words
 
 
+def _load_parser(bank_name):
+    """Load one of the parsers used to qualify a generated fixture."""
+    if bank_name not in ("hdfc", "sbi"):
+        raise SystemExit("sanitise: BANK must be one of: hdfc, sbi")
+    path = pathlib.Path(__file__).with_name("bank_statement_import.py")
+    spec = importlib.util.spec_from_file_location("sanitise_bank_parser", path)
+    if spec is None or spec.loader is None:
+        raise SystemExit("sanitise: cannot load the selected bank parser")
+    parser = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(parser)
+    return parser, parser.BANKS[bank_name]()
+
+
+def _assert_party_partition(source_keys, output_keys, bank_name):
+    """Require a two-way, one-to-one mapping of party equivalence classes."""
+    if not source_keys or len(source_keys) != len(output_keys):
+        raise SystemExit(f"sanitise: {bank_name} party evidence is empty or misaligned")
+    source_to_output, output_to_source = {}, {}
+    for index, (source, output) in enumerate(zip(source_keys, output_keys)):
+        if not source or not output:
+            raise SystemExit(f"sanitise: {bank_name} party evidence is underdetermined at row {index}")
+        old = source_to_output.setdefault(source, output)
+        reverse = output_to_source.setdefault(output, source)
+        if old != output:
+            raise SystemExit(f"sanitise: {bank_name} party partition split at row {index}")
+        if reverse != source:
+            raise SystemExit(f"sanitise: {bank_name} party partition merged at row {index}")
+
+
+def _validate_parser_evidence(parser, bank, source_pages, output_pages, bank_name):
+    """Parse complete page sets and compare only structure preserved by scrubbing."""
+    try:
+        source_rows = parser.parse_pages(source_pages, bank)
+        output_rows = parser.parse_pages(output_pages, bank)
+    except (KeyError, IndexError, TypeError, ValueError, decimal.InvalidOperation) as error:
+        raise SystemExit(f"sanitise: {bank_name} parser evidence is invalid: {type(error).__name__}") from error
+    if not source_rows or not output_rows or len(source_rows) != len(output_rows):
+        raise SystemExit(f"sanitise: {bank_name} parser evidence is empty or misaligned")
+
+    source_dates, output_dates = [], []
+    source_keys, output_keys = [], []
+    for index, (source, output) in enumerate(zip(source_rows, output_rows)):
+        try:
+            source_date = str(source[bank.date_column]).strip()
+            output_date = str(output[bank.date_column]).strip()
+            bank.parse_date(source_date)
+            bank.parse_date(output_date)
+            source_dates.append(source_date)
+            output_dates.append(output_date)
+            for row in (source, output):
+                for column in (bank.debit_column, bank.credit_column, bank.balance_column):
+                    value = str(row.get(column) or "").strip()
+                    if value:
+                        parser.D(value)
+            source_ref = bank.reference(source)
+            output_ref = bank.reference(output)
+            source_shape = (bool(source.get(bank.debit_column)), bool(source.get(bank.credit_column)),
+                            bool(source.get(bank.balance_column)), source_ref[0], len(str(source_ref[1])))
+            output_shape = (bool(output.get(bank.debit_column)), bool(output.get(bank.credit_column)),
+                            bool(output.get(bank.balance_column)), output_ref[0], len(str(output_ref[1])))
+            if source_shape != output_shape:
+                raise SystemExit(f"sanitise: {bank_name} amount/reference alignment failed at row {index}")
+            source_keys.append(parser._key(bank.party(source)))
+            output_keys.append(parser._key(bank.party(output)))
+        except SystemExit:
+            raise
+        except (KeyError, IndexError, TypeError, ValueError, decimal.InvalidOperation) as error:
+            raise SystemExit(f"sanitise: {bank_name} row alignment failed at row {index}: {type(error).__name__}") from error
+
+    _assert_party_partition(source_dates, output_dates, bank_name)
+    _assert_party_partition(source_keys, output_keys, bank_name)
+
+
 def main(source, destination, keep, bank):
     """keep: [(page_index, [(y_min, y_max), ...]), ...] regions to retain."""
     # `pdftotext` emits UTF-8. `read_text()` without an encoding decodes with
@@ -500,6 +575,7 @@ def main(source, destination, keep, bank):
     # unit cases reach this boundary: CI is ubuntu-only, and the Unicode tests
     # call `_scrub_plain` with strings that are already decoded.
     pages = pathlib.Path(source).read_text(encoding="utf-8").split("<page ")[1:]
+    parser, bank_profile = _load_parser(bank)
     regions = list(_kept_words(pages, keep))
     # Two passes, and the first one has to be complete before the second starts.
     # A replacement is only safe once the allocator knows every token the
@@ -516,8 +592,11 @@ def main(source, destination, keep, bank):
         + "\n</page>"
         for head, words in regions
     ]
-    pathlib.Path(destination).write_text(
-        BANNER_TEMPLATE.format(bank=bank) + "\n".join(chunks) + "\n", encoding="utf-8")
+    output = BANNER_TEMPLATE.format(bank=bank_profile.name) + "\n".join(chunks) + "\n"
+    selected_pages = [pages[index] for index, _ in keep]
+    _validate_parser_evidence(parser, bank_profile, selected_pages,
+                              output.split("<page ")[1:], bank_profile.name)
+    pathlib.Path(destination).write_text(output, encoding="utf-8")
     print(f"wrote {destination}: "
           f"{sum(chunk.count('<word') for chunk in chunks)} words, {len(chunks)} pages")
 
@@ -526,7 +605,7 @@ USAGE = """usage: sanitise-bbox-capture.py SOURCE DEST BANK PAGE:Y0-Y1[,Y0-Y1] .
 
   SOURCE  pdftotext -bbox-layout output from a real statement
   DEST    fixture to write
-  BANK    a description for the banner, e.g. "HDFC current-account"
+  BANK    parser profile: hdfc or sbi (closed selection)
   PAGE:.. 0-based page index and the y ranges to keep from it
 
 Always diff the result against the source before committing it, and scan the

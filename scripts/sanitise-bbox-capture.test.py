@@ -48,6 +48,22 @@ def check(name, condition, detail=""):
         print(f"FAIL {name}{(': ' + detail) if detail else ''}")
 
 
+# The generation gate must reject both directions of class corruption. These
+# controls exercise its bounded two-dictionary proof without fabricating a
+# statement or weakening the real parser-path checks below.
+for label, source, output, expected in (
+    ("party classes preserve", ["A", "B", "A"], ["X", "Y", "X"], True),
+    ("party false merge rejects", ["A", "B"], ["X", "X"], False),
+    ("party false split rejects", ["A", "A"], ["X", "Y"], False),
+):
+    rejected = False
+    try:
+        m._assert_party_partition(source, output, "sbi")
+    except SystemExit:
+        rejected = True
+    check(label, rejected is (not expected))
+
+
 def scrub_all(module, words):
     """Replace every word, returning exhaustion as a value instead of exiting.
 
@@ -293,7 +309,7 @@ with tempfile.TemporaryDirectory() as directory:
     destination = pathlib.Path(directory) / "short-mask-fabricated.xml"
     fresh = load()
     with contextlib.redirect_stdout(io.StringIO()):
-        fresh.main(str(short_capture), str(destination), [(0, [(0, 10000)])], "SBI")
+        fresh.main(str(short_capture), str(destination), [(0, [(0, 10000)])], "sbi")
     short_box = (143.66, 701.384, 183.68, 712.484)
     words = {tuple(map(float, match.groups()[:4])): match.group(5)
              for match in fresh.WORD.finditer(destination.read_text(encoding="utf-8"))}
@@ -636,7 +652,8 @@ for fixture in sorted(pathlib.Path(__file__).with_name("fixtures").glob("*-bbox-
             destination = str(pathlib.Path(directory, "out.xml"))
             try:
                 with contextlib.redirect_stdout(io.StringIO()):
-                    fresh.main(str(fixture), destination, keep, "regression")
+                    bank = "sbi" if fixture.name.startswith("sbi-") else "hdfc"
+                    fresh.main(str(fixture), destination, keep, bank)
             except SystemExit as stop:
                 check(f"{fixture.name} page {page} re-sanitises", False, str(stop))
                 continue
