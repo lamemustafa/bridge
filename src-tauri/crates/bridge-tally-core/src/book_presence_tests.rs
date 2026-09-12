@@ -472,6 +472,32 @@ fn aggregate_proposal_window_resemblance_work_is_refused() {
 }
 
 #[test]
+fn admitted_indexed_work_boundary_is_accepted() {
+    let rows = (0..500)
+        .map(|i| {
+            BookRow::new(
+                Box::leak(format!("book-{i}").into_boxed_str()),
+                "20260812",
+                Box::leak(format!("N{i}").into_boxed_str()),
+            )
+        })
+        .collect::<Vec<_>>();
+    let proposals = (0..500)
+        .map(|i| {
+            ProposalRow::new(i, "20260812", Box::leak(format!("P{i}").into_boxed_str())).build()
+        })
+        .collect::<Vec<_>>();
+    let observed = window(&rows);
+    assert!(PresenceRequest::new(
+        &observed,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    )
+    .is_ok());
+}
+
+#[test]
 fn request_refuses_a_window_ledger_missing_from_its_catalog() {
     let window =
         window(&[BookRow::new("book-1", "20260812", "AA0118")
@@ -2147,6 +2173,24 @@ fn a_remote_id_with_an_absent_manual_number_is_an_identity_conflict() {
         &numbering(NumberingMethod::Manual),
         &proposals,
     );
+    let entry = only(&report);
+    assert!(entry.present_book_key().is_none());
+    assert_eq!(reason(entry), UndecidedReason::IdentityConflict);
+}
+
+#[test]
+fn a_remote_id_with_an_absent_manual_number_on_an_unobserved_type_is_a_conflict() {
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118").remote_id("tally-1")]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0999")
+        .voucher_type("Other")
+        .remote_id("tally-1")
+        .build()];
+    let numbering = NumberingDeclaration::new([
+        ("Sales", NumberingMethod::Manual),
+        ("Other", NumberingMethod::Manual),
+    ])
+    .expect("numbering");
+    let report = run(&window, &catalog(), &numbering, &proposals);
     let entry = only(&report);
     assert!(entry.present_book_key().is_none());
     assert_eq!(reason(entry), UndecidedReason::IdentityConflict);
