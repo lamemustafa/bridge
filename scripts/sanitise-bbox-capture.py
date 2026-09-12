@@ -475,7 +475,7 @@ def _kept_words(pages, keep):
         yield head, words
 
 
-def _page_short_masks(page):
+def _page_short_masks(page, retained=None):
     """Locate wrapped SBI IMPS mask fields using the existing bank profile.
 
     Keep headers, adjacent columns and separate transactions out of the context.
@@ -505,14 +505,23 @@ def _page_short_masks(page):
     found = {}
     for row in rows:
         joined = " ".join(word[4] for word in row)
-        spans = _short_mask_spans(joined)
-        offset = 0
-        for x0, y0, x1, y1, text in row:
-            local = {(a - offset, b - offset) for a, b in spans
-                     if offset <= a and b <= offset + len(text)}
-            if local:
-                found[(x0, y0, x1, y1)] = local
-            offset += len(text) + 1
+        offsets, offset = [], 0
+        for word in row:
+            offsets.append((offset, offset + len(word[4]), word[:4]))
+            offset += len(word[4]) + 1
+        for match in SHORT_IMPS_MASK.finditer(joined):
+            # Full-page geometry establishes row membership, but every word
+            # carrying the qualifying IMPS field must survive the crop. Table
+            # furniture need not be emitted just to preserve a transaction.
+            support = {box for start, end, box in offsets
+                       if start < match.end() and end > match.start()}
+            if retained is not None and not support <= retained:
+                continue
+            a, b = match.span(1)
+            for start, end, box in offsets:
+                if start <= a and b <= end:
+                    found.setdefault(box, set()).add((a - start, b - start))
+
     return found
 
 
@@ -526,12 +535,11 @@ def main(source, destination, keep, bank):
     # call `_scrub_plain` with strings that are already decoded.
     pages = pathlib.Path(source).read_text(encoding="utf-8").split("<page ")[1:]
     regions = list(_kept_words(pages, keep))
-    # Qualification must survive the retained region selection. A mask-only
-    # crop has no IMPS field context in the emitted fixture and is fabricated.
-    contexts = [_page_short_masks(
-        "\n".join(f'<word xMin="{x0}" yMin="{y0}" xMax="{x1}" yMax="{y1}">'
-                  f'{body}</word>' for x0, y0, x1, y1, body in words))
-        for _, words in regions]
+    # Qualify against source row geometry, then require the field's context
+    # words to survive the crop. A mask-only selection carries no authority.
+    contexts = [_page_short_masks(pages[index], {
+        tuple(map(float, word[:4])) for word in words})
+        for (index, _), (_, words) in zip(keep, regions)]
     # Two passes, and the first one has to be complete before the second starts.
     # A replacement is only safe once the allocator knows every token the
     # capture contains: otherwise a fabricated value can equal some *other*

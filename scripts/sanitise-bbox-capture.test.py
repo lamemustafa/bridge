@@ -278,6 +278,17 @@ with tempfile.TemporaryDirectory() as directory:
     words = [match.group(5) for match in fresh.WORD.finditer(destination.read_text())]
     check("mask-only capture crop fabricates short Xs without retained context",
           len(words) == 1 and "X" not in words[0].upper(), repr(words))
+# A transaction crop retains the IMPS field while omitting table furniture.
+# Source geometry still establishes the row; all field words remain emitted.
+with tempfile.TemporaryDirectory() as directory:
+    destination = pathlib.Path(directory) / "transaction.xml"
+    fresh = load()
+    with contextlib.redirect_stdout(io.StringIO()):
+        fresh.main(str(fixture), str(destination), [(0, [(665, 736.5)])], "SBI")
+    words = {tuple(map(float, m.groups()[:4])): m.group(5)
+             for m in fresh.WORD.finditer(destination.read_text())}
+    check("transaction crop preserves its retained IMPS mask without a header",
+          bool(re.fullmatch(r"XX\d{3}-", words[box])), repr(words[box]))
 # Same captured word in an adjacent column must not receive mask authority.
 shifted = page.replace('xMin="143.660000" yMin="701.384000" xMax="183.680000"',
                        'xMin="222.900000" yMin="701.384000" xMax="262.920000"')
