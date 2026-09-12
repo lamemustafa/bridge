@@ -975,6 +975,32 @@ fn an_unbalanced_book_voucher_is_reported_and_still_matched() {
     assert_eq!(only(&report).present_book_key(), Some("book-1"));
 }
 
+#[test]
+fn unbalanced_observation_listing_is_sorted_before_its_cap() {
+    let rows = [
+        "book-z", "book-a", "book-b", "book-c", "book-d", "book-e", "book-f", "book-g", "book-h",
+        "book-i", "book-j", "book-k", "book-l", "book-m", "book-n", "book-o", "book-p", "book-q",
+        "book-r", "book-s", "book-t", "book-u", "book-v", "book-w", "book-x", "book-y",
+    ]
+    .map(|key| BookRow::new(key, "20260812", "AA0118").rows(vec![["Alpha Traders", "-1.00"]]));
+    let window = window(&rows);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0999").build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+
+    assert_eq!(report.observations().unbalanced_voucher_count, 26);
+    assert_eq!(
+        report.observations().unbalanced_vouchers,
+        (b'a'..=b'y')
+            .map(|suffix| format!("book-{}", char::from(suffix)))
+            .collect::<Vec<_>>()
+    );
+}
+
 // --- book observations --------------------------------------------------
 
 #[test]
