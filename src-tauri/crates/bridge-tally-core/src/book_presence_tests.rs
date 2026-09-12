@@ -2264,7 +2264,7 @@ fn a_remote_id_the_window_never_read_withholds_absent() {
     let report = run(
         &unread,
         &catalog(),
-        &NumberingDeclaration::new([("Receipt", NumberingMethod::Manual)]).expect("numbering"),
+        &numbering(NumberingMethod::Manual),
         &proposals,
     );
     let entry = only(&report);

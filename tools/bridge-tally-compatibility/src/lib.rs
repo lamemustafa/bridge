@@ -44,7 +44,9 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// the surface digest unchanged and let existing evidence attest behaviour it
 /// never covered. That is the deliberate decision the paragraph above requires,
 /// and it is one file for one named reason — not headroom.
-pub const MAX_SURFACE_FILES: usize = 215;
+/// The next slot binds `agent_catalog.rs`: its recursively executed proposal
+/// schema changes presence admission, so existing receipts must cover its bytes.
+pub const MAX_SURFACE_FILES: usize = 216;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
@@ -62,7 +64,8 @@ const REQUIRED_SURFACE_DIRECTORIES: [&str; 2] =
 /// entry and resealing. A required path cannot be dropped silently, and
 /// `gate_rejects_each_omitted_required_lifecycle_path` iterates this list, so adding it
 /// here is what covers its omission.
-const REQUIRED_SURFACE_FILES: [&str; 6] = [
+const REQUIRED_SURFACE_FILES: [&str; 7] = [
+    "src-tauri/src/agent_catalog.rs",
     "src-tauri/src/agent_desktop_journal.rs",
     "src-tauri/src/agent_ledgers.rs",
     "src-tauri/src/source_draft/lifecycle.rs",
