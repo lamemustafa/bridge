@@ -54,6 +54,11 @@ if args[:2] == ["pr", "view"]:
             "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
             "- [x] [Errors](https://github.com/example/repo/blob/HEAD/review-checklist.md#L10)"
         )
+    elif scenario == "body-loses-functional" and view_count > 0:
+        body = (
+            "## Validation and evidence\n\n`python3 scripts/merge-gate.test.py`\n\n"
+            "- [x] [Errors](https://github.com/example/repo/blob/HEAD/review-checklist.md#L10)"
+        )
     if scenario == "checklist-foreign":
         body = "- [x] [Errors](https://github.com/other/repo/blob/HEAD/review-checklist.md#L10)"
     elif scenario == "checklist-unlinked":
@@ -75,7 +80,7 @@ if args[:2] == ["pr", "view"]:
             "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
             "- [x] [Errors](https://github.com/example/repo/blob/HEAD/review-checklist.md#L10)"
         )
-    one_file = scenario in {"files-empty", "formatted-phone", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "separated-dates"}
+    one_file = scenario in {"files-empty", "formatted-phone", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates"}
     selected_base = new_head if scenario == "base-oid-mismatch" else base
     emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
@@ -119,6 +124,8 @@ elif args[:2] == ["pr", "diff"]:
         emit(f"diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n++++ b/synthetic {phone}\n")
     elif scenario == "hunk-header-literals":
         emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +2 @@\n++++ b/safe\n++++ /dev/null\n")
+    elif scenario == "hunk-binary-literal":
+        emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+GIT binary patch\n")
     elif scenario == "separated-dates":
         emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+2026-09-12 2026-09-13\n")
     elif scenario == "surface-unpins":
@@ -210,6 +217,8 @@ elif args and args[0] == "api":
             emit([[{"filename": "docs/example.md", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "hunk-header-literals":
             emit([[{"filename": "docs/example.md", "status": "modified", "additions": 2, "deletions": 0}]])
+        elif scenario == "hunk-binary-literal":
+            emit([[{"filename": "docs/example.md", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "separated-dates":
             emit([[{"filename": "docs/example.md", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "malformed-files":
@@ -361,6 +370,10 @@ class MergeGateControls(unittest.TestCase):
         result = self.run_gate("hunk-header-literals")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_binary_shaped_added_literal_is_not_binary_metadata(self):
+        result = self.run_gate("hunk-binary-literal")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_unrelated_separator_groups_are_not_fused_into_a_phone(self):
         result = self.run_gate("separated-dates")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -469,6 +482,9 @@ class MergeGateControls(unittest.TestCase):
 
     def test_final_changed_body_revalidates_test_evidence(self):
         self.assert_blocked("body-loses-evidence", "description changed and no longer carries test or reproduction evidence")
+
+    def test_final_changed_body_revalidates_functional_summary(self):
+        self.assert_blocked("body-loses-functional", "description changed and no longer carries a non-empty functional summary")
 
 
 if __name__ == "__main__":
