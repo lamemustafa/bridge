@@ -503,6 +503,32 @@ human-approved batch — this ADR does not move.
   read contract with its own live evidence. Until then, prefer several narrow
   windows to one dense one, and read `Absent` as scoped to a window that was
   read narrow enough to trust.
+
+- **A widened re-read was built, measured and rejected**, and the reasoning is
+  recorded here so the next attempt starts past it rather than at it. The idea
+  is to re-read the same range a day wider and compare the two reads on Tally's
+  own `GUID`s for the rows inside the original window: a row the wider read saw
+  and the narrow one did not proves the narrow read short.
+
+  It does detect something real. A wider read is denser, so it truncates at
+  least as hard, and size-driven shortness is the case this section is about.
+  But it **cannot establish completeness**, for the reason stated two sentences
+  up in this same paragraph: a deterministic short answer agrees with itself.
+  If the added boundary days are empty, both reads drop the same suffix and
+  agree, and agreement is then indistinguishable from correctness. It converts
+  some false `Complete`s into `Partial`; it licenses none.
+
+  The price is not small. Measured against a licensed 7.1 Silver book, a
+  one-day window reads 895,888 bytes and its widened corroboration reads
+  1,744,152 — **1.95x**, taking one call from ~896 KB to ~2.6 MB, which roughly
+  halves the widest window the tool can serve before corroboration alone fails
+  it. Widening also moves the requested boundary, and on Education-mode Tally
+  an accepted boundary can widen into an unsupported one that Tally silently
+  reinterprets as the whole book.
+
+  So: a detector with a real cost, a live correctness hazard, and no ability to
+  close the finding it was built for. The source-side control total above
+  remains the only thing that would.
 - **The identifier rule that binds a party across spellings is bimodal, not
   general.** Measured across three catalogs: zero of 470 names across sixteen
   loaded synthetic companies, zero of 105 on one real book, and **91 of 214 —
