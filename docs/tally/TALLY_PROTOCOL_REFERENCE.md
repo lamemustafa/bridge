@@ -1042,8 +1042,14 @@ assigned.
 
 **VERIFIED.** Re-sending an identical ledger `ACTION="Create"` returned `CREATED=0,
 ALTERED=1` with no error — the existing master was **overwritten** with the retry payload.
-"No duplicate was made" is not the same as "my create succeeded." Pre-read before creating,
-and persist `CREATED` and `ALTERED` as distinct outcomes.
+The observed counters distinguish an alteration of an existing master from creation
+of a new one. This experiment did not establish protection against a concurrent
+foreign writer or recovery of an unobserved prior master.
+
+The required implementation workflow is maintained in
+[Implementation Guide §3.6](IMPLEMENTATION_GUIDE.md#36-master-re-create-is-a-silent-alter)
+and `PROMPT_PLAYBOOK.md` Phase 4 step 3a. This section records the gateway observation;
+it does not grant dispatch authority from a pre-read.
 
 ### 9.4a A partial ledger `Alter` preserves the omitted Party GSTIN
 

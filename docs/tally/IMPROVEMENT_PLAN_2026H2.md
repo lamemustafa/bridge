@@ -756,8 +756,15 @@ under the wrong document sent readers to a section that does not exist.)
 | narration marker | attribution — which client write produced which voucher |
 | date/amount/ledger tuple | "these look alike, a human should check" — **not** a dedupe decision |
 
-**Consequence for the qualification work:** the regression in
-[`PROMPT_PLAYBOOK.md`](./PROMPT_PLAYBOOK.md) §6 — "duplicate re-dispatch with edited narration is
-still caught by the fingerprint check" — is still a *useful* case, but its exit criterion is that
-the pair is **flagged for review**, not that the second dispatch is suppressed. A qualification
-that passes by suppressing it is qualifying the defect.
+**Deviation 2026-09-12 — unknown outcomes remain read-only.** The former
+qualification wording below required a second dispatch and treated preventing it
+as a defect. That acceptance criterion is withdrawn. After an unknown outcome,
+reconcile the original saved batch without sending another write; an edited
+narration or an absent fingerprint match cannot authorize replay. Assert that the
+dispatch count does not increase and unresolved evidence remains visible for
+manual review, as required by `PROMPT_PLAYBOOK.md` Phase 4 recovery and §6.
+
+The original distinction remains relevant to independently proposed business
+events: a similar date/amount/ledger tuple is a review flag and cannot by itself
+suppress a separately approved legitimate payment. It does not turn recovery of
+one unknown attempt into a new business event.
