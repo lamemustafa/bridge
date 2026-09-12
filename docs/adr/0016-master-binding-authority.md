@@ -319,7 +319,15 @@ name reaching a family it cannot separate is withheld under
 `NoDiscriminatingCandidate`. A consumer that keys on the reason misses the first,
 which is exactly the defect the preparation screen shipped with.
 
-| `candidate_listing` | what empty means | which `reason` |
+**The state has three names, one per boundary.** The core enum is reachable as
+`Candidates::listing()`; the **MCP** result carries it as `listing`; the
+**desktop** DTO carries it as `candidate_listing`. The four words are identical
+everywhere — `none`, `listed`, `truncated`, `withheld` — so the table below is
+keyed on the word, and each consumer reads it from the field its own boundary
+emits. Naming one boundary's field as though it were universal is how the last
+version of this table sent a consumer looking for something that does not exist.
+
+| listing state | what empty means | which `reason` |
 | --- | --- | --- |
 | `none` | no master resembles this name at all | `NoCandidate` |
 | `withheld` | **many exist**, the binder declined to print an arbitrary slice, and `candidate_count` says how many | either `NoDiscriminatingCandidate` (a name reaching a family) or `IdentifierConflict` (an identifier held by a family) |
@@ -331,8 +339,8 @@ total: two or more skipped identifier families, or one beside masters the name
 reached. One skipped family alone is a single set, and its size is its length.
 
 So `candidates.is_empty()` alone answers nothing. The disambiguators are
-`reason`, `candidate_count`, `candidate_count_is_lower_bound` and
-`candidate_listing`, and a consumer that
+`reason`, `candidate_count`, `candidate_count_is_lower_bound` and the listing
+state under whichever of its three names the boundary emits, and a consumer that
 reads the empty vector as "nothing exists" is wrong in two cases out of three.
 
 This is stated here, in the producer's contract, rather than left to each
@@ -364,12 +372,16 @@ for it measured its own cost at about thirty lines and reported that the change
 made its code better rather than merely compatible — a hand-assembled
 disjunction became an exhaustive match.
 
-**The fix stops at the crate boundary, and says so.** The MCP result carries an
-explicit `listing` discriminator, because a model is precisely the caller that
-would read an empty array as "no such ledger exists". The desktop DTO stays
-flat: its screen already distinguishes the three cases and is tested on each, so
-flattening there is a projection with a tested consumer rather than an
-ambiguity. Neither boundary has the compiler behind it — this protects Rust
+**The fix stops at the crate boundary, and says so.** Both projections now carry
+an explicit discriminator — `listing` on the MCP result, `candidate_listing` on
+the desktop DTO — because a model is precisely the caller that would read an
+empty array as "no such ledger exists", and the preparation screen turned out to
+be another. The desktop DTO was flat until it was not: it carried a
+`candidates_truncated` boolean, which is `is_incomplete()` and so could not tell
+a withheld family from an exhausted budget. That flattening was defended here as
+"a projection with a tested consumer"; the tests were real and tested the wrong
+thing, because the DTO could not express the distinction they would have had to
+make. Neither boundary has the compiler behind it — this protects Rust
 consumers, and the projections are the two places where that protection ends.
 
 ### 5. Status vocabulary

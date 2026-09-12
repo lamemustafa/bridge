@@ -1074,10 +1074,15 @@ fn bind_one(
     // The holders of the largest skipped family, kept by reference so the count
     // below can ask which listed masters are *not* in it. Nothing is cloned.
     let mut largest_withheld: Option<&Vec<usize>> = None;
-    // How many families were skipped, which is what decides whether the count
-    // can be exact: one family's union with the listed masters is computed
-    // below, two disjoint ones cannot be without materializing them.
-    let mut skipped_families = 0_usize;
+    // The skipped families themselves, by reference. Their *count* is not the
+    // question — two identifiers can be held by the identical set of masters,
+    // and an entity carrying both a registration code and a phone number that
+    // appear on exactly the same ledgers has one family, not two. Deduplicated
+    // below, because counting occurrences hedged a union that was known.
+    //
+    // Bounded by `MAX_IDENTIFIERS_PER_NAME`, and only populated when something
+    // was skipped, which is rare.
+    let mut skipped: Vec<&Vec<usize>> = Vec::new();
     for identifier in &entity.identifiers {
         if let Some(holders) = catalog.by_identifier.get(identifier) {
             // An identifier held by more masters than a candidate list may show
@@ -1089,7 +1094,7 @@ fn bind_one(
             // before the candidate memo is even consulted.
             if holders.len() > MAX_CANDIDATES_PER_ENTITY {
                 identifier_conflict = true;
-                skipped_families += 1;
+                skipped.push(holders);
                 if holders.len() > withheld_holders {
                     withheld_holders = holders.len();
                     largest_withheld = Some(holders);
@@ -1140,6 +1145,17 @@ fn bind_one(
     // would be worse than under-counting here: two identifiers can be held by
     // overlapping families, so summing their sizes would state a number of
     // masters that do not exist.
+    // Distinct *sets*, not occurrences. Compared by content rather than by the
+    // identifier that reached them: two identifiers are the same family when
+    // they name the same masters, however they were spelled.
+    let mut distinct_skipped: Vec<&Vec<usize>> = Vec::new();
+    for family in &skipped {
+        if !distinct_skipped.contains(family) {
+            distinct_skipped.push(family);
+        }
+    }
+    let skipped_families = distinct_skipped.len();
+
     let withheld_holders = match largest_withheld {
         Some(family) => {
             // `by_identifier` is filled by pushing entry indices in ascending

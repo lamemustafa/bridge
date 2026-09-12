@@ -2925,6 +2925,34 @@ fn an_exactly_counted_family_is_not_reported_as_a_floor() {
         candidates.count_is_lower_bound(),
         "masters reached by name may or may not sit inside the skipped family"
     );
+
+    // Two identifiers on the **same** masters are one family, not two. A
+    // duplicated party carrying both a code and a number on every one of its
+    // ledgers is the shape: the two holder sets are identical, so their union
+    // is that set and the total is known. Counting occurrences rather than
+    // distinct sets hedged it.
+    let twinned = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Twinned Party {index:03} (5550007777) (5550008888)"))
+        .collect::<Vec<_>>();
+    let twinned_catalog = MasterCatalog::new(MasterClass::Ledger, &twinned).expect("valid");
+    let entity =
+        SourceEntity::with_identifier_hints(0, "Zeta Holdings", ["5550007777", "5550008888"])
+            .expect("valid");
+    let same_set = bound(&twinned_catalog, &[entity])
+        .entities()
+        .first()
+        .cloned()
+        .expect("one");
+    let candidates = &same_set.unresolved().expect("unbound").candidates;
+    assert_eq!(
+        candidates.found(),
+        MAX_CANDIDATES_PER_ENTITY + 5,
+        "the two identifiers name one set of masters, so the total is its size"
+    );
+    assert!(
+        !candidates.count_is_lower_bound(),
+        "two identifiers on the identical holder set are one family, not two"
+    );
 }
 
 #[test]
