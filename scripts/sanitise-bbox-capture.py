@@ -522,7 +522,9 @@ def _assert_party_partition(source_keys, output_keys, bank_name):
         raise EvidenceRefusal("party_evidence_empty_or_misaligned", bank_name)
     source_to_output, output_to_source = {}, {}
     for index, (source, output) in enumerate(zip(source_keys, output_keys)):
-        if not source or not output or source.upper() in ("UNRESOLVED", "UNNAMED") or output.upper() in ("UNRESOLVED", "UNNAMED"):
+        if (not source or not output
+                or (isinstance(source, str) and source.upper() in ("UNRESOLVED", "UNNAMED"))
+                or (isinstance(output, str) and output.upper() in ("UNRESOLVED", "UNNAMED"))):
             raise EvidenceRefusal("party_evidence_underdetermined", bank_name, index)
         old = source_to_output.setdefault(source, output)
         reverse = output_to_source.setdefault(output, source)
@@ -548,15 +550,15 @@ def _validate_parser_evidence(parser, bank, source_pages, output_pages, bank_nam
         try:
             source_date = str(source[bank.date_column]).strip()
             output_date = str(output[bank.date_column]).strip()
-            bank.parse_date(source_date)
-            bank.parse_date(output_date)
-            source_dates.append(source_date)
-            output_dates.append(output_date)
+            source_dates.append(bank.parse_date(source_date))
+            output_dates.append(bank.parse_date(output_date))
             for row in (source, output):
-                for column in (bank.debit_column, bank.credit_column, bank.balance_column):
+                for column in (bank.debit_column, bank.credit_column):
                     value = str(row.get(column) or "").strip()
                     if value:
-                        parser.D(value)
+                        getattr(parser, "_money", parser.D)(value)
+                balance = str(row.get(bank.balance_column) or "").strip()
+                getattr(parser, "_balance", parser.D)(balance)
             source_ref = bank.reference(source)
             output_ref = bank.reference(output)
             source_side = tuple(bool(source.get(column)) for column in (bank.debit_column, bank.credit_column))
@@ -571,7 +573,7 @@ def _validate_parser_evidence(parser, bank, source_pages, output_pages, bank_nam
             output_keys.append(parser._key(bank.party(output)))
         except SystemExit:
             raise
-        except (KeyError, IndexError, TypeError, ValueError, decimal.InvalidOperation) as error:
+        except (KeyError, IndexError, TypeError, ValueError, decimal.InvalidOperation, Exception) as error:
             raise EvidenceRefusal("row_alignment_invalid", bank_name, index) from error
 
     _assert_party_partition(source_dates, output_dates, bank_name)
