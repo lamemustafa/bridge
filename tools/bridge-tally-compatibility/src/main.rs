@@ -172,17 +172,31 @@ fn create_temporary_output_file(
 ) -> Result<tempfile::NamedTempFile, &'static str> {
     use std::os::unix::fs::PermissionsExt;
 
-    let permissions = match fs::metadata(output_path) {
-        Ok(metadata) => metadata.permissions(),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            std::fs::Permissions::from_mode(0o666)
-        }
+    let existing_permissions = match fs::metadata(output_path) {
+        Ok(metadata) => Some(metadata.permissions()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(_) => return Err("output_metadata_unavailable"),
     };
-    tempfile::Builder::new()
-        .permissions(permissions)
+    let mut builder = tempfile::Builder::new();
+    if existing_permissions.is_none() {
+        // Fresh artifacts retain the longstanding 0666 request, which the OS
+        // filters through umask at creation time.
+        builder.permissions(std::fs::Permissions::from_mode(0o666));
+    }
+    let temporary = builder
         .tempfile_in(parent)
-        .map_err(|_| "output_directory_unavailable")
+        .map_err(|_| "output_directory_unavailable")?;
+    // tempfile creation is intentionally still constrained by the process
+    // umask for a new output. A replacement inherits the existing destination
+    // mode only after this descriptor is owned, so a restrictive umask cannot
+    // silently change its public contract.
+    if let Some(permissions) = existing_permissions {
+        temporary
+            .as_file()
+            .set_permissions(permissions)
+            .map_err(|_| "output_permissions_unavailable")?;
+    }
+    Ok(temporary)
 }
 
 #[cfg(not(unix))]
@@ -387,8 +401,23 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn output_file_preserves_existing_destination_mode() {
+    fn assert_new_destination_mode(expected_mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let output_path = directory.path().join("new-surface.json");
+        emit_output(CommandOutput::output_file(
+            "{\"a\":1}".to_string(),
+            Some(output_path.clone()),
+        ))
+        .unwrap();
+        assert_eq!(
+            fs::metadata(output_path).unwrap().permissions().mode() & 0o777,
+            expected_mode
+        );
+    }
+
+    #[cfg(unix)]
+    fn assert_existing_destination_mode() {
         use std::os::unix::fs::PermissionsExt;
 
         let directory = tempfile::tempdir().unwrap();
@@ -405,6 +434,55 @@ mod tests {
         assert_eq!(
             fs::metadata(output_path).unwrap().permissions().mode() & 0o777,
             0o644
+        );
+    }
+
+    #[cfg(unix)]
+    fn run_output_mode_child(test_name: &str, umask: &str, marker: &str) {
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("umask {umask}; exec \"$@\""))
+            .arg("sh")
+            .arg(std::env::current_exe().unwrap())
+            .arg(test_name)
+            .arg("--exact")
+            .env("BRIDGE_COMPAT_UMASK_CHILD", marker)
+            .status()
+            .expect("spawn controlled-umask child");
+        assert!(status.success());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn output_file_preserves_existing_destination_mode() {
+        if std::env::var_os("BRIDGE_COMPAT_UMASK_CHILD").as_deref()
+            == Some(std::ffi::OsStr::new("022"))
+        {
+            assert_existing_destination_mode();
+            assert_new_destination_mode(0o644);
+            return;
+        }
+        run_output_mode_child(
+            "tests::output_file_preserves_existing_destination_mode",
+            "022",
+            "022",
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn output_file_preserves_existing_mode_under_restrictive_umask() {
+        if std::env::var_os("BRIDGE_COMPAT_UMASK_CHILD").as_deref()
+            == Some(std::ffi::OsStr::new("077"))
+        {
+            assert_existing_destination_mode();
+            assert_new_destination_mode(0o600);
+            return;
+        }
+        run_output_mode_child(
+            "tests::output_file_preserves_existing_mode_under_restrictive_umask",
+            "077",
+            "077",
         );
     }
 
