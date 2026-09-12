@@ -224,6 +224,25 @@ pub(crate) enum CompanyIdentityBracketError {
     AbsentOrAmbiguous,
 }
 
+/// Tags a failure of the bracket's own company-enumeration fetch so it can never be
+/// mistaken for a failure of the catalogue request it brackets. Both calls can raise
+/// the same `TallyTransportError`, but `classify_runtime_catalogue_error` must not
+/// apply the catalogue request's bounds/malformed split to this stage: a bracket
+/// failure proves nothing about the size or shape of the catalogue response it did
+/// not receive. This keeps the bracket stage at the pre-existing plain `Transport`
+/// code on purpose, by structure rather than by a variant check.
+#[derive(Debug, thiserror::Error)]
+#[error("company identity bracket read failed: {0}")]
+pub(crate) struct BracketStageTransportFailure(#[source] anyhow::Error);
+
+impl BracketStageTransportFailure {
+    /// Only constructor: forces every bracket-stage failure through this one
+    /// marking point rather than each call site improvising its own wrap.
+    pub(crate) fn new(error: anyhow::Error) -> Self {
+        Self(error)
+    }
+}
+
 /// Re-enumerate the complete identity immediately before or after a scoped
 /// read. Tally accepts a company name as the scope selector, so the GUID alone
 /// is not a sufficient witness when company names differ only by presentation.
@@ -231,7 +250,10 @@ async fn bracket_verified_company_identity(
     client: &TallyClient,
     identity: &VerifiedCompanyIdentity,
 ) -> anyhow::Result<()> {
-    let companies = client.fetch_companies().await?;
+    let companies = client
+        .fetch_companies()
+        .await
+        .map_err(|error| anyhow::Error::new(BracketStageTransportFailure::new(error)))?;
     admit_company_identity(&companies, identity)
 }
 

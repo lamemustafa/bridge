@@ -15,7 +15,7 @@ use bridge_tally_transport::TallyTransportError;
 use super::{
     agent_read_request::AgentReadRequest,
     connection::NativeReportPairDrift,
-    runtime::{CompanyIdentityBracketError, TallyRuntime},
+    runtime::{BracketStageTransportFailure, CompanyIdentityBracketError, TallyRuntime},
     TallyConfig, VerifiedCompanyIdentity,
 };
 
@@ -118,6 +118,18 @@ pub(crate) async fn read_standard_ledger_catalog(
 }
 
 fn classify_runtime_catalogue_error(error: anyhow::Error) -> StandardLedgerCatalogReadError {
+    // A `BracketStageTransportFailure` marks a transport fault from the identity
+    // bracket around this read, not from the catalogue request itself -- see that
+    // type. It must be caught before the variant-only split below, or a bracket
+    // failure would inherit `BoundsViolation`/`MalformedResponse` and claim the
+    // existing-ledger list is bad when the catalogue request never ran, or already
+    // succeeded before the closing bracket failed.
+    if error
+        .chain()
+        .any(|cause| cause.is::<BracketStageTransportFailure>())
+    {
+        return StandardLedgerCatalogReadError::Transport;
+    }
     if let Some(transport_error) = error
         .chain()
         .find_map(|cause| cause.downcast_ref::<TallyTransportError>())
@@ -271,6 +283,49 @@ mod tests {
             )),
             StandardLedgerCatalogReadError::MalformedResponse
         );
+    }
+
+    /// The whole point of `BracketStageTransportFailure`: the identical
+    /// `TallyTransportError` variant must classify differently depending on which
+    /// stage produced it. A bracket failure proves nothing about the catalogue
+    /// response it never received (or received fine, before the closing bracket
+    /// failed), so it must not inherit the catalogue request's bounds/malformed
+    /// split -- see `BracketStageTransportFailure` and `classify_runtime_catalogue_error`.
+    #[test]
+    fn bracket_stage_transport_failures_stay_generic_while_catalogue_request_failures_split() {
+        for variant in [
+            TallyTransportError::ResponseTooLarge {
+                limit: 1,
+                declared_by_peer: true,
+            },
+            TallyTransportError::InvalidEncoding { code: "test" },
+        ] {
+            let bracket_failure =
+                BracketStageTransportFailure::new(anyhow::Error::new(variant.clone()));
+            assert_eq!(
+                classify_runtime_catalogue_error(anyhow::Error::new(bracket_failure)),
+                StandardLedgerCatalogReadError::Transport,
+                "expected a bracket-stage {variant:?} to stay the generic transport code"
+            );
+
+            // The same variant, raised by the catalogue request itself rather than the
+            // identity bracket, still gets the finer split.
+            let expected = match variant {
+                TallyTransportError::ResponseTooLarge { .. } => {
+                    StandardLedgerCatalogReadError::BoundsViolation
+                }
+                TallyTransportError::InvalidEncoding { .. } => {
+                    StandardLedgerCatalogReadError::MalformedResponse
+                }
+                _ => unreachable!(),
+            };
+            let description = format!("{variant:?}");
+            assert_eq!(
+                classify_runtime_catalogue_error(anyhow::Error::new(variant)),
+                expected,
+                "expected a catalogue-request {description} to keep its specific code"
+            );
+        }
     }
 
     #[test]
