@@ -247,18 +247,30 @@ for mask, keeps in (("XXXX", True), ("XXXXXX1234", True), ("xxxx5678", True),
 #
 # A sanitiser may be NARROWER than the parser: the cost is a fabricated mask
 # shape. It must never be WIDER: the cost there is a customer character kept.
+# The parser reads the masked account at one POSITION, not anywhere an `IMPS/`
+# appears: `IMPS/<part0>/<prefix>-<Xrun><digits>-<rest>`. Gating on the mere
+# presence of `IMPS/` in the bbox word marked every short X+digit token in that
+# word as masking, including ones nowhere near the account subfield — so a
+# customer token sharing the word kept its X.
 for token in ("XX1234", "X99", "xx7"):
     outside = load()._scrub_plain(f"TRANSFER TO {token} ACCOUNT")
-    inside = load()._scrub_plain(f"IMPS/P2A/{token}/SOMEBANK")
+    inside = load()._scrub_plain(f"IMPS/P2A/ABC-{token}-SOMENAME")
+    # Same word as a real mask, but NOT in the masked subfield.
+    beside = load()._scrub_plain(f"IMPS/P2A/ABC-XXXX9999-SOMENAME {token} REF")
     check(
         f"{token!r} outside an IMPS field is customer data and is fabricated",
         "X" not in outside.upper(),
         outside,
     )
     check(
-        f"{token!r} inside an IMPS field is the bank's mask and survives",
+        f"{token!r} in the parser's masked subfield is the bank's mask and survives",
         "X" in inside.upper(),
         inside,
+    )
+    check(
+        f"{token!r} elsewhere in an IMPS word is still customer data",
+        beside.upper().count("X") == 4,
+        f"{beside} (expected the four-X mask to survive and {token} not to)",
     )
 
 # The invariant the case above turns on, asserted directly so it cannot be
