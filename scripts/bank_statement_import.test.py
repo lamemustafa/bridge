@@ -3568,13 +3568,15 @@ def test_rollback_keeps_an_aliased_earlier_backup_after_a_later_swap_failure(m):
             return result
 
         m.os.replace = swap_first_alias_backup_then_fail_second
+        stderr = io.StringIO()
         try:
-            try:
-                m.write_outputs([(str(first), "new first"), (str(second), "new second")])
-                raise AssertionError("the controlled later failure must escape")
-            except OSError as error:
-                notes = "\n".join(getattr(error, "__notes__", []))
-                assert "unknown hard-link alias may retain rollback bytes" in notes
+            with contextlib.redirect_stderr(stderr):
+                try:
+                    m.write_outputs([(str(first), "new first"), (str(second), "new second")])
+                    raise AssertionError("the controlled later failure must escape")
+                except OSError as error:
+                    notes = str(error) + "\n" + "\n".join(getattr(error, "__notes__", [])) + stderr.getvalue()
+                    assert "unknown hard-link alias may retain rollback bytes" in notes
         finally:
             m.os.replace = real_replace
 
@@ -3582,7 +3584,6 @@ def test_rollback_keeps_an_aliased_earlier_backup_after_a_later_swap_failure(m):
         assert first.read_text() == "new first"
         assert second.read_text() == "old second"
         assert backup.read_text() == alias.read_text() == "old first"
-
 
 
 def test_rollback_path_distinguishes_an_unlinked_backup_from_an_alias(m):
@@ -3608,14 +3609,16 @@ def test_rollback_path_distinguishes_an_unlinked_backup_from_an_alias(m):
             return result
 
         m.os.replace = swap_first_unlink_backup_then_fail_second
+        stderr = io.StringIO()
         try:
-            try:
-                m.write_outputs([(str(first), "new first"), (str(second), "new second")])
-                raise AssertionError("the controlled later failure must escape")
-            except OSError as error:
-                details = "\n".join(getattr(error, "__notes__", []))
-                assert "controlled later swap failure" in str(error)
-                assert "unknown hard-link alias" not in details
+            with contextlib.redirect_stderr(stderr):
+                try:
+                    m.write_outputs([(str(first), "new first"), (str(second), "new second")])
+                    raise AssertionError("the controlled later failure must escape")
+                except OSError as error:
+                    details = str(error) + "\n" + "\n".join(getattr(error, "__notes__", [])) + stderr.getvalue()
+                    assert "controlled later swap failure" in str(error)
+                    assert "unknown hard-link alias" not in details
         finally:
             m.os.replace = real_replace
 
@@ -3663,7 +3666,9 @@ with tempfile.TemporaryDirectory() as directory:
 
 
 def test_restore_metadata_orders_xattrs_before_final_mode(m):
-    """Portable ordering proof; Linux permission enforcement is tested separately."""
+    """POSIX call-order proof; Linux permission enforcement is tested separately."""
+    if os.name != "posix":
+        return
     with tempfile.TemporaryDirectory() as directory:
         path = pathlib.Path(directory) / "output.xml"
         path.write_text("bytes")
@@ -3707,7 +3712,6 @@ def test_restore_metadata_orders_xattrs_before_final_mode(m):
             os.close(handle)
 
         assert events == ["xattr", "mode"]
-
 
 
 def test_existing_destination_is_pinned_before_staging_side_effects(m):
