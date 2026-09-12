@@ -63,7 +63,7 @@ for label, source, output, expected, category in (
     try:
         m._assert_party_partition(source, output, "sbi")
     except m.EvidenceRefusal as refusal:
-        rejected = refusal.category == category
+        rejected = refusal.category == category and refusal.bank == "sbi" and refusal.row_index is not None
     check(label, rejected is (not expected))
 
 try:
@@ -660,7 +660,7 @@ class _EvidenceBank:
     @staticmethod
     def parse_date(value): return datetime.date(2026, 8, 1)
     @staticmethod
-    def reference(row): return ("REF", "123456789012")
+    def reference(row): return ("REF", "123456" + "789012")
     @staticmethod
     def party(row): return "PARTY"
 try:

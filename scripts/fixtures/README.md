@@ -31,8 +31,8 @@ carries the end-of-statement marker, and — for HDFC — one page *after* that 
 cannot be removed without a test noticing.
 
 The bank argument is a closed parser selection (`hdfc` or `sbi`). The sanitiser parses every selected
-source page and the complete generated page set before writing the destination. It refuses empty,
-misaligned or party-class-changing evidence; captured geometry remains fixture evidence and does not
+source region and the complete generated regions, using the same retained geometry before writing the destination. It refuses empty,
+incomplete accounting rows, misaligned or party-class-changing evidence; captured geometry remains fixture evidence and does not
 qualify raw customer data.
 
 ## Adding a capture for a new bank

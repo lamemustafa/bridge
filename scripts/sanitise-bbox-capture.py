@@ -519,17 +519,17 @@ def _load_parser(bank_name):
 def _assert_party_partition(source_keys, output_keys, bank_name):
     """Require a two-way, one-to-one mapping of party equivalence classes."""
     if not source_keys or len(source_keys) != len(output_keys):
-        raise EvidenceRefusal("party_evidence_empty_or_misaligned")
+        raise EvidenceRefusal("party_evidence_empty_or_misaligned", bank_name)
     source_to_output, output_to_source = {}, {}
     for index, (source, output) in enumerate(zip(source_keys, output_keys)):
         if not source or not output or source.upper() in ("UNRESOLVED", "UNNAMED") or output.upper() in ("UNRESOLVED", "UNNAMED"):
-            raise EvidenceRefusal("party_evidence_underdetermined")
+            raise EvidenceRefusal("party_evidence_underdetermined", bank_name, index)
         old = source_to_output.setdefault(source, output)
         reverse = output_to_source.setdefault(output, source)
         if old != output:
-            raise EvidenceRefusal("party_partition_split")
+            raise EvidenceRefusal("party_partition_split", bank_name, index)
         if reverse != source:
-            raise EvidenceRefusal("party_partition_merged")
+            raise EvidenceRefusal("party_partition_merged", bank_name, index)
 
 
 def _validate_parser_evidence(parser, bank, source_pages, output_pages, bank_name):
@@ -538,9 +538,9 @@ def _validate_parser_evidence(parser, bank, source_pages, output_pages, bank_nam
         source_rows = parser.parse_pages(source_pages, bank)
         output_rows = parser.parse_pages(output_pages, bank)
     except (KeyError, IndexError, TypeError, ValueError, decimal.InvalidOperation) as error:
-        raise EvidenceRefusal("parser_evidence_invalid") from error
+        raise EvidenceRefusal("parser_evidence_invalid", bank_name) from error
     if not source_rows or not output_rows or len(source_rows) != len(output_rows):
-        raise EvidenceRefusal("parser_evidence_empty_or_misaligned")
+        raise EvidenceRefusal("parser_evidence_empty_or_misaligned", bank_name)
 
     source_dates, output_dates = [], []
     source_keys, output_keys = [], []
