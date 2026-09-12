@@ -659,14 +659,15 @@ fi
 
 # The review contract requires an explicit security-impact statement whenever
 # either spelling of a renamed path touches a DSC, credential, or Tally surface.
-# Use the complete REST inventory, not rendered hunks, so removals and renames
-# cannot bypass the requirement.
+# Treat native and frontend source conservatively: their generic filenames can
+# carry DSC/Tally behavior. Use the complete REST inventory, including removals
+# and prior rename paths; named tooling and documentation surfaces are included.
 security_sensitive_change=0
 if [ "$files_status" -eq 0 ]; then
   security_sensitive_change=$(jq -r '
     (if all(.[]; type == "array") then flatten else . end) |
     any(.[]; [ .filename, (.previous_filename? // "") ][] |
-      ascii_downcase | test("(^|/)(dsc|credential)([^/]*|/)|^src-tauri/(crates/[^/]+/|src/).*(tally|agent_import|source_draft)|^src/.*tally|(^|/)docs/tally(/|$)"))
+      ascii_downcase | test("^src-tauri/(crates|src)/|^src/|^docs/(tally|agent)/|^scripts/(bank_statement_import|sanitise-bbox-capture)|(^|/)[^/]*(dsc|credential|tally)[^/]*(/|$)"))
   ' <<<"$files")
 fi
 if [ "$security_sensitive_change" = "true" ]; then
@@ -862,7 +863,7 @@ $added"
   home_path_status=0
   mac_home='/'"Users"'/[A-Za-z0-9._-]+'
   unix_home='/'"home"'/[A-Za-z0-9._-]+'
-  windows_home='[A-Za-z]:[\\/]'"Users"'[\\/][A-Za-z0-9._-]+'
+  windows_home='[A-Za-z]:[\\/]{1,2}'"Users"'[\\/]{1,2}[A-Za-z0-9._-]+'
   home_path_matches=$(grep -Eio "(^|[^[:alnum:]_])(${mac_home}|${unix_home}|${windows_home})(\$|/|\\\\|[^[:alnum:]_.-])" <<<"$scan_input") || home_path_status=$?
   if [ "$home_path_status" -gt 1 ]; then
     unknown "developer-home path scan expression failed"

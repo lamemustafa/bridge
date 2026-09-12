@@ -138,8 +138,9 @@ def parse(lines: list[str]) -> dict[str, object]:
     return {"records": records, "added_payload": added_payload}
 
 
-try:
-    print(json.dumps(parse(sys.stdin.read().splitlines())))
-except (UnicodeError, ValueError) as error:
-    print(f"merge_gate_diff_error:{error}", file=sys.stderr)
-    raise SystemExit(2)
+if __name__ == "__main__":
+    try:
+        print(json.dumps(parse(sys.stdin.read().splitlines())))
+    except (UnicodeError, ValueError) as error:
+        print(f"merge_gate_diff_error:{error}", file=sys.stderr)
+        raise SystemExit(2)
