@@ -1,4 +1,4 @@
-import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 declare global {
   interface Window {
@@ -33,67 +33,16 @@ async function pressUntilNativeFocus(
   throw new Error(`native ${key} sequence did not reach ${expectedFocusName}`);
 }
 
-async function nativeFocusRoute(
-  page: Page,
-  startFocusName: string,
-  key: "Tab" | "Shift+Tab",
-  pressCount = 12,
-) {
-  await page.locator(`[data-focus-name="${startFocusName}"]`).focus();
-  const route = [startFocusName];
-  for (let index = 0; index < pressCount; index += 1) {
-    await page.keyboard.press(key);
-    route.push(await page.evaluate(() => document.activeElement?.getAttribute("data-focus-name") ?? "document"));
-  }
-  return route;
-}
-
-async function visibleDrawerTabStops(page: Page) {
-  return page.locator("#drawer").evaluate((drawer) => (
-    window.evidenceDrawerFocus.visibleDrawerTabStops(drawer as HTMLElement)
-      .map((element) => element.dataset.focusName)
-  ));
-}
-
-async function attachFocusDiagnostics(page: Page, testInfo: TestInfo) {
-  const diagnostics = {
-    project: testInfo.project.name,
-    platform: process.platform,
-    collapsed: {
-      helperStops: await visibleDrawerTabStops(page),
-      forwardFromPositive: await nativeFocusRoute(page, "positive tabindex editable", "Tab"),
-      reverseFromEditable: await nativeFocusRoute(page, "editable", "Shift+Tab"),
-    },
-  };
-
-  await page.locator("summary").click();
-  const expanded = {
-    helperStops: await visibleDrawerTabStops(page),
-    forwardFromSummary: await nativeFocusRoute(page, "advanced summary", "Tab"),
-    reverseFromEditable: await nativeFocusRoute(page, "editable", "Shift+Tab"),
-  };
-  await page.locator("summary").click();
-
-  const body = JSON.stringify({ ...diagnostics, expanded });
-  console.log(`evidence-drawer native focus diagnostics: ${body}`);
-  await testInfo.attach("evidence-drawer-native-focus-routes.json", {
-    body,
-    contentType: "application/json",
-  });
-}
-
 test("the evidence drawer records each browser engine's native Tab order for collapsed and expanded details", async ({ page }, testInfo) => {
   await page.goto("/scripts/evidence-drawer-focus.fixture.html");
   await expect.poll(() => page.locator("#drawer").evaluate((drawer) => Boolean(window.evidenceDrawerFocus))).toBe(true);
-  // Preserve bounded native routes and helper output before strict assertions so
-  // a new browser/platform divergence is visible in the CI log and artifact.
-  await attachFocusDiagnostics(page, testInfo);
 
+  const macWebKitNativeFocusPath = testInfo.project.name === "webkit" && process.platform === "darwin";
   await page.locator('[data-focus-name="positive tabindex editable"]').focus();
-  // The engines differ here: Chromium follows the positive-tabindex editable
-  // host with Close, while Playwright WebKit moves straight to the summary.
-  // This records browser-engine behavior only; it is not packaged-shell proof.
-  if (testInfo.project.name === "webkit") {
+  // Native focus is platform-specific: macOS Playwright WebKit moves directly
+  // to the summary, while Ubuntu WebKit and Chromium reach Close first. These
+  // are browser-test observations, not packaged-shell proof.
+  if (macWebKitNativeFocusPath) {
     await pressUntilNativeFocus(page, "Tab", "positive tabindex editable", "advanced summary");
   } else {
     await pressUntilNativeFocus(page, "Tab", "positive tabindex editable", "close");
@@ -103,10 +52,10 @@ test("the evidence drawer records each browser engine's native Tab order for col
   await pressUntilNativeFocus(page, "Tab", "advanced summary", "audio controls");
   await pressUntilNativeFocus(page, "Tab", "audio controls", "video controls");
   await pressUntilNativeFocus(page, "Tab", "video controls", "editable");
-  if (testInfo.project.name === "webkit") {
-    // WebKit leaves the document's focusable sequence once after this editing
-    // host, then wraps to the positive-tabindex editable host instead of
-    // reaching the following button.
+  if (macWebKitNativeFocusPath) {
+    // macOS Playwright WebKit leaves the document's focusable sequence once
+    // after this editing host, then wraps to the positive-tabindex editable
+    // host instead of reaching the following button.
     await page.keyboard.press("Tab");
     await expect.poll(() => page.evaluate(() => document.activeElement === document.body)).toBe(true);
     await page.keyboard.press("Tab");
@@ -131,9 +80,10 @@ test("the evidence drawer records each browser engine's native Tab order for col
     : ["positive tabindex editable", "close", "advanced summary", "audio controls", "video controls", "editable"]);
 
   await page.locator("summary").click();
-  if (testInfo.project.name === "webkit") {
-    // WebKit also keeps the details button out of its native Tab path after
-    // expansion, despite the element being present in the helper's list.
+  if (macWebKitNativeFocusPath) {
+    // macOS Playwright WebKit keeps the details button out of its native Tab
+    // path after expansion, despite the element being present in the helper's
+    // list.
     await pressUntilNativeFocus(page, "Tab", "advanced summary", "audio controls");
   } else {
     await pressUntilNativeFocus(page, "Tab", "advanced summary", "advanced button");
