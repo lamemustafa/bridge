@@ -186,6 +186,11 @@ pub struct Identifier {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CandidateRule {
+    /// Byte-equal to the observed master name. Only reachable on a refusal:
+    /// where byte equality settles the question it binds instead, so this
+    /// appears exactly when something outranked it — an identifier pointing
+    /// elsewhere — and it is the other half of that disagreement.
+    ExactName,
     /// Shares an embedded identifier, but the identifier was not decisive.
     SharedIdentifier,
     /// Equal under the comparison key, but the key was not unique.
@@ -201,11 +206,12 @@ pub enum CandidateRule {
 impl CandidateRule {
     fn rank(self) -> u8 {
         match self {
-            Self::SharedIdentifier => 0,
-            Self::NormalizedEqual => 1,
-            Self::CatalogPrefix => 2,
-            Self::SourcePrefix => 3,
-            Self::SharedToken => 4,
+            Self::ExactName => 0,
+            Self::SharedIdentifier => 1,
+            Self::NormalizedEqual => 2,
+            Self::CatalogPrefix => 3,
+            Self::SourcePrefix => 4,
+            Self::SharedToken => 5,
         }
     }
 }
@@ -911,6 +917,20 @@ type CandidateMemo = BTreeMap<(String, BTreeSet<usize>), (Vec<(usize, CandidateR
 /// One run's search scratch: what has already been computed, and which source
 /// keys a second row will ask for again. Carried together because they are one
 /// decision — whether this result is worth keeping — split across two values.
+/// What the identifier pass established for one entity, before any name was
+/// compared. Carried together because every consumer needs all three and the
+/// awkward one — how large a family was skipped — is meaningless without the
+/// other two.
+struct IdentifierEvidence<'a> {
+    /// The master whose name the source matches byte for byte, if any.
+    exact: Option<usize>,
+    /// Every master the entity's identifiers reached.
+    matches: &'a BTreeSet<usize>,
+    /// The largest family skipped rather than expanded, so a withheld listing
+    /// can still say how many masters share the identifier.
+    withheld_holders: usize,
+}
+
 struct SearchMemo<'a> {
     seen: CandidateMemo,
     repeated: BTreeSet<&'a str>,
@@ -937,6 +957,11 @@ fn bind_one(
     let mut identifier_matches = BTreeSet::new();
     let mut identifier_conflict = false;
     let mut large_holder_points_elsewhere = false;
+    // How many masters a skipped family actually held. The set is not built,
+    // but the *count* is the one thing a reader still needs: without it a
+    // withheld family reported `found() == 0` and `listing: "none"`, telling
+    // the operator nothing shares the identifier when hundreds do.
+    let mut withheld_holders = 0_usize;
     for identifier in &entity.identifiers {
         if let Some(holders) = catalog.by_identifier.get(identifier) {
             // An identifier held by more masters than a candidate list may show
@@ -948,6 +973,7 @@ fn bind_one(
             // before the candidate memo is even consulted.
             if holders.len() > MAX_CANDIDATES_PER_ENTITY {
                 identifier_conflict = true;
+                withheld_holders = withheld_holders.max(holders.len());
                 // Skipping the expansion must not skip the *question* the
                 // expansion was asked. `identifier_points_elsewhere` needs one
                 // fact from this set — whether it contains the byte-exact
@@ -1005,8 +1031,11 @@ fn bind_one(
             catalog,
             entity,
             UnboundReason::IdentifierNameConflict,
-            exact,
-            &identifier_matches,
+            IdentifierEvidence {
+                exact,
+                matches: &identifier_matches,
+                withheld_holders,
+            },
             budget,
             memo,
         )
@@ -1023,8 +1052,11 @@ fn bind_one(
             catalog,
             entity,
             UnboundReason::IdentifierConflict,
-            exact,
-            &identifier_matches,
+            IdentifierEvidence {
+                exact,
+                matches: &identifier_matches,
+                withheld_holders,
+            },
             budget,
             memo,
         )
@@ -1053,12 +1085,31 @@ fn bind_one(
                 catalog_name: catalog.entries[*index].name.clone(),
                 basis: BindingBasis::NormalizedName,
             },
+            // A single folded match that the class does not license is not an
+            // ambiguity — nothing shares its key. `NameAmbiguous` would tell a
+            // consumer that several masters collided when exactly one did not
+            // qualify, which is a different fact with a different remedy.
+            Some([_]) => unresolved_status(
+                catalog,
+                entity,
+                UnboundReason::NearMiss,
+                IdentifierEvidence {
+                    exact,
+                    matches: &identifier_matches,
+                    withheld_holders,
+                },
+                budget,
+                memo,
+            ),
             Some(_) => unresolved_status(
                 catalog,
                 entity,
                 UnboundReason::NameAmbiguous,
-                exact,
-                &identifier_matches,
+                IdentifierEvidence {
+                    exact,
+                    matches: &identifier_matches,
+                    withheld_holders,
+                },
                 budget,
                 memo,
             ),
@@ -1072,7 +1123,14 @@ fn bind_one(
                 } else {
                     UnboundReason::NoCandidate
                 };
-                unresolved_from(catalog, entity, reason, candidates, masters_found, budget)
+                unresolved_from(
+                    catalog,
+                    entity,
+                    reason,
+                    candidates,
+                    masters_found.max(withheld_holders),
+                    budget,
+                )
             }
         }
     };
@@ -1088,19 +1146,34 @@ fn unresolved_status(
     catalog: &MasterCatalog,
     entity: &SourceEntity,
     reason: UnboundReason,
-    exact: Option<usize>,
-    identifier_matches: &BTreeSet<usize>,
+    evidence: IdentifierEvidence<'_>,
     budget: &mut usize,
     memo: &mut SearchMemo<'_>,
 ) -> BindingStatus {
+    let IdentifierEvidence {
+        exact,
+        matches: identifier_matches,
+        withheld_holders,
+    } = evidence;
     let (mut candidates, masters_found) =
         remembered_candidates(catalog, entity, identifier_matches, memo);
     if let Some(index) = exact {
-        if !candidates.iter().any(|(candidate, _)| *candidate == index) {
-            candidates.push((index, CandidateRule::NormalizedEqual));
-        }
+        // Byte equality, labelled as itself. Adding it as `NormalizedEqual`
+        // hid the strongest name evidence there is and sorted it behind the
+        // identifier that outranked it — on a conflict produced *because* byte
+        // equality was observed, which left the operator reading the two facts
+        // that disagreed without being told one of them was exact.
+        candidates.retain(|(candidate, _)| *candidate != index);
+        candidates.push((index, CandidateRule::ExactName));
     }
-    unresolved_from(catalog, entity, reason, candidates, masters_found, budget)
+    unresolved_from(
+        catalog,
+        entity,
+        reason,
+        candidates,
+        masters_found.max(withheld_holders),
+        budget,
+    )
 }
 
 fn unresolved_from(
@@ -1523,9 +1596,15 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
         } else if token.chars().any(char::is_alphanumeric) {
             previous_was_mask = false;
         }
+        // Only the separators §9.4d measured may be discarded. Filtering to
+        // alphanumerics dropped **every** ASCII punctuation mark, so
+        // `AB_123456` and `AB-123456` canonicalized alike and one identifier
+        // bound the other's master — while §9.4d had sent an underscore and
+        // watched Tally *reject* it. The evidence for this fold is one
+        // measurement about hyphens and slashes; everything else stays content.
         let canonical = token
             .chars()
-            .filter(|character| character.is_ascii_alphanumeric())
+            .filter(|character| !matches!(character, '-' | '/'))
             .map(|character| character.to_ascii_uppercase())
             .collect::<String>();
         let digits = canonical.chars().filter(char::is_ascii_digit).count();

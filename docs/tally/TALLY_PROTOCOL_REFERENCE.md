@@ -1259,7 +1259,27 @@ eight created vouchers were then deleted by `REMOTEID` and the day read back emp
 | an **en dash** where the master has a space | **rejected** | *UNVERIFIED* |
 | an **underscore** where the master has a space | **rejected** | *UNVERIFIED* |
 | `AND` for `&` | **rejected** | rejected |
+| a **missing** suffix word | **rejected** | rejected |
+| an **added** suffix word | **rejected** | not sent |
 | **NFD** against an NFC master | **rejected** | not sent |
+
+**One row here was mislabelled and is corrected.** The first run of this probe recorded `AND` for
+`&` as rejected, but what it actually sent was a name with `AND CO` **appended** — against a master
+carrying no `&` at all. That measures an added suffix, not a substitution, and the label was wrong
+even though the verdict happened to be. It was re-run against `Profit & Loss A/c`, a reserved
+ledger present in every company:
+
+| supplied against live `Profit & Loss A/c` | result |
+| --- | --- |
+| `Profit & Loss A/c` | **matched** — control |
+| `profit & loss a/c` | **matched** — case folds on a name carrying `&` and `/` |
+| `Profit AND Loss A/c` | **rejected** — the substitution, now measured here |
+| `profit and loss a/c` | **rejected** |
+| `Profit & Loss` | **rejected** — a missing suffix word |
+| `Profit & Loss A/c AND CO` | **rejected** — an added suffix word, what the first run really sent |
+
+So §9.4b's abbreviation findings hold on licensed 7.1 as well, and this section now says which
+of them it measured rather than which it meant to.
 
 **Composition was measured separately, because twelve single-axis results do not license it.**
 Each row above is **one** transformation away from exact, so together they say each transformation

@@ -802,9 +802,16 @@ fn a_name_in_another_script_does_not_shed_its_letters_into_a_code() {
         bind_one_name(&bank, &format!("Purchases 12345678{digits}")).bound_name(),
         None
     );
-    // The dash variants stay admitted: this module already folds them as
-    // separators, and a punctuated code must still agree with a plain one.
+    // Only the separators §9.4d measured are discarded from a code. An ASCII
+    // hyphen and slash are; a non-breaking hyphen is not, because §9.4d sent a
+    // non-ASCII dash and watched Tally reject it. So a code punctuated with one
+    // no longer agrees with the plain spelling — a refusal, which is the safe
+    // direction, and the token is still admitted as a candidate by name.
     assert_eq!(
+        entity("Item PH-01/AB-00").identifiers(),
+        entity("Item PH01AB00").identifiers()
+    );
+    assert_ne!(
         entity("Item PH\u{2011}01AB00").identifiers(),
         entity("Item PH01AB00").identifiers()
     );
@@ -1139,6 +1146,11 @@ fn a_stock_item_may_suggest_on_a_fold_but_not_resolve_on_one() {
         "a stock item resolved on an unmeasured fold"
     );
     assert_eq!(candidate_names(binding), ["Sales-Item"]);
+    // A lone unlicensed fold is a **near miss**, not an ambiguity. Nothing
+    // shares its key; one master simply did not qualify, and `NameAmbiguous`
+    // would tell a consumer several masters collided — a different fact with a
+    // different remedy.
+    assert_eq!(reason(binding), UnboundReason::NearMiss);
 
     // Byte equality needs no fold and is unaffected by the class.
     let exact = SourceEntity::new(0, "Sales-Item").expect("valid");
@@ -1173,6 +1185,66 @@ fn a_repeated_key_is_remembered_however_many_distinct_ones_precede_it() {
     assert!(
         searches <= MAX_CANDIDATE_MEMO_ENTRIES + 1,
         "the repeated key was searched more than once: {searches} searches"
+    );
+}
+
+#[test]
+fn unmeasured_punctuation_keeps_two_codes_apart() {
+    // Canonicalization filtered to alphanumerics, so **every** ASCII
+    // punctuation mark was discarded and `AB_123456` canonicalized the same as
+    // `AB-123456` — while §9.4d had sent an underscore at a live master and
+    // watched Tally reject it. The fold's evidence is about hyphens and
+    // slashes; everything else is content.
+    let catalog = ledgers(&["Sales AB-123456", "Beta Supply"]);
+    let binding = bind_one_name(&catalog, "Purchases AB_123456");
+    assert_eq!(
+        binding.bound_name(),
+        None,
+        "an underscore was treated as a hyphen on evidence that says it is not"
+    );
+    // The measured separators still agree, and the contrast is the point: with
+    // a hyphen the two codes are one identifier and the bind is the
+    // identifier-first rule working; with an underscore they are two
+    // identifiers and nothing binds.
+    let measured = ledgers(&["Sales PH-01-AB-00", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&measured, "Purchases PH01AB00").bound_name(),
+        Some("Sales PH-01-AB-00"),
+        "a hyphen and no hyphen are one code, which §9.4d measured"
+    );
+    assert_eq!(
+        entity("Item PH-01-AB-00").identifiers(),
+        entity("Item PH01AB00").identifiers()
+    );
+    assert_ne!(
+        entity("Item AB_123456").identifiers(),
+        entity("Item AB-123456").identifiers()
+    );
+}
+
+#[test]
+fn a_withheld_family_still_reports_how_many_share_the_identifier() {
+    // Skipping the expansion discarded the holder count with the set, so a
+    // withheld family reported `found() == 0` and an empty listing — telling
+    // the operator nothing shares the identifier when hundreds do. The count is
+    // the one thing a reader still needs from a set too large to show.
+    let names = (0..MAX_CANDIDATES_PER_ENTITY + 7)
+        .map(|index| format!("Shared Party {index:03} (5550007777)"))
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let source =
+        SourceEntity::with_identifier_hints(0, "Zeta Holdings", ["5550007777"]).expect("valid");
+    let report = bound(&catalog, &[source]);
+    let unresolved = report.entities()[0].unresolved().expect("unbound");
+    assert_eq!(unresolved.reason, UnboundReason::IdentifierConflict);
+    assert_eq!(
+        unresolved.candidates.found(),
+        MAX_CANDIDATES_PER_ENTITY + 7,
+        "a withheld family reported no holders at all"
+    );
+    assert!(
+        unresolved.candidates.is_incomplete(),
+        "a count without a listing must say the listing is incomplete"
     );
 }
 
@@ -1243,10 +1315,17 @@ fn conflicting_identifiers_outrank_a_byte_exact_name_but_a_shared_one_does_not()
     let binding = &report.entities()[0];
     assert_eq!(reason(binding), UnboundReason::IdentifierNameConflict);
     // Every master the evidence reached is offered, so the operator sees the
-    // disagreement rather than one side of it.
+    // disagreement rather than one side of it — and the byte-exact name leads,
+    // labelled as itself. This refusal exists *because* byte equality was
+    // observed, so burying that under the identifier that outranked it left
+    // the operator reading two facts without being told one of them was exact.
     assert_eq!(
         candidate_names(binding),
-        ["BETA 11111111", "GAMMA 22222222", "ACME"]
+        ["ACME", "BETA 11111111", "GAMMA 22222222"]
+    );
+    assert_eq!(
+        binding.unresolved().expect("unbound").candidates.listed()[0].rule,
+        CandidateRule::ExactName
     );
 
     // The shared-identifier case must keep binding: one identifier reached the
