@@ -226,19 +226,21 @@ fn a_caller_limited_presence_page_includes_its_resume_cursor() {
             date: "20260901",
             voucher_type: "Journal",
             voucher_number: Some(if position == 0 { "JV-0" } else { "JV-1" }),
+            narration_marker: None,
             remote_id: None,
             party: None,
             entries: &entries,
         })
         .expect("proposal")
     });
-    let window = BookWindow::observed(
-        "20260901",
-        "20260930",
-        WindowRead::Complete,
-        RemoteIdEvidence::NotRead,
-        vec![],
-    )
+    let window = BookWindow::observed(ObservedWindow {
+        from: "20260901",
+        to: "20260930",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::NotRead,
+        narration_evidence: ColumnEvidence::NotRead,
+        vouchers: vec![],
+    })
     .expect("complete empty window");
     let catalogue = vec!["Cash".to_string(), "Sales".to_string()];
     let catalog = MasterCatalog::new(MasterClass::Ledger, &catalogue).expect("catalog");
