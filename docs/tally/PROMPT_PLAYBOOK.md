@@ -309,7 +309,10 @@ Implement:
    §9.4b's case and separator rows sit on §0's **Edit Log 7.0
    Educational** baseline. Where this phase reads a licensed instance,
    match on exact codepoints; widen to `accepts()` only where a licensed
-   capture or the connected instance's compatibility result qualifies it.
+   capture has qualified it — §9.4d does exactly that for LEDGERS on
+   licensed 7.1, and for nothing else. A compatibility result cannot
+   qualify it: that evidence is a live-READ receipt and establishes no
+   write behaviour (`compatibility/README`).
    A read is not a safe place to be wrong about this — the mirror rows
    built here are what later binding decisions resolve against, so a fold
    that merges two masters here merges them everywhere downstream.
@@ -588,52 +591,78 @@ Implement — write core (masters):
    MAX_LEDGER_WRITE_BATCH.
 3. Single-writer actor owns the import surface; reads gated during
    dispatch→readback windows; queue depth visible.
+3a. MASTER-CREATION GUARD — **BEFORE DISPATCH, NOT IN READBACK.**
+   This runs on the intent, before any import is sent. Placing it in
+   step 4 was a defect: step 4 begins "after counters accept", and by
+   then `ACTION="Create"` against a name Tally considers matching has
+   already returned `CREATED=0, ALTERED=1` and **silently overwritten
+   the existing master with the retry payload** (IMPLEMENTATION_GUIDE
+   §3.6, plan §8.5). A refusal raised during readback protects nothing;
+   the client's master is already gone. Pre-read, then decide, then
+   dispatch.
+   The harm is an OVERWRITE, not a duplicate. An earlier revision of
+   this guard said a near-collision "makes a SECOND master differing
+   only by case". That is not what was measured: the existing master is
+   altered in place, so its group, its opening balance and its GST
+   registration are replaced by whatever the new payload carried. A
+   duplicate is visible in a ledger list; an overwrite is not.
+   Three outcomes, never two:
+   **bind** to an exact-codepoint match;
+   **create** only when NO existing master collides under the detector
+   below;
+   otherwise **REFUSE and raise it for a human.**
+   THE DETECTOR IS NOT THE BINDER AND MUST BE WIDER THAN IT.
+   §9.4b's `accepts()` is DIRECTIONAL — for a requested `FOO` against an
+   existing `foo`, `accepts(FOO, foo)` is false — so reusing it as the
+   detector misses exactly the collision it exists to catch. The
+   detector folds SYMMETRICALLY and deliberately over-wide:
+   case-insensitive both ways; hyphen and space interchangeable both
+   ways; leading and trailing whitespace ignored; internal whitespace
+   runs collapsed; **and NFC/NFD canonical equivalents treated as
+   colliding.** That last row matters most and is the one most easily
+   left out: §9.4b's exact-codepoint result came from an **EDU**
+   instance, so a licensed SKU that folds canonical equivalence is not
+   excluded — and an NFD request beside an existing NFC master would
+   otherwise pass exact lookup *and* the detector, and overwrite it.
+   Detecting NFC/NFD collision does NOT reintroduce NFC normalisation
+   into matching: the binder still compares exact codepoints. One folds
+   to refuse, the other folds to write, and only the second needs
+   evidence.
+   Several detector rows are UNVERIFIED as *matching* behaviour, which
+   is why they belong here: **an unverified equivalence cannot justify a
+   write, but it is ample reason to stop and ask.** A detector that
+   misses a collision overwrites a master in a client's book; a detector
+   that over-fires costs one question to a human. Fail toward the
+   question.
 4. Readback verification: after counters accept, re-export the object
    (masters matched by name under the SCOPE GATE below — never by a
    broader rule stated anywhere else in this step; vouchers by
    LASTVCHID) and
-   SCOPE GATE (§9.4b, §0) — THE ONLY NAME-MATCHING RULE IN THIS STEP:
-   §9.4b's case-folding and hyphen-for-space rows
-   were measured on the **Edit Log 7.0 Educational** baseline and carry no
-   licensed-SKU qualification. NOR DOES THE NFC/NFD ROW: an earlier
-   revision of this gate called that capture licensed, and it is not —
+   SCOPE GATE (§9.4b, §9.4d, §0) — THE ONLY NAME-MATCHING RULE IN THIS
+   STEP. §9.4b's rows sit on §0's **Edit Log 7.0 Educational** baseline,
+   the NFC/NFD row included: an earlier revision of this gate called
+   that capture licensed and it is not —
    `src-tauri/crates/bridge-tally-protocol/tests/fixtures/encoding/`
-   `PROVENANCE.md` records the 2026-08-19 instance behind it as **EDU**. Correcting that makes this gate
-   stricter, not weaker: **no** row of §9.4b is qualified on a licensed
-   SKU, so there is no licensed evidence to widen towards.
-   Phase 4 runs against licensed TallyPrime, so on a licensed SKU match
-   master names on **exact codepoints** and let a case or separator
-   difference fail loudly. Widen to `accepts()` only where a licensed
-   capture has qualified the predicate, or where the compatibility result
-   for the connected instance says it holds. A fold applied on an
-   unqualified SKU can bind a write to an account Tally keeps distinct.
-   AND EXACT-ONLY MATCHING HAS ITS OWN FAILURE, WHICH IS NOT "SAFE":
-   if the connected SKU *does* share the Educational behaviour, an
-   existing `FOO` reads as ABSENT for a requested `foo`, and a step that
-   creates what it finds missing then makes a SECOND master differing
-   only by case — a duplicate in the client's book rather than a
-   misbinding. Exact-only is the right rule for BINDING and the wrong
-   rule for CREATING, so the gate has three outcomes, not two:
-   **bind** on an exact match; **create** only when no master differs
-   from the requested name by case or separator alone; otherwise
-   **REFUSE and raise it for a human** — a near-collision on an
-   unqualified SKU is precisely the case where neither automatic answer
-   is defensible. Compute the near-collision set with a fold
-   used only as a *detector*, never as a binder — and **the detector
-   must be wider than the binder, not the same predicate pointed the
-   other way.** §9.4b's `accepts()` is DIRECTIONAL: for a requested
-   `FOO` against an existing `foo`, `accepts(FOO, foo)` is false, so
-   reusing it as the detector misses exactly the collision that would
-   then be created as a duplicate — the hazard surviving inside its
-   own guard. The detector folds SYMMETRICALLY and deliberately
-   over-wide: case-insensitive both ways, hyphen and space
-   interchangeable both ways, leading and trailing whitespace ignored,
-   internal whitespace runs collapsed. Several of those rows are
-   UNVERIFIED as *matching* behaviour, which is precisely why they
-   belong here: an unverified equivalence cannot justify a write, but
-   it is ample reason to stop and ask. A detector that misses a
-   collision creates a duplicate in a client's book; a detector that
-   over-fires costs one question to a human. Fail toward the question.
+   `PROVENANCE.md` records the 2026-08-19 instance behind it as **EDU**.
+   **§9.4d is the licensed qualification, and it is qualification of a
+   WRITE.** It re-ran §9.4b's method on **TallyPrime 7.1, licence tier
+   silver, `education_mode=false`** by importing vouchers naming folded
+   spellings and reading the **day book** back to see which master each
+   posted against. That is observed write behaviour on the SKU this
+   project writes to, for **ledgers**.
+   So: for **ledgers on licensed 7.1**, match under §9.4d's measured
+   rows. For **every other master type** — stock items, groups, voucher
+   types — §9.4d measured nothing, so match on **exact codepoints** and
+   let a case or separator difference fail loudly.
+   **A compatibility result cannot widen this.** `compatibility/README`
+   defines a cell's evidence as a live-**read** receipt and says it
+   "never establishes ... any write behavior". An earlier revision of
+   this gate offered the connected instance's compatibility result as a
+   widening route; it is withdrawn. Only a direct write measurement
+   like §9.4d qualifies a write predicate.
+   Exact-only matching is not automatically the safe answer — see the
+   MASTER-CREATION GUARD at step 3a, which is where the creating case is
+   decided, and which runs before dispatch rather than here.
    ALWAYS cross-check the fetched object against the idempotency key and
    the (date, amount, ledger-set, voucher-type) fingerprint before
    promoting to CONFIRMED — LASTVCHID can be clobbered by a foreign
