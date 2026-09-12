@@ -1362,6 +1362,72 @@ def test_a_failed_run_does_not_destroy_the_previous_output(m):
             ["new.csv", "previous.xml"]
 
 
+def test_write_outputs_writes_through_a_symlinked_destination(m):
+    """`os.replace` does not follow a symlink at the destination -- it
+    replaces the link itself, the same as `unlink` would. Renaming the staged
+    payload onto the link's own name would silently turn a live symlink into
+    a plain file, leaving whatever else reads through that link looking at
+    stale content forever. The swap must resolve through the link and land on
+    its target instead."""
+    with tempfile.TemporaryDirectory() as directory:
+        real_target = pathlib.Path(directory, "real-target.xml")
+        real_target.write_text("old")
+        link = pathlib.Path(directory, "out.xml")
+        link.symlink_to(real_target)
+
+        m.write_outputs([(str(link), "<new/>")])
+
+        assert link.is_symlink(), "the link itself must survive the write"
+        assert pathlib.Path(os.readlink(link)) == real_target
+        assert real_target.read_text() == "<new/>", \
+            "the payload must reach the link's target, not replace the link"
+
+
+def test_a_failed_swap_rolls_back_every_staged_replacement(m):
+    """Two existing destinations are both staged; the first's swap succeeds
+    and the second's fails. The rollback used to run only the un-staged
+    cleanup, so the first destination was left holding the new run's content
+    with no way back -- a mid-sequence failure must undo every replacement
+    this call already committed, not only the one in progress when it failed.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        first = pathlib.Path(directory, "first.xml")
+        second = pathlib.Path(directory, "second.csv")
+        first.write_text("first old")
+        second.write_text("second old")
+
+        real_replace = m.os.replace
+        calls = {"n": 0}
+
+        def flaky_replace(src, dst):
+            calls["n"] += 1
+            # calls 1-2 are the first destination's own backup-then-swap;
+            # let those land, then fail the second destination's backup --
+            # after the first has already fully committed.
+            if calls["n"] == 3:
+                raise OSError("simulated failure mid-sequence")
+            return real_replace(src, dst)
+
+        m.os.replace = flaky_replace
+        try:
+            try:
+                m.write_outputs([(str(first), "<new-first/>"),
+                                  (str(second), "new-second\n")])
+                raise AssertionError("the second target's swap must fail")
+            except OSError:
+                pass
+        finally:
+            m.os.replace = real_replace
+
+        assert first.read_text() == "first old", \
+            "the first destination's already-committed swap must be rolled back"
+        assert second.read_text() == "second old"
+        # no stray .part/.bak file is left behind by either destination
+        assert sorted(p.name for p in pathlib.Path(directory).iterdir()) == \
+            ["first.xml", "second.csv"], \
+            sorted(p.name for p in pathlib.Path(directory).iterdir())
+
+
 def test_a_case_insensitive_collision_is_refused_before_anything_is_written(m):
     """`--out Result.xml --manifest result.XML` is one file on a case-insensitive
     volume. The lexical preflight cannot see it and `samefile` needs both paths

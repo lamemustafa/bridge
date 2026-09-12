@@ -1515,8 +1515,26 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
     does not exist is created exclusively under its own name, which is both the
     reservation against a concurrent run and, on Windows, the rule itself —
     there an existing destination is refused outright rather than staged.
+
+    A destination that is a **symlink** is written through to its target: the
+    sibling temporary file is created next to (and the final rename targets)
+    `os.path.realpath(path)`, not `path` itself. `os.replace` does not follow a
+    symlink at the destination — it replaces the link, the same as `unlink`
+    would — so renaming onto the link's own name would silently turn it into a
+    plain file and leave whatever else reads through that link looking at
+    stale content.
+
+    The final swap is inside the same try as the write, and every swap is
+    itself preceded by backing its destination up to a sibling name. A run
+    with two staged destinations that fails swapping the second must not leave
+    the first swapped in with no way back: **each swap is undone in reverse**
+    on any failure, from the backups, so a mid-sequence failure restores every
+    destination this call has touched, not only the ones the failure had not
+    yet reached.
     """
     claimed, staged = [], []
+    replaced = []  # (backup, path) already swapped in — undone on failure
+    pending_backup = None  # reserved backup name not yet holding content
     try:
         for path, _ in targets:
             if os.path.exists(path):
@@ -1524,11 +1542,12 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 refusal = windows_destination_refusal(path, accept_inherited)
                 if refusal:
                     raise refusal
+                real_path = os.path.realpath(path)
                 handle, temporary = tempfile.mkstemp(
-                    dir=os.path.dirname(os.path.abspath(path)),
-                    prefix=os.path.basename(path) + ".", suffix=".part")
+                    dir=os.path.dirname(real_path),
+                    prefix=os.path.basename(real_path) + ".", suffix=".part")
                 claimed.append((temporary, handle))
-                staged.append((temporary, path))
+                staged.append((temporary, real_path))
             else:
                 claimed.append((path, _open_private(path, accept_inherited)))
         if after_claim is not None:
@@ -1538,9 +1557,35 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
                 stream.write(text)
             os.chmod(where, 0o600)
+        # Every payload is on disk. Swapping now cannot lose an existing output
+        # to a failure that has already been ruled out — but the swap itself
+        # can still fail partway through a multi-target run, so each existing
+        # destination is backed up (an atomic rename to a sibling name, so it
+        # is never briefly missing) before its replacement lands, and that
+        # backup is what the `except` below restores from.
+        for temporary, real_path in staged:
+            backup_handle, backup = tempfile.mkstemp(
+                dir=os.path.dirname(real_path),
+                prefix=os.path.basename(real_path) + ".", suffix=".bak")
+            os.close(backup_handle)
+            pending_backup = backup
+            os.replace(real_path, backup)
+            pending_backup = None
+            replaced.append((backup, real_path))
+            os.replace(temporary, real_path)
     except BaseException:
-        # Only paths this call created are removed. A created destination is
-        # still this run's; a staged file never was the destination at all.
+        # Undo everything this call has done, most recent first: a backup
+        # name reserved by mkstemp but never populated (the rename into it
+        # failed) is discarded, destinations already swapped in are restored
+        # from their backup, files this call created outright are removed,
+        # and a temp file staged but never swapped in is removed too (a
+        # staged file never was the destination).
+        if pending_backup is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(pending_backup)
+        for backup, real_path in reversed(replaced):
+            with contextlib.suppress(OSError):
+                os.replace(backup, real_path)
         for where, handle in claimed:
             if handle is not None:
                 with contextlib.suppress(OSError):
@@ -1548,10 +1593,11 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             with contextlib.suppress(OSError):
                 os.unlink(where)
         raise
-    # Every payload is on disk. Replacing now cannot lose an existing output to
-    # a failure that has already been ruled out.
-    for temporary, path in staged:
-        os.replace(temporary, path)
+    # Every swap committed. The backups exist only to undo a failure that, by
+    # this point, cannot happen any more.
+    for backup, _ in replaced:
+        with contextlib.suppress(OSError):
+            os.unlink(backup)
 
 
 def _check_paths(args):
