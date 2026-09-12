@@ -285,6 +285,7 @@ pub struct BookVoucher {
     voucher_number: Option<String>,
     remote_id: Option<String>,
     party: Option<String>,
+    observed_ledgers: BTreeSet<String>,
     ledger_keys: BTreeSet<String>,
     magnitude: ExactDecimal,
     balanced: bool,
@@ -305,8 +306,9 @@ impl BookVoucher {
         let voucher_number = input.voucher_number.map(validated_text).transpose()?;
         let remote_id = input.remote_id.map(validated_text).transpose()?;
         let party = input.party.map(validated_text).transpose()?;
-        let (magnitude, balanced, mut ledger_keys) = magnitude_of(input.entries)?;
+        let (magnitude, balanced, mut observed_ledgers, mut ledger_keys) = magnitude_of(input.entries)?;
         if let Some(party) = party.as_deref() {
+            observed_ledgers.insert(party.to_string());
             ledger_keys.insert(comparison_key(party));
         }
         // Voucher types participate in an identity key. Unlike ledger names,
@@ -321,6 +323,7 @@ impl BookVoucher {
             voucher_number,
             remote_id,
             party,
+            observed_ledgers,
             ledger_keys,
             magnitude,
             balanced,
@@ -380,7 +383,7 @@ impl ProposedVoucher {
         let voucher_number = input.voucher_number.map(validated_text).transpose()?;
         let remote_id = input.remote_id.map(validated_text).transpose()?;
         let party = input.party.map(validated_text).transpose()?;
-        let (magnitude, _, _) = magnitude_of(input.entries)?;
+        let (magnitude, _, _, _) = magnitude_of(input.entries)?;
         let type_key = voucher_type.clone();
         let number_key = voucher_number.as_deref().map(number_key_of);
         Ok(Self {
@@ -463,8 +466,13 @@ impl BookWindow {
             if remote_id_evidence == RemoteIdEvidence::NotRead && voucher.remote_id.is_some() {
                 return Err(PresenceError::WindowRemoteIdContradiction);
             }
+            let retained_memberships = voucher
+                .ledger_keys
+                .len()
+                .checked_add(voucher.observed_ledgers.len())
+                .ok_or(PresenceError::WindowLedgerMembershipsTooMany)?;
             ledger_memberships = ledger_memberships
-                .checked_add(voucher.ledger_keys.len())
+                .checked_add(retained_memberships)
                 .ok_or(PresenceError::WindowLedgerMembershipsTooMany)?;
             if ledger_memberships > MAX_WINDOW_LEDGER_MEMBERSHIPS {
                 return Err(PresenceError::WindowLedgerMembershipsTooMany);
@@ -472,6 +480,7 @@ impl BookWindow {
             let voucher_key_bytes = voucher
                 .ledger_keys
                 .iter()
+                .chain(voucher.observed_ledgers.iter())
                 .try_fold(0usize, |total, key| total.checked_add(key.len()))
                 .ok_or(PresenceError::WindowLedgerKeyBytesTooLarge)?;
             ledger_key_bytes = ledger_key_bytes
@@ -925,7 +934,7 @@ impl<'a> PresenceRequest<'a> {
         if window
             .vouchers()
             .iter()
-            .flat_map(|voucher| voucher.ledger_keys.iter())
+            .flat_map(|voucher| voucher.observed_ledgers.iter())
             .any(|ledger| catalog.exact(ledger).is_none())
         {
             return Err(PresenceError::CatalogWindowCoverageMissing);
@@ -1832,7 +1841,7 @@ fn undecided(
 /// which is defined whether or not the voucher balances.
 fn magnitude_of(
     entries: &[ObservedEntry<'_>],
-) -> Result<(ExactDecimal, bool, BTreeSet<String>), PresenceError> {
+) -> Result<(ExactDecimal, bool, BTreeSet<String>, BTreeSet<String>), PresenceError> {
     if entries.is_empty() {
         return Err(PresenceError::EntriesEmpty);
     }
@@ -1841,6 +1850,7 @@ fn magnitude_of(
     }
     let mut total = ExactDecimalAccumulator::default();
     let mut positive = ExactDecimalAccumulator::default();
+    let mut observed_ledgers = BTreeSet::new();
     let mut ledger_keys = BTreeSet::new();
     for entry in entries {
         let amount = ExactDecimal::parse(entry.amount.to_string())
@@ -1849,11 +1859,13 @@ fn magnitude_of(
         if !amount.is_negative() {
             positive.add(amount.as_str());
         }
-        ledger_keys.insert(comparison_key(&validated_text(entry.ledger)?));
+        let ledger = validated_text(entry.ledger)?;
+        observed_ledgers.insert(ledger.clone());
+        ledger_keys.insert(comparison_key(&ledger));
     }
     let magnitude = ExactDecimal::parse(positive.canonical_string())
         .map_err(|_| PresenceError::AmountInvalid)?;
-    Ok((magnitude, total.is_zero(), ledger_keys))
+    Ok((magnitude, total.is_zero(), observed_ledgers, ledger_keys))
 }
 
 fn validated_text(value: &str) -> Result<String, PresenceError> {
