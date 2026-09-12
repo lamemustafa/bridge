@@ -32,6 +32,10 @@ use serde::{Deserialize, Serialize};
 pub const MAX_WINDOW_VOUCHERS: usize = 20_000;
 /// Most vouchers one proposal set may carry.
 pub const MAX_PROPOSED_VOUCHERS: usize = 5_000;
+/// Most numbering declarations consumed for one presence request.
+pub const MAX_NUMBERING_DECLARATIONS: usize = MAX_PROPOSED_VOUCHERS;
+/// Aggregate UTF-8 bytes accepted while consuming numbering declarations.
+pub const MAX_NUMBERING_DECLARATION_BYTES: usize = 1_048_576;
 /// Most ledger entries one voucher may carry.
 pub const MAX_ENTRIES_PER_VOUCHER: usize = 2_000;
 /// Most distinct voucher-to-ledger memberships retained across one window.
@@ -128,6 +132,10 @@ pub enum PresenceError {
     NumberingMethodUndeclared,
     #[error("a voucher type was declared twice with different numbering")]
     NumberingMethodConflict,
+    #[error("numbering declarations exceeded their count bound")]
+    NumberingDeclarationsTooMany,
+    #[error("numbering declarations exceeded their aggregate byte bound")]
+    NumberingDeclarationBytesTooLarge,
     #[error("text field was blank")]
     TextBlank,
     #[error("text field exceeded its bound")]
@@ -141,6 +149,8 @@ pub enum PresenceError {
     /// Presence compares party names against ledgers.
     #[error("master catalog was not a ledger catalog")]
     CatalogClassInvalid,
+    #[error("book window referenced a ledger absent from the catalog")]
+    CatalogWindowCoverageMissing,
     #[error("party binding refused the input")]
     PartyBinding(MasterBindingError),
 }
@@ -165,12 +175,15 @@ impl PresenceError {
             Self::TooManyEntries => "presence_entries_too_many",
             Self::NumberingMethodUndeclared => "presence_numbering_method_undeclared",
             Self::NumberingMethodConflict => "presence_numbering_method_conflict",
+            Self::NumberingDeclarationsTooMany => "presence_numbering_declarations_too_many",
+            Self::NumberingDeclarationBytesTooLarge => "presence_numbering_declaration_bytes_too_large",
             Self::TextBlank => "presence_text_blank",
             Self::TextTooLong => "presence_text_too_long",
             Self::TextUnsafe => "presence_text_unsafe",
             Self::DateInvalid => "presence_date_invalid",
             Self::AmountInvalid => "presence_amount_invalid",
             Self::CatalogClassInvalid => "presence_catalog_class_invalid",
+            Self::CatalogWindowCoverageMissing => "presence_catalog_window_coverage_missing",
             Self::PartyBinding(error) => error.safe_reason_code(),
         }
     }
@@ -512,8 +525,22 @@ impl NumberingDeclaration {
         S: AsRef<str>,
     {
         let mut methods = BTreeMap::new();
+        let mut declaration_count = 0usize;
+        let mut declaration_bytes = 0usize;
         for (voucher_type, method) in entries {
             let key = validated_text(voucher_type.as_ref())?;
+            declaration_count = declaration_count
+                .checked_add(1)
+                .ok_or(PresenceError::NumberingDeclarationsTooMany)?;
+            if declaration_count > MAX_NUMBERING_DECLARATIONS {
+                return Err(PresenceError::NumberingDeclarationsTooMany);
+            }
+            declaration_bytes = declaration_bytes
+                .checked_add(key.len())
+                .ok_or(PresenceError::NumberingDeclarationBytesTooLarge)?;
+            if declaration_bytes > MAX_NUMBERING_DECLARATION_BYTES {
+                return Err(PresenceError::NumberingDeclarationBytesTooLarge);
+            }
             if methods
                 .insert(key, method)
                 .is_some_and(|prior| prior != method)
@@ -894,6 +921,14 @@ impl<'a> PresenceRequest<'a> {
     ) -> Result<Self, PresenceError> {
         if catalog.class() != MasterClass::Ledger {
             return Err(PresenceError::CatalogClassInvalid);
+        }
+        if window
+            .vouchers()
+            .iter()
+            .flat_map(|voucher| voucher.ledger_keys.iter())
+            .any(|ledger| catalog.exact(ledger).is_none())
+        {
+            return Err(PresenceError::CatalogWindowCoverageMissing);
         }
         if proposals.is_empty() {
             return Err(PresenceError::ProposalsEmpty);

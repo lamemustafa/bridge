@@ -941,7 +941,10 @@ fn corroborate_empty_voucher_window(
         return Err("window_contradicted".to_string());
     }
     if !widened_rows.is_empty() {
-        return Ok((false, None));
+        // Boundary-day rows only prove that this wider read returned *some*
+        // data. They provide no independent cardinality for the nonempty
+        // response, so they cannot promote the original empty window.
+        return Ok((true, Some("nonempty_uncorroborated")));
     }
     match company_high_water {
         Some(0) => Ok((false, Some("company_has_no_vouchers"))),
