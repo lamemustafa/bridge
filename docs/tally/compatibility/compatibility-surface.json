@@ -579,11 +579,11 @@
     },
     {
       "path": "src-tauri/src/source_draft.rs",
-      "sha256": "26ddd335e80829f640c44f34583689d1ed315b09202abb7570eee6ecd5d8f896"
+      "sha256": "73daa2a6f971707ab65e411720bfffd6bd3f7fc962aa8519378b57835995677e"
     },
     {
       "path": "src-tauri/src/source_draft/catalog.rs",
-      "sha256": "c87839f0c69facc514280cc42d42d8287fcfc3200275be10f132eeeff717e493"
+      "sha256": "766172699b354308e8abb5ecbb10c0a6f637af5bad4ff2a099a48bb93d2ebb49"
     },
     {
       "path": "src-tauri/src/source_draft/files.rs",
@@ -595,7 +595,7 @@
     },
     {
       "path": "src-tauri/src/source_draft/types.rs",
-      "sha256": "2edc3bb954696b027801a5790c18d03d6b9b8eed26fcb0ebdc098997bd3adc28"
+      "sha256": "d429f3835e1fe81397e770ef9f00bfe7aff5b9b9e89ffaf241bfc5b3cf10449a"
     },
     {
       "path": "src-tauri/src/source_draft_xml.rs",
@@ -723,7 +723,7 @@
     },
     {
       "path": "src/SourceDraftScreen.tsx",
-      "sha256": "6a324579117c59a335e28f0df1d003d2032692682283db63a140dcaf5479e834"
+      "sha256": "ea1b88fec5e0b8918a6ec31f8de75224d6e41723059a1b8585cbd3db3bf46d0e"
     },
     {
       "path": "src/TallyReadinessFlow.tsx",
@@ -779,7 +779,7 @@
     },
     {
       "path": "src/source-draft-types.ts",
-      "sha256": "1254cc0b04ce6fc1032d6f01782f5cd05d8e8f523e8c36f65e4ab3fc46535a1f"
+      "sha256": "5b56de06c8b70f5bf70d35c1230f9c96e9a5988306bc8dd68e0b9017f2f110d8"
     },
     {
       "path": "src/source-draft.css",
@@ -850,5 +850,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "6a41feb32756d361ce83e19e0f8fb6402f6b86dd88006f4ca8fb60f554728640"
+  "manifest_sha256": "8f8019fc85e37f3dcf44912a6c4033ee917fa6edee33d37015016083232a0135"
 }

@@ -36,6 +36,22 @@ pub(crate) struct SourceDraftCatalogLoadRequest {
     pub(crate) selected_company: SelectedCompanyIdentity,
 }
 
+/// Names the draft and catalog generation an invalidation is meant for.
+///
+/// Company-scope changes queue this command; by the time it is processed the
+/// operator may already have replaced the draft, or an earlier invalidation
+/// may already have advanced the generation. Carrying the identity the
+/// request was issued against -- rather than applying to whatever draft
+/// happens to be active when it runs -- is what lets the store tell a stale
+/// invalidation apart from a current one instead of clobbering a catalogue it
+/// was never meant to touch.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SourceDraftCatalogInvalidateRequest {
+    pub(crate) draft_id: String,
+    pub(crate) generation: u64,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SourceDraftCatalogApplyRequest {
@@ -547,19 +563,47 @@ impl SourceDraftStore {
         Ok(dto(current))
     }
 
-    pub(super) fn invalidate_catalogue(&self) -> CommandResult<()> {
+    /// Returns the draft's catalog generation *after* this call, so a caller
+    /// that only learns of a scope change can still name the right value the
+    /// next time it invalidates -- see the no-op paths below for why that
+    /// return value matters even when this call changes nothing.
+    pub(super) fn invalidate_catalogue(
+        &self,
+        request: &SourceDraftCatalogInvalidateRequest,
+    ) -> CommandResult<u64> {
+        let draft_id = Uuid::parse_str(&request.draft_id)
+            .map_err(|_| error("source_draft_identifier_invalid"))?;
         let mut active = self
             .active
             .lock()
             .map_err(|_| error("source_draft_state_unavailable"))?;
-        if let Some(active) = active.as_mut() {
-            active.catalog_generation = active
-                .catalog_generation
-                .checked_add(1)
-                .ok_or_else(|| error("source_draft_revision_exhausted"))?;
-            active.catalog = None;
+        let Some(current) = active.as_mut() else {
+            // No draft is active at all, so nothing this request names still
+            // exists. 0 is what every freshly loaded draft's generation
+            // starts at, so a caller that folds this back in sees a value
+            // consistent with whatever draft it opens next, rather than a
+            // number left over from one that is already gone.
+            return Ok(0);
+        };
+        // The draft or generation this invalidation names may already be gone
+        // -- replaced by a newer draft, or already cleared by an earlier
+        // invalidation -- because it was queued before either happened. What
+        // it wanted invalidated is already gone, so this is a no-op success,
+        // not a failure: an error here would make the frontend surface a
+        // refusal for a request that has nothing left to refuse. Reporting
+        // this draft's actual generation here -- instead of echoing back the
+        // stale value the request named -- is what lets a caller that missed
+        // an earlier advance self-correct on this very call, rather than
+        // repeating the same stale request every time it invalidates again.
+        if current.id != draft_id || current.catalog_generation != request.generation {
+            return Ok(current.catalog_generation);
         }
-        Ok(())
+        current.catalog_generation = current
+            .catalog_generation
+            .checked_add(1)
+            .ok_or_else(|| error("source_draft_revision_exhausted"))?;
+        current.catalog = None;
+        Ok(current.catalog_generation)
     }
 
     pub(super) fn remove_changed_bindings(
@@ -1805,7 +1849,12 @@ mod tests {
             selected_company: selected_company(),
         };
         let snapshot = store.catalog_load_snapshot(&request).unwrap();
-        store.invalidate_catalogue().unwrap();
+        store
+            .invalidate_catalogue(&SourceDraftCatalogInvalidateRequest {
+                draft_id: first_id.to_string(),
+                generation: 0,
+            })
+            .unwrap();
         let (catalog, _) = captured_catalog_and_xml();
         let read = StandardLedgerCatalogRead {
             catalog,
@@ -1902,7 +1951,12 @@ mod tests {
         let fresh = snapshot.catalog.clone();
         let before =
             serde_json::to_vec(&store.active.lock().unwrap().as_ref().unwrap().proposals).unwrap();
-        store.invalidate_catalogue().unwrap();
+        store
+            .invalidate_catalogue(&SourceDraftCatalogInvalidateRequest {
+                draft_id: id.to_string(),
+                generation: 0,
+            })
+            .unwrap();
         assert_eq!(
             store
                 .commit_catalog_target(snapshot, request, binding, &fresh)
@@ -1959,6 +2013,241 @@ mod tests {
         let active = store.active.lock().unwrap().clone().unwrap();
         assert_eq!(serde_json::to_vec(&active.proposals).unwrap(), expected);
         assert!(active.catalog.is_none());
+    }
+
+    /// Regression for issue #285: a company-scope invalidation queued for one
+    /// draft must not land on a replacement draft opened before it drains.
+    /// Scoping the store's check on the identity the request names, rather
+    /// than whichever draft happens to be active when it finally runs, is
+    /// what makes that arrival order harmless instead of merely rare.
+    #[test]
+    fn a_stale_invalidation_after_draft_replacement_is_a_no_op_that_preserves_the_new_catalogue() {
+        let store = SourceDraftStore::default();
+        let (first_id, _, _, _) = install_active_catalog(&store);
+        // Captured while the first draft was still active -- exactly what the
+        // frontend captures before this command reaches its queue.
+        let stale = SourceDraftCatalogInvalidateRequest {
+            draft_id: first_id.to_string(),
+            generation: 0,
+        };
+
+        // The operator opens a replacement draft with its own freshly
+        // installed catalogue before the queued invalidation above runs.
+        let (second_id, second_capture_id, _, _) = install_active_catalog(&store);
+        assert_ne!(first_id, second_id, "replace installs a distinct draft");
+
+        let reported = store
+            .invalidate_catalogue(&stale)
+            .expect("a stale invalidation is a no-op success, not a refusal");
+        assert_eq!(
+            reported, 0,
+            "a no-op reports the replacement draft's actual generation, not the stale one requested"
+        );
+
+        let active = store.active.lock().unwrap().clone().unwrap();
+        assert_eq!(
+            active.id, second_id,
+            "the replacement draft is still active"
+        );
+        assert_eq!(
+            active.catalog.as_ref().map(|capture| capture.id),
+            Some(second_capture_id),
+            "the replacement draft's freshly installed capture survives the stale invalidation"
+        );
+        assert_eq!(
+            active.catalog_generation, 0,
+            "a stale invalidation must not advance the replacement draft's generation"
+        );
+    }
+
+    /// The other half of the scoping: a queued invalidation can go stale
+    /// without any draft replacement, if an earlier invalidation for the same
+    /// draft already ran first and advanced the generation it named. Draft id
+    /// alone would not catch this -- both fields must match.
+    #[test]
+    fn a_stale_invalidation_with_a_superseded_generation_on_the_same_draft_is_a_no_op() {
+        let store = SourceDraftStore::default();
+        let draft_id = install_active_draft_without_catalog(&store);
+        // Captured while generation 0 was still active.
+        let stale = SourceDraftCatalogInvalidateRequest {
+            draft_id: draft_id.to_string(),
+            generation: 0,
+        };
+
+        let advanced = store
+            .invalidate_catalogue(&SourceDraftCatalogInvalidateRequest {
+                draft_id: draft_id.to_string(),
+                generation: 0,
+            })
+            .expect("the first invalidation is correctly scoped");
+        assert_eq!(
+            advanced, 1,
+            "the call reports the generation it just advanced to"
+        );
+        assert_eq!(
+            store
+                .active
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .catalog_generation,
+            1
+        );
+
+        // A fresh catalogue is installed under the advanced generation,
+        // through the same snapshot/install path production uses.
+        let load_request = SourceDraftCatalogLoadRequest {
+            draft_id: draft_id.to_string(),
+            config: TallyConfig::default(),
+            selected_company: selected_company(),
+        };
+        let snapshot = store.catalog_load_snapshot(&load_request).unwrap();
+        let (catalog, _) = captured_catalog_and_xml();
+        store
+            .install_catalog(
+                snapshot,
+                EndpointKey::from_config(&TallyConfig::default()).unwrap(),
+                VerifiedCompanyIdentity::test_fixture(CAPTURED_COMPANY, CAPTURED_GUID),
+                StandardLedgerCatalogRead {
+                    catalog,
+                    request_sha256: "request".into(),
+                    response_sha256: "response".into(),
+                    bytes: 2,
+                },
+            )
+            .expect("install after the correctly scoped invalidation");
+
+        // The invalidation queued before the first one ran now arrives late,
+        // naming the generation that invalidation already superseded.
+        let reported = store
+            .invalidate_catalogue(&stale)
+            .expect("a superseded generation is a no-op success, not a refusal");
+        assert_eq!(
+            reported, advanced,
+            "a no-op reports the generation genuinely current for this draft, not the stale one requested"
+        );
+        let active = store.active.lock().unwrap().clone().unwrap();
+        assert!(
+            active.catalog.is_some(),
+            "the newer capture survives a stale-generation invalidation"
+        );
+        assert_eq!(
+            active.catalog_generation, 1,
+            "a stale invalidation must not advance the generation again"
+        );
+    }
+
+    /// The fix is not vacuous: a correctly scoped invalidation still clears
+    /// the active catalogue and advances the generation.
+    #[test]
+    fn a_correctly_scoped_invalidation_clears_the_active_catalogue() {
+        let store = SourceDraftStore::default();
+        let (id, _, _, _) = install_active_catalog(&store);
+        let advanced = store
+            .invalidate_catalogue(&SourceDraftCatalogInvalidateRequest {
+                draft_id: id.to_string(),
+                generation: 0,
+            })
+            .expect("a correctly scoped invalidation succeeds");
+        assert_eq!(
+            advanced, 1,
+            "the call reports the generation it just advanced to"
+        );
+        let active = store.active.lock().unwrap().clone().unwrap();
+        assert!(active.catalog.is_none(), "the catalogue is cleared");
+        assert_eq!(active.catalog_generation, 1, "the generation advances");
+    }
+
+    /// Regression for the fail-open half of issue #285: before this fix the
+    /// command returned `()`, so nothing ever told a caller that its notion
+    /// of "current generation" had gone stale after the very first
+    /// invalidation -- every invalidation after that first one named a
+    /// generation the store had already moved past, and silently did
+    /// nothing. This walks the sequence a caller relies on to avoid that: a
+    /// correctly scoped call reports the generation it advanced to; naming
+    /// that reported value clears a freshly reinstalled catalogue, while
+    /// reusing the original, now-superseded generation instead is a no-op
+    /// that reports the same current value back rather than advancing again.
+    #[test]
+    fn an_invalidation_reports_the_generation_a_caller_should_name_next() {
+        let store = SourceDraftStore::default();
+        let (id, _, _, _) = install_active_catalog(&store);
+
+        let advanced = store
+            .invalidate_catalogue(&SourceDraftCatalogInvalidateRequest {
+                draft_id: id.to_string(),
+                generation: 0,
+            })
+            .expect("a correctly scoped invalidation succeeds");
+        assert_eq!(
+            advanced, 1,
+            "the call reports the generation it just advanced to"
+        );
+
+        // A fresh catalogue installed under the advanced generation, through
+        // the same snapshot/install path production uses.
+        let load_request = SourceDraftCatalogLoadRequest {
+            draft_id: id.to_string(),
+            config: TallyConfig::default(),
+            selected_company: selected_company(),
+        };
+        let snapshot = store.catalog_load_snapshot(&load_request).unwrap();
+        let (catalog, _) = captured_catalog_and_xml();
+        store
+            .install_catalog(
+                snapshot,
+                EndpointKey::from_config(&TallyConfig::default()).unwrap(),
+                VerifiedCompanyIdentity::test_fixture(CAPTURED_COMPANY, CAPTURED_GUID),
+                StandardLedgerCatalogRead {
+                    catalog,
+                    request_sha256: "request".into(),
+                    response_sha256: "response".into(),
+                    bytes: 2,
+                },
+            )
+            .expect("install after the correctly scoped invalidation");
+
+        // Reusing the original, now-stale generation is exactly what a
+        // caller that never learned of the advance would send. It must not
+        // clear the freshly reinstalled catalogue, and it must report the
+        // generation genuinely current now, not the stale value requested.
+        let reported = store
+            .invalidate_catalogue(&SourceDraftCatalogInvalidateRequest {
+                draft_id: id.to_string(),
+                generation: 0,
+            })
+            .expect("a stale generation is a no-op success, not a refusal");
+        assert_eq!(
+            reported, advanced,
+            "a no-op reports the generation genuinely current for this draft"
+        );
+        assert!(
+            store
+                .active
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .catalog
+                .is_some(),
+            "reusing the stale generation must not clear the freshly installed catalogue"
+        );
+
+        // Naming the generation the first call actually reported clears it.
+        let next = store
+            .invalidate_catalogue(&SourceDraftCatalogInvalidateRequest {
+                draft_id: id.to_string(),
+                generation: advanced,
+            })
+            .expect("naming the reported generation is correctly scoped");
+        assert_eq!(next, advanced + 1, "the generation advances again");
+        let active = store.active.lock().unwrap().clone().unwrap();
+        assert!(
+            active.catalog.is_none(),
+            "naming the generation the previous call reported clears the catalogue"
+        );
+        assert_eq!(active.catalog_generation, 2);
     }
 
     #[test]
