@@ -4500,3 +4500,32 @@ fn proposal_batch_rejects_duplicate_source_positions_before_conversion() {
         Err(PresenceError::DuplicateProposalPosition)
     );
 }
+
+#[test]
+fn a_book_number_collision_retains_an_ambiguous_marker_candidate() {
+    let window = window(&[
+        BookRow::new("book-number-a", "20260812", "AA0118"),
+        BookRow::new("book-number-b", "20260813", "AA0118"),
+        BookRow::new("book-ambiguous-marker", "20260814", "BB0229")
+            .ambiguous_markers(&[MARKER_A, MARKER_B]),
+    ]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .marker(MARKER_A)
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert_eq!(reason(entry), UndecidedReason::BookNumberCollision);
+    let undecided = entry.undecided().expect("undecided");
+    assert_eq!(undecided.candidate_count, 3);
+    assert!(undecided
+        .candidates
+        .iter()
+        .any(|candidate| candidate.book_key == "book-ambiguous-marker"
+            && candidate.rule == CandidateRule::SharedNarrationMarker));
+    assert_eq!(report.observations().unmatched_book_vouchers, 0);
+}

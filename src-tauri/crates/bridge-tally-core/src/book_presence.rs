@@ -1998,13 +1998,9 @@ fn decide(
                 return shell(
                     PresenceStatus::PossiblyPresent(undecided(
                         UndecidedReason::ProposalNumberCollision,
-                        candidates_from(
-                            window,
-                            &number_matches,
-                            CandidateRule::SharedVoucherNumber,
-                        ),
+                        collision_candidates.clone(),
                     )),
-                    with_resemblances(number_matches.iter().copied().collect()),
+                    with_resemblances(collision_touched.clone()),
                 );
             }
         }
@@ -2018,9 +2014,9 @@ fn decide(
         return shell(
             PresenceStatus::PossiblyPresent(undecided(
                 UndecidedReason::BookNumberCollision,
-                candidates_from(window, &number_matches, CandidateRule::SharedVoucherNumber),
+                collision_candidates.clone(),
             )),
-            with_resemblances(number_matches.iter().copied().collect()),
+            with_resemblances(collision_touched.clone()),
         );
     }
 
@@ -2519,18 +2515,6 @@ fn candidates_ranked(
         })
         .collect();
     (retained, found)
-}
-
-fn candidates_from(
-    window: &BookWindow,
-    positions: &[usize],
-    rule: CandidateRule,
-) -> (Vec<PresenceCandidate>, usize) {
-    let mut entries = positions
-        .iter()
-        .map(|position| (*position, rule))
-        .collect::<Vec<_>>();
-    candidates_ranked(window, &mut entries)
 }
 
 fn undecided(
