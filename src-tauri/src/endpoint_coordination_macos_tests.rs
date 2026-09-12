@@ -17,22 +17,26 @@ const CHILD_RELEASE: &str = "BRIDGE_MACOS_DISPATCH_LEASE_RELEASE";
 #[test]
 fn macos_native_dispatch_lease_contends_across_filtered_and_overridden_home() {
     let directory = tempfile::tempdir().unwrap();
-    let expected_root = crate::local_files::paths::default_dispatch_coordination_dir()
+    let expected_default_root = crate::local_files::paths::default_dispatch_coordination_dir()
         .expect("macOS account coordination root");
-    let endpoint = endpoint(50_000 + (std::process::id() % 10_000) as u16);
 
     for home_mode in [HomeMode::Filtered, HomeMode::Overridden] {
+        // Reserve the real endpoint identity for the entire parent/child run.
+        // Both processes use the production root; a unique held port isolates
+        // their lease file while still testing acquire() root selection.
+        let (port_reservation, port) = reserve_loopback_port().expect("loopback test port");
+        let endpoint = endpoint(port);
         let ready = directory.path().join(format!("{home_mode:?}-ready"));
         let release = directory.path().join(format!("{home_mode:?}-release"));
         let data_root = directory.path().join(format!("{home_mode:?}-agent-data"));
         let overridden_home = directory.path().join(format!("{home_mode:?}-home"));
         let mut child = ChildLease::new(
             spawn_child(
-                &expected_root,
+                &expected_default_root,
                 &data_root,
                 &overridden_home,
                 home_mode,
-                endpoint.port,
+                port,
                 &ready,
                 &release,
             ),
@@ -45,6 +49,7 @@ fn macos_native_dispatch_lease_contends_across_filtered_and_overridden_home() {
         );
         assert!(child.release().unwrap().success());
         drop(acquire(&endpoint).expect("lease reacquired after child release"));
+        drop(port_reservation);
     }
 }
 
@@ -99,6 +104,12 @@ fn endpoint(port: u16) -> TallyEndpointConfig {
         host: "127.0.0.1".into(),
         port,
     }
+}
+
+fn reserve_loopback_port() -> std::io::Result<(std::net::TcpListener, u16)> {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
+    let port = listener.local_addr()?.port();
+    Ok((listener, port))
 }
 
 fn spawn_child(
@@ -170,7 +181,21 @@ impl ChildLease {
 
     fn release(mut self) -> std::io::Result<std::process::ExitStatus> {
         fs::write(&self.release, b"release")?;
-        self.child.wait()
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = self.child.try_wait()? {
+                return Ok(status);
+            }
+            if Instant::now() >= deadline {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "child did not exit after release",
+                ));
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 }
 
