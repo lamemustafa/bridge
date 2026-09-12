@@ -118,6 +118,8 @@ pub enum PresenceError {
     ProposalsEmpty,
     #[error("proposed voucher list exceeded its bound")]
     TooManyProposals,
+    #[error("voucher entry list was empty")]
+    EntriesEmpty,
     #[error("voucher entry list exceeded its bound")]
     TooManyEntries,
     /// A voucher type whose numbering method nobody stated. Defaulting it
@@ -160,6 +162,7 @@ impl PresenceError {
             Self::WindowDoesNotCover => "presence_window_does_not_cover",
             Self::ProposalsEmpty => "presence_proposals_empty",
             Self::TooManyProposals => "presence_proposals_too_many",
+            Self::EntriesEmpty => "presence_entries_empty",
             Self::TooManyEntries => "presence_entries_too_many",
             Self::NumberingMethodUndeclared => "presence_numbering_method_undeclared",
             Self::NumberingMethodConflict => "presence_numbering_method_conflict",
@@ -2030,6 +2033,9 @@ fn undecided(
 fn magnitude_of(
     entries: &[ObservedEntry<'_>],
 ) -> Result<(ExactDecimal, bool, BTreeSet<String>), PresenceError> {
+    if entries.is_empty() {
+        return Err(PresenceError::EntriesEmpty);
+    }
     if entries.len() > MAX_ENTRIES_PER_VOUCHER {
         return Err(PresenceError::TooManyEntries);
     }

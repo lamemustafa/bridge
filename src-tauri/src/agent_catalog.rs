@@ -1,5 +1,6 @@
 //! Public tool catalog and argument admission before any Tally read.
 use super::*;
+use regex::Regex;
 
 pub(super) fn validate_tool_arguments(name: &str, args: &Value) -> Result<(), String> {
     let arguments = args
@@ -100,9 +101,9 @@ pub(super) fn validate_tool_arguments(name: &str, args: &Value) -> Result<(), St
 /// drift, and the copy that drifts is the one nobody is looking at.
 ///
 /// It enforces exactly what the fragment states — `type`, `enum`, string
-/// bounds, array bounds, `required`, and `additionalProperties: false` — and
-/// nothing it does not, so a schema remains the single description of what a
-/// caller may send.
+/// bounds and patterns, array bounds, `required`, and `additionalProperties:
+/// false` — and nothing it does not, so a schema remains the single
+/// description of what a caller may send.
 pub(super) fn validate_against_schema(
     value: &Value,
     schema: &Value,
@@ -176,7 +177,11 @@ fn validate_string_bounds(text: &str, schema: &Value, key: &str) -> Result<(), S
         || schema["maxLength"]
             .as_u64()
             .is_some_and(|max| length > max as usize)
-        || (schema["pattern"] == r"\S" && text.trim().is_empty())
+        || schema["pattern"].as_str().is_some_and(|pattern| {
+            Regex::new(pattern)
+                .map(|regex| !regex.is_match(text))
+                .unwrap_or(true)
+        })
     {
         return Err(format!("argument_invalid:{key}"));
     }

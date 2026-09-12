@@ -425,6 +425,7 @@ dependencies = [
  "pdf-writer",
  "pkcs11",
  "quick-xml",
+ "regex",
  "reqwest",
  "rfd",
  "rust_xlsxwriter",
