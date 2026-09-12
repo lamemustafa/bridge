@@ -186,7 +186,8 @@ The four rest on different observations, and each build reports its own in
 `live_evidence` rather than a single blanket claim:
 
 - `Journal` — a licensed synthetic-lab file cycle and exact-file repeat import
-  observed 2026-09-06; see [the assessment](ASSESSMENT-2026-09-06.md).
+  observed 2026-09-06; see [the assessment](ASSESSMENT-2026-09-06.md). The controlled
+  repeat does not qualify recovery after an unknown outcome.
 - `Payment`, `Receipt`, `Contra` — a licensed TallyPrime 7.1 Gold bank-statement
   import observed 2026-09-10; see
   [reference §9.13](../tally/TALLY_PROTOCOL_REFERENCE.md). These three are
@@ -497,13 +498,14 @@ sent directly as Tally's upsert key. Reused labels in independent batches theref
 have different wire identities, so rebuilding after losing the batch journal
 creates a new identity and does not deduplicate the business event.
 
-**Whether to retry the saved file depends on the voucher type.** Exact-file
-repeat is qualified for `Journal` only: a repeat import of the identical file
-returned `CREATED=0, ALTERED=1` and left one voucher. Nothing establishes that
-for `Payment`, `Receipt` or `Contra` — each measured bank file was imported
-exactly once — so a second import of one may create a second set of vouchers.
-For those three, do not re-import: call `verify_import`, which reads the window
-back without writing.
+**An unknown outcome requires read-only reconciliation for every voucher type.**
+Preserve the original batch and saved file, then call `verify_import`. Do not
+re-import or rebuild the same business event, including a `Journal`. The
+controlled repeat observation returned `CREATED=0, ALTERED=1` and left one
+voucher; it did not qualify a resend after a lost response, restart or an
+intervening change. Each measured `Payment`, `Receipt` and `Contra` bank file
+was imported once. Neither observation authorizes another write to discover
+what happened to the first one.
 Historical records without an identity scheme retain their original raw-label
 interpretation. Unknown schemes are refused. Narration markers support readback
 attribution; they are not authenticated provenance.
