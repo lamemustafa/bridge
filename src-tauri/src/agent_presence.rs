@@ -9,9 +9,9 @@ use super::*;
 use std::collections::BTreeSet;
 
 use bridge_tally_core::book_presence::{
-    self, BookVoucher, BookWindow, NumberingDeclaration, NumberingMethod, ObservedEntry,
-    ObservedVoucher, PresenceError, PresenceReport, PresenceRequest, ProposedVoucher,
-    ProposedVoucherInput, RemoteIdEvidence, WindowRead,
+    self, BookWindow, NumberingDeclaration, NumberingMethod, ObservedEntry, ObservedVoucher,
+    PresenceError, PresenceReport, PresenceRequest, ProposedVoucher, ProposedVoucherInput,
+    RemoteIdEvidence, WindowRead,
 };
 use bridge_tally_core::master_binding::{MasterCatalog, MasterClass, SourceEntity};
 
@@ -202,18 +202,11 @@ impl Server {
                 return Err("ledger_snapshot_drifted".to_string().into());
             }
 
-            let observed = rows
-                .iter()
-                .map(book_voucher)
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(presence_code)?;
             // The qualified `vouchers` profile does not FETCH REMOTEID, so an
             // absent value here means "never read", not "the voucher has
             // none". Declaring that keeps a proposal whose own REMOTEID was
             // never compared out of `absent`.
-            let window =
-                BookWindow::observed(&from, &to, read, RemoteIdEvidence::NotRead, observed)
-                    .map_err(presence_code)?;
+            let window = book_window(&from, &to, read, &rows).map_err(presence_code)?;
             let request = PresenceRequest::new(&window, &catalog, &numbering, &proposals)
                 .map_err(presence_code)?;
             let report = book_presence::assess(&request);
@@ -261,30 +254,44 @@ fn presence_code(error: PresenceError) -> ToolFailure {
 /// observed book voucher. `REMOTEID` is deliberately not read here: the
 /// `vouchers` profile does not fetch it, and inventing an absent column would
 /// be worse than reporting that it was never observed.
-fn book_voucher(row: &Value) -> Result<BookVoucher, PresenceError> {
-    let entries = row["amounts"]
-        .as_array()
-        .map(Vec::as_slice)
-        .unwrap_or_default()
+fn book_window(
+    from: &str,
+    to: &str,
+    read: WindowRead,
+    rows: &[Value],
+) -> Result<BookWindow, PresenceError> {
+    let entries = rows
         .iter()
-        .map(|entry| ObservedEntry {
-            ledger: entry["ledger"].as_str().unwrap_or_default(),
-            amount: entry["amount"].as_str().unwrap_or_default(),
+        .map(|row| {
+            row["amounts"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+                .iter()
+                .map(|entry| ObservedEntry {
+                    ledger: entry["ledger"].as_str().unwrap_or_default(),
+                    amount: entry["amount"].as_str().unwrap_or_default(),
+                })
+                .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
-    BookVoucher::observed(ObservedVoucher {
-        // The GUID is the identity the window read already proved belongs to
-        // this company, and the same field this tool's sibling already emits.
-        key: row["guid"].as_str().unwrap_or_default(),
-        date: row["date"].as_str().unwrap_or_default(),
-        voucher_type: row["voucher_type"].as_str().unwrap_or_default(),
-        voucher_number: row["voucher_number"].as_str(),
-        remote_id: None,
-        party: row["party"].as_str(),
-        entries: &entries,
-        cancelled: row["cancelled"].as_bool().unwrap_or_default(),
-        optional: row["optional"].as_bool().unwrap_or_default(),
-    })
+    let observations = rows
+        .iter()
+        .zip(&entries)
+        .map(|(row, entries)| ObservedVoucher {
+            // The GUID is the identity the window read already proved belongs to
+            // this company, and the same field this tool's sibling already emits.
+            key: row["guid"].as_str().unwrap_or_default(),
+            date: row["date"].as_str().unwrap_or_default(),
+            voucher_type: row["voucher_type"].as_str().unwrap_or_default(),
+            voucher_number: row["voucher_number"].as_str(),
+            remote_id: None,
+            party: row["party"].as_str(),
+            entries,
+            cancelled: row["cancelled"].as_bool().unwrap_or_default(),
+            optional: row["optional"].as_bool().unwrap_or_default(),
+        });
+    BookWindow::from_observations(from, to, read, RemoteIdEvidence::NotRead, observations)
 }
 
 fn parse_numbering(args: &Value) -> Result<NumberingDeclaration, String> {

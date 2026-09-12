@@ -1545,6 +1545,87 @@ fn a_window_bounds_aggregate_ledger_memberships_before_indexing() {
 }
 
 #[test]
+fn raw_observations_are_bounded_before_voucher_conversion() {
+    let entry = ObservedEntry {
+        ledger: "Cash",
+        amount: "1.00",
+    };
+    let rows = vec![entry; MAX_WINDOW_RAW_ENTRY_WORK + 1];
+    assert_eq!(
+        BookWindow::from_observations(
+            "20260801",
+            "20260831",
+            WindowRead::Complete,
+            RemoteIdEvidence::Observed,
+            [ObservedVoucher {
+                key: "book-1",
+                date: "20260812",
+                voucher_type: "Sales",
+                voucher_number: None,
+                remote_id: None,
+                party: None,
+                entries: &rows,
+                cancelled: false,
+                optional: false
+            }],
+        )
+        .expect_err("raw entries must be refused before parsing"),
+        PresenceError::WindowRawEntryWorkTooLarge
+    );
+    let long = "x".repeat(MAX_WINDOW_RAW_ENTRY_BYTES + 1);
+    let oversized = [ObservedEntry {
+        ledger: &long,
+        amount: "1.00",
+    }];
+    assert_eq!(
+        BookWindow::from_observations(
+            "20260801",
+            "20260831",
+            WindowRead::Complete,
+            RemoteIdEvidence::Observed,
+            [ObservedVoucher {
+                key: "book-2",
+                date: "20260812",
+                voucher_type: "Sales",
+                voucher_number: None,
+                remote_id: None,
+                party: None,
+                entries: &oversized,
+                cancelled: false,
+                optional: false
+            }],
+        )
+        .expect_err("raw bytes must be refused before cloning"),
+        PresenceError::WindowRawEntryBytesTooLarge
+    );
+    let admitted_entries = (0..(MAX_WINDOW_RAW_ENTRY_WORK / MAX_ENTRIES_PER_VOUCHER))
+        .map(|_| vec![entry; MAX_ENTRIES_PER_VOUCHER])
+        .collect::<Vec<_>>();
+    let admitted = admitted_entries
+        .iter()
+        .enumerate()
+        .map(|(position, entries)| ObservedVoucher {
+            key: Box::leak(format!("admitted-{position}").into_boxed_str()),
+            date: "20260812",
+            voucher_type: "Sales",
+            voucher_number: None,
+            remote_id: None,
+            party: None,
+            entries,
+            cancelled: false,
+            optional: false,
+        });
+    assert!(BookWindow::from_observations(
+        "20260801",
+        "20260831",
+        WindowRead::Complete,
+        RemoteIdEvidence::Observed,
+        admitted
+    )
+    .is_ok());
+}
+
+#[test]
 fn a_window_bounds_aggregate_ledger_key_bytes_before_indexing() {
     let ledgers = (0..(MAX_WINDOW_LEDGER_KEY_BYTES / MAX_TEXT_CHARS + 1))
         .map(|position| {
