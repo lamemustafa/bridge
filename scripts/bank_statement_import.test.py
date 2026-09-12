@@ -1761,6 +1761,23 @@ def test_backup_copy_refuses_a_replaced_original_before_commit(m):
         assert sorted(path.name for path in root.iterdir()) == ["previous.xml"]
 
 
+def test_backup_copy_refuses_a_fifo_before_reading_it(m):
+    """An existing output is data only when it is a regular file; opening a
+    FIFO for its rollback copy would otherwise wait for an unrelated writer."""
+    if not hasattr(os, "mkfifo"):
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "previous.xml"
+        os.mkfifo(destination)
+
+        refuses(m, "output_not_regular", m.write_outputs,
+                [(str(destination), "new bytes")])
+
+        assert destination.is_fifo()
+        assert sorted(path.name for path in root.iterdir()) == ["previous.xml"]
+
+
 def test_cleanup_keeps_a_reclaimed_owned_path(m):
     """A cleanup record proves only the path our run made. If that pathname
     changes identity, reporting it is safe; unlinking it is not."""
@@ -1823,35 +1840,91 @@ def test_rollback_keeps_a_foreign_destination_and_private_backup(m):
         first.write_text("first old")
         second.write_text("second old")
         real_replace = m.os.replace
+        swaps = []
 
         def replace_then_conflict(src, dst):
             if str(src).endswith(".part") and os.path.basename(dst) == "first.xml":
+                swaps.append("first")
                 result = real_replace(src, dst)
                 foreign.write_text("foreign writer bytes")
                 real_replace(foreign, first)
                 return result
             if str(src).endswith(".part") and os.path.basename(dst) == "second.csv":
+                swaps.append("second")
                 raise OSError("simulated failure after foreign writer")
             return real_replace(src, dst)
 
         m.os.replace = replace_then_conflict
+        diagnostic_notes = ""
         try:
             try:
                 m.write_outputs([(str(first), "new first"),
                                  (str(second), "new second")])
                 raise AssertionError("the second target's swap must fail")
             except OSError as error:
-                assert any(str(path).endswith(".bak")
-                           for path in getattr(error, "__notes__", []))
+                diagnostic_notes = "\n".join(
+                    str(note) for note in getattr(error, "__notes__", [])
+                )
         finally:
             m.os.replace = real_replace
 
         backups = list(root.glob("first.xml.*.bak"))
         assert len(backups) == 1
+        assert str(backups[0]) in diagnostic_notes
+        assert swaps == ["first", "second"]
         assert stat.S_IMODE(backups[0].stat().st_mode) == 0o600
         assert backups[0].read_text() == "first old"
         assert first.read_text() == "foreign writer bytes"
         assert second.read_text() == "second old"
+
+
+def test_rollback_restores_original_output_metadata(m):
+    """A caught later swap failure restores the former bytes and portable
+    metadata, while a retained pre-rollback backup stays private."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first = root / "first.xml"
+        second = root / "second.csv"
+        first.write_text("first old")
+        second.write_text("second old")
+        first.chmod(0o640)
+        old_mtime_ns = 1_700_000_000_123_456_789
+        os.utime(first, ns=(old_mtime_ns, old_mtime_ns))
+        xattr_name = "user.bridge_rollback_test"
+        xattr_value = b"original metadata"
+        preserves_xattr = False
+        if hasattr(os, "setxattr"):
+            try:
+                os.setxattr(first, xattr_name, xattr_value)
+                preserves_xattr = True
+            except OSError:
+                pass
+        real_replace = m.os.replace
+
+        def fail_second_swap(src, dst):
+            if str(src).endswith(".part") and os.path.basename(dst) == "second.csv":
+                raise OSError("controlled second swap failure")
+            return real_replace(src, dst)
+
+        m.os.replace = fail_second_swap
+        try:
+            try:
+                m.write_outputs([(str(first), "new first"),
+                                 (str(second), "new second")])
+                raise AssertionError("the controlled swap failure must escape")
+            except OSError as error:
+                assert "controlled second swap failure" in str(error)
+        finally:
+            m.os.replace = real_replace
+
+        restored = first.stat()
+        assert first.read_text() == "first old"
+        assert stat.S_IMODE(restored.st_mode) == 0o640
+        assert restored.st_mtime_ns == old_mtime_ns
+        if preserves_xattr:
+            assert os.getxattr(first, xattr_name) == xattr_value
+        assert second.read_text() == "second old"
+        assert sorted(path.name for path in root.iterdir()) == ["first.xml", "second.csv"]
 
 
 def test_a_case_insensitive_collision_is_refused_before_anything_is_written(m):

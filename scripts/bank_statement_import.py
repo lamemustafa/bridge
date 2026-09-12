@@ -99,6 +99,7 @@ import os
 import pathlib
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -1539,6 +1540,82 @@ def _unlink_for_cleanup(path, owned_identity, failures):
             failures.append(str(path))
 
 
+def _open_regular_output(path, expected_identity):
+    """Open and pin one existing regular output without waiting on a FIFO."""
+    handle = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        stat_result = os.fstat(handle)
+        if not stat.S_ISREG(stat_result.st_mode):
+            raise Refusal(
+                "output_not_regular",
+                f"{path}: an existing output must be a regular file",
+            )
+        if (stat_result.st_dev, stat_result.st_ino) != expected_identity:
+            raise Refusal(
+                "output_path_changed",
+                f"{path} changed while its rollback copy was prepared",
+            )
+        return handle
+    except BaseException:
+        os.close(handle)
+        raise
+
+
+def _metadata_from_handle(handle):
+    """Capture regular-output metadata while its original inode is pinned.
+
+    The private backup remains mode 0600. These values are applied only after
+    that backup has been atomically restored to its original pathname.
+    """
+    stat_result = os.fstat(handle)
+    metadata = {
+        "mode": stat.S_IMODE(stat_result.st_mode),
+        "uid": stat_result.st_uid,
+        "gid": stat_result.st_gid,
+        "atime_ns": stat_result.st_atime_ns,
+        "mtime_ns": stat_result.st_mtime_ns,
+        "xattrs": None,
+    }
+    if hasattr(os, "listxattr"):
+        try:
+            metadata["xattrs"] = {
+                name: os.getxattr(handle, name)
+                for name in os.listxattr(handle)
+            }
+        except OSError:
+            # Metadata restoration below still preserves portable mode and
+            # times. Some filesystems do not expose extended attributes.
+            pass
+    return metadata
+
+
+def _restore_metadata(handle, metadata):
+    """Restore captured metadata to an already-restored regular output."""
+    current = os.fstat(handle)
+    if (current.st_uid, current.st_gid) != (metadata["uid"], metadata["gid"]):
+        os.fchown(handle, metadata["uid"], metadata["gid"])
+    os.fchmod(handle, metadata["mode"])
+    os.utime(handle, ns=(metadata["atime_ns"], metadata["mtime_ns"]))
+    original_xattrs = metadata["xattrs"]
+    if original_xattrs is not None:
+        for name in os.listxattr(handle):
+            if name not in original_xattrs:
+                os.removexattr(handle, name)
+        for name, value in original_xattrs.items():
+            os.setxattr(handle, name, value)
+
+
+def _close_original_handle(swap, failures):
+    handle = swap.get("original_handle")
+    if handle is None:
+        return
+    swap["original_handle"] = None
+    try:
+        os.close(handle)
+    except OSError:
+        failures.append(swap["destination"])
+
+
 def _copy_private_backup(source_path, original_identity, backup_handle):
     """Copy the original inode into an owner-only backup already opened O_EXCL.
 
@@ -1548,7 +1625,7 @@ def _copy_private_backup(source_path, original_identity, backup_handle):
     that modifies the same inode while it is being read remains outside this
     command's authority, so this does not promise a crash transaction.
     """
-    source_handle = os.open(source_path, os.O_RDONLY)
+    source_handle = _open_regular_output(source_path, original_identity)
     try:
         if _fd_identity(source_handle) != original_identity:
             raise Refusal(
@@ -1588,7 +1665,7 @@ def _copy_private_backup(source_path, original_identity, backup_handle):
 
 
 def _restore_backup(backup, backup_identity, destination, original_identity,
-                    staged_identity, failures):
+                    staged_identity, metadata, failures):
     """Restore an owned private backup after a caught swap failure.
 
     `os.replace` can report an exception after the filesystem call took effect.
@@ -1608,6 +1685,7 @@ def _restore_backup(backup, backup_identity, destination, original_identity,
     if current_identity != staged_identity:
         failures.append(backup)
         return
+    restored = False
     try:
         if _entry_identity(backup) != backup_identity:
             failures.append(backup)
@@ -1616,6 +1694,7 @@ def _restore_backup(backup, backup_identity, destination, original_identity,
         # compare-and-swap rename, so a hostile concurrent rename after this
         # check is still outside the CLI's locking authority.
         os.replace(backup, destination)
+        restored = True
     except OSError:
         try:
             restored = _file_identity(destination) == backup_identity
@@ -1627,6 +1706,15 @@ def _restore_backup(backup, backup_identity, destination, original_identity,
             except OSError:
                 backup_retained = False
             failures.append(backup if backup_retained else destination)
+    if restored:
+        try:
+            restore_handle = _open_regular_output(destination, backup_identity)
+            try:
+                _restore_metadata(restore_handle, metadata)
+            finally:
+                os.close(restore_handle)
+        except (OSError, Refusal):
+            failures.append(destination)
 
 
 def _note_cleanup_failures(error, failures):
@@ -1743,7 +1831,8 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             pending_backup["handle"] = None
             pending_swap = {"backup": pending_backup, "destination": real_path,
                             "original_identity": original_identity,
-                            "staged_identity": temporary["identity"]}
+                            "staged_identity": temporary["identity"],
+                            "original_handle": None, "metadata": None}
             pending_backup = None
             # The destination stays present until this one atomic replacement.
             # `pending_swap` is set first because an interrupt may arrive after
@@ -1768,6 +1857,13 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                     "output_path_changed",
                     f"{supplied_path} rollback copy changed before replacement",
                 )
+            # Hold the original inode through the whole transaction. Once a
+            # replacement unlinks its pathname, this prevents inode reuse from
+            # making a later foreign writer look like the old destination.
+            pending_swap["original_handle"] = _open_regular_output(
+                real_path, original_identity)
+            pending_swap["metadata"] = _metadata_from_handle(
+                pending_swap["original_handle"])
             os.replace(temporary["path"], real_path)
             replaced.append(pending_swap)
             pending_swap = None
@@ -1787,7 +1883,9 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             _restore_backup(backup["path"], backup["identity"],
                             pending_swap["destination"],
                             pending_swap["original_identity"],
-                            pending_swap["staged_identity"], cleanup_failures)
+                            pending_swap["staged_identity"],
+                            pending_swap["metadata"], cleanup_failures)
+            _close_original_handle(pending_swap, cleanup_failures)
         if pending_backup is not None:
             _unlink_for_cleanup(pending_backup["path"], pending_backup["identity"],
                                 cleanup_failures)
@@ -1795,7 +1893,8 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             backup = swap["backup"]
             _restore_backup(backup["path"], backup["identity"], swap["destination"],
                             swap["original_identity"], swap["staged_identity"],
-                            cleanup_failures)
+                            swap["metadata"], cleanup_failures)
+            _close_original_handle(swap, cleanup_failures)
         for record in claimed:
             if record["handle"] is not None:
                 try:
@@ -1811,6 +1910,7 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
     for swap in replaced:
         backup = swap["backup"]
         _unlink_for_cleanup(backup["path"], backup["identity"], cleanup_failures)
+        _close_original_handle(swap, cleanup_failures)
     if cleanup_failures:
         raise OutputCleanupFailure(cleanup_failures)
 
