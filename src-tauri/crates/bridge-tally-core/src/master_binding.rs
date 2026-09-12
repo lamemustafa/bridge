@@ -59,6 +59,10 @@ pub const MAX_REPORT_CANDIDATE_BYTES: usize = 256 * 1024;
 /// Most identifiers one name may carry. Exceeding it is refused, never
 /// truncated.
 pub const MAX_IDENTIFIERS_PER_NAME: usize = 32;
+/// Maximum holder-membership probes spent proving that skipped identifier
+/// families are nested. Exhausting this budget keeps the count a lower bound;
+/// it must never turn a large-family check into an unbounded per-entity walk.
+const MAX_WITHHELD_FAMILY_PROBES: usize = 256;
 /// Digits a numeric run needs before it is treated as an identifier. Eight
 /// excludes a year, a rate, a house number and a masked last-four; a mobile,
 /// an account number and a customer code all clear it.
@@ -1080,7 +1084,7 @@ fn bind_one(
     let mut large_holder_points_elsewhere = false;
     // Keep references rather than cloning large holder vectors. Distinct
     // skipped families are the only source of unknown overlap in this union.
-    let mut withheld_families: Vec<usize> = Vec::new();
+    let mut withheld_families: Vec<(&[usize], usize)> = Vec::new();
     // The holders of the largest skipped family, kept by reference so the count
     // below can ask which listed masters are *not* in it. Nothing is cloned.
     let mut largest_withheld: Option<&Vec<usize>> = None;
@@ -1100,8 +1104,11 @@ fn bind_one(
                     .get(identifier)
                     .copied()
                     .expect("identifier index has a family id");
-                if !withheld_families.contains(&family_id) {
-                    withheld_families.push(family_id);
+                if !withheld_families
+                    .iter()
+                    .any(|(_, existing_id)| *existing_id == family_id)
+                {
+                    withheld_families.push((holders.as_slice(), family_id));
                 }
                 if largest_withheld.is_none_or(|family| holders.len() > family.len()) {
                     largest_withheld = Some(holders);
@@ -1134,7 +1141,7 @@ fn bind_one(
     // retain the larger family as the lower-bound floor and mark the count
     // uncertain without allocating their union.
     let largest_withheld = largest_withheld.map(Vec::as_slice);
-    let withheld_count_is_lower_bound = withheld_families.len() > 1;
+    let withheld_count_is_lower_bound = withheld_families_are_not_nested(&withheld_families);
     debug_assert!(withheld_families.len() <= MAX_IDENTIFIERS_PER_NAME);
 
     // An identifier shared by two masters, and an entity whose identifiers
@@ -1288,6 +1295,39 @@ fn bind_one(
         source_name: entity.name.clone(),
         status,
     }
+}
+
+/// Returns whether the union of skipped holder families may exceed its largest
+/// member. Membership checks are deliberately budgeted: a proof of containment
+/// is cheap for the usual small family, while an adversarial 20,000-entry family
+/// cannot force a source row to walk every holder. An exhausted proof remains a
+/// lower bound, which is the safe direction for an operator-facing count.
+fn withheld_families_are_not_nested(families: &[(&[usize], usize)]) -> bool {
+    let Some((largest, largest_id)) = families.iter().max_by_key(|(holders, _)| holders.len())
+    else {
+        return false;
+    };
+    let mut probes_left = MAX_WITHHELD_FAMILY_PROBES;
+    for (family, family_id) in families {
+        if *family_id == *largest_id {
+            continue;
+        }
+        if family.len() > largest.len() {
+            return true;
+        }
+        for holder in *family {
+            if probes_left == 0 {
+                return true;
+            }
+            probes_left -= 1;
+            #[cfg(test)]
+            WITHHELD_FAMILY_PROBES.with(|count| count.set(count.get() + 1));
+            if largest.binary_search(holder).is_err() {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn unresolved_status(
@@ -1521,6 +1561,12 @@ thread_local! {
 #[cfg(test)]
 thread_local! {
     pub(crate) static CANDIDATE_SEARCHES: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static WITHHELD_FAMILY_PROBES: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
 }
 

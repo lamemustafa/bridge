@@ -1282,6 +1282,57 @@ fn a_withheld_family_still_reports_how_many_share_the_identifier() {
 }
 
 #[test]
+fn nested_withheld_identifier_families_have_an_exact_union_count() {
+    let names = (0..MAX_CANDIDATES_PER_ENTITY + 1)
+        .map(|index| {
+            if index < MAX_CANDIDATES_PER_ENTITY {
+                format!("Party {index:03} (5550007777) (5550008888)")
+            } else {
+                format!("Party {index:03} (5550007777)")
+            }
+        })
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let source = SourceEntity::with_identifier_hints(
+        0,
+        "Zeta Holdings",
+        ["5550007777", "5550008888"],
+    )
+    .expect("valid");
+    let report = bound(&catalog, &[source]);
+    let candidates = &report.entities()[0].unresolved().expect("unbound").candidates;
+    assert_eq!(candidates.found(), MAX_CANDIDATES_PER_ENTITY + 1);
+    assert!(!candidates.count_is_lower_bound());
+}
+
+#[test]
+fn an_unprovable_large_nested_family_remains_a_lower_bound() {
+    let names = (0..300)
+        .map(|index| {
+            if index < 299 {
+                format!("Party {index:03} (5550007777) (5550008888)")
+            } else {
+                format!("Party {index:03} (5550007777)")
+            }
+        })
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let source = SourceEntity::with_identifier_hints(
+        0,
+        "Zeta Holdings",
+        ["5550007777", "5550008888"],
+    )
+    .expect("valid");
+    super::WITHHELD_FAMILY_PROBES.with(|count| count.set(0));
+    let report = bound(&catalog, &[source]);
+    let probes = super::WITHHELD_FAMILY_PROBES.with(std::cell::Cell::get);
+    let candidates = &report.entities()[0].unresolved().expect("unbound").candidates;
+    assert_eq!(candidates.found(), 300);
+    assert!(candidates.count_is_lower_bound());
+    assert_eq!(probes, 256, "nested-family proof exceeded its hard budget");
+}
+
+#[test]
 fn a_report_bounds_its_own_candidate_allocation() {
     // A per-entity cap does not bound a report: the clones exist the moment it
     // is built, and a consumer capping its own copy afterwards bounds only the
