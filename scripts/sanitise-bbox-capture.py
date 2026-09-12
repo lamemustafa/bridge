@@ -123,7 +123,11 @@ def _is_mask(token):
     return bool(re.fullmatch(rf"[Xx]{{{MASK_MIN_XS},}}\d*", token))
 
 
-SHORT_IMPS_MASK = re.compile(r"IMPS/[^/]+/[A-Za-z]+-\s*([Xx]+\d+)-")
+# Match the parser's masked-account subfield by position. The first IMPS
+# component may be empty in a captured narration, so `*` mirrors the parser's
+# slash-delimited field without widening authority to other X+digit tokens in
+# the same word.
+SHORT_IMPS_MASK = re.compile(r"IMPS/[^/]*/[A-Za-z]+-\s*([Xx]+\d+)-")
 
 
 def _short_mask_spans(text):

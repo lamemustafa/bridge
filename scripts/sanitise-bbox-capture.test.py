@@ -251,6 +251,13 @@ for text in ("UPI/X99", "IMPS/X99/NAME", "IMPS/123/NAME-X99",
     check("short masks outside the exact field are fabricated: " + text,
           "X" not in load().scrub(text).upper())
 
+# Position is decisive even when the same short token appears in the same
+# narration word: only the parser's account subfield may preserve its X.
+same_word = load().scrub("IMPS/123/NAME-X99-REF X99")
+check("same-word short token outside the IMPS field is fabricated",
+      bool(re.search(r"IMPS/[^/]+/[A-Za-z]+-X\d+-", same_word))
+      and not bool(re.search(r"\sX\d+", same_word)), same_word)
+
 # Captured source geometry proves the wrapped context without inventing a new
 # bank fixture. Pin the mask-bearing box and mutate only its classification.
 fixture = pathlib.Path(__file__).with_name("fixtures") / "sbi-bbox-capture.xml"
