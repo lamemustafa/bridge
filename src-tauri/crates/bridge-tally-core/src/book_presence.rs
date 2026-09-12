@@ -990,6 +990,7 @@ impl UndecidedReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DifferenceField {
+    VoucherType,
     Date,
     Amount,
     Party,
@@ -1848,6 +1849,20 @@ fn decide(
         return shell(PresenceStatus::Absent, BTreeSet::new());
     }
 
+    let touched = found.keys().copied().collect::<BTreeSet<_>>();
+    // The unread REMOTEID outranks every non-decisive resemblance: carrying
+    // candidates forward keeps the operator's work item intact, but it cannot
+    // silently become a weaker reason for withholding absence.
+    if remote_id_unverifiable {
+        let mut ordered = found.into_iter().collect::<Vec<_>>();
+        return shell(
+            PresenceStatus::PossiblyPresent(undecided(
+                UndecidedReason::RemoteIdEvidenceUnavailable,
+                candidates_ranked(window, &mut ordered),
+            )),
+            touched,
+        );
+    }
     let reason = match (
         number_matches.is_empty(),
         type_observed,
@@ -1857,7 +1872,6 @@ fn decide(
         (false, true, false) => UndecidedReason::NumberNotDecisive,
         _ => UndecidedReason::ResemblesBookVoucher,
     };
-    let touched = found.keys().copied().collect::<BTreeSet<_>>();
     // Ordered as (position, rule) pairs before anything is cloned: the order is
     // rule-then-key and only the retained prefix needs a key at all.
     let mut ordered = found.into_iter().collect::<Vec<_>>();
@@ -1955,6 +1969,13 @@ fn differences(
     voucher: &BookVoucher,
 ) -> Vec<Difference> {
     let mut differences = Vec::new();
+    if voucher.voucher_type != proposal.voucher_type {
+        differences.push(Difference {
+            field: DifferenceField::VoucherType,
+            proposed: Some(proposal.voucher_type.clone()),
+            observed: Some(voucher.voucher_type.clone()),
+        });
+    }
     if voucher.date() != proposal.date() {
         differences.push(Difference {
             field: DifferenceField::Date,
