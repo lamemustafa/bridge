@@ -1731,7 +1731,7 @@ fn master_recovery_guidance(report: &[Value]) -> String {
     {
         guidance.push("For near-misses, have an operator explicitly select the intended ledger and run validate_masters again; do not copy a candidate automatically.");
     }
-    guidance.push("No file was written.");
+    guidance.push("After operator review, update the payload to each confirmed exact live spelling and run validate_masters again before building. No file was written.");
     guidance.join(" ")
 }
 

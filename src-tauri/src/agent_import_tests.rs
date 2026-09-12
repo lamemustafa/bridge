@@ -1628,6 +1628,8 @@ fn import_recovery_guidance_names_the_state_and_next_safe_read() {
     assert!(guidance.contains("exact_live_spelling"));
     assert!(guidance.contains("legitimate ledger externally"));
     assert!(guidance.contains("explicitly select"));
+    assert!(guidance.contains("update the payload to each confirmed exact live spelling"));
+    assert!(guidance.contains("validate_masters again before building"));
 }
 
 #[tokio::test]
