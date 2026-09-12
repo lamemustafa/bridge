@@ -960,6 +960,7 @@ fn live_env(key: &str) -> String {
 /// BRIDGE_TALLY_LIVE_PORT=9001 \
 /// BRIDGE_TALLY_LIVE_COMPANY_GUID=<guid> \
 /// BRIDGE_PRESENCE_LIVE_FROM=YYYYMMDD BRIDGE_PRESENCE_LIVE_TO=YYYYMMDD \
+/// BRIDGE_PRESENCE_LIVE_MANUAL_TYPES=<comma-separated voucher type names, e.g. "Sales,Purchase"> \
 /// cargo test -p bridge --lib replay_the_twenty_invoice_engagement -- --ignored --nocapture
 /// ```
 #[tokio::test]
@@ -1123,9 +1124,16 @@ async fn replay_the_twenty_invoice_engagement() {
         .map(str::trim)
         .filter(|kind| !kind.is_empty())
         .collect::<BTreeSet<_>>();
+    // `shortened` is whichever row past the faithful slice could absorb the
+    // perturbation, not necessarily `posted[REPLAY_PRESENT]` -- so the types
+    // in the declaration have to be read off the rows that actually became
+    // proposals (the faithful fifteen plus `shortened`) rather than off the
+    // first `needed` rows of `posted`, or a shortfall landing on a later type
+    // leaves that type's proposal without a numbering declaration at all.
     let mut types = posted
         .iter()
-        .take(needed)
+        .take(REPLAY_PRESENT)
+        .chain(std::iter::once(shortened))
         .filter_map(|row| row["voucher_type"].as_str())
         .collect::<Vec<_>>();
     types.sort_unstable();
