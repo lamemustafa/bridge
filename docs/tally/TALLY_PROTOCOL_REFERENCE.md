@@ -1184,8 +1184,11 @@ result into them would silently widen the scope of a measurement nobody repeated
 **The NFC/NFD row is the only one with evidence pointing the wrong way**, rather than no evidence
 at all, and it is the one most likely to be folded in by accident.
 
-`tally-matches-master-names-by-exact-codepoint` recorded it on 2026-08-19, TallyPrime 7.1, port
-9001: a voucher naming a UI-created NFC ledger in its **canonically equivalent NFD** spelling was
+`tally-matches-master-names-by-exact-codepoint` recorded it on 2026-08-19, **standard TallyPrime
+7.1 in Educational mode** — port 9001, per that capture's provenance sidecar. Note what that is
+*not*: it is neither §0's **Edit Log 7.0** Educational baseline nor a licensed instance, so this row
+inherits neither. Two different products, both in Educational mode, and flattening them into "EDU"
+loses the distinction that decides which other rows it can be read beside. The measurement: a voucher naming a UI-created NFC ledger in its **canonically equivalent NFD** spelling was
 rejected — `EXCEPTIONS=1`, `LINEERROR` saying the ledger does not exist — while the NFC spelling
 created it. A create with a programmatically-constructed NFD name returned `CREATED=1` and read
 back with identical NFD codepoints, so storage is verbatim too. **Tally matches on exact
@@ -1428,7 +1431,11 @@ voucher number survives and how a failed Alter behaves.
 
 Two consequences, both significant:
 
-1. **Voucher-number-based idempotency only works with Manual numbering.** Under automatic
+1. **What was measured is the FAILED-ALTER column, and the consequences below are about that
+   column.** §9.8 sent a failed `Alter`; it did not test a `Create` retry, a restart, or another
+   voucher type, and its own rule below forbids carrying the observation to a different request
+   identity mechanism. Read "idempotency" here as "this failure mode, under this setting".
+   Voucher-number-based idempotency in that sense only works with Manual numbering. Under automatic
    numbering the client-supplied number is thrown away, so any dedupe key built on it is
    silently ineffective. This was not obvious — the create returned `CREATED=1, ERRORS=0`
    and looked entirely successful.

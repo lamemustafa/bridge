@@ -628,7 +628,11 @@ Implement — write core (masters):
    recover the previous master after an overwrite. The dispatch counters
    must therefore remain an independent race detector: a create must report
    `CREATED=1`; `ALTERED=1` is an overwrite alarm and manual halt, never a
-   promotion to CONFIRMED. This detects the race at dispatch but does not
+   promotion to CONFIRMED. A create has no pre-image of a foreign master
+   introduced after the pre-read, so Bridge cannot restore its prior content.
+   Retain the affected name, exact dispatched payload and dispatch time, and
+   tell the operator that the unobserved prior content requires reconstruction
+   from their own records or a Tally backup. This detects the race but does not
    prevent it. Concurrent automatic master creation therefore remains
    UNQUALIFIED. Do not enable it until
    a qualified mutation-time condition or proven exclusive-write window
@@ -679,11 +683,12 @@ Implement — write core (masters):
    broader rule stated anywhere else in this step; vouchers by
    LASTVCHID) and
    SCOPE GATE (§9.4b, §9.4d, §0) — THE ONLY NAME-MATCHING RULE IN THIS
-   STEP. §9.4b's rows sit on §0's **Edit Log 7.0 Educational** baseline,
-   the NFC/NFD row included: an earlier revision of this gate called
-   that capture licensed and it is not —
+   STEP. §9.4b's rows use §0's **Edit Log 7.0 Educational** baseline
+   except the separately captured NFC/NFD row. That capture is not licensed —
    `src-tauri/crates/bridge-tally-protocol/tests/fixtures/encoding/`
-   `PROVENANCE.md` records the 2026-08-19 instance behind it as **EDU**.
+   `PROVENANCE.md` records the 2026-08-19 instance as **standard TallyPrime
+   7.1 in Educational mode**. It qualifies neither the Edit Log 7.0
+   Educational baseline nor a licensed SKU.
    **§9.4d is the licensed qualification, and it is qualification of a
    WRITE.** It re-ran §9.4b's method on **TallyPrime 7.1, licence tier
    silver, `education_mode=false`** by importing vouchers naming folded
