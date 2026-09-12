@@ -20,6 +20,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
+use unicode_normalization::UnicodeNormalization;
 
 use crate::exact_arithmetic::ExactDecimalAccumulator;
 use crate::master_binding::{
@@ -277,7 +278,7 @@ impl BookVoucher {
             ledger_keys.insert(comparison_key(party));
         }
         let type_key = comparison_key(&voucher_type);
-        let number_key = voucher_number.as_deref().map(comparison_key);
+        let number_key = voucher_number.as_deref().map(number_key_of);
         Ok(Self {
             key,
             date,
@@ -346,7 +347,7 @@ impl ProposedVoucher {
         let party = input.party.map(validated_text).transpose()?;
         let (magnitude, _, _) = magnitude_of(input.entries)?;
         let type_key = comparison_key(&voucher_type);
-        let number_key = voucher_number.as_deref().map(comparison_key);
+        let number_key = voucher_number.as_deref().map(number_key_of);
         Ok(Self {
             position: input.position,
             date,
@@ -1642,6 +1643,33 @@ fn label(value: &str) -> String {
     let mut bounded: String = value.chars().take(MAX_OBSERVATION_LABEL_CHARS).collect();
     bounded.push(SHORTENED);
     bounded
+}
+
+/// The key a *voucher number* is compared on, which is deliberately narrower
+/// than the one master names use.
+///
+/// `comparison_key` folds case and unifies dash and quote variants, and that
+/// fold is not arbitrary: §3.3b measured Tally's own master-name matching and
+/// the key follows it. **No such measurement exists for voucher numbers.**
+/// Applying the name fold to them was an assumption wearing a measurement's
+/// clothes, and it fails in the silent direction: folding produces *more*
+/// matches, a wrong match on a number is a `Present`, and a `Present` tells a
+/// caller an invoice is already filed. Two distinct invoices numbered `a-1`
+/// and `A-1` would have suppressed one another.
+///
+/// What remains is encoding, not semantics. NFC because the same number typed
+/// two ways is the same number, and whitespace collapse because Tally pads its
+/// own fields -- both are artefacts of transport. Case and punctuation are
+/// content until something measures otherwise, and this narrows toward the
+/// noisy failure: an unmatched punctuation variant reads as absent, which
+/// costs a duplicate a person can see.
+fn number_key_of(value: &str) -> String {
+    value
+        .nfc()
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn keep_strongest(

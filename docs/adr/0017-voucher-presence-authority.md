@@ -247,11 +247,27 @@ leaves open:
   would make the tool less useful — which is the posture in §7 argued
   backwards, and review caught it.
 
-Number comparison uses the same NFC / dash-and-quote / case / whitespace
-comparison key as master binding, so a long alphanumeric invoice number and its
-differently punctuated twin agree.
+Number comparison uses a **narrower** key than master binding, and the
+difference is the point. The master key folds case and unifies dash and quote
+variants because §3.3b measured Tally doing exactly that to master *names*;
+nothing has measured it for voucher numbers. Borrowing the conclusion without
+the measurement is how an assumption acquires a citation, and this one fails in
+the silent direction — folding produces *more* matches, a wrong number match is
+a `Present`, and a `Present` tells a caller the invoice is already filed. Two
+distinct invoices numbered `aa-0118` and `AA-0118` would each have suppressed
+the other.
 
-Voucher types are compared on that key too, and a manual number decides only
+So a number is compared on NFC and collapsed whitespace only. Both are
+transport artefacts: the same number typed two ways is the same number, and
+Tally pads its own fields. Case and punctuation are **content** until something
+measures otherwise, and treating them so fails toward the noisy direction —
+an unmatched punctuation variant reads as absent, which costs a duplicate a
+person can see rather than an invoice nobody does.
+
+Voucher *types* keep the master key, because a voucher type is a Tally master
+and §3.3b measured that case.
+
+A manual number decides only
 **within an observed voucher type** — numbers are a per-type series, so a match
 across types is a coincidence, not a series position. If a proposal's voucher
 type is **not observed anywhere in the window**, type discriminates nothing, so

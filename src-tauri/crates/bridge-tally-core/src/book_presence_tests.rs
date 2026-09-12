@@ -416,8 +416,20 @@ fn a_voucher_number_decides_nothing_under_unknown_numbering() {
     assert_eq!(reason(only(&report)), UndecidedReason::NumberNotDecisive);
 }
 
+/// This asserted the opposite until a review asked what measured it.
+///
+/// A voucher number used the master-name key, so `aa-0118` matched `AA-0118`
+/// and settled `Present`. The fold that key applies is not arbitrary -- §3.3b
+/// measured Tally's own master-name matching and the key follows it -- but
+/// nothing measured it for *numbers*, and borrowing the conclusion without the
+/// measurement is how an assumption acquires a citation.
+///
+/// It also fails in the wrong direction. Folding produces more matches, a
+/// wrong number match is a `Present`, and a `Present` tells a caller the
+/// invoice is already filed. Two distinct invoices numbered `aa-0118` and
+/// `AA-0118` would each have suppressed the other.
 #[test]
-fn a_voucher_number_is_compared_on_the_same_key_as_a_master_name() {
+fn a_voucher_number_is_not_folded_the_way_a_master_name_is() {
     let window = window(&[BookRow::new("book-1", "20260812", "aa-0118")]);
     let proposals = [ProposalRow::new(0, "20260812", "AA-0118").build()];
     let report = run(
@@ -426,7 +438,11 @@ fn a_voucher_number_is_compared_on_the_same_key_as_a_master_name() {
         &numbering(NumberingMethod::Manual),
         &proposals,
     );
-    assert_eq!(only(&report).present_book_key(), Some("book-1"));
+    assert_eq!(
+        only(&report).present_book_key(),
+        None,
+        "case is content in a number until a measurement says otherwise"
+    );
 }
 
 #[test]
@@ -1924,6 +1940,51 @@ fn a_large_number_collision_reports_its_true_size_without_listing_it() {
     assert_eq!(report.observations().unmatched_book_vouchers, 0);
     // And the book-side diagnostic sees the collision it is there to find.
     assert_eq!(report.observations().duplicate_number_group_count, 1);
+}
+
+/// A voucher number is content, not a name, and the two are folded
+/// differently on purpose.
+///
+/// `comparison_key` lowercases and unifies dash and quote variants because
+/// §3.3b measured Tally doing that to master *names*. Nothing measured it for
+/// numbers, and the fold fails in the silent direction: it produces more
+/// matches, a wrong number match is a `Present`, and `Present` tells a caller
+/// an invoice is already filed. Two distinct invoices differing only in case
+/// would have suppressed one another.
+#[test]
+fn two_numbers_differing_only_in_case_are_two_numbers() {
+    let cased = window(&[BookRow::new("book-1", "20260812", "AA0118")]);
+    let proposals = [ProposalRow::new(0, "20260812", "aa0118")
+        .party("Bravo Industries")
+        .rows(vec![
+            ["Bravo Industries", "-4200.00"],
+            ["Sales Account", "4200.00"],
+        ])
+        .build()];
+    let report = run(
+        &cased,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    assert_eq!(
+        only(&report).present_book_key(),
+        None,
+        "a case variant is a different number until something measures otherwise"
+    );
+
+    // Encoding still folds: Tally pads its own fields, and the same number
+    // typed two ways is the same number.
+    let padded_rows = [BookRow::new("book-1", "20260812", "AA 0118")];
+    let padded = window(&padded_rows);
+    let spaced = [ProposalRow::new(0, "20260812", "AA  0118").build()];
+    let report = run(
+        &padded,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &spaced,
+    );
+    assert_eq!(only(&report).present_book_key(), Some("book-1"));
 }
 
 /// Under a `Manual` declaration the number is the one key that can decide, so
