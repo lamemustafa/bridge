@@ -111,7 +111,7 @@ if args[:2] == ["pr", "view"]:
             "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
             "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10)"
         )
-    one_file = scenario in {"files-empty", "formatted-phone", "formatted-phone-grouped", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes"}
+    one_file = scenario in {"files-empty", "formatted-phone", "formatted-phone-grouped", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false"}
     selected_base = new_head if scenario == "base-oid-mismatch" else base
     emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
@@ -309,6 +309,12 @@ elif args and args[0] == "api":
             emit([[{"filename": ".github/workflows/ci.yml", "status": "removed", "additions": 0, "deletions": 1}]])
         elif scenario in {"workflow-rename-out", "workflow-rename-out-notes"}:
             emit([[{"filename": "docs/retired-ci.yml", "previous_filename": ".github/workflows/ci.yml", "status": "renamed", "additions": 0, "deletions": 0}]])
+        elif scenario == "renamed-previous-missing":
+            emit([[{"filename": "docs/retired-ci.yml", "status": "renamed", "additions": 0, "deletions": 0}]])
+        elif scenario == "renamed-previous-null":
+            emit([[{"filename": "docs/retired-ci.yml", "previous_filename": None, "status": "renamed", "additions": 0, "deletions": 0}]])
+        elif scenario == "renamed-previous-false":
+            emit([[{"filename": "docs/retired-ci.yml", "previous_filename": False, "status": "renamed", "additions": 0, "deletions": 0}]])
         elif scenario == "path-id":
             path_id = "ABCDE" + "1234" + "F"
             emit([[{"filename": f"docs/{path_id}.md", "status": "added", "additions": 1, "deletions": 0}]])
@@ -716,6 +722,11 @@ class MergeGateControls(unittest.TestCase):
             with self.subTest(scenario=scenario):
                 result = self.run_gate(scenario)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_renamed_file_requires_a_string_previous_filename(self):
+        for scenario in ("renamed-previous-missing", "renamed-previous-null", "renamed-previous-false"):
+            with self.subTest(scenario=scenario):
+                self.assert_indeterminate(scenario, "could not read the complete changed-file set")
 
     def test_definite_blocker_wins_over_indeterminate_evidence(self):
         self.assert_blocked("draft-surface-fail", "merge state DRAFT")

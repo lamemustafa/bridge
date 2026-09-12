@@ -619,13 +619,13 @@ if [ "$files_status" -ne 0 ] || ! jq -e '
       type == "object" and
       ((.filename | type) == "string") and (.filename | length > 0) and (.filename | test("[\u0000-\u001F\u007F]") | not) and
       ((.status | type) == "string") and (.status | length > 0) and
-      ((.previous_filename? // null) == null or (((.previous_filename | type) == "string") and ((.previous_filename | length) > 0) and ((.previous_filename | test("[\u0000-\u001F\u007F]")) | not))) and
+      (((.previous_filename? == null) or (((.previous_filename | type) == "string") and ((.previous_filename | length) > 0) and ((.previous_filename | test("[\u0000-\u001F\u007F]")) | not))) and ((.status != "renamed") or (((.previous_filename | type) == "string") and ((.previous_filename | length) > 0) and ((.previous_filename | test("[\u0000-\u001F\u007F]")) | not)))) and
       ((.additions | type) == "number") and (.additions | floor == . and . >= 0) and
       ((.deletions | type) == "number") and (.deletions | floor == . and . >= 0))) or
    all(.[]; type == "object" and
       ((.filename | type) == "string") and (.filename | length > 0) and (.filename | test("[\u0000-\u001F\u007F]") | not) and
       ((.status | type) == "string") and (.status | length > 0) and
-      ((.previous_filename? // null) == null or (((.previous_filename | type) == "string") and ((.previous_filename | length) > 0) and ((.previous_filename | test("[\u0000-\u001F\u007F]")) | not))) and
+      (((.previous_filename? == null) or (((.previous_filename | type) == "string") and ((.previous_filename | length) > 0) and ((.previous_filename | test("[\u0000-\u001F\u007F]")) | not))) and ((.status != "renamed") or (((.previous_filename | type) == "string") and ((.previous_filename | length) > 0) and ((.previous_filename | test("[\u0000-\u001F\u007F]")) | not)))) and
       ((.additions | type) == "number") and (.additions | floor == . and . >= 0) and
       ((.deletions | type) == "number") and (.deletions | floor == . and . >= 0)))
 ' <<<"$files" >/dev/null 2>&1; then
