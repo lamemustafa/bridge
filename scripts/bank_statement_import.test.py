@@ -1039,7 +1039,7 @@ def test_ach_party_ends_at_the_final_bank_reference(m):
 
     # This branch reads `narr_spaced`, which keeps the PDF's spacing, and a cell
     # wrap lands wherever the column edge falls — inside the reference as
-    # readily as between fields, the same way `HDF CH01206262147` wraps in the
+    # readily as between fields, the same way `HDF CH12345678901` wraps in the
     # UTR branch. Anchoring on `\d+$` made every wrapped reference UNRESOLVED,
     # which the earlier over-greedy pattern had handled: the first fix for the
     # boundary traded one failure for another.
