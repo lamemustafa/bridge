@@ -712,6 +712,39 @@ test("reports a truncated candidate list truthfully and falls back to the flat c
   root.unmount();
 });
 
+test("a family withheld under a different reason is not reported as a full report", async () => {
+  // The second withheld shape. An identifier held by more masters than a
+  // candidate list may show is withheld under `identifier_conflict`, not under
+  // `no_discriminating_candidate` — and inferring the state from the reason
+  // knew only the latter, so this one fell to the budget sentence and told the
+  // operator the report had run out of room when it had declined to slice.
+  // The two sentences give opposite advice, so this is not a wording defect.
+  const withheldFamily = {
+    ...catalog,
+    targets: ["DN Party 001", "DN Party 002", "DN Party 003"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: null,
+      bound_basis: null,
+      unbound_reason: "master_binding_identifier_conflict",
+      candidates: [],
+      candidate_count: 30,
+      candidate_listing: "withheld",
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(withheldFamily);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  expect(host.textContent).toContain("matches 30 existing ledgers and tells them apart from none of them, so none is listed");
+  expect(host.textContent).not.toContain("ran out of room");
+  root.unmount();
+});
+
 test("a source line that separates no ledger says so instead of counting nothing", async () => {
   // The state the live measurement made necessary: the name reaches a whole
   // family and tells none of them apart, so listing an arbitrary slice would
@@ -728,7 +761,7 @@ test("a source line that separates no ledger says so instead of counting nothing
       unbound_reason: "master_binding_no_discriminating_candidate",
       candidates: [],
       candidate_count: 120,
-      candidate_listing: "truncated",
+      candidate_listing: "withheld",
     }],
   };
   mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(familyCatalog);
