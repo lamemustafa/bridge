@@ -332,12 +332,11 @@ fn convert_bill_allocation(
         .name
         .and_then(|value| trimmed_optional(Some(value.text)));
     let Some(bill_type) = raw.bill_type else {
-        if name.is_some() {
-            return Err(OutstandingsError::InvalidResponse("bill_type_missing"));
+        if crate::outstandings_shared::bill_allocation_without_type_is_placeholder(name.as_deref())
+        {
+            return Ok(None);
         }
-        // Tally emits both empty and amount-only placeholder containers for
-        // ledger entries that have no typed bill allocation.
-        return Ok(None);
+        return Err(OutstandingsError::InvalidResponse("bill_type_missing"));
     };
     if raw.amount.is_none() {
         return Err(OutstandingsError::InvalidResponse("bill_amount_missing"));

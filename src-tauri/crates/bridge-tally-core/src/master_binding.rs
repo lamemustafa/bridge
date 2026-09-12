@@ -340,7 +340,8 @@ pub struct Unresolved {
     /// narration.** A client-supplied `REMOTEID` is not it: Tally overwrites
     /// the attribute with its own value, so a key written there cannot be
     /// observed afterwards and cannot identify what to reallocate
-    /// (`docs/tally/IMPLEMENTATION_GUIDE.md` §3.3a, fourth property, verified).
+    /// (`docs/tally/TALLY_PROTOCOL_REFERENCE.md` §9.3, which records that the
+    /// attribute does not echo the client key on readback).
     /// A parked amount whose identity went into a write-only field is
     /// unreallocatable, and nothing about the write would say so.
     pub unresolved_identity: Vec<Identifier>,
@@ -542,7 +543,7 @@ impl BindingReport {
 /// either way, so the obvious correction produces exactly the double-posting a
 /// parked entry exists to avoid, and says it worked.
 ///
-/// Re-import under the same client `REMOTEID` (§3.3a) is a real correction
+/// Re-import under the same client `REMOTEID` (§9.3) is a real correction
 /// path, but reaches only vouchers Bridge itself wrote; a hand-keyed voucher
 /// has no client key. This is why the retained identity travels in the
 /// narration: the Journal that reallocates it is written by a human or a later
@@ -857,7 +858,31 @@ pub fn bind(
         return Err(MasterBindingError::TooManySourceEntities);
     }
     let mut budget = MAX_REPORT_CANDIDATE_BYTES;
-    let mut memo = CandidateMemo::new();
+    // Which source keys actually repeat, decided before any of them is bound.
+    //
+    // A first-come cap made the memo's protection depend on **source order**:
+    // 1,024 distinct cheap misses at the head of a draft filled it, and the
+    // repeated expensive key behind them was then never cached — the stall the
+    // memo exists to prevent, reachable by reordering the same rows. Counting
+    // first removes the ordering entirely, and caches only what a second row
+    // will ask for again.
+    //
+    // This borrows the keys rather than cloning them, so it costs no more than
+    // the entity list it is counting.
+    let mut repeats: BTreeMap<&str, usize> = BTreeMap::new();
+    for entity in entities {
+        *repeats.entry(entity.key.as_str()).or_insert(0) += 1;
+    }
+    let repeated = repeats
+        .into_iter()
+        .filter(|(_, count)| *count > 1)
+        .map(|(key, _)| key)
+        .collect::<BTreeSet<_>>();
+
+    let mut memo = SearchMemo {
+        seen: CandidateMemo::new(),
+        repeated,
+    };
     Ok(BindingReport {
         class: catalog.class,
         catalog: catalog.fingerprint,
@@ -883,13 +908,21 @@ pub fn bind(
 /// repeated-name case, which is the one that stalls, needs very few entries.
 type CandidateMemo = BTreeMap<(String, BTreeSet<usize>), (Vec<(usize, CandidateRule)>, usize)>;
 
+/// One run's search scratch: what has already been computed, and which source
+/// keys a second row will ask for again. Carried together because they are one
+/// decision — whether this result is worth keeping — split across two values.
+struct SearchMemo<'a> {
+    seen: CandidateMemo,
+    repeated: BTreeSet<&'a str>,
+}
+
 const MAX_CANDIDATE_MEMO_ENTRIES: usize = 1_024;
 
 fn bind_one(
     catalog: &MasterCatalog,
     entity: &SourceEntity,
     budget: &mut usize,
-    memo: &mut CandidateMemo,
+    memo: &mut SearchMemo<'_>,
 ) -> EntityBinding {
     let exact = catalog.by_name.get(&entity.name).copied();
 
@@ -903,6 +936,7 @@ fn bind_one(
     let mut per_identifier: Vec<BTreeSet<usize>> = Vec::new();
     let mut identifier_matches = BTreeSet::new();
     let mut identifier_conflict = false;
+    let mut large_holder_points_elsewhere = false;
     for identifier in &entity.identifiers {
         if let Some(holders) = catalog.by_identifier.get(identifier) {
             // An identifier held by more masters than a candidate list may show
@@ -914,6 +948,16 @@ fn bind_one(
             // before the candidate memo is even consulted.
             if holders.len() > MAX_CANDIDATES_PER_ENTITY {
                 identifier_conflict = true;
+                // Skipping the expansion must not skip the *question* the
+                // expansion was asked. `identifier_points_elsewhere` needs one
+                // fact from this set — whether it contains the byte-exact
+                // master — and that is a membership test, not a
+                // materialization. Dropping it made the invariant
+                // size-dependent: a hint pointing entirely elsewhere let the
+                // exact name bind, but only once the family grew past the cap.
+                if exact.is_some_and(|index| !holders.contains(&index)) {
+                    large_holder_points_elsewhere = true;
+                }
                 continue;
             }
             #[cfg(test)]
@@ -950,11 +994,12 @@ fn bind_one(
     // union contains the exact master answers the shared case correctly and the
     // mixed case wrongly: `ACME 11111111` with a hint reaching `BETA 22222222`
     // has the exact master in the union while one identifier plainly disagrees.
-    let identifier_points_elsewhere = exact.is_some_and(|index| {
-        per_identifier
-            .iter()
-            .any(|reached| !reached.contains(&index))
-    });
+    let identifier_points_elsewhere = large_holder_points_elsewhere
+        || exact.is_some_and(|index| {
+            per_identifier
+                .iter()
+                .any(|reached| !reached.contains(&index))
+        });
     let status = if identifier_points_elsewhere {
         unresolved_status(
             catalog,
@@ -1000,7 +1045,11 @@ fn bind_one(
             .get(&entity.binding_key)
             .map(Vec::as_slice)
         {
-            Some([index]) => BindingStatus::Bound {
+            // §9.4d measured **ledgers**. Whether stock items match by the
+            // same rule is not merely unmeasured, it was never sent — so a
+            // folded stock-item name may suggest and may not resolve. Byte
+            // equality is unaffected: it needs no fold and is checked above.
+            Some([index]) if catalog.class == MasterClass::Ledger => BindingStatus::Bound {
                 catalog_name: catalog.entries[*index].name.clone(),
                 basis: BindingBasis::NormalizedName,
             },
@@ -1042,7 +1091,7 @@ fn unresolved_status(
     exact: Option<usize>,
     identifier_matches: &BTreeSet<usize>,
     budget: &mut usize,
-    memo: &mut CandidateMemo,
+    memo: &mut SearchMemo<'_>,
 ) -> BindingStatus {
     let (mut candidates, masters_found) =
         remembered_candidates(catalog, entity, identifier_matches, memo);
@@ -1124,10 +1173,10 @@ fn remembered_candidates(
     catalog: &MasterCatalog,
     entity: &SourceEntity,
     identifier_matches: &BTreeSet<usize>,
-    memo: &mut CandidateMemo,
+    memo: &mut SearchMemo<'_>,
 ) -> (Vec<(usize, CandidateRule)>, usize) {
     let key = (entity.key.clone(), identifier_matches.clone());
-    if let Some(remembered) = memo.get(&key) {
+    if let Some(remembered) = memo.seen.get(&key) {
         return remembered.clone();
     }
     let computed = collect_candidates(catalog, entity, identifier_matches);
@@ -1136,10 +1185,11 @@ fn remembered_candidates(
     // recomputing it costs, multiplied by the cap — trading a stall for the
     // memory the aggregate bounds elsewhere exist to prevent. A large result is
     // cheap to recompute relative to what holding it costs, so it is not held.
-    let worth_holding =
-        key.1.len() <= MAX_CANDIDATES_PER_ENTITY && computed.0.len() <= MAX_CANDIDATES_PER_ENTITY;
-    if worth_holding && memo.len() < MAX_CANDIDATE_MEMO_ENTRIES {
-        memo.insert(key, computed.clone());
+    let worth_holding = memo.repeated.contains(entity.key.as_str())
+        && key.1.len() <= MAX_CANDIDATES_PER_ENTITY
+        && computed.0.len() <= MAX_CANDIDATES_PER_ENTITY;
+    if worth_holding && memo.seen.len() < MAX_CANDIDATE_MEMO_ENTRIES {
+        memo.seen.insert(key, computed.clone());
     }
     computed
 }
@@ -1528,8 +1578,16 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
             !(character.is_ascii_digit() || character == '-' || character == '/')
         }) {
             let digits = run.chars().filter(char::is_ascii_digit).collect::<String>();
+            // Each side of a punctuated run is tested before the separator is
+            // removed. `20250911-20250912` fuses to sixteen digits, which is no
+            // length `is_plausible_date` recognizes, and `is_period` reads
+            // neither half as a year range — so a date *range* walked through a
+            // guard that a single date does not. Checking the components is
+            // where the check belonged: the fusing is what hid them.
+            let component_is_a_date = run.split(DASH_VARIANTS).any(is_plausible_date);
             if digits.len() >= MIN_NUMERIC_IDENTIFIER_DIGITS
                 && digits.len() <= MAX_IDENTIFIER_CHARS
+                && !component_is_a_date
                 && !is_plausible_date(&digits)
                 && !is_period(run)
             {

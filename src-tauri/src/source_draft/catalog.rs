@@ -609,6 +609,21 @@ mod tests {
         .expect("fabricated source parses")
     }
 
+    /// The names a **captured** `StandardLedgerCatalogV1` response carries,
+    /// parsed by the production path rather than typed into the test.
+    ///
+    /// The other binding tests here hand `source_entry_bindings` a target list
+    /// written by hand, so they show the rules behave — not that they behave
+    /// against what a real book returns. These are the bytes captured from
+    /// licensed TallyPrime 7.1 Silver that the protocol reference already
+    /// retains, decoded and parsed through the same functions production uses,
+    /// so the catalogue reaches the binder exactly as it does there — including
+    /// the parts a hand-written list would never think to include.
+    fn captured_catalogue_names() -> Vec<String> {
+        let (catalog, _) = captured_catalog_and_xml();
+        catalog.names().map(str::to_owned).collect()
+    }
+
     #[test]
     fn a_capture_narrows_each_source_entry_without_deciding_a_near_miss() {
         let targets = [
@@ -683,6 +698,111 @@ mod tests {
             parse_standard_ledger_catalog_with_identities(&xml, CAPTURED_COMPANY, CAPTURED_GUID)
                 .expect("captured catalogue remains parser-admitted");
         (catalog, xml)
+    }
+
+    #[test]
+    fn the_binder_meets_a_real_catalogue_through_the_production_parse() {
+        let targets = captured_catalogue_names();
+        assert!(
+            targets.iter().any(|name| name.starts_with('\u{928}')),
+            "the capture should still carry its Devanagari ledger: {targets:?}"
+        );
+
+        let source = parse_source_xml(
+            concat!(
+                "<ENVELOPE><BODY><IMPORTDATA><REQUESTDATA><TALLYMESSAGE>",
+                "<VOUCHER REMOTEID=\"ph-1\" VCHTYPE=\"Receipt\"><DATE>20260901</DATE>",
+                // Byte-exact against a captured name.
+                "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Cash</LEDGERNAME><AMOUNT>1</AMOUNT></ALLLEDGERENTRIES.LIST>",
+                // Case and separator folding, against a captured name.
+                "<ALLLEDGERENTRIES.LIST><LEDGERNAME>wr2-sales</LEDGERNAME><AMOUNT>-1</AMOUNT></ALLLEDGERENTRIES.LIST>",
+                // `AND` for `&` is rejected by the gateway, so it must not bind.
+                "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Profit AND Loss A/c</LEDGERNAME><AMOUNT>0</AMOUNT></ALLLEDGERENTRIES.LIST>",
+                "</VOUCHER></TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>"
+            )
+            .as_bytes(),
+            "source.xml".into(),
+        )
+        .expect("fabricated source parses");
+
+        let (bindings, state) = source_entry_bindings(&source, &targets);
+        assert_eq!(state, "complete");
+        assert_eq!(bindings.len(), 3);
+
+        assert_eq!(bindings[0].bound_target.as_deref(), Some("Cash"));
+        assert_eq!(bindings[0].bound_basis, Some(BindingBasis::ExactName));
+
+        assert_eq!(bindings[1].bound_target.as_deref(), Some("WR2 Sales"));
+        assert_eq!(bindings[1].bound_basis, Some(BindingBasis::NormalizedName));
+
+        // `&` is not folded — §9.4d sent `AND` for `&` and Tally rejected it —
+        // so this refuses against a real catalogue rather than in theory, and
+        // offers the ledger it could not reach.
+        assert_eq!(bindings[2].bound_target, None);
+        assert_eq!(bindings[2].unbound_reason, Some("master_binding_near_miss"));
+        assert_eq!(bindings[2].candidates, ["Profit & Loss A/c"]);
+
+        // The same values are committed as a fixture the **screen** test reads,
+        // so the two halves of this DTO cannot drift apart: if the producer
+        // changes what it emits, this assertion fails here rather than leaving
+        // the frontend asserting a shape nothing produces any more.
+        let committed: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../scripts/fixtures/source-draft-capture-bindings.json"
+        ))
+        .expect("the committed capture fixture parses");
+        assert_eq!(
+            committed["targets"],
+            serde_json::to_value(&targets).expect("targets serialize"),
+            "the committed fixture no longer matches the captured catalogue"
+        );
+        assert_eq!(
+            committed["bindings"],
+            serde_json::to_value(&bindings).expect("bindings serialize"),
+            "the committed fixture no longer matches what the binder emits"
+        );
+    }
+
+    #[test]
+    fn a_captured_nfd_ledger_is_not_reachable_from_its_nfc_spelling() {
+        // The capture carries a genuinely NFD ledger beside NFC ones, which is
+        // the pair the resolving fold must keep apart: Tally stores the bytes
+        // it was given and matches on exact codepoints, so normalizing before
+        // comparing would resolve one onto a master the gateway keeps apart.
+        let targets = captured_catalogue_names();
+        let nfd = targets
+            .iter()
+            .find(|name| name.contains("NFD2"))
+            .expect("the capture carries the NFD probe ledger")
+            .clone();
+        assert!(
+            nfd.contains('\u{301}'),
+            "the fixture stopped being NFD, so this would assert nothing: {nfd:?}"
+        );
+
+        let nfc = nfd.replace("e\u{301}", "\u{e9}");
+        assert_ne!(nfc, nfd, "the two spellings must differ byte for byte");
+        let source = parse_source_xml(
+            format!(
+                concat!(
+                    "<ENVELOPE><BODY><IMPORTDATA><REQUESTDATA><TALLYMESSAGE>",
+                    "<VOUCHER REMOTEID=\"ph-1\" VCHTYPE=\"Receipt\"><DATE>20260901</DATE>",
+                    "<ALLLEDGERENTRIES.LIST><LEDGERNAME>{nfc}</LEDGERNAME><AMOUNT>1</AMOUNT>",
+                    "</ALLLEDGERENTRIES.LIST>",
+                    "</VOUCHER></TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>"
+                ),
+                nfc = nfc
+            )
+            .as_bytes(),
+            "source.xml".into(),
+        )
+        .expect("fabricated source parses");
+
+        let (bindings, state) = source_entry_bindings(&source, &targets);
+        assert_eq!(state, "complete");
+        assert_eq!(
+            bindings[0].bound_target, None,
+            "an NFC spelling resolved onto an NFD master the gateway keeps apart"
+        );
     }
 
     /// The ledger renamed between the two captured responses below.

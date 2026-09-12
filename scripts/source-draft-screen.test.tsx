@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
 import React, { act } from "react";
 import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
@@ -415,6 +416,47 @@ test("distinguishes the two other refusals that are not weak matches", async () 
     root.unmount();
     host.remove();
   }
+});
+
+test("the picker groups a real captured catalogue, not a shape the test invented", async () => {
+  // Every other test here writes both the catalogue and its bindings, so they
+  // show the component agrees with an assumed response. This one reads
+  // `scripts/fixtures/source-draft-capture-bindings.json`, which is the DTO the
+  // **producer** emits from a `StandardLedgerCatalogV1` response captured on
+  // licensed TallyPrime 7.1 — nine real ledger names, including Devanagari, an
+  // `&` name, and an NFD ledger beside NFC ones.
+  //
+  // The Rust test `the_binder_meets_a_real_catalogue_through_the_production_parse`
+  // asserts that same file against what the binder actually produces, so the
+  // two halves cannot drift: if the producer changes, that test fails rather
+  // than leaving this one asserting a shape nothing emits.
+  const captured = JSON.parse(
+    readFileSync("scripts/fixtures/source-draft-capture-bindings.json", "utf8"),
+  ) as SourceDraftCatalogTargets;
+
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(captured);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  const target = host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!;
+  // Narrowing never chooses, on a real catalogue as on a fabricated one.
+  expect(target.value).toBe("");
+  const groups = Array.from(target.querySelectorAll("optgroup")).map((group) => group.label);
+  expect(groups).toEqual(["Matched to this source line", `All ${captured.targets.length} existing ledgers`]);
+  expect(
+    Array.from(target.querySelectorAll("optgroup")[0].querySelectorAll("option")).map((option) => option.value),
+  ).toEqual(["Cash"]);
+
+  // The whole captured catalogue stays reachable, Devanagari and all.
+  const all = Array.from(target.querySelectorAll("optgroup")[1].querySelectorAll("option")).map((option) => option.value);
+  expect(all).toEqual(captured.targets);
+  expect(all.some((name) => /^[\u0900-\u097F]/.test(name))).toBe(true);
+
+  expect(host.textContent).toContain("Listed first because the exact ledger name matches this source line.");
+  root.unmount();
 });
 
 test("a refusal reason survives the candidate listing being dropped", async () => {
