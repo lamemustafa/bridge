@@ -135,8 +135,7 @@ prbody="$raw_prbody"
 visible_body_status=0
 prbody=$(python3 -c 'import re, sys
 text = sys.stdin.read()
-if text.count("<!--") != text.count("-->"): raise SystemExit(2)
-print(re.sub(r"<!--.*?-->", "", text, flags=re.S), end="")' <<<"$prbody") || visible_body_status=$?
+print(re.sub(r"<!--.*?(?:-->|\Z)", "", text, flags=re.S), end="")' <<<"$prbody") || visible_body_status=$?
 if [ "$visible_body_status" -ne 0 ]; then
   unknown "could not extract visible PR description content"
   prbody=""
@@ -473,7 +472,7 @@ else
      .commit.committer.name, .commit.committer.email,
      (.author.login? // null), (.committer.login? // null)] |
     map(select(. != null))[]' <<<"$metadata_commits")
-privacy_metadata="$title
+  privacy_metadata="$title
 $raw_prbody
 $commit_messages"
 fi
@@ -1258,8 +1257,7 @@ else
   final_visible_status=0
   final_body=$(python3 -c 'import re, sys
 text = sys.stdin.read()
-if text.count("<!--") != text.count("-->"): raise SystemExit(2)
-print(re.sub(r"<!--.*?-->", "", text, flags=re.S), end="")' <<<"$final_body") || final_visible_status=$?
+print(re.sub(r"<!--.*?(?:-->|\Z)", "", text, flags=re.S), end="")' <<<"$final_body") || final_visible_status=$?
   [ "$final_visible_status" -eq 0 ] || unknown "could not extract final visible PR description content"
   [ "$final_title" = "$title" ] || bad "PR title changed during preflight"
   if ! checklist_link_ok "$final_body" "$review_checklist"; then

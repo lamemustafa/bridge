@@ -135,10 +135,12 @@ if args[:2] == ["pr", "view"]:
             body += "\n## Migration compatibility\n\nNo persisted format change.\n"
     if scenario == "validation-command-outside":
         body = body.replace("`python3 scripts/merge-gate.test.py`", "Tests not run") + "\n## Rollback\n`cargo test`\n"
+    if scenario == "policy-multiline-comment":
+        body = body.replace("A bounded merge preflight keeps incomplete evidence from becoming a merge.", "<!--\nA hidden summary cannot establish the change.\n-->")
     if scenario == "validation-html-comment":
         body = body.replace("`python3 scripts/merge-gate.test.py`", "Tests not run <!-- `cargo test` -->")
     if scenario == "unterminated-html-comment":
-        body += "\n<!-- hidden through EOF"
+        body = body.replace("`python3 scripts/merge-gate.test.py`", "<!-- hidden through EOF\n`cargo test`")
     if scenario == "hidden-comment-identifier":
         body += "\n<!-- " + "ABCDE" + "1234" + "F -->"
     if scenario == "body-comment-drift" and view_count > 0:
@@ -218,7 +220,7 @@ if args[:2] == ["pr", "view"]:
     body = body.replace("blob/HEAD", f"blob/{head}")
     if scenario == "checklist-stale-ref":
         body = body.replace(f"blob/{head}", "blob/" + "f" * 40)
-    one_file = scenario in {"files-empty", "formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-two-lines", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "workflow-placeholders", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-none", "security-pending", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "home-macos", "home-unix", "home-windows", "crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path", "gitlink", "implementation-p4-missing", "implementation-p4-present", "implementation-p4-shell", "p4-placeholders", "platform-evidence-missing", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"} or scenario.startswith("home-") or security_case or sync_case
+    one_file = scenario in {"metadata-private", "files-empty", "formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-two-lines", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "workflow-placeholders", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-none", "security-pending", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "home-macos", "home-unix", "home-windows", "crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path", "gitlink", "implementation-p4-missing", "implementation-p4-present", "implementation-p4-shell", "p4-placeholders", "platform-evidence-missing", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"} or scenario.startswith("home-") or security_case or sync_case
     selected_base = new_head if scenario == "base-oid-mismatch" else base
     emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
@@ -298,7 +300,8 @@ elif args[:2] == ["pr", "diff"]:
     elif scenario == "metadata-only":
         emit("diff --git a/docs/example.md b/docs/example.md\nsimilarity index 100%\nrename from docs/example.md\nrename to docs/example.md\n")
     elif scenario == "metadata-private":
-        emit("diff --git a/docs/example.md b/docs/example.md\nsimilarity index 100%\nrename from docs/example.md\nrename to docs/example.md\n")
+        private_path = "docs/" + "/" + "Users" + "/tester/" + "x" * 300
+        emit(f"diff --git a/{private_path} b/{private_path}\nsimilarity index 100%\nrename from {private_path}\nrename to {private_path}\n")
     elif scenario == "metadata-incomplete":
         emit("diff --git a/docs/example.md b/docs/example.md\nsimilarity index 100%\nrename from docs/example.md\nrename to docs/example.md\n")
     elif scenario == "hunk-header-phone":
@@ -519,7 +522,7 @@ elif args and args[0] == "api":
         elif scenario == "metadata-only":
             emit([[{"filename": "docs/example.md", "status": "modified", "additions": 0, "deletions": 0}]])
         elif scenario == "metadata-private":
-            emit([[{"filename": "/Users/tester/" + "x" * 300, "status": "modified", "additions": 0, "deletions": 0}]])
+            emit([[{"filename": "docs/" + "/" + "Users" + "/tester/" + "x" * 300, "status": "modified", "additions": 0, "deletions": 0}]])
         elif scenario == "metadata-incomplete":
             emit([[{"filename": "docs/example.md", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "hunk-header-phone":
@@ -718,8 +721,11 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
     def test_hidden_metadata_identifier_is_still_scanned(self):
         self.assert_blocked("hidden-comment-identifier", "privacy scan found")
 
-    def test_unterminated_comment_is_indeterminate(self):
-        self.assert_indeterminate("unterminated-html-comment", "could not extract visible")
+    def test_unterminated_comment_cannot_supply_validation(self):
+        self.assert_blocked("unterminated-html-comment", "actual test or reproduction command")
+
+    def test_multiline_comment_cannot_supply_functional_summary(self):
+        self.assert_blocked("policy-multiline-comment", "non-empty functional summary")
 
     def test_raw_html_comment_drift_blocks_revalidation(self):
         self.assert_blocked("body-comment-drift", "description changed during preflight")
@@ -841,8 +847,13 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
 
     def test_metadata_only_examples_are_redacted_and_bounded(self):
         result = self.run_gate("metadata-private")
-        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("metadata-only diff section", result.stdout)
+        self.assertNotIn("privacy diff coverage failed", result.stdout)
         self.assertNotIn("tester", result.stdout)
+        examples = next(line for line in result.stdout.splitlines() if "metadata-only diff section" in line)
+        self.assertLess(len(examples), 260)
+        self.assertNotIn("x" * 161, examples)
 
     def test_metadata_only_diff_requires_rest_zero_totals(self):
         self.assert_indeterminate("metadata-incomplete", "metadata-only 'docs/example.md' conflicts")
