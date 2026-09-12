@@ -219,8 +219,9 @@ for leaky in ("XAVIER", "ABXXCD", "MAX", "X-RAY"):
 # fabricated it to `ZZ1111` and destroyed a shape the fixture exists to keep.
 # Without these three rows the union predicate has no test at all: reverting it
 # to the four-X rule left the whole suite green.
+# The short form is gated on IMPS context, so it is tested through the context
+# rather than beside it — see the block below. Only the global shape belongs here.
 for mask, keeps in (("XXXX", True), ("XXXXXX1234", True), ("xxxx5678", True),
-                    ("XX1234", True), ("X99", True), ("xx7", True),
                     ("XX", False), ("X", False), ("XXX", False)):
     out = load()._scrub_plain(mask)
     # For a mask, every X position must survive verbatim and every digit
@@ -235,6 +236,29 @@ for mask, keeps in (("XXXX", True), ("XXXXXX1234", True), ("xxxx5678", True),
     check(
         f"{mask!r} is {'preserved as a mask' if keeps else 'fabricated, being too short to be one'}",
         held, f"{mask} -> {out}",
+    )
+
+# `bank_statement_import` recognises `[Xx]+\d+` ONLY inside an `IMPS/` component,
+# behind an alphabetic prefix and hyphens. An earlier revision of `_is_mask`
+# applied that shape globally, so `X99` anywhere was classified as a mask and
+# `_fake_token` returned `X11` — carrying a customer's X into a public fixture,
+# the very defect the function exists to prevent, reintroduced by widening the
+# rule past the parser it mirrors.
+#
+# A sanitiser may be NARROWER than the parser: the cost is a fabricated mask
+# shape. It must never be WIDER: the cost there is a customer character kept.
+for token in ("XX1234", "X99", "xx7"):
+    outside = load()._scrub_plain(f"TRANSFER TO {token} ACCOUNT")
+    inside = load()._scrub_plain(f"IMPS/P2A/{token}/SOMEBANK")
+    check(
+        f"{token!r} outside an IMPS field is customer data and is fabricated",
+        "X" not in outside.upper(),
+        outside,
+    )
+    check(
+        f"{token!r} inside an IMPS field is the bank's mask and survives",
+        "X" in inside.upper(),
+        inside,
     )
 
 # The invariant the case above turns on, asserted directly so it cannot be
