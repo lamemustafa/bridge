@@ -517,6 +517,19 @@ fn a_number_claimed_by_two_proposals_decides_nothing() {
 }
 
 #[test]
+fn internal_whitespace_in_a_voucher_number_is_content() {
+    let window = window(&[BookRow::new("book-1", "20260812", "AA  0118")]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA 0118").build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    assert_ne!(only(&report).present_book_key(), Some("book-1"));
+}
+
+#[test]
 fn a_remote_id_unique_on_both_sides_decides_presence() {
     let window = window(&[BookRow::new("book-1", "20260812", "AA0118").remote_id("bridge-txn-1")]);
     let proposals = [ProposalRow::new(0, "20260814", "AA9999")
@@ -1018,6 +1031,39 @@ fn duplicate_voucher_numbers_in_the_book_are_reported_without_being_asked_for() 
     assert_eq!(group.voucher_number, "AA0118");
     assert_eq!(group.book_voucher_count, 2);
     assert_eq!(group.book_keys, vec!["book-1", "book-2"]);
+}
+
+#[test]
+fn duplicate_observation_keys_are_sorted_before_the_listing_is_capped() {
+    let window = window(&[
+        BookRow::new("book-10", "20260812", "AA0118"),
+        BookRow::new("book-09", "20260812", "AA0118"),
+        BookRow::new("book-08", "20260812", "AA0118"),
+        BookRow::new("book-07", "20260812", "AA0118"),
+        BookRow::new("book-06", "20260812", "AA0118"),
+        BookRow::new("book-05", "20260812", "AA0118"),
+        BookRow::new("book-04", "20260812", "AA0118"),
+        BookRow::new("book-03", "20260812", "AA0118"),
+        BookRow::new("book-02", "20260812", "AA0118"),
+        BookRow::new("book-01", "20260812", "AA0118"),
+        BookRow::new("book-00", "20260812", "AA0118"),
+    ]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0999").build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let group = &report.observations().duplicate_numbers[0];
+    assert_eq!(group.book_voucher_count, MAX_KEYS_PER_DUPLICATE_GROUP + 1);
+    assert_eq!(
+        group.book_keys,
+        (0..MAX_KEYS_PER_DUPLICATE_GROUP)
+            .map(|index| format!("book-{index:02}"))
+            .collect::<Vec<_>>(),
+        "the capped diagnostic is stable even when the transport orders rows differently"
+    );
 }
 
 #[test]
@@ -1817,6 +1863,27 @@ fn a_remote_id_and_a_number_selecting_different_vouchers_do_not_settle() {
 }
 
 #[test]
+fn a_nonunique_proposal_number_cannot_contradict_a_unique_remote_id() {
+    let window = window(&[
+        BookRow::new("book-1", "20260812", "AA0118").remote_id("tally-1"),
+        BookRow::new("book-2", "20260813", "AA0119"),
+    ]);
+    let proposals = [
+        ProposalRow::new(0, "20260813", "AA0119")
+            .remote_id("tally-1")
+            .build(),
+        ProposalRow::new(1, "20260814", "AA0119").build(),
+    ];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    assert_eq!(report.vouchers()[0].present_book_key(), Some("book-1"));
+}
+
+#[test]
 fn a_remote_id_and_a_number_agreeing_on_one_voucher_still_settle() {
     let window = window(&[BookRow::new("book-1", "20260812", "AA0118").remote_id("tally-1")]);
     let proposals = [ProposalRow::new(0, "20260812", "AA0118")
@@ -2020,8 +2087,9 @@ fn two_numbers_differing_only_in_case_are_two_numbers() {
         "a case variant is a different number until something measures otherwise"
     );
 
-    // Encoding still folds: Tally pads its own fields, and the same number
-    // typed two ways is the same number.
+    // Outer padding is normalized, but internal whitespace is content until
+    // an observed source contract proves otherwise. Folding it could turn two
+    // distinct invoice numbers into an unsafe `Present` verdict.
     let padded_rows = [BookRow::new("book-1", "20260812", "AA 0118")];
     let padded = window(&padded_rows);
     let spaced = [ProposalRow::new(0, "20260812", "AA  0118").build()];
@@ -2031,7 +2099,7 @@ fn two_numbers_differing_only_in_case_are_two_numbers() {
         &numbering(NumberingMethod::Manual),
         &spaced,
     );
-    assert_eq!(only(&report).present_book_key(), Some("book-1"));
+    assert_eq!(only(&report).present_book_key(), None);
 }
 
 /// Under a `Manual` declaration the number is the one key that can decide, so

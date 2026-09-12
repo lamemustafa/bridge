@@ -65,7 +65,22 @@ The constructor refuses, rather than degrades, on:
   does not identify one master, nothing downstream is meaningful;
 - **an identifier hint that yields no identifier** — `IdentifierHintUnusable`. A
   hint that silently does nothing is a trap (P7);
-- bounds violations on entry count, entity count, and name length.
+- bounds violations on entry count, entity count, name length, **total catalog
+  name bytes**, **total source name bytes**, and **hint count**. The byte bounds
+  are not redundant with the count and length ones: 20,000 names of 16,384
+  characters satisfies both and is 327 MB before the constructor builds its
+  keys, tokens and four indexes over them. The catalog's is accumulated as the
+  iterator is consumed, so a lazy catalog fails before the next name is retained
+  rather than after all of them are. The source side had no such bound at all
+  until a review asked why only one side of an equally untrusted pair carried
+  one — 40,000 entities of 16,384 characters is two and a half gigabytes of
+  names, each individually valid — and it is now checked at `bind`, the boundary
+  where the collection first becomes this module's problem, as
+  `SourceNamesTooLarge`. The last is checked as the hints arrive rather than on the finished
+  set: hints deduplicate, so a million repeated ones fold to a single identifier
+  and the finished set never exceeds its bound, while every one of them has
+  already been scanned and copied. Each hint yields at least one identifier or
+  is refused outright, so the eager bound rejects nothing the late one admitted.
 
 A softer collision — two masters differing only in case, whitespace runs, or
 dash and quote style — does **not** fail the catalog. It is carried as a
@@ -74,9 +89,13 @@ colliding pair surfaces in the unbound list where an operator can see it.
 Failing a whole read to report one collision would block all the work it was
 performed for.
 
-`MasterClass` is `Ledger` or `StockItem`. Both classes failed in practice, the
-rules are identical for both, and the class is carried only so a report cannot
-be applied to the wrong catalog.
+`MasterClass` is `Ledger` or `StockItem`. Both classes failed in practice and
+the identifier rules are identical for both, but **the name fold is not**:
+§9.4d measured ledgers, and whether a stock item matches by the same rule was
+never sent. So a folded stock-item name may *suggest* and may not resolve —
+byte equality is unaffected, since it needs no fold. The class is carried both
+so a report cannot be applied to the wrong catalog and because the evidence
+behind the two differs.
 
 ### 2. The identifier is the key; the name is a hint
 
@@ -117,13 +136,47 @@ it qualified as a code. Otherwise `Part A12345678` reaches an unrelated
 `Bank 12345678` through the one-letter gap the code test rejects: a token
 identifies by its whole shape or not at all.
 
+**A mask is a mask however it is spelled, and wherever it is written.** A value
+carrying mask punctuation (`****`, `####`) or a run of one repeated letter
+(`XXXX`) exposes a suffix rather than a number, and that suffix is no more
+identifying a space away than joined: `XXXX 12345678` is the same statement as
+`XXXX12345678`. A mask therefore suppresses the token that follows it, in both
+spellings and for both identifier shapes. Two unrelated ledgers sharing a masked
+last-eight must reach a near-miss, never a bind.
+
+A token carrying no alphanumeric content is a **delimiter**, and a delimiter
+does not end a mask: `XXXX - 12345678` says what `XXXX 12345678` says. Reading
+the mask state token by token let a single `-` or `/` clear it and walk the
+suffix out as a whole account number. An ordinary word does end a mask, or
+nothing downstream of one could identify anything again.
+
+**An identifier may only be built from characters the token actually has.**
+Canonical form keeps ASCII alphanumerics, and the digit-run split keeps ASCII
+digits, so anything else in a token is discarded in silence — and what survives
+is an identifier the name never contained. A name in another script fused to
+`AB12345678` yielded that code and reached an unrelated bank; `12345678`
+followed by Devanagari numerals yielded that number and did the same. In both
+cases the ASCII spelling of the same shape never would.
+
+So the admitted set is **positive**: a token yields an identifier only if it is
+ASCII apart from the dash variants this module already folds as separators.
+Guarding "non-ASCII letters" was the first attempt and was too narrow —
+`char::is_alphabetic` is false for a Devanagari digit — which is the second time
+in this module an ASCII-shaped class silently decided a non-ASCII question. The
+question is not which scripts exist; it is which characters canonicalization is
+entitled to drop. The books this binder reads carry Devanagari, Tamil and
+Bengali ledger names, so the boundary is reached rather than theoretical.
+
 **Period labels are recognized by their numbers, not their words.** A token is
 a period when every number in it reads as a year or a small ordinal — which
 catches `SEPTEMBER2025` and `2025QUARTER1` that no cap on the alphabetic run
 ever would, because a month name can be any length and a year cannot. A fiscal
 range (`2025-2026`, `2025/2026`) is excluded before its digits are fused, since
 stripping the separator produced an eight-digit run that no calendar reading
-rejects.
+rejects. Written without any separator the range arrives as one run that the
+splitting step never sees — `FY202425`, `FY20242025` — so a year followed by a
+two- or four-digit year is read as a period in its own right. Otherwise a
+missing `Purchases FY202425` identifier-binds to a sole live `Sales FY202425`.
 
 One narrow exclusion applies to the numeric shape: an eight-digit run that reads
 as a calendar date in 1900–2199 is a date, not an identifier. Without it two
@@ -160,26 +213,69 @@ favour.
 under **Tally's own rule for when two master names are the same**, and only when
 exactly one master shares it.
 
-That rule is measured, not chosen: `IMPLEMENTATION_GUIDE.md` §3.3b found Tally's
-master-name matching to be case-insensitive **and separator-insensitive — a
-hyphen matches a space** — and otherwise exact on letters. `AND` for `&`, a
-missing suffix word, and a singular for a plural were all rejected. So the fold
-lowercases, collapses whitespace, folds Unicode dash and quote variants to
-ASCII, and treats `-` as a space; and it stops exactly where Tally stops.
+**There are two folds, and which one may answer is the whole of this section.**
 
-**Being stricter than the authority is not the safe direction it appears to
-be.** It refuses names Tally would accept, and `X - Y` is a common ledger
-convention — six of the seventeen hyphenated names in the observed books take
-that shape. A binder that reports a near-miss for a name the book would have
-matched has invented work, not prevented an error.
+The resolving fold implements exactly the equivalences
+`TALLY_PROTOCOL_REFERENCE.md` §9.4d measured on **licensed TallyPrime 7.1** —
+the SKU this writes to — by naming each spelling in a voucher and reading the
+day book back to see which master it reached:
+
+- ASCII case folds;
+- leading and trailing whitespace is ignored;
+- an internal run of spaces collapses;
+- **space, `-` and `/` are one separator**, in both directions.
+
+Everything else is exact on codepoints. The wide fold (`master_identity_key`)
+carries more than that and may only offer candidates.
+
+**The two rules that matter are negative, and neither is guessable.** An **en
+dash** and an **underscore** were sent and *rejected*: they are not separators
+to Tally however much they look like ones, so a fold that treats "punctuation"
+or "separators" as a class is wider than the gateway and merges masters it keeps
+apart. And **canonical equivalence is not folded** — an NFD spelling of an NFC
+master is a different master, consistent with the exact-codepoint finding
+recorded against this release.
+
+**This section has been wrong twice, in both directions, and the record is
+worth more than the conclusion.**
+
+It first claimed the fold "stops exactly where Tally stops" while resolving on
+four transformations §9.4b marked UNVERIFIED — a Bridge guess wearing Tally's
+authority. That was corrected by narrowing to the three §9.4b had measured,
+which cost 420 of 995 mutation binds and withdrew `X - Y`, a common ledger
+convention.
+
+Then the narrowing turned out to be over-strict, because §9.4b's scope is *Edit
+Log 7.0 Educational* and this project writes to licensed 7.1. Measuring that SKU
+directly (§9.4d) found the gateway wider: the reverse hyphen direction, leading
+whitespace, collapsed runs and slash all match. The fold is symmetric again, one
+key per side, and the asymmetric index the narrow version needed is gone. On the
+mutation book **600 of 995** now bind, against 420 under the narrow fold.
+
+The lesson is not "measure more". It is that **the scope line of an inherited
+measurement is part of the measurement**: §9.4b was accurate and its scope was
+the thing being skipped, by me in one direction and then by the narrowing in the
+other.
+
+**What still holds regardless of which way the evidence moves.** A fold that
+merges two **live** masters never resolves — the pair is an ambiguity and both
+surface (§4). Two masters differing only in case, trailing whitespace or
+separator style collapse under the measured fold and are refused there, which is
+also what Tally implies, since it would match that source name to either.
+
+**Trimming.** Neither side is trimmed on the way in: `validated_name` bounds a
+name and returns it unchanged, and an observed master is retained byte for byte
+because a caller writes it back. Whitespace is handled by the fold, not by
+editing the stored text.
 
 This fold is deliberately **separate from the general comparison key**, which is
-shared with other contracts for voucher numbers and voucher-type names. §3.3b
+shared with other contracts for voucher numbers and voucher-type names. §9.4b
 says nothing about those, and widening the shared fold to serve masters would be
 the "never to make one caller's case pass" this ADR warns against. One fold per
-notion of sameness, each named for the question it answers. Nothing else binds. There is no edit distance, no
-phonetic key, no token stemming, and no similarity threshold anywhere in the
-implementation.
+notion of sameness, each named for the question it answers.
+
+**Nothing else binds.** There is no edit distance, no phonetic key, no token
+stemming, and no similarity threshold anywhere in the implementation.
 
 ### 4. Near-misses produce candidates and never resolve
 

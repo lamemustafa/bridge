@@ -185,10 +185,27 @@ fn captured_import_scalar_content_is_preserved_or_refused_without_silent_loss() 
             Err("import_verification_export_invalid".into())
         );
     }
-    let invalid = captured.replace(">-101.01</AMOUNT>", ">-101.01<![CDATA[invalid]]></AMOUNT>");
+    // Scoped to the ENTRY amount by its `TYPE="Amount"` attribute. The captured
+    // bill allocation repeats the same value, so an unscoped replace corrupts both
+    // and the bill-allocation parse answers first -- which asserts layer ordering
+    // instead of entry-amount refusal. Both layers are asserted, separately.
+    let invalid = captured.replace(
+        "<AMOUNT TYPE=\"Amount\">-101.01</AMOUNT>",
+        "<AMOUNT TYPE=\"Amount\">-101.01<![CDATA[invalid]]></AMOUNT>",
+    );
+    assert_ne!(invalid, captured);
     assert_eq!(
         parse_import_vouchers(&invalid, CAPTURED_GUID),
         Err("import_verification_amount_invalid".into())
+    );
+    let invalid_allocation = captured.replace(
+        "<AMOUNT>-101.01</AMOUNT>",
+        "<AMOUNT>-101.01<![CDATA[invalid]]></AMOUNT>",
+    );
+    assert_ne!(invalid_allocation, captured);
+    assert_eq!(
+        parse_import_vouchers(&invalid_allocation, CAPTURED_GUID),
+        Err("bill_allocation_amount_invalid".into())
     );
     let narration = baseline.rows[0].narration.as_deref().unwrap();
     let literal = captured.replace(narration, "<![CDATA[literal &amp; text]]>");

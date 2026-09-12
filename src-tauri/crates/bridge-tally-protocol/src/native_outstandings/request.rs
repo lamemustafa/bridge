@@ -193,8 +193,8 @@ pub fn render_native_ledger_export_request(
 }
 
 /// Renders the dedicated collection used only by the party/ledger master
-/// workbook. Sensitive master values are fetched here because this report
-/// renders them; ordinary ledger readers use `render_native_ledger_export_request`.
+/// workbook and compliance readers. Sensitive master values are fetched here;
+/// ordinary ledger readers use `render_native_ledger_export_request`.
 pub fn render_party_ledger_master_request(
     company: &str,
     period: &NativeLedgerExportPeriod,
@@ -202,7 +202,7 @@ pub fn render_party_ledger_master_request(
     render_native_ledger_collection_request(
         company,
         period,
-        "NAME, GUID, REMOTEID, MASTERID, ALTERID, PARENT, PARTYGSTIN, INCOMETAXNUMBER, NAMEONPAN, LEDPINCODE, LEDGSTPINCODE, MSMEREGNUMBER, LEDUDYAMREGNUMBER, BANKACCHOLDERNAME, BANKDETAILS, IFSCODE, EMAIL, LEDGERPHONE, STATENAME, LEDADDRESS.LIST, OPENINGBALANCE",
+        "NAME, GUID, REMOTEID, MASTERID, ALTERID, PARENT, PARTYGSTIN, INCOMETAXNUMBER, NAMEONPAN, LEDPINCODE, LEDGSTPINCODE, MSMEREGNUMBER, LEDUDYAMREGNUMBER, BANKACCHOLDERNAME, BANKDETAILS, IFSCODE, EMAIL, LEDGERPHONE, STATENAME, LEDADDRESS.LIST, TAXTYPE, GSTDUTYHEAD, OPENINGBALANCE",
         true,
     )
 }
@@ -521,7 +521,7 @@ mod tests {
             "the ordinary ledger profile retains its existing response shape"
         );
         let party_master_xml = render_party_ledger_master_request("A & B <Co>", &export_period);
-        assert!(party_master_xml.contains("INCOMETAXNUMBER, NAMEONPAN, LEDPINCODE, LEDGSTPINCODE, MSMEREGNUMBER, LEDUDYAMREGNUMBER, BANKACCHOLDERNAME, BANKDETAILS, IFSCODE, EMAIL, LEDGERPHONE, STATENAME, LEDADDRESS.LIST"));
+        assert!(party_master_xml.contains("INCOMETAXNUMBER, NAMEONPAN, LEDPINCODE, LEDGSTPINCODE, MSMEREGNUMBER, LEDUDYAMREGNUMBER, BANKACCHOLDERNAME, BANKDETAILS, IFSCODE, EMAIL, LEDGERPHONE, STATENAME, LEDADDRESS.LIST, TAXTYPE, GSTDUTYHEAD"));
         assert!(party_master_xml
             .contains("<COMPUTE>BRIDGECOMPANYGUID:$GUID:Company:##SVCurrentCompany</COMPUTE>"));
         assert!(!export_xml.contains("<REPORT>"));

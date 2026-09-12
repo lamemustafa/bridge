@@ -209,6 +209,54 @@ fn the_result_is_pageable_so_an_over_large_report_is_not_discarded() {
 }
 
 #[test]
+fn a_caller_limited_presence_page_includes_its_resume_cursor() {
+    let entries = [
+        ObservedEntry {
+            ledger: "Cash",
+            amount: "-1.00",
+        },
+        ObservedEntry {
+            ledger: "Sales",
+            amount: "1.00",
+        },
+    ];
+    let proposals = [0, 1].map(|position| {
+        ProposedVoucher::new(ProposedVoucherInput {
+            position,
+            date: "20260901",
+            voucher_type: "Journal",
+            voucher_number: Some(if position == 0 { "JV-0" } else { "JV-1" }),
+            remote_id: None,
+            party: None,
+            entries: &entries,
+        })
+        .expect("proposal")
+    });
+    let window = BookWindow::observed(
+        "20260901",
+        "20260930",
+        WindowRead::Complete,
+        RemoteIdEvidence::NotRead,
+        vec![],
+    )
+    .expect("complete empty window");
+    let catalogue = vec!["Cash".to_string(), "Sales".to_string()];
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &catalogue).expect("catalog");
+    let numbering =
+        NumberingDeclaration::new([("Journal", NumberingMethod::Manual)]).expect("numbering");
+    let request =
+        PresenceRequest::new(&window, &catalog, &numbering, &proposals).expect("presence request");
+    let report = book_presence::assess(&request);
+
+    let (result, truncated) = presence_result(&report, &catalogue, None, 0, 1, 200_000);
+    assert!(truncated);
+    assert_eq!(result["offset"], 0);
+    assert_eq!(result["total"], 2);
+    assert_eq!(result["items"].as_array().map(Vec::len), Some(1));
+    assert_eq!(result["next_offset"], 1);
+}
+
+#[test]
 fn an_unknown_numbering_method_is_refused_at_the_published_schema() {
     assert_eq!(
         validate_tool_arguments(
@@ -523,7 +571,7 @@ fn presence_plans() -> Vec<ScenarioPlan> {
 }
 
 #[tokio::test]
-async fn a_live_shaped_cycle_separates_present_undecided_and_absent() {
+async fn a_nonempty_window_without_a_control_total_refuses_to_issue_absent() {
     let simulator = SequenceSimulator::spawn(presence_plans()).expect("simulator");
     let directory = tempfile::tempdir().expect("directory");
     let server = Server::new(Settings {
@@ -557,51 +605,16 @@ async fn a_live_shaped_cycle_separates_present_undecided_and_absent() {
             }),
         )
         .await;
-    assert_eq!(response["isError"], false, "{response}");
-    let result = &response["structuredContent"]["result"];
-    assert_eq!(result["profile"], "agent_voucher_presence_v1");
-    assert_eq!(result["window"]["from"], "20260901");
-    assert_eq!(result["window"]["to"], "20260930");
-    assert_eq!(result["total"], 3);
-    assert_eq!(result["offset"], 0);
-    assert_eq!(result["totals"]["requested"], 3);
-    assert_eq!(result["totals"]["present"], 2);
-    assert_eq!(result["totals"]["absent"], 1);
-    assert_eq!(result["totals"]["possibly_present"], 0);
-
-    let vouchers = result["items"].as_array().expect("items");
-    assert_eq!(vouchers[0]["presence"], "present");
-    assert_eq!(vouchers[0]["basis"], "manual_voucher_number");
-    assert_eq!(vouchers[0]["book_key"], format!("{CAPTURED_GUID}-00000001"));
-    assert!(vouchers[0]["differences"]
-        .as_array()
-        .expect("differences")
-        .is_empty());
-
-    // The number identified it, so the date and amount the book disagrees on
-    // are findings about the book, not evidence against the match.
-    assert_eq!(vouchers[1]["presence"], "present");
-    let differences = vouchers[1]["differences"].as_array().expect("differences");
-    assert_eq!(differences.len(), 2);
-    assert_eq!(differences[0]["field"], "date");
-    assert_eq!(differences[0]["proposed"], "20260901");
-    assert_eq!(differences[0]["observed"], "20260902");
-    assert_eq!(differences[1]["field"], "amount");
-    assert_eq!(differences[1]["proposed"], "7.5");
-    assert_eq!(differences[1]["observed"], "7");
-
-    assert_eq!(vouchers[2]["presence"], "absent");
-    assert!(vouchers[2].get("book_key").is_none());
-    assert_eq!(vouchers[2]["party"]["catalog_name"], "नमस्ते ट्रेडर्स");
-
-    // The book half of the report is computed, not asked for.
-    assert_eq!(result["book"]["window_voucher_count"], 2);
-    assert_eq!(result["book"]["remote_id_observed"], false);
-    assert_eq!(result["book"]["duplicate_number_group_count"], 0);
-    assert_eq!(result["book"]["unmatched_book_vouchers"], 0);
+    // A nonempty response has no source-side cardinality control. It therefore
+    // cannot issue the `Absent` verdict this fixture used to assert.
+    assert_eq!(response["isError"], true, "{response}");
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"],
+        "presence_window_incomplete"
+    );
     assert_eq!(
         response["structuredContent"]["evidence"]["state"],
-        "complete"
+        "partial"
     );
     let observed = simulator.finish().expect("requests");
     assert_eq!(observed.len(), 22);
@@ -954,7 +967,8 @@ fn live_env(key: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| panic!("{key} must be set for the live replay"))
 }
 
-/// Replays the twenty-invoice engagement against the live lab.
+/// Confirms that a live nonempty window remains fail-closed until a source
+/// cardinality control exists.
 ///
 /// ```text
 /// BRIDGE_TALLY_LIVE_PORT=9001 \
@@ -1044,20 +1058,21 @@ async fn replay_the_twenty_invoice_engagement() {
     // test would still see *a* difference and still pass, measuring something
     // other than what it says it measures. So it is taken off the largest
     // positive entry, and only where that entry can absorb it.
-    let widest_positive = |row: &Value| -> Option<usize> {
+    let widest_positive = |row: &Value, minimum: i64| -> Option<usize> {
         row["amounts"]
             .as_array()
             .expect("amounts")
             .iter()
             .enumerate()
             .map(|(at, entry)| (at, paise(entry["amount"].as_str().expect("amount"))))
-            .filter(|(_, value)| *value > SHORT_BY_PAISE)
+            .filter(|(_, value)| *value > minimum)
             .max_by_key(|(_, value)| *value)
             .map(|(at, _)| at)
     };
 
     let proposal_from = |row: &Value, short_by: i64| {
-        let target = (short_by > 0).then(|| widest_positive(row).expect("an entry to shorten"));
+        let target =
+            (short_by > 0).then(|| widest_positive(row, short_by).expect("an entry to shorten"));
         let entries = row["amounts"]
             .as_array()
             .expect("amounts")
@@ -1096,7 +1111,7 @@ async fn replay_the_twenty_invoice_engagement() {
     let shortened = posted
         .iter()
         .skip(REPLAY_PRESENT)
-        .find(|row| widest_positive(row).is_some())
+        .find(|row| widest_positive(row, SHORT_BY_PAISE).is_some())
         .expect("a voucher whose invoice line exceeds the shortfall");
     proposals.push(proposal_from(shortened, SHORT_BY_PAISE));
     // A new customer's invoice, which the engagement also had. It must differ
@@ -1105,7 +1120,12 @@ async fn replay_the_twenty_invoice_engagement() {
     // resemble something on date-and-party and withhold `absent` -- correctly,
     // and that is a property of the window rather than of the proposal.
     for index in 0..REPLAY_ABSENT {
-        let mut invented = proposal_from(posted[0], (index as i64 + 1) * 7_777);
+        let short_by = (index as i64 + 1) * 7_777;
+        let seed = posted
+            .iter()
+            .find(|row| widest_positive(row, short_by).is_some())
+            .expect("a voucher whose invoice line exceeds each invented shortfall");
+        let mut invented = proposal_from(seed, short_by);
         invented["voucher_number"] = json!(format!("BRIDGE-REPLAY-ABSENT-{index:02}"));
         invented["party"] = json!(REPLAY_UNKNOWN_PARTY);
         invented["entries"][0]["ledger"] = json!(REPLAY_UNKNOWN_PARTY);
@@ -1157,88 +1177,18 @@ async fn replay_the_twenty_invoice_engagement() {
                 "numbering": numbering, "vouchers": proposals}),
         )
         .await;
-    let result = &response["structuredContent"]["result"];
     assert_eq!(
-        response["isError"], false,
-        "presence refused the replay: {}",
-        result["error"]["code"]
+        response["isError"], true,
+        "the nonempty window must fail closed"
     );
-
-    let items = result["items"].as_array().expect("items");
-    // Counts, bases and reason codes only: never a name, number or amount.
-    let summarise = |entry: &Value| {
-        format!(
-            "{}/{}/{}",
-            entry["presence"].as_str().unwrap_or("?"),
-            entry["basis"].as_str().unwrap_or("-"),
-            entry["reason"].as_str().unwrap_or("-")
-        )
-    };
-    println!(
-        "replay totals: {} | verdicts: {:?}",
-        result["totals"],
-        items.iter().map(summarise).collect::<Vec<_>>()
-    );
-    // Scalars only, by construction rather than by intention. `book` also
-    // carries `duplicate_numbers` and `unbalanced_vouchers`, and those hold
-    // real voucher numbers, voucher types and GUIDs -- printing the object
-    // whole would put customer accounting data into a terminal or a CI log,
-    // which is exactly what the header above promises this does not do. A
-    // promise a reader has to check the code to trust is not a promise.
-    let counts = result["book"]
-        .as_object()
-        .expect("book")
-        .iter()
-        .filter(|(_, value)| !value.is_array())
-        .map(|(key, value)| format!("{key}={value}"))
-        .collect::<Vec<_>>();
-    println!("book observations: {}", counts.join(" "));
-
-    for (index, entry) in items.iter().take(REPLAY_PRESENT).enumerate() {
-        assert_eq!(
-            entry["presence"],
-            "present",
-            "faithful copy {index} came back {}",
-            summarise(entry)
-        );
-        assert!(
-            entry["differences"]
-                .as_array()
-                .is_some_and(|rows| rows.is_empty()),
-            "a faithful copy reported a difference at {index}"
-        );
-    }
-    let differing = &items[REPLAY_PRESENT];
     assert_eq!(
-        differing["presence"],
-        "present",
-        "the short proposal came back {}",
-        summarise(differing)
+        response["structuredContent"]["result"]["error"]["code"],
+        "presence_window_incomplete"
     );
-    // The *exact* shortfall, not merely "some difference". Asserting only
-    // that a difference exists is what let the perturbation drift into
-    // something else while the test went on passing.
-    let amount = differing["differences"]
-        .as_array()
-        .expect("differences")
-        .iter()
-        .find(|difference| difference["field"] == "amount")
-        .expect("an amount difference");
-    let proposed = paise(amount["proposed"].as_str().expect("proposed"));
-    let observed = paise(amount["observed"].as_str().expect("observed"));
     assert_eq!(
-        observed - proposed,
-        SHORT_BY_PAISE,
-        "the reported shortfall is not the one the proposal applied"
+        response["structuredContent"]["evidence"]["state"],
+        "partial"
     );
-    for (index, entry) in items.iter().skip(needed).enumerate() {
-        assert_eq!(
-            entry["presence"],
-            "absent",
-            "invented voucher {index} came back {}",
-            summarise(entry)
-        );
-    }
 }
 
 // ---------------------------------------------------------------------------

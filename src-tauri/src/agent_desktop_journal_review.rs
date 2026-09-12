@@ -75,6 +75,10 @@ impl DesktopJournalError {
                 "This Journal is too large for Bridge's one-Journal desktop review.",
                 "Use the manual workflow for this file; Bridge will not truncate the review.",
             ),
+            "import_post_requires_one_journal" => (
+                "Bridge's desktop review posts one unnumbered Journal, and this saved batch is a different shape.",
+                "Import this file in Tally (Gateway of Tally → Import → Vouchers), then verify it. Payment, Receipt and Contra batches, and batches holding more than one voucher, are import-only. The file itself is unchanged and correct.",
+            ),
             "import_post_numbered_journal_unsupported" => (
                 "Bridge cannot post a Journal file that specifies a voucher number.",
                 "Import it manually, or choose an unnumbered Journal. A previously dispatched Journal remains available only for reconciliation.",
@@ -186,4 +190,24 @@ pub(crate) async fn reconcile_reviewed(
         .reconcile(&request.batch_id, &request.sha256, &request.company_guid)
         .await;
     Ok(action(request.batch_id, operation))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_batch_this_review_cannot_post_says_so_instead_of_blaming_the_file() {
+        // Building a Payment, Receipt or Contra batch is ordinary now, and
+        // choosing one here is the ordinary way to discover that this review
+        // posts Journals only. The generic fallback tells the user to choose an
+        // unchanged original file, which is advice for a different problem and
+        // sends them round a loop fixing nothing.
+        let refused = DesktopJournalError::refused("import_post_requires_one_journal");
+        let fallback = DesktopJournalError::refused("some_unmapped_code");
+        assert_ne!(refused.message, fallback.message);
+        assert_ne!(refused.remediation, fallback.remediation);
+        assert!(refused.message.contains("Journal"));
+        assert!(refused.remediation.contains("Payment, Receipt and Contra"));
+    }
 }

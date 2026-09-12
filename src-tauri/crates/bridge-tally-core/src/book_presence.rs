@@ -1492,7 +1492,20 @@ fn decide(
     if let [position] = marker_matches[..] {
         selections.push((PresenceBasis::NarrationMarker, position));
     }
-    if number_decides && number_matches.len() == 1 {
+    // A proposal-side duplicate makes the number unusable as an identity
+    // basis. It must stay out of `selections` even when a stronger basis has
+    // already selected a voucher; otherwise the duplicate number can turn a
+    // sound identity match into a false cross-basis conflict.
+    let number_is_unique_in_proposal = proposal
+        .number_key
+        .as_deref()
+        .is_some_and(|number_key| {
+            proposal_number_counts
+                .get(&(proposal.type_key.as_str(), number_key))
+                .copied()
+                == Some(1)
+        });
+    if number_decides && number_is_unique_in_proposal && number_matches.len() == 1 {
         selections.push((PresenceBasis::ManualVoucherNumber, number_matches[0]));
     }
 

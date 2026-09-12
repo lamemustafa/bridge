@@ -176,11 +176,10 @@ impl Server {
         let (xml, mut evidence) = self
             .post_read(
                 identity,
-                render_agent_vouchers(
+                render_agent_movement_vouchers(
                     company.as_str(),
                     range.from_yyyymmdd(),
                     range.to_yyyymmdd(),
-                    None,
                 )?,
             )
             .await?;

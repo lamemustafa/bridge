@@ -1063,6 +1063,22 @@ fn standard_ledger_identity_ignores_nonessential_ledger_fields() {
 }
 
 #[test]
+fn standard_ledger_catalog_retains_a_padded_parent_verbatim() {
+    // A `PARENT` is a foreign reference to a group `NAME`, matched by exact
+    // codepoint. Trimming it here would resolve a pair the ancestry walk exists
+    // to refuse, and would do it upstream of the walk where nothing can see it.
+    let document = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE="Ledger" ISMSTDEPTYPE="Yes"><SyntheticLedger NAME="synthetic-ledger" RESERVEDNAME=""><GUID TYPE="String">ledger-guid</GUID><PARENT TYPE="String">  Bank Accounts  </PARENT><BRIDGECOMPANYGUID TYPE="String">company-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE="String">Synthetic Company</BRIDGECOMPANYNAME></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>"#;
+    let catalog = parse_standard_ledger_catalog(document, "Synthetic Company", "company-guid")
+        .expect("a padded parent is a safe value, merely not a matching one");
+    assert_eq!(
+        catalog[0].parent,
+        PartyLedgerMasterFieldObservation::Returned("  Bank Accounts  ".to_string()),
+        "the surrounding whitespace must survive the reader, or the classifier \
+         authorizes this ledger against the unpadded group"
+    );
+}
+
+#[test]
 fn standard_ledger_catalog_reports_rejected_parent_as_unobserved_on_the_wire() {
     for (cause, parent) in [
         ("overlong", "p".repeat(1025)),

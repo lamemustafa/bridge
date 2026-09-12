@@ -36,10 +36,23 @@ impl NativeCollectionScope {
             && self.path[..5] == ["ENVELOPE", "BODY", "DATA", "COLLECTION", "VOUCHER"]
             && self.path[5] == "ALLLEDGERENTRIES.LIST"
     }
+    pub(super) fn bill_allocation(&self) -> bool {
+        self.path.len() == 7
+            && self.path[..5] == ["ENVELOPE", "BODY", "DATA", "COLLECTION", "VOUCHER"]
+            && self.path[5] == "ALLLEDGERENTRIES.LIST"
+            && self.path[6] == "BILLALLOCATIONS.LIST"
+    }
+    pub(super) fn bill_allocation_field(&self) -> bool {
+        self.path.len() == 8
+            && self.path[..5] == ["ENVELOPE", "BODY", "DATA", "COLLECTION", "VOUCHER"]
+            && self.path[5] == "ALLLEDGERENTRIES.LIST"
+            && self.path[6] == "BILLALLOCATIONS.LIST"
+    }
     pub(super) fn voucher_scalar(&self) -> bool {
         self.path.last().is_some_and(|field| {
             (self.field("VOUCHER") && is_voucher_scalar(field))
                 || (self.entry_field() && is_voucher_entry_scalar(field))
+                || (self.bill_allocation_field() && is_voucher_bill_allocation_scalar(field))
         })
     }
     pub(super) fn start(&mut self, name: String) {
@@ -90,7 +103,9 @@ pub(super) fn parse_agent_rows_with_accounting_state(
     validate_agent_envelope(xml)?;
     let mut current: Option<BTreeMap<String, String>> = None;
     let mut entry: Option<BTreeMap<String, String>> = None;
+    let mut allocation: Option<BTreeMap<String, String>> = None;
     let mut entries = Vec::<Value>::new();
+    let mut allocations = Vec::<Value>::new();
     let mut current_tag = String::new();
     let mut scope = NativeCollectionScope::default();
     loop {
@@ -124,8 +139,19 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                 }
                 if tag == "ALLLEDGERENTRIES.LIST" && scope.row("VOUCHER") {
                     entry = Some(BTreeMap::new());
+                    allocations.clear();
                 }
-                claim_voucher_scalar(&scope, &tag, current.as_mut(), entry.as_mut())?;
+                if tag == "BILLALLOCATIONS.LIST" && scope.child("VOUCHER", "ALLLEDGERENTRIES.LIST")
+                {
+                    allocation = Some(BTreeMap::new());
+                }
+                claim_voucher_scalar(
+                    &scope,
+                    &tag,
+                    current.as_mut(),
+                    entry.as_mut(),
+                    allocation.as_mut(),
+                )?;
                 scope.start(tag.clone());
                 if scope.repeated_collection {
                     return Err("agent_read_protocol_invalid".into());
@@ -133,7 +159,12 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                 current_tag = tag;
             }
             Ok(quick_xml::events::Event::Text(text)) => {
-                if let Some(row) = entry.as_mut().filter(|_| scope.entry_field()) {
+                if let Some(row) = allocation
+                    .as_mut()
+                    .filter(|_| scope.bill_allocation_field())
+                {
+                    append_agent_text(row, &current_tag, decoded_agent_text(text)?);
+                } else if let Some(row) = entry.as_mut().filter(|_| scope.entry_field()) {
                     append_agent_text(row, &current_tag, decoded_agent_text(text)?);
                 } else if let Some(row) = current.as_mut().filter(|_| scope.field("VOUCHER")) {
                     append_agent_text(row, &current_tag, decoded_agent_text(text)?);
@@ -144,14 +175,24 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                     .decode()
                     .map_err(|_| "agent_read_protocol_invalid".to_string())?
                     .into_owned();
-                if let Some(row) = entry.as_mut().filter(|_| scope.entry_field()) {
+                if let Some(row) = allocation
+                    .as_mut()
+                    .filter(|_| scope.bill_allocation_field())
+                {
+                    append_agent_text(row, &current_tag, value);
+                } else if let Some(row) = entry.as_mut().filter(|_| scope.entry_field()) {
                     append_agent_text(row, &current_tag, value);
                 } else if let Some(row) = current.as_mut().filter(|_| scope.field("VOUCHER")) {
                     append_agent_text(row, &current_tag, value);
                 }
             }
             Ok(quick_xml::events::Event::GeneralRef(reference)) => {
-                if let Some(row) = entry.as_mut().filter(|_| scope.entry_field()) {
+                if let Some(row) = allocation
+                    .as_mut()
+                    .filter(|_| scope.bill_allocation_field())
+                {
+                    append_agent_text(row, &current_tag, decoded_agent_reference(reference)?);
+                } else if let Some(row) = entry.as_mut().filter(|_| scope.entry_field()) {
                     append_agent_text(row, &current_tag, decoded_agent_reference(reference)?);
                 } else if let Some(row) = current.as_mut().filter(|_| scope.field("VOUCHER")) {
                     append_agent_text(row, &current_tag, decoded_agent_reference(reference)?);
@@ -159,7 +200,70 @@ pub(super) fn parse_agent_rows_with_accounting_state(
             }
             Ok(quick_xml::events::Event::End(event)) => {
                 let end = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
-                if scope.child("VOUCHER", "ALLLEDGERENTRIES.LIST") {
+                if scope.bill_allocation() {
+                    if let Some(allocation_row) = allocation.take().filter(|row| !row.is_empty()) {
+                        // Tally emits an amount-only container for a ledger entry with no
+                        // typed allocation. It is NOT empty, so the filter above admits
+                        // it, and requiring BILLTYPE unconditionally aborted the entire
+                        // read over a row that carries nothing to record. The rule for
+                        // which untyped rows are placeholders is shared with the
+                        // voucher-scan boundary rather than restated here.
+                        //
+                        // A skipped row must still fall through to `scope.end` below, so
+                        // this is an `if let` and not a `continue`: continuing the event
+                        // loop would leave the scope stack unbalanced and mis-attribute
+                        // every element after it.
+                        let bill_type = allocation_row
+                            .get("BILLTYPE")
+                            .filter(|value| !value.trim().is_empty());
+                        if let Some(bill_type) = bill_type {
+                            let amount = allocation_row
+                                .get("AMOUNT")
+                                .filter(|value| !value.trim().is_empty())
+                                .ok_or_else(|| "bill_allocation_field_missing".to_string())?;
+                            bridge_tally_core::ExactDecimal::parse(amount.clone())
+                                .map_err(|_| "bill_allocation_amount_invalid".to_string())?;
+                            let name = allocation_row
+                                .get("NAME")
+                                .filter(|value| !value.trim().is_empty());
+                            let reference = if bill_type.trim() == "On Account" {
+                                // On Account is the one bill type with no bill identity.
+                                // Keep that absence explicit instead of representing it
+                                // as an empty name.
+                                //
+                                // A NAME here is a contradiction, not a value to drop.
+                                // Silently discarding it loses a supplier reference that
+                                // a malformed response -- or a request-shape regression
+                                // -- is trying to tell us about. The typed boundary in
+                                // outstandings/parser.rs refuses the same state as
+                                // `bill_reference_forbidden`; refuse it here too.
+                                if name.is_some() {
+                                    return Err("bill_reference_forbidden".to_string());
+                                }
+                                json!({"kind": "on_account"})
+                            } else {
+                                let name = name.ok_or_else(|| {
+                                    "bill_allocation_field_missing".to_string()
+                                })?;
+                                json!({"kind": "named", "name": name})
+                            };
+                            allocations.push(json!({
+                                "reference": reference,
+                                "bill_type": bill_type,
+                                "amount": amount,
+                            }));
+                        } else if !bridge_tally_protocol::outstandings_shared::bill_allocation_without_type_is_placeholder(
+                            allocation_row.get("NAME").map(String::as_str),
+                        ) {
+                            // A named bill with no type is partially populated, not a
+                            // placeholder. Guessing the type would invent an allocation.
+                            return Err("bill_allocation_field_missing".to_string());
+                        }
+                    }
+                } else if scope.child("VOUCHER", "ALLLEDGERENTRIES.LIST") {
+                    if allocation.is_some() {
+                        return Err("agent_read_protocol_invalid".to_string());
+                    }
                     if let (Some(_), Some(entry_row)) = (current.as_mut(), entry.take()) {
                         let ledger = entry_row
                             .get("LEDGERNAME")
@@ -181,6 +285,7 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                             "ledger": ledger,
                             "amount": amount,
                             "is_deemed_positive": if is_deemed_positive { "Yes" } else { "No" },
+                            "bill_allocations": std::mem::take(&mut allocations),
                         }));
                     }
                 } else if scope.row("VOUCHER") {
@@ -233,7 +338,13 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                 if scope.collection() {
                     return Err("agent_read_protocol_invalid".to_string());
                 }
-                claim_voucher_scalar(&scope, &name, current.as_mut(), entry.as_mut())?;
+                claim_voucher_scalar(
+                    &scope,
+                    &name,
+                    current.as_mut(),
+                    entry.as_mut(),
+                    allocation.as_mut(),
+                )?;
                 scope.start(name.clone());
                 if scope.repeated_collection {
                     return Err("agent_read_protocol_invalid".into());
@@ -258,11 +369,14 @@ fn claim_voucher_scalar(
     field: &str,
     current: Option<&mut BTreeMap<String, String>>,
     entry: Option<&mut BTreeMap<String, String>>,
+    allocation: Option<&mut BTreeMap<String, String>>,
 ) -> Result<(), String> {
     let row = if scope.row("VOUCHER") && is_voucher_scalar(field) {
         current
     } else if scope.child("VOUCHER", "ALLLEDGERENTRIES.LIST") && is_voucher_entry_scalar(field) {
         entry
+    } else if scope.bill_allocation() && is_voucher_bill_allocation_scalar(field) {
+        allocation
     } else {
         None
     };
