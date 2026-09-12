@@ -153,13 +153,16 @@ if [ -z "$diff" ]; then
   bad "could not read diff for the privacy scan"
 else
   # A UUID's last group is twelve hex characters and often all digits; the
-  # canonical 550e8400-…-446655440000 tripped this. Strip UUIDs rather than
+  # canonical RFC example UUID tripped this. Strip UUIDs rather than
   # widening the placeholder list, which would start excusing real values.
   # Hex digests are the other machine-generated shape that trips this: a
   # sha256 in a lockfile or a sealed surface manifest contains long digit runs
-  # by chance, and dropping \b (see below) made them visible. Strip digests and
-  # UUIDs — both are generated, neither can carry a client identifier — rather
-  # than loosening the placeholder list, which would start excusing real values.
+  # by chance, and dropping \b (see below) made them visible. The canonical RFC
+  # example UUID tripped it the same way. Strip digests and UUIDs — both are
+  # generated, neither can carry a client identifier — rather than loosening the
+  # placeholder list, which would start excusing real values. (Deliberately no
+  # example digits in this comment: a literal here is a literal in the diff,
+  # and this scan reads its own file like any other.)
   added=$(grep '^+' <<<"$diff" | grep -v '^+++' \
           | sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/<uuid>/g' \
           | sed -E 's/[0-9a-fA-F]{32,}/<digest>/g')
@@ -168,7 +171,11 @@ else
   # placeholders are excluded by an EXPLICIT list; widening the shape itself
   # would start excusing real values. No backreferences: this must be plain
   # ERE, and a grep that errors returns nothing, which reads as a clean scan.
-  placeholder='^(X+|Z+|A+)[0-9]+(X|Z|A)?$|^[0-9]{2}(X+|Z+|A+)[0-9]+[0-9A-Z]*$|^(0+|1+|2+|3+|4+|5+|6+|7+|8+|9+)$|^(0?1234567890|1234567890[0-9]*)$'
+  # `^0{6,}` is the padded-fixture shape: six or more leading zeros then a small
+  # number, as constructed test pages use for MICR and postcode fields. Kept
+  # narrow on purpose — a real account number can begin with a zero or two, so
+  # only a run long enough to be plainly synthetic is excused.
+  placeholder='^(X+|Z+|A+)[0-9]+(X|Z|A)?$|^[0-9]{2}(X+|Z+|A+)[0-9]+[0-9A-Z]*$|^(0+|1+|2+|3+|4+|5+|6+|7+|8+|9+)$|^(0?1234567890|1234567890[0-9]*)$|^0{6,}[0-9]{1,5}$'
   printf 'XXXXX1234X\n' | grep -qE "$placeholder" \
     || { bad "privacy-scan pattern failed to compile or match its own probe"; fail=1; }
   # NO \b around the digit run. The leak that motivated this gate was written
