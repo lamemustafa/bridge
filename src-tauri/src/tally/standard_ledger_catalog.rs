@@ -14,7 +14,7 @@ use bridge_tally_transport::TallyTransportError;
 
 use super::{
     agent_read_request::AgentReadRequest,
-    connection::NativeReportPairDrift,
+    connection::{NativeReportPairDrift, PairedNativeReportResponseFailure},
     runtime::{CompanyIdentityBracketError, TallyRuntime},
     TallyConfig, VerifiedCompanyIdentity,
 };
@@ -118,11 +118,24 @@ pub(crate) async fn read_standard_ledger_catalog(
 }
 
 fn classify_runtime_catalogue_error(error: anyhow::Error) -> StandardLedgerCatalogReadError {
-    if error
+    // The bounds/malformed split below applies only when a
+    // `PairedNativeReportResponseFailure` marks the error chain -- i.e. the
+    // failure came from one of the two POST responses the paired catalogue
+    // request itself makes. Everything untagged -- the identity bracket
+    // around this read, both health checks between and after the pair, and
+    // any stage added later -- falls through to the conservative `Transport`
+    // code at the bottom of this function. This is inverted from tagging
+    // every non-response stage on purpose: enumerating stages to exclude is
+    // unbounded, since there is always another stage, while a positive
+    // marker on the one response actually being classified means a stage
+    // added later inherits the safe code automatically instead of silently
+    // inheriting a confidently wrong one.
+    if let Some(transport_error) = error
         .chain()
-        .any(|cause| cause.downcast_ref::<TallyTransportError>().is_some())
+        .find_map(|cause| cause.downcast_ref::<PairedNativeReportResponseFailure>())
+        .and_then(PairedNativeReportResponseFailure::transport_error)
     {
-        return StandardLedgerCatalogReadError::Transport;
+        return classify_transport_error(transport_error);
     }
     if error
         .chain()
@@ -137,6 +150,39 @@ fn classify_runtime_catalogue_error(error: anyhow::Error) -> StandardLedgerCatal
         return StandardLedgerCatalogReadError::CompanyIdentityMismatch;
     }
     StandardLedgerCatalogReadError::Transport
+}
+
+/// `TallyTransportError` is not `#[non_exhaustive]`, so this is written to stay exhaustive on
+/// purpose: a variant added later must fail to compile here, not silently inherit `Transport`
+/// through a catch-all the way `ResponseTooLarge` and `InvalidEncoding` used to. Those two are
+/// response-side validation failures -- Tally was reached and answered, and the answer failed
+/// validation -- so telling the operator to check connectivity and retry is wrong; a retry
+/// reproduces the same answer. The dividing question is whether retrying could plausibly
+/// succeed: `ResponseTruncated` and `ResponseReadFailed` are answers cut short in transit, which
+/// a retry may well fix, so they stay `Transport` even though Tally did respond.
+fn classify_transport_error(error: &TallyTransportError) -> StandardLedgerCatalogReadError {
+    match error {
+        TallyTransportError::EndpointInvalid { .. }
+        | TallyTransportError::PolicyInvalid { .. }
+        | TallyTransportError::ClientInitializationFailed
+        | TallyTransportError::RequestTooLarge { .. }
+        | TallyTransportError::ConnectionFailed
+        | TallyTransportError::RequestTimedOut
+        | TallyTransportError::RequestFailed
+        | TallyTransportError::HttpStatus { .. }
+        | TallyTransportError::ResponseTruncated
+        | TallyTransportError::ResponseReadFailed => StandardLedgerCatalogReadError::Transport,
+        TallyTransportError::ResponseTooLarge { .. } => {
+            StandardLedgerCatalogReadError::BoundsViolation
+        }
+        // An encoding Bridge cannot decode and one Tally encoded wrongly are the
+        // same situation to the operator: a complete answer that cannot be read,
+        // reproduced exactly by retrying.
+        TallyTransportError::UnsupportedContentEncoding
+        | TallyTransportError::InvalidEncoding { .. } => {
+            StandardLedgerCatalogReadError::MalformedResponse
+        }
+    }
 }
 
 fn sha256(bytes: &[u8]) -> String {
@@ -167,6 +213,124 @@ mod tests {
                 CompanyIdentityBracketError::AbsentOrAmbiguous,
             )),
             StandardLedgerCatalogReadError::CompanyIdentityMismatch
+        );
+    }
+
+    /// Every `TallyTransportError` variant, named explicitly rather than sampled, so a
+    /// variant this test does not know about cannot pass silently -- the match in
+    /// `classify_transport_error` would fail to compile first.
+    #[test]
+    fn catalog_read_failure_classifier_splits_transport_from_response_validation() {
+        let request_side = [
+            TallyTransportError::EndpointInvalid { code: "test" },
+            TallyTransportError::PolicyInvalid { code: "test" },
+            TallyTransportError::ClientInitializationFailed,
+            TallyTransportError::RequestTooLarge { limit: 1 },
+            TallyTransportError::ConnectionFailed,
+            TallyTransportError::RequestTimedOut,
+            TallyTransportError::RequestFailed,
+            TallyTransportError::HttpStatus { status: 500 },
+            TallyTransportError::ResponseTruncated,
+            TallyTransportError::ResponseReadFailed,
+        ];
+        for variant in request_side {
+            assert_eq!(
+                classify_transport_error(&variant),
+                StandardLedgerCatalogReadError::Transport,
+                "expected {variant:?} to remain the transport code"
+            );
+        }
+
+        assert_eq!(
+            classify_transport_error(&TallyTransportError::ResponseTooLarge {
+                limit: 1,
+                declared_by_peer: true,
+            }),
+            StandardLedgerCatalogReadError::BoundsViolation
+        );
+        // Both encoding faults are complete answers Bridge cannot read, so both are
+        // malformed responses rather than outages a retry might clear.
+        for variant in [
+            TallyTransportError::UnsupportedContentEncoding,
+            TallyTransportError::InvalidEncoding { code: "test" },
+        ] {
+            assert_eq!(
+                classify_transport_error(&variant),
+                StandardLedgerCatalogReadError::MalformedResponse,
+                "expected {variant:?} to report an unusable response, not an outage"
+            );
+        }
+
+        // A genuine request-side failure -- Tally was never reached at all -- must still
+        // surface as the transport code end to end, through the anyhow chain, whether or
+        // not it is tagged as a paired-report response (see the marker-gating test below
+        // for the untagged/tagged response-side contrast this end-to-end path exists for).
+        assert_eq!(
+            classify_runtime_catalogue_error(anyhow::Error::new(
+                TallyTransportError::RequestFailed
+            )),
+            StandardLedgerCatalogReadError::Transport
+        );
+    }
+
+    /// The whole point of `PairedNativeReportResponseFailure`: the identical
+    /// `TallyTransportError` variant must classify differently depending on whether it
+    /// is marked as a paired native-report response failure. An untagged transport error
+    /// -- what a bracket read or one of the two health checks around the pair now
+    /// produces -- proves nothing about the shape of a catalogue response, since it
+    /// either predates that response or never touched it, so it must not inherit the
+    /// bounds/malformed split; only the marker earns that split. See
+    /// `PairedNativeReportResponseFailure` and `classify_runtime_catalogue_error`.
+    #[test]
+    fn catalogue_response_marker_gates_the_bounds_malformed_split() {
+        for variant in [
+            TallyTransportError::ResponseTooLarge {
+                limit: 1,
+                declared_by_peer: true,
+            },
+            TallyTransportError::InvalidEncoding { code: "test" },
+            TallyTransportError::UnsupportedContentEncoding,
+        ] {
+            // Untagged: what a bracket read or a health-check failure now looks like.
+            // Must stay the generic transport code even though the variant matches a
+            // response-side split further down.
+            assert_eq!(
+                classify_runtime_catalogue_error(anyhow::Error::new(variant.clone())),
+                StandardLedgerCatalogReadError::Transport,
+                "expected an untagged {variant:?} to stay the generic transport code"
+            );
+
+            // The same variant, tagged as having come from a paired-report response,
+            // gets the finer split.
+            let expected = match variant {
+                TallyTransportError::ResponseTooLarge { .. } => {
+                    StandardLedgerCatalogReadError::BoundsViolation
+                }
+                TallyTransportError::InvalidEncoding { .. }
+                | TallyTransportError::UnsupportedContentEncoding => {
+                    StandardLedgerCatalogReadError::MalformedResponse
+                }
+                _ => unreachable!(),
+            };
+            let description = format!("{variant:?}");
+            let tagged = PairedNativeReportResponseFailure::new(anyhow::Error::new(variant));
+            assert_eq!(
+                classify_runtime_catalogue_error(anyhow::Error::new(tagged)),
+                expected,
+                "expected a paired-report-tagged {description} to get its specific code"
+            );
+        }
+
+        // A genuine request-side variant, tagged as though it were a paired-report
+        // response, must still surface as the generic transport code: the marker only
+        // gates the split, and `classify_transport_error` itself keeps request-side
+        // variants at `Transport` regardless of tagging.
+        let tagged_request_failure = PairedNativeReportResponseFailure::new(anyhow::Error::new(
+            TallyTransportError::RequestFailed,
+        ));
+        assert_eq!(
+            classify_runtime_catalogue_error(anyhow::Error::new(tagged_request_failure)),
+            StandardLedgerCatalogReadError::Transport
         );
     }
 
