@@ -455,7 +455,7 @@ impl Server {
                     payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
                         "state":"refused", "reason":"masters_not_exact", "masters":report,
                         "catalogue_evidence_sha256":sha256_json(&catalogue),
-                        "next_step":"Use the exact live spelling from validate_masters, then build a new batch. No file was written."
+                        "next_step":"For each near-miss, an operator must select a candidate, update the payload to that chosen exact live spelling, then run validate_masters again before building a new batch. Do not copy a candidate automatically. No file was written."
                     }}),
                     evidence: accumulated.clone(),
                     company_guid: Some(payload.company_guid),
@@ -1644,7 +1644,6 @@ fn master_match_json(binding: &EntityBinding) -> Value {
             // nothing else.
             let match_state = match basis {
                 BindingBasis::ExactName => "exact",
-                BindingBasis::NormalizedName => "normalized",
                 BindingBasis::Identifier => "identifier",
             };
             json!({

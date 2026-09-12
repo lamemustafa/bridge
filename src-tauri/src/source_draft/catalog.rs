@@ -856,12 +856,12 @@ mod tests {
             "the committed fixture no longer matches what the binder emits"
         );
 
-        // The evidence fields are the capture's own, not placeholders. They
-        // come from the retained capture's metadata sidecar and from this
-        // source document's digest, and are asserted here so the fixture
-        // cannot quietly go back to zeros while still calling itself a
-        // capture. `capture_id` has no captured counterpart — it is minted
-        // locally per read — so it stays a fixed synthetic UUID.
+        // The evidence fields belong to the retained **catalogue** capture;
+        // the source XML is authored test input and its digest is only that
+        // input's identity. The fixture's provenance records this split so it
+        // cannot be presented as an end-to-end source-draft observation.
+        // `capture_id` has no captured counterpart — it is minted locally per
+        // read — so it stays a fixed synthetic UUID.
         let provenance: serde_json::Value = serde_json::from_str(include_str!(
             "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ledger-catalogue.json"
         ))
@@ -881,7 +881,7 @@ mod tests {
         assert_eq!(
             committed["source_sha256"],
             serde_json::Value::String(source.sha256.clone()),
-            "the fixture no longer carries this source document's digest"
+            "the fixture no longer carries the authored source input digest"
         );
     }
 

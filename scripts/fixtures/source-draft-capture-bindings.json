@@ -47,6 +47,11 @@
     "response_sha256": "f354993704f0feddc27a46d73b4ca10787b6028d9f385d8323994b18e5b34e0f",
     "state": "complete"
   },
+  "provenance": {
+    "catalogue": "captured StandardLedgerCatalogV1 response",
+    "source_xml": "authored test input",
+    "binding_dto": "derived by the production parser and binder"
+  },
   "source_sha256": "41c4de4324e0eb03c46b92aee7b0be0a0a1ff29feb63ffc3b8435cce559810aa",
   "targets": [
     "Bridge Nested Debtor WR4",

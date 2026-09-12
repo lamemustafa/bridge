@@ -394,6 +394,32 @@ fn a_single_candidate_still_does_not_bind() {
 }
 
 #[test]
+fn a_narrow_fold_candidate_survives_a_wide_fold_cap() {
+    // `comparison_key` folds Unicode case while the historical candidate index
+    // intentionally does not. Twenty-five slash spellings therefore share the
+    // wide key, while the space spelling is the only narrow-fold candidate.
+    // The report must retain the latter before applying the listing cap.
+    let upper = ['Α', 'Β', 'Γ', 'Δ', 'Ε', 'Ζ'];
+    let lower = ['α', 'β', 'γ', 'δ', 'ε', 'ζ'];
+    let mut names = vec!["ΑΒΓΔΕ Ζ".to_string()];
+    for mask in 1..=MAX_CANDIDATES_PER_ENTITY {
+        let spelling = upper
+            .iter()
+            .zip(lower)
+            .enumerate()
+            .map(|(bit, (upper, lower))| if mask & (1 << bit) == 0 { *upper } else { lower })
+            .collect::<String>();
+        names.push(format!("{}{}", &spelling[..spelling.len() - 'Ζ'.len_utf8()], "/ζ"));
+    }
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid catalog");
+    let binding = bind_one_name(&catalog, "ΑΒΓΔΕ/Ζ");
+    let candidates = binding.unresolved().expect("candidate-only fold").candidates.listed();
+    assert_eq!(candidates.len(), MAX_CANDIDATES_PER_ENTITY);
+    assert_eq!(candidates[0].catalog_name, "ΑΒΓΔΕ Ζ");
+    assert_eq!(candidates[0].rule, CandidateRule::NormalizedEqual);
+}
+
+#[test]
 fn a_truncated_source_name_surfaces_the_longer_master() {
     let catalog = ledgers(&["DELTA WHOLESALE PLACEHOLDER", "Beta Supply"]);
     let binding = bind_one_name(&catalog, "DELTA WHOLESALE PL");
@@ -2120,10 +2146,11 @@ fn a_bound_status_serializes_without_a_score_field() {
 }
 
 #[test]
-fn historical_normalized_basis_remains_deserializable() {
-    let basis: BindingBasis = serde_json::from_str("\"normalized_name\"")
+fn historical_normalized_basis_is_not_a_current_bound_basis() {
+    assert!(serde_json::from_str::<BindingBasis>("\"normalized_name\"").is_err());
+    let historical: HistoricalBindingBasis = serde_json::from_str("\"normalized_name\"")
         .expect("older retained binding basis remains readable");
-    assert_eq!(basis, BindingBasis::NormalizedName);
+    assert_eq!(historical, HistoricalBindingBasis::NormalizedName);
 }
 
 // ---------------------------------------------------------------------------

@@ -1267,6 +1267,14 @@ assuming something nobody has measured.
 
 ### 9.4d Master-name matching on **licensed** TallyPrime 7.1
 
+**Superseded as generic binding authority, 2026-09-12.** The observations below remain
+an exact record for their one licensed 7.1 instance, company, ledger class and import-time
+operation. They do not authorize a scope-free `MasterCatalog` to bind a folded spelling:
+that constructor carries none of the product, release, endpoint or approval information the
+measurement requires. Generic binding therefore presents every folded result as a candidate
+and requires operator selection plus exact revalidation; it must not treat these directional
+observations as a symmetric, portable canonicalization rule.
+
 **VERIFIED 2026-09-12**, and it widens §9.4b rather than confirming it. §9.4b is inherited from a
 2026-07-30 measurement on **Edit Log 7.0 Educational** and marks licensed TallyPrime UNVERIFIED.
 This is that measurement re-run on the SKU this project actually writes to: **TallyPrime 7.1,

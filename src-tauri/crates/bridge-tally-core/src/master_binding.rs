@@ -291,9 +291,16 @@ pub enum BindingBasis {
     Identifier,
     /// Byte equality with the observed master name.
     ExactName,
-    /// Historical serialized basis retained for reading older records. New
-    /// binding results never use a fold as authority without an explicit,
-    /// scoped operator approval path.
+}
+
+/// Historical wire values retained solely for decoding archived binding records.
+/// Current [`BindingStatus::Bound`] uses [`BindingBasis`], which deliberately
+/// has no folded variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoricalBindingBasis {
+    Identifier,
+    ExactName,
     NormalizedName,
 }
 
@@ -429,8 +436,8 @@ pub struct Unresolved {
 ///   acting on a binding re-reads and revalidates through the admission path
 ///   that owns identity; nothing here is a lease on the book.
 /// - **Not that the name may be written as given.** Only `ExactName` is byte
-///   equality. `NormalizedName` is retained only to deserialize historical
-///   records; current folded names are candidates. An `Identifier` bind means
+///   equality. `HistoricalBindingBasis` retains old wire values separately;
+///   current folded names are candidates. An `Identifier` bind means
 ///   the payload and live name can differ, and Bridge's write gate admits
 ///   `exact` only — use `catalog_name`, not what was requested.
 /// - **Not that this is the right master in business terms.** It establishes
@@ -1635,12 +1642,12 @@ fn collect_candidates(
     // token sets and memo keys across the whole module on the strength of it,
     // and still leave the candidate list assembled from a key that is not the
     // one the ambiguity was found in.
-    for index in catalog
+    let binding_matches = catalog
         .by_binding_key
         .get(&entity.binding_key)
-        .into_iter()
-        .flatten()
-    {
+        .cloned()
+        .unwrap_or_default();
+    for index in &binding_matches {
         offer(*index, CandidateRule::NormalizedEqual);
     }
     if withheld.is_empty() {
@@ -1713,7 +1720,15 @@ fn collect_candidates(
     //
     // `found` is computed above from the full union, so the count an operator
     // sees is unaffected by the cap; only the listing is.
-    listed.sort_by(|left, right| candidate_order(catalog, left, right));
+    // The narrower historical index was the reason this near-miss was reached.
+    // Preserve its candidates before the bounded listing drops wider-only ones;
+    // this is visibility, never authority or a similarity score.
+    listed.sort_by(|left, right| {
+        binding_matches
+            .contains(&right.0)
+            .cmp(&binding_matches.contains(&left.0))
+            .then_with(|| candidate_order(catalog, left, right))
+    });
     listed.truncate(MAX_CANDIDATES_PER_ENTITY);
     (listed, found)
 }
