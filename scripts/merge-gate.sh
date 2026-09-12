@@ -41,13 +41,15 @@ OWNER="${REPO%%/*}"; NAME="${REPO##*/}"
   || { echo "--repo must be OWNER/NAME, got '$REPO'" >&2; exit 2; }
 
 fail=0
+blocked_seen=0
+errfile=$(mktemp); trap 'rm -f "$errfile"' EXIT
 say()  { printf '  %-6s %s\n' "$1" "$2"; }
 bad()  { say "BLOCK" "$1"; fail=1; }
 good() { say "ok"    "$1"; }
 die()  { echo "$1" >&2; exit 2; }
 
 meta=$(gh pr view "$PR" --repo "$REPO" \
-        --json headRefOid,baseRefName,mergeable,mergeStateStatus,isDraft,state 2>/dev/null) \
+        --json headRefOid,baseRefName,mergeable,mergeStateStatus,isDraft,state,body 2>/dev/null) \
   || die "could not read PR #$PR in $REPO"
 head=$(jq -r .headRefOid <<<"$meta")
 base=$(jq -r .baseRefName <<<"$meta")
@@ -74,7 +76,15 @@ case "$mstate" in
   BEHIND) bad "head is BEHIND $base — its checks and review describe a stale tree; rebase" ;;
   DIRTY)  bad "merge state DIRTY — conflicts" ;;
   UNKNOWN) bad "merge state UNKNOWN; re-run in a moment" ;;
-  *) good "merge state $mstate is not stale" ;;
+  BLOCKED)
+    # GitHub blocks for reasons this script may not model — a missing required
+    # approval, for instance. The checks below usually explain it, but printing
+    # `ok` for BLOCKED reads as approval for a state GitHub is refusing, so say
+    # what it is and let the specific checks account for it.
+    say "note" "merge state BLOCKED — GitHub is refusing; the checks below should say why"
+    blocked_seen=1 ;;
+  CLEAN|HAS_HOOKS|UNSTABLE) good "merge state $mstate is not stale" ;;
+  *) bad "unrecognised merge state '$mstate' — refusing rather than guessing" ;;
 esac
 
 # 2. Based on master. ci.yml fires on pull_request into master ONLY, so a
@@ -91,9 +101,19 @@ fi
 #    skipping/cancel — note `cancel`, not `cancelled`; matching the longer word
 #    left a cancelled check counted as neither failing nor pending, which read
 #    as success.
-buckets=$(gh pr checks "$PR" --repo "$REPO" --json bucket,name 2>/dev/null)
-if [ -z "$buckets" ] || [ "$buckets" = "[]" ]; then
-  bad "no checks reported"
+# `gh pr checks` exits nonzero both when a check is failing and when the query
+# itself fails, so the status alone cannot be read as a verdict — but empty
+# stdout from a broken query must never be reported as "no checks", which is a
+# statement about the PR rather than about the request.
+buckets=$(gh pr checks "$PR" --repo "$REPO" --json bucket,name 2>"$errfile")
+if [ -z "$buckets" ]; then
+  if [ -s "$errfile" ]; then
+    bad "could not query checks: $(tr '\n' ' ' <"$errfile" | cut -c1-120)"
+  else
+    bad "no checks reported for this PR"
+  fi
+elif [ "$buckets" = "[]" ]; then
+  bad "no checks reported for this PR"
 else
   pend=$(jq '[.[]|select(.bucket=="pending")]|length' <<<"$buckets")
   bust=$(jq '[.[]|select(.bucket=="fail" or .bucket=="cancel")]|length' <<<"$buckets")
@@ -109,8 +129,13 @@ fi
 #    plus a thumbs-up, which is why the row and not the review list is read.
 #    Paginate: the summary is an ordinary issue comment and the default page is
 #    30, so on a busy PR it is not on the first one.
+#    Filter on the AUTHOR as well as the marker. The marker is just text in a
+#    comment body, so any PR participant could post one carrying a `Completed`
+#    row for the current SHA and the gate would accept it as a review. The
+#    summary is posted by the Codex app; require that login and a Bot type.
 body=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
-        --jq '.[] | select(.body|contains("codex-pull-request-review-summary")) | .body' 2>/dev/null)
+        --jq '.[] | select(.user.login=="chatgpt-codex-connector[bot]" and .user.type=="Bot")
+                  | select(.body|contains("codex-pull-request-review-summary")) | .body' 2>/dev/null)
 row=$(grep -E '^\| (📝|🔍)' <<<"$body" | tail -1)
 if [ -z "$row" ]; then
   bad "no Codex review summary at all"
@@ -128,18 +153,27 @@ fi
 
 # 5. No unresolved threads. required_conversation_resolution is on, so this is
 #    the gate, not a courtesy. Paginate: a first:100 page once hid 19 threads.
-threads=$(gh api graphql -f owner="$OWNER" -f name="$NAME" -F pr="$PR" -f query='
-  query($owner:String!,$name:String!,$pr:Int!){
-    repository(owner:$owner,name:$name){
-      pullRequest(number:$pr){
-        reviewThreads(first:100){ totalCount pageInfo{hasNextPage} nodes{isResolved} }}}}' 2>/dev/null)
-if [ -z "$threads" ] || [ "$(jq -r '.data.repository.pullRequest' <<<"$threads")" = "null" ]; then
-  bad "could not read review threads for $REPO#$PR"
-else
-  total=$(jq -r '.data.repository.pullRequest.reviewThreads.totalCount' <<<"$threads")
-  more=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$threads")
-  open=$(jq '[.data.repository.pullRequest.reviewThreads.nodes[]|select(.isResolved==false)]|length' <<<"$threads")
-  [ "$more" = "false" ] || bad "more than 100 threads — paginate before trusting this count"
+#    Actually paginate. Blocking whenever a second page exists made every busy
+#    PR permanently unmergeable — and a PR accumulates threads precisely by
+#    being reviewed carefully, so the rule punished the PRs it should trust.
+cursor=null; open=0; total=0; ok_threads=1
+while : ; do
+  page=$(gh api graphql -f owner="$OWNER" -f name="$NAME" -F pr="$PR" \
+    -f cursor="$([ "$cursor" = "null" ] && echo "" || echo "$cursor")" -f query='
+    query($owner:String!,$name:String!,$pr:Int!,$cursor:String){
+      repository(owner:$owner,name:$name){
+        pullRequest(number:$pr){
+          reviewThreads(first:100,after:$cursor){
+            totalCount pageInfo{hasNextPage endCursor} nodes{isResolved} }}}}' 2>/dev/null)
+  if [ -z "$page" ] || [ "$(jq -r '.data.repository.pullRequest' <<<"$page")" = "null" ]; then
+    bad "could not read review threads for $REPO#$PR"; ok_threads=0; break
+  fi
+  total=$(jq -r '.data.repository.pullRequest.reviewThreads.totalCount' <<<"$page")
+  open=$(( open + $(jq '[.data.repository.pullRequest.reviewThreads.nodes[]|select(.isResolved==false)]|length' <<<"$page") ))
+  [ "$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$page")" = "true" ] || break
+  cursor=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor' <<<"$page")
+done
+if [ "$ok_threads" -eq 1 ]; then
   if [ "$open" -eq 0 ]; then good "0 of $total threads unresolved"; else bad "$open of $total threads unresolved"; fi
 fi
 
@@ -148,6 +182,16 @@ fi
 #    sat in a comment on public master through two PRs because each author
 #    scanned only what they wrote — but scan ADDED lines only, or the gate
 #    blocks the very PR that deletes a leak.
+# AGENTS.md: "Each PR must link to one line in review-checklist.md as completed
+# before merge." A gate that checks everything except the repository's own
+# stated pre-merge rule is not the gate it claims to be.
+prbody=$(jq -r '.body // ""' <<<"$meta")
+if grep -qiE 'review-checklist' <<<"$prbody"; then
+  good "description links review-checklist.md"
+else
+  bad "description does not link review-checklist.md (AGENTS.md requires one completed line per PR)"
+fi
+
 diff=$(gh pr diff "$PR" --repo "$REPO" 2>/dev/null)
 if [ -z "$diff" ]; then
   bad "could not read diff for the privacy scan"
@@ -163,9 +207,22 @@ else
   # placeholder list, which would start excusing real values. (Deliberately no
   # example digits in this comment: a literal here is a literal in the diff,
   # and this scan reads its own file like any other.)
-  added=$(grep '^+' <<<"$diff" | grep -v '^+++' \
-          | sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/<uuid>/g' \
+  # A binary file is a hole in this scan, not an absence of findings: the patch
+  # carries a marker instead of content, so a screenshot or PDF of a client
+  # statement reads exactly like a clean diff. Refuse rather than pass.
+  binaries=$(grep -cE '^(Binary files .* differ|GIT binary patch)' <<<"$diff")
+  if [ "$binaries" -gt 0 ]; then
+    bad "$binaries binary change(s) the privacy scan cannot read — inspect by hand before merging: $(grep -E '^\+\+\+ b/' <<<"$diff" | sed 's|^+++ b/||' | tr '\n' ' ' | cut -c1-160)"
+  fi
+  raw_added=$(grep '^+' <<<"$diff" | grep -v '^+++')
+  added=$(sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/<uuid>/g' <<<"$raw_added" \
           | sed -E 's/[0-9a-fA-F]{32,}/<digest>/g')
+  # Exemptions are REPORTED, never silent. Stripping generated-looking values
+  # keeps the false-positive rate low enough that the gate is read at all, but a
+  # blanket exemption that nobody can see is how a real value gets erased — so
+  # say how many were dropped and let the operator judge.
+  exempt=$(( $(grep -cE '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{32,}' <<<"$raw_added") ))
+  [ "$exempt" -eq 0 ] || say "note" "$exempt added line(s) carried a UUID or hex digest, exempted from the scan — check by eye if this PR touches client data"
   # Placeholders match these shapes too — XXXXX1234X is a fabricated PAN and X
   # is an uppercase letter. A gate that cries wolf gets ignored, so obvious
   # placeholders are excluded by an EXPLICIT list; widening the shape itself
