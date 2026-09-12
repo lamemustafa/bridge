@@ -512,7 +512,7 @@ def _assert_party_partition(source_keys, output_keys, bank_name):
         raise SystemExit(f"sanitise: {bank_name} party evidence is empty or misaligned")
     source_to_output, output_to_source = {}, {}
     for index, (source, output) in enumerate(zip(source_keys, output_keys)):
-        if not source or not output:
+        if not source or not output or source in ("UNRESOLVED", "UNNAMED") or output in ("UNRESOLVED", "UNNAMED"):
             raise SystemExit(f"sanitise: {bank_name} party evidence is underdetermined at row {index}")
         old = source_to_output.setdefault(source, output)
         reverse = output_to_source.setdefault(output, source)
@@ -574,6 +574,7 @@ def main(source, destination, keep, bank):
     # `UnicodeDecodeError` before sanitisation runs at all. Neither CI nor the
     # unit cases reach this boundary: CI is ubuntu-only, and the Unicode tests
     # call `_scrub_plain` with strings that are already decoded.
+    keep = list(keep)
     pages = pathlib.Path(source).read_text(encoding="utf-8").split("<page ")[1:]
     parser, bank_profile = _load_parser(bank)
     regions = list(_kept_words(pages, keep))
@@ -585,16 +586,18 @@ def main(source, destination, keep, bank):
     for _, words in regions:
         for *_, body in words:
             reserve_source_tokens(body)
-    chunks = [
+    def render(transform):
+        return [
         "<page " + head + "\n"
         + "\n".join(f'<word xMin="{x0}" yMin="{y0}" xMax="{x1}" yMax="{y1}">'
-                    f'{scrub(body)}</word>' for x0, y0, x1, y1, body in words)
+                    f'{transform(body)}</word>' for x0, y0, x1, y1, body in words)
         + "\n</page>"
         for head, words in regions
-    ]
+        ]
+    source_chunks = render(lambda body: body)
+    chunks = render(scrub)
     output = BANNER_TEMPLATE.format(bank=bank_profile.name) + "\n".join(chunks) + "\n"
-    selected_pages = [pages[index] for index, _ in keep]
-    _validate_parser_evidence(parser, bank_profile, selected_pages,
+    _validate_parser_evidence(parser, bank_profile, [chunk[len("<page "):] for chunk in source_chunks],
                               output.split("<page ")[1:], bank_profile.name)
     pathlib.Path(destination).write_text(output, encoding="utf-8")
     print(f"wrote {destination}: "

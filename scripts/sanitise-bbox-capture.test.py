@@ -55,6 +55,7 @@ for label, source, output, expected in (
     ("party classes preserve", ["A", "B", "A"], ["X", "Y", "X"], True),
     ("party false merge rejects", ["A", "B"], ["X", "X"], False),
     ("party false split rejects", ["A", "A"], ["X", "Y"], False),
+    ("party sentinel rejects", ["UNRESOLVED"], ["X"], False),
 ):
     rejected = False
     try:
@@ -62,6 +63,20 @@ for label, source, output, expected in (
     except SystemExit:
         rejected = True
     check(label, rejected is (not expected))
+
+try:
+    m._load_parser("regression")
+except SystemExit:
+    check("unsupported parser profile rejects", True)
+else:
+    check("unsupported parser profile rejects", False)
+
+try:
+    m._validate_parser_evidence(*m._load_parser("sbi"), [], [], "sbi")
+except SystemExit:
+    check("empty parser evidence rejects", True)
+else:
+    check("empty parser evidence rejects", False)
 
 
 def scrub_all(module, words):
@@ -643,7 +658,8 @@ for fixture in sorted(pathlib.Path(__file__).with_name("fixtures").glob("*-bbox-
         pages = fixture.read_text(encoding="utf-8").split("<page ")[1:]
         if page >= len(pages):
             continue
-        keep = [(page, [(0.0, 10_000.0)])]
+        region = (200.0, 330.0) if fixture.name.startswith("hdfc-") and page == 1 else (0.0, 10_000.0)
+        keep = [(page, [region])]
         consumed = identifying_tokens(
             fresh,
             [body for _, words in fresh._kept_words(pages, keep) for *_, body in words],
@@ -655,7 +671,13 @@ for fixture in sorted(pathlib.Path(__file__).with_name("fixtures").glob("*-bbox-
                     bank = "sbi" if fixture.name.startswith("sbi-") else "hdfc"
                     fresh.main(str(fixture), destination, keep, bank)
             except SystemExit as stop:
-                check(f"{fixture.name} page {page} re-sanitises", False, str(stop))
+                expected_refusal = fixture.name.startswith("hdfc-") and page == 0
+                check(f"{fixture.name} page {page} expected refusal" if expected_refusal
+                      else f"{fixture.name} page {page} re-sanitises",
+                      expected_refusal, str(stop))
+                if expected_refusal:
+                    check(f"{fixture.name} page {page} refusal emits no destination",
+                          not pathlib.Path(destination).exists())
                 continue
             produced = identifying_tokens(
                 fresh, WORD_BODY.findall(pathlib.Path(destination).read_text()))
