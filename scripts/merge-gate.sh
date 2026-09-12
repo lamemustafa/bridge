@@ -21,7 +21,8 @@ PR=""; REPO=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo) REPO="${2:-}"; [ -n "$REPO" ] || { echo "--repo needs OWNER/NAME" >&2; exit 2; }; shift 2 ;;
-    --repo=*) REPO="${1#--repo=}"; shift ;;
+    --repo=*) REPO="${1#--repo=}"
+              [ -n "$REPO" ] || { echo "--repo= needs OWNER/NAME" >&2; exit 2; }; shift ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     -*) echo "unknown option: $1" >&2; exit 2 ;;
     *) [ -z "$PR" ] && PR="$1" || { echo "unexpected argument: $1" >&2; exit 2; }; shift ;;
@@ -135,14 +136,34 @@ fi
 #    summary is posted by the Codex app; require that login and a Bot type.
 body=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
         --jq '.[] | select(.user.login=="chatgpt-codex-connector[bot]" and .user.type=="Bot")
-                  | select(.body|contains("codex-pull-request-review-summary")) | .body' 2>/dev/null)
+                  | select(.body|contains("codex-pull-request-review-summary")) | .body' 2>"$errfile")
+comment_query_failed=0
+[ -s "$errfile" ] && [ -z "$body" ] && comment_query_failed=1
 row=$(grep -E '^\| (📝|🔍)' <<<"$body" | tail -1)
-if [ -z "$row" ]; then
+if [ "$comment_query_failed" -eq 1 ]; then
+  # "I could not ask" is not "there is no review". Saying the second when the
+  # first is true is the failure this whole script is about.
+  bad "could not read PR comments: $(tr '\n' ' ' <"$errfile" | cut -c1-110)"
+elif [ -z "$row" ]; then
   bad "no Codex review summary at all"
-elif ! grep -q "$short" <<<"$row"; then
+elif ! grep -qE "\`$short\`" <<<"$row"; then
+  # Anchored to the backtick cell: an unanchored substring also matches the
+  # row's timestamp and URL, which are not claims about a commit.
   bad "latest review names a different commit than $short — it has not seen this push"
 elif grep -q 'Completed' <<<"$row"; then
-  good "review completed on $short"
+  # A seven-hex prefix is 28 bits and a matching commit can be ground
+  # deliberately, after which a stale `Completed` row would vouch for code
+  # nobody read. Codex publishes only seven characters, so the prefix cannot be
+  # strengthened — but a ground commit has to be created AFTER the review it is
+  # impersonating, and that is checkable. Require the reviewed row to postdate
+  # the head commit.
+  review_at=$(grep -oE 'datetime="[^"]+"' <<<"$row" | head -1 | sed 's/datetime="//;s/"//')
+  head_at=$(gh api "repos/$REPO/commits/$head" --jq '.commit.committer.date' 2>/dev/null)
+  if [ -n "$review_at" ] && [ -n "$head_at" ] && [[ "$review_at" < "$head_at" ]]; then
+    bad "review at $review_at predates head commit $short ($head_at) — it cannot have seen it"
+  else
+    good "review completed on $short${review_at:+ at $review_at}"
+  fi
 else
   # Running, Failed, Errored — none of these is a review. A failed review run
   # means nothing looked at the code, which is exactly the state this gate
@@ -210,11 +231,23 @@ else
   # A binary file is a hole in this scan, not an absence of findings: the patch
   # carries a marker instead of content, so a screenshot or PDF of a client
   # statement reads exactly like a clean diff. Refuse rather than pass.
-  binaries=$(grep -cE '^(Binary files .* differ|GIT binary patch)' <<<"$diff")
+  # A binary DELETION removes a file rather than adding unreadable content, so
+  # it is a cleanup, not a hole — counting it blocked the PR that deletes a
+  # leaked screenshot, the same inversion as scanning removed lines.
+  binaries=$(grep -E '^(Binary files .* differ|GIT binary patch)' <<<"$diff" \
+             | grep -cv 'and /dev/null differ')
   if [ "$binaries" -gt 0 ]; then
     bad "$binaries binary change(s) the privacy scan cannot read — inspect by hand before merging: $(grep -E '^\+\+\+ b/' <<<"$diff" | sed 's|^+++ b/||' | tr '\n' ' ' | cut -c1-160)"
   fi
-  raw_added=$(grep '^+' <<<"$diff" | grep -v '^+++')
+  # The unified-diff file header is `+++ ` WITH A SPACE. Filtering `^+++`
+  # discarded any added line whose own content starts with `++`, so
+  # `++ customer ABCDE1234F` produced no scannable text at all — a place to
+  # hide a value from the scan, in the scan's own input.
+  # Identify the header STRUCTURALLY. `+++ ` alone is not enough: an added line
+  # whose content begins with `++` produces exactly that prefix. Git's header
+  # is always `+++ b/<path>` or `+++ /dev/null`, so match those and nothing
+  # else — `+++ customer ABCDE1234F` is content and must reach the scan.
+  raw_added=$(grep '^+' <<<"$diff" | grep -vE '^\+\+\+ (b/|/dev/null)')
   added=$(sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/<uuid>/g' <<<"$raw_added" \
           | sed -E 's/[0-9a-fA-F]{32,}/<digest>/g')
   # Exemptions are REPORTED, never silent. Stripping generated-looking values
@@ -238,8 +271,11 @@ else
   # NO \b around the digit run. The leak that motivated this gate was written
   # `HDF CH12345678901` — glued to letters — and \b does not match between `H`
   # and `1`, so the scan that was supposed to catch it could not see it at all.
-  hits=$(grep -Eo '[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]{3}|[A-Z]{5}[0-9]{4}[A-Z]|[6-9][0-9]{9}' <<<"$added" \
-          | sort -u | { grep -cvE "$placeholder" || true; })
+  # Case-insensitively: a GSTIN or PAN written in lower or mixed case is the
+  # same identifier, and prose is exactly where it would be written that way.
+  # The placeholder list is applied to the UPPERCASED form for the same reason.
+  hits=$(grep -Eio '[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]{3}|[A-Z]{5}[0-9]{4}[A-Z]|[6-9][0-9]{9}' <<<"$added" \
+          | tr '[:lower:]' '[:upper:]' | sort -u | { grep -cvE "$placeholder" || true; })
   runs=$(grep -Eo '[0-9]{11,18}' <<<"$added" | sort -u | { grep -cvE "$placeholder" || true; })
   if [ "$hits" -eq 0 ] && [ "$runs" -eq 0 ]; then
     good "added lines carry no identifier shapes and no unexplained long digit runs"
@@ -253,6 +289,10 @@ if [ "$fail" -ne 0 ]; then echo "MUST NOT MERGE"; exit 1; fi
 # 7. Bind the merge to the commit that was actually reviewed. Between this
 #    check and the merge the head can move, and everything above would then
 #    describe a commit the PR no longer points at.
-echo "MAY MERGE — bind the merge to the reviewed commit:"
-echo "  gh pr merge $PR --repo $REPO --squash --match-head-commit $head"
+echo "MAY MERGE — bind the merge to the reviewed commit AND the validated base:"
+echo "  [ \"\$(gh pr view $PR --repo $REPO --json baseRefName -q .baseRefName)\" = \"$base\" ] \\"
+echo "    && gh pr merge $PR --repo $REPO --squash --match-head-commit $head"
+echo
+echo "  (--match-head-commit validates only the head; the base can be changed"
+echo "   after this check without moving the head, so re-read it too.)"
 exit 0
