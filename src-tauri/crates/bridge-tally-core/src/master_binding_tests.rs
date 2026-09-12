@@ -1284,7 +1284,7 @@ fn a_withheld_family_still_reports_how_many_share_the_identifier() {
 #[test]
 fn only_withheld_identifier_holder_sets_receive_family_ids() {
     let names = (0..MAX_CANDIDATES_PER_ENTITY + 1)
-        .map(|index| format!("Party {index:03} (5550007777)"))
+        .map(|index| format!("Party {index:03} (5550007777) (4455{index:06})"))
         .collect::<Vec<_>>();
     let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
     let shared_identifier = entity("Source (5550007777)")
@@ -1293,6 +1293,10 @@ fn only_withheld_identifier_holder_sets_receive_family_ids() {
         .cloned()
         .expect("valid identifier");
 
+    assert!(catalog
+        .by_identifier
+        .values()
+        .any(|holders| holders.len() == 1));
     assert_eq!(catalog.identifier_family_ids.len(), 1);
     assert!(catalog
         .identifier_family_ids
