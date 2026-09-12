@@ -2509,6 +2509,103 @@ fn a_request_within_every_other_bound_is_still_refused_on_its_total_size() {
 }
 
 #[test]
+fn a_date_range_fused_by_its_own_separator_is_still_dates() {
+    // The separator works in both directions. Removing `-` reveals a date in
+    // `2025-09-11`, and hides two in `DATED20250911-20250912`: the canonical
+    // carries one sixteen-digit run that reads as no date, and `is_period` does
+    // not see it either, because its eight-digit case admits a year followed by
+    // a year and `0911` is neither. A period label is the single thing two
+    // unrelated masters most reliably share, so identifying on one is the
+    // wrong-party bind this guard exists to prevent.
+    let catalog = ledgers(&["Sales DATED20250911-20250912", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&catalog, "Purchases DATED20250911-20250912").bound_name(),
+        None,
+        "a fused date range identified two unrelated masters with each other"
+    );
+
+    // The direction the canonical check exists for still holds: a date written
+    // with separators is a date once they are removed.
+    let punctuated = ledgers(&["Sales 2025-09-11", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&punctuated, "Purchases 2025-09-11").bound_name(),
+        None,
+        "a punctuated date identified"
+    );
+
+    // And a genuine code still identifies, so the guard has not swallowed the
+    // rule it guards.
+    let coded = ledgers(&["Sales AB-123456", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&coded, "Purchases AB-123456").bound_name(),
+        Some("Sales AB-123456"),
+        "the identifier rule stopped working"
+    );
+}
+
+#[test]
+fn the_expensive_repeated_search_is_the_one_the_memo_keeps() {
+    // `worth_holding` refused to cache a result larger than the candidate cap,
+    // which read as prudence and excluded exactly the search the memo exists
+    // for: a name reaching a large family through shared tokens re-ran it once
+    // per row. The search now returns a capped list and the full count, so
+    // every result is small enough to hold.
+    // Forty masters carry one distinctive token, in a catalog of four hundred.
+    // Forty is exactly the common-token limit rather than over it, so the token
+    // still discriminates and the search returns all forty — more than the
+    // candidate cap, which is what made the old memo refuse to hold it. The
+    // token sits at the end of each name so this reaches the shared-token rule
+    // rather than the prefix family, which withholds instead of listing.
+    let mut names = (0..360)
+        .map(|index| format!("Alpha Placeholder {index:04}"))
+        .collect::<Vec<_>>();
+    names.extend((0..40).map(|index| format!("Beta Placeholder {index:04} Zetaomega")));
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+
+    let entities = (0..64)
+        .map(|index| SourceEntity::new(index, "Zetaomega").expect("valid"))
+        .collect::<Vec<_>>();
+
+    super::CANDIDATE_SEARCHES.with(|count| count.set(0));
+    let report = bound(&catalog, &entities);
+    let searches = super::CANDIDATE_SEARCHES.with(std::cell::Cell::get);
+    assert_eq!(report.totals().requested, 64);
+    assert_eq!(
+        searches, 1,
+        "a repeated name reaching a large family was searched {searches} times"
+    );
+
+    // The count the operator sees is the whole union, not the capped listing.
+    let unresolved = report.entities()[0].unresolved().expect("unbound");
+    assert!(
+        unresolved.candidates.found() > MAX_CANDIDATES_PER_ENTITY,
+        "this fixture no longer exercises a result larger than the cap"
+    );
+    assert!(unresolved.candidates.listed().len() <= MAX_CANDIDATES_PER_ENTITY);
+}
+
+#[test]
+fn an_ambiguity_lists_every_master_that_caused_it() {
+    // The reason is decided on the resolving fold and the candidates were
+    // gathered from the wide one, which is not always coarser: the wide fold
+    // replaces `-` but not `/`, so `AB/CD` and `AB CD` are one master to
+    // `verified_fold` and two to `master_identity_key`. Both tokens are below
+    // the shared-token threshold, so nothing else restored the space spelling,
+    // and the operator was shown an ambiguity with a complete-looking list of
+    // one — asked to choose between masters they could not see.
+    let catalog = ledgers(&["AB/CD", "AB CD", "Beta Supply"]);
+    let binding = bind_one_name(&catalog, "ab/cd");
+    assert_eq!(reason(&binding), UnboundReason::NameAmbiguous);
+    assert_eq!(binding.bound_name(), None);
+    assert_eq!(candidate_names(&binding), ["AB CD", "AB/CD"]);
+    assert_eq!(
+        binding.unresolved().expect("unbound").candidates.found(),
+        2,
+        "the count agreed with the short list rather than with the collision"
+    );
+}
+
+#[test]
 fn the_listing_word_is_the_one_the_wire_carries() {
     // `listing()` exists so a projection need not reconstruct the state from
     // an empty list and a count. If it drifted from the serde tag, a consumer

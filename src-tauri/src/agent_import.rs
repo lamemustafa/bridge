@@ -345,24 +345,28 @@ impl Server {
             .collect::<Option<Vec<_>>>()
             .filter(|names| !names.is_empty())
             .ok_or_else(|| "ledgers_required".to_string())?;
+        // Before either read. A name the core refuses is refused at any
+        // catalogue, so verifying the company and reading its ledgers first
+        // would spend two live round trips — and retain evidence of them — to
+        // reach a failure that was decidable from the request alone.
+        let entities =
+            source_entities(&ledgers.into_iter().map(str::to_string).collect::<Vec<_>>())
+                .map_err(ToolFailure::from)?;
         let (company, identity, identity_evidence) = self.verified_company(guid).await?;
         let (catalogue, evidence) = self
             .read_ledger_catalogue(&identity, &company.name)
             .await
             .map_err(|failure| failure.with_prior_evidence(identity_evidence.clone()))?;
-        let report = master_report(
-            &ledgers.into_iter().map(str::to_string).collect::<Vec<_>>(),
-            &catalogue,
-        )
-        // The catalogue read already succeeded, so its request/response
-        // commitments belong in the failure too; attaching identity evidence
-        // alone would omit a Tally read that actually happened.
-        .map_err(|code| {
-            ToolFailure::from(code).with_prior_evidence(combine_evidence(
-                identity_evidence.clone(),
-                evidence.clone(),
-            ))
-        })?;
+        let report = master_report(&entities, &catalogue)
+            // The catalogue read already succeeded, so its request/response
+            // commitments belong in the failure too; attaching identity evidence
+            // alone would omit a Tally read that actually happened.
+            .map_err(|code| {
+                ToolFailure::from(code).with_prior_evidence(combine_evidence(
+                    identity_evidence.clone(),
+                    evidence.clone(),
+                ))
+            })?;
         let hash = sha256_json(&catalogue);
         Ok(ToolOutcome {
             payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"masters": report, "catalogue_evidence_sha256": hash}}),
@@ -1575,7 +1579,27 @@ fn masters_for_payload(
     payload: &ImportPayload,
     catalogue: &[String],
 ) -> Result<Vec<Value>, String> {
-    master_report(&requested_ledger_names(payload), catalogue)
+    master_report(
+        &source_entities(&requested_ledger_names(payload))?,
+        catalogue,
+    )
+}
+
+/// Parses requested names into source entities, which is where the core's own
+/// bounds are enforced — a control character, or more identifiers than one name
+/// may carry.
+///
+/// Kept separate from `master_report` so a caller can run it **before** it
+/// reads Tally. A request the core will refuse cannot succeed at any catalogue,
+/// so spending a live read and collecting evidence of it first buys nothing and
+/// costs an external round trip against the operator's books.
+fn source_entities(requested: &[String]) -> Result<Vec<SourceEntity>, String> {
+    requested
+        .iter()
+        .enumerate()
+        .map(|(position, name)| SourceEntity::new(position, name))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.safe_reason_code().to_string())
 }
 
 fn requested_ledger_names(payload: &ImportPayload) -> Vec<String> {
@@ -1600,16 +1624,10 @@ const MAX_CANDIDATE_RESULT_BYTES: usize = 8_192;
 /// desktop preparation screen cannot drift apart; see
 /// `docs/adr/0016-master-binding-authority.md`. This function only renders the
 /// report, and it never promotes a candidate into a spelling.
-fn master_report(requested: &[String], catalogue: &[String]) -> Result<Vec<Value>, String> {
+fn master_report(entities: &[SourceEntity], catalogue: &[String]) -> Result<Vec<Value>, String> {
     let catalog = MasterCatalog::new(MasterClass::Ledger, catalogue)
         .map_err(|error| error.safe_reason_code().to_string())?;
-    let entities = requested
-        .iter()
-        .enumerate()
-        .map(|(position, name)| SourceEntity::new(position, name))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.safe_reason_code().to_string())?;
-    let report = master_binding::bind(&catalog, &entities)
+    let report = master_binding::bind(&catalog, entities)
         .map_err(|error| error.safe_reason_code().to_string())?;
     Ok(report.entities().iter().map(master_match_json).collect())
 }
