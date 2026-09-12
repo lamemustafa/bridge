@@ -1270,6 +1270,43 @@ def test_windows_refuses_to_claim_a_privacy_it_cannot_deliver(m):
         assert pathlib.Path(target).read_text() == "<xml/>", "refused, so not truncated"
 
 
+def test_windows_cleanup_closes_a_new_output_before_unlinking(m):
+    """Windows cannot unlink an open exclusive output, so caught cleanup
+    releases its pin before removal. The branch is simulated; ACL/filesystem
+    behavior still needs an affected Windows host."""
+    with tempfile.TemporaryDirectory() as directory, pretending_windows(m) as shim:
+        target = pathlib.Path(directory, "out.xml")
+        events = []
+        real_close = shim.close
+        real_unlink = m._unlink_for_cleanup
+
+        def observe_close(handle):
+            events.append("close")
+            return real_close(handle)
+
+        def observe_unlink(path, identity, failures):
+            assert events == ["close"]
+            events.append("unlink")
+            return real_unlink(path, identity, failures)
+
+        shim.close = observe_close
+        m._unlink_for_cleanup = observe_unlink
+        try:
+            try:
+                m.write_outputs([(str(target), "<xml/>")], True,
+                                after_claim=lambda: (_ for _ in ()).throw(
+                                    OSError("controlled failure")))
+                raise AssertionError("the controlled failure must escape")
+            except OSError as error:
+                assert "controlled failure" in str(error)
+        finally:
+            shim.close = real_close
+            m._unlink_for_cleanup = real_unlink
+
+        assert events == ["close", "unlink"]
+        assert not target.exists()
+
+
 def test_a_windows_target_appearing_after_the_check_is_not_truncated(m):
     """The check and the create must be one operation.
 
@@ -1776,6 +1813,47 @@ def test_backup_copy_refuses_a_fifo_before_reading_it(m):
 
         assert destination.is_fifo()
         assert sorted(path.name for path in root.iterdir()) == ["previous.xml"]
+
+
+def test_duplicate_failure_after_claim_closes_and_removes_new_output(m):
+    """The claimed private descriptor is already recorded before a duplicate
+    is needed for writing, so descriptor exhaustion cannot leak the path."""
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory, "new.xml")
+        real_open_private = m._open_private
+        real_dup = m.os.dup
+        real_close = m.os.close
+        opened, closed = [], []
+
+        def observe_open(path, accept_inherited=False):
+            handle = real_open_private(path, accept_inherited)
+            opened.append(handle)
+            return handle
+
+        def exhausted_dup(_):
+            raise OSError("controlled descriptor exhaustion")
+
+        def observe_close(handle):
+            closed.append(handle)
+            return real_close(handle)
+
+        m._open_private = observe_open
+        m.os.dup = exhausted_dup
+        m.os.close = observe_close
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("the duplicate failure must escape")
+            except OSError as error:
+                assert "controlled descriptor exhaustion" in str(error)
+        finally:
+            m._open_private = real_open_private
+            m.os.dup = real_dup
+            m.os.close = real_close
+
+        assert len(opened) == 1
+        assert opened[0] in closed
+        assert not destination.exists()
 
 
 def test_backup_refuses_when_original_metadata_cannot_be_recorded(m):

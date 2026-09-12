@@ -1578,16 +1578,21 @@ def _close_owned_path(record, failures):
         failures.append(record["path"])
 
 
-def _close_write_handle(record, failures):
-    """Close a descriptor used for writing while retaining its ownership pin."""
-    handle = record.get("write_handle")
-    if handle is None:
-        return
-    record["write_handle"] = None
-    try:
-        os.close(handle)
-    except OSError:
-        failures.append(record["path"])
+def _cleanup_owned_path(record, failures):
+    """Remove one owned pathname, releasing its pin first on Windows.
+
+    POSIX keeps the descriptor open through the identity decision so an inode
+    cannot be recycled before cleanup. Windows does not permit unlinking an
+    open file, so fresh exclusive outputs close first and retain the existing
+    Windows cleanup behavior; actual Windows filesystem evidence remains
+    required for that platform-specific branch.
+    """
+    if os.name == "nt":
+        _close_owned_path(record, failures)
+        _unlink_for_cleanup(record["path"], record["identity"], failures)
+    else:
+        _unlink_for_cleanup(record["path"], record["identity"], failures)
+        _close_owned_path(record, failures)
 
 
 def _metadata_from_handle(path, handle):
@@ -1821,22 +1826,22 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 handle, temporary = tempfile.mkstemp(
                     dir=os.path.dirname(real_path),
                     prefix=os.path.basename(real_path) + ".", suffix=".part")
-                record = _owned_path(temporary, os.dup(handle))
-                record["write_handle"] = handle
+                record = _owned_path(temporary, handle)
                 claimed.append(record)
                 staged.append({"temporary": record, "supplied_path": path,
                                "real_path": real_path,
                                "original_identity": _file_identity(real_path)})
             else:
                 handle = _open_private(path, accept_inherited)
-                record = _owned_path(path, os.dup(handle))
-                record["write_handle"] = handle
+                record = _owned_path(path, handle)
                 claimed.append(record)
         if after_claim is not None:
             after_claim()
         for (_, text), record in zip(targets, claimed):
-            where, handle = record["path"], record["write_handle"]
-            record["write_handle"] = None  # fdopen owns the handle from here
+            where = record["path"]
+            # The record already owns the opened descriptor, so a duplicate
+            # failure here can still close it and unlink the created path.
+            handle = os.dup(record["pin"])
             with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
                 stream.write(text)
         # Every payload is on disk. A private copy preserves the old bytes while
@@ -1848,8 +1853,7 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             backup_handle, backup = tempfile.mkstemp(
                 dir=os.path.dirname(real_path),
                 prefix=os.path.basename(real_path) + ".", suffix=".bak")
-            pending_backup = _owned_path(backup, os.dup(backup_handle))
-            pending_backup["write_handle"] = backup_handle
+            pending_backup = _owned_path(backup, backup_handle)
             pending_swap = {"backup": pending_backup, "destination": real_path,
                             "original_identity": original_identity,
                             "staged_identity": temporary["identity"],
@@ -1863,8 +1867,6 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             pending_swap["metadata"] = _metadata_from_handle(
                 real_path, original_handle)
             _copy_private_backup(real_path, original_identity, backup_handle)
-            os.close(backup_handle)
-            pending_swap["backup"]["write_handle"] = None
             # The destination stays present until this one atomic replacement.
             # `pending_swap` is set first because an interrupt may arrive after
             # the filesystem call has taken effect but before it returns.
@@ -1897,11 +1899,8 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
         # earlier committed swaps. Cleanup failures remain attached to the
         # original exception with their recoverable locations.
         cleanup_failures = []
-        if pending_backup is not None:
-            _close_write_handle(pending_backup, cleanup_failures)
         if pending_swap is not None:
             backup = pending_swap["backup"]
-            _close_write_handle(backup, cleanup_failures)
             _restore_backup(backup["path"], backup["identity"],
                             pending_swap["destination"],
                             pending_swap["original_identity"],
@@ -1912,21 +1911,16 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             if pending_swap["original"] is not None:
                 _close_owned_path(pending_swap["original"], cleanup_failures)
         if pending_backup is not None:
-            _unlink_for_cleanup(pending_backup["path"], pending_backup["identity"],
-                                cleanup_failures)
-            _close_owned_path(pending_backup, cleanup_failures)
+            _cleanup_owned_path(pending_backup, cleanup_failures)
         for swap in reversed(replaced):
             backup = swap["backup"]
-            _close_write_handle(backup, cleanup_failures)
             _restore_backup(backup["path"], backup["identity"], swap["destination"],
                             swap["original_identity"], swap["staged_identity"],
                             swap["metadata"], swap["swap_started"], cleanup_failures)
             _close_owned_path(backup, cleanup_failures)
             _close_owned_path(swap["original"], cleanup_failures)
         for record in claimed:
-            _close_write_handle(record, cleanup_failures)
-            _unlink_for_cleanup(record["path"], record["identity"], cleanup_failures)
-            _close_owned_path(record, cleanup_failures)
+            _cleanup_owned_path(record, cleanup_failures)
         _note_cleanup_failures(error, cleanup_failures)
         raise
     # A successful replacement is not a successful command if an old statement
