@@ -263,25 +263,64 @@ fn book_window(
 ) -> Result<BookWindow, PresenceError> {
     let mut budget = RawObservationBudget::default();
     let mut entries = Vec::with_capacity(rows.len().min(book_presence::MAX_WINDOW_VOUCHERS));
+    let mut ambiguous = Vec::with_capacity(rows.len().min(book_presence::MAX_WINDOW_VOUCHERS));
     for row in rows {
         let raw = row["amounts"]
             .as_array()
             .map(Vec::as_slice)
             .unwrap_or_default();
-        budget.admit_fields(
-            row["guid"].as_str().unwrap_or_default(),
-            row["date"].as_str().unwrap_or_default(),
-            row["voucher_type"].as_str().unwrap_or_default(),
-            row["voucher_number"].as_str(),
-            None,
-            row["party"].as_str(),
-            raw.iter().map(|entry| {
-                (
-                    entry["ledger"].as_str().unwrap_or_default(),
-                    entry["amount"].as_str().unwrap_or_default(),
-                )
-            }),
-        )?;
+        let narration = row["narration"].as_str();
+        match marker_kind(narration) {
+            MarkerKind::Absent => budget.admit_fields(
+                row["guid"].as_str().unwrap_or_default(),
+                row["date"].as_str().unwrap_or_default(),
+                row["voucher_type"].as_str().unwrap_or_default(),
+                row["voucher_number"].as_str(),
+                None,
+                row["party"].as_str(),
+                None,
+                std::iter::empty(),
+                raw.iter().map(|entry| {
+                    (
+                        entry["ledger"].as_str().unwrap_or_default(),
+                        entry["amount"].as_str().unwrap_or_default(),
+                    )
+                }),
+            )?,
+            MarkerKind::Identifying(marker) => budget.admit_fields(
+                row["guid"].as_str().unwrap_or_default(),
+                row["date"].as_str().unwrap_or_default(),
+                row["voucher_type"].as_str().unwrap_or_default(),
+                row["voucher_number"].as_str(),
+                None,
+                row["party"].as_str(),
+                Some(marker),
+                std::iter::empty(),
+                raw.iter().map(|entry| {
+                    (
+                        entry["ledger"].as_str().unwrap_or_default(),
+                        entry["amount"].as_str().unwrap_or_default(),
+                    )
+                }),
+            )?,
+            MarkerKind::Unidentified => budget.admit_fields(
+                row["guid"].as_str().unwrap_or_default(),
+                row["date"].as_str().unwrap_or_default(),
+                row["voucher_type"].as_str().unwrap_or_default(),
+                row["voucher_number"].as_str(),
+                None,
+                row["party"].as_str(),
+                None,
+                ambiguous_markers_iter(narration),
+                raw.iter().map(|entry| {
+                    (
+                        entry["ledger"].as_str().unwrap_or_default(),
+                        entry["amount"].as_str().unwrap_or_default(),
+                    )
+                }),
+            )?,
+        }
+        ambiguous.push(ambiguous_markers(narration));
         entries.push(
             row["amounts"]
                 .as_array()
@@ -295,10 +334,6 @@ fn book_window(
                 .collect::<Vec<_>>(),
         );
     }
-    let ambiguous = rows
-        .iter()
-        .map(|row| ambiguous_markers(row["narration"].as_str()))
-        .collect::<Vec<_>>();
     let observations =
         rows.iter()
             .zip(&entries)
@@ -345,14 +380,31 @@ fn book_window(
 ///   words, commonly reused -- matching one would pair a proposal with an
 ///   unrelated voucher from an unrelated batch and drop an invoice silently.
 fn observed_marker(narration: Option<&str>) -> ObservedMarker<'_> {
+    match marker_kind(narration) {
+        MarkerKind::Absent => ObservedMarker::Absent,
+        MarkerKind::Identifying(identity) => ObservedMarker::Identifying(identity),
+        MarkerKind::Unidentified => ObservedMarker::Unidentified(&[]),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum MarkerKind<'a> {
+    Absent,
+    Identifying(&'a str),
+    Unidentified,
+}
+
+fn marker_kind(narration: Option<&str>) -> MarkerKind<'_> {
     let Some(narration) = narration else {
-        return ObservedMarker::Absent;
+        return MarkerKind::Absent;
     };
-    let found = agent_import::narration_markers(narration).collect::<Vec<_>>();
-    match found.as_slice() {
-        [] => ObservedMarker::Absent,
-        [Some(identity)] if is_batch_derived(identity) => ObservedMarker::Identifying(identity),
-        _ => ObservedMarker::Unidentified(&[]),
+    let mut found = agent_import::narration_markers(narration);
+    match found.next() {
+        None => MarkerKind::Absent,
+        Some(Some(identity)) if is_batch_derived(identity) && found.next().is_none() => {
+            MarkerKind::Identifying(identity)
+        }
+        _ => MarkerKind::Unidentified,
     }
 }
 
@@ -360,14 +412,15 @@ fn observed_marker(narration: Option<&str>) -> ObservedMarker<'_> {
 /// import. They cannot decide, and they must not be thrown away: a proposal
 /// whose own marker is among them is asking about this exact voucher.
 fn ambiguous_markers(narration: Option<&str>) -> Vec<&str> {
-    narration
-        .map(|narration| {
-            agent_import::narration_markers(narration)
-                .flatten()
-                .filter(|identity| is_batch_derived(identity))
-                .collect()
-        })
-        .unwrap_or_default()
+    ambiguous_markers_iter(narration).collect()
+}
+
+fn ambiguous_markers_iter(narration: Option<&str>) -> impl Iterator<Item = &str> {
+    narration.into_iter().flat_map(|narration| {
+        agent_import::narration_markers(narration)
+            .flatten()
+            .filter(|identity| is_batch_derived(identity))
+    })
 }
 
 /// Whether a marker has the exact shape `import_identity` writes.
@@ -477,6 +530,7 @@ fn parse_proposals(
                 raw_date,
                 raw_type,
                 voucher["voucher_number"].as_str(),
+                marker.as_deref(),
                 None,
                 voucher["party"].as_str(),
                 rows.iter().map(|entry| {

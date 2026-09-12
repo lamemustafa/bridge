@@ -38,6 +38,88 @@ fn proposal(number: &str, party: &str, total: &str) -> Value {
     })
 }
 
+#[test]
+fn proposal_marker_bytes_are_admitted_before_entry_conversion() {
+    let batch = "bridge-2b1c9f4e-9d3a-4f71-8c2e-5a6b7c8d9e01";
+    let marker = agent_import::import_identity(batch, "txn-001").to_string();
+    assert_eq!(marker.len(), 36);
+    let party = "P".repeat(
+        book_presence::MAX_TEXT_CHARS
+            - "20260901".len()
+            - "Journal".len()
+            - "1".len()
+            - marker.len(),
+    );
+    let mut vouchers = (0..256)
+        .map(|_| {
+            json!({
+                "date": "20260901",
+                "voucher_type": "Journal",
+                "voucher_number": "1",
+                "party": party,
+                "batch_id": batch,
+                "bridge_txn_id": "txn-001",
+                "entries": [{"ledger": "L", "amount": "1"}],
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        parse_proposals(&json!({"vouchers": vouchers}))
+            .expect("exact marker metadata limit")
+            .as_slice()
+            .len(),
+        256
+    );
+    // The public adapter owns this marker. One valid extra party byte must be
+    // rejected by raw admission before an invalid amount can be parsed.
+    vouchers[255]["party"] = json!(format!("{party}P"));
+    vouchers[255]["entries"][0]["amount"] = json!("not-an-amount");
+    assert_eq!(
+        parse_proposals(&json!({"vouchers": vouchers})),
+        Err("presence_proposal_raw_bytes_too_large".to_string())
+    );
+}
+
+#[test]
+fn book_window_admits_marker_metadata_before_entry_descriptors() {
+    let marker =
+        agent_import::import_identity("bridge-2b1c9f4e-9d3a-4f71-8c2e-5a6b7c8d9e01", "txn-001")
+            .to_string();
+    let guid_prefix = "00000000-0000-4000-8000-000000000000";
+    let number = "N".repeat(
+        book_presence::MAX_TEXT_CHARS
+            - format!("{guid_prefix}-00000000").len()
+            - "20260901".len()
+            - "Journal".len()
+            - marker.len(),
+    );
+    let mut rows = (0..256)
+        .map(|position| {
+            json!({
+                "guid": format!("{guid_prefix}-{position:08}"),
+                "date": "20260901",
+                "voucher_type": "Journal",
+                "voucher_number": number,
+                "narration": narration_with(&marker),
+                "amounts": [{"ledger": "L", "amount": "1"}],
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        book_window("20260901", "20260930", WindowRead::Complete, &rows)
+            .expect("exact marker metadata limit")
+            .vouchers()
+            .len(),
+        256
+    );
+    rows[255]["voucher_number"] = json!(format!("{number}N"));
+    rows[255]["amounts"][0]["amount"] = json!("not-an-amount");
+    assert_eq!(
+        book_window("20260901", "20260930", WindowRead::Complete, &rows),
+        Err(PresenceError::WindowRawEntryBytesTooLarge)
+    );
+}
+
 fn args(vouchers: Value, numbering: &str) -> Value {
     json!({
         "company_guid": CAPTURED_GUID,

@@ -1145,8 +1145,8 @@ fn an_empty_proposal_entry_list_is_refused_at_the_core_boundary() {
             voucher_type: "Sales",
             voucher_number: Some("AA0118"),
             remote_id: None,
-            party: None,
             narration_marker: None,
+            party: None,
             entries: &[],
         })
         .expect_err("empty accounting data"),
@@ -4089,6 +4089,7 @@ fn raw_proposal_budget_counts_all_entry_work_before_conversion() {
             voucher_type: "Receipt",
             voucher_number: Some("1"),
             remote_id: None,
+            narration_marker: None,
             party: None,
             entries: &entries,
         })
@@ -4121,7 +4122,9 @@ fn raw_proposal_budget_counts_metadata_bytes_before_conversion() {
         ledger: "L",
         amount: "1",
     }];
-    let metadata = "x".repeat(16_384 - "20260812".len() - "Receipt".len() - 1);
+    let marker = "m".repeat(36);
+    let metadata =
+        "x".repeat(16_384 - "20260812".len() - "Receipt".len() - 1 - marker.len());
     let extra_byte = format!("{metadata}x");
     assert!(extra_byte.len() <= MAX_TEXT_CHARS);
     let inputs = (0..256)
@@ -4131,6 +4134,7 @@ fn raw_proposal_budget_counts_metadata_bytes_before_conversion() {
             voucher_type: "Receipt",
             voucher_number: Some("1"),
             remote_id: None,
+            narration_marker: Some(marker.as_str()),
             party: Some(metadata.as_str()),
             entries: &rows,
         })
@@ -4141,6 +4145,7 @@ fn raw_proposal_budget_counts_metadata_bytes_before_conversion() {
             v.date.len()
                 + v.voucher_type.len()
                 + v.voucher_number.unwrap().len()
+                + v.narration_marker.unwrap().len()
                 + v.party.unwrap().len()
         })
         .sum::<usize>();
@@ -4173,7 +4178,9 @@ fn raw_observation_budget_counts_retained_voucher_metadata() {
     let keys = (0..256)
         .map(|position| format!("K{position:07}"))
         .collect::<Vec<_>>();
-    let metadata = "x".repeat(16_384 - 8 - "20260812".len() - "Receipt".len());
+    let marker = "m".repeat(36);
+    let metadata =
+        "x".repeat(16_384 - 8 - "20260812".len() - "Receipt".len() - marker.len());
     let extra_byte = format!("{metadata}x");
     assert!(extra_byte.len() <= MAX_TEXT_CHARS);
     let inputs = keys
@@ -4185,6 +4192,7 @@ fn raw_observation_budget_counts_retained_voucher_metadata() {
             voucher_number: None,
             remote_id: Some(metadata.as_str()),
             party: None,
+            marker: ObservedMarker::Identifying(marker.as_str()),
             entries: &rows,
             cancelled: false,
             optional: false,
@@ -4192,17 +4200,24 @@ fn raw_observation_budget_counts_retained_voucher_metadata() {
         .collect::<Vec<_>>();
     let total = inputs
         .iter()
-        .map(|v| v.key.len() + v.date.len() + v.voucher_type.len() + v.remote_id.unwrap().len())
+        .map(|v| {
+            v.key.len()
+                + v.date.len()
+                + v.voucher_type.len()
+                + v.remote_id.unwrap().len()
+                + marker.len()
+        })
         .sum::<usize>();
     assert_eq!(total, MAX_WINDOW_RAW_ENTRY_BYTES);
     assert_eq!(
-        BookWindow::from_observations(
-            "20260801",
-            "20260831",
-            WindowRead::Complete,
-            RemoteIdEvidence::Observed,
-            inputs.iter().copied()
-        )
+        BookWindow::from_observations(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers: inputs.iter().copied(),
+        })
         .expect("exact metadata limit")
         .vouchers()
         .len(),
@@ -4215,14 +4230,207 @@ fn raw_observation_budget_counts_retained_voucher_metadata() {
         MAX_WINDOW_RAW_ENTRY_BYTES + 1
     );
     assert_eq!(
-        BookWindow::from_observations(
-            "20260801",
-            "20260831",
-            WindowRead::Complete,
-            RemoteIdEvidence::Observed,
-            over
-        ),
+        BookWindow::from_observations(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers: over,
+        }),
         Err(PresenceError::WindowRawEntryBytesTooLarge)
+    );
+}
+
+#[test]
+fn raw_observation_budget_counts_ambiguous_marker_bytes_before_conversion() {
+    let rows = [ObservedEntry {
+        ledger: "L",
+        amount: "1",
+    }];
+    let marker = "m".repeat(36);
+    let next_marker = format!("{marker}x");
+    let ambiguous = [marker.as_str()];
+    let next_ambiguous = [next_marker.as_str()];
+    let keys = (0..256)
+        .map(|position| format!("K{position:07}"))
+        .collect::<Vec<_>>();
+    let metadata =
+        "x".repeat(16_384 - 8 - "20260812".len() - "Receipt".len() - marker.len());
+    let inputs = keys
+        .iter()
+        .map(|key| ObservedVoucher {
+            key,
+            date: "20260812",
+            voucher_type: "Receipt",
+            voucher_number: None,
+            remote_id: Some(metadata.as_str()),
+            party: None,
+            marker: ObservedMarker::Unidentified(&ambiguous),
+            entries: &rows,
+            cancelled: false,
+            optional: false,
+        })
+        .collect::<Vec<_>>();
+    let total = inputs
+        .iter()
+        .map(|voucher| {
+            voucher.key.len()
+                + voucher.date.len()
+                + voucher.voucher_type.len()
+                + voucher.remote_id.unwrap().len()
+                + marker.len()
+        })
+        .sum::<usize>();
+    assert_eq!(total, MAX_WINDOW_RAW_ENTRY_BYTES);
+    assert_eq!(
+        BookWindow::from_observations(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers: inputs.iter().copied(),
+        })
+        .expect("exact metadata limit")
+        .vouchers()
+        .len(),
+        256
+    );
+    let mut over = inputs;
+    over[255].marker = ObservedMarker::Unidentified(&next_ambiguous);
+    assert_eq!(total + 1, MAX_WINDOW_RAW_ENTRY_BYTES + 1);
+    assert_eq!(
+        BookWindow::from_observations(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers: over,
+        }),
+        Err(PresenceError::WindowRawEntryBytesTooLarge)
+    );
+}
+
+#[test]
+fn raw_observation_budget_bounds_ambiguous_marker_occurrences_before_conversion() {
+    let rows = [ObservedEntry {
+        ledger: "L",
+        amount: "1",
+    }];
+    let marker = "m";
+    let at_limit = vec![marker; MAX_AMBIGUOUS_MARKERS_PER_VOUCHER];
+    let over_limit = vec![marker; MAX_AMBIGUOUS_MARKERS_PER_VOUCHER + 1];
+    let exact = ObservedVoucher {
+        key: "exact",
+        date: "20260812",
+        voucher_type: "Receipt",
+        voucher_number: None,
+        remote_id: None,
+        party: None,
+        marker: ObservedMarker::Unidentified(&at_limit),
+        entries: &rows,
+        cancelled: false,
+        optional: false,
+    };
+    assert!(BookWindow::from_observations(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::NotRead,
+        narration_evidence: ColumnEvidence::Observed,
+        vouchers: [exact],
+    })
+    .is_ok());
+    assert_eq!(
+        BookWindow::from_observations(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::NotRead,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers: [ObservedVoucher {
+                marker: ObservedMarker::Unidentified(&over_limit),
+                ..exact
+            }],
+        }),
+        Err(PresenceError::TooManyAmbiguousMarkers)
+    );
+}
+
+#[test]
+fn raw_observation_budget_bounds_aggregate_ambiguous_marker_work_before_conversion() {
+    let rows = [ObservedEntry {
+        ledger: "L",
+        amount: "1",
+    }];
+    let markers = vec!["m"; MAX_AMBIGUOUS_MARKERS_PER_VOUCHER];
+    let full_rows = MAX_WINDOW_AMBIGUOUS_MARKER_MEMBERSHIPS / markers.len();
+    let remainder = MAX_WINDOW_AMBIGUOUS_MARKER_MEMBERSHIPS % markers.len();
+    let final_markers = vec!["m"; remainder];
+    let keys = (0..=full_rows + 1)
+        .map(|position| format!("K{position:07}"))
+        .collect::<Vec<_>>();
+    let mut observations = keys[..full_rows]
+        .iter()
+        .map(|key| ObservedVoucher {
+            key,
+            date: "20260812",
+            voucher_type: "Receipt",
+            voucher_number: None,
+            remote_id: None,
+            party: None,
+            marker: ObservedMarker::Unidentified(&markers),
+            entries: &rows,
+            cancelled: false,
+            optional: false,
+        })
+        .collect::<Vec<_>>();
+    observations.push(ObservedVoucher {
+        key: &keys[full_rows],
+        date: "20260812",
+        voucher_type: "Receipt",
+        voucher_number: None,
+        remote_id: None,
+        party: None,
+        marker: ObservedMarker::Unidentified(&final_markers),
+        entries: &rows,
+        cancelled: false,
+        optional: false,
+    });
+    observations.push(ObservedVoucher {
+        key: &keys[full_rows + 1],
+        ..observations[0]
+    });
+    assert_eq!(
+        full_rows * markers.len() + final_markers.len(),
+        MAX_WINDOW_AMBIGUOUS_MARKER_MEMBERSHIPS
+    );
+    assert_eq!(
+        BookWindow::from_observations(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::NotRead,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers: observations[..=full_rows].iter().copied(),
+        })
+        .expect("exact raw ambiguous marker work")
+        .vouchers()
+        .len(),
+        full_rows + 1
+    );
+    assert_eq!(
+        BookWindow::from_observations(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::NotRead,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers: observations,
+        }),
+        Err(PresenceError::WindowAmbiguousMarkerMembershipsTooMany)
     );
 }
 
@@ -4246,6 +4454,7 @@ fn raw_proposal_batch_stops_an_unbounded_iterator_at_the_count_limit() {
             voucher_type: "Receipt",
             voucher_number: None,
             remote_id: None,
+            narration_marker: None,
             party: None,
             entries: &rows,
         })
@@ -4270,6 +4479,7 @@ fn proposal_batch_rejects_duplicate_source_positions_before_conversion() {
             voucher_type: "Receipt",
             voucher_number: Some("1"),
             remote_id: None,
+            narration_marker: None,
             party: None,
             entries: &rows,
         },
@@ -4279,6 +4489,7 @@ fn proposal_batch_rejects_duplicate_source_positions_before_conversion() {
             voucher_type: "Receipt",
             voucher_number: Some("2"),
             remote_id: None,
+            narration_marker: None,
             party: None,
             entries: &rows,
         },

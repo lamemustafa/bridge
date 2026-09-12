@@ -386,6 +386,7 @@ impl RawProposalBudget {
             input.date,
             input.voucher_type,
             input.voucher_number,
+            input.narration_marker,
             input.remote_id,
             input.party,
             input
@@ -402,6 +403,7 @@ impl RawProposalBudget {
         date: &'a str,
         voucher_type: &'a str,
         voucher_number: Option<&'a str>,
+        narration_marker: Option<&'a str>,
         remote_id: Option<&'a str>,
         party: Option<&'a str>,
         entries: impl IntoIterator<Item = (&'a str, &'a str)>,
@@ -417,6 +419,7 @@ impl RawProposalBudget {
             date,
             voucher_type,
             voucher_number.unwrap_or_default(),
+            narration_marker.unwrap_or_default(),
             remote_id.unwrap_or_default(),
             party.unwrap_or_default(),
         ];
@@ -707,6 +710,7 @@ pub struct RawObservationBudget {
     entries: usize,
     bytes: usize,
     metadata_bytes: usize,
+    ambiguous_marker_memberships: usize,
 }
 
 impl RawObservationBudget {
@@ -719,8 +723,32 @@ impl RawObservationBudget {
         voucher_number: Option<&'a str>,
         remote_id: Option<&'a str>,
         party: Option<&'a str>,
+        identifying_marker: Option<&'a str>,
+        ambiguous_markers: impl IntoIterator<Item = &'a str>,
         entries: impl IntoIterator<Item = (&'a str, &'a str)>,
     ) -> Result<(), PresenceError> {
+        let mut marker_bytes = identifying_marker
+            .map(str::len)
+            .unwrap_or_default();
+        let mut ambiguous_count = 0usize;
+        for marker in ambiguous_markers {
+            ambiguous_count = ambiguous_count
+                .checked_add(1)
+                .ok_or(PresenceError::TooManyAmbiguousMarkers)?;
+            if ambiguous_count > MAX_AMBIGUOUS_MARKERS_PER_VOUCHER {
+                return Err(PresenceError::TooManyAmbiguousMarkers);
+            }
+            marker_bytes = marker_bytes
+                .checked_add(marker.len())
+                .ok_or(PresenceError::WindowRawEntryBytesTooLarge)?;
+        }
+        self.ambiguous_marker_memberships = self
+            .ambiguous_marker_memberships
+            .checked_add(ambiguous_count)
+            .ok_or(PresenceError::WindowAmbiguousMarkerMembershipsTooMany)?;
+        if self.ambiguous_marker_memberships > MAX_WINDOW_AMBIGUOUS_MARKER_MEMBERSHIPS {
+            return Err(PresenceError::WindowAmbiguousMarkerMembershipsTooMany);
+        }
         let metadata = [
             key,
             date,
@@ -732,6 +760,7 @@ impl RawObservationBudget {
         let metadata_bytes = metadata
             .iter()
             .try_fold(0usize, |total, value| total.checked_add(value.len()))
+            .and_then(|total| total.checked_add(marker_bytes))
             .ok_or(PresenceError::WindowRawEntryBytesTooLarge)?;
         self.metadata_bytes = self
             .metadata_bytes
@@ -747,6 +776,12 @@ impl RawObservationBudget {
         &mut self,
         observation: &ObservedVoucher<'_>,
     ) -> Result<(), PresenceError> {
+        let (identifying_marker, ambiguous_markers): (Option<&str>, &[&str]) =
+            match observation.marker {
+                ObservedMarker::Absent => (None, &[]),
+                ObservedMarker::Identifying(marker) => (Some(marker), &[]),
+                ObservedMarker::Unidentified(markers) => (None, markers),
+            };
         self.admit_fields(
             observation.key,
             observation.date,
@@ -754,6 +789,8 @@ impl RawObservationBudget {
             observation.voucher_number,
             observation.remote_id,
             observation.party,
+            identifying_marker,
+            ambiguous_markers.iter().copied(),
             observation
                 .entries
                 .iter()
