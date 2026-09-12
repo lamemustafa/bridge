@@ -1531,6 +1531,22 @@ def _entry_identity(path):
     return stat_result.st_dev, stat_result.st_ino
 
 
+def _resolve_output_path(path):
+    """Resolve an operator path into the spelling this run is authorised to touch.
+
+    Python raises ``RuntimeError`` for a symlink loop on supported 3.10--3.12
+    versions. That is a changed/unverifiable output path, not an implementation
+    traceback that should escape the writer.
+    """
+    try:
+        return str(pathlib.Path(path).resolve())
+    except RuntimeError as error:
+        raise Refusal(
+            "output_path_changed",
+            f"{path} could not be resolved safely before output was written",
+        ) from error
+
+
 def _unlink_for_cleanup(path, owned_identity, failures):
     """Remove a path only while it still names the inode this run created."""
     try:
@@ -1670,7 +1686,7 @@ def _cleanup_owned_path(record, failures):
             # this output. Keep any earlier diagnostics, but replace this
             # pathname with the separate pinned-inode conclusion below.
             del failures[failure_start:]
-        if outcome in ("missing", "reclaimed") and "cleanup_path" in record:
+        if outcome == "missing" or (outcome == "reclaimed" and "cleanup_path" in record):
             # The descriptor still proves this is our fresh output, but a
             # stale parent pathname cannot say where it went. Do not turn a
             # missing entry into a successful cleanup or invent a replacement
@@ -2045,7 +2061,7 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                                "original_identity": _file_identity(real_path)})
             else:
                 supplied_path = path
-                canonical_path = str(pathlib.Path(supplied_path).resolve())
+                canonical_path = _resolve_output_path(supplied_path)
                 handle = _open_private(canonical_path, accept_inherited)
                 # Keep cleanup on the canonical inode path captured before the
                 # open. The supplied spelling remains an authority that must
@@ -2058,7 +2074,7 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 claimed.append(record)
                 try:
                     claimed_path_changed = (
-                        str(pathlib.Path(supplied_path).resolve()) != canonical_path
+                        _resolve_output_path(supplied_path) != canonical_path
                         or _file_identity(canonical_path) != record["identity"])
                 except (FileNotFoundError, OSError):
                     claimed_path_changed = True
@@ -2142,7 +2158,7 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             supplied_path = record["supplied_path"]
             canonical_path = record["canonical_path"]
             try:
-                changed = (str(pathlib.Path(supplied_path).resolve()) != canonical_path
+                changed = (_resolve_output_path(supplied_path) != canonical_path
                            or _file_identity(supplied_path) != record["identity"]
                            or _entry_identity(canonical_path) != record["identity"])
             except (FileNotFoundError, OSError):
@@ -2223,7 +2239,7 @@ def _check_paths(args):
     `--out` and `--manifest` sharing a path leaves whichever was written second,
     with both success lines printed.
     """
-    named = [(flag, pathlib.Path(value).expanduser().resolve())
+    named = [(flag, pathlib.Path(_resolve_output_path(pathlib.Path(value).expanduser())))
              for flag, value in (("--pdf", args.pdf), ("--mapping", args.mapping),
                                  ("--out", args.out), ("--manifest", args.manifest))
              if value]

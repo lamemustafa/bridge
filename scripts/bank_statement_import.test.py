@@ -2307,6 +2307,51 @@ def test_pinned_backup_reclaimed_path_retains_cleanup_diagnostic(m):
         assert moved.read_text() == "prior output"
 
 
+def test_pinned_backup_parent_rename_reports_unlocated_copy(m):
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        before, after = root / "before", root / "after"
+        before.mkdir()
+        path = before / "rollback.bak"
+        path.write_text("prior output")
+        identity = m._entry_identity(path)
+        handle = os.open(path, os.O_RDONLY)
+        record = {"path": path, "identity": identity, "pin": handle}
+        try:
+            before.rename(after)
+            failures = []
+            m._cleanup_owned_path(record, failures)
+        finally:
+            if record["pin"] is not None:
+                os.close(record["pin"])
+        assert failures == [
+            f"owned output could not be located after cleanup: {path}"
+        ]
+        assert (after / "rollback.bak").read_text() == "prior output"
+
+
+def test_new_output_symlink_loop_is_a_typed_path_refusal(m):
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "output.xml"
+        real_resolve = m.pathlib.Path.resolve
+
+        def loop_resolve(path, *args, **kwargs):
+            if path == destination:
+                raise RuntimeError("controlled symlink loop")
+            return real_resolve(path, *args, **kwargs)
+
+        m.pathlib.Path.resolve = loop_resolve
+        try:
+            refusal = refuses(m, "output_path_changed", m.write_outputs,
+                              [(str(destination), "new bytes")])
+        finally:
+            m.pathlib.Path.resolve = real_resolve
+        assert "could not be resolved safely" in str(refusal.code)
+        assert not destination.exists()
+
+
 def test_unlinked_pinned_backup_does_not_claim_a_hard_link_alias(m):
     if os.name == "nt":
         return
