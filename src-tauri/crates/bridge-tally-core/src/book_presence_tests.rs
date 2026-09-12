@@ -972,6 +972,23 @@ fn a_proposal_without_a_party_still_runs_the_party_independent_rules() {
 // --- magnitude ---------------------------------------------------------
 
 #[test]
+fn an_empty_proposal_entry_list_is_refused_at_the_core_boundary() {
+    assert_eq!(
+        ProposedVoucher::new(ProposedVoucherInput {
+            position: 0,
+            date: "20260812",
+            voucher_type: "Sales",
+            voucher_number: Some("AA0118"),
+            remote_id: None,
+            party: None,
+            entries: &[],
+        })
+        .expect_err("empty accounting data"),
+        PresenceError::EntriesEmpty
+    );
+}
+
+#[test]
 fn both_sides_derive_one_magnitude_from_the_same_entries() {
     let window = window(&[BookRow::new("book-1", "20260812", "AA0118").rows(vec![
         ["Alpha Traders", "-11800"],

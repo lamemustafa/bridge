@@ -93,6 +93,13 @@ async fn presence_arguments_are_bounded_before_any_tally_probe() {
         (
             json!({"company_guid":GUID,"from":"20260901","to":"20260930",
                 "numbering":[{"voucher_type":"Journal","numbering_method":"manual"}],
+                "vouchers":[{"date":"2-0-2-6-0-9-0-1","voucher_type":"Journal",
+                    "entries":[{"ledger":"Cash","amount":"-1.00"},{"ledger":"WR2 Sales","amount":"1.00"}]}]}),
+            "argument_invalid:vouchers",
+        ),
+        (
+            json!({"company_guid":GUID,"from":"20260901","to":"20260930",
+                "numbering":[{"voucher_type":"Journal","numbering_method":"manual"}],
                 "vouchers":[{"date":"20260901","voucher_type":"Journal",
                     "entries":[{"ledger":"Cash","amount":"maybe"}]}]}),
             "presence_amount_invalid",
