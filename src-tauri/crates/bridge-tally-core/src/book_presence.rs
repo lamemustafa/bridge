@@ -1707,6 +1707,15 @@ fn decide(
             let mut entries = found.into_iter().collect::<Vec<_>>();
             candidates_ranked(window, &mut entries)
         };
+        // Evidence that was never gathered cannot settle a `Present` either.
+        // This withholding precedes conflict classification: an unread column
+        // cannot establish that a selected voucher omitted the supplied value.
+        if let Some(reason) = skipped_evidence {
+            return shell(
+                PresenceStatus::PossiblyPresent(undecided(reason, ranked())),
+                touched,
+            );
+        }
         // Two identity signals that disagree are reported, never ranked — the
         // same rule ADR 0016 applies when an identifier contradicts an exact
         // name. They can disagree two ways: by selecting different vouchers,
@@ -1720,15 +1729,6 @@ fn decide(
                     UndecidedReason::IdentityConflict,
                     ranked(),
                 )),
-                touched,
-            );
-        }
-        // Evidence that was never gathered cannot settle a `Present` either.
-        // The rule that withholds `Absent` applies here with more force,
-        // because `Present` carries the higher bar and its error is silent.
-        if let Some(reason) = skipped_evidence {
-            return shell(
-                PresenceStatus::PossiblyPresent(undecided(reason, ranked())),
                 touched,
             );
         }

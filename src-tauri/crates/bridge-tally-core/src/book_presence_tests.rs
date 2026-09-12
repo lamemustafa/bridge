@@ -1395,24 +1395,68 @@ fn weighted_party_fanout_is_bounded_below_the_pair_product_limit() {
         .map(|i| Box::leak(format!("Party Key {i}").into_boxed_str()) as &'static str)
         .collect::<Vec<_>>();
     let rows = (0..999)
-        .map(|i| BookRow::new(Box::leak(format!("book-{i}").into_boxed_str()), "20260812", "N")
+        .map(|i| {
+            BookRow::new(
+                Box::leak(format!("book-{i}").into_boxed_str()),
+                "20260812",
+                "N",
+            )
             .rows(names.iter().map(|name| [*name, "0.00"]).collect())
-            .party_field(names[0]))
+            .party_field(names[0])
+        })
         .collect::<Vec<_>>();
     let observed = window(&rows);
-    let proposals = (0..500).map(|i| ProposalRow::new(i, "20260812", "P").party("Party").build()).collect::<Vec<_>>();
+    let proposals = (0..500)
+        .map(|i| ProposalRow::new(i, "20260812", "P").party("Party").build())
+        .collect::<Vec<_>>();
     assert!(proposals.len() * observed.vouchers().len() < MAX_PRESENCE_COMPARISONS);
     let catalog = catalog_of(&names);
     let parties = bind_parties(&catalog, &proposals).expect("actual party binding");
-    assert_eq!(parties[0].compare_keys.len(), 25, "fixture must retain every party fanout key");
+    assert_eq!(
+        parties[0].compare_keys.len(),
+        25,
+        "fixture must retain every party fanout key"
+    );
     let index = WindowIndex::build(&observed);
-    let per_proposal = resemblance_work_units(&proposals[..1], &parties[..1], &index).expect("unit cost");
+    let per_proposal =
+        resemblance_work_units(&proposals[..1], &parties[..1], &index).expect("unit cost");
     let admitted_count = MAX_PRESENCE_WORK_UNITS / per_proposal;
     assert!(admitted_count > 0 && admitted_count < proposals.len());
-    assert!(resemblance_work_units(&proposals[..admitted_count], &parties[..admitted_count], &index).expect("admitted count") <= MAX_PRESENCE_WORK_UNITS);
-    assert!(resemblance_work_units(&proposals[..admitted_count + 1], &parties[..admitted_count + 1], &index).expect("refused count") > MAX_PRESENCE_WORK_UNITS);
-    assert!(PresenceRequest::new(&observed, &catalog, &numbering(NumberingMethod::Manual), &proposals[..admitted_count]).is_ok());
-    assert_eq!(PresenceRequest::new(&observed, &catalog, &numbering(NumberingMethod::Manual), &proposals[..admitted_count + 1]).expect_err("real admission refuses"), PresenceError::ComparisonWorkTooLarge);
+    assert!(
+        resemblance_work_units(
+            &proposals[..admitted_count],
+            &parties[..admitted_count],
+            &index
+        )
+        .expect("admitted count")
+            <= MAX_PRESENCE_WORK_UNITS
+    );
+    assert!(
+        resemblance_work_units(
+            &proposals[..admitted_count + 1],
+            &parties[..admitted_count + 1],
+            &index
+        )
+        .expect("refused count")
+            > MAX_PRESENCE_WORK_UNITS
+    );
+    assert!(PresenceRequest::new(
+        &observed,
+        &catalog,
+        &numbering(NumberingMethod::Manual),
+        &proposals[..admitted_count]
+    )
+    .is_ok());
+    assert_eq!(
+        PresenceRequest::new(
+            &observed,
+            &catalog,
+            &numbering(NumberingMethod::Manual),
+            &proposals[..admitted_count + 1]
+        )
+        .expect_err("real admission refuses"),
+        PresenceError::ComparisonWorkTooLarge
+    );
 }
 
 #[test]
@@ -1954,8 +1998,15 @@ fn a_number_match_contradicted_by_a_different_remote_id_does_not_settle() {
 #[test]
 fn a_number_match_without_the_proposed_observed_remote_id_does_not_settle() {
     let window = window(&[BookRow::new("book-1", "20260812", "AA0118")]);
-    let proposals = [ProposalRow::new(0, "20260812", "AA0118").remote_id("previous-id").build()];
-    let report = run(&window, &catalog(), &numbering(NumberingMethod::Manual), &proposals);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .remote_id("previous-id")
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
     let entry = only(&report);
     assert!(entry.present_book_key().is_none());
     assert_eq!(reason(entry), UndecidedReason::IdentityConflict);
