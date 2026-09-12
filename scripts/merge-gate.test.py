@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -476,6 +477,17 @@ class MergeGateControls(unittest.TestCase):
         gh = cls.bin / "gh"
         gh.write_text(FAKE_GH)
         gh.chmod(0o755)
+        jq = cls.bin / "jq"
+        jq.write_text("""#!/usr/bin/env python3
+import os, sys
+if os.environ.get("GATE_SCENARIO") == "context-report-jq-failure" and "--rawfile" in sys.argv and "contexts" in sys.argv:
+    raise SystemExit(1)
+os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]])
+""")
+        jq.chmod(0o755)
+        cls.real_jq = shutil.which("jq")
+        if not cls.real_jq:
+            raise RuntimeError("jq is required for merge-gate controls")
 
     @classmethod
     def tearDownClass(cls):
@@ -485,6 +497,7 @@ class MergeGateControls(unittest.TestCase):
         env = os.environ.copy()
         env["PATH"] = f"{self.bin}:{env['PATH']}"
         env["GATE_SCENARIO"] = scenario
+        env["GATE_REAL_JQ"] = self.real_jq
         counter = self.bin / f"{scenario}-counter-{os.getpid()}"
         counter.write_text("0")
         env["GATE_COUNTER"] = str(counter)
@@ -872,6 +885,13 @@ class MergeGateControls(unittest.TestCase):
 
     def test_checklist_heading_is_not_a_completed_item(self):
         self.assert_blocked("checklist-heading", "review-checklist link")
+
+    def test_context_report_jq_failure_is_indeterminate_without_fabricated_count(self):
+        result = self.run_gate("context-report-jq-failure")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("could not compute bounded required-check diagnostics", result.stdout)
+        self.assertNotIn("1 of 0 required check contexts", result.stdout)
+        self.assertNotIn("all 0 required check contexts passed", result.stdout)
 
     def test_required_context_diagnostics_are_bounded_for_failures(self):
         result = self.run_gate("required-context-output-bound")

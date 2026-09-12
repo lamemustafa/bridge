@@ -248,6 +248,7 @@ else
   else
     printf '%s' "$buckets" >"$tmpdir/check-buckets.json"
     context_report_status=0
+    context_report_valid=false
     context_report=$(jq --rawfile contexts "$tmpdir/required-contexts" '
       . as $buckets | ($contexts | split("\n") | map(select(length > 0))) |
       map(. as $context | [$buckets[] | select(.name == $context)] |
@@ -261,22 +262,21 @@ else
     ' <"$tmpdir/check-buckets.json") || context_report_status=$?
     if [ "$context_report_status" -ne 0 ] || ! jq -e '. as $report | type == "object" and ($report.total | type == "number" and floor == . and . >= 0) and ($report.failed | type == "number" and floor == . and . >= 0 and . <= $report.total) and ($report.examples | type == "array" and length <= 8 and all(.[]; type == "string"))' <<<"$context_report" >/dev/null 2>&1; then
       unknown "could not compute bounded required-check diagnostics"
-      check_bad=1
-      context_count=0
     else
+      context_report_valid=true
       check_bad=$(jq -r '.failed' <<<"$context_report")
       context_count=$(jq -r '.total' <<<"$context_report")
-    fi
-    if [ "$check_bad" -gt 0 ]; then
-      bad "$check_bad of $context_count required check contexts are not passing; up to 8 bounded examples: $(jq -r '.examples | join("; ")' <<<"$context_report")"
-    else
-      say "ok" "all $context_count required check contexts passed"
+      if [ "$check_bad" -gt 0 ]; then
+        bad "$check_bad of $context_count required check contexts are not passing; up to 8 bounded examples: $(jq -r '.examples | join("; ")' <<<"$context_report")"
+      else
+        say "ok" "all $context_count required check contexts passed"
+      fi
     fi
     all_bad=$(jq '[.[] | select(.bucket == "fail" or .bucket == "cancel" or .bucket == "pending")] | length' <<<"$buckets")
     skipped=$(jq '[.[] | select(.bucket == "skipping")] | length' <<<"$buckets")
     [ "$all_bad" -eq 0 ] || bad "$all_bad reported check(s) are failing, cancelled, or pending"
     [ "$skipped" -eq 0 ] || say "note" "$skipped optional check(s) are skipped; required skipped contexts remain blocking"
-    [ "$check_bad" -eq 0 ] && [ "$all_bad" -eq 0 ] && say "ok" "all reported checks concluded successfully"
+    [ "$context_report_valid" = true ] && [ "$check_bad" -eq 0 ] && [ "$all_bad" -eq 0 ] && say "ok" "all reported checks concluded successfully"
   fi
 fi
 
