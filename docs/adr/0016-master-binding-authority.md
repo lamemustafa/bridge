@@ -315,12 +315,25 @@ things to anyone deciding what to do next:
 | --- | --- |
 | `NoCandidate` | no master resembles this name at all |
 | `NoDiscriminatingCandidate` | at least `candidate_count` masters resemble it when the count is a lower bound, and none is separable — **many exist**, none is worth showing |
-| any, with `candidates_truncated` | the list was cut, by the per-entity cap or by the report's aggregate byte budget |
+| any, with an incomplete listing | the list was cut, by the per-entity cap or by the report's aggregate byte budget |
 
 So `candidates.is_empty()` alone answers nothing. The disambiguators are
-`reason`, `candidate_count`, `candidate_count_is_lower_bound` and
-`candidates_truncated`, and a consumer that
-reads the empty vector as "nothing exists" is wrong in two cases out of three.
+`reason`, `candidate_count`, `candidate_count_is_lower_bound` and the listing
+state, and a consumer that reads the empty vector as "nothing exists" is wrong
+in two cases out of three.
+
+**The listing state is named differently at each boundary, and a consumer must
+use the one its own boundary carries.** The core's `Candidates` is a tagged
+enum — `none`, `listed`, `truncated`, `withheld` — reachable in Rust through
+`Candidates::listing()` and on the agent surface as the `listing` field. The
+**desktop** DTO flattens it to `candidate_listing`, carrying the same four
+words. `candidates_truncated` is **not** the desktop discriminator: the field
+of that name on `SourceDraftCatalogBinding` was removed, because as a boolean
+it was `is_incomplete()` and so could not separate a withheld family from an
+exhausted budget — the distinction the two rows above turn on. The agent
+surface keeps a field of that name, but it means something narrower there: that
+*its own* 8 KiB rendering cap cut the list, which is why it can be true beside
+an exact count.
 
 This is stated here, in the producer's contract, rather than left to each
 consumer to rediscover, because **it has already been got wrong twice by

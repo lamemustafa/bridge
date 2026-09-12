@@ -315,11 +315,21 @@ pub enum Candidates {
     Truncated {
         listed: Vec<Candidate>,
         found: usize,
+        /// Whether `found` is a floor rather than a total. See
+        /// [`Candidates::count_is_lower_bound`].
+        #[serde(default)]
+        count_is_lower_bound: bool,
     },
     /// A family this name reaches and separates none of: counted, and
     /// deliberately not listed, because an arbitrary slice of it put the right
     /// master out of view about a third of the time against live books.
-    Withheld { found: usize },
+    Withheld {
+        found: usize,
+        /// Whether `found` is a floor rather than a total. See
+        /// [`Candidates::count_is_lower_bound`].
+        #[serde(default)]
+        count_is_lower_bound: bool,
+    },
 }
 
 impl Candidates {
@@ -356,18 +366,38 @@ impl Candidates {
         match self {
             Self::None => 0,
             Self::Listed { listed } => listed.len(),
-            Self::Truncated { found, .. } | Self::Withheld { found } => *found,
+            Self::Truncated { found, .. } | Self::Withheld { found, .. } => *found,
         }
     }
 
-    /// Whether `found()` is conservative because the report withheld or
-    /// truncated part of the evidence. Large identifier families are not
-    /// expanded, so overlapping families cannot be distinguished from one
-    /// another without materializing them. Keeping this fact beside the count
-    /// prevents a projection from turning a sound lower bound into a false
-    /// exact total.
+    /// Whether `found()` is a floor rather than a total.
+    ///
+    /// **Count precision and listing completeness are different questions**, and
+    /// deriving this from `is_incomplete()` conflated them. A prefix family of a
+    /// hundred masters is counted *exactly* — `collect_candidates` unions it
+    /// with the listed candidates before deciding not to show it — and every
+    /// consumer was told "at least 100" about a number that was 100. Under-
+    /// claiming is the safe direction, but it is still a wrong statement about
+    /// the book, and it trains an operator to discount a hedge that elsewhere
+    /// means something.
+    ///
+    /// The count is a floor in exactly one situation: an **identifier** family
+    /// was too large to expand. Those are not unioned with anything, so the
+    /// reported count is the larger of two possibly-overlapping sets rather
+    /// than their union — see issue #325. Every other path computes a true
+    /// union before it decides what to show.
     pub fn count_is_lower_bound(&self) -> bool {
-        self.is_incomplete()
+        match self {
+            Self::None | Self::Listed { .. } => false,
+            Self::Truncated {
+                count_is_lower_bound,
+                ..
+            }
+            | Self::Withheld {
+                count_is_lower_bound,
+                ..
+            } => *count_is_lower_bound,
+        }
     }
 
     /// Whether masters exist that are not in `listed()`. The predicate a
@@ -971,7 +1001,14 @@ pub fn bind(
 /// candidate list it holds — a draft of 40,000 *distinct* names would trade the
 /// stall for the memory the aggregate bounds elsewhere exist to prevent. The
 /// repeated-name case, which is the one that stalls, needs very few entries.
-type CandidateMemoKey = (String, BTreeSet<usize>);
+/// Both folds, not just the wide one. `collect_candidates` reads
+/// `entity.binding_key` as well as `entity.key` — it offers the resolving
+/// fold's holders as candidates, so that the masters which *caused* a name
+/// ambiguity are the ones listed — and a key that named only the wide fold
+/// served one spelling's candidates to another. `AB-CD` and `AB\u{2013}CD` share a
+/// wide key, because `comparison_key` maps every dash variant to `-`, and
+/// differ under the resolving fold, because only ASCII `-` and `/` fold there.
+type CandidateMemoKey = (String, String, BTreeSet<usize>);
 type CandidateMemo = BTreeMap<CandidateMemoKey, (Vec<(usize, CandidateRule)>, usize)>;
 
 /// One run's search scratch: what has already been computed, and which source
@@ -1236,6 +1273,7 @@ fn bind_one(
                     reason,
                     candidates,
                     masters_found.max(withheld_holders),
+                    withheld_holders > 0,
                     budget,
                 )
             }
@@ -1279,6 +1317,7 @@ fn unresolved_status(
         reason,
         candidates,
         masters_found.max(withheld_holders),
+        withheld_holders > 0,
         budget,
     )
 }
@@ -1289,6 +1328,10 @@ fn unresolved_from(
     reason: UnboundReason,
     candidates: Vec<(usize, CandidateRule)>,
     masters_found: usize,
+    // True when `masters_found` came from a skipped identifier family, which is
+    // the one case the count cannot be a true union. See
+    // `Candidates::count_is_lower_bound`.
+    count_is_lower_bound: bool,
     budget: &mut usize,
 ) -> BindingStatus {
     let mut ordered = candidates;
@@ -1299,6 +1342,7 @@ fn unresolved_from(
         if masters_found > 0 {
             Candidates::Withheld {
                 found: masters_found,
+                count_is_lower_bound,
             }
         } else {
             Candidates::None
@@ -1319,7 +1363,11 @@ fn unresolved_from(
             .collect::<Vec<_>>();
         let found = masters_found.max(capped);
         if listed.len() < found {
-            Candidates::Truncated { listed, found }
+            Candidates::Truncated {
+                listed,
+                found,
+                count_is_lower_bound,
+            }
         } else {
             Candidates::Listed { listed }
         }
@@ -1349,11 +1397,15 @@ fn remembered_candidates(
     identifier_matches: &BTreeSet<usize>,
     memo: &mut SearchMemo,
 ) -> (Vec<(usize, CandidateRule)>, usize) {
-    let key = (entity.key.clone(), identifier_matches.clone());
+    let key = (
+        entity.key.clone(),
+        entity.binding_key.clone(),
+        identifier_matches.clone(),
+    );
     if let Some(remembered) = memo.seen.get(&key) {
         return remembered.clone();
     }
-    let fingerprint = candidate_memo_fingerprint(&key.0, &key.1);
+    let fingerprint = candidate_memo_fingerprint(&key.0, &key.1, &key.2);
     let computed = collect_candidates(catalog, entity, identifier_matches);
     // Entry *count* alone does not bound a memo whose keys and values are
     // themselves collections, so the key is still size-tested. The **value** is
@@ -1400,12 +1452,20 @@ fn candidate_memo_fingerprint_for_entity(catalog: &MasterCatalog, entity: &Sourc
             }
         }
     }
-    candidate_memo_fingerprint(&entity.key, &identifier_matches)
+    candidate_memo_fingerprint(&entity.key, &entity.binding_key, &identifier_matches)
 }
 
-fn candidate_memo_fingerprint(key: &str, identifier_matches: &BTreeSet<usize>) -> u64 {
+/// Must hash exactly what `CandidateMemoKey` holds. A fingerprint over less than
+/// the key counts two entities as repeating when they do not, and admits to the
+/// memo a result the second one must not be served.
+fn candidate_memo_fingerprint(
+    key: &str,
+    binding_key: &str,
+    identifier_matches: &BTreeSet<usize>,
+) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     key.hash(&mut hasher);
+    binding_key.hash(&mut hasher);
     identifier_matches.hash(&mut hasher);
     hasher.finish()
 }

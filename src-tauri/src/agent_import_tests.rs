@@ -1532,7 +1532,14 @@ fn master_match_bounds_suggestions_before_copying_names_and_preserves_ambiguity(
         "master_binding_no_discriminating_candidate"
     );
     assert_eq!(matched["candidate_count"], 100);
-    assert_eq!(matched["candidate_count_is_lower_bound"], true);
+    // Exactly 100, and said so. A **prefix** family is unioned with the listed
+    // candidates before the decision not to show it, so the count is a true
+    // union — only a skipped *identifier* family makes it a floor. This
+    // asserted `true` while the flag was derived from `is_incomplete()`, which
+    // told every consumer "at least 100" about a number that was 100.
+    assert_eq!(matched["candidate_count_is_lower_bound"], false);
+    // The listing is still incomplete, which is a different question and keeps
+    // its own field.
     assert_eq!(matched["candidates_truncated"], true);
     assert!(matched["candidates"].as_array().unwrap().is_empty());
     // A family inside the bound is still listed in full.

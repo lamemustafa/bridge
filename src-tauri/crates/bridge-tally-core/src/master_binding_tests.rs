@@ -1586,7 +1586,11 @@ fn the_listing_variant_says_what_an_absent_candidate_means() {
             .expect("unbound")
             .candidates,
         Candidates::Withheld {
-            found: MAX_PREFIX_FAMILY + 5
+            found: MAX_PREFIX_FAMILY + 5,
+            // A prefix family is unioned with the listed candidates before it
+            // is withheld, so its count is exact — the listing is incomplete
+            // and the number is not a floor. Those are different questions.
+            count_is_lower_bound: false,
         },
         "many exist and none separates them"
     );
@@ -1604,23 +1608,53 @@ fn only_an_incomplete_listing_may_withhold_an_absence() {
     // present". `None` permits that conclusion; the other two forbid it.
     assert!(!Candidates::None.is_incomplete());
     assert!(!Candidates::Listed { listed: Vec::new() }.is_incomplete());
-    assert!(Candidates::Withheld { found: 30 }.is_incomplete());
+    assert!(Candidates::Withheld {
+        found: 30,
+        count_is_lower_bound: true
+    }
+    .is_incomplete());
     assert!(Candidates::Truncated {
         listed: Vec::new(),
-        found: 9
+        found: 9,
+        count_is_lower_bound: false,
     }
     .is_incomplete());
     assert!(!Candidates::None.count_is_lower_bound());
     assert!(!Candidates::Listed { listed: Vec::new() }.count_is_lower_bound());
-    assert!(Candidates::Withheld { found: 30 }.count_is_lower_bound());
+    assert!(Candidates::Withheld {
+        found: 30,
+        count_is_lower_bound: true
+    }
+    .count_is_lower_bound());
+    // Incomplete and inexact are now independent: a truncated listing whose
+    // count is a true union reports `false` here, which is the whole point.
+    assert!(!Candidates::Truncated {
+        listed: Vec::new(),
+        found: 9,
+        count_is_lower_bound: false,
+    }
+    .count_is_lower_bound());
     assert!(Candidates::Truncated {
         listed: Vec::new(),
-        found: 9
+        found: 9,
+        count_is_lower_bound: true,
     }
     .count_is_lower_bound());
     // `found` is the total, never the listed length, wherever it is known.
-    assert_eq!(Candidates::Withheld { found: 30 }.found(), 30);
-    assert!(Candidates::Withheld { found: 30 }.listed().is_empty());
+    assert_eq!(
+        Candidates::Withheld {
+            found: 30,
+            count_is_lower_bound: true
+        }
+        .found(),
+        30
+    );
+    assert!(Candidates::Withheld {
+        found: 30,
+        count_is_lower_bound: true
+    }
+    .listed()
+    .is_empty());
 }
 
 // --- candidate discipline --------------------------------------------------
@@ -2698,8 +2732,12 @@ fn the_listing_word_is_the_one_the_wire_carries() {
         Candidates::Truncated {
             listed: vec![candidate],
             found: 9,
+            count_is_lower_bound: true,
         },
-        Candidates::Withheld { found: 9 },
+        Candidates::Withheld {
+            found: 9,
+            count_is_lower_bound: true,
+        },
     ] {
         let json = serde_json::to_value(&candidates).expect("candidates serialize");
         assert_eq!(
@@ -2708,4 +2746,96 @@ fn the_listing_word_is_the_one_the_wire_carries() {
             "the accessor and the wire tag disagree about {candidates:?}"
         );
     }
+}
+
+#[test]
+fn two_spellings_sharing_a_wide_key_do_not_share_a_memo_entry() {
+    // `collect_candidates` reads BOTH folds: the wide key for prefix and token
+    // rules, and the resolving key so that the masters which *caused* a name
+    // ambiguity are the ones listed. The memo key named only the wide fold, so
+    // two spellings that agree there and differ under the resolving fold shared
+    // an entry, and the second was served candidates justified by the first.
+    //
+    // `AB-CD` and `AB\u{2013}CD` are exactly that pair. `comparison_key` maps every
+    // dash variant to `-`, so the wide keys agree; `verified_fold` folds only
+    // ASCII `-` and `/`, so the resolving keys do not — which is §9.4d's
+    // measurement that an en dash is not a separator, reaching the memo.
+    let catalog = ledgers(&["AB CD", "AB\u{2013}CD", "Beta Supply"]);
+
+    // The ASCII spelling resolves onto `AB CD`: hyphen and space are one
+    // separator, so this is a normalized bind.
+    let ascii = bind_one_name(&catalog, "ab-cd");
+    assert_eq!(ascii.bound_name(), Some("AB CD"));
+
+    // The en-dash spelling must reach its own master, not the other's result.
+    let dashed = bind_one_name(&catalog, "ab\u{2013}cd");
+    assert_eq!(
+        dashed.bound_name(),
+        Some("AB\u{2013}CD"),
+        "the en-dash spelling was served the ASCII spelling's binding"
+    );
+
+    // And in one report, where the memo is actually consulted: the same two
+    // spellings twice each, so both keys repeat and both are cacheable.
+    let entities = ["ab-cd", "ab\u{2013}cd", "ab-cd", "ab\u{2013}cd"]
+        .iter()
+        .enumerate()
+        .map(|(position, name)| SourceEntity::new(position, name).expect("valid"))
+        .collect::<Vec<_>>();
+    let report = bound(&catalog, &entities);
+    let bound_names = report
+        .entities()
+        .iter()
+        .map(EntityBinding::bound_name)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        bound_names,
+        [
+            Some("AB CD"),
+            Some("AB\u{2013}CD"),
+            Some("AB CD"),
+            Some("AB\u{2013}CD")
+        ],
+        "a cached result crossed between two spellings of one wide key"
+    );
+}
+
+#[test]
+fn an_exactly_counted_family_is_not_reported_as_a_floor() {
+    // Count precision and listing completeness are different questions, and
+    // deriving the first from the second told every consumer "at least 100"
+    // about a number that was 100. Under-claiming is the safe direction and it
+    // is still a wrong statement about the book — and it trains an operator to
+    // discount a hedge that elsewhere means something.
+    //
+    // A **prefix** family is unioned with the listed candidates in
+    // `collect_candidates` before the decision not to show it, so its count is
+    // a true union. An **identifier** family is not expanded at all, so the
+    // count is the larger of two possibly-overlapping sets. One is exact and
+    // withheld; the other is withheld and a floor.
+    let prefix = (0..MAX_PREFIX_FAMILY + 5)
+        .map(|index| format!("ALPHAGROUP {index:03}"))
+        .collect::<Vec<_>>();
+    let prefix_catalog = MasterCatalog::new(MasterClass::Ledger, &prefix).expect("valid");
+    let withheld_exactly = bind_one_name(&prefix_catalog, "ALPHAGROUP");
+    let candidates = &withheld_exactly.unresolved().expect("unbound").candidates;
+    assert_eq!(candidates.listing(), "withheld");
+    assert_eq!(candidates.found(), MAX_PREFIX_FAMILY + 5);
+    assert!(
+        !candidates.count_is_lower_bound(),
+        "a prefix family is counted as a union, so its count is not a floor"
+    );
+
+    // The identifier family, by contrast, is a floor.
+    let shared = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Shared Party {index:03} (5550007777)"))
+        .collect::<Vec<_>>();
+    let shared_catalog = MasterCatalog::new(MasterClass::Ledger, &shared).expect("valid");
+    let withheld_loosely = bind_one_name(&shared_catalog, "Zeta Holdings 5550007777");
+    let candidates = &withheld_loosely.unresolved().expect("unbound").candidates;
+    assert!(candidates.is_incomplete());
+    assert!(
+        candidates.count_is_lower_bound(),
+        "a skipped identifier family is the one case the count cannot be a union"
+    );
 }
