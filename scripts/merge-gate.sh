@@ -860,7 +860,7 @@ migration_change=false
 if [ "$files_status" -eq 0 ]; then
   implementation_code_added=$(jq -r '
     (if all(.[]; type == "array") then flatten else . end) |
-    any(.[]; (.additions > 0) and (.filename | test("\\.(rs|ts|tsx|js|mjs|py|go|java|kt|swift|c|cc|cpp|h|hpp|sh|bash)$")))
+    any(.[]; (.additions > 0) and (.filename | test("\\.(rs|ts|tsx|js|mjs|py|go|java|kt|swift|c|cc|cpp|h|hpp|sh|bash|ps1|psm1|sql)$")))
   ' <<<"$files")
   platform_sensitive_change=$(jq -r '
     (if all(.[]; type == "array") then flatten else . end) |

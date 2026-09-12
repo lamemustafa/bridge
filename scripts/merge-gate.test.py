@@ -220,7 +220,7 @@ if args[:2] == ["pr", "view"]:
     body = body.replace("blob/HEAD", f"blob/{head}")
     if scenario == "checklist-stale-ref":
         body = body.replace(f"blob/{head}", "blob/" + "f" * 40)
-    one_file = scenario in {"metadata-private", "files-empty", "formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-two-lines", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "workflow-placeholders", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-none", "security-pending", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "home-macos", "home-unix", "home-windows", "crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path", "gitlink", "implementation-p4-missing", "implementation-p4-present", "implementation-p4-shell", "p4-placeholders", "platform-evidence-missing", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"} or scenario.startswith("home-") or security_case or sync_case
+    one_file = scenario in {"metadata-private", "files-empty", "formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-two-lines", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "workflow-placeholders", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-none", "security-pending", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "home-macos", "home-unix", "home-windows", "crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path", "gitlink", "implementation-p4-missing", "implementation-p4-present", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders", "platform-evidence-missing", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"} or scenario.startswith("home-") or security_case or sync_case
     selected_base = new_head if scenario == "base-oid-mismatch" else base
     emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
@@ -327,8 +327,8 @@ elif args[:2] == ["pr", "diff"]:
         emit("diff --git a/docs/a b/example.md b/docs/a b/example.md\nsimilarity index 100%\nrename from docs/a b/example.md\nrename to docs/a b/example.md\n")
     elif scenario == "gitlink":
         emit("diff --git a/vendor/module b/vendor/module\nnew file mode 160000\nindex 0000000..2222222\n--- /dev/null\n+++ b/vendor/module\n@@ -0,0 +1 @@\n+Subproject commit 2222222\n")
-    elif scenario in {"implementation-p4-missing", "implementation-p4-present", "implementation-p4-shell", "p4-placeholders"}:
-        suffix = "sh" if scenario == "implementation-p4-shell" else "py"
+    elif scenario in {"implementation-p4-missing", "implementation-p4-present", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders"}:
+        suffix = {"implementation-p4-shell": "sh", "implementation-p4-powershell": "ps1", "implementation-p4-sql": "sql"}.get(scenario, "py")
         emit(f"diff --git a/scripts/example.{suffix} b/scripts/example.{suffix}\n--- a/scripts/example.{suffix}\n+++ b/scripts/example.{suffix}\n@@ -0,0 +1 @@\n+safe text\n")
     elif scenario in {"platform-evidence-missing", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale"}:
         emit("diff --git a/src-tauri/src/local_files/paths.rs b/src-tauri/src/local_files/paths.rs\n--- a/src-tauri/src/local_files/paths.rs\n+++ b/src-tauri/src/local_files/paths.rs\n@@ -0,0 +1 @@\n+safe text\n")
@@ -542,8 +542,8 @@ elif args and args[0] == "api":
             emit([[record]])
         elif scenario == "gitlink":
             emit([[{"filename": "vendor/module", "status": "modified", "additions": 1, "deletions": 1}]])
-        elif scenario in {"implementation-p4-missing", "implementation-p4-present", "implementation-p4-shell", "p4-placeholders"}:
-            suffix = "sh" if scenario == "implementation-p4-shell" else "py"
+        elif scenario in {"implementation-p4-missing", "implementation-p4-present", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders"}:
+            suffix = {"implementation-p4-shell": "sh", "implementation-p4-powershell": "ps1", "implementation-p4-sql": "sql"}.get(scenario, "py")
             emit([[{"filename": f"scripts/example.{suffix}", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario in {"platform-evidence-missing", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale"}:
             emit([[{"filename": "src-tauri/src/local_files/paths.rs", "status": "modified", "additions": 1, "deletions": 0}]])
@@ -1084,6 +1084,8 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
     def test_implementation_additions_need_all_three_p4_answers(self):
         self.assert_blocked("implementation-p4-missing", "all three substantive P4")
         self.assert_blocked("implementation-p4-shell", "all three substantive P4")
+        self.assert_blocked("implementation-p4-powershell", "all three substantive P4")
+        self.assert_blocked("implementation-p4-sql", "all three substantive P4")
         self.assert_blocked("p4-placeholders", "all three substantive P4")
         result = self.run_gate("implementation-p4-present")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
