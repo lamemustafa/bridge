@@ -1710,21 +1710,29 @@ fn master_match_json(binding: &EntityBinding) -> Value {
     }
 }
 
-fn master_recovery_guidance(report: &[Value]) -> &'static str {
-    if report.iter().any(|master| {
-        master["reason"]
-            .as_str()
-            .is_some_and(|reason| reason.contains("identifier"))
-    }) {
-        "For identifier conflicts, correct the source identity or explicitly select against the complete observed catalogue; use the exact_live_spelling from a fresh validate_masters result before building again. Do not copy a candidate automatically. No file was written."
-    } else if report
+fn master_recovery_guidance(report: &[Value]) -> String {
+    let mut guidance = Vec::new();
+    if report
+        .iter()
+        .any(|master| master["match_state"] == "identifier")
+    {
+        guidance
+            .push("For identifier-bound entries, copy exact_live_spelling from this fresh result.");
+    }
+    if report
         .iter()
         .any(|master| master["match_state"] == "missing")
     {
-        "For missing ledgers, correct the source spelling or have an operator create the legitimate missing ledger externally, then run validate_masters again before building. Do not create or choose a ledger automatically. No file was written."
-    } else {
-        "For near-misses, have an operator select the intended ledger and use its exact live spelling, then run validate_masters again before building. Do not copy a candidate automatically. No file was written."
+        guidance.push("For missing ledgers, correct the source spelling or have an operator create the legitimate ledger externally, then run validate_masters again.");
     }
+    if report
+        .iter()
+        .any(|master| master["match_state"] == "near_miss")
+    {
+        guidance.push("For near-misses, have an operator explicitly select the intended ledger and run validate_masters again; do not copy a candidate automatically.");
+    }
+    guidance.push("No file was written.");
+    guidance.join(" ")
 }
 
 fn render_import_xml(company: &str, vouchers: &[ImportVoucher], batch_id: &str) -> String {

@@ -1617,15 +1617,17 @@ fn nothing_defensible_is_reported_missing_with_no_candidate() {
 
 #[test]
 fn import_recovery_guidance_names_the_state_and_next_safe_read() {
-    let identifier =
-        serde_json::json!({"reason":"master_binding_identifier_conflict", "match_state":"near_miss"});
-    assert!(master_recovery_guidance(&[identifier]).contains("exact_live_spelling"));
-    let missing =
-        serde_json::json!({"reason":"master_binding_no_candidate", "match_state":"missing"});
-    assert!(master_recovery_guidance(&[missing]).contains("legitimate missing ledger"));
-    let near_miss =
-        serde_json::json!({"reason":"master_binding_near_miss", "match_state":"near_miss"});
-    assert!(master_recovery_guidance(&[near_miss]).contains("exact live spelling"));
+    let identifier = one_master_match("GAMMA 5550000001", &["GAMMA (5550000001)"]);
+    assert_eq!(identifier["match_state"], "identifier");
+    assert!(identifier.get("reason").is_none());
+    let guidance = master_recovery_guidance(&[
+        identifier,
+        serde_json::json!({"match_state":"missing"}),
+        serde_json::json!({"match_state":"near_miss"}),
+    ]);
+    assert!(guidance.contains("exact_live_spelling"));
+    assert!(guidance.contains("legitimate ledger externally"));
+    assert!(guidance.contains("explicitly select"));
 }
 
 #[tokio::test]
@@ -2186,4 +2188,30 @@ async fn current_dispatch_persists_its_reconciliation_verdict_before_returning_t
         simulator.finish().expect("captured plan requests").len(),
         50
     );
+}
+
+#[test]
+fn master_match_byte_cap_retains_narrow_fold_candidate() {
+    let suffix = "α".repeat(880);
+    let source = format!("αβγδεζ/{suffix}");
+    let narrow = format!("αβγδεζ {suffix}");
+    let upper = ['Α', 'Β', 'Γ', 'Δ', 'Ε', 'Ζ'];
+    let lower = ['α', 'β', 'γ', 'δ', 'ε', 'ζ'];
+    let mut names = vec![narrow.clone()];
+    for mask in 1..=10 {
+        let prefix = upper
+            .iter()
+            .zip(lower)
+            .enumerate()
+            .map(|(bit, (u, l))| if mask & (1 << bit) == 0 { *u } else { l })
+            .collect::<String>();
+        names.push(format!("{prefix}/{suffix}"));
+    }
+    assert!(names.iter().map(String::len).sum::<usize>() > 8192);
+    let borrowed = names.iter().map(String::as_str).collect::<Vec<_>>();
+    let rendered = one_master_match(&source, &borrowed);
+    let listed = rendered["candidates"].as_array().unwrap();
+    assert_eq!(listed[0]["name"][super::super::PARTY_NAME_MARKER], narrow);
+    assert!(listed.iter().all(|v| v["rule"] == "normalized_equal"));
+    assert_eq!(rendered["candidates_truncated"], true);
 }

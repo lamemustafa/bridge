@@ -90,34 +90,22 @@ fn the_measured_transformations_compose() {
     // does on every comparison. Two reviewers raised that independently, so
     // §9.4d measured it rather than arguing it: eight composed variants, all
     // matched, all confirmed by day-book readback against the intended master.
-    let catalog = ledgers(&[
-        "MB PILOT ALPHA",
-        "MB-PROBE-LEDGER-A",
-        "Beta Supply",
-    ]);
+    let catalog = ledgers(&["MB PILOT ALPHA", "MB-PROBE-LEDGER-A", "Beta Supply"]);
     for (supplied, expected) in [
-        (
-            "  mb pilot alpha  ",
-            "MB PILOT ALPHA",
-        ),
+        ("  mb pilot alpha  ", "MB PILOT ALPHA"),
         ("mb-pilot-alpha", "MB PILOT ALPHA"),
-        (
-            "  mb-pilot-alpha  ",
-            "MB PILOT ALPHA",
-        ),
-        (
-            "MB/PILOT  ALPHA",
-            "MB PILOT ALPHA",
-        ),
+        ("  mb-pilot-alpha  ", "MB PILOT ALPHA"),
+        ("MB/PILOT  ALPHA", "MB PILOT ALPHA"),
         ("mb-pilot alpha", "MB PILOT ALPHA"),
-        (
-            "  mb-pilot/alpha  ",
-            "MB PILOT ALPHA",
-        ),
+        ("  mb-pilot/alpha  ", "MB PILOT ALPHA"),
         ("  mb probe  ledger a ", "MB-PROBE-LEDGER-A"),
     ] {
         let binding = bind_one_name(&catalog, supplied);
-        assert_eq!(binding.bound_name(), None, "{supplied:?} selected {expected:?}");
+        assert_eq!(
+            binding.bound_name(),
+            None,
+            "{supplied:?} selected {expected:?}"
+        );
         assert!(
             candidate_names(&binding).contains(&expected),
             "{supplied:?} did not offer {expected:?}"
@@ -407,19 +395,33 @@ fn a_narrow_fold_candidate_survives_a_wide_fold_cap() {
             .iter()
             .zip(lower)
             .enumerate()
-            .map(|(bit, (upper, lower))| if mask & (1 << bit) == 0 { *upper } else { lower })
+            .map(|(bit, (upper, lower))| {
+                if mask & (1 << bit) == 0 {
+                    *upper
+                } else {
+                    lower
+                }
+            })
             .collect::<String>();
-        names.push(format!("{}{}", &spelling[..spelling.len() - 'Ζ'.len_utf8()], "/ζ"));
+        names.push(format!(
+            "{}{}",
+            &spelling[..spelling.len() - 'Ζ'.len_utf8()],
+            "/ζ"
+        ));
     }
     names.extend([
         "Identifier Alpha (5550001234)".to_string(),
         "Identifier Beta (5550001234)".to_string(),
     ]);
     let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid catalog");
-    let source = SourceEntity::with_identifier_hints(0, "ΑΒΓΔΕ/Ζ", ["5550001234"])
-        .expect("valid source");
+    let source =
+        SourceEntity::with_identifier_hints(0, "ΑΒΓΔΕ/Ζ", ["5550001234"]).expect("valid source");
     let binding = bound(&catalog, &[source]).entities()[0].clone();
-    let candidates = binding.unresolved().expect("candidate-only fold").candidates.listed();
+    let candidates = binding
+        .unresolved()
+        .expect("candidate-only fold")
+        .candidates
+        .listed();
     assert_eq!(candidates.len(), MAX_CANDIDATES_PER_ENTITY);
     assert_eq!(candidates[0].catalog_name, "Identifier Alpha (5550001234)");
     assert_eq!(candidates[1].catalog_name, "Identifier Beta (5550001234)");
@@ -978,7 +980,10 @@ fn repeating_one_source_name_does_not_repeat_the_search_or_change_the_answer() {
         None,
         "a folded hit must remain a candidate"
     );
-    assert_eq!(candidate_names(&report.entities()[1]), ["Acme Branch 00007"]);
+    assert_eq!(
+        candidate_names(&report.entities()[1]),
+        ["Acme Branch 00007"]
+    );
 
     // Same source *name*, different identifier hints. The key is identical, so
     // a memo keyed on the key alone would hand the second entity the first
@@ -1939,41 +1944,6 @@ fn candidate_order_is_rule_then_name_and_never_a_ranking() {
 }
 
 #[test]
-fn bounded_listing_keeps_narrow_evidence_before_long_same_rule_names() {
-    let narrow = "A/B";
-    // The wider candidate sorts first lexicographically (`-` precedes `/`),
-    // so the old downstream name sort hid the narrow holder.
-    let long = "A-".to_string() + &"x".repeat(1020);
-    let catalog = ledgers(&[narrow, &long]);
-    let source = entity("A");
-    let mut budget = 8_192;
-    let status = super::unresolved_from(
-        &catalog,
-        &source,
-        UnboundReason::NearMiss,
-        vec![
-            (0, CandidateRule::NormalizedEqual),
-            (1, CandidateRule::NormalizedEqual),
-        ],
-        2,
-        super::CountEvidence {
-            largest_withheld: None,
-            withheld_count_is_lower_bound: false,
-        },
-        &mut budget,
-    );
-    let listed = match &status {
-        BindingStatus::Ambiguous(unresolved) => unresolved.candidates.listed(),
-        _ => panic!("near miss must remain unresolved"),
-    };
-    assert_eq!(
-        listed.first().expect("narrow candidate").catalog_name,
-        narrow
-    );
-    assert_eq!(listed.len(), 2);
-}
-
-#[test]
 fn the_report_does_not_depend_on_the_order_the_book_returned() {
     let forward = ledgers(&["ALPHA SALE", "ALPHA SALES", "SALES - ALPHA", "Beta Supply"]);
     let reversed = ledgers(&["Beta Supply", "SALES - ALPHA", "ALPHA SALES", "ALPHA SALE"]);
@@ -2284,7 +2254,11 @@ fn fabricated_document() -> Vec<(&'static str, Option<&'static str>, Expected)> 
         ("Cash", None, Expected::Bound("Cash")),
         ("CGST OUTPUT 9%", None, Expected::Bound("CGST OUTPUT 9%")),
         // Folded spelling is shown for review; it is not a selected master.
-        ("cgst output 9%", None, Expected::Unbound(UnboundReason::NearMiss)),
+        (
+            "cgst output 9%",
+            None,
+            Expected::Unbound(UnboundReason::NearMiss),
+        ),
         (
             "  cgst   output 9%  ",
             None,
