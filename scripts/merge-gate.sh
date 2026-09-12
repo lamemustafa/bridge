@@ -13,6 +13,7 @@ set -uo pipefail
 
 PR=""
 REPO=""
+INDEPENDENT_REVIEW_SHA=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo)
@@ -23,6 +24,16 @@ while [ $# -gt 0 ]; do
     --repo=*)
       REPO="${1#--repo=}"
       [ -n "$REPO" ] || { echo "--repo= needs OWNER/NAME" >&2; exit 2; }
+      shift
+      ;;
+    --independent-review-sha)
+      INDEPENDENT_REVIEW_SHA="${2:-}"
+      [ -n "$INDEPENDENT_REVIEW_SHA" ] || { echo "--independent-review-sha needs a full commit SHA" >&2; exit 2; }
+      shift 2
+      ;;
+    --independent-review-sha=*)
+      INDEPENDENT_REVIEW_SHA="${1#*=}"
+      [ -n "$INDEPENDENT_REVIEW_SHA" ] || { echo "--independent-review-sha= needs a full commit SHA" >&2; exit 2; }
       shift
       ;;
     -h|--help)
@@ -45,6 +56,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$PR" ] || { echo "usage: $0 <pr-number> [--repo OWNER/NAME]" >&2; exit 2; }
+[[ "$PR" =~ ^[0-9]+$ ]] || { echo "PR selector must be numeric" >&2; exit 2; }
 
 # Resolve the repository once. An explicit target must never fall back to the
 # current checkout if one later API call fails.
@@ -56,7 +68,9 @@ if [ -z "$REPO" ]; then
 fi
 OWNER="${REPO%%/*}"
 NAME="${REPO##*/}"
-if [ -z "$OWNER" ] || [ -z "$NAME" ] || [ "$OWNER" = "$REPO" ] || [[ "$REPO" == */*/* ]]; then
+if [ -z "$OWNER" ] || [ -z "$NAME" ] || [ "$OWNER" = "$REPO" ] || [[ "$REPO" == */*/* ]] \
+  || ! [[ "$OWNER" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
+  || ! [[ "$NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
   echo "--repo must be OWNER/NAME, got '$REPO'" >&2
   exit 2
 fi
@@ -101,6 +115,12 @@ pstate=$(jq -r '.state' <<<"$meta")
 changed_files_expected=$(jq -r '.changedFiles' <<<"$meta")
 short=${head:0:7}
 prbody=$(jq -r '.body // ""' <<<"$meta")
+
+if [ -n "$INDEPENDENT_REVIEW_SHA" ] && ! [[ "$INDEPENDENT_REVIEW_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+  bad "independent review attestation must be a full 40-hex commit SHA"
+elif [ -n "$INDEPENDENT_REVIEW_SHA" ] && [ "$INDEPENDENT_REVIEW_SHA" != "$head" ]; then
+  bad "independent review attestation names a different commit than the PR head"
+fi
 
 echo "PR #$PR ($REPO)  head=$short  base=$base  $mergeable/$mstate"
 [ "$pstate" = "OPEN" ] || bad "PR is $pstate, not OPEN"
@@ -272,11 +292,14 @@ else
 fi
 
 # Provider review objects carry an immutable full commit_id even when the
-# human-readable summary is abbreviated. No author-controlled commit timestamp
-# is used. A clean summary without a full provider OID is indeterminate and
-# points the operator to independent exact-head acceptance.
+# human-readable summary is abbreviated. The summary is required as a separate
+# completed-run receipt: an exact-head COMMENTED object can remain after a run
+# later fails. A clean summary without a full provider OID has an explicit
+# operator-attestation path, but a seven-character row never becomes a full-SHA
+# claim by inference.
 : >"$errfile"
 review_status=0
+provider_review=""
 reviews=$(gh api --paginate --slurp "repos/$REPO/pulls/$PR/reviews" 2>"$errfile") || review_status=$?
 if [ "$review_status" -ne 0 ]; then
   unknown "could not read provider review records"
@@ -289,37 +312,44 @@ else
                .state == "COMMENTED" and .commit_id == $head)) |
     if length > 0 then "matched" else "" end
   ' <<<"$reviews")
-  if [ "$provider_review" = "matched" ]; then
-    say "ok" "provider review records the full current head $short"
+fi
+
+: >"$errfile"
+comment_status=0
+comments=$(gh api --paginate --slurp "repos/$REPO/issues/$PR/comments" 2>"$errfile") || comment_status=$?
+summary_good=0
+if [ "$comment_status" -ne 0 ]; then
+  unknown "could not read provider review summaries"
+elif ! jq -e 'type == "array" and (all(.[]; type == "array") or all(.[]; type == "object"))' <<<"$comments" >/dev/null 2>&1; then
+  unknown "provider review-summary response was malformed"
+else
+  summary_rows=$(jq -r '
+    (if all(.[]; type == "array") then flatten else . end)[] |
+    select(.user.login == "chatgpt-codex-connector[bot]" and .user.type == "Bot") |
+    select((.body // "") | contains("codex-pull-request-review-summary")) |
+    .body
+  ' <<<"$comments" | grep -E '^\| (📝|🔍)' | tail -1)
+  if [ -z "$summary_rows" ]; then
+    bad "no provider review summary row"
+  elif ! grep -Fq "\`$short\`" <<<"$summary_rows"; then
+    bad "latest provider summary names a different head than $short"
+  elif ! grep -Fq 'Completed' <<<"$summary_rows"; then
+    bad "provider review run for $short is not completed"
   else
-    # Read the summary only to distinguish absent evidence from a provider
-    # summary that exposes an abbreviated current prefix.
-    : >"$errfile"
-    comment_status=0
-    comments=$(gh api --paginate --slurp "repos/$REPO/issues/$PR/comments" 2>"$errfile") || comment_status=$?
-    if [ "$comment_status" -ne 0 ]; then
-      unknown "could not read provider review summaries"
-    elif ! jq -e 'type == "array" and (all(.[]; type == "array") or all(.[]; type == "object"))' <<<"$comments" >/dev/null 2>&1; then
-      unknown "provider review-summary response was malformed"
-    else
-      summaries=$(jq -r '
-        (if all(.[]; type == "array") then flatten else . end)[] |
-        select(.user.login == "chatgpt-codex-connector[bot]" and .user.type == "Bot") |
-        select((.body // "") | contains("codex-pull-request-review-summary")) |
-        .body
-      ' <<<"$comments")
-      if [ -z "$summaries" ]; then
-        bad "no provider review records or summaries"
-      else
-        current_prefix=0
-        if grep -Fq "\`$short\`" <<<"$summaries"; then current_prefix=1; fi
-        if [ "$current_prefix" -eq 1 ]; then
-          unknown "provider summary exposes only an abbreviated head; obtain full-SHA provider evidence or independently review this exact head"
-        else
-          bad "provider review evidence names a different head"
-        fi
-      fi
-    fi
+    summary_good=1
+    say "ok" "provider review summary is completed on $short"
+  fi
+fi
+
+if [ "$provider_review" = "matched" ] && [ "$summary_good" -eq 1 ]; then
+  say "ok" "provider review records the full current head $short"
+elif [ "$provider_review" != "matched" ] && [ "$summary_good" -eq 1 ]; then
+  if [ -n "$INDEPENDENT_REVIEW_SHA" ] && [ "$INDEPENDENT_REVIEW_SHA" = "$head" ]; then
+    say "ok" "manual independent review attestation names full current head $short"
+  elif [ -n "$INDEPENDENT_REVIEW_SHA" ]; then
+    bad "manual independent review attestation does not match the current head"
+  else
+    unknown "provider summary exposes only an abbreviated head; pass --independent-review-sha with an exact manual review attestation"
   fi
 fi
 
@@ -431,6 +461,42 @@ if ! checklist_link_ok "$prbody"; then
   bad "description lacks a completed same-repository line-specific review-checklist link"
 else
   say "ok" "description links a completed review-checklist item"
+fi
+
+body_section_has_content() {
+  local body="$1" labels="$2"
+  awk -v labels="$labels" '
+    function heading(line, lower) {
+      lower = tolower(line)
+      sub(/^[[:space:]]*#+[[:space:]]*/, "", lower)
+      return lower ~ ("^(" labels ")[[:space:]]*:[[:space:]]*[^[:space:]]") ||
+             lower ~ ("^(" labels ")[[:space:]]*:?[[:space:]]*$")
+    }
+    {
+      if (heading($0)) {
+        lower = tolower($0)
+        sub(/^[[:space:]]*#+[[:space:]]*/, "", lower)
+        if (lower ~ ("^(" labels ")[[:space:]]*:[[:space:]]*[^[:space:]]")) { found = 1; exit }
+        waiting = 1
+        next
+      }
+      if (waiting && $0 ~ /[^[:space:]]/) {
+        if ($0 !~ /^[[:space:]]*#/ && $0 !~ /^[[:space:]]*<!--/) { found = 1; exit }
+        waiting = 0
+      }
+    }
+    END { exit(found ? 0 : 1) }
+  ' <<<"$body"
+}
+if ! body_section_has_content "$prbody" 'functional summary|outcome and reason'; then
+  bad "description lacks a non-empty functional summary"
+else
+  say "ok" "description includes a functional summary"
+fi
+if ! body_section_has_content "$prbody" 'test or reproduction command|commands and results|validation and evidence'; then
+  bad "description lacks a non-empty test or reproduction command"
+else
+  say "ok" "description includes test or reproduction evidence"
 fi
 
 # Paginate changed files through the REST endpoint; gh pr view hard-codes a
@@ -608,7 +674,9 @@ else
         # reconciled through textual hunks, but its destination was covered.
         continue
       fi
-      if [ "$textual" -ne 1 ]; then
+      if [ "$textual" -ne 1 ] && [ "$diff_added" -eq 0 ] && [ "$diff_deleted" -eq 0 ]; then
+        say "note" "metadata-only diff section for '$filename' has no textual payload"
+      elif [ "$textual" -ne 1 ]; then
         unknown "privacy diff lacks a textual destination for '$filename'"
       elif [ "$diff_added" -ne "$rest_added" ] || [ "$diff_deleted" -ne "$rest_deleted" ]; then
         unknown "privacy diff line totals for '$filename' differ from REST metadata"

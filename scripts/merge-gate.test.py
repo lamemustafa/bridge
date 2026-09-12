@@ -15,6 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "merge-gate.sh"
+HEAD = "0123456789abcdef0123456789abcdef01234567"
 FAKE_GH = r'''#!/usr/bin/env python3
 import base64, json, os, sys
 args = sys.argv[1:]
@@ -43,17 +44,33 @@ if args[:2] == ["pr", "view"]:
             counter.write(str(view_count + 1))
     selected_head = new_head if scenario == "head-moves" and view_count > 0 else head
     final_state = "UNKNOWN_VALUE" if scenario == "final-unrecognized" and view_count > 0 else ("BLOCKED" if scenario == "blocked-state" else "CLEAN")
-    body = "- [x] [Errors](https://github.com/example/repo/blob/HEAD/review-checklist.md#L10)"
+    body = (
+        "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
+        "## Validation and evidence\n\n`python3 scripts/merge-gate.test.py`\n\n"
+        "- [x] [Errors](https://github.com/example/repo/blob/HEAD/review-checklist.md#L10)"
+    )
     if scenario == "checklist-foreign":
         body = "- [x] [Errors](https://github.com/other/repo/blob/HEAD/review-checklist.md#L10)"
     elif scenario == "checklist-unlinked":
         body = "- [x] review-checklist.md line 10"
     elif scenario == "checklist-template-continuation":
         body = (
+            "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
+            "## Validation and evidence\n\n`python3 scripts/merge-gate.test.py`\n\n"
             "- [x] One completed [`review-checklist.md`](../review-checklist.md) line is\n"
             "      linked here: https://github.com/example/repo/blob/HEAD/review-checklist.md#L10"
         )
-    one_file = scenario in {"files-empty", "formatted-phone", "path-id", "binary-delete"}
+    elif scenario == "missing-functional-summary":
+        body = (
+            "## Validation and evidence\n\n`python3 scripts/merge-gate.test.py`\n\n"
+            "- [x] [Errors](https://github.com/example/repo/blob/HEAD/review-checklist.md#L10)"
+        )
+    elif scenario == "missing-test-summary":
+        body = (
+            "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
+            "- [x] [Errors](https://github.com/example/repo/blob/HEAD/review-checklist.md#L10)"
+        )
+    one_file = scenario in {"files-empty", "formatted-phone", "path-id", "binary-delete", "metadata-only"}
     selected_base = new_head if scenario == "base-oid-mismatch" else base
     emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
@@ -88,6 +105,8 @@ elif args[:2] == ["pr", "diff"]:
         emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+safe text\n")
     elif scenario == "diff-truncated-payload":
         emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +2 @@\n+first line\n")
+    elif scenario == "metadata-only":
+        emit("diff --git a/docs/example.md b/docs/example.md\nsimilarity index 100%\nrename from docs/example.md\nrename to docs/example.md\n")
     elif scenario == "surface-unpins":
         emit("diff --git a/src/example.rs b/src/example.rs\n--- a/src/example.rs\n+++ b/src/example.rs\n@@ -0,0 +1 @@\n+safe text\n"
              "diff --git a/docs/tally/compatibility/compatibility-surface.json b/docs/tally/compatibility/compatibility-surface.json\n"
@@ -141,17 +160,24 @@ elif args and args[0] == "api":
     elif "branches/master" in joined:
         emit(base)
     elif "/pulls/321/reviews" in joined:
-        if scenario == "short-review":
+        if scenario in {"short-review", "summary-only", "manual-summary"}:
             emit([[]])
         else:
             emit([[{"user": {"login": "chatgpt-codex-connector[bot]", "type": "Bot"},
                      "state": "COMMENTED", "commit_id": head}]])
     elif "/issues/321/comments" in joined:
         if scenario == "short-review":
-            emit([[{"user": {"login": "chatgpt-codex-connector[bot]", "type": "Bot"},
-                     "body": "codex-pull-request-review-summary\n| 📝 | ✅ **Completed** | `0123456` |"}]])
+            summary = f"codex-pull-request-review-summary\n| 📝 | ✅ **Completed** | `{head[:7]}` |"
+            emit([[{"user": {"login": "chatgpt-codex-connector[bot]", "type": "Bot"}, "body": summary}]])
+        elif scenario == "summary-failed":
+            summary = f"codex-pull-request-review-summary\n| 📝 | ❌ **Failed** | `{head[:7]}` |"
+            emit([[{"user": {"login": "chatgpt-codex-connector[bot]", "type": "Bot"}, "body": summary}]])
+        elif scenario in {"summary-only", "manual-summary"}:
+            summary = f"codex-pull-request-review-summary\n| 📝 | ✅ **Completed** | `{head[:7]}` |"
+            emit([[{"user": {"login": "chatgpt-codex-connector[bot]", "type": "Bot"}, "body": summary}]])
         else:
-            emit([[]])
+            summary = f"codex-pull-request-review-summary\n| 📝 | ✅ **Completed** | `{head[:7]}` |"
+            emit([[{"user": {"login": "chatgpt-codex-connector[bot]", "type": "Bot"}, "body": summary}]])
     elif "/pulls/321/files" in joined:
         if scenario == "files-empty":
             emit([[]])
@@ -162,6 +188,8 @@ elif args and args[0] == "api":
             emit([[{"filename": f"docs/{path_id}.md", "status": "added", "additions": 1, "deletions": 0}]])
         elif scenario == "binary-delete":
             emit([[{"filename": "docs/old.png", "status": "removed", "additions": 0, "deletions": 0}]])
+        elif scenario == "metadata-only":
+            emit([[{"filename": "docs/example.md", "status": "modified", "additions": 0, "deletions": 0}]])
         elif scenario == "malformed-files":
             emit([[{"filename": "docs/example.md", "status": "added", "additions": 1, "deletions": 0}], [{"filename": 3, "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "missing-file-status":
@@ -213,7 +241,7 @@ class MergeGateControls(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
-    def run_gate(self, scenario="pass"):
+    def run_gate(self, scenario="pass", extra_args=()):
         env = os.environ.copy()
         env["PATH"] = f"{self.bin}:{env['PATH']}"
         env["GATE_SCENARIO"] = scenario
@@ -221,7 +249,7 @@ class MergeGateControls(unittest.TestCase):
         counter.write_text("0")
         env["GATE_COUNTER"] = str(counter)
         return subprocess.run(
-            [str(SCRIPT), "321", "--repo", "example/repo"],
+            [str(SCRIPT), "321", "--repo", "example/repo", *extra_args],
             cwd=ROOT,
             env=env,
             text=True,
@@ -270,7 +298,15 @@ class MergeGateControls(unittest.TestCase):
         self.assert_indeterminate("checks-silent", "checks query returned no JSON")
 
     def test_summary_only_short_sha_is_indeterminate(self):
-        self.assert_indeterminate("short-review", "full-SHA provider evidence")
+        self.assert_indeterminate("short-review", "independent-review-sha")
+
+    def test_manual_full_sha_attestation_accepts_zero_finding_summary(self):
+        result = self.run_gate("manual-summary", ("--independent-review-sha", HEAD))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("manual independent review attestation", result.stdout)
+
+    def test_provider_review_requires_completed_summary(self):
+        self.assert_blocked("summary-failed", "review run for 0123456 is not completed")
 
     def test_blocked_merge_state_cannot_pass(self):
         self.assert_blocked("blocked-state", "merge state BLOCKED")
@@ -361,6 +397,39 @@ class MergeGateControls(unittest.TestCase):
 
     def test_truncated_textual_diff_payload_is_indeterminate(self):
         self.assert_indeterminate("diff-truncated-payload", "privacy diff line totals")
+
+    def test_metadata_only_zero_line_diff_can_pass(self):
+        result = self.run_gate("metadata-only")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("metadata-only diff section", result.stdout)
+
+    def test_pr_selector_must_be_numeric(self):
+        env = os.environ.copy()
+        env["PATH"] = f"{self.bin}:{env['PATH']}"
+        result = subprocess.run(
+            [str(SCRIPT), "321;echo unsafe", "--repo", "example/repo"],
+            cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("PR selector must be numeric", result.stderr)
+
+    def test_repo_identity_must_be_safe(self):
+        env = os.environ.copy()
+        env["PATH"] = f"{self.bin}:{env['PATH']}"
+        result = subprocess.run(
+            [str(SCRIPT), "321", "--repo", "example/repo;echo unsafe"],
+            cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--repo must be OWNER/NAME", result.stderr)
+
+    def test_missing_functional_summary_blocks(self):
+        self.assert_blocked("missing-functional-summary", "functional summary")
+
+    def test_missing_test_summary_blocks(self):
+        self.assert_blocked("missing-test-summary", "test or reproduction command")
 
 
 if __name__ == "__main__":
