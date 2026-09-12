@@ -57,6 +57,25 @@ function cloneDraft(draft: SourceDraft): SourceDraft {
   return { ...draft, rows: draft.rows.map((row) => ({ ...row, entries: row.entries.map((entry) => ({ ...entry })), proposal: cloneProposal(row.proposal) })) };
 }
 
+// Every DTO that can replace the draft in state (save, catalogue apply, the
+// invalidation fold-in) carries a catalog_generation that was only current
+// as of the moment that particular command was issued. Commands do not
+// resolve in issue order, so a slower one's DTO can land after a faster
+// one's -- and unless something stops it, that late DTO drags the visible
+// generation back down. The store's generation only ever advances while a
+// draft is loaded, so for the SAME draft a lower incoming value can only be
+// a stale observation, never a legitimate reset: keep the highest one seen.
+// A DIFFERENT draft's generation is not comparable at all -- it is counting
+// invalidations against an unrelated catalogue -- so route every
+// draft-replacing setDraft call through here and take the incoming draft
+// as-is whenever the draft id changed.
+function withMonotonicGeneration(current: SourceDraft | null, next: SourceDraft): SourceDraft {
+  if (current && current.draft_id === next.draft_id && current.catalog_generation > next.catalog_generation) {
+    return { ...next, catalog_generation: current.catalog_generation };
+  }
+  return next;
+}
+
 function errorMessage(cause: unknown) {
   if (cause instanceof Error) return cause.message;
   if (typeof cause === "string") return cause;
@@ -143,9 +162,14 @@ export function SourceDraftScreen({
   const onTallyReadActivityChangeRef = React.useRef(onTallyReadActivityChange);
   const busyLeaseCountRef = React.useRef(0);
   const catalogReadActiveRef = React.useRef(false);
+  // Read at the moment an invalidation is queued, not at the moment it runs,
+  // so a request queued behind a slow one still names the draft and
+  // generation it was meant for rather than whatever is active by then.
+  const draftRef = React.useRef<SourceDraft | null>(null);
   dirtyRef.current = dirty;
   onBusyChangeRef.current = onBusyChange;
   onTallyReadActivityChangeRef.current = onTallyReadActivityChange;
+  draftRef.current = draft;
 
   const setDraftDirty = React.useCallback((next: boolean) => {
     dirtyRef.current = next;
@@ -166,10 +190,35 @@ export function SourceDraftScreen({
   }
 
   function invalidateNativeCatalog() {
+    // Captured now, not when the queued call actually runs -- a request
+    // naming a draft or generation that has since been replaced is stale,
+    // and the native store treats it as a no-op rather than an error.
+    const target = draftRef.current;
+    // Fenced the same way every other native call in this file is: if a
+    // newer draft load or scope change starts before this resolves, the
+    // generation it reports belongs to a draft this screen has already
+    // moved past, and folding it in would be the same clobber this fencing
+    // exists to prevent.
+    const generation = operationGeneration.current;
     beginBusy();
     const next = catalogInvalidationTail.current
       .catch(() => undefined)
-      .then(() => invoke("desktop_invalidate_source_draft_existing_ledger_targets"));
+      .then(() => target
+        ? invoke<number>("desktop_invalidate_source_draft_existing_ledger_targets", {
+          request: { draft_id: target.draft_id, generation: target.catalog_generation },
+        })
+        : undefined)
+      .then((nextGeneration) => {
+        // The command always reports the generation now current for its
+        // draft -- even on its no-op paths -- specifically so this can fold
+        // it back in and keep the next invalidation from naming a value the
+        // store has already moved past. See
+        // `desktop_invalidate_source_draft_existing_ledger_targets`.
+        if (typeof nextGeneration !== "number" || !mounted.current || operationGeneration.current !== generation) return;
+        setDraft((current) => current && current.draft_id === target?.draft_id
+          ? withMonotonicGeneration(current, { ...current, catalog_generation: nextGeneration })
+          : current);
+      });
     catalogInvalidationTail.current = next;
     void next.finally(endBusy).catch(() => undefined);
     return next;
@@ -223,7 +272,7 @@ export function SourceDraftScreen({
         return;
       }
       const copy = cloneDraft(next);
-      setDraft(copy);
+      setDraft((current) => withMonotonicGeneration(current, copy));
       setDraftDirty(false);
       setSelectedPosition(copy.rows[0]?.position ?? null);
       setPage(0);
@@ -264,7 +313,7 @@ export function SourceDraftScreen({
       });
       if (!mounted.current || !next) return;
       const copy = cloneDraft(next);
-      setDraft(copy);
+      setDraft((current) => withMonotonicGeneration(current, copy));
       setDraftDirty(false);
       setCatalogSelections(currentSessionSelections(copy));
       setSavedPath("Draft saved locally as JSON.");
@@ -339,14 +388,14 @@ export function SourceDraftScreen({
         // The native apply may have committed before a concurrent company-scope
         // invalidation reached it. Keep its new revision visible, but never
         // present the old capture or session binding as current for this scope.
-        setDraft(copy);
+        setDraft((current) => withMonotonicGeneration(current, copy));
         setCatalog(null);
         setCatalogSelections({});
         setCatalogInvalidatedSelections({});
         setSavedPath(null);
         return;
       }
-      setDraft(copy);
+      setDraft((current) => withMonotonicGeneration(current, copy));
       const nextSelections = currentSessionSelections(copy);
       setCatalogInvalidatedSelections((current) => ({
         ...Object.fromEntries(Object.entries(current).filter(([key, target]) => nextSelections[key] !== target)),

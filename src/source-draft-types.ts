@@ -51,6 +51,11 @@ export type SourceDraft = {
   source_notices: SourceDraftSourceNotice[];
   rows: SourceDraftRow[];
   current_catalog_bindings: SourceDraftCurrentCatalogBinding[];
+  // The draft's current catalog generation. An invalidation request names the
+  // draft and generation it means to clear, so a stale one -- queued before a
+  // draft replacement or an earlier invalidation -- can be told apart from a
+  // current one instead of landing on whatever draft happens to be active.
+  catalog_generation: number;
 };
 
 export type SourceDraftAction = "choose" | "open" | "save" | "catalog_load" | "catalog_apply" | "catalog_clear" | null;

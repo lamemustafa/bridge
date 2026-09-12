@@ -1407,24 +1407,12 @@ read masters back by name. `LASTVCHID` is populated for vouchers and usable,
 subject to a foreign-writer cross-check. `LASTVCHID` also accepts non-numeric text without
 error when parsed back, so validate it.
 
+For the implementation's readback identity policy, see `IMPLEMENTATION_GUIDE.md` §3.6
+and `PROMPT_PLAYBOOK.md` Phase 4 step 4. Their prescriptions are separate from this observation.
+
 ---
 
 ### 9.8 Voucher numbering method changes everything — **use Manual**
-
-**Implementation policy, not a measurement — stated separately on purpose.** "Read back by name"
-does not say *which* name rule, and the answer is not a protocol observation: **normalised never
-means NFC/NFD-normalised**, because §9.4b measured Tally matching on exact codepoints and
-normalising before comparing resolves a name onto a master Tally itself keeps apart. Which fold is
-permitted on top is decided by the SCOPE GATE in `PROMPT_PLAYBOOK.md` Phase 4 step 4 — §9.4d's
-measured rows for **ledgers on licensed 7.1**, exact codepoints for every other master type.
-
-That prescription previously sat inside this section's `**VERIFIED**` paragraph, which made a
-policy choice read as a measured behaviour. §0 and §9.4b both record licensed master-name matching
-as UNVERIFIED except where §9.4d reaches, so a reader collecting VERIFIED claims would have
-collected one that was never measured. The evidence marker governs the paragraph it opens; a
-prescription put under it inherits a confidence it has not earned.
-
----
 
 **VERIFIED.** The voucher type's numbering method silently determines both whether your
 voucher number survives and how a failed Alter behaves.

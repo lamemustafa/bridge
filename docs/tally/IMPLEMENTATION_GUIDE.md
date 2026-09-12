@@ -585,16 +585,17 @@ has always named. It may overwrite, may partially update, or may duplicate. `TAL
 
 **Consequences.**
 
-*Positive:* this gives real duplicate prevention without a TDL plugin and without a UDF
-fingerprint. For a generate-a-file-the-human-imports design, **re-running the same file is safe.**
+*Positive:* the measured byte-identical Journal repeat produced no duplicate without a TDL plugin
+or UDF fingerprint. That observation does not qualify a resend after an unknown outcome or an
+intervening external edit; the repeated import can alter the existing voucher.
 
 *Not the outbox, and not the narration marker.* Both of those were listed here as unnecessary and
 neither is:
 
 - **The durable dispatch intent stays.** `REMOTEID` prevents a duplicate; it does not tell you,
-  after a crash, *what you sent*. A resend is only safe while the exact key and payload are still
-  on disk, which is what the `row fsynced before dispatch` invariant and the restart-reconciliation
-  flow in `docs/agent/README.md` are for.
+  after a crash, *what you sent*. Preserve the exact key and payload on disk for read-only outcome
+  reconciliation, as required by `row fsynced before dispatch` and `docs/agent/README.md`.
+  Retaining them is not permission to resend after an unknown outcome.
 - **An independent attribution marker stays.** The returned *attribute* does not echo the client
   key — but the key itself survives in any field Tally does not own. The committed capture
   `src-tauri/crates/bridge-tally-protocol/tests/fixtures/agent/native-namespaced-journal.utf16le.xml` returns it inside `NARRATION` as
@@ -671,9 +672,11 @@ is no natural idempotency: voucher number is not a key.
 
 **What the heading's "narrowed" means.** §3.3a since established that a byte-identical repeat under
 the same `REMOTEID` is an **upsert** on the qualified Journal path — `CREATED=0, ALTERED=1`, no
-duplicate. So on that path a crash-retry of the *same file* is safe on its own, and the sentence
-that used to stand here — that the fingerprint plus an embedded key is "the only thing" preventing a
-duplicate — is no longer true where §3.3a applies.
+duplicate. This is the observed outcome of that repeat, not permission to resend after an unknown
+outcome: retain the original batch identity and reconcile its outcome first. It does not protect
+against an intervening external edit. The sentence that used to stand here — that the fingerprint
+plus an embedded key is "the only thing" preventing a duplicate — is no longer true where §3.3a
+applies.
 
 **And it is not true anywhere else either.** An earlier revision of this paragraph — mine — said it
 "is still true everywhere §3.3a does not reach", which quietly kept the fingerprint alive as a
@@ -838,8 +841,10 @@ subject to a foreign-writer cross-check. It also accepts non-numeric text withou
 ### 3.6 Master re-create is a silent Alter
 
 Re-sending an identical ledger `ACTION="Create"` returned `CREATED=0, ALTERED=1` — the
-existing master was **overwritten** with the retry payload. Pre-read before creating, and
-persist `CREATED` and `ALTERED` as distinct outbox outcomes.
+existing master was **overwritten** with the retry payload. Persist `CREATED` and `ALTERED` as
+distinct outbox outcomes. A pre-read alone does not authorize creation: use the complete-catalogue
+and mutation-time prerequisites in `PROMPT_PLAYBOOK.md` Phase 4 step 3a; an unqualified case stays
+unresolved without dispatch.
 
 ### 3.7 Company pinning is asymmetric — I2
 
