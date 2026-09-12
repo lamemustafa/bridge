@@ -257,6 +257,8 @@ fn presence_code(error: PresenceError) -> ToolFailure {
 /// `vouchers` profile does not fetch it, and inventing an absent column would
 /// be worse than reporting that it was never observed.
 fn book_voucher(row: &Value) -> Result<BookVoucher, PresenceError> {
+    let narration = row["narration"].as_str();
+    let ambiguous = ambiguous_markers(narration);
     let entries = row["amounts"]
         .as_array()
         .map(Vec::as_slice)
@@ -276,7 +278,10 @@ fn book_voucher(row: &Value) -> Result<BookVoucher, PresenceError> {
         voucher_number: row["voucher_number"].as_str(),
         remote_id: None,
         party: row["party"].as_str(),
-        marker: observed_marker(row["narration"].as_str()),
+        marker: match observed_marker(narration) {
+            ObservedMarker::Unidentified(_) => ObservedMarker::Unidentified(&ambiguous),
+            settled => settled,
+        },
         entries: &entries,
         cancelled: row["cancelled"].as_bool().unwrap_or_default(),
         optional: row["optional"].as_bool().unwrap_or_default(),
@@ -301,14 +306,26 @@ fn observed_marker(narration: Option<&str>) -> ObservedMarker<'_> {
     let Some(narration) = narration else {
         return ObservedMarker::Absent;
     };
-    let mut found = agent_import::narration_markers(narration);
-    match (found.next(), found.next()) {
-        (None, _) => ObservedMarker::Absent,
-        (Some(Some(identity)), None) if is_batch_derived(identity) => {
-            ObservedMarker::Identifying(identity)
-        }
-        _ => ObservedMarker::Unidentified,
+    let found = agent_import::narration_markers(narration).collect::<Vec<_>>();
+    match found.as_slice() {
+        [] => ObservedMarker::Absent,
+        [Some(identity)] if is_batch_derived(identity) => ObservedMarker::Identifying(identity),
+        _ => ObservedMarker::Unidentified(&[]),
     }
+}
+
+/// The well-formed occurrences in a narration that could not identify one
+/// import. They cannot decide, and they must not be thrown away: a proposal
+/// whose own marker is among them is asking about this exact voucher.
+fn ambiguous_markers(narration: Option<&str>) -> Vec<&str> {
+    narration
+        .map(|narration| {
+            agent_import::narration_markers(narration)
+                .flatten()
+                .filter(|identity| is_batch_derived(identity))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Whether a marker has the exact shape `import_identity` writes.
@@ -381,6 +398,15 @@ fn parse_proposals(args: &Value) -> Result<Vec<ProposedVoucher>, String> {
                 // an identity no book can hold and calls the result `absent`.
                 if !agent_import::valid_txn_id(txn_id) {
                     return Err("argument_invalid:bridge_txn_id".to_string());
+                }
+                // Same rule, other half of the pair. A mistyped batch id is
+                // not a harmless miss: under automatic numbering, with nothing
+                // resembling the proposal, the derived-but-impossible marker
+                // matches nothing and the window reports `absent` -- which
+                // invites the duplicate import this contract exists to stop.
+                // Bad input should say it is bad input.
+                if !agent_import::valid_batch_id(batch_id) {
+                    return Err("argument_invalid:batch_id".to_string());
                 }
                 Some(agent_import::import_identity(batch_id, txn_id).to_string())
             }

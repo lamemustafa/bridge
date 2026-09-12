@@ -1102,6 +1102,18 @@ pub(super) fn narration_markers(narration: &str) -> impl Iterator<Item = Option<
         })
 }
 
+/// The shape `build_import_xml` generates for a batch id: `bridge-` and a
+/// canonical UUID. Read at presence time for the same reason `valid_txn_id`
+/// is -- a batch id the writer could not have produced cannot have written a
+/// marker, so hashing it derives an identity no book holds and the run
+/// reports `absent` where it should have reported bad input.
+pub(in crate::agent) fn valid_batch_id(value: &str) -> bool {
+    value
+        .strip_prefix("bridge-")
+        .and_then(|uuid| Uuid::parse_str(uuid).ok().map(|parsed| (uuid, parsed)))
+        .is_some_and(|(spelled, parsed)| parsed.to_string() == spelled)
+}
+
 /// The character rule `build_import_xml` enforces on a caller's transaction
 /// label. Presence reads it too: a label the writer would have refused cannot
 /// have produced a narration marker, so hashing one would derive an identity

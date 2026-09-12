@@ -1287,7 +1287,7 @@ fn a_legacy_caller_label_is_never_an_identity() {
     for label in ["txn-001", "INV-2026-0001", "batch1_txn1"] {
         assert_eq!(
             observed_marker(Some(&narration_with(label))),
-            ObservedMarker::Unidentified,
+            ObservedMarker::Unidentified(&[]),
             "{label} is a caller label, not a batch-derived identity"
         );
     }
@@ -1299,7 +1299,7 @@ fn a_legacy_caller_label_is_never_an_identity() {
         observed_marker(Some(&narration_with(
             "550e8400-e29b-41d4-a716-446655440000"
         ))),
-        ObservedMarker::Unidentified,
+        ObservedMarker::Unidentified(&[]),
         "a canonical v4 UUID is not something import_identity can emit"
     );
 
@@ -1312,7 +1312,7 @@ fn a_legacy_caller_label_is_never_an_identity() {
     ] {
         assert_eq!(
             observed_marker(Some(&narration_with(&spelling))),
-            ObservedMarker::Unidentified,
+            ObservedMarker::Unidentified(&[]),
             "only the canonical form can have come from the writer"
         );
     }
@@ -1333,7 +1333,7 @@ fn an_ambiguous_or_malformed_marker_is_a_bridge_write_without_a_name() {
     ] {
         assert_eq!(
             observed_marker(Some(&narration)),
-            ObservedMarker::Unidentified,
+            ObservedMarker::Unidentified(&[]),
             "narration {narration:?}"
         );
     }
@@ -1424,6 +1424,65 @@ fn the_import_identity_inputs_are_bounded_where_they_are_published() {
     // And a marker still cannot be handed over directly.
     assert!(voucher["properties"].get("narration_marker").is_none());
     assert!(voucher["properties"].get("remote_id").is_none());
+}
+
+/// A batch id the writer could not have generated cannot have written a
+/// marker, so deriving one from it yields an identity no book holds. Left
+/// unchecked that is not a harmless miss: under automatic numbering, with
+/// nothing resembling the proposal, the window reports `absent` and a caller
+/// imports a second copy. A mistyped argument must say it is a mistyped
+/// argument. Against the live simulator, so zero bytes means the refusal came
+/// before the reads.
+#[tokio::test]
+async fn a_batch_id_the_writer_could_not_have_made_is_refused() {
+    let simulator = SequenceSimulator::spawn(presence_plans()).expect("simulator");
+    let directory = tempfile::tempdir().expect("directory");
+    let server = Server::new(Settings {
+        endpoint: TallyEndpointConfig {
+            host: simulator.address().ip().to_string(),
+            port: simulator.address().port(),
+        },
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 500,
+        max_bytes: 200_000,
+        redaction: Redaction::None,
+        import_enabled: false,
+        writes_enabled: false,
+    });
+    for (batch, refused) in [
+        (BATCH, false),
+        // Plausible, nonblank, within bounds, and not a shape the writer emits.
+        ("bridge-not-a-uuid", true),
+        ("2b1c9f4e-9d3a-4f71-8c2e-5a6b7c8d9e01", true),
+        ("bridge-2B1C9F4E-9D3A-4F71-8C2E-5A6B7C8D9E01", true),
+    ] {
+        let mut voucher = proposal("JV-1", "Bridge Nested Debtor WR4", "12.50");
+        voucher["batch_id"] = json!(batch);
+        voucher["bridge_txn_id"] = json!("txn-001");
+        let response = server
+            .call_tool_response(
+                "voucher_presence",
+                json!({"company_guid": CAPTURED_GUID, "from":"20260901", "to":"20260930",
+                    "numbering":[{"voucher_type":"Journal","numbering_method":"manual"}],
+                    "vouchers":[voucher]}),
+            )
+            .await;
+        let code = response.value["structuredContent"]["result"]["error"]["code"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert_eq!(
+            code == "argument_invalid:batch_id",
+            refused,
+            "batch id {batch:?} produced {code:?}"
+        );
+        if refused {
+            assert_eq!(
+                response.value["structuredContent"]["evidence"]["bytes"], 0,
+                "a batch id the writer could not have made must cost no read"
+            );
+        }
+    }
 }
 
 /// A declared pattern is documentation until something evaluates it, and the

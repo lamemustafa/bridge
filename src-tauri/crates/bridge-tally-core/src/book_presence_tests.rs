@@ -98,7 +98,14 @@ impl BookRow {
     }
 
     fn unidentified_marker(mut self) -> Self {
-        self.marker = ObservedMarker::Unidentified;
+        self.marker = ObservedMarker::Unidentified(&[]);
+        self
+    }
+
+    /// A narration carrying more than one well-formed marker: it identifies
+    /// nothing, and the occurrences are still evidence.
+    fn ambiguous_markers(mut self, markers: &'static [&'static str]) -> Self {
+        self.marker = ObservedMarker::Unidentified(markers);
         self
     }
 
@@ -2806,6 +2813,50 @@ fn a_marker_and_a_number_cannot_claim_one_voucher_for_two_proposals() {
             CandidateRule::SharedNarrationMarker
         ]
     );
+}
+
+/// A voucher whose narration carries this proposal's marker *and* another one
+/// cannot be an identity -- it claims two imports, which this contract never
+/// resolves. But the marker was observed, so `Absent` is not available either:
+/// saying it invites the duplicate the whole contract exists to prevent.
+///
+/// The proposal here shares nothing else with the book row -- different date,
+/// different number, different party, different amount -- so the marker is the
+/// only thing that can surface it, and before this it surfaced nothing.
+#[test]
+fn an_ambiguous_narration_still_withholds_the_absence() {
+    let window = window(&[
+        BookRow::new("book-1", "20260812", "AA0118").ambiguous_markers(&[MARKER_A, MARKER_B])
+    ]);
+    let proposals = [ProposalRow::new(0, "20260820", "ZZ9999")
+        .marker(MARKER_A)
+        .party("Charlie Minerals")
+        .rows(vec![
+            ["Charlie Minerals", "-4200.00"],
+            ["Sales Account", "4200.00"],
+        ])
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert_ne!(
+        entry.status,
+        PresenceStatus::Absent,
+        "the marker was observed in this book, so an absence is not available"
+    );
+    // And it is a candidate, named by the rule that found it -- never a
+    // `Present`, because the voucher claims two imports.
+    let undecided = entry.undecided().expect("undecided");
+    assert_eq!(undecided.candidates[0].book_key, "book-1");
+    assert_eq!(
+        undecided.candidates[0].rule,
+        CandidateRule::SharedNarrationMarker
+    );
+    assert_eq!(report.observations().unidentified_bridge_writes, 1);
 }
 
 /// A `Present` on the marker reports its differences like any other basis --

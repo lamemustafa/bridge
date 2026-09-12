@@ -236,7 +236,15 @@ pub enum ObservedMarker<'a> {
     /// two of them, a malformed one, or one written under a scheme whose
     /// values are not unique across batches. The voucher is a Bridge write
     /// this window cannot name: a finding for a person, never an identity.
-    Unidentified,
+    ///
+    /// The well-formed occurrences travel with it. They may not **decide** --
+    /// a voucher claiming two imports is the middle case this contract never
+    /// resolves -- but discarding them loses real evidence: a proposal whose
+    /// own marker is among them is asking about this very voucher, and saying
+    /// `Absent` to it invites the duplicate the whole contract exists to
+    /// prevent. They surface as candidates instead, which decides nothing and
+    /// withholds the absence.
+    Unidentified(&'a [&'a str]),
 }
 
 /// One voucher as the book was observed to hold it.
@@ -289,10 +297,12 @@ pub struct BookVoucher {
     /// Set only for `ObservedMarker::Identifying`, so an unidentifiable marker
     /// cannot reach a lookup by being stored beside an identifying one.
     marker: Option<String>,
-    /// Set only for `ObservedMarker::Unidentified`. Counted for a person and
-    /// read by no rule. Both are private and derived from one input, so no
-    /// caller can construct a voucher that is somehow both.
+    /// Set only for `ObservedMarker::Unidentified`. Counted for a person, and
+    /// the markers it carried are reachable as candidates but never as an
+    /// identity. Both are private and derived from one input, so no caller can
+    /// construct a voucher that is somehow both.
     unidentified_bridge_write: bool,
+    ambiguous_markers: BTreeSet<String>,
     ledger_keys: BTreeSet<String>,
     magnitude: ExactDecimal,
     balanced: bool,
@@ -315,7 +325,14 @@ impl BookVoucher {
         let party = input.party.map(validated_text).transpose()?;
         let marker = match input.marker {
             ObservedMarker::Identifying(marker) => Some(validated_text(marker)?),
-            ObservedMarker::Absent | ObservedMarker::Unidentified => None,
+            ObservedMarker::Absent | ObservedMarker::Unidentified(_) => None,
+        };
+        let ambiguous_markers = match input.marker {
+            ObservedMarker::Unidentified(markers) => markers
+                .iter()
+                .map(|marker| validated_text(marker))
+                .collect::<Result<BTreeSet<_>, _>>()?,
+            _ => BTreeSet::new(),
         };
         let (magnitude, balanced, mut ledger_keys) = magnitude_of(input.entries)?;
         if let Some(party) = party.as_deref() {
@@ -331,7 +348,8 @@ impl BookVoucher {
             remote_id,
             party,
             marker,
-            unidentified_bridge_write: input.marker == ObservedMarker::Unidentified,
+            unidentified_bridge_write: matches!(input.marker, ObservedMarker::Unidentified(_)),
+            ambiguous_markers,
             ledger_keys,
             magnitude,
             balanced,
@@ -1104,6 +1122,9 @@ fn resolution_of(binding: &master_binding::EntityBinding) -> PartyResolution {
 struct WindowIndex<'a> {
     by_remote_id: BTreeMap<&'a str, Vec<usize>>,
     by_marker: BTreeMap<&'a str, Vec<usize>>,
+    /// Vouchers whose narration carried a marker that could not identify one
+    /// import. Never consulted for identity; only to surface a candidate.
+    by_ambiguous_marker: BTreeMap<&'a str, Vec<usize>>,
     by_type_and_number: BTreeMap<(&'a str, &'a str), Vec<usize>>,
     by_number: BTreeMap<&'a str, Vec<usize>>,
     by_date: BTreeMap<&'a str, Vec<usize>>,
@@ -1116,6 +1137,7 @@ impl<'a> WindowIndex<'a> {
         let mut index = Self {
             by_remote_id: BTreeMap::new(),
             by_marker: BTreeMap::new(),
+            by_ambiguous_marker: BTreeMap::new(),
             by_type_and_number: BTreeMap::new(),
             by_number: BTreeMap::new(),
             by_date: BTreeMap::new(),
@@ -1133,6 +1155,13 @@ impl<'a> WindowIndex<'a> {
             }
             if let Some(marker) = voucher.marker.as_deref() {
                 index.by_marker.entry(marker).or_default().push(position);
+            }
+            for marker in &voucher.ambiguous_markers {
+                index
+                    .by_ambiguous_marker
+                    .entry(marker.as_str())
+                    .or_default()
+                    .push(position);
             }
             if let Some(number_key) = voucher.number_key.as_deref() {
                 index
@@ -1585,6 +1614,20 @@ fn resemblances(
     let mut found: BTreeMap<usize, CandidateRule> = BTreeMap::new();
     for position in number_matches {
         keep_strongest(&mut found, *position, CandidateRule::SharedVoucherNumber);
+    }
+    // A voucher whose narration carried this proposal's marker *and* another
+    // one cannot be an identity -- it claims two imports. It is still the
+    // strongest resemblance there is, and withholding the absence is the whole
+    // point: the marker was observed, so `Absent` is not available.
+    if let Some(marker) = proposal.narration_marker.as_deref() {
+        for position in index
+            .by_ambiguous_marker
+            .get(marker)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+        {
+            keep_strongest(&mut found, *position, CandidateRule::SharedNarrationMarker);
+        }
     }
     let mut pool: BTreeSet<usize> = BTreeSet::new();
     if let Some(positions) = index.by_date.get(proposal.date()) {
