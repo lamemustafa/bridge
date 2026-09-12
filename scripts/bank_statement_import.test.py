@@ -2352,6 +2352,41 @@ def test_new_output_symlink_loop_is_a_typed_path_refusal(m):
         assert not destination.exists()
 
 
+def test_new_output_final_revalidation_loop_cleans_all_claimed_outputs(m):
+    """A loop discovered after claiming still rolls back every fresh output."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        real_resolve = m.pathlib.Path.resolve
+        resolve_calls = 0
+
+        def loop_after_claim(path):
+            nonlocal resolve_calls
+            if pathlib.Path(path) == first:
+                resolve_calls += 1
+                # Claiming resolves once to choose the canonical path and once
+                # to verify the new inode. The third call is final
+                # revalidation, after both outputs have been written.
+                if resolve_calls == 3:
+                    raise RuntimeError("controlled post-claim symlink loop")
+            return real_resolve(path)
+
+        m.pathlib.Path.resolve = loop_after_claim
+        try:
+            refusal = refuses(
+                m,
+                "output_path_changed",
+                m.write_outputs,
+                [(str(first), "first bytes"), (str(second), "second bytes")],
+            )
+        finally:
+            m.pathlib.Path.resolve = real_resolve
+        assert resolve_calls == 3, "RuntimeError must be injected during final revalidation"
+        assert "could not be resolved safely" in str(refusal.code)
+        assert not first.exists(), "the first claimed output must be cleaned"
+        assert not second.exists(), "the earlier claimed output must be cleaned too"
+
+
 def test_unlinked_pinned_backup_does_not_claim_a_hard_link_alias(m):
     if os.name == "nt":
         return
