@@ -1550,9 +1550,15 @@ def _restore_backup(backup, destination, original_identity, failures):
 def _note_cleanup_failures(error, failures):
     if failures:
         retained = ", ".join(sorted(set(failures)))
-        error.add_note(
-            "output cleanup or rollback failed; retained path(s): " + retained
-        )
+        message = "output cleanup or rollback failed; retained path(s): " + retained
+        # Python prints `SystemExit.code`, not exception notes. A Refusal is a
+        # SystemExit so that command-line validation exits without a traceback;
+        # put the retained location in its visible code rather than hiding it in
+        # an unrendered note.
+        if isinstance(error, Refusal):
+            error.code = f"{error.code}\n{message}"
+        else:
+            error.add_note(message)
 
 
 def write_outputs(targets, accept_inherited=False, after_claim=None):
@@ -1634,12 +1640,6 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
         # Every payload is on disk. Each backup is a second link to the old
         # inode, so creating it never removes the requested destination.
         for temporary, supplied_path, real_path, original_identity in staged:
-            if (os.path.realpath(supplied_path) != real_path
-                    or _file_identity(real_path) != original_identity):
-                raise Refusal(
-                    "output_path_changed",
-                    f"{supplied_path} changed after it was claimed; no output was replaced",
-                )
             backup_handle, backup = tempfile.mkstemp(
                 dir=os.path.dirname(real_path),
                 prefix=os.path.basename(real_path) + ".", suffix=".bak")
@@ -1652,6 +1652,15 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             # The destination stays present until this one atomic replacement.
             # `pending_swap` is set first because an interrupt may arrive after
             # the filesystem call has taken effect but before it returns.
+            # Revalidate *after* the backup operation: it is a filesystem call
+            # an attacker can use to retarget the supplied symlink before this
+            # commit. The pending backup lets the refusal cleanly undo itself.
+            if (os.path.realpath(supplied_path) != real_path
+                    or _file_identity(real_path) != original_identity):
+                raise Refusal(
+                    "output_path_changed",
+                    f"{supplied_path} changed after it was claimed; no output was replaced",
+                )
             os.replace(temporary, real_path)
             replaced.append(pending_swap)
             pending_swap = None

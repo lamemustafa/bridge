@@ -37,6 +37,7 @@ import importlib.util
 import os
 import pathlib
 import stat
+import subprocess
 import sys
 import tempfile
 import types
@@ -1410,6 +1411,37 @@ def test_write_outputs_refuses_a_retargeted_symlink_before_commit(m):
         assert sorted(p.name for p in root.iterdir()) == ["first.xml", "out.xml", "second.xml"]
 
 
+def test_write_outputs_revalidates_a_symlink_after_backup_preparation(m):
+    """The check belongs directly before the swap, not before a backup syscall
+    which can itself be used to retarget the operator's path."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first = root / "first.xml"
+        second = root / "second.xml"
+        link = root / "out.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        link.symlink_to(first)
+        real_link = m.os.link
+
+        def retarget_after_backup(src, dst):
+            result = real_link(src, dst)
+            link.unlink()
+            link.symlink_to(second)
+            return result
+
+        m.os.link = retarget_after_backup
+        try:
+            refuses(m, "output_path_changed", m.write_outputs, [(str(link), "new bytes")])
+        finally:
+            m.os.link = real_link
+
+        assert first.read_text() == "first old"
+        assert second.read_text() == "second old"
+        assert link.read_text() == "second old"
+        assert sorted(p.name for p in root.iterdir()) == ["first.xml", "out.xml", "second.xml"]
+
+
 def test_write_outputs_keeps_destination_during_backup_preparation(m):
     """A backup is a second link to the old inode, so the requested output is
     still readable until the one atomic replacement. This catches a regression
@@ -1521,6 +1553,51 @@ def test_write_outputs_reports_a_retained_backup_after_commit(m):
                 path.unlink()
 
         assert destination.read_text() == "new bytes"
+
+
+def test_refusal_reports_a_retained_backup_on_stderr(m):
+    """Refusal inherits SystemExit, whose unhandled rendering ignores
+    `BaseException.add_note`. Assert the CLI-visible error rather than the
+    in-process exception object so a sensitive retained backup is not hidden."""
+    program = f'''\
+import importlib.util
+import pathlib
+import tempfile
+
+script = {str(SCRIPT)!r}
+spec = importlib.util.spec_from_file_location("bank_statement_import_subprocess", script)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+with tempfile.TemporaryDirectory() as directory:
+    root = pathlib.Path(directory)
+    first = root / "first.xml"
+    second = root / "second.xml"
+    link = root / "out.xml"
+    first.write_text("first old")
+    second.write_text("second old")
+    link.symlink_to(first)
+    real_link = module.os.link
+    real_cleanup = module._unlink_for_cleanup
+    def retarget_after_backup(src, dst):
+        result = real_link(src, dst)
+        link.unlink()
+        link.symlink_to(second)
+        return result
+    def retain_backup(path, failures):
+        if str(path).endswith(".bak"):
+            failures.append(path)
+        else:
+            real_cleanup(path, failures)
+    module.os.link = retarget_after_backup
+    module._unlink_for_cleanup = retain_backup
+    module.write_outputs([(str(link), "new bytes")])
+'''
+    done = subprocess.run([sys.executable, "-c", program], text=True,
+                          capture_output=True, check=False)
+    assert done.returncode != 0
+    assert "output_path_changed" in done.stderr, done.stderr
+    assert "retained path(s):" in done.stderr, done.stderr
+    assert ".bak" in done.stderr, done.stderr
 
 
 def test_a_failed_swap_rolls_back_every_staged_replacement(m):
