@@ -612,7 +612,7 @@ proof-of-post claim must account for that — carry your own marker in a field T
 or when the payload differs from the original (partial update semantics). Also untested on
 licensed or standard TallyPrime.
 
-### 3.3b Master-name matching: case- and separator-insensitive, otherwise exact
+### 3.3b Master-name matching: directional alternatives, otherwise exact
 
 **VERIFIED 2026-07-30**, against a ledger named `BRIDGE-PROBE-LEDGER-A` and one named
 `ZZ Ram & Sons Pvt Ltd`:
@@ -628,7 +628,11 @@ licensed or standard TallyPrime.
 | `ZZ Ram & Son Pvt Ltd` (singular for plural) | **rejected** |
 | entirely different name | **rejected** |
 
-So Tally normalises **case and separators** and is otherwise **exact on letters**.
+These rows establish only the supplied candidate against the recorded master;
+they do **not** establish a symmetric case/separator normalizer or canonical
+fold. Automatic binding is exact-codepoint unless the authoritative protocol
+records the particular directional comparison. In particular, do not infer a
+slash rule from this baseline.
 
 > **Promoted to `TALLY_PROTOCOL_REFERENCE.md` §9.4b**, which is where observed gateway behaviour
 > belongs and which carries the consequences for a writer. This entry stays as the measurement
@@ -1171,7 +1175,7 @@ zero; fail closed or quarantine.
 | Modal dialog | Gateway blocked until a human clicks | §5.1 |
 | `ClosingBalance` read as a period figure | Wrong balance, presented as correct | §6.4 |
 | `ACTION="Alter"` + `REMOTEID` | Creates a duplicate. `Create` upserts a **byte-identical** repeat; a *corrected* payload is UNVERIFIED and may overwrite, partially update or duplicate | §3.3a |
-| Master name differing by more than case/separators | Voucher rejected, master NOT auto-created | §3.3b |
+| Master name outside an exact or qualified directional comparison | Voucher rejected, master NOT auto-created | §3.3b |
 | Omitting `BILLALLOCATIONS.LIST` | Allocation becomes `On Account` with no bill identity | §3.3c |
 | Self-referential `$$NumItems` in a collection | Gateway hangs, empty reply | §5.3b |
 | `<COMPUTE>` used for a per-request constant | Per-row work; request exceeds deadline | §2.3a |

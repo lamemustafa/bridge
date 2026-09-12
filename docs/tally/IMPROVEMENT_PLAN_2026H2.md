@@ -409,11 +409,19 @@ Re-sending the identical voucher payload, same `VOUCHERNUMBER`, produced `CREATE
 
 Re-sending the identical ledger `ACTION="Create"` returned `CREATED=0, ALTERED=1` — no error. A retry silently **overwrites** the existing master with the retry payload, including any defaulted fields.
 
-**Adds to §6:** master creates require a pre-existence read before dispatch, and `CREATED` vs `ALTERED` must persist as distinct outbox outcomes. "No duplicate was made" is not the same as "my create succeeded."
+**DEVIATION 2026-09-12 — amends §6:** a pre-existence read is necessary but does not
+authorize master creation. Require a qualified Complete catalogue for the exact company and
+master class, plus a qualified mutation-time condition or proven exclusive-write window.
+Concurrent automatic creation remains UNQUALIFIED until those prerequisites hold; another
+ordinary pre-read or operator confirmation is insufficient. Apply the full creation/bind/refusal
+contract in `PROMPT_PLAYBOOK.md` Phase 4 step 3a, including approved-field equality before
+binding an existing name. Retain unresolved proposals and block dependent writes when evidence
+is missing. Persist `CREATED` and `ALTERED` as distinct outcomes; avoiding a duplicate does not
+establish that the requested create succeeded.
 
 ### 8.6 `LASTMID` is 0 on successful master creates; `LASTVCHID` works
 
-Both ledger creates returned `LASTMID=0` despite `CREATED=1`. **Confirms §5.1.4's choice**: masters must be read back by name. Which name-matching rule applies is decided by the SCOPE GATE in `PROMPT_PLAYBOOK.md` Phase 4 step 4 and by nothing here: §9.4b's case-folding and separator rows inherit §0's **Edit Log 7.0 Educational** baseline and mark licensed TallyPrime UNVERIFIED, so on a licensed SKU match on **exact codepoints** and let a case or separator difference fail loudly. Widen only where a licensed capture has qualified it as a **write**: §9.4d does so for **ledgers** on licensed 7.1, by importing vouchers naming folded spellings and reading the day book back, and for no other master type. A compatibility result cannot widen it — that evidence is a live-**read** receipt and `compatibility/README` says it never establishes any write behaviour. `LASTVCHID` is populated for vouchers and usable, still subject to the foreign-writer cross-check.
+Both ledger creates returned `LASTMID=0` despite `CREATED=1`. **Confirms §5.1.4's choice**: masters must be read back by name. Which name-matching rule applies is decided by the SCOPE GATE in `PROMPT_PLAYBOOK.md` Phase 4 step 4 and by nothing here: §9.4b's case-folding and separator rows inherit §0's **Edit Log 7.0 Educational** baseline and mark licensed TallyPrime UNVERIFIED, so on a licensed SKU match on **exact codepoints** and let a case or separator difference fail loudly. Widen only where a licensed capture has qualified a **directional write comparison**: §9.4d does so for **ledgers** on licensed 7.1 **Silver**, with `education_mode=false`, by importing vouchers naming folded spellings and reading the day book back, and for no other master type or licence tier. Its slash row is slash-candidate against space-master only; the reverse is not qualified, so slash-bearing cross-spellings remain exact-only. Gold and other unqualified tiers remain exact-only. A compatibility result cannot widen it — that evidence is a live-**read** receipt and `compatibility/README` says it never establishes any write behaviour. `LASTVCHID` is populated for vouchers and usable, still subject to the foreign-writer cross-check.
 
 DEVIATION 2026-09-12 (`TALLY_PROTOCOL_REFERENCE.md` §9.4b): "normalized name" here never means NFC/NFD normalization, which is WITHDRAWN. §9.4b is MEASURED: Tally matches master names on exact codepoints, so an NFD create read back with NFC folding applied would resolve onto a pre-existing, distinct NFC master and promote the wrong object. Compare on exact codepoints. This deviation removes normalization; it does not decide whether any case or separator fold is permitted on top — that is the SCOPE GATE's question, answered above, and on an unqualified licensed SKU the answer is exact codepoints and nothing else.
 

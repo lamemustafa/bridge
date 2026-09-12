@@ -908,7 +908,9 @@ voucher by reusing a key.
 
 **Not the outbox, though.** `REMOTEID` prevents a duplicate; it does not tell you, after a crash,
 *what you sent*. The `REMOTEID` **attribute** does not echo the client key on readback (below), so
-a resend is only safe while the exact key and payload are still on disk. Be precise about the
+the exact key and payload must remain on disk for read-only reconciliation. They do not
+authorize a resend after an unknown outcome; restart behaviour remains unqualified. See
+`IMPLEMENTATION_GUIDE.md` §§3.3–3.5 and the playbook's held recovery flow. Be precise about the
 field: the key itself does survive anywhere Tally does not own — a narration marker comes back —
 and a categorical "Tally does not return the key" would send recovery work to discard the one
 attribution channel that works. The durable dispatch intent stays — see the
@@ -1165,14 +1167,14 @@ symmetry is exactly the property the separator result does not have.
 | --- | --- |
 | ASCII case folding | **VERIFIED** — lowercase matched |
 | supplying a **space** where the master has a **hyphen** | **VERIFIED** — `BRIDGE PROBE LEDGER A` matched `BRIDGE-PROBE-LEDGER-A` |
-| supplying a **hyphen** where the master has a **space** | **UNVERIFIED here** — the reverse direction was never sent on this SKU. Measured **matched** on licensed 7.1, §9.4d |
+| supplying a **hyphen** where the master has a **space** | **UNVERIFIED here** — the reverse direction was never sent on this SKU. Measured **matched** on licensed 7.1 Silver, §9.4d |
 | one trailing space ignored | **VERIFIED** |
 | **two or more** trailing spaces ignored | **UNVERIFIED** — only one was sent |
-| *leading* whitespace ignored | **UNVERIFIED here**. Measured **matched** on licensed 7.1, §9.4d |
-| runs of internal whitespace collapsed to one | **UNVERIFIED here** — only a single space was tested. Measured **matched** on licensed 7.1, §9.4d |
+| *leading* whitespace ignored | **UNVERIFIED here**. Measured **matched** on licensed 7.1 Silver, §9.4d |
+| runs of internal whitespace collapsed to one | **UNVERIFIED here** — only a single space was tested. Measured **matched** on licensed 7.1 Silver, §9.4d |
 | non-ASCII case folding (Devanagari, Tamil, Bengali, Turkish dotted I) | **UNVERIFIED** |
 | **Unicode canonical equivalence (NFC/NFD)** | **MEASURED — folding it is wrong.** See below. |
-| any other separator (underscore, en dash, `/`) treated as a space | **UNVERIFIED here**, and §9.4d splits it on licensed 7.1: `/` **matched**, underscore and en dash **rejected**. Not one row — do not fold them together |
+| any other separator (underscore, en dash, `/`) treated as a space | **UNVERIFIED here**, and §9.4d splits it on licensed 7.1 Silver: `/` **matched**, underscore and en dash **rejected**. Not one row — do not fold them together |
 
 **A wider result exists for a different SKU.** §9.4d re-ran this measurement on **licensed
 TallyPrime 7.1** and found the gateway folds more than these rows establish. It is a separate
@@ -1290,7 +1292,7 @@ voucher each, then the **day book was read back** to record which master each vo
 posted against — the counters alone would not have said. Every created voucher was then deleted by
 `REMOTEID` and the day read back empty (eight from the first run, two from the second).
 
-| Supplied against a live master | Licensed 7.1 | §9.4b on Educational |
+| Supplied against a live master | Licensed 7.1 Silver | §9.4b on Educational |
 | --- | --- | --- |
 | exact | **matched** | matched |
 | ASCII lowercase | **matched** | matched |
@@ -1322,7 +1324,7 @@ ledger present in every company:
 | `Profit & Loss` | **rejected** — a missing suffix word |
 | `Profit & Loss A/c AND CO` | **rejected** — an added suffix word, what the first run really sent |
 
-So §9.4b's abbreviation findings hold on licensed 7.1 as well, and this section now says which
+So §9.4b's abbreviation findings hold on licensed 7.1 Silver as well, and this section now says which
 of them it measured rather than which it meant to.
 
 **Composition was measured separately, because twelve single-axis results do not license it.**
@@ -1342,23 +1344,26 @@ more variants, same method, same readback and deletion:
 | `  mb-pilot/alpha  (5550001001) ` | all five at once | **matched** |
 | `  mb probe  ledger a ` against `MB-PROBE-LEDGER-A` | case + space-for-hyphen + surrounding + run | **matched** |
 
-All eight posted against the intended master, confirmed by day-book readback. **So the folds
-compose**, and a canonical form applying every measured transformation before comparing is
-licensed by measurement rather than by extrapolation from the single-axis rows.
+All eight posted against the intended master, confirmed by day-book readback. **So the listed
+supplied-to-master transformations compose in those measured directions.** That does not license
+a canonical form: it compares symmetrically and would assert a reverse comparison the probe did
+not send.
 
-**What this says.** On licensed 7.1, Tally treats **space, hyphen and slash** as interchangeable
-separators, collapses internal whitespace runs, ignores leading and trailing whitespace, folds
-**ASCII** case, and is otherwise **exact on codepoints**.
+**What this says.** On licensed 7.1 Silver, the recorded supplied-to-master comparisons accept the
+listed space/hyphen alternatives and the one **slash-candidate to space-master** alternative,
+collapse the measured internal whitespace run, ignore the measured leading and trailing whitespace,
+and fold the measured **ASCII** case. The reverse slash comparison was not sent. Cross-spellings
+involving slash therefore require exact codepoints unless that direction is separately measured.
 
-> **RULE: separators fold, and the set is `space`, `-`, `/` — nothing else.** An en dash and an
-> underscore are ordinary characters to Tally and are **not** separators, so a fold that treats
-> "punctuation" or "separators" as a class is wider than the gateway and will merge masters it
-> keeps apart.
+> **RULE: use only the recorded directional alternatives; do not fold separators into a canonical
+> form.** The slash result is candidate `/` against master space, not the reverse. An en dash and
+> an underscore were rejected in their recorded directions, so a fold that treats punctuation or
+> separators as a class is wider than the gateway and will merge masters it keeps apart.
 
 That is the trap §9.4b warned about, arriving from the other side: the danger was never only that
-a reader would fold too much, it was that "normalises separators" names no particular set. Two of
-the four separators tested are folded and two are not, and nothing about their appearance predicts
-which.
+a reader would fold too much, it was that "normalises separators" hides both the particular
+substitutions and their directions. Nothing about a separator's appearance predicts which comparison
+the gateway accepts.
 
 **Canonical equivalence is still refused**, consistent with the exact-codepoint finding recorded
 elsewhere in this document: an NFD spelling of an NFC ledger does not resolve. A fold that
@@ -1402,12 +1407,11 @@ habits, not against real operator input.
 
 ### 9.5 Identity after write
 
-**VERIFIED.** `LASTMID` is **0** on successful master creates — unusable for master identity;
-read masters back by name. `LASTVCHID` is populated for vouchers and usable,
-subject to a foreign-writer cross-check. `LASTVCHID` also accepts non-numeric text without
-error when parsed back, so validate it.
+**VERIFIED.** `LASTMID` is **0** on successful master creates, so this counter does not
+identify the created master. `LASTVCHID` is populated for vouchers. Non-numeric
+`LASTVCHID` text is also accepted without error when parsed back.
 
-For the implementation's readback identity policy, see `IMPLEMENTATION_GUIDE.md` §3.6
+For the implementation's readback identity policy, see `IMPLEMENTATION_GUIDE.md` §3.5
 and `PROMPT_PLAYBOOK.md` Phase 4 step 4. Their prescriptions are separate from this observation.
 
 ---

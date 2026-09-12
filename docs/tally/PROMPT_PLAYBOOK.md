@@ -299,21 +299,23 @@ Implement:
    fix-it list.
 5. Encoding/normalization hardening: UTF-8/UTF-16LE/BOM fixtures;
    non-English (Devanagari, Gujarati, Tamil) company/ledger/narration
-   fixtures in the simulator corpus; name-key matching via §9.4b's
-   `accepts(candidate, tally_name)` predicate — directional ASCII case
-   folding only (`candidate == ascii_lower(tally_name)`; the reverse, an
-   uppercase candidate against a lowercase master, was never measured and
-   must not be accepted). Never a symmetric case-insensitive collation:
-   that accepts the unverified direction and can bind a voucher to the
-   wrong master.
-   And the same SCOPE GATE that governs Phase 4 step 4 governs here:
-   §9.4b's case and separator rows sit on §0's **Edit Log 7.0
-   Educational** baseline. Where this phase reads a licensed instance,
-   match on exact codepoints; widen to `accepts()` only where a licensed
-   capture has qualified it — §9.4d does exactly that for LEDGERS on
-   licensed 7.1, and for nothing else. A compatibility result cannot
-   qualify it: that evidence is a live-READ receipt and establishes no
-   write behaviour (`compatibility/README`).
+   fixtures in the simulator corpus. Scope name-key resolution by SKU and
+   entity class, using the shared ADR 0016 binder:
+   - On §0's Edit Log 7.0 Educational baseline, §9.4b's
+     `accepts(candidate, tally_name)` permits only the measured directional
+     transformations; do not infer their reverse.
+   - For LEDGERS on licensed 7.1 Silver (`education_mode=false`), use only
+     §9.4d's individually measured **directional** comparisons; do not turn
+     them into a canonical fold. In particular, its slash row supplied a
+     slash candidate against a space-bearing master. The reverse was not
+     measured, so slash-bearing cross-spellings remain exact-codepoint only
+     until both directions are qualified. Preserve every other codepoint,
+     including NFC/NFD, en dash and underscore distinctions.
+   - Other licensed scopes remain exact-codepoint unless a capture
+     qualifies their particular rule. Compatibility live-READ receipts
+     do not establish write behaviour (`compatibility/README`).
+   Resolution still requires unique identity evidence. Never coalesce
+   distinct catalogue or mirror identities merely because a fold agrees.
    A read is not a safe place to be wrong about this — the mirror rows
    built here are what later binding decisions resolve against, so a fold
    that merges two masters here merges them everywhere downstream.
@@ -625,11 +627,20 @@ Implement — write core (masters):
    does not establish either. The quiet-company Journal preview in
    issue #239 is not evidence qualifying this master-create flow.
    Three outcomes, never two:
-   **bind** to an exact-codepoint match without creating or altering it;
+   **bind** to an exact-codepoint match without creating or altering it
+   only after fresh same-company readback also matches every relevant
+   approved master field (including parent/group, GST configuration and
+   opening balance). Missing/unqualified field evidence or any difference
+   is a visible intent conflict: retain the unresolved proposal and block
+   dependent voucher dispatch for manual resolution. A name match alone
+   must never silently discard approved fields;
    **create** only after the completeness and mutation-time prerequisites
    above are qualified AND no existing master collides under the detector
    below;
    otherwise **REFUSE and retain the unresolved proposal.**
+   Regression acceptance includes an exact-name master with differing
+   approved fields and an unreadable required field: both remain visibly
+   unresolved and neither creates, alters, nor enables a dependent write.
    THE DETECTOR IS NOT THE BINDER AND MUST BE WIDER THAN IT.
    §9.4b's `accepts()` is DIRECTIONAL — for a requested `FOO` against an
    existing `foo`, `accepts(FOO, foo)` is false — so reusing it as the
@@ -670,10 +681,14 @@ Implement — write core (masters):
    spellings and reading the **day book** back to see which master each
    posted against. That is observed write behaviour on the SKU this
    project writes to, for **ledgers**.
-   So: for **ledgers on licensed 7.1**, match under §9.4d's measured
-   rows. For **every other master type** — stock items, groups, voucher
-   types — §9.4d measured nothing, so match on **exact codepoints** and
-   let a case or separator difference fail loudly.
+   So: for **ledgers on licensed 7.1 Silver (`education_mode=false`)**,
+   match only under §9.4d's individually measured directional rows. Its
+   slash row does not qualify the reverse, so a slash-bearing cross-spelling
+   is **exact-codepoint only** and fails loudly until both directions are
+   captured. Gold, other tiers and unqualified versions remain exact-codepoint
+   only. For **every other master type** — stock items, groups, voucher types
+   — §9.4d measured nothing, so match on **exact codepoints** and let a case
+   or separator difference fail loudly.
    **A compatibility result cannot widen this.** `compatibility/README`
    defines a cell's evidence as a live-**read** receipt and says it
    "never establishes ... any write behavior". An earlier revision of
