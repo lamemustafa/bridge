@@ -123,47 +123,27 @@ MASK_MIN_XS = 4
 # (`^[A-Za-z]+-\s*[Xx]+\d+-`). Outside that, a short run of X with digits is not
 # a masking convention to any parser here — it is a customer token that happens
 # to start with the letter X.
-# The parser's masked-account subfield, verbatim from
-# `bank_statement_import.HDFC.party`: an alphabetic prefix, a hyphen, the run of
-# X and digits, a hyphen. Matching merely `IMPS/` anywhere in the bbox word was
-# too coarse — it marked EVERY short X+digit token in that word as masking,
-# including ones nowhere near the account subfield.
-IMPS_MASK_SUBFIELD = re.compile(r"IMPS/[^/]*/[A-Za-z]+-\s*([Xx]+\d+)-")
+def _is_mask(token):
+    """True when `token` is a masked account: `[Xx]{4,}` optionally then digits.
 
+    **Only the unambiguous form.** `bank_statement_import` also reads a short
+    `[Xx]+\\d+` inside an `IMPS/` component, and mirroring that here cost four
+    revisions — per character, per token, per word containing `IMPS/`, per
+    position within the word — each one leaking a customer `X` into a public
+    fixture in a narrower place than the last, because a context-free tokeniser
+    cannot reliably mirror a context-sensitive rule.
 
-def _mask_tokens(text):
-    """The exact token strings that occupy the parser's masked-account subfield.
+    Measured before dropping it: the short form preserves **one** token across
+    both committed fixtures, and the importer's own IMPS tests use constructed
+    eight-X masks rather than that token. So the whole feature bought one
+    masked-account shape in one fixture and produced four rounds of findings.
 
-    Position, not presence. `in_imps` as a property of the whole word meant a
-    customer token elsewhere in an IMPS narration kept its X; this returns only
-    what the parser would actually read as the masked account.
+    A sanitiser may be narrower than the parser — the cost is a fabricated mask
+    shape — but never wider, because the cost there is a customer character
+    preserved verbatim. Given a doubt about scope, this is the narrow answer and
+    it needs no context at all to be checked.
     """
-    return {match.group(1) for match in IMPS_MASK_SUBFIELD.finditer(text)}
-
-
-def _is_mask(token, is_masked_subfield=False):
-    """True when `token` is a masked account to a parser that reads these captures.
-
-    Two shapes, and they are scoped differently — which is the whole of this
-    function. `[Xx]{4,}\\d*` is recognised wherever a standalone field is tested
-    for being an account, so it is global. `[Xx]+\\d+` is recognised only inside
-    an `IMPS/` component, so it is gated on `is_masked_subfield` — the parser's
-    position, not the mere presence of `IMPS/` in the word.
-
-    Applying the short form globally leaked: `X99` anywhere at all was
-    classified as a mask and `_fake_token` returned `X11`, carrying the
-    customer's X into the fixture verbatim. That is the same defect this
-    function was written to fix, reintroduced one revision later by widening
-    the rule past the parser it was supposed to mirror. A sanitiser may be
-    narrower than the parser — the cost is a fabricated mask shape — but never
-    wider, because the cost there is a customer character preserved.
-
-    Both are whole-token tests, which keeps `XAVIER`, `ABXXCD` and `MAX` out:
-    an X is structure only when the token is *nothing but* a mask.
-    """
-    if re.fullmatch(rf"[Xx]{{{MASK_MIN_XS},}}\d*", token):
-        return True
-    return is_masked_subfield and bool(re.fullmatch(r"[Xx]+\d+", token))
+    return bool(re.fullmatch(rf"[Xx]{{{MASK_MIN_XS},}}\d*", token))
 
 ALPHA = "ZQVWKJYBGFHLMNPRSTDC"
 # Markup escapes: syntax, held out and restored untouched.
@@ -240,7 +220,7 @@ def _shape_of(token):
         for character in token)
 
 
-def _fake_token(token, treat_as_mask=False):
+def _fake_token(token):
     """A fabricated token of the same length AND the same character shape.
 
     Shape matters as much as length. The parsers decide where a counterparty
@@ -281,13 +261,8 @@ def _fake_token(token, treat_as_mask=False):
     per-position alphabets, which is the whole of what shape-preservation
     allows.
     """
-    # Keyed on the DECISION, not on the surrounding context. Keying on context
-    # split ordinary tokens: a party name appearing in an IMPS narration and
-    # again elsewhere got two different replacements, breaking the one-mapping-
-    # per-token property that makes these fixtures readable. An ordinary token
-    # decides `False` everywhere, so it keeps a single mapping.
-    if (token, treat_as_mask) in _seen:
-        return _seen[(token, treat_as_mask)]
+    if token in _seen:
+        return _seen[token]
     # An `X` is only a masking convention when the WHOLE token is the shape the
     # parsers actually look for. `bank_statement_import` requires
     # `[Xx]{4,}\d*` to call something a masked account, so a bare `X` or `XX`
@@ -303,7 +278,7 @@ def _fake_token(token, treat_as_mask=False):
     # customer letters. Classify the token against the parser's own pattern
     # first, and only then treat `X` as structure; everywhere else an `X` is
     # data like any other letter.
-    if _is_mask(token, treat_as_mask):
+    if _is_mask(token):
         positions = [index for index, character in enumerate(token) if character.isdigit()]
         if not positions:
             return token
@@ -362,7 +337,7 @@ def _fake_token(token, treat_as_mask=False):
             f"(ALPHA for letters, DIGITS for digits)."
         )
     _next[shape] = index
-    _seen[(token, treat_as_mask)] = candidate
+    _seen[token] = candidate
     _taken.add(candidate.upper())
     return candidate
 
@@ -436,15 +411,12 @@ def _scrub_plain(text):
         return _days[text]
     # The short mask shape is only a convention inside an IMPS component, so the
     # decision needs the surrounding field, which the token alone cannot carry.
-    # Only the tokens the parser would read as the masked account count as
-    # masking. Everything else in the same word is ordinary data.
-    masked_here = _mask_tokens(text)
     out = []
     for is_token, piece in _split_tokens(text):
         if piece in TEMPLATE:
             out.append(piece)
         elif is_token:
-            out.append(_fake_token(piece, piece in masked_here))
+            out.append(_fake_token(piece))
         else:
             # ASCII punctuation and whitespace only. Nothing reaches this branch
             # that could be a name, which is the whole change — previously an
