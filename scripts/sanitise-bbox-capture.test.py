@@ -247,31 +247,42 @@ for mask, keeps in (("XXXX", True), ("XXXXXX1234", True), ("xxxx5678", True),
 #
 # A sanitiser may be NARROWER than the parser: the cost is a fabricated mask
 # shape. It must never be WIDER: the cost there is a customer character kept.
-# The parser reads the masked account at one POSITION, not anywhere an `IMPS/`
-# appears: `IMPS/<part0>/<prefix>-<Xrun><digits>-<rest>`. Gating on the mere
-# presence of `IMPS/` in the bbox word marked every short X+digit token in that
-# word as masking, including ones nowhere near the account subfield — so a
-# customer token sharing the word kept its X.
-for token in ("XX1234", "X99", "xx7"):
-    outside = load()._scrub_plain(f"TRANSFER TO {token} ACCOUNT")
-    inside = load()._scrub_plain(f"IMPS/P2A/ABC-{token}-SOMENAME")
-    # Same word as a real mask, but NOT in the masked subfield.
-    beside = load()._scrub_plain(f"IMPS/P2A/ABC-XXXX9999-SOMENAME {token} REF")
+# The short form `[Xx]+\d+` is NOT preserved, deliberately. The importer reads
+# it inside an `IMPS/` component, and mirroring a context-sensitive rule from a
+# context-free tokeniser cost four revisions — per character, per token, per word
+# containing `IMPS/`, per position within the word — each leaking a customer `X`
+# into a public fixture in a narrower place than the last.
+#
+# Measured before dropping it: the short form preserved ONE token across both
+# committed fixtures, and the importer's own IMPS tests use constructed eight-X
+# masks. One shape in one fixture, four rounds of findings.
+# Asserted by COUNTING X, not by looking for the original token: the token is
+# absent from the output either way, so searching for it proves nothing. An
+# earlier version of this block did exactly that and passed under a mutation
+# that re-admitted the short form.
+for token in ("XX1234", "X99", "xx7", "X1"):
+    for context, expected_x in ((f"TRANSFER TO {token} ACCOUNT", 0),
+                                (f"IMPS/P2A/ABC-{token}-SOMENAME", 0),
+                                (f"IMPS/P2A/ABC-XXXX9999-SOMENAME {token} REF", 4)):
+        out = load()._scrub_plain(context)
+        label = "plain" if "IMPS" not in context else (
+            "the IMPS mask subfield" if f"-{token}-" in context else "beside a real mask")
+        check(
+            f"{token!r} in {label} leaves exactly {expected_x} X in the output",
+            out.upper().count("X") == expected_x,
+            f"{context} -> {out} (X count {out.upper().count('X')})",
+        )
+
+# ...and the unambiguous form still survives, in any context, because it needs no
+# context to be recognised.
+for context in ("XXXXXX1234", "IMPS/P2A/ABC-XXXXXX1234-NAME", "ACCT XXXXXX1234 END"):
+    out = load()._scrub_plain(context)
     check(
-        f"{token!r} outside an IMPS field is customer data and is fabricated",
-        "X" not in outside.upper(),
-        outside,
+        f"an unambiguous mask survives in {context[:14]!r}",
+        "XXXXXX" in out,
+        out,
     )
-    check(
-        f"{token!r} in the parser's masked subfield is the bank's mask and survives",
-        "X" in inside.upper(),
-        inside,
-    )
-    check(
-        f"{token!r} elsewhere in an IMPS word is still customer data",
-        beside.upper().count("X") == 4,
-        f"{beside} (expected the four-X mask to survive and {token} not to)",
-    )
+
 
 # The invariant the case above turns on, asserted directly so it cannot be
 # undone by editing one string. A replacement character that is an X must mean
