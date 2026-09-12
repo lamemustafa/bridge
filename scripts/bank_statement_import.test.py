@@ -3349,19 +3349,50 @@ def test_interrupted_committed_cleanup_parent_rename_retains_unlocated_backup(m)
 
 
 def test_restore_backup_preserves_foreign_symlink_entry(m):
+    """A symlink to the staged-new inode is still a foreign directory entry."""
     if os.name == "nt":
         return
+    def make_swap(root):
+        original, destination, staged, backup = (root / name for name in
+            ("original-old.xml", "destination.xml", "staged-new.xml", "backup.bak"))
+        original.write_text("old original bytes")
+        destination.write_text("new destination bytes")
+        staged.write_text("new staged bytes")
+        backup.write_text("old backup bytes")
+        original_fd, backup_fd = os.open(original, os.O_RDONLY), os.open(backup, os.O_RDONLY)
+        swap = {"destination": destination, "original_identity": m._fd_identity(original_fd),
+                "staged_identity": m._entry_identity(staged), "metadata": None,
+                "swap_started": True, "original": None,
+                "backup": {"path": backup, "identity": m._fd_identity(backup_fd), "pin": backup_fd}}
+        destination.unlink(); destination.symlink_to(staged)
+        return destination, staged, backup, original_fd, backup_fd, swap
     with tempfile.TemporaryDirectory() as directory:
-        root=pathlib.Path(directory); destination=root/"destination.xml"; backup=root/"backup.bak"; foreign=root/"foreign.xml"
-        destination.write_text("new bytes"); backup.write_text("old bytes"); foreign.write_text("foreign bytes")
-        backup_fd=os.open(backup, os.O_RDONLY); original_fd=os.open(destination, os.O_RDONLY)
-        swap={"destination":destination,"original_identity":m._fd_identity(original_fd),"staged_identity":m._entry_identity(destination),"metadata":None,"swap_started":True,"backup":{"path":backup,"identity":m._fd_identity(backup_fd),"pin":backup_fd}}
-        destination.unlink(); destination.symlink_to(foreign)
-        failures=[]; warnings=[]
-        m._restore_backup(swap, failures, warnings)
-        assert destination.is_symlink() and foreign.read_text() == "foreign bytes"
-        assert backup.exists()
-        os.close(backup_fd); os.close(original_fd)
+        root = pathlib.Path(directory)
+        destination, staged, backup, original_fd, backup_fd, swap = make_swap(root)
+        try:
+            failures=[]
+            m._restore_backup(swap, failures, [])
+            assert destination.is_symlink()
+            assert staged.read_text() == "new staged bytes"
+            assert backup.read_text() == "old backup bytes"
+            assert failures == [backup]
+        finally:
+            os.close(original_fd); os.close(backup_fd)
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination, staged, backup, original_fd, backup_fd, swap = make_swap(root)
+        original_entry = m._entry_identity
+        m._entry_identity = m._file_identity
+        try:
+            try:
+                m._restore_backup(swap, [], [])
+            except TypeError:
+                pass
+            assert not destination.is_symlink(), "old stat-following check replaces the foreign link"
+            assert destination.read_text() == "old backup bytes"
+        finally:
+            m._entry_identity = original_entry
+            os.close(original_fd); os.close(backup_fd)
 
 
 def test_interrupted_cleanup_skips_closed_missing_backup_and_closes_later_pins(m):
