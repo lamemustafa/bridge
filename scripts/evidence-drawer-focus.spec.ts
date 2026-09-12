@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type TestInfo } from "@playwright/test";
 
 declare global {
   interface Window {
@@ -33,9 +33,61 @@ async function pressUntilNativeFocus(
   throw new Error(`native ${key} sequence did not reach ${expectedFocusName}`);
 }
 
+async function nativeFocusRoute(
+  page: Page,
+  startFocusName: string,
+  key: "Tab" | "Shift+Tab",
+  pressCount = 12,
+) {
+  await page.locator(`[data-focus-name="${startFocusName}"]`).focus();
+  const route = [startFocusName];
+  for (let index = 0; index < pressCount; index += 1) {
+    await page.keyboard.press(key);
+    route.push(await page.evaluate(() => document.activeElement?.getAttribute("data-focus-name") ?? "document"));
+  }
+  return route;
+}
+
+async function visibleDrawerTabStops(page: Page) {
+  return page.locator("#drawer").evaluate((drawer) => (
+    window.evidenceDrawerFocus.visibleDrawerTabStops(drawer as HTMLElement)
+      .map((element) => element.dataset.focusName)
+  ));
+}
+
+async function attachFocusDiagnostics(page: Page, testInfo: TestInfo) {
+  const diagnostics = {
+    project: testInfo.project.name,
+    platform: process.platform,
+    collapsed: {
+      helperStops: await visibleDrawerTabStops(page),
+      forwardFromPositive: await nativeFocusRoute(page, "positive tabindex editable", "Tab"),
+      reverseFromEditable: await nativeFocusRoute(page, "editable", "Shift+Tab"),
+    },
+  };
+
+  await page.locator("summary").click();
+  const expanded = {
+    helperStops: await visibleDrawerTabStops(page),
+    forwardFromSummary: await nativeFocusRoute(page, "advanced summary", "Tab"),
+    reverseFromEditable: await nativeFocusRoute(page, "editable", "Shift+Tab"),
+  };
+  await page.locator("summary").click();
+
+  const body = JSON.stringify({ ...diagnostics, expanded });
+  console.log(`evidence-drawer native focus diagnostics: ${body}`);
+  await testInfo.attach("evidence-drawer-native-focus-routes.json", {
+    body,
+    contentType: "application/json",
+  });
+}
+
 test("the evidence drawer records each browser engine's native Tab order for collapsed and expanded details", async ({ page }, testInfo) => {
   await page.goto("/scripts/evidence-drawer-focus.fixture.html");
   await expect.poll(() => page.locator("#drawer").evaluate((drawer) => Boolean(window.evidenceDrawerFocus))).toBe(true);
+  // Preserve bounded native routes and helper output before strict assertions so
+  // a new browser/platform divergence is visible in the CI log and artifact.
+  await attachFocusDiagnostics(page, testInfo);
 
   await page.locator('[data-focus-name="positive tabindex editable"]').focus();
   // The engines differ here: Chromium follows the positive-tabindex editable
