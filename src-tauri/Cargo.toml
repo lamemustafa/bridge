@@ -70,7 +70,6 @@ cryptoki = "0.12"
 getrandom = "0.4"
 icu_properties = "2.3"
 keyring = { version = "4.1.4", default-features = false, features = ["v1"] }
-libsqlite3-sys = { version = "0.37.0", features = ["bundled-sqlcipher-vendored-openssl"] }
 pkcs11 = "0.5"
 quick-xml = { version = "0.41", features = ["serialize"] }
 reqwest = { version = "0.13", features = ["json", "stream"] }
@@ -100,10 +99,17 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+libsqlite3-sys = { version = "0.37.0", features = ["bundled-sqlcipher-vendored-openssl"] }
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# On macOS, select SQLCipher's CommonCrypto provider rather than vendored
+# OpenSSL. The observed CI teardown stack makes this a bounded provider change,
+# not proof of the historical crash's sole cause.
+libsqlite3-sys = { version = "0.37.0", features = ["bundled-sqlcipher"] }
 objc2 = "0.6.4"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSApplication", "NSResponder"] }
 objc2-foundation = { version = "0.3.2", default-features = false }
