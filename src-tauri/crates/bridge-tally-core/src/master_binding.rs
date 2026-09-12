@@ -12,6 +12,7 @@
 //! path that owns identity.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
 use unicode_normalization::UnicodeNormalization;
@@ -930,43 +931,18 @@ pub fn bind(
         }
     }
     let mut budget = MAX_REPORT_CANDIDATE_BYTES;
-    // Which source keys actually repeat, decided before any of them is bound.
-    //
-    // A first-come cap made the memo's protection depend on **source order**:
+    // Which *memo keys* actually repeat, decided before any candidate search
+    // runs. A first-come cap made the memo's protection depend on source order:
     // 1,024 distinct cheap misses at the head of a draft filled it, and the
-    // repeated expensive key behind them was then never cached — the stall the
-    // memo exists to prevent, reachable by reordering the same rows. Counting
-    // first removes the ordering entirely, and caches only what a second row
-    // will ask for again.
+    // repeated expensive key behind them was then never cached.
     //
-    // Counted on the **whole** determinant of a memo entry, not on the name
-    // alone. The memo is keyed by the source key *and* the masters the
-    // identifiers reached, so counting `key` by itself called every hint
-    // variant of one name repeated: 1,024 singleton variants of `Acme Branch`
-    // then filled the memo with entries nothing would ask for twice, and a key
-    // that genuinely repeated behind them could no longer be inserted — the
-    // stall the memo exists to prevent, reached by a different door than the
-    // source-order one.
-    //
-    // The identifiers are the source-side determinant of those masters: the
-    // same key with the same identifiers always produces the same memo key
-    // against a given catalog. The converse does not hold — two different
-    // identifier sets can reach the same masters — so this counts no pair as
-    // repeated that is not, and at worst declines to cache one that is.
-    //
-    // This borrows the keys rather than cloning them, so it costs no more than
-    // the entity list it is counting.
-    let mut repeats: BTreeMap<(&str, &[Identifier]), usize> = BTreeMap::new();
-    for entity in entities {
-        *repeats
-            .entry((entity.key.as_str(), entity.identifiers.as_slice()))
-            .or_insert(0) += 1;
-    }
-    let repeated = repeats
-        .into_iter()
-        .filter(|(_, count)| *count > 1)
-        .map(|(key, _)| key)
-        .collect::<BTreeSet<_>>();
+    // The key is the source fold plus the masters its identifiers reached, not
+    // the raw identifier list. Different unmatched hints all reach the same
+    // empty set, so proxy-counting the raw lists re-ran their one expensive
+    // candidate search once per row. Fingerprints keep this prepass bounded by
+    // `MAX_SOURCE_ENTITIES` without holding another owned key/set per entity;
+    // the memo itself remains capped and checks the full key before reuse.
+    let repeated = repeated_candidate_memo_fingerprints(catalog, entities);
 
     let mut memo = SearchMemo {
         seen: CandidateMemo::new(),
@@ -995,7 +971,8 @@ pub fn bind(
 /// candidate list it holds — a draft of 40,000 *distinct* names would trade the
 /// stall for the memory the aggregate bounds elsewhere exist to prevent. The
 /// repeated-name case, which is the one that stalls, needs very few entries.
-type CandidateMemo = BTreeMap<(String, BTreeSet<usize>), (Vec<(usize, CandidateRule)>, usize)>;
+type CandidateMemoKey = (String, BTreeSet<usize>);
+type CandidateMemo = BTreeMap<CandidateMemoKey, (Vec<(usize, CandidateRule)>, usize)>;
 
 /// One run's search scratch: what has already been computed, and which source
 /// keys a second row will ask for again. Carried together because they are one
@@ -1016,10 +993,12 @@ struct IdentifierEvidence<'a> {
     withheld_holders: usize,
 }
 
-struct SearchMemo<'a> {
+struct SearchMemo {
     seen: CandidateMemo,
-    /// The (source key, identifiers) pairs a second row will ask for again.
-    repeated: BTreeSet<(&'a str, &'a [Identifier])>,
+    /// Fingerprints of the full memo keys a later entity will ask for again.
+    /// A collision can retain one otherwise-singleton result, but can never
+    /// reuse it: `seen` remains keyed by the complete value.
+    repeated: BTreeSet<u64>,
 }
 
 const MAX_CANDIDATE_MEMO_ENTRIES: usize = 1_024;
@@ -1028,7 +1007,7 @@ fn bind_one(
     catalog: &MasterCatalog,
     entity: &SourceEntity,
     budget: &mut usize,
-    memo: &mut SearchMemo<'_>,
+    memo: &mut SearchMemo,
 ) -> EntityBinding {
     let exact = catalog.by_name.get(&entity.name).copied();
 
@@ -1268,7 +1247,7 @@ fn unresolved_status(
     reason: UnboundReason,
     evidence: IdentifierEvidence<'_>,
     budget: &mut usize,
-    memo: &mut SearchMemo<'_>,
+    memo: &mut SearchMemo,
 ) -> BindingStatus {
     let IdentifierEvidence {
         exact,
@@ -1360,12 +1339,13 @@ fn remembered_candidates(
     catalog: &MasterCatalog,
     entity: &SourceEntity,
     identifier_matches: &BTreeSet<usize>,
-    memo: &mut SearchMemo<'_>,
+    memo: &mut SearchMemo,
 ) -> (Vec<(usize, CandidateRule)>, usize) {
     let key = (entity.key.clone(), identifier_matches.clone());
     if let Some(remembered) = memo.seen.get(&key) {
         return remembered.clone();
     }
+    let fingerprint = candidate_memo_fingerprint(&key.0, &key.1);
     let computed = collect_candidates(catalog, entity, identifier_matches);
     // Entry *count* alone does not bound a memo whose keys and values are
     // themselves collections, so the key is still size-tested. The **value** is
@@ -1376,14 +1356,50 @@ fn remembered_candidates(
     // search the memo exists for, and a name reaching twenty thousand masters
     // through shared tokens re-ran it once per row.
     debug_assert!(computed.0.len() <= MAX_CANDIDATES_PER_ENTITY);
-    let worth_holding = memo
-        .repeated
-        .contains(&(entity.key.as_str(), entity.identifiers.as_slice()))
-        && key.1.len() <= MAX_CANDIDATES_PER_ENTITY;
+    let worth_holding =
+        memo.repeated.contains(&fingerprint) && key.1.len() <= MAX_CANDIDATES_PER_ENTITY;
     if worth_holding && memo.seen.len() < MAX_CANDIDATE_MEMO_ENTRIES {
         memo.seen.insert(key, computed.clone());
     }
     computed
+}
+
+/// Counts derived memo keys before candidate collection so a repeated key is
+/// retained from its first computation, independent of source order. The
+/// identifier pass here mirrors the memo key's existing definition: holders
+/// too large to materialize do not enter `identifier_matches` there either.
+fn repeated_candidate_memo_fingerprints(
+    catalog: &MasterCatalog,
+    entities: &[SourceEntity],
+) -> BTreeSet<u64> {
+    let mut occurrences = BTreeMap::<u64, usize>::new();
+    for entity in entities {
+        let fingerprint = candidate_memo_fingerprint_for_entity(catalog, entity);
+        *occurrences.entry(fingerprint).or_insert(0) += 1;
+    }
+    occurrences
+        .into_iter()
+        .filter_map(|(fingerprint, count)| (count > 1).then_some(fingerprint))
+        .collect()
+}
+
+fn candidate_memo_fingerprint_for_entity(catalog: &MasterCatalog, entity: &SourceEntity) -> u64 {
+    let mut identifier_matches = BTreeSet::new();
+    for identifier in &entity.identifiers {
+        if let Some(holders) = catalog.by_identifier.get(identifier) {
+            if holders.len() <= MAX_CANDIDATES_PER_ENTITY {
+                identifier_matches.extend(holders.iter().copied());
+            }
+        }
+    }
+    candidate_memo_fingerprint(&entity.key, &identifier_matches)
+}
+
+fn candidate_memo_fingerprint(key: &str, identifier_matches: &BTreeSet<usize>) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut hasher);
+    identifier_matches.hash(&mut hasher);
+    hasher.finish()
 }
 
 // Counts holder sets actually materialized, for the same reason as the search

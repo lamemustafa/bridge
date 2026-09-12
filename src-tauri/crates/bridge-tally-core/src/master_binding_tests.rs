@@ -2471,6 +2471,35 @@ fn disjoint_withheld_identifier_families_are_marked_as_a_lower_bound() {
 }
 
 #[test]
+fn unmatched_hint_variants_share_one_memo_key_and_compute_once() {
+    let names = (0..60)
+        .map(|index| format!("Acme Branch {index:05}"))
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    // Every raw hint differs, but none reaches a catalog identifier. The memo
+    // key is therefore the same `(acme branch, {})` for every entity.
+    let entities = (0..MAX_CANDIDATE_MEMO_ENTRIES + 4)
+        .map(|index| {
+            SourceEntity::with_identifier_hints(
+                index,
+                "Acme Branch",
+                [format!("5550{index:06}").as_str()],
+            )
+            .expect("valid")
+        })
+        .collect::<Vec<_>>();
+
+    super::CANDIDATE_SEARCHES.with(|count| count.set(0));
+    let report = bound(&catalog, &entities);
+    assert_eq!(report.totals().requested, MAX_CANDIDATE_MEMO_ENTRIES + 4);
+    assert_eq!(
+        super::CANDIDATE_SEARCHES.with(std::cell::Cell::get),
+        1,
+        "different unmatched hints must share their one derived memo key"
+    );
+}
+
+#[test]
 fn hint_variants_of_one_name_do_not_crowd_out_a_key_that_repeats() {
     // The memo is keyed by the source key *and* the masters the identifiers
     // reached, but repetition was counted on the key alone. Every hint variant
@@ -2478,12 +2507,17 @@ fn hint_variants_of_one_name_do_not_crowd_out_a_key_that_repeats() {
     // nothing asks for twice, and the pair that genuinely repeated behind them
     // could no longer be inserted — the same stall as the source-order defect,
     // through a different door.
-    let names = (0..60)
-        .map(|index| format!("Acme Branch {index:05}"))
-        .collect::<Vec<_>>();
+    let mut names = vec!["Acme Branch".to_string()];
+    names.extend(
+        (0..MAX_CANDIDATE_MEMO_ENTRIES)
+            .map(|index| format!("Hint Target {index:05} (5550{index:06})")),
+    );
+    names.push("Repeated Hint Target (5559999999)".to_string());
     let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
 
-    // Distinct hints, one name: same key, different memo key, each asked once.
+    // Distinct hints, one name: each reaches a different master, so each has a
+    // different memo key and is asked only once. The exact source name keeps
+    // all of them on the unresolved candidate path.
     let mut entities = (0..MAX_CANDIDATE_MEMO_ENTRIES)
         .map(|index| {
             SourceEntity::with_identifier_hints(
