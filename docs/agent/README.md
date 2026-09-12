@@ -218,9 +218,14 @@ licence mode, or manually imported file, and only an unnumbered single-voucher
      `master_binding_identifier_conflict`. Obtain a more complete source name
      for an indistinguishable name family; conflicting identifiers require
      correction of the source identity or explicit operator selection against
-     the observed ledger list. A fuller name alone does not settle conflicting
-     identifiers. Where candidates are listed, each carries its comparison
-     rule; even a single candidate still requires a decision. For every reason,
+     the observed ledger list. Identifier-conflict recovery is independent of
+     `listing`: a `truncated` result may show an outside name candidate while
+     omitting the whole large identifier family, so choosing only among listed
+     candidates is insufficient. Inspect the complete observed catalogue and
+     correct or explicitly confirm the intended source identity; a fuller name
+     alone does not settle conflicting identifiers. Where candidates are listed,
+     each carries its comparison rule; even a single candidate still requires a
+     decision. For every reason,
      render `candidate_count_is_lower_bound` as "at least N", never an exact total.
    - `missing` — no live ledger matched. Bridge never creates masters.
 3. Call `build_import_xml` with the payload. It checks exact decimal balance,
