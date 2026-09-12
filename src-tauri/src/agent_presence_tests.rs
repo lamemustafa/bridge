@@ -565,12 +565,11 @@ fn plans(steps: Vec<Step>) -> Vec<ScenarioPlan> {
 fn presence_plans() -> Vec<ScenarioPlan> {
     let catalogue = catalogue_xml();
     let mut steps = vec![Step::Company, Step::Status, Step::Company, Step::Status];
-    // Catalogue, then the voucher window, then the catalogue again: the
-    // verdict is built from two observations and the second read proves the
-    // first still holds.
+    // Catalogue, then the voucher window. A nonempty window lacks a
+    // source-side cardinality control and is refused before a paired
+    // catalogue snapshot could contribute to a verdict.
     steps.extend(paired_read(&catalogue));
     steps.extend(paired_read(&window_xml()));
-    steps.extend(paired_read(&catalogue));
     plans(steps)
 }
 
@@ -621,7 +620,7 @@ async fn a_nonempty_window_without_a_control_total_refuses_to_issue_absent() {
         "partial"
     );
     let observed = simulator.finish().expect("requests");
-    assert_eq!(observed.len(), 22);
+    assert_eq!(observed.len(), 16);
 }
 
 /// The admission contract this tool enforces lives in `agent_catalog.rs`, and
@@ -756,7 +755,6 @@ async fn a_ledger_missing_from_the_catalogue_fails_closed() {
     let mut steps = vec![Step::Company, Step::Status, Step::Company, Step::Status];
     steps.extend(paired_read(&catalogue));
     steps.extend(paired_read(&unlisted));
-    steps.extend(paired_read(&catalogue));
     let simulator = SequenceSimulator::spawn(plans(steps)).expect("simulator");
     let directory = tempfile::tempdir().expect("directory");
     let server = Server::new(Settings {

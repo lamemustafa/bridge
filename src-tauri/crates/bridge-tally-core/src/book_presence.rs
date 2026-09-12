@@ -19,15 +19,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::{Deserialize, Serialize};
-use unicode_normalization::UnicodeNormalization;
-
 use crate::exact_arithmetic::ExactDecimalAccumulator;
 use crate::master_binding::{
     self, comparison_key, BindingStatus, Candidates, MasterBindingError, MasterCatalog,
     MasterClass, SourceEntity,
 };
 use crate::{ExactDecimal, TallyDate};
+use serde::{Deserialize, Serialize};
 
 /// Most vouchers one observed window may carry. A window past this is refused
 /// with a narrow-the-range error rather than silently compared in part.
@@ -36,6 +34,18 @@ pub const MAX_WINDOW_VOUCHERS: usize = 20_000;
 pub const MAX_PROPOSED_VOUCHERS: usize = 5_000;
 /// Most ledger entries one voucher may carry.
 pub const MAX_ENTRIES_PER_VOUCHER: usize = 2_000;
+/// Most distinct voucher-to-ledger memberships retained across one window.
+///
+/// `WindowIndex` must retain every membership once more to find party
+/// resemblances. Per-voucher limits alone therefore admitted 40 million
+/// memberships. The cap keeps that derived index bounded rather than relying
+/// on an allocator failure after a complete-looking input was accepted.
+pub const MAX_WINDOW_LEDGER_MEMBERSHIPS: usize = 100_000;
+/// Most UTF-8 bytes in the distinct ledger comparison keys across one window.
+///
+/// This separately bounds a smaller number of very long accepted keys; a
+/// membership count alone cannot do that.
+pub const MAX_WINDOW_LEDGER_KEY_BYTES: usize = 4 * 1024 * 1024;
 /// Most candidates retained per undecided proposal.
 pub const MAX_CANDIDATES_PER_PROPOSAL: usize = 25;
 /// Most duplicate-number groups listed in the book observations.
@@ -85,6 +95,10 @@ pub enum PresenceError {
     WindowRangeInvalid,
     #[error("book window exceeded its bound")]
     WindowTooLarge,
+    #[error("book window ledger memberships exceeded their aggregate bound")]
+    WindowLedgerMembershipsTooMany,
+    #[error("book window ledger keys exceeded their aggregate byte bound")]
+    WindowLedgerKeyBytesTooLarge,
     #[error("book window carried a voucher dated outside its own range")]
     WindowVoucherOutsideRange,
     #[error("book window carried the same voucher key twice")]
@@ -136,6 +150,8 @@ impl PresenceError {
             Self::WindowIncomplete => "presence_window_incomplete",
             Self::WindowRangeInvalid => "presence_window_range_invalid",
             Self::WindowTooLarge => "presence_window_too_large",
+            Self::WindowLedgerMembershipsTooMany => "presence_window_ledger_memberships_too_many",
+            Self::WindowLedgerKeyBytesTooLarge => "presence_window_ledger_key_bytes_too_large",
             Self::WindowVoucherOutsideRange => "presence_window_voucher_outside_range",
             Self::WindowDuplicateVoucherKey => "presence_window_duplicate_voucher_key",
             Self::WindowRemoteIdContradiction => "presence_window_remote_id_contradiction",
@@ -277,7 +293,10 @@ impl BookVoucher {
         if let Some(party) = party.as_deref() {
             ledger_keys.insert(comparison_key(party));
         }
-        let type_key = comparison_key(&voucher_type);
+        // Voucher types participate in an identity key. Unlike ledger names,
+        // no source observation qualifies case, whitespace, or separator
+        // folding for them, so preserve their validated spelling exactly.
+        let type_key = voucher_type.clone();
         let number_key = voucher_number.as_deref().map(number_key_of);
         Ok(Self {
             key,
@@ -346,7 +365,7 @@ impl ProposedVoucher {
         let remote_id = input.remote_id.map(validated_text).transpose()?;
         let party = input.party.map(validated_text).transpose()?;
         let (magnitude, _, _) = magnitude_of(input.entries)?;
-        let type_key = comparison_key(&voucher_type);
+        let type_key = voucher_type.clone();
         let number_key = voucher_number.as_deref().map(number_key_of);
         Ok(Self {
             position: input.position,
@@ -416,6 +435,8 @@ impl BookWindow {
             return Err(PresenceError::WindowTooLarge);
         }
         let mut keys = BTreeSet::new();
+        let mut ledger_memberships = 0usize;
+        let mut ledger_key_bytes = 0usize;
         for voucher in &vouchers {
             if voucher.date() < from.as_str() || voucher.date() > to.as_str() {
                 return Err(PresenceError::WindowVoucherOutsideRange);
@@ -425,6 +446,23 @@ impl BookWindow {
             }
             if remote_id_evidence == RemoteIdEvidence::NotRead && voucher.remote_id.is_some() {
                 return Err(PresenceError::WindowRemoteIdContradiction);
+            }
+            ledger_memberships = ledger_memberships
+                .checked_add(voucher.ledger_keys.len())
+                .ok_or(PresenceError::WindowLedgerMembershipsTooMany)?;
+            if ledger_memberships > MAX_WINDOW_LEDGER_MEMBERSHIPS {
+                return Err(PresenceError::WindowLedgerMembershipsTooMany);
+            }
+            let voucher_key_bytes = voucher
+                .ledger_keys
+                .iter()
+                .try_fold(0usize, |total, key| total.checked_add(key.len()))
+                .ok_or(PresenceError::WindowLedgerKeyBytesTooLarge)?;
+            ledger_key_bytes = ledger_key_bytes
+                .checked_add(voucher_key_bytes)
+                .ok_or(PresenceError::WindowLedgerKeyBytesTooLarge)?;
+            if ledger_key_bytes > MAX_WINDOW_LEDGER_KEY_BYTES {
+                return Err(PresenceError::WindowLedgerKeyBytesTooLarge);
             }
         }
         Ok(Self {
@@ -472,7 +510,7 @@ impl NumberingDeclaration {
     {
         let mut methods = BTreeMap::new();
         for (voucher_type, method) in entries {
-            let key = comparison_key(&validated_text(voucher_type.as_ref())?);
+            let key = validated_text(voucher_type.as_ref())?;
             if methods
                 .insert(key, method)
                 .is_some_and(|prior| prior != method)
@@ -487,7 +525,7 @@ impl NumberingDeclaration {
     /// caller to reproduce this crate's comparison key. A consumer validating
     /// its own arguments before performing a read uses this.
     pub fn declares(&self, voucher_type: &str) -> bool {
-        self.methods.contains_key(&comparison_key(voucher_type))
+        self.methods.contains_key(voucher_type)
     }
 
     fn method(&self, type_key: &str) -> Option<NumberingMethod> {
@@ -1554,7 +1592,7 @@ fn differences(
                 // Bounded for the same reason the observation labels are: a
                 // response can drop whole rows but cannot shrink one, and the
                 // comparison above already used the full values.
-                proposed: Some(label(catalog_name)),
+                proposed: proposal.party.as_deref().map(label),
                 observed: Some(label(observed)),
             });
         }
@@ -1671,13 +1709,12 @@ fn label(value: &str) -> String {
 /// caller an invoice is already filed. Two distinct invoices numbered `a-1`
 /// and `A-1` would have suppressed one another.
 ///
-/// What remains is encoding, not semantics. NFC and outer whitespace trimming
-/// handle transport artefacts. Internal whitespace, case and punctuation are
-/// content until something measures otherwise, and this narrows toward the
-/// noisy failure: an unmatched punctuation variant reads as absent, which
-/// costs a duplicate a person can see.
+/// Only outer whitespace is a transport artefact in the current adapter.
+/// Unicode composition, internal whitespace, case and punctuation are content
+/// until something measures otherwise. This narrows toward the noisy failure:
+/// an unmatched variant costs a duplicate a person can see.
 fn number_key_of(value: &str) -> String {
-    value.nfc().collect::<String>().trim().to_string()
+    value.trim().to_string()
 }
 
 fn keep_strongest(
