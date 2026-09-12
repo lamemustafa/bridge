@@ -1789,9 +1789,9 @@ def test_original_pin_registration_failure_preserves_existing_output(m):
         def fail_original_pin(handle):
             nonlocal calls
             calls += 1
-            # Staged output and private backup register first. The third pin
-            # is the old destination opened for backup and metadata capture.
-            if calls == 3:
+            # Staged output registers first; the second pin is the old
+            # destination opened for backup and metadata capture.
+            if calls == 2:
                 raise OSError("controlled original pin fstat failure")
             return real_identity(handle)
 

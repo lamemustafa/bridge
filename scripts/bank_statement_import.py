@@ -1868,7 +1868,7 @@ def _restore_backup(swap, failures, metadata_scope_warnings):
     destination, original_identity = swap["destination"], swap["original_identity"]
     staged_identity, metadata = swap["staged_identity"], swap["metadata"]
     try:
-        current_identity = _file_identity(destination)
+        current_identity = _entry_identity(destination)
     except OSError:
         current_identity = None
     if not swap["swap_started"] or current_identity == original_identity:
@@ -1901,7 +1901,7 @@ def _restore_backup(swap, failures, metadata_scope_warnings):
         restored = True
     except OSError:
         try:
-            restored = _file_identity(destination) == backup_identity
+            restored = _entry_identity(destination) == backup_identity
         except OSError:
             restored = False
         if not restored:
@@ -1965,8 +1965,7 @@ def _cleanup_committed_outputs(replaced, claimed, retained_failures, descriptor_
     """Remove old private copies after every replacement has committed."""
     for swap in replaced:
         backup = swap["backup"]
-        _unlink_for_cleanup(backup["path"], backup["identity"], retained_failures)
-        _close_owned_path(backup, retained_failures)
+        _cleanup_owned_path(backup, retained_failures)
         _close_owned_path(swap["original"], retained_failures)
     for record in claimed:
         # A claimed path did not exist before this run. Its close failure cannot
@@ -1983,16 +1982,13 @@ def _reconcile_interrupted_committed_cleanup(
         try:
             if _entry_identity(backup["path"]) == backup["identity"]:
                 retained_failures.append(str(backup["path"]))
-            elif os.path.lexists(backup["path"]):
-                retained_failures.append(str(backup["path"]))
+            else:
+                _cleanup_owned_path(backup, retained_failures)
         except FileNotFoundError:
-            pass
-        except OSError:
-            if os.path.lexists(backup["path"]):
-                retained_failures.append(str(backup["path"]))
-        finally:
+            _cleanup_owned_path(backup, retained_failures)
+        if backup.get("pin") is not None:
             _close_owned_path(backup, retained_failures)
-            _close_owned_path(swap["original"], retained_failures)
+        _close_owned_path(swap["original"], retained_failures)
     for record in claimed:
         _close_owned_path(record, descriptor_failures)
 
