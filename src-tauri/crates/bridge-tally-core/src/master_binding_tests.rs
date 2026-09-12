@@ -2860,3 +2860,22 @@ fn the_listing_word_is_the_one_the_wire_carries() {
         );
     }
 }
+
+#[test]
+fn a_long_repeated_name_is_still_cached() {
+    let name = "Zeta Placeholder Holdings Alpha Branch";
+    assert!(name.len() > MAX_CANDIDATES_PER_ENTITY);
+    let catalog = ledgers(&["Omega Supply", "Beta Supply"]);
+    let entities = (0..6)
+        .map(|position| SourceEntity::new(position, name).expect("valid"))
+        .collect::<Vec<_>>();
+
+    super::CANDIDATE_SEARCHES.with(|count| count.set(0));
+    let report = bound(&catalog, &entities);
+    let searches = super::CANDIDATE_SEARCHES.with(std::cell::Cell::get);
+    assert_eq!(report.totals().requested, 6);
+    assert_eq!(
+        searches, 1,
+        "a long repeated name was searched {searches} times"
+    );
+}

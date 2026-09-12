@@ -990,7 +990,14 @@ pub fn bind(
 /// candidate list it holds — a draft of 40,000 *distinct* names would trade the
 /// stall for the memory the aggregate bounds elsewhere exist to prevent. The
 /// repeated-name case, which is the one that stalls, needs very few entries.
-type CandidateMemoKey = (String, String, BTreeSet<usize>);
+/// Named rather than positional: the memo size guard must continue to measure
+/// the identifier-holder set when the two source folds evolve independently.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct CandidateMemoKey {
+    key: String,
+    binding_key: String,
+    identifier_matches: BTreeSet<usize>,
+}
 type CandidateMemo = BTreeMap<CandidateMemoKey, (Vec<(usize, CandidateRule)>, usize)>;
 
 /// One run's search scratch: what has already been computed, and which source
@@ -1400,15 +1407,16 @@ fn remembered_candidates(
     identifier_matches: &BTreeSet<usize>,
     memo: &mut SearchMemo,
 ) -> (Vec<(usize, CandidateRule)>, usize) {
-    let key = (
-        entity.key.clone(),
-        entity.binding_key.clone(),
-        identifier_matches.clone(),
-    );
+    let key = CandidateMemoKey {
+        key: entity.key.clone(),
+        binding_key: entity.binding_key.clone(),
+        identifier_matches: identifier_matches.clone(),
+    };
     if let Some(remembered) = memo.seen.get(&key) {
         return remembered.clone();
     }
-    let fingerprint = candidate_memo_fingerprint(&key.0, &key.1, &key.2);
+    let fingerprint =
+        candidate_memo_fingerprint(&key.key, &key.binding_key, &key.identifier_matches);
     let computed = collect_candidates(catalog, entity, identifier_matches);
     // Entry *count* alone does not bound a memo whose keys and values are
     // themselves collections, so the key is still size-tested. The **value** is
@@ -1419,8 +1427,8 @@ fn remembered_candidates(
     // search the memo exists for, and a name reaching twenty thousand masters
     // through shared tokens re-ran it once per row.
     debug_assert!(computed.0.len() <= MAX_CANDIDATES_PER_ENTITY);
-    let worth_holding =
-        memo.repeated.contains(&fingerprint) && key.2.len() <= MAX_CANDIDATES_PER_ENTITY;
+    let worth_holding = memo.repeated.contains(&fingerprint)
+        && key.identifier_matches.len() <= MAX_CANDIDATES_PER_ENTITY;
     if worth_holding && memo.seen.len() < MAX_CANDIDATE_MEMO_ENTRIES {
         memo.seen.insert(key, computed.clone());
     }

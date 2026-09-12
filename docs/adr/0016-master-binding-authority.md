@@ -312,12 +312,22 @@ retaining an exact count.
 `candidates` can be empty for three unrelated reasons, and they mean opposite
 things to anyone deciding what to do next:
 
-| `reason` | what empty means |
-| --- | --- |
-| `NoCandidate` | no master resembles this name at all |
-| `NoDiscriminatingCandidate` | at least `candidate_count` masters resemble it when the count is a lower bound, and none is separable — **many exist**, none is worth showing |
-| any, with `candidate_listing: "withheld"` | a family is deliberately not sliced; `candidate_count_is_lower_bound` says whether multiple unmaterialized families leave its union uncertain |
-| any, with `candidate_listing: "truncated"` | the list was cut, by the per-entity cap or by the report's aggregate byte budget |
+**Key the row on the listing state, not on the reason.** Withholding is not the
+property of one reason: a source identifier held by more than
+`MAX_CANDIDATES_PER_ENTITY` masters is withheld under `IdentifierConflict`, and a
+name reaching a family it cannot separate is withheld under
+`NoDiscriminatingCandidate`. A consumer that keys on the reason misses the first.
+
+| `candidate_listing` | what empty means | which `reason` |
+| --- | --- | --- |
+| `none` | no master resembles this name at all | `NoCandidate` |
+| `withheld` | **many exist**, the binder declined to print an arbitrary slice, and `candidate_count` says how many | either `NoDiscriminatingCandidate` or `IdentifierConflict` |
+| `truncated` | the list was cut, by the per-entity cap or by the report's aggregate byte budget | any |
+
+`candidate_count` is exact unless `candidate_count_is_lower_bound` says
+otherwise, which happens only where an unmaterialized union prevents an exact
+total: two or more skipped identifier families, or one beside masters the name
+reached. One skipped family alone is a single set, and its size is its length.
 
 So `candidates.is_empty()` alone answers nothing. The disambiguators are
 `reason`, `candidate_count`, `candidate_count_is_lower_bound` and
