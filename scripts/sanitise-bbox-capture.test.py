@@ -213,14 +213,10 @@ for leaky in ("XAVIER", "ABXXCD", "MAX", "X-RAY"):
 # ...while the shape the parsers actually look for is still structure, and
 # survives. `bank_statement_import` calls something a masked account only when
 # the whole token matches `[Xx]{4,}\d*`, so that is the one test applied here.
-# The short forms carry the second parser path. `bank_statement_import` reads
-# `[Xx]+\d+` inside a UPI/IMPS reference, so `XX1234` is the bank's masking even
-# though it has fewer than MASK_MIN_XS characters — requiring four everywhere
-# fabricated it to `ZZ1111` and destroyed a shape the fixture exists to keep.
-# Without these three rows the union predicate has no test at all: reverting it
-# to the four-X rule left the whole suite green.
+# A short X+digits token is ordinary customer data without its IMPS field
+# context. The captured wrapped SBI field is checked through main() below.
 for mask, keeps in (("XXXX", True), ("XXXXXX1234", True), ("xxxx5678", True),
-                    ("XX1234", True), ("X99", True), ("xx7", True),
+                    ("XX1234", False), ("X99", False), ("xx7", False),
                     ("XX", False), ("X", False), ("XXX", False)):
     out = load()._scrub_plain(mask)
     # For a mask, every X position must survive verbatim and every digit
@@ -236,6 +232,49 @@ for mask, keeps in (("XXXX", True), ("XXXXXX1234", True), ("xxxx5678", True),
         f"{mask!r} is {'preserved as a mask' if keeps else 'fabricated, being too short to be one'}",
         held, f"{mask} -> {out}",
     )
+
+# The same token can be a structural mask in a bank reference and customer
+# data elsewhere. Memoisation must keep those roles separate in both orders.
+for mask_first in (True, False):
+    fresh = load()
+    source = "IMPS/111112 111113/ZZY- X99-NAME"
+    for value in ((source, "X99") if mask_first else ("X99", source)):
+        out = fresh.scrub(value)
+        if value == "X99":
+            check(f"ordinary X99 is fabricated after mask={mask_first}",
+                  "X" not in out.upper(), out)
+        else:
+            check(f"qualified short IMPS mask survives first={mask_first}",
+                  bool(re.search(r"/[^/]+- X\d+-", out)), out)
+for text in ("UPI/X99", "IMPS/X99/NAME", "IMPS/123/NAME-X99",
+             "IMPS/123/NAME-X99Z-OTHER", "IMPS/123/NAME-OTHER/X99-END"):
+    check("short masks outside the exact field are fabricated: " + text,
+          "X" not in load().scrub(text).upper())
+
+# Captured source geometry proves the wrapped context without inventing a new
+# bank fixture. Pin the mask-bearing box and mutate only its classification.
+fixture = pathlib.Path(__file__).with_name("fixtures") / "sbi-bbox-capture.xml"
+fresh = load()
+page = fixture.read_text(encoding="utf-8").split("<page ")[1]
+contexts = fresh._page_short_masks(page)
+box = (143.66, 701.384, 183.68, 712.484)
+check("captured SBI short mask is located in its narration row",
+      contexts == {box: {(0, 5)}}, repr(contexts))
+with tempfile.TemporaryDirectory() as directory:
+    destination = pathlib.Path(directory) / "out.xml"
+    with contextlib.redirect_stdout(io.StringIO()):
+        fresh.main(str(fixture), str(destination), [(0, [(0, 10000)])], "SBI")
+    words = {tuple(map(float, m.groups()[:4])): m.group(5)
+             for m in fresh.WORD.finditer(destination.read_text())}
+    check("main preserves the captured wrapped short mask's structural Xs",
+          bool(re.fullmatch(r"XX\d{3}-", words[box])), repr(words[box]))
+# Same captured word in an adjacent column must not receive mask authority.
+shifted = page.replace('xMin="143.660000" yMin="701.384000" xMax="183.680000"',
+                       'xMin="222.900000" yMin="701.384000" xMax="262.920000"')
+check("adjacent-column mutation loses short-mask authority",
+      not load()._page_short_masks(shifted))
+check("missing IMPS reference context loses short-mask authority",
+      not load()._page_short_masks(page.replace("IMPS/111112", "UPI/111112")))
 
 # The invariant the case above turns on, asserted directly so it cannot be
 # undone by editing one string. A replacement character that is an X must mean
