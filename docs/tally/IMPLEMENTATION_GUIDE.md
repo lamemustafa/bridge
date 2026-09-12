@@ -683,20 +683,39 @@ identical payment, so it prevents no duplicate anywhere. Two paragraphs of one p
 each other is how a withdrawn mandate comes back.
 
 What is actually true outside §3.3a's reach is narrower and less comfortable — with **one**
-qualified exception. `TALLY_PROTOCOL_REFERENCE.md` §9.8 is VERIFIED: a voucher type set to
-**Manual** numbering with `PREVENTDUPLICATES=Yes` preserves the supplied number verbatim and
-rejects a duplicate **cleanly** (`CREATED=0, ALTERED=0, EXCEPTIONS=1`). A flow that carries
-voucher-number identity under that configuration therefore *does* have a proven mechanism, and this
-paragraph must not discard it.
+narrowly qualified exception, and the qualification is tighter than the first correction made it
+look. `TALLY_PROTOCOL_REFERENCE.md` §9.8 measured **one thing**: how a **failed `Alter`** behaves
+under Manual numbering with `PREVENTDUPLICATES=Yes`. It was cleanly rejected — `CREATED=0,
+ALTERED=0, EXCEPTIONS=1` — where automatic numbering silently duplicated. That is the whole result.
 
-Outside **both** §3.3a's `REMOTEID` path and §9.8's Manual + `PREVENTDUPLICATES=Yes` path, **there
-is no proven duplicate-prevention mechanism at all.** A **different** payload under the same key is
-untested (it may overwrite, partially update or duplicate), as is any non-Journal voucher type, any
-other SKU, and a retry across a Tally restart or a company boundary. Name which case you are in,
-and where it is neither of those two, stop and involve a human rather than reaching for the tuple.
+Three limits come with it, and §9.8 states two of them itself:
 
-The tuple is withdrawn in every case. §9.8 does not rehabilitate the fingerprint — it supplies a
-*different* mechanism, one that rejects at the gateway instead of guessing at the caller.
+- **Request shape.** The observation is about a failed `Alter`. §9.8's own rule says *"Do not apply
+  the failed-`Alter` observation to a different request identity mechanism."* A crash retry sends a
+  `Create`, which is a different request shape and is **UNVERIFIED**.
+- **SKU.** §9.8 carries no licensed qualification for the numbering path. Its later scope
+  clarification covers a licensed *Journal* `ACTION="Create"` repeat carrying `REMOTEID` and says
+  in terms that it does **not** establish voucher-number identity, the configured numbering method,
+  or other request shapes.
+- **Voucher type.** Journal only, as everywhere else in this section.
+
+So the honest statement is: **for a failed `Alter` on the measured baseline, Manual numbering
+converts a silent duplicate into a clean rejection.** It is not a general duplicate-prevention
+mechanism, and a `Create` retry is not covered by it.
+
+Outside §3.3a's `REMOTEID` path and outside that one measured case, **there is no proven
+duplicate-prevention mechanism at all.** A **different** payload under the same key is untested (it
+may overwrite, partially update or duplicate), as is any non-Journal voucher type, any other SKU,
+and a retry across a Tally restart or a company boundary. Name which case you are in, and where it
+is neither, stop and involve a human rather than reaching for the tuple.
+
+The tuple is withdrawn in every case. §9.8 does not rehabilitate the fingerprint — it reports how
+one failure mode behaves under one setting, which is a different kind of thing entirely.
+
+**Why this needed two corrections.** The first revision withdrew an over-broad claim ("no proven
+mechanism anywhere") and replaced it with another one ("Manual + `PREVENTDUPLICATES` is a proven
+mechanism"), widening §9.8 past both its request shape and its SKU in the act of narrowing
+something else. A claim is not made safe by being a correction.
 
 ### 3.4a Undefined UDF fields are silently discarded — **the plan's primary idempotency key does not work as written**
 
@@ -793,11 +812,14 @@ an automatic dedupe it suppresses real vouchers no matter which tier it is place
 
 What follows instead is narrower and less comfortable: **there is no proven mechanism that lets an
 automatic dedupe *decision* be made from the fingerprint tuple.** That is not the same claim as "no
-proven duplicate-prevention mechanism outside §3.3a" — it overstates the gap. Two mechanisms are
-proven, each with a narrow scope: `REMOTEID` upsert on a byte-identical repeat on the Journal path
-(§3.3a), and Manual numbering with `PREVENTDUPLICATES=Yes`, which cleanly rejects a duplicate
-voucher number instead of silently creating one — `CREATED=0, ALTERED=0, EXCEPTIONS=1` (§3.3;
+proven duplicate-prevention mechanism outside §3.3a" — it overstates the gap, but only just. One
+mechanism is proven: `REMOTEID` upsert on a byte-identical repeat on the Journal path (§3.3a). One
+narrower observation sits beside it: under Manual numbering with `PREVENTDUPLICATES=Yes`, a
+**failed `Alter`** is cleanly rejected rather than silently duplicated — `CREATED=0, ALTERED=0,
+EXCEPTIONS=1` (§3.3;
 [`TALLY_PROTOCOL_REFERENCE.md` §9.8](TALLY_PROTOCOL_REFERENCE.md#98-voucher-numbering-method-changes-everything--use-manual)).
+That is a failed-`Alter` result on §9.8's own baseline, not a general rejection mechanism: §9.8
+forbids carrying it to a different request identity mechanism, and a crash retry sends a `Create`.
 Neither reaches a destroyed narration marker or a differently-numbered duplicate under automatic
 numbering; for those cases the honest response is still to stop and ask a human, not to substitute
 the fingerprint as an automatic suppressor — it cannot tell a retry from a legitimate second
