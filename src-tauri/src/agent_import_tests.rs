@@ -1632,6 +1632,19 @@ async fn built_batch_guidance_matches_the_saved_native_admission() {
                 .any(|warning| warning.contains("Confirm the loaded company before importing")),
             "company-identity warning missing from a Journal-only batch: {warnings:?}"
         );
+        // The check the warning asks for is §9.13's five-element tuple, and
+        // the operator can only perform it if the fifth element is visible:
+        // endpoint_origin is recorded on the batch and compared on dispatch,
+        // but a hand import never reaches that check.
+        assert!(
+            warnings.iter().any(|warning| warning
+                .contains("endpoint origin, name, GUID, company number and books-from, all five")),
+            "the identity warning must enumerate the whole tuple: {warnings:?}"
+        );
+        assert!(
+            result["endpoint_origin"].is_string(),
+            "the batch must expose the endpoint origin the warning tells the operator to compare"
+        );
         // The stale-classification warning is bank-gated and must not appear
         // for a Journal-only batch.
         assert!(

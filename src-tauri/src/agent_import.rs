@@ -594,6 +594,11 @@ impl Server {
                     "live_evidence": live_evidence(&line.vouchers),
                     "verification_preflight": verification_preflight,
                     "identity_scheme": line.identity_scheme,
+                    // The fifth element of §9.13's identity tuple. It is
+                    // recorded on the batch and compared on dispatch, but a
+                    // hand import never reaches that check — so the operator
+                    // is asked to compare it and must be able to see it.
+                    "endpoint_origin": line.endpoint_origin,
                     "observed_profile": opening_profile.observed_profile,
                     "warnings": warnings,
                     "next_step": next_step
@@ -1057,7 +1062,7 @@ fn build_import_guidance(
     // wording stays neutral between a hand import and a native post because
     // this is emitted at build time, before which one happens is known.
     let company_identity_warning =
-        "Confirm the loaded company before importing. A mismatched SVCURRENTCOMPANY is verified to post into whatever company Tally has loaded, with CREATED=1 and no error, so naming a company does not aim the write. Compare the whole identity immediately before importing — name, GUID, company number and books-from, not the GUID alone, because a year-end split gives the child its parent's GUID. Prefer an instance with no other company loaded.";
+        "Confirm the loaded company before importing. A mismatched SVCURRENTCOMPANY is verified to post into whatever company Tally has loaded, with CREATED=1 and no error, so naming a company does not aim the write. Compare the whole identity immediately before importing — endpoint origin, name, GUID, company number and books-from, all five. Not the GUID alone, because a year-end split gives the child its parent's GUID; and not the company fields alone, because a second local Tally can hold a copy of the same company and a hand import is never checked against the endpoint this batch was built from. The endpoint_origin this batch recorded is returned beside it. Prefer an instance with no other company loaded.";
     // §9.13: every party amount in the observed import landed On Account, and
     // that is explicitly not established as correct for a book that reconciles
     // bills. Bridge cannot yet tell the two kinds of book apart — the ledger
