@@ -1402,13 +1402,17 @@ fn weighted_party_fanout_is_bounded_below_the_pair_product_limit() {
     let observed = window(&rows);
     let proposals = (0..500).map(|i| ProposalRow::new(i, "20260812", "P").party("Party").build()).collect::<Vec<_>>();
     assert!(proposals.len() * observed.vouchers().len() < MAX_PRESENCE_COMPARISONS);
-    let keys = names.iter().map(|name| comparison_key(name)).collect::<BTreeSet<_>>();
-    assert_eq!(keys.len(), 25, "fixture must retain every party fanout key");
-    let parties = vec![PartyResolution { outcome: PartyOutcome::Ambiguous { reason: "test".into(), candidate_count: 25 }, compare_keys: keys, incomplete: false }; proposals.len()];
+    let catalog = catalog_of(&names);
+    let parties = bind_parties(&catalog, &proposals).expect("actual party binding");
+    assert_eq!(parties[0].compare_keys.len(), 25, "fixture must retain every party fanout key");
     let index = WindowIndex::build(&observed);
-    let work = resemblance_work_units(&proposals, &parties, &index).expect("count");
-    assert!(work > MAX_PRESENCE_WORK_UNITS, "weighted fanout must exceed admission bound");
-    assert_eq!(PresenceRequest::new(&observed, &catalog_of(&names), &numbering(NumberingMethod::Manual), &proposals).expect_err("real admission refuses"), PresenceError::ComparisonWorkTooLarge);
+    let per_proposal = resemblance_work_units(&proposals[..1], &parties[..1], &index).expect("unit cost");
+    let admitted_count = MAX_PRESENCE_WORK_UNITS / per_proposal;
+    assert!(admitted_count > 0 && admitted_count < proposals.len());
+    assert!(resemblance_work_units(&proposals[..admitted_count], &parties[..admitted_count], &index).expect("admitted count") <= MAX_PRESENCE_WORK_UNITS);
+    assert!(resemblance_work_units(&proposals[..admitted_count + 1], &parties[..admitted_count + 1], &index).expect("refused count") > MAX_PRESENCE_WORK_UNITS);
+    assert!(PresenceRequest::new(&observed, &catalog, &numbering(NumberingMethod::Manual), &proposals[..admitted_count]).is_ok());
+    assert_eq!(PresenceRequest::new(&observed, &catalog, &numbering(NumberingMethod::Manual), &proposals[..admitted_count + 1]).expect_err("real admission refuses"), PresenceError::ComparisonWorkTooLarge);
 }
 
 #[test]

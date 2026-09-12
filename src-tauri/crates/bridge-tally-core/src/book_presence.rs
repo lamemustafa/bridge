@@ -1599,25 +1599,6 @@ fn decide(
         }
     }
 
-    // A supplied REMOTEID is observed evidence even when no book row carries it.
-    // Do not let a coincident manual number settle a row whose matched book voucher
-    // lacks that supplied identity; NotRead remains withheld by `skipped_evidence`.
-    if window.remote_id_evidence() == ColumnEvidence::Observed
-        && proposal.remote_id.is_some()
-        && proposal.remote_id.as_deref().map_or(false, |key| index.by_remote_id.get(key).map_or(true, Vec::is_empty))
-        && method == NumberingMethod::Manual
-        && number_matches.len() == 1
-        && window.vouchers[number_matches[0]].remote_id.is_none()
-    {
-        return shell(
-            PresenceStatus::PossiblyPresent(undecided(
-                UndecidedReason::IdentityConflict,
-                candidates_from(window, &number_matches, CandidateRule::SharedVoucherNumber),
-            )),
-            with_resemblances(number_matches.iter().copied().collect()),
-        );
-    }
-
     // Rule two: a voucher number is identity only where the numbering method
     // preserves it (§9.8), and only when it is unique on both sides.
     //
@@ -1816,19 +1797,21 @@ fn decide(
     )
 }
 
-/// The selected voucher names a *different* identity than the proposal does,
-/// in a column they both carry. Not "two signals chose different vouchers" but
-/// "the one they chose disagrees about who it is" — a number matching uniquely
-/// while the two sides carry different `REMOTEID`s is the case this exists for.
+/// The selected voucher names a different identity than the proposal does.
+/// A supplied observed `REMOTEID` must match the selected voucher's value;
+/// absence in an observed column also contradicts it. Narration markers only
+/// compare when both sides supply one, because their absence is not a claim
+/// about the external source identity.
 fn contradicts(proposal: &ProposedVoucher, voucher: &BookVoucher) -> bool {
-    fn disagree(proposed: Option<&str>, observed: Option<&str>) -> bool {
-        matches!((proposed, observed), (Some(a), Some(b)) if a != b)
-    }
-    disagree(proposal.remote_id.as_deref(), voucher.remote_id.as_deref())
-        || disagree(
-            proposal.narration_marker.as_deref(),
-            voucher.marker.as_deref(),
-        )
+    let remote_id_disagrees = proposal
+        .remote_id
+        .as_deref()
+        .is_some_and(|proposed| voucher.remote_id.as_deref() != Some(proposed));
+    let marker_disagrees = matches!(
+        (proposal.narration_marker.as_deref(), voucher.marker.as_deref()),
+        (Some(proposed), Some(observed)) if proposed != observed
+    );
+    remote_id_disagrees || marker_disagrees
 }
 
 /// Every book voucher this proposal resembles, strongest rule per voucher.
