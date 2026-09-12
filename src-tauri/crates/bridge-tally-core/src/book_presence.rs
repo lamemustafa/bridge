@@ -1770,11 +1770,11 @@ fn decide(
         );
     }
 
-    // A remote identity that uniquely selects a book voucher conflicts with a
+    // A strong identity that uniquely selects a book voucher conflicts with a
     // supplied manual number absent from that voucher series. Treat the two
     // identities as contradictory rather than allowing the stronger key to
     // settle a row whose number evidence disagrees.
-    if remote_id_matches.len() == 1
+    if stronger_selected
         && method == NumberingMethod::Manual
         && proposal.number_key.is_some()
         && number_matches.is_empty()
@@ -1782,9 +1782,9 @@ fn decide(
         return shell(
             PresenceStatus::PossiblyPresent(undecided(
                 UndecidedReason::IdentityConflict,
-                candidates_from(window, &remote_id_matches, CandidateRule::SharedRemoteId),
+                collision_candidates.clone(),
             )),
-            with_resemblances(remote_id_matches.iter().copied().collect()),
+            with_resemblances(collision_touched.clone()),
         );
     }
 

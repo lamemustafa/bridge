@@ -139,6 +139,12 @@ another is `IdentityConflict`. Ranking them would be the move ADR 0016 refuses
 when an identifier contradicts an exact name, and adding a third signal makes
 that more important rather than less: there are now three ways to disagree.
 
+A unique marker also conflicts with a supplied manual number that selects no
+observed voucher. That is `IdentityConflict`, with every matching identity kept
+in the candidate set. An omitted number provides no contradictory identity;
+an automatic number is not an identity. Both remain distinct from a supplied,
+absent manual number.
+
 ### 6. What this basis does not reach, said plainly
 
 The marker reaches **only vouchers Bridge itself wrote**. It says nothing about

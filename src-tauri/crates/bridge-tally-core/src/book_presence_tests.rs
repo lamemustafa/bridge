@@ -2718,6 +2718,57 @@ fn a_remote_id_with_an_absent_manual_number_is_an_identity_conflict() {
 }
 
 #[test]
+fn a_marker_with_an_absent_manual_number_is_an_identity_conflict() {
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118").marker("marker-1")]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0999")
+        .marker("marker-1")
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert!(entry.present_book_key().is_none());
+    assert_eq!(reason(entry), UndecidedReason::IdentityConflict);
+    let candidates = &entry.undecided().expect("undecided").candidates;
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].book_key, "book-1");
+    assert_eq!(candidates[0].rule, CandidateRule::SharedNarrationMarker);
+}
+
+#[test]
+fn an_absent_manual_number_conflict_retains_both_strong_identities() {
+    let window = window(&[
+        BookRow::new("book-1", "20260812", "AA0118").remote_id("remote-1"),
+        BookRow::new("book-2", "20260813", "AA0119").marker("marker-1"),
+    ]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0999")
+        .remote_id("remote-1")
+        .marker("marker-1")
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert!(entry.present_book_key().is_none());
+    assert_eq!(reason(entry), UndecidedReason::IdentityConflict);
+    let candidates = &entry.undecided().expect("undecided").candidates;
+    assert_eq!(candidates.len(), 2);
+    assert!(candidates
+        .iter()
+        .any(|c| c.book_key == "book-1" && c.rule == CandidateRule::SharedRemoteId));
+    assert!(candidates
+        .iter()
+        .any(|c| c.book_key == "book-2" && c.rule == CandidateRule::SharedNarrationMarker));
+    assert_eq!(report.observations().unmatched_book_vouchers, 0);
+}
+
+#[test]
 fn a_remote_id_with_an_absent_manual_number_on_an_unobserved_type_is_a_conflict() {
     let window = window(&[BookRow::new("book-1", "20260812", "AA0118").remote_id("tally-1")]);
     let proposals = [ProposalRow::new(0, "20260812", "AA0999")
@@ -3912,11 +3963,13 @@ fn a_marker_on_a_cancelled_voucher_is_not_present() {
 #[test]
 fn a_marker_and_a_number_cannot_claim_one_voucher_for_two_proposals() {
     let window = window(&[BookRow::new("book-1", "20260812", "AA0118").marker(MARKER_A)]);
+    let mut marker_only = ProposalRow::new(1, "20260813", "AA0119").marker(MARKER_A);
+    // Omitted number evidence permits another identity to settle. A supplied
+    // absent manual number would instead conflict before claiming this row.
+    marker_only.number = None;
     let proposals = [
         ProposalRow::new(0, "20260812", "AA0118").build(),
-        ProposalRow::new(1, "20260813", "AA0119")
-            .marker(MARKER_A)
-            .build(),
+        marker_only.build(),
     ];
     let report = run(
         &window,
