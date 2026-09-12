@@ -867,8 +867,13 @@ Read that precisely, because the obvious paraphrase — "Tally does not dedupe o
 number" — is false in two directions. Under **automatic** numbering the supplied number is
 *discarded* (§9.8), so the two sends never shared a stored voucher number and nothing could have
 deduped on it. Under **Manual + `PREVENTDUPLICATES=Yes`**, §9.8 records that a repeated number is
-**cleanly rejected** — a qualified duplicate-rejection mechanism that a reader of this sentence
-would otherwise never look for.
+**cleanly rejected** — a qualified rejection that a reader of this sentence would otherwise never
+look for. Qualified narrowly, though: §9.8 measured a **failed `Alter`**, and its own rule forbids
+carrying that observation to a different request identity mechanism. A crash retry sends a
+`Create`, which is **UNVERIFIED** here, as is the behaviour on any licensed SKU — §9.8's scope
+clarification covers a licensed Journal `REMOTEID` repeat and says in terms that it establishes
+neither voucher-number identity nor the configured numbering method. Do not read this sentence as
+promising a crash-retry is safe under Manual numbering.
 
 So: on the numbering method measured here, a crash-retry duplicates client data unless the
 integrator prevents it.

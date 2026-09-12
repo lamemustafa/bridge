@@ -607,6 +607,21 @@ Implement — write core (masters):
    capture has qualified the predicate, or where the compatibility result
    for the connected instance says it holds. A fold applied on an
    unqualified SKU can bind a write to an account Tally keeps distinct.
+   AND EXACT-ONLY MATCHING HAS ITS OWN FAILURE, WHICH IS NOT "SAFE":
+   if the connected SKU *does* share the Educational behaviour, an
+   existing `FOO` reads as ABSENT for a requested `foo`, and a step that
+   creates what it finds missing then makes a SECOND master differing
+   only by case — a duplicate in the client's book rather than a
+   misbinding. Exact-only is the right rule for BINDING and the wrong
+   rule for CREATING, so the gate has three outcomes, not two:
+   **bind** on an exact match; **create** only when no master differs
+   from the requested name by case or separator alone; otherwise
+   **REFUSE and raise it for a human** — a near-collision on an
+   unqualified SKU is precisely the case where neither automatic answer
+   is defensible. Compute the near-collision set with the §9.4b fold
+   used only as a *detector*, never as a binder: folding to decide
+   "something similar exists, stop" needs no licensed qualification,
+   because the conclusion is a refusal rather than a write.
    ALWAYS cross-check the fetched object against the idempotency key and
    the (date, amount, ledger-set, voucher-type) fingerprint before
    promoting to CONFIRMED — LASTVCHID can be clobbered by a foreign
