@@ -140,10 +140,61 @@ if args[:2] == ["pr", "view"]:
         body = body.replace("`python3 scripts/merge-gate.test.py`", "`cargo ...`")
     if scenario == "checklist-heading":
         body = body.replace("#L10", "#L1")
+    if scenario in {"implementation-p4-present", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "migration-rollback-present", "migration-template-wrapped", "security-notes-present", "security-review-valid"}:
+        body += (
+            "\n## Scope, reuse, and impact\n\n"
+            "- Existing component reused: the existing gate parser and file inventory.\n"
+            "- What is deleted (or why no deletion is justified): no duplicate path remains.\n"
+            "- What breaks if this is not built: unsafe evidence could reach a merge.\n"
+        )
+    if security_case or scenario in {"surface-unpins", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"}:
+        body += (
+            "\n## Scope, reuse, and impact\n\n"
+            "- Existing component reused: the existing gate parser and file inventory.\n"
+            "- What is deleted (or why no deletion is justified): no duplicate path remains.\n"
+            "- What breaks if this is not built: unsafe evidence could reach a merge.\n"
+            "\n## Security impact\n\nNo credential material is added.\n"
+            "\n## Migration compatibility\n\nExisting callers retain their paths and formats.\n"
+            "\n- Windows validation evidence: Windows CI ran `python3 scripts/merge-gate.test.py`.\n"
+            "- macOS validation evidence: macOS CI ran `python3 scripts/merge-gate.test.py`.\n"
+        )
+    if scenario in {"platform-evidence-present", "migration-template-wrapped", "security-notes-present", "security-review-valid", "sync-migration-present"}:
+        body += (
+            "\n- Windows validation evidence: Windows CI ran `python3 scripts/merge-gate.test.py`.\n"
+            "- macOS validation evidence: macOS CI ran `python3 scripts/merge-gate.test.py`.\n"
+        )
+    if scenario == "platform-checkbox-evidence":
+        body += (
+            "\n- [x] Native Windows validation completed: `python3 scripts/merge-gate.test.py` passed on Windows CI.\n"
+            "- [x] Native macOS validation completed: `python3 scripts/merge-gate.test.py` passed on macOS CI.\n"
+        )
+    if scenario == "platform-checkbox-comment":
+        body += (
+            "\n- [x] Native Windows validation completed: <!-- paste evidence -->\n"
+            "- [x] Native macOS validation completed: <!-- paste evidence -->\n"
+        )
+    if scenario in {"platform-evidence-present", "platform-checkbox-evidence"}:
+        body += (
+            "\n## Security impact\n\nNo credential material is added.\n"
+            "\n## Migration compatibility\n\nExisting callers retain their paths and formats.\n"
+        )
+    if scenario == "migration-rollback-present":
+        body += "\n## Rollback notes\n\nRevert the migration commit before deployment.\n"
+    if scenario == "migration-template-wrapped":
+        body += (
+            "\n- Migration/sync compatibility and rollback procedure (required when an\n"
+            "  existing workflow changes): Existing readers retain the old format; revert this commit before deployment.\n"
+        )
+    if scenario == "migration-template-other-field":
+        body += (
+            "\n- Migration/sync compatibility and rollback procedure (required when an\n"
+            "  existing workflow changes):\n"
+            "- Destructive database migration: No\n"
+        )
     body = body.replace("blob/HEAD", f"blob/{head}")
     if scenario == "checklist-stale-ref":
         body = body.replace(f"blob/{head}", "blob/" + "f" * 40)
-    one_file = scenario in {"files-empty", "formatted-phone", "formatted-phone-grouped", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "home-macos", "home-unix", "home-windows"} or scenario.startswith("home-") or security_case or sync_case
+    one_file = scenario in {"files-empty", "formatted-phone", "formatted-phone-grouped", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "home-macos", "home-unix", "home-windows", "crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path", "gitlink", "implementation-p4-missing", "implementation-p4-present", "platform-evidence-missing", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"} or scenario.startswith("home-") or security_case or sync_case
     selected_base = new_head if scenario == "base-oid-mismatch" else base
     emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
@@ -235,6 +286,20 @@ elif args[:2] == ["pr", "diff"]:
         emit(f"diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+{identifier}\n")
     elif scenario == "quoted-path":
         emit('diff --git "a/docs/caf\\303\\251.md" "b/docs/caf\\303\\251.md"\n--- "a/docs/caf\\303\\251.md"\n+++ "b/docs/caf\\303\\251.md"\n@@ -0,0 +1 @@\n+safe text\n')
+    elif scenario == "crlf-diff":
+        emit("diff --git a/docs/example.md b/docs/example.md\r\n--- a/docs/example.md\r\n+++ b/docs/example.md\r\n@@ -0,0 +1 @@\r\n+safe text\r\n")
+    elif scenario == "ambiguous-unquoted-path":
+        emit("diff --git a/docs/a b/example.md b/docs/a b/example.md\n--- a/docs/a b/example.md\n+++ b/docs/a b/example.md\n@@ -0,0 +1 @@\n+safe text\n")
+    elif scenario == "ambiguous-rename-path":
+        emit("diff --git a/docs/a b/example.md b/docs/a b/example.md\nsimilarity index 100%\nrename from docs/a b/example.md\nrename to docs/a b/example.md\n")
+    elif scenario == "gitlink":
+        emit("diff --git a/vendor/module b/vendor/module\nnew file mode 160000\nindex 0000000..2222222\n--- /dev/null\n+++ b/vendor/module\n@@ -0,0 +1 @@\n+Subproject commit 2222222\n")
+    elif scenario in {"implementation-p4-missing", "implementation-p4-present"}:
+        emit("diff --git a/scripts/example.py b/scripts/example.py\n--- a/scripts/example.py\n+++ b/scripts/example.py\n@@ -0,0 +1 @@\n+safe text\n")
+    elif scenario in {"platform-evidence-missing", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment"}:
+        emit("diff --git a/src-tauri/src/local_files/paths.rs b/src-tauri/src/local_files/paths.rs\n--- a/src-tauri/src/local_files/paths.rs\n+++ b/src-tauri/src/local_files/paths.rs\n@@ -0,0 +1 @@\n+safe text\n")
+    elif scenario in {"migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"}:
+        emit("diff --git a/src-tauri/migrations/001.sql b/src-tauri/migrations/001.sql\n--- a/src-tauri/migrations/001.sql\n+++ b/src-tauri/migrations/001.sql\n@@ -0,0 +1 @@\n+safe text\n")
     elif scenario == "separated-dates":
         emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+2026-09-12 2026-09-13\n")
     elif scenario == "separated-dates-new-year":
@@ -325,7 +390,13 @@ elif args and args[0] == "api":
         message = "safe commit metadata"
         if scenario == "metadata-commit-id":
             message = "Customer " + "ABCDE" + "1234" + "F"
-        commits = [{"sha": head, "commit": {"message": message}}]
+        identity = {"name": "Maintainer", "email": "maintainer@example.invalid"}
+        if scenario == "metadata-author-id":
+            identity = {"name": "ABCDE" + "1234" + "F", "email": "maintainer@example.invalid"}
+        linked_author = None if scenario == "metadata-unlinked-identities" else {"login": "author"}
+        linked_committer = None if scenario == "metadata-unlinked-identities" else {"login": "committer"}
+        commits = [{"sha": head, "commit": {"message": message, "author": identity, "committer": identity},
+                    "author": linked_author, "committer": linked_committer}]
         if scenario == "metadata-duplicate":
             commits.append({"sha": head, "commit": {"message": message}})
         emit([commits])
@@ -426,6 +497,19 @@ elif args and args[0] == "api":
             emit([[{"filename": "docs/example.md", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "quoted-path":
             emit([[{"filename": "docs/café.md", "status": "added", "additions": 1, "deletions": 0}]])
+        elif scenario in {"crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path"}:
+            status = "renamed" if scenario == "ambiguous-rename-path" else "added"
+            record = {"filename": "docs/a b/example.md" if scenario != "crlf-diff" else "docs/example.md", "status": status, "additions": 0 if status == "renamed" else 1, "deletions": 0}
+            if status == "renamed": record["previous_filename"] = "docs/a b/example.md"
+            emit([[record]])
+        elif scenario == "gitlink":
+            emit([[{"filename": "vendor/module", "status": "modified", "additions": 1, "deletions": 1}]])
+        elif scenario in {"implementation-p4-missing", "implementation-p4-present"}:
+            emit([[{"filename": "scripts/example.py", "status": "modified", "additions": 1, "deletions": 0}]])
+        elif scenario in {"platform-evidence-missing", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment"}:
+            emit([[{"filename": "src-tauri/src/local_files/paths.rs", "status": "modified", "additions": 1, "deletions": 0}]])
+        elif scenario in {"migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"}:
+            emit([[{"filename": "src-tauri/migrations/001.sql", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "control-path":
             emit([[{"filename": "docs/unsafe\x1b.md", "status": "added", "additions": 1, "deletions": 0}]])
         elif scenario == "malformed-files":
@@ -782,6 +866,11 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
     def test_pr_commit_metadata_identifier_is_scanned(self):
         self.assert_blocked("metadata-commit-id", "privacy scan found")
 
+    def test_standard_commit_identity_fields_are_validated_and_scanned(self):
+        self.assert_blocked("metadata-author-id", "privacy scan found")
+        result = self.run_gate("metadata-unlinked-identities")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_capped_commit_metadata_is_indeterminate(self):
         self.assert_indeterminate("metadata-capped", "complete head-bound PR commit metadata")
 
@@ -804,6 +893,15 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
     def test_quoted_git_destination_path_is_covered(self):
         result = self.run_gate("quoted-path")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_crlf_and_ambiguous_unquoted_diffs_preserve_coverage(self):
+        for scenario in ("crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path"):
+            with self.subTest(scenario=scenario):
+                result = self.run_gate(scenario)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_gitlink_requires_explicit_provenance_license_notice_review(self):
+        self.assert_indeterminate("gitlink", "gitlink change(s) require explicit provenance, license, and NOTICE review")
 
     def test_control_character_in_destination_path_is_indeterminate(self):
         self.assert_indeterminate("control-path", "could not read the complete changed-file set")
@@ -912,6 +1010,29 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
         result = self.run_gate("sync-migration-present")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_implementation_additions_need_all_three_p4_answers(self):
+        self.assert_blocked("implementation-p4-missing", "all three substantive P4")
+        result = self.run_gate("implementation-p4-present")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_platform_sensitive_paths_need_substantive_both_host_evidence(self):
+        self.assert_blocked("platform-evidence-missing", "substantive Windows validation")
+        result = self.run_gate("platform-evidence-present")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.run_gate("platform-checkbox-evidence")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assert_blocked("platform-checkbox-comment", "substantive Windows validation")
+
+    def test_database_migration_paths_need_rollback_notes(self):
+        self.assert_blocked("migration-rollback-missing", "database migration path lacks non-empty rollback notes")
+        result = self.run_gate("migration-rollback-present")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_wrapped_canonical_migration_template_field_is_recognized(self):
+        result = self.run_gate("migration-template-wrapped")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assert_blocked("migration-template-other-field", "database migration path lacks non-empty rollback notes")
+
     def test_developer_home_path_shapes_are_scanned_without_echoing_values(self):
         for scenario in ("home-macos", "home-unix", "home-windows", "home-macos-root", "home-unix-root", "home-windows-forward", "home-windows-escaped"):
             with self.subTest(scenario=scenario):
@@ -933,6 +1054,17 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
                 raise AssertionError("Python 3.8 lacks str.removeprefix")
         self.assertEqual(module.diff_destination(NoRemovePrefix("diff --git a/x b/y")), "y")
         self.assertEqual(module.textual_destination(NoRemovePrefix("+++ b/y")), "y")
+
+    def test_diff_parser_accepts_git_generated_mixed_quote_rename_headers(self):
+        import importlib.util
+        parser = ROOT / "scripts" / "merge_gate_diff.py"
+        spec = importlib.util.spec_from_file_location("merge_gate_diff_mixed", parser)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        unicode_name = '"b/\\351\\233\\252.txt"'
+        self.assertEqual(module.diff_destination('diff --git "a/\\351\\233\\252.txt" b/plain.txt'), "plain.txt")
+        self.assertEqual(module.diff_destination('diff --git a/plain.txt ' + unicode_name), "雪.txt")
+        self.assertEqual(module.diff_destination("diff --git a/foo b/bar b/foo b/bar"), "foo b/bar")
 
     def test_definite_blocker_wins_over_indeterminate_evidence(self):
         self.assert_blocked("draft-surface-fail", "merge state DRAFT")

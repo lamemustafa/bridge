@@ -440,12 +440,25 @@ if [ -z "${metadata_commit_total:-}" ] || [ "$metadata_status" -ne 0 ] || ! jq -
    all(.[]; type == "object" and
     (.sha | type == "string" and test("^[0-9a-fA-F]{40}$")) and
     (.commit | type == "object") and
-    (.commit.message | type == "string")))
+    (.commit.message | type == "string") and
+    (.commit.author | type == "object" and
+      (.name | type == "string") and (.email | type == "string")) and
+    (.commit.committer | type == "object" and
+      (.name | type == "string") and (.email | type == "string")) and
+    ((.author == null) or (.author | type == "object" and (.login | type == "string"))) and
+    ((.committer == null) or (.committer | type == "object" and (.login | type == "string")))))
 ' <<<"$metadata_commits" >/dev/null 2>&1; then
   unknown "could not prove complete head-bound PR commit metadata for the privacy scan"
   privacy_metadata=""
 else
-  commit_messages=$(jq -r '(if all(.[]; type == "array") then flatten else . end)[].commit.message' <<<"$metadata_commits")
+  # These are Git's standard author/committer and linked-account fields.  The
+  # privacy scanner checks identifier/path shapes in their literal values; it
+  # does not claim that ordinary names or email addresses are private data.
+  commit_messages=$(jq -r '(if all(.[]; type == "array") then flatten else . end)[] |
+    [.commit.message, .commit.author.name, .commit.author.email,
+     .commit.committer.name, .commit.committer.email,
+     (.author.login? // null), (.committer.login? // null)] |
+    map(select(. != null))[]' <<<"$metadata_commits")
   privacy_metadata="$title
 $prbody
 $commit_messages"
@@ -613,6 +626,40 @@ body_section_has_content() {
              lower ~ /^-[[:space:]]*manual\/ui evidence[[:space:]]*\(.*\):[[:space:]]*$/
     }
     {
+      # The canonical PR template uses labelled list fields as well as
+      # headings.  Accept a filled field for the requested policy label, but
+      # never the untouched label or a checkbox by itself.
+      lower = tolower($0)
+      gsub(/<!--[[:print:][:space:]]*-->/, "", lower)
+      if (pending_list) {
+        if (lower ~ /^[[:space:]]*$/) {
+          pending_list = 0
+        } else if (lower ~ /^[[:space:]]*[-#]/) {
+          pending_list = 0
+        } else if (lower !~ /^[[:space:]]+/) {
+          pending_list = 0
+        } else if (lower ~ /:[[:space:]]*[^[:space:]]/) {
+          found = 1
+          exit
+        } else if (lower ~ /:[[:space:]]*$/) {
+          pending_list = 2
+        } else if (pending_list == 2 && lower ~ /[^[:space:]]/) {
+          if (!template_prompt($0) && lower !~ /^[[:space:]]*<!--/) {
+            found = 1
+            exit
+          }
+          pending_list = 0
+        }
+      }
+      if (lower ~ "^[[:space:]]*-[[:space:]]*(" labels ")[^:]*:[[:space:]]*[^[:space:]]" &&
+          !template_prompt($0) && lower !~ /^[[:space:]]*-[[:space:]]*\[[ xX]\][[:space:]]/) {
+        found = 1
+        exit
+      }
+      if (lower ~ "^[[:space:]]*-[[:space:]]*(" labels ")[^:]*$") {
+        pending_list = 1
+        next
+      }
       if (heading($0)) {
         lower = tolower($0)
         sub(/^[[:space:]]*#+[[:space:]]*/, "", lower)
@@ -680,6 +727,37 @@ if ! body_has_validation_command "$prbody"; then
   bad "description lacks an actual test or reproduction command"
 fi
 
+# P4 is a three-part design record, not a generic scope paragraph.  When a
+# patch adds implementation code, each question must have an answer that is
+# more than the untouched template label.
+body_has_p4_answers() {
+  local body="$1"
+  body_section_has_content "$body" 'existing component reused' &&
+    body_section_has_content "$body" 'what is deleted' &&
+    body_section_has_content "$body" 'what breaks if this is not built'
+}
+
+body_has_platform_evidence() {
+  local body="$1" host="$2"
+  # A bare checked template box has no host, command, or rationale.  Require
+  # a filled heading/list field that names the host and either evidence or a
+  # justified unaffected statement.
+  python3 -c '
+import re, sys
+host = sys.argv[1].lower()
+for line in sys.stdin.read().splitlines():
+    lower = line.strip().lower()
+    lower = re.sub(r"<!--.*?-->", "", lower).strip()
+    if host not in lower:
+        continue
+    if re.search(r"(validation|evidence|test|check|unaffected|not applicable|not affected|not impact)", lower):
+        value = lower.split(":", 1)[1].strip() if ":" in lower else ""
+        if value and value not in {"none", "n/a", "not applicable"}:
+            raise SystemExit(0)
+raise SystemExit(1)
+' "$host" <<<"$body"
+}
+
 # Paginate changed files through the REST endpoint; gh pr view hard-codes a
 # first:100 GraphQL fragment in some versions. Retain the line counts as well:
 # the privacy scan can only be complete when the textual diff describes every
@@ -707,7 +785,7 @@ if [ "$files_status" -ne 0 ] || ! jq -e '
   unknown "could not read the complete changed-file set"
   changed=""
 else
-  jq -r '(if all(.[]; type == "array") then flatten else . end)[] | [.filename, .status, .additions, .deletions] | @tsv' <<<"$files" >"$changed_records"
+  jq -r '(if all(.[]; type == "array") then flatten else . end)[] | [.filename, .status, .additions, .deletions, (.previous_filename? // "")] | @tsv' <<<"$files" >"$changed_records"
   changed=$(cut -f1 "$changed_records")
   changed_count=$(jq '(if all(.[]; type == "array") then flatten else . end) | length' <<<"$files")
   unique_changed_count=$(jq '(if all(.[]; type == "array") then flatten else . end) | map(.filename) | unique | length' <<<"$files")
@@ -737,6 +815,30 @@ if [ "$files_status" -eq 0 ]; then
     (if all(.[]; type == "array") then flatten else . end) |
     any(.[]; [ .filename, (.previous_filename? // "") ][] |
       test("^(src-tauri/|src/|scripts/.*\\.(ts|tsx|js|mjs)$)"))
+  ' <<<"$files")
+fi
+
+# Treat source additions as implementation work only when the REST line totals
+# prove that bytes were added.  Rename paths are considered for every path
+# policy below, so moving platform, migration, or sensitive code cannot evade
+# the relevant review record.
+implementation_code_added=false
+platform_sensitive_change=false
+migration_change=false
+if [ "$files_status" -eq 0 ]; then
+  implementation_code_added=$(jq -r '
+    (if all(.[]; type == "array") then flatten else . end) |
+    any(.[]; (.additions > 0) and (.filename | test("\\.(rs|ts|tsx|js|mjs|py|go|java|kt|swift|c|cc|cpp|h|hpp)$")))
+  ' <<<"$files")
+  platform_sensitive_change=$(jq -r '
+    (if all(.[]; type == "array") then flatten else . end) |
+    any(.[]; [.filename, (.previous_filename? // "")][] |
+      test("^(src-tauri/|src/.*\\.(rs|ts|tsx|js|mjs)$)|(^|/)(windows|macos|darwin|win32|local_files|paths)(/|[._-])"; "i"))
+  ' <<<"$files")
+  migration_change=$(jq -r '
+    (if all(.[]; type == "array") then flatten else . end) |
+    any(.[]; [.filename, (.previous_filename? // "")][] |
+      test("(^|/)(migrations?|schema|database|db)(/|[._-])"; "i"))
   ' <<<"$files")
 fi
 
@@ -799,15 +901,29 @@ if [ "$security_reviewer_change" = "true" ]; then
   fi
 fi
 if [ "$workflow_change" = "true" ]; then
-  if ! body_section_has_content "$prbody" 'rollback notes|rollback'; then
+  if ! body_section_has_content "$prbody" 'rollback notes|rollback procedure|migration/sync compatibility and rollback procedure'; then
     bad "workflow change lacks non-empty rollback notes"
   fi
-  if ! body_section_has_content "$prbody" 'migration compatibility|migration impact'; then
+  if ! body_section_has_content "$prbody" 'migration compatibility|migration impact|migration/sync compatibility'; then
     bad "workflow change lacks non-empty migration compatibility notes"
   fi
 fi
-if [ "$native_frontend_change" = "true" ] && ! body_section_has_content "$prbody" 'migration compatibility|migration impact'; then
+if [ "$native_frontend_change" = "true" ] && ! body_section_has_content "$prbody" 'migration compatibility|migration impact|migration/sync compatibility'; then
   bad "native or frontend change lacks non-empty migration compatibility notes"
+fi
+if [ "$migration_change" = "true" ] && ! body_section_has_content "$prbody" 'rollback notes|rollback procedure|migration/sync compatibility and rollback procedure'; then
+  bad "database migration path lacks non-empty rollback notes"
+fi
+if [ "$implementation_code_added" = "true" ] && ! body_has_p4_answers "$prbody"; then
+  bad "implementation code addition lacks all three substantive P4 reuse, deletion, and omission answers"
+fi
+if [ "$platform_sensitive_change" = "true" ]; then
+  if ! body_has_platform_evidence "$prbody" windows; then
+    bad "platform-sensitive change lacks substantive Windows validation evidence or unaffected-host rationale"
+  fi
+  if ! body_has_platform_evidence "$prbody" macos; then
+    bad "platform-sensitive change lacks substantive macOS validation evidence or unaffected-host rationale"
+  fi
 fi
 
 # Read and validate the v1 surface as a required object. Any transport,
@@ -910,14 +1026,14 @@ else
       ((.textual_destination == null) or (.textual_destination | type == "string" and length > 0)) and
       (.added | type == "number" and floor == . and . >= 0) and
       (.deleted | type == "number" and floor == . and . >= 0) and
-      (.binary | type == "boolean"))) and
+      (.binary | type == "boolean") and (.gitlink | type == "boolean"))) and
     (.added_payload | type == "array" and all(.[]; type == "string"))
   ' <<<"$parsed_diff" >/dev/null 2>&1; then
     unknown "could not parse diff sections for the privacy scan"
     : >"$diff_stats"
     : >"$added_payload"
   else
-    jq -r '.records[] | [.destination, .added, .deleted, (if .textual_destination == null then 0 else 1 end), (if .binary then 1 else 0 end)] | @tsv' <<<"$parsed_diff" >"$diff_stats"
+    jq -r '.records[] | [.destination, .added, .deleted, (if .textual_destination == null then 0 else 1 end), (if .binary then 1 else 0 end), (if .gitlink then 1 else 0 end)] | @tsv' <<<"$parsed_diff" >"$diff_stats"
     jq -r '.added_payload[]' <<<"$parsed_diff" >"$added_payload"
 
 
@@ -926,6 +1042,7 @@ else
   metadata_only_count=0
   metadata_only_examples=""
   binary_count=0
+  gitlink_count=0
   record_coverage_issue() {
     coverage_count=$((coverage_count + 1))
     if [ "$coverage_count" -le 8 ]; then
@@ -940,7 +1057,7 @@ else
   }
   path_text=""
   if [ -s "$changed_records" ]; then
-    while IFS=$'\t' read -r filename status rest_added rest_deleted; do
+    while IFS=$'\t' read -r filename status rest_added rest_deleted previous_filename; do
       [ "$status" = "removed" ] && continue
       match_count=$(awk -F '\t' -v filename="$filename" '$1 == filename { count++ } END { print count+0 }' "$diff_stats")
       if [ "$match_count" -ne 1 ]; then
@@ -948,7 +1065,10 @@ else
         continue
       fi
       diff_record=$(awk -F '\t' -v filename="$filename" '$1 == filename { print; exit }' "$diff_stats")
-      IFS=$'\t' read -r _ diff_added diff_deleted textual binary <<<"$diff_record"
+      IFS=$'\t' read -r _ diff_added diff_deleted textual binary gitlink <<<"$diff_record"
+      if [ "$gitlink" -eq 1 ]; then
+        gitlink_count=$((gitlink_count + 1))
+      fi
       if [ "$binary" -eq 1 ]; then
         # Its bytes cannot be reconciled through textual hunks.
         binary_count=$((binary_count + 1))
@@ -967,6 +1087,7 @@ else
       fi
     done <"$changed_records"
     [ "$binary_count" -eq 0 ] || bad "$binary_count binary addition/change(s) require human privacy inspection"
+    [ "$gitlink_count" -eq 0 ] || unknown "$gitlink_count gitlink change(s) require explicit provenance, license, and NOTICE review"
     if [ "$coverage_count" -gt 0 ]; then
       unknown "privacy diff coverage failed for $coverage_count non-removed REST file(s): $coverage_examples"
     fi

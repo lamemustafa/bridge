@@ -61,21 +61,56 @@ def quoted_token(value: str, start: int) -> tuple[str, int]:
     raise ValueError("unterminated quoted token")
 
 
-def diff_destination(line: str) -> str:
+def diff_destination(line: str) -> str | None:
     value = remove_prefix(line, "diff --git ")
     if value.startswith('"'):
         _source, index = quoted_token(value, 0)
         if index >= len(value) or value[index] != " ":
             raise ValueError("missing destination")
-        destination, end = quoted_token(value, index + 1)
-        if end != len(value):
-            raise ValueError("trailing header text")
+        destination = value[index + 1:]
+        path = decode_quoted_path(destination) if destination.startswith('"') else destination
+        if not path.startswith("b/"):
+            raise ValueError("destination does not start b/")
+        return path[2:]
+    # Git quotes each path independently.  A plain source with a quoted
+    # destination is therefore valid (and occurs for plain-to-Unicode
+    # renames); the quote itself cannot occur in an unquoted token.
+    quoted_destination = value.find(' "b/')
+    if quoted_destination >= 0:
+        source = value[:quoted_destination]
+        destination = value[quoted_destination + 1:]
+        if not source.startswith("a/"):
+            raise ValueError("invalid unquoted source")
         path = decode_quoted_path(destination)
         if not path.startswith("b/"):
             raise ValueError("destination does not start b/")
         return path[2:]
-    source, separator, destination = value.partition(" b/")
-    if not separator or not source.startswith("a/") or not destination:
+    # An unquoted header has no escaping grammar.  Splitting on the first
+    # `` b/`` silently misparses a legal-looking filename containing that
+    # sequence.  Defer an ambiguous header to the independently parsed +++
+    # destination; that destination is subsequently reconciled to the REST
+    # changed-file inventory.  Metadata-only ambiguous records remain
+    # indeterminate because they have no unambiguous textual identity.
+    parts = value.split(" b/")
+    if len(parts) != 2:
+        # Pure mode/deletion records may have neither +++ nor rename-to.  A
+        # same-path header can still be proven when exactly one candidate
+        # delimiter leaves identical a/ and b/ paths.  Do not guess when the
+        # filename makes that proof ambiguous.
+        matches: list[str] = []
+        start = 0
+        while True:
+            index = value.find(" b/", start)
+            if index < 0:
+                break
+            source = value[:index]
+            destination = value[index + 1:]
+            if source.startswith("a/") and destination.startswith("b/") and source[2:] == destination[2:]:
+                matches.append(destination[2:])
+            start = index + 1
+        return matches[0] if len(matches) == 1 else None
+    source, destination = parts
+    if not source.startswith("a/") or not destination:
         raise ValueError("invalid unquoted header")
     return destination
 
@@ -102,15 +137,21 @@ def parse(lines: list[str]) -> dict[str, object]:
         if record is not None:
             records.append(record.copy())
 
-    for line in lines:
+    for raw_line in lines:
+        # A diff is delimited by LF.  CR from CRLF or in an added payload is
+        # content for scanning/counting, but must not prevent recognising a
+        # protocol header.
+        line = raw_line[:-1] if raw_line.endswith("\r") else raw_line
         if line.startswith("diff --git "):
             emit()
             record = {
                 "destination": diff_destination(line),
                 "textual_destination": None,
+                "rename_destination": None,
                 "added": 0,
                 "deleted": 0,
                 "binary": False,
+                "gitlink": False,
                 "in_hunk": False,
             }
             continue
@@ -119,28 +160,46 @@ def parse(lines: list[str]) -> dict[str, object]:
         if not record["in_hunk"] and line.startswith("+++ "):
             record["textual_destination"] = textual_destination(line)
             continue
+        if not record["in_hunk"] and line.startswith("rename to "):
+            destination = remove_prefix(line, "rename to ")
+            record["rename_destination"] = decode_quoted_path(destination) if destination.startswith('"') else destination
+            continue
         if not record["in_hunk"] and line in {"GIT binary patch"} or (
             not record["in_hunk"] and line.startswith("Binary files ") and line.endswith(" differ")
         ):
             record["binary"] = True
             continue
+        if not record["in_hunk"] and line in {
+            "old mode 160000", "new mode 160000", "new file mode 160000",
+            "deleted file mode 160000",
+        }:
+            record["gitlink"] = True
+            continue
         if line.startswith("@@ "):
             record["in_hunk"] = True
             continue
-        if record["in_hunk"] and line.startswith("+"):
+        if record["in_hunk"] and raw_line.startswith("+"):
             record["added"] = int(record["added"]) + 1
-            added_payload.append(line[1:])
-        elif record["in_hunk"] and line.startswith("-"):
+            added_payload.append(raw_line[1:])
+        elif record["in_hunk"] and raw_line.startswith("-"):
             record["deleted"] = int(record["deleted"]) + 1
     emit()
     for record in records:
         record.pop("in_hunk")
+        if record["destination"] is None:
+            if record["textual_destination"] is None and record["rename_destination"] is None:
+                raise ValueError("ambiguous header without textual destination")
+            record["destination"] = record["textual_destination"] or record["rename_destination"]
+        record.pop("rename_destination")
     return {"records": records, "added_payload": added_payload}
 
 
 if __name__ == "__main__":
     try:
-        print(json.dumps(parse(sys.stdin.read().splitlines())))
+        raw = sys.stdin.buffer.read().decode("utf-8")
+        # Split only on the protocol's LF delimiter.  Do not let Python's
+        # universal-newline mode erase CR or Unicode line-separator payload.
+        print(json.dumps(parse(raw.split("\n"))))
     except (UnicodeError, ValueError) as error:
         print(f"merge_gate_diff_error:{error}", file=sys.stderr)
         raise SystemExit(2)
