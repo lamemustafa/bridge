@@ -1,0 +1,2251 @@
+//! Deterministic answer to "which of these proposed vouchers are already in
+//! this company's book?"
+//!
+//! See `docs/adr/0017-voucher-presence-authority.md`. Tally has no idempotency
+//! (`TALLY_PROTOCOL_REFERENCE.md` §9.3): re-sending a voucher creates a second
+//! one, so this question stands between a generated batch and an import.
+//!
+//! Four rules carry the contract. Only an identity key — a `REMOTEID`, or a
+//! voucher number on a voucher type declared `Manual` — can produce `Present`.
+//! Nothing binds unless it is unique on both sides. `Absent` is only available
+//! from a window proven complete and proven to cover the proposal. Everything
+//! else is `PossiblyPresent`, which authorises nothing, carries no preferred
+//! answer, and is handed to a person.
+//!
+//! Party matching is not reimplemented here: it is `master_binding`, whose
+//! contract already owns "is this the same customer".
+//!
+//! This module performs no I/O, holds no company identity, and calls no model.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::exact_arithmetic::ExactDecimalAccumulator;
+use crate::master_binding::{
+    self, comparison_key, BindingStatus, Candidates, MasterBindingError, MasterCatalog,
+    MasterClass, SourceEntity,
+};
+use crate::{ExactDecimal, TallyDate};
+use serde::{Deserialize, Serialize};
+
+/// Most vouchers one observed window may carry. A window past this is refused
+/// with a narrow-the-range error rather than silently compared in part.
+pub const MAX_WINDOW_VOUCHERS: usize = 20_000;
+/// Most vouchers one proposal set may carry.
+pub const MAX_PROPOSED_VOUCHERS: usize = 5_000;
+/// Maximum proposal/window pair comparisons admitted before resemblance work.
+/// The individual bounds permit a product that would otherwise make the
+/// indexed resemblance pass quadratic in the two untrusted collections.
+pub const MAX_PRESENCE_COMPARISONS: usize = 1_000_000;
+/// Aggregate indexed resemblance work units, including posting-list walks and
+/// the party-key checks performed for every pooled voucher.
+pub const MAX_PRESENCE_WORK_UNITS: usize = 5_000_000;
+/// Most numbering declarations consumed for one presence request.
+pub const MAX_NUMBERING_DECLARATIONS: usize = MAX_PROPOSED_VOUCHERS;
+/// Aggregate UTF-8 bytes accepted while consuming numbering declarations.
+pub const MAX_NUMBERING_DECLARATION_BYTES: usize = 1_048_576;
+/// Most ledger entries one voucher may carry.
+pub const MAX_ENTRIES_PER_VOUCHER: usize = 2_000;
+/// Aggregate raw entries admitted before parsing, cloning, or folding them.
+pub const MAX_WINDOW_RAW_ENTRY_WORK: usize = 100_000;
+/// Aggregate raw entry bytes admitted before parsing, cloning, or folding them.
+pub const MAX_WINDOW_RAW_ENTRY_BYTES: usize = 4 * 1024 * 1024;
+/// Proposal input shares the same aggregate work and byte ceilings as a book
+/// window.  Admission happens while the borrowed input is still raw, before
+/// decimal parsing or any string is cloned.
+pub const MAX_PROPOSAL_RAW_ENTRY_WORK: usize = MAX_WINDOW_RAW_ENTRY_WORK;
+pub const MAX_PROPOSAL_RAW_BYTES: usize = MAX_WINDOW_RAW_ENTRY_BYTES;
+/// Most distinct voucher-to-ledger memberships retained across one window.
+///
+/// `WindowIndex` must retain every membership once more to find party
+/// resemblances. Per-voucher limits alone therefore admitted 40 million
+/// memberships. The cap keeps that derived index bounded rather than relying
+/// on an allocator failure after a complete-looking input was accepted.
+pub const MAX_WINDOW_LEDGER_MEMBERSHIPS: usize = 100_000;
+/// Most UTF-8 bytes in the distinct ledger comparison keys across one window.
+///
+/// This separately bounds a smaller number of very long accepted keys; a
+/// membership count alone cannot do that.
+pub const MAX_WINDOW_LEDGER_KEY_BYTES: usize = 4 * 1024 * 1024;
+/// Most candidates retained per undecided proposal.
+pub const MAX_CANDIDATES_PER_PROPOSAL: usize = 25;
+/// Most duplicate-number groups listed in the book observations.
+pub const MAX_DUPLICATE_NUMBER_GROUPS: usize = 25;
+/// Most book keys listed inside one duplicate-number group.
+pub const MAX_KEYS_PER_DUPLICATE_GROUP: usize = 10;
+/// Most unbalanced book vouchers listed in the book observations.
+pub const MAX_UNBALANCED_LISTED: usize = 25;
+/// Longest accepted book-voucher key.
+///
+/// The key is echoed in every candidate, and a response can carry twenty-five
+/// of them per proposal, so an unbounded key defeats any page budget: a
+/// consumer's framing can drop whole rows but cannot shrink one. A Tally
+/// voucher GUID is a 36-character company prefix and a short suffix, so this
+/// is far above anything real and refuses only pathological input — and it
+/// *refuses* rather than truncates, because a key is an identity and half of
+/// one joins to nothing.
+pub const MAX_BOOK_KEY_CHARS: usize = 128;
+
+/// Longest echoed label in the book observations.
+///
+/// The observations sit outside the paged rows, so a consumer's response
+/// machinery cannot trim them — an unbounded echo there can push a complete
+/// report past a byte budget that trimming rows could no longer rescue. These
+/// two fields are **recognition labels**, not keys: a group's identity is its
+/// `book_keys`, which are bounded by count.
+pub const MAX_OBSERVATION_LABEL_CHARS: usize = 128;
+/// Appended to an echoed value that was longer than its bound, so a reader can
+/// tell a shortened value from a whole one. See `label`.
+pub const SHORTENED: char = '\u{2026}';
+/// Longest accepted text field, in characters. This bounds pathological input;
+/// it is not a claim about what Tally accepts.
+pub const MAX_TEXT_CHARS: usize = 16_384;
+
+/// Presence refuses rather than degrades. Every variant is a boundary check on
+/// input that was never observed, never complete, or already undecidable
+/// before any comparison ran.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum PresenceError {
+    /// The window came from a read that was not complete. A window too dense
+    /// to read, or one whose emptiness was only partly corroborated, is not
+    /// "no match found" — and this is the confusion most likely to turn into a
+    /// duplicated invoice, so it is a type error rather than a flag.
+    #[error("book window was not read completely")]
+    WindowIncomplete,
+    #[error("book window range was invalid")]
+    WindowRangeInvalid,
+    #[error("book window exceeded its bound")]
+    WindowTooLarge,
+    #[error("book window ledger memberships exceeded their aggregate bound")]
+    WindowLedgerMembershipsTooMany,
+    #[error("book window raw entries exceeded their aggregate bound")]
+    WindowRawEntryWorkTooLarge,
+    #[error("book window raw entry bytes exceeded their aggregate bound")]
+    WindowRawEntryBytesTooLarge,
+    #[error("book window ledger keys exceeded their aggregate byte bound")]
+    WindowLedgerKeyBytesTooLarge,
+    #[error("book window carried a voucher dated outside its own range")]
+    WindowVoucherOutsideRange,
+    #[error("book window carried the same voucher key twice")]
+    WindowDuplicateVoucherKey,
+    /// A window declaring that `REMOTEID` was never read, carrying vouchers
+    /// that have one. The two statements contradict, and the contradiction
+    /// would let a verdict settle on evidence the window says was not gathered.
+    #[error("book window declared REMOTEID unread while carrying one")]
+    WindowRemoteIdContradiction,
+    #[error("book voucher key exceeded its bound")]
+    VoucherKeyTooLong,
+    /// A proposal dated outside the window would be judged against evidence
+    /// that could not contain it.
+    #[error("book window does not cover every proposed date")]
+    WindowDoesNotCover,
+    #[error("no vouchers were proposed")]
+    ProposalsEmpty,
+    #[error("proposed voucher list exceeded its bound")]
+    TooManyProposals,
+    #[error("two proposed vouchers carried the same source position")]
+    DuplicateProposalPosition,
+    #[error("proposed voucher raw entries exceeded their aggregate bound")]
+    ProposalRawEntryWorkTooLarge,
+    #[error("proposed voucher raw metadata exceeded its aggregate byte bound")]
+    ProposalRawBytesTooLarge,
+    #[error("proposal and book window comparison work exceeded its bound")]
+    ComparisonWorkTooLarge,
+    #[error("voucher entry list was empty")]
+    EntriesEmpty,
+    #[error("voucher entry list exceeded its bound")]
+    TooManyEntries,
+    /// A voucher type whose numbering method nobody stated. Defaulting it
+    /// would silently decide whether the only decisive key is usable.
+    #[error("a proposed voucher type has no declared numbering method")]
+    NumberingMethodUndeclared,
+    #[error("a voucher type was declared twice with different numbering")]
+    NumberingMethodConflict,
+    #[error("numbering declarations exceeded their count bound")]
+    NumberingDeclarationsTooMany,
+    #[error("numbering declarations exceeded their aggregate byte bound")]
+    NumberingDeclarationBytesTooLarge,
+    #[error("text field was blank")]
+    TextBlank,
+    #[error("text field exceeded its bound")]
+    TextTooLong,
+    #[error("text field carried a control character")]
+    TextUnsafe,
+    #[error("date was not a valid Tally date")]
+    DateInvalid,
+    #[error("amount was not an exact decimal")]
+    AmountInvalid,
+    /// Presence compares party names against ledgers.
+    #[error("master catalog was not a ledger catalog")]
+    CatalogClassInvalid,
+    #[error("book window referenced a ledger absent from the catalog")]
+    CatalogWindowCoverageMissing,
+    #[error("party binding refused the input")]
+    PartyBinding(MasterBindingError),
+}
+
+impl PresenceError {
+    /// A stable code safe to surface to an operator or a tool result.
+    pub fn safe_reason_code(&self) -> &'static str {
+        match self {
+            Self::WindowIncomplete => "presence_window_incomplete",
+            Self::WindowRangeInvalid => "presence_window_range_invalid",
+            Self::WindowTooLarge => "presence_window_too_large",
+            Self::WindowLedgerMembershipsTooMany => "presence_window_ledger_memberships_too_many",
+            Self::WindowRawEntryWorkTooLarge => "presence_window_raw_entry_work_too_large",
+            Self::WindowRawEntryBytesTooLarge => "presence_window_raw_entry_bytes_too_large",
+            Self::WindowLedgerKeyBytesTooLarge => "presence_window_ledger_key_bytes_too_large",
+            Self::WindowVoucherOutsideRange => "presence_window_voucher_outside_range",
+            Self::WindowDuplicateVoucherKey => "presence_window_duplicate_voucher_key",
+            Self::WindowRemoteIdContradiction => "presence_window_remote_id_contradiction",
+            Self::VoucherKeyTooLong => "presence_voucher_key_too_long",
+            Self::WindowDoesNotCover => "presence_window_does_not_cover",
+            Self::ProposalsEmpty => "presence_proposals_empty",
+            Self::TooManyProposals => "presence_proposals_too_many",
+            Self::DuplicateProposalPosition => "presence_duplicate_proposal_position",
+            Self::ProposalRawEntryWorkTooLarge => "presence_proposal_raw_entry_work_too_large",
+            Self::ProposalRawBytesTooLarge => "presence_proposal_raw_bytes_too_large",
+            Self::ComparisonWorkTooLarge => "presence_comparison_work_too_large",
+            Self::EntriesEmpty => "presence_entries_empty",
+            Self::TooManyEntries => "presence_entries_too_many",
+            Self::NumberingMethodUndeclared => "presence_numbering_method_undeclared",
+            Self::NumberingMethodConflict => "presence_numbering_method_conflict",
+            Self::NumberingDeclarationsTooMany => "presence_numbering_declarations_too_many",
+            Self::NumberingDeclarationBytesTooLarge => {
+                "presence_numbering_declaration_bytes_too_large"
+            }
+            Self::TextBlank => "presence_text_blank",
+            Self::TextTooLong => "presence_text_too_long",
+            Self::TextUnsafe => "presence_text_unsafe",
+            Self::DateInvalid => "presence_date_invalid",
+            Self::AmountInvalid => "presence_amount_invalid",
+            Self::CatalogClassInvalid => "presence_catalog_class_invalid",
+            Self::CatalogWindowCoverageMissing => "presence_catalog_window_coverage_missing",
+            Self::PartyBinding(error) => error.safe_reason_code(),
+        }
+    }
+}
+
+/// Whether the window's read gathered `REMOTEID` at all. A read profile that
+/// does not fetch the field yields `NotRead`, which is a different fact from
+/// "no voucher carried one" and must not be confused with it: a proposal whose
+/// own `REMOTEID` was never compared cannot be reported `Absent`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteIdEvidence {
+    /// The read fetched `REMOTEID`; an absent value means the voucher has none.
+    Observed,
+    /// The read did not fetch `REMOTEID`; absence means nothing at all.
+    NotRead,
+}
+
+/// How completely the window's source read observed its range. Only a complete
+/// read may become a `BookWindow`; the other value exists so a caller must
+/// state which it has rather than omit the question.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowRead {
+    Complete,
+    Partial,
+}
+
+/// A voucher type's numbering method decides whether its voucher number is an
+/// identity or a coincidence (§9.8). Under `Automatic`, Tally discards the
+/// supplied number, so a number-based key is silently ineffective.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NumberingMethod {
+    Manual,
+    Automatic,
+    /// Nobody has observed it. Legal, honest, and the common case; it demotes
+    /// the number from identity to resemblance.
+    Unknown,
+}
+
+/// Whether an observed voucher has accounting effect. A cancelled or optional
+/// voucher still occupies its number, so it can be matched and must never be
+/// reported as a posted duplicate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PostingState {
+    Posted,
+    Cancelled,
+    Optional,
+}
+
+/// One ledger entry, from either side of the comparison. The same function
+/// derives a magnitude from both, so the two sides cannot compute one fact
+/// differently.
+#[derive(Debug, Clone, Copy)]
+pub struct ObservedEntry<'a> {
+    pub ledger: &'a str,
+    pub amount: &'a str,
+}
+
+/// One voucher as the book was observed to hold it.
+#[derive(Debug, Clone, Copy)]
+pub struct ObservedVoucher<'a> {
+    /// An opaque caller-owned key for this voucher. It is echoed back in the
+    /// report and never interpreted, so a caller chooses whatever it can join
+    /// on without granting this crate any identity.
+    pub key: &'a str,
+    pub date: &'a str,
+    pub voucher_type: &'a str,
+    pub voucher_number: Option<&'a str>,
+    pub remote_id: Option<&'a str>,
+    /// `PARTYLEDGERNAME`, when the read carried one.
+    pub party: Option<&'a str>,
+    pub entries: &'a [ObservedEntry<'a>],
+    pub cancelled: bool,
+    pub optional: bool,
+}
+
+/// One voucher a source document proposes to import.
+#[derive(Debug, Clone, Copy)]
+pub struct ProposedVoucherInput<'a> {
+    pub position: usize,
+    pub date: &'a str,
+    pub voucher_type: &'a str,
+    pub voucher_number: Option<&'a str>,
+    pub remote_id: Option<&'a str>,
+    /// The party name exactly as the source document gives it. It is bound
+    /// through `master_binding`, never compared raw.
+    pub party: Option<&'a str>,
+    pub entries: &'a [ObservedEntry<'a>],
+}
+
+/// Aggregate admission for a proposal batch.  The input is borrowed so this
+/// check runs before parsing decimals and before `ProposedVoucher` clones any
+/// metadata.  Callers that accept external proposal batches must use this
+/// boundary rather than constructing a large converted vector first.
+#[derive(Debug, Default)]
+pub struct RawProposalBudget {
+    proposals: usize,
+    entries: usize,
+    entry_bytes: usize,
+    metadata_bytes: usize,
+}
+
+impl RawProposalBudget {
+    pub fn admit(&mut self, input: ProposedVoucherInput<'_>) -> Result<(), PresenceError> {
+        self.admit_parts(
+            input.position,
+            input.date,
+            input.voucher_type,
+            input.voucher_number,
+            input.remote_id,
+            input.party,
+            input
+                .entries
+                .iter()
+                .map(|entry| (entry.ledger, entry.amount)),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn admit_parts<'a>(
+        &mut self,
+        _position: usize,
+        date: &'a str,
+        voucher_type: &'a str,
+        voucher_number: Option<&'a str>,
+        remote_id: Option<&'a str>,
+        party: Option<&'a str>,
+        entries: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> Result<(), PresenceError> {
+        self.proposals = self
+            .proposals
+            .checked_add(1)
+            .ok_or(PresenceError::TooManyProposals)?;
+        if self.proposals > MAX_PROPOSED_VOUCHERS {
+            return Err(PresenceError::TooManyProposals);
+        }
+        let metadata = [
+            date,
+            voucher_type,
+            voucher_number.unwrap_or_default(),
+            remote_id.unwrap_or_default(),
+            party.unwrap_or_default(),
+        ];
+        let metadata_bytes = metadata
+            .iter()
+            .try_fold(0usize, |total, value| total.checked_add(value.len()))
+            .ok_or(PresenceError::ProposalRawBytesTooLarge)?;
+        self.metadata_bytes = self
+            .metadata_bytes
+            .checked_add(metadata_bytes)
+            .ok_or(PresenceError::ProposalRawBytesTooLarge)?;
+        if self.metadata_bytes > MAX_PROPOSAL_RAW_BYTES {
+            return Err(PresenceError::ProposalRawBytesTooLarge);
+        }
+        for (ledger, amount) in entries {
+            self.entries = self
+                .entries
+                .checked_add(1)
+                .ok_or(PresenceError::ProposalRawEntryWorkTooLarge)?;
+            if self.entries > MAX_PROPOSAL_RAW_ENTRY_WORK {
+                return Err(PresenceError::ProposalRawEntryWorkTooLarge);
+            }
+            self.entry_bytes = self
+                .entry_bytes
+                .checked_add(ledger.len())
+                .and_then(|total| total.checked_add(amount.len()))
+                .ok_or(PresenceError::ProposalRawBytesTooLarge)?;
+            if self.entry_bytes > MAX_PROPOSAL_RAW_BYTES {
+                return Err(PresenceError::ProposalRawBytesTooLarge);
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BookVoucher {
+    key: String,
+    date: TallyDate,
+    voucher_type: String,
+    voucher_number: Option<String>,
+    remote_id: Option<String>,
+    party: Option<String>,
+    observed_ledgers: BTreeSet<String>,
+    ledger_keys: BTreeSet<String>,
+    magnitude: ExactDecimal,
+    balanced: bool,
+    posting: PostingState,
+    type_key: String,
+    number_key: Option<String>,
+}
+
+impl BookVoucher {
+    pub(crate) fn observed(input: ObservedVoucher<'_>) -> Result<Self, PresenceError> {
+        let key = validated_text(input.key)?;
+        if key.chars().count() > MAX_BOOK_KEY_CHARS {
+            return Err(PresenceError::VoucherKeyTooLong);
+        }
+        let date =
+            TallyDate::parse(input.date.to_string()).map_err(|_| PresenceError::DateInvalid)?;
+        let voucher_type = validated_text(input.voucher_type)?;
+        let voucher_number = input.voucher_number.map(validated_text).transpose()?;
+        let remote_id = input.remote_id.map(validated_text).transpose()?;
+        let party = input.party.map(validated_text).transpose()?;
+        let (magnitude, balanced, mut observed_ledgers, mut ledger_keys) =
+            magnitude_of(input.entries)?;
+        if let Some(party) = party.as_deref() {
+            observed_ledgers.insert(party.to_string());
+            ledger_keys.insert(comparison_key(party));
+        }
+        // Voucher types participate in an identity key. Unlike ledger names,
+        // no source observation qualifies case, whitespace, or separator
+        // folding for them, so preserve their validated spelling exactly.
+        let type_key = voucher_type.clone();
+        let number_key = voucher_number.as_deref().map(number_key_of);
+        Ok(Self {
+            key,
+            date,
+            voucher_type,
+            voucher_number,
+            remote_id,
+            party,
+            observed_ledgers,
+            ledger_keys,
+            magnitude,
+            balanced,
+            // A cancelled voucher is cancelled whatever else it is.
+            posting: match (input.cancelled, input.optional) {
+                (true, _) => PostingState::Cancelled,
+                (false, true) => PostingState::Optional,
+                (false, false) => PostingState::Posted,
+            },
+            type_key,
+            number_key,
+        })
+    }
+
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    pub fn date(&self) -> &str {
+        self.date.as_str()
+    }
+
+    pub fn party(&self) -> Option<&str> {
+        self.party.as_deref()
+    }
+
+    pub fn magnitude(&self) -> &ExactDecimal {
+        &self.magnitude
+    }
+
+    /// Whether the observed entries summed to zero. An unbalanced voucher is
+    /// reported and still participates in every rule: excluding it would make
+    /// `Absent` more likely, which is the wrong direction.
+    pub fn balanced(&self) -> bool {
+        self.balanced
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProposedVoucher {
+    position: usize,
+    date: TallyDate,
+    voucher_type: String,
+    voucher_number: Option<String>,
+    remote_id: Option<String>,
+    party: Option<String>,
+    magnitude: ExactDecimal,
+    type_key: String,
+    number_key: Option<String>,
+}
+
+impl ProposedVoucher {
+    #[cfg(test)]
+    pub(crate) fn new(input: ProposedVoucherInput<'_>) -> Result<Self, PresenceError> {
+        let mut budget = RawProposalBudget::default();
+        budget.admit(input)?;
+        Self::new_admitted(input)
+    }
+
+    fn new_admitted(input: ProposedVoucherInput<'_>) -> Result<Self, PresenceError> {
+        let date =
+            TallyDate::parse(input.date.to_string()).map_err(|_| PresenceError::DateInvalid)?;
+        let voucher_type = validated_text(input.voucher_type)?;
+        let voucher_number = input.voucher_number.map(validated_text).transpose()?;
+        let remote_id = input.remote_id.map(validated_text).transpose()?;
+        let party = input.party.map(validated_text).transpose()?;
+        let (magnitude, _, _, _) = magnitude_of(input.entries)?;
+        let type_key = voucher_type.clone();
+        let number_key = voucher_number.as_deref().map(number_key_of);
+        Ok(Self {
+            position: input.position,
+            date,
+            voucher_type,
+            voucher_number,
+            remote_id,
+            party,
+            magnitude,
+            type_key,
+            number_key,
+        })
+    }
+
+    /// Convert a raw proposal batch only after one aggregate admission pass.
+    pub fn from_inputs<'a>(
+        inputs: impl IntoIterator<Item = ProposedVoucherInput<'a>>,
+    ) -> Result<ProposedBatch, PresenceError> {
+        let mut budget = RawProposalBudget::default();
+        let mut positions = BTreeSet::new();
+        let mut converted = Vec::new();
+        for input in inputs {
+            budget.admit(input)?;
+            if !positions.insert(input.position) {
+                return Err(PresenceError::DuplicateProposalPosition);
+            }
+            converted.push(Self::new_admitted(input)?);
+        }
+        Ok(ProposedBatch {
+            vouchers: converted,
+        })
+    }
+
+    pub fn date(&self) -> &str {
+        self.date.as_str()
+    }
+
+    /// The type as the source document spelled it. A consumer validating its
+    /// own arguments against a `NumberingDeclaration` needs this; nothing else
+    /// does.
+    pub fn voucher_type(&self) -> &str {
+        &self.voucher_type
+    }
+
+    /// The party name as the source document spelled it, and this proposal's
+    /// place in the batch. An adapter that wants to refuse a malformed party
+    /// *before* it spends a read needs both, because the entity parse that
+    /// would refuse it otherwise happens inside `PresenceRequest::new`.
+    pub fn party(&self) -> Option<&str> {
+        self.party.as_deref()
+    }
+
+    pub fn position(&self) -> usize {
+        self.position
+    }
+}
+
+/// An admitted proposal batch. Its only production constructor performs the
+/// aggregate raw admission before conversion, so callers cannot concatenate
+/// independently converted vectors and evade the batch budget.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProposedBatch {
+    vouchers: Vec<ProposedVoucher>,
+}
+
+impl ProposedBatch {
+    pub fn as_slice(&self) -> &[ProposedVoucher] {
+        &self.vouchers
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &ProposedVoucher> {
+        self.vouchers.iter()
+    }
+}
+
+/// One observed window of a company's book. It can only be constructed from a
+/// read that observed its whole range, so "the window was too dense to read"
+/// can never reach a comparison as "nothing matched".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BookWindow {
+    from: TallyDate,
+    to: TallyDate,
+    remote_id_evidence: RemoteIdEvidence,
+    vouchers: Vec<BookVoucher>,
+}
+
+/// Incremental admission for raw voucher rows. Both adapters and the core
+/// window boundary use this before retaining entry descriptors.
+#[derive(Debug, Default)]
+pub struct RawObservationBudget {
+    vouchers: usize,
+    entries: usize,
+    bytes: usize,
+    metadata_bytes: usize,
+}
+
+impl RawObservationBudget {
+    #[allow(clippy::too_many_arguments)]
+    pub fn admit_fields<'a>(
+        &mut self,
+        key: &'a str,
+        date: &'a str,
+        voucher_type: &'a str,
+        voucher_number: Option<&'a str>,
+        remote_id: Option<&'a str>,
+        party: Option<&'a str>,
+        entries: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> Result<(), PresenceError> {
+        let metadata = [
+            key,
+            date,
+            voucher_type,
+            voucher_number.unwrap_or_default(),
+            remote_id.unwrap_or_default(),
+            party.unwrap_or_default(),
+        ];
+        let metadata_bytes = metadata
+            .iter()
+            .try_fold(0usize, |total, value| total.checked_add(value.len()))
+            .ok_or(PresenceError::WindowRawEntryBytesTooLarge)?;
+        self.metadata_bytes = self
+            .metadata_bytes
+            .checked_add(metadata_bytes)
+            .ok_or(PresenceError::WindowRawEntryBytesTooLarge)?;
+        if self.metadata_bytes > MAX_WINDOW_RAW_ENTRY_BYTES {
+            return Err(PresenceError::WindowRawEntryBytesTooLarge);
+        }
+        self.admit(entries)
+    }
+
+    pub fn admit_observation(
+        &mut self,
+        observation: &ObservedVoucher<'_>,
+    ) -> Result<(), PresenceError> {
+        self.admit_fields(
+            observation.key,
+            observation.date,
+            observation.voucher_type,
+            observation.voucher_number,
+            observation.remote_id,
+            observation.party,
+            observation
+                .entries
+                .iter()
+                .map(|entry| (entry.ledger, entry.amount)),
+        )
+    }
+
+    pub fn admit<'a>(
+        &mut self,
+        entries: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> Result<(), PresenceError> {
+        self.vouchers = self
+            .vouchers
+            .checked_add(1)
+            .ok_or(PresenceError::WindowTooLarge)?;
+        if self.vouchers > MAX_WINDOW_VOUCHERS {
+            return Err(PresenceError::WindowTooLarge);
+        }
+        for (ledger, amount) in entries {
+            self.entries = self
+                .entries
+                .checked_add(1)
+                .ok_or(PresenceError::WindowRawEntryWorkTooLarge)?;
+            if self.entries > MAX_WINDOW_RAW_ENTRY_WORK {
+                return Err(PresenceError::WindowRawEntryWorkTooLarge);
+            }
+            self.bytes = self
+                .bytes
+                .checked_add(ledger.len())
+                .and_then(|n| n.checked_add(amount.len()))
+                .ok_or(PresenceError::WindowRawEntryBytesTooLarge)?;
+            if self.bytes > MAX_WINDOW_RAW_ENTRY_BYTES {
+                return Err(PresenceError::WindowRawEntryBytesTooLarge);
+            }
+        }
+        Ok(())
+    }
+}
+
+impl BookWindow {
+    /// Admits raw observations in aggregate before the per-voucher conversion
+    /// performs decimal parsing, string cloning, and comparison-key folding.
+    pub fn from_observations<'a>(
+        from: &str,
+        to: &str,
+        read: WindowRead,
+        remote_id_evidence: RemoteIdEvidence,
+        observations: impl IntoIterator<Item = ObservedVoucher<'a>>,
+    ) -> Result<Self, PresenceError> {
+        let mut budget = RawObservationBudget::default();
+        let mut vouchers = Vec::new();
+        for observation in observations {
+            budget.admit_observation(&observation)?;
+            vouchers.push(BookVoucher::observed(observation)?);
+        }
+        Self::observed(from, to, read, remote_id_evidence, vouchers)
+    }
+
+    pub(crate) fn observed(
+        from: &str,
+        to: &str,
+        read: WindowRead,
+        remote_id_evidence: RemoteIdEvidence,
+        vouchers: Vec<BookVoucher>,
+    ) -> Result<Self, PresenceError> {
+        if read != WindowRead::Complete {
+            return Err(PresenceError::WindowIncomplete);
+        }
+        let from = TallyDate::parse(from.to_string()).map_err(|_| PresenceError::DateInvalid)?;
+        let to = TallyDate::parse(to.to_string()).map_err(|_| PresenceError::DateInvalid)?;
+        if from.as_str() > to.as_str() {
+            return Err(PresenceError::WindowRangeInvalid);
+        }
+        if vouchers.len() > MAX_WINDOW_VOUCHERS {
+            return Err(PresenceError::WindowTooLarge);
+        }
+        let mut keys = BTreeSet::new();
+        let mut ledger_memberships = 0usize;
+        let mut ledger_key_bytes = 0usize;
+        for voucher in &vouchers {
+            if voucher.date() < from.as_str() || voucher.date() > to.as_str() {
+                return Err(PresenceError::WindowVoucherOutsideRange);
+            }
+            if !keys.insert(voucher.key()) {
+                return Err(PresenceError::WindowDuplicateVoucherKey);
+            }
+            if remote_id_evidence == RemoteIdEvidence::NotRead && voucher.remote_id.is_some() {
+                return Err(PresenceError::WindowRemoteIdContradiction);
+            }
+            let retained_memberships = voucher
+                .ledger_keys
+                .len()
+                .checked_add(voucher.observed_ledgers.len())
+                .ok_or(PresenceError::WindowLedgerMembershipsTooMany)?;
+            ledger_memberships = ledger_memberships
+                .checked_add(retained_memberships)
+                .ok_or(PresenceError::WindowLedgerMembershipsTooMany)?;
+            if ledger_memberships > MAX_WINDOW_LEDGER_MEMBERSHIPS {
+                return Err(PresenceError::WindowLedgerMembershipsTooMany);
+            }
+            let voucher_key_bytes = voucher
+                .ledger_keys
+                .iter()
+                .chain(voucher.observed_ledgers.iter())
+                .try_fold(0usize, |total, key| total.checked_add(key.len()))
+                .ok_or(PresenceError::WindowLedgerKeyBytesTooLarge)?;
+            ledger_key_bytes = ledger_key_bytes
+                .checked_add(voucher_key_bytes)
+                .ok_or(PresenceError::WindowLedgerKeyBytesTooLarge)?;
+            if ledger_key_bytes > MAX_WINDOW_LEDGER_KEY_BYTES {
+                return Err(PresenceError::WindowLedgerKeyBytesTooLarge);
+            }
+        }
+        Ok(Self {
+            from,
+            to,
+            remote_id_evidence,
+            vouchers,
+        })
+    }
+
+    pub fn from(&self) -> &str {
+        self.from.as_str()
+    }
+
+    pub fn to(&self) -> &str {
+        self.to.as_str()
+    }
+
+    pub fn vouchers(&self) -> &[BookVoucher] {
+        &self.vouchers
+    }
+
+    pub fn remote_id_evidence(&self) -> RemoteIdEvidence {
+        self.remote_id_evidence
+    }
+
+    fn covers(&self, date: &str) -> bool {
+        date >= self.from.as_str() && date <= self.to.as_str()
+    }
+}
+
+/// The numbering method of every voucher type a proposal names. A type that is
+/// missing is an error, not a default: the declaration decides whether the only
+/// decisive key is usable at all.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct NumberingDeclaration {
+    methods: BTreeMap<String, NumberingMethod>,
+}
+
+impl NumberingDeclaration {
+    pub fn new<I, S>(entries: I) -> Result<Self, PresenceError>
+    where
+        I: IntoIterator<Item = (S, NumberingMethod)>,
+        S: AsRef<str>,
+    {
+        let mut methods = BTreeMap::new();
+        let mut declaration_count = 0usize;
+        let mut declaration_bytes = 0usize;
+        for (voucher_type, method) in entries {
+            let key = validated_text(voucher_type.as_ref())?;
+            declaration_count = declaration_count
+                .checked_add(1)
+                .ok_or(PresenceError::NumberingDeclarationsTooMany)?;
+            if declaration_count > MAX_NUMBERING_DECLARATIONS {
+                return Err(PresenceError::NumberingDeclarationsTooMany);
+            }
+            declaration_bytes = declaration_bytes
+                .checked_add(key.len())
+                .ok_or(PresenceError::NumberingDeclarationBytesTooLarge)?;
+            if declaration_bytes > MAX_NUMBERING_DECLARATION_BYTES {
+                return Err(PresenceError::NumberingDeclarationBytesTooLarge);
+            }
+            if methods
+                .insert(key, method)
+                .is_some_and(|prior| prior != method)
+            {
+                return Err(PresenceError::NumberingMethodConflict);
+            }
+        }
+        Ok(Self { methods })
+    }
+
+    /// Whether a voucher type has a declared method, without needing the
+    /// caller to reproduce this crate's comparison key. A consumer validating
+    /// its own arguments before performing a read uses this.
+    pub fn declares(&self, voucher_type: &str) -> bool {
+        self.methods.contains_key(voucher_type)
+    }
+
+    fn method(&self, type_key: &str) -> Option<NumberingMethod> {
+        self.methods.get(type_key).copied()
+    }
+}
+
+/// How a proposal's party name resolved against the observed ledger catalog.
+/// It reports the binding and nothing more: an ambiguous party's candidates
+/// belong to `validate_masters`, which owns that vocabulary, and naming one of
+/// them here would be the auto-resolution ADR 0016 forbids.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", tag = "party_state")]
+pub enum PartyOutcome {
+    NotSupplied,
+    Bound {
+        catalog_name: String,
+    },
+    Ambiguous {
+        reason: String,
+        candidate_count: usize,
+    },
+    Unmatched {
+        reason: String,
+    },
+}
+
+/// The evidence that decided a `Present`. Both are identity. Date, amount and
+/// party are never a basis; they are the keys that measurably collide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PresenceBasis {
+    RemoteId,
+    ManualVoucherNumber,
+}
+
+/// The rule that surfaced a candidate. Ordered by `rank`, never by similarity,
+/// and no candidate is marked best.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CandidateRule {
+    SharedRemoteId,
+    SharedVoucherNumber,
+    SameDatePartyAmount,
+    SamePartyAmount,
+    SameDateAmount,
+    SameDateParty,
+}
+
+impl CandidateRule {
+    fn rank(self) -> u8 {
+        match self {
+            Self::SharedRemoteId => 0,
+            Self::SharedVoucherNumber => 1,
+            Self::SameDatePartyAmount => 2,
+            Self::SamePartyAmount => 3,
+            Self::SameDateAmount => 4,
+            Self::SameDateParty => 5,
+        }
+    }
+}
+
+/// A book voucher an operator may judge, with the rule that surfaced it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct PresenceCandidate {
+    pub book_key: String,
+    pub rule: CandidateRule,
+}
+
+/// Why a proposal was not decided. Exactly one, by the precedence in
+/// `assess`: a collision outranks a resemblance, and a resemblance outranks an
+/// incomplete party comparison.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UndecidedReason {
+    /// One `REMOTEID` is carried by more than one voucher on either side.
+    RemoteIdCollision,
+    /// The number selects more than one book voucher. This is the book that
+    /// held twenty-five invoices sharing numbers in one month.
+    BookNumberCollision,
+    /// More than one proposal claims the number under manual numbering.
+    ProposalNumberCollision,
+    /// An identity key landed on a cancelled or optional voucher. It occupies
+    /// the number but has no accounting effect.
+    MatchedVoucherNotPosted,
+    /// A number matched, but the voucher type is not declared `Manual`, so the
+    /// number is not identity (§9.8).
+    NumberNotDecisive,
+    /// A number matched under a voucher type this window never observed. The
+    /// number was compared across every type rather than manufacture an
+    /// absence, so it is a resemblance and not a series position.
+    VoucherTypeNotObserved,
+    /// Date, party or amount resembles a book voucher. These collide in real
+    /// data and never decide.
+    ResemblesBookVoucher,
+    /// The party comparison could not be completed, so no rule that needs a
+    /// party actually ran and `Absent` is not available.
+    PartyNotDecidable,
+    /// The voucher type is declared `Manual`, so the number is the one key
+    /// that could decide — and the source supplied none. Nothing was skipped,
+    /// and nothing decisive was offered either, so the absence would rest on
+    /// resemblance alone.
+    ManualNumberNotSupplied,
+    /// The source named no party at all. Nothing was skipped — but nothing was
+    /// compared either, and a book voucher for the same party and amount on
+    /// another date would never have surfaced. `Present` is still reachable by
+    /// identity; only the absence claim is withheld, and supplying the party
+    /// is what makes it available.
+    PartyNotSupplied,
+    /// Two proposals both resolved to the same book voucher, possibly by
+    /// different identity bases. One book voucher can satisfy at most one
+    /// proposal, so every claimant is demoted rather than one being chosen.
+    BookVoucherClaimedTwice,
+    /// A number matched uniquely while the two sides carried *different*
+    /// `REMOTEID`s. Two identity signals disagree, and a disagreement is
+    /// reported rather than settled in the number's favour.
+    IdentityConflict,
+    /// The proposal carries a `REMOTEID` the window never read, so the
+    /// strongest key available to this proposal was never compared. An
+    /// `Absent` here would rest on evidence that was not gathered.
+    RemoteIdEvidenceUnavailable,
+}
+
+impl UndecidedReason {
+    /// A stable code safe to surface to an operator or a tool result.
+    pub fn safe_reason_code(self) -> &'static str {
+        match self {
+            Self::RemoteIdCollision => "presence_remote_id_collision",
+            Self::BookNumberCollision => "presence_book_number_collision",
+            Self::ProposalNumberCollision => "presence_proposal_number_collision",
+            Self::MatchedVoucherNotPosted => "presence_matched_voucher_not_posted",
+            Self::NumberNotDecisive => "presence_number_not_decisive",
+            Self::VoucherTypeNotObserved => "presence_voucher_type_not_observed",
+            Self::ResemblesBookVoucher => "presence_resembles_book_voucher",
+            Self::PartyNotDecidable => "presence_party_not_decidable",
+            Self::PartyNotSupplied => "presence_party_not_supplied",
+            Self::ManualNumberNotSupplied => "presence_manual_number_not_supplied",
+            Self::BookVoucherClaimedTwice => "presence_book_voucher_claimed_twice",
+            Self::IdentityConflict => "presence_identity_conflict",
+            Self::RemoteIdEvidenceUnavailable => "presence_remote_id_evidence_unavailable",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DifferenceField {
+    VoucherType,
+    Date,
+    Amount,
+    Party,
+}
+
+/// A field on which an identified voucher disagrees with its source. The match
+/// was decided by identity, so a difference is a finding about the book — not
+/// evidence against the match.
+///
+/// **It is a finding for a person, and the obvious way to act on it in code is
+/// destructive.** On the observed instance a voucher `Alter` returns
+/// `CREATED=1, ALTERED=0` and makes a duplicate while leaving the target
+/// untouched (`TALLY_PROTOCOL_REFERENCE.md` §9.7, four keys tested and all four
+/// duplicating), and `Cancel` behaves the same way (§9.6). A caller that reads
+/// "amount differs" and reaches for an `Alter` creates the duplicate this whole
+/// contract exists to prevent, and Tally's counters report success. The only
+/// correction that works is re-import under the same client `REMOTEID`
+/// (`IMPLEMENTATION_GUIDE.md` §3.3a), which reaches only vouchers Bridge itself
+/// wrote — so for the hand-keyed voucher this contract is built for there is no
+/// programmatic correction path at all, and the operator fixes it in Tally.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct Difference {
+    pub field: DifferenceField,
+    pub proposed: Option<String>,
+    pub observed: Option<String>,
+}
+
+/// What could not be decided, and why. This is the operator's work item, not
+/// an error path — and it carries no field that names a match.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct Undecided {
+    pub reason: UndecidedReason,
+    pub candidates: Vec<PresenceCandidate>,
+    /// Candidates found before truncation.
+    pub candidate_count: usize,
+    pub candidates_truncated: bool,
+}
+
+/// Exactly one outcome per proposed voucher.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", tag = "presence")]
+pub enum PresenceStatus {
+    /// An identity key matched uniquely on both sides. This is the only status
+    /// that names a book voucher, and the only one that authorises excluding a
+    /// voucher from an import.
+    Present {
+        book_key: String,
+        basis: PresenceBasis,
+        differences: Vec<Difference>,
+    },
+    /// Something resembles it, or something prevented a decision. Authorises
+    /// nothing.
+    PossiblyPresent(Undecided),
+    /// No rule produced any candidate, in a window proven to cover it.
+    /// `Absent` is always relative to that window.
+    Absent,
+}
+
+/// One proposed voucher and its outcome.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct VoucherPresence {
+    pub position: usize,
+    /// The voucher number exactly as the source document gave it.
+    pub voucher_number: Option<String>,
+    pub numbering_method: NumberingMethod,
+    /// Whether this proposal's voucher type was observed anywhere in the
+    /// window. When it was not, type stops discriminating and number matching
+    /// widens to every observed type — narrowing on an unobserved type name
+    /// would manufacture absence.
+    pub voucher_type_observed: bool,
+    pub party: PartyOutcome,
+    #[serde(flatten)]
+    pub status: PresenceStatus,
+}
+
+impl VoucherPresence {
+    pub fn present_book_key(&self) -> Option<&str> {
+        match &self.status {
+            PresenceStatus::Present { book_key, .. } => Some(book_key.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn undecided(&self) -> Option<&Undecided> {
+        match &self.status {
+            PresenceStatus::PossiblyPresent(undecided) => Some(undecided),
+            _ => None,
+        }
+    }
+
+    pub fn is_absent(&self) -> bool {
+        matches!(self.status, PresenceStatus::Absent)
+    }
+}
+
+/// A (voucher type, number) pair that identifies more than one book voucher.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct DuplicateNumberGroup {
+    pub voucher_type: String,
+    pub voucher_number: String,
+    pub book_keys: Vec<String>,
+    pub book_voucher_count: usize,
+}
+
+/// What the book gave away while it was being indexed. These cost nothing to
+/// compute and one of them is a filed-return problem.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct BookObservations {
+    pub duplicate_numbers: Vec<DuplicateNumberGroup>,
+    pub duplicate_number_group_count: usize,
+    pub duplicate_numbers_truncated: bool,
+    pub unbalanced_vouchers: Vec<String>,
+    pub unbalanced_voucher_count: usize,
+    /// Vouchers of a proposed voucher type that no proposal matched or even
+    /// resembled — the other half of a reconciliation. Counted, not listed.
+    pub unmatched_book_vouchers: usize,
+    pub window_voucher_count: usize,
+    /// Whether any observed voucher carried a `REMOTEID` at all. Without this,
+    /// an absence of remote-id matches reads as evidence that none exist.
+    pub remote_id_observed: bool,
+}
+
+/// Control totals for one run. `requested == present + possibly_present +
+/// absent` always holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+pub struct PresenceTotals {
+    pub requested: usize,
+    pub present: usize,
+    pub possibly_present: usize,
+    pub absent: usize,
+}
+
+/// The result of one presence run, scoped to the window it was computed over.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct PresenceReport {
+    window_from: String,
+    window_to: String,
+    vouchers: Vec<VoucherPresence>,
+    observations: BookObservations,
+}
+
+impl PresenceReport {
+    /// The window every verdict is relative to. `Absent` means absent from
+    /// this range, never absent from the book.
+    pub fn window(&self) -> (&str, &str) {
+        (&self.window_from, &self.window_to)
+    }
+
+    pub fn vouchers(&self) -> &[VoucherPresence] {
+        &self.vouchers
+    }
+
+    pub fn observations(&self) -> &BookObservations {
+        &self.observations
+    }
+
+    /// The vouchers an import may carry. Nothing else is safe to include
+    /// without a person.
+    pub fn absent(&self) -> impl Iterator<Item = &VoucherPresence> {
+        self.vouchers.iter().filter(|entry| entry.is_absent())
+    }
+
+    pub fn present(&self) -> impl Iterator<Item = &VoucherPresence> {
+        self.vouchers
+            .iter()
+            .filter(|entry| entry.present_book_key().is_some())
+    }
+
+    pub fn possibly_present(&self) -> impl Iterator<Item = &VoucherPresence> {
+        self.vouchers
+            .iter()
+            .filter(|entry| entry.undecided().is_some())
+    }
+
+    pub fn totals(&self) -> PresenceTotals {
+        let present = self.present().count();
+        let possibly_present = self.possibly_present().count();
+        let absent = self.absent().count();
+        PresenceTotals {
+            requested: self.vouchers.len(),
+            present,
+            possibly_present,
+            absent,
+        }
+    }
+}
+
+/// Already-valid inputs for one presence run. Every cross-input refusal — the
+/// window covering the proposals, a declared numbering method for every
+/// proposed type, a ledger catalog, the party binding itself — happens here,
+/// so `assess` cannot fail and no caller can compensate differently.
+#[derive(Debug)]
+pub struct PresenceRequest<'a> {
+    window: &'a BookWindow,
+    numbering: &'a NumberingDeclaration,
+    proposals: &'a [ProposedVoucher],
+    party_bindings: Vec<PartyResolution>,
+}
+
+/// A bound party reduced to what the rules need: the names to compare against,
+/// and whether the comparison was complete enough to justify `Absent`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PartyResolution {
+    outcome: PartyOutcome,
+    compare_keys: BTreeSet<String>,
+    /// True when names that might have matched were never compared.
+    incomplete: bool,
+}
+
+impl<'a> PresenceRequest<'a> {
+    #[cfg(not(test))]
+    pub fn new(
+        window: &'a BookWindow,
+        catalog: &'a MasterCatalog,
+        numbering: &'a NumberingDeclaration,
+        proposals: &'a ProposedBatch,
+    ) -> Result<Self, PresenceError> {
+        Self::new_inner(window, catalog, numbering, proposals.as_slice())
+    }
+
+    #[cfg(test)]
+    pub fn new(
+        window: &'a BookWindow,
+        catalog: &'a MasterCatalog,
+        numbering: &'a NumberingDeclaration,
+        proposals: &'a [ProposedVoucher],
+    ) -> Result<Self, PresenceError> {
+        Self::new_inner(window, catalog, numbering, proposals)
+    }
+
+    fn new_inner(
+        window: &'a BookWindow,
+        catalog: &'a MasterCatalog,
+        numbering: &'a NumberingDeclaration,
+        proposals: &'a [ProposedVoucher],
+    ) -> Result<Self, PresenceError> {
+        if catalog.class() != MasterClass::Ledger {
+            return Err(PresenceError::CatalogClassInvalid);
+        }
+        if window
+            .vouchers()
+            .iter()
+            .flat_map(|voucher| voucher.observed_ledgers.iter())
+            .any(|ledger| catalog.exact(ledger).is_none())
+        {
+            return Err(PresenceError::CatalogWindowCoverageMissing);
+        }
+        if proposals.is_empty() {
+            return Err(PresenceError::ProposalsEmpty);
+        }
+        if proposals.len() > MAX_PROPOSED_VOUCHERS {
+            return Err(PresenceError::TooManyProposals);
+        }
+        let mut positions = BTreeSet::new();
+        if proposals
+            .iter()
+            .any(|proposal| !positions.insert(proposal.position()))
+        {
+            return Err(PresenceError::DuplicateProposalPosition);
+        }
+        let comparisons = proposals
+            .len()
+            .checked_mul(window.vouchers().len())
+            .ok_or(PresenceError::ComparisonWorkTooLarge)?;
+        if comparisons > MAX_PRESENCE_COMPARISONS {
+            return Err(PresenceError::ComparisonWorkTooLarge);
+        }
+        for proposal in proposals {
+            if !window.covers(proposal.date()) {
+                return Err(PresenceError::WindowDoesNotCover);
+            }
+            if numbering.method(&proposal.type_key).is_none() {
+                return Err(PresenceError::NumberingMethodUndeclared);
+            }
+        }
+        let party_bindings = bind_parties(catalog, proposals)?;
+        let index = WindowIndex::build(window);
+        if resemblance_work_units(proposals, &party_bindings, &index)? > MAX_PRESENCE_WORK_UNITS {
+            return Err(PresenceError::ComparisonWorkTooLarge);
+        }
+        Ok(Self {
+            window,
+            numbering,
+            proposals,
+            party_bindings,
+        })
+    }
+}
+
+/// Binds every distinct proposed party name through `master_binding`, once, and
+/// reduces each to the names the rules may compare against.
+fn bind_parties(
+    catalog: &MasterCatalog,
+    proposals: &[ProposedVoucher],
+) -> Result<Vec<PartyResolution>, PresenceError> {
+    let mut distinct: Vec<&str> = proposals
+        .iter()
+        .filter_map(|proposal| proposal.party.as_deref())
+        .collect();
+    distinct.sort_unstable();
+    distinct.dedup();
+    let entities = distinct
+        .iter()
+        .enumerate()
+        .map(|(position, name)| SourceEntity::new(position, name))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(PresenceError::PartyBinding)?;
+    let report = master_binding::bind(catalog, &entities).map_err(PresenceError::PartyBinding)?;
+    let resolved = distinct
+        .iter()
+        .zip(report.entities())
+        .map(|(name, binding)| ((*name).to_string(), resolution_of(binding)))
+        .collect::<BTreeMap<_, _>>();
+    Ok(proposals
+        .iter()
+        .map(|proposal| match proposal.party.as_deref() {
+            None => PartyResolution {
+                outcome: PartyOutcome::NotSupplied,
+                compare_keys: BTreeSet::new(),
+                // No party was skipped, and none was compared. The party rules
+                // could not run at all, so an absence rests on the date and
+                // amount alone — which is the pair this contract says collides.
+                incomplete: true,
+            },
+            Some(name) => resolved
+                .get(name)
+                .cloned()
+                .expect("every proposed party name was bound"),
+        })
+        .collect())
+}
+
+fn resolution_of(binding: &master_binding::EntityBinding) -> PartyResolution {
+    // Matched exhaustively rather than read through accessors: these four
+    // cases are the reason ADR 0016 replaced a vector plus two flags with a
+    // type, and a new one must not compile until this decides what it means.
+    // `listed` is empty for `None` and `Withheld` alike, so the difference
+    // between "nothing resembles this party" and "a family we refuse to slice"
+    // lives only here.
+    fn from(unresolved: &master_binding::Unresolved) -> (BTreeSet<String>, bool) {
+        let keys = |listed: &[master_binding::Candidate]| {
+            listed
+                .iter()
+                .map(|candidate| comparison_key(&candidate.catalog_name))
+                .collect::<BTreeSet<_>>()
+        };
+        match &unresolved.candidates {
+            // Nothing resembles the party, and that is information.
+            Candidates::None => (BTreeSet::new(), false),
+            Candidates::Listed { listed } => (keys(listed), false),
+            // Names exist that were never compared, either way.
+            Candidates::Truncated { listed, .. } => (keys(listed), true),
+            Candidates::Withheld { .. } => (BTreeSet::new(), true),
+        }
+    }
+    match &binding.status {
+        BindingStatus::Bound { catalog_name, .. } => PartyResolution {
+            outcome: PartyOutcome::Bound {
+                catalog_name: catalog_name.clone(),
+            },
+            compare_keys: BTreeSet::from([comparison_key(catalog_name)]),
+            incomplete: false,
+        },
+        // Every candidate is compared, never one of them. Widening the net can
+        // only produce more resemblance, which is the safe direction here.
+        BindingStatus::Ambiguous(unresolved) => {
+            let (compare_keys, incomplete) = from(unresolved);
+            PartyResolution {
+                outcome: PartyOutcome::Ambiguous {
+                    reason: unresolved.reason.safe_reason_code().to_string(),
+                    candidate_count: unresolved.candidates.found(),
+                },
+                compare_keys,
+                incomplete,
+            }
+        }
+        // Nothing in this book resembles the party, so no posted voucher can
+        // be carrying it. Party rules simply do not run.
+        BindingStatus::Unmatched(unresolved) => {
+            let (compare_keys, incomplete) = from(unresolved);
+            PartyResolution {
+                outcome: PartyOutcome::Unmatched {
+                    reason: unresolved.reason.safe_reason_code().to_string(),
+                },
+                compare_keys,
+                incomplete,
+            }
+        }
+    }
+}
+
+/// Indexes of one window, built once per run.
+struct WindowIndex<'a> {
+    by_remote_id: BTreeMap<&'a str, Vec<usize>>,
+    by_type_and_number: BTreeMap<(&'a str, &'a str), Vec<usize>>,
+    by_number: BTreeMap<&'a str, Vec<usize>>,
+    by_date: BTreeMap<&'a str, Vec<usize>>,
+    by_ledger: BTreeMap<&'a str, Vec<usize>>,
+    type_keys: BTreeSet<&'a str>,
+}
+
+impl<'a> WindowIndex<'a> {
+    fn build(window: &'a BookWindow) -> Self {
+        let mut index = Self {
+            by_remote_id: BTreeMap::new(),
+            by_type_and_number: BTreeMap::new(),
+            by_number: BTreeMap::new(),
+            by_date: BTreeMap::new(),
+            by_ledger: BTreeMap::new(),
+            type_keys: BTreeSet::new(),
+        };
+        for (position, voucher) in window.vouchers.iter().enumerate() {
+            index.type_keys.insert(voucher.type_key.as_str());
+            if let Some(remote_id) = voucher.remote_id.as_deref() {
+                index
+                    .by_remote_id
+                    .entry(remote_id)
+                    .or_default()
+                    .push(position);
+            }
+            if let Some(number_key) = voucher.number_key.as_deref() {
+                index
+                    .by_type_and_number
+                    .entry((voucher.type_key.as_str(), number_key))
+                    .or_default()
+                    .push(position);
+                index
+                    .by_number
+                    .entry(number_key)
+                    .or_default()
+                    .push(position);
+            }
+            index
+                .by_date
+                .entry(voucher.date.as_str())
+                .or_default()
+                .push(position);
+            for ledger in &voucher.ledger_keys {
+                index
+                    .by_ledger
+                    .entry(ledger.as_str())
+                    .or_default()
+                    .push(position);
+            }
+        }
+        index
+    }
+}
+
+/// Conservatively prices the indexed resemblance pass. The bound includes
+/// each proposal's date posting list, every party-key posting list, the pooled
+/// voucher checks, and the per-pooled-voucher `any` over party keys. It applies
+/// even when an identity path settles, because those paths retain the full
+/// resemblance set for observations.
+fn resemblance_work_units(
+    proposals: &[ProposedVoucher],
+    parties: &[PartyResolution],
+    index: &WindowIndex<'_>,
+) -> Result<usize, PresenceError> {
+    let mut total = 0usize;
+    for (proposal, party) in proposals.iter().zip(parties) {
+        let date_posts = index.by_date.get(proposal.date()).map_or(0, Vec::len);
+        let party_posts = party.compare_keys.iter().try_fold(0usize, |sum, key| {
+            sum.checked_add(index.by_ledger.get(key.as_str()).map_or(0, Vec::len))
+                .ok_or(PresenceError::ComparisonWorkTooLarge)
+        })?;
+        let pool_upper = date_posts
+            .checked_add(party_posts)
+            .ok_or(PresenceError::ComparisonWorkTooLarge)?;
+        let party_checks = pool_upper
+            .checked_mul(party.compare_keys.len())
+            .ok_or(PresenceError::ComparisonWorkTooLarge)?;
+        let units = 1usize
+            .checked_add(date_posts)
+            .and_then(|n| n.checked_add(party_posts))
+            .and_then(|n| n.checked_add(pool_upper))
+            .and_then(|n| n.checked_add(party_checks))
+            .ok_or(PresenceError::ComparisonWorkTooLarge)?;
+        total = total
+            .checked_add(units)
+            .ok_or(PresenceError::ComparisonWorkTooLarge)?;
+    }
+    Ok(total)
+}
+
+/// Decides every proposal against the window.
+///
+/// `Present` requires identity unique on both sides. `Absent` requires that no
+/// rule produced any candidate. Everything between is `PossiblyPresent` and is
+/// never resolved here. See `docs/adr/0017-voucher-presence-authority.md` for
+/// why the two bars are set at different heights.
+pub fn assess(request: &PresenceRequest<'_>) -> PresenceReport {
+    let window = request.window;
+    let index = WindowIndex::build(window);
+
+    let mut proposal_remote_counts: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut proposal_number_counts: BTreeMap<(&str, &str), usize> = BTreeMap::new();
+    for proposal in request.proposals {
+        if let Some(remote_id) = proposal.remote_id.as_deref() {
+            *proposal_remote_counts.entry(remote_id).or_default() += 1;
+        }
+        if let Some(number_key) = proposal.number_key.as_deref() {
+            *proposal_number_counts
+                .entry((proposal.type_key.as_str(), number_key))
+                .or_default() += 1;
+        }
+    }
+
+    let mut touched_book: BTreeSet<usize> = BTreeSet::new();
+    let mut proposed_type_keys: BTreeSet<&str> = BTreeSet::new();
+    let mut vouchers = Vec::with_capacity(request.proposals.len());
+    for (proposal, party) in request.proposals.iter().zip(&request.party_bindings) {
+        proposed_type_keys.insert(proposal.type_key.as_str());
+        let decided = decide(
+            proposal,
+            party,
+            window,
+            &index,
+            request.numbering,
+            &proposal_remote_counts,
+            &proposal_number_counts,
+        );
+        touched_book.extend(decided.touched);
+        vouchers.push(decided.presence);
+    }
+
+    // One book voucher satisfies at most one proposal. Uniqueness was enforced
+    // within each identity basis; nothing yet stopped two proposals reaching
+    // the same voucher by *different* bases — one by `REMOTEID`, another by a
+    // manual number — and a consumer would then exclude two source vouchers
+    // against one book row, silently dropping an invoice. Every claimant is
+    // demoted; choosing between them would be the auto-resolution this whole
+    // contract refuses.
+    let mut claims: BTreeMap<String, usize> = BTreeMap::new();
+    for entry in &vouchers {
+        if let Some(book_key) = entry.present_book_key() {
+            *claims.entry(book_key.to_string()).or_default() += 1;
+        }
+    }
+    let contested = claims
+        .into_iter()
+        .filter(|(_, count)| *count > 1)
+        .map(|(book_key, _)| book_key)
+        .collect::<BTreeSet<_>>();
+    if !contested.is_empty() {
+        for entry in &mut vouchers {
+            let Some(book_key) = entry.present_book_key() else {
+                continue;
+            };
+            if !contested.contains(book_key) {
+                continue;
+            }
+            let book_key = book_key.to_string();
+            let rule = match &entry.status {
+                PresenceStatus::Present {
+                    basis: PresenceBasis::RemoteId,
+                    ..
+                } => CandidateRule::SharedRemoteId,
+                _ => CandidateRule::SharedVoucherNumber,
+            };
+            entry.status = PresenceStatus::PossiblyPresent(undecided(
+                UndecidedReason::BookVoucherClaimedTwice,
+                (vec![PresenceCandidate { book_key, rule }], 1),
+            ));
+        }
+    }
+
+    let observations = observe(window, &index, &proposed_type_keys, &touched_book);
+    PresenceReport {
+        window_from: window.from().to_string(),
+        window_to: window.to().to_string(),
+        vouchers,
+        observations,
+    }
+}
+
+/// One proposal's verdict, plus every book voucher it reached *before* the
+/// response candidate cap. The observations need the full set: a candidate
+/// dropped by the cap was still resembled, and counting it as untouched would
+/// report it as a voucher no proposal came near.
+struct Decided {
+    presence: VoucherPresence,
+    touched: BTreeSet<usize>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decide(
+    proposal: &ProposedVoucher,
+    party: &PartyResolution,
+    window: &BookWindow,
+    index: &WindowIndex<'_>,
+    numbering: &NumberingDeclaration,
+    proposal_remote_counts: &BTreeMap<&str, usize>,
+    proposal_number_counts: &BTreeMap<(&str, &str), usize>,
+) -> Decided {
+    let method = numbering
+        .method(&proposal.type_key)
+        .expect("PresenceRequest refused an undeclared numbering method");
+    let type_observed = index.type_keys.contains(proposal.type_key.as_str());
+    let shell = |status: PresenceStatus, touched: BTreeSet<usize>| Decided {
+        presence: VoucherPresence {
+            position: proposal.position,
+            voucher_number: proposal.voucher_number.clone(),
+            numbering_method: method,
+            voucher_type_observed: type_observed,
+            party: party.outcome.clone(),
+            status,
+        },
+        touched,
+    };
+    // A proposal carrying a `REMOTEID` the window never fetched has had its
+    // strongest key silently skipped. That cannot license an absence.
+    let remote_id_unverifiable =
+        proposal.remote_id.is_some() && window.remote_id_evidence() == RemoteIdEvidence::NotRead;
+
+    // Both identity lookups are resolved *before* either settles, so that a
+    // `REMOTEID` selecting one voucher while the number selects another can be
+    // reported as a disagreement instead of decided by whichever ran first.
+    // That is why the number lookup sits above rule one rather than under
+    // rule two, where it is used.
+    let number_matches: Vec<usize> = proposal
+        .number_key
+        .as_deref()
+        .map(|number_key| {
+            if type_observed {
+                index
+                    .by_type_and_number
+                    .get(&(proposal.type_key.as_str(), number_key))
+                    .cloned()
+                    .unwrap_or_default()
+            } else {
+                // The type name was never observed, so it discriminates
+                // nothing. Widen rather than manufacture an absence.
+                index.by_number.get(number_key).cloned().unwrap_or_default()
+            }
+        })
+        .unwrap_or_default();
+
+    // A verdict decided before rule three — an identity match as much as a
+    // collision — still *reached* whatever it resembles, and the observations
+    // count only what no proposal came near.
+    let with_resemblances = |touched: BTreeSet<usize>| {
+        let mut touched = touched;
+        touched.extend(resemblances(proposal, party, window, index, &number_matches).into_keys());
+        touched
+    };
+
+    // Rule one: identity first. A REMOTEID is a key Bridge itself wrote.
+    if let Some(remote_id) = proposal.remote_id.as_deref() {
+        let unique_here = proposal_remote_counts.get(remote_id).copied() == Some(1);
+        let empty = Vec::new();
+        let matches = index.by_remote_id.get(remote_id).unwrap_or(&empty);
+        // Proposal-side uniqueness is checked *before* the book lookup, the
+        // same way a duplicated manual number is. Two source rows claiming one
+        // identity are undecidable whether or not the book holds it, and
+        // falling through would report both as safe to import.
+        if !unique_here {
+            return shell(
+                PresenceStatus::PossiblyPresent(undecided(
+                    UndecidedReason::RemoteIdCollision,
+                    candidates_from(window, matches, CandidateRule::SharedRemoteId),
+                )),
+                with_resemblances(matches.iter().copied().collect()),
+            );
+        }
+        if !matches.is_empty() {
+            // Uniqueness on the proposal side was settled above, so one match
+            // here is one match on both sides.
+            if matches.len() == 1 {
+                // Both identities are resolved before either settles. A
+                // REMOTEID selecting one voucher while the number selects
+                // another is two identity signals disagreeing, and ranking one
+                // of them is the move this contract refuses everywhere else.
+                let number_selects_another = method == NumberingMethod::Manual
+                    && proposal_number_counts
+                        .get(&(
+                            proposal.type_key.as_str(),
+                            proposal.number_key.as_deref().unwrap_or_default(),
+                        ))
+                        .copied()
+                        == Some(1)
+                    && (number_matches.is_empty()
+                        || (number_matches.len() == 1 && number_matches[0] != matches[0]));
+                if number_selects_another {
+                    let mut touched = BTreeSet::from([matches[0]]);
+                    touched.extend(number_matches.iter().copied());
+                    // Both sides go through one ranked constructor. Appending
+                    // and truncating could drop the number side wholesale when
+                    // the REMOTEID side alone filled the cap — hiding half of
+                    // the disagreement this status exists to report.
+                    let mut entries = matches
+                        .iter()
+                        .map(|position| (*position, CandidateRule::SharedRemoteId))
+                        .chain(
+                            number_matches
+                                .iter()
+                                .map(|position| (*position, CandidateRule::SharedVoucherNumber)),
+                        )
+                        .collect::<Vec<_>>();
+                    return shell(
+                        PresenceStatus::PossiblyPresent(undecided(
+                            UndecidedReason::IdentityConflict,
+                            candidates_ranked(window, &mut entries),
+                        )),
+                        with_resemblances(touched),
+                    );
+                }
+                return shell(
+                    settled(
+                        proposal,
+                        party,
+                        &window.vouchers[matches[0]],
+                        PresenceBasis::RemoteId,
+                    ),
+                    with_resemblances(BTreeSet::from([matches[0]])),
+                );
+            }
+            return shell(
+                PresenceStatus::PossiblyPresent(undecided(
+                    UndecidedReason::RemoteIdCollision,
+                    candidates_from(window, matches, CandidateRule::SharedRemoteId),
+                )),
+                with_resemblances(matches.iter().copied().collect()),
+            );
+        }
+    }
+
+    // Rule two: a voucher number is identity only where the numbering method
+    // preserves it (§9.8), and only when it is unique on both sides.
+    //
+    // The proposal side comes first, because a collision between two proposals
+    // is a fact about the *source*: it does not become less true because the
+    // book has never seen this voucher type.
+    if method == NumberingMethod::Manual {
+        if let Some(number_key) = proposal.number_key.as_deref() {
+            let proposed_twice = proposal_number_counts
+                .get(&(proposal.type_key.as_str(), number_key))
+                .copied()
+                .unwrap_or_default()
+                > 1;
+            if proposed_twice {
+                return shell(
+                    PresenceStatus::PossiblyPresent(undecided(
+                        UndecidedReason::ProposalNumberCollision,
+                        candidates_from(
+                            window,
+                            &number_matches,
+                            CandidateRule::SharedVoucherNumber,
+                        ),
+                    )),
+                    with_resemblances(number_matches.iter().copied().collect()),
+                );
+            }
+        }
+    }
+
+    // Manual numbering only decides *within* an observed voucher type: numbers
+    // are a per-type series, so a cross-type match is a resemblance.
+    if method == NumberingMethod::Manual && type_observed && !number_matches.is_empty() {
+        // Every return below reaches the same rows -- the ones sharing the
+        // number, plus whatever this proposal resembles -- so the union is
+        // taken once, here. Taking it per branch is what let three early
+        // returns ship a bare set, and `unmatched_book_vouchers` then counted
+        // a plainly resembled row as one no proposal came near.
+        let touched = with_resemblances(number_matches.iter().copied().collect());
+        if number_matches.len() > 1 {
+            return shell(
+                PresenceStatus::PossiblyPresent(undecided(
+                    UndecidedReason::BookNumberCollision,
+                    candidates_from(window, &number_matches, CandidateRule::SharedVoucherNumber),
+                )),
+                touched,
+            );
+        }
+        if number_matches.len() == 1 {
+            let matched = &window.vouchers[number_matches[0]];
+            // Two identity signals that disagree are reported, never
+            // settled in the number's favour — the same rule ADR 0016
+            // applies to an identifier contradicting an exact name.
+            let contradicted = match (proposal.remote_id.as_deref(), matched.remote_id.as_deref()) {
+                (Some(proposed), observed) => observed != Some(proposed),
+                _ => false,
+            };
+            if remote_id_unverifiable {
+                return shell(
+                    PresenceStatus::PossiblyPresent(undecided(
+                        UndecidedReason::RemoteIdEvidenceUnavailable,
+                        candidates_from(
+                            window,
+                            &number_matches,
+                            CandidateRule::SharedVoucherNumber,
+                        ),
+                    )),
+                    touched,
+                );
+            }
+            if contradicted {
+                return shell(
+                    PresenceStatus::PossiblyPresent(undecided(
+                        UndecidedReason::IdentityConflict,
+                        candidates_from(
+                            window,
+                            &number_matches,
+                            CandidateRule::SharedVoucherNumber,
+                        ),
+                    )),
+                    touched,
+                );
+            }
+            return shell(
+                settled(proposal, party, matched, PresenceBasis::ManualVoucherNumber),
+                touched,
+            );
+        }
+    }
+
+    // Rule three: everything else is resemblance, and resemblance decides
+    // nothing. It only widens what a person is asked to look at.
+    let found = resemblances(proposal, party, window, index, &number_matches);
+
+    if found.is_empty() {
+        // Nothing resembled it — but an absence is only evidence when every
+        // key this proposal carries was actually compared.
+        if remote_id_unverifiable {
+            return shell(
+                PresenceStatus::PossiblyPresent(undecided(
+                    UndecidedReason::RemoteIdEvidenceUnavailable,
+                    (Vec::new(), 0),
+                )),
+                BTreeSet::new(),
+            );
+        }
+        // Under a Manual declaration the number is the deciding key. A
+        // proposal that supplies none has offered nothing decisive, so an
+        // absence would rest on date, party and amount — which this contract
+        // does not let decide.
+        if method == NumberingMethod::Manual && proposal.number_key.is_none() {
+            return shell(
+                PresenceStatus::PossiblyPresent(undecided(
+                    UndecidedReason::ManualNumberNotSupplied,
+                    (Vec::new(), 0),
+                )),
+                BTreeSet::new(),
+            );
+        }
+        if party.incomplete {
+            let reason = match party.outcome {
+                PartyOutcome::NotSupplied => UndecidedReason::PartyNotSupplied,
+                _ => UndecidedReason::PartyNotDecidable,
+            };
+            return shell(
+                PresenceStatus::PossiblyPresent(undecided(reason, (Vec::new(), 0))),
+                BTreeSet::new(),
+            );
+        }
+        return shell(PresenceStatus::Absent, BTreeSet::new());
+    }
+
+    let touched = found.keys().copied().collect::<BTreeSet<_>>();
+    let reason = if remote_id_unverifiable {
+        UndecidedReason::RemoteIdEvidenceUnavailable
+    } else {
+        match (
+            number_matches.is_empty(),
+            type_observed,
+            method == NumberingMethod::Manual,
+        ) {
+            (false, false, _) => UndecidedReason::VoucherTypeNotObserved,
+            (false, true, false) => UndecidedReason::NumberNotDecisive,
+            _ => UndecidedReason::ResemblesBookVoucher,
+        }
+    };
+    // Ordered as (position, rule) pairs before anything is cloned: the order is
+    // rule-then-key and only the retained prefix needs a key at all.
+    let mut ordered = found.into_iter().collect::<Vec<_>>();
+    let ranked = candidates_ranked(window, &mut ordered);
+    shell(
+        PresenceStatus::PossiblyPresent(undecided(reason, ranked)),
+        touched,
+    )
+}
+
+/// Every book voucher this proposal resembles, strongest rule per voucher.
+///
+/// Extracted because the *touched* set it produces is needed even on paths that
+/// return before resemblance can decide anything. A collision returns early
+/// with only its colliding positions, and `unmatched_book_vouchers` promises to
+/// count rows no proposal "matched or even resembled" — so a row this proposal
+/// plainly resembles must not be counted there merely because a collision
+/// outranked the resemblance. The scan is indexed, and the paths that need it
+/// early are collisions, which are rare.
+fn resemblances(
+    proposal: &ProposedVoucher,
+    party: &PartyResolution,
+    window: &BookWindow,
+    index: &WindowIndex<'_>,
+    number_matches: &[usize],
+) -> BTreeMap<usize, CandidateRule> {
+    let mut found: BTreeMap<usize, CandidateRule> = BTreeMap::new();
+    for position in number_matches {
+        keep_strongest(&mut found, *position, CandidateRule::SharedVoucherNumber);
+    }
+    let mut pool: BTreeSet<usize> = BTreeSet::new();
+    if let Some(positions) = index.by_date.get(proposal.date()) {
+        pool.extend(positions.iter().copied());
+    }
+    for key in &party.compare_keys {
+        if let Some(positions) = index.by_ledger.get(key.as_str()) {
+            pool.extend(positions.iter().copied());
+        }
+    }
+    for position in pool {
+        let voucher = &window.vouchers[position];
+        let same_date = voucher.date() == proposal.date();
+        let same_amount = voucher.magnitude.numeric_eq(&proposal.magnitude);
+        let same_party = party
+            .compare_keys
+            .iter()
+            .any(|key| voucher.ledger_keys.contains(key));
+        let rule = match (same_date, same_party, same_amount) {
+            (true, true, true) => CandidateRule::SameDatePartyAmount,
+            (_, true, true) => CandidateRule::SamePartyAmount,
+            (true, false, true) => CandidateRule::SameDateAmount,
+            (true, true, false) => CandidateRule::SameDateParty,
+            _ => continue,
+        };
+        keep_strongest(&mut found, position, rule);
+    }
+    found
+}
+
+/// Turns an identity match into a status. A cancelled or optional voucher
+/// occupies the number without being posted, so it is never `Present`.
+fn settled(
+    proposal: &ProposedVoucher,
+    party: &PartyResolution,
+    voucher: &BookVoucher,
+    basis: PresenceBasis,
+) -> PresenceStatus {
+    if voucher.posting != PostingState::Posted {
+        return PresenceStatus::PossiblyPresent(undecided(
+            UndecidedReason::MatchedVoucherNotPosted,
+            (
+                vec![PresenceCandidate {
+                    book_key: voucher.key().to_string(),
+                    rule: match basis {
+                        PresenceBasis::RemoteId => CandidateRule::SharedRemoteId,
+                        PresenceBasis::ManualVoucherNumber => CandidateRule::SharedVoucherNumber,
+                    },
+                }],
+                1,
+            ),
+        ));
+    }
+    PresenceStatus::Present {
+        book_key: voucher.key().to_string(),
+        basis,
+        differences: differences(proposal, party, voucher),
+    }
+}
+
+/// What an identified voucher disagrees with its source about. One engagement
+/// found an invoice posted short by exactly one dropped GST head this way.
+fn differences(
+    proposal: &ProposedVoucher,
+    party: &PartyResolution,
+    voucher: &BookVoucher,
+) -> Vec<Difference> {
+    let mut differences = Vec::new();
+    if voucher.voucher_type != proposal.voucher_type {
+        differences.push(Difference {
+            field: DifferenceField::VoucherType,
+            proposed: Some(proposal.voucher_type.clone()),
+            observed: Some(voucher.voucher_type.clone()),
+        });
+    }
+    if voucher.date() != proposal.date() {
+        differences.push(Difference {
+            field: DifferenceField::Date,
+            proposed: Some(proposal.date().to_string()),
+            observed: Some(voucher.date().to_string()),
+        });
+    }
+    if !voucher.magnitude.numeric_eq(&proposal.magnitude) {
+        differences.push(Difference {
+            field: DifferenceField::Amount,
+            proposed: Some(proposal.magnitude.as_str().to_string()),
+            observed: Some(voucher.magnitude.as_str().to_string()),
+        });
+    }
+    // Two narrowings, and each has a reason the other does not.
+    //
+    // Only a *bound* party can disagree: an ambiguous one has no single name to
+    // disagree with, and asserting a difference against a candidate would be
+    // the same guess by another route.
+    //
+    // And the comparison is against the *observed party field*, not against
+    // every ledger the voucher touches. Widening to all entry ledgers is right
+    // for finding a candidate and wrong for reporting a disagreement — a
+    // voucher whose party is one name while an entry names another would
+    // otherwise report no difference while serializing the other name as
+    // `observed`. A voucher with no party field has nothing to disagree with.
+    if let (PartyOutcome::Bound { catalog_name }, Some(observed)) =
+        (&party.outcome, voucher.party.as_deref())
+    {
+        if comparison_key(observed) != comparison_key(catalog_name) {
+            differences.push(Difference {
+                field: DifferenceField::Party,
+                // Bounded for the same reason the observation labels are: a
+                // response can drop whole rows but cannot shrink one, and the
+                // comparison above already used the full values.
+                proposed: proposal.party.as_deref().map(label),
+                observed: Some(label(observed)),
+            });
+        }
+    }
+    differences
+}
+
+fn observe(
+    window: &BookWindow,
+    index: &WindowIndex<'_>,
+    proposed_type_keys: &BTreeSet<&str>,
+    touched: &BTreeSet<usize>,
+) -> BookObservations {
+    let mut duplicate_numbers = Vec::new();
+    let mut duplicate_number_group_count = 0_usize;
+    for ((_, _), positions) in &index.by_type_and_number {
+        if positions.len() < 2 {
+            continue;
+        }
+        duplicate_number_group_count += 1;
+        if duplicate_numbers.len() >= MAX_DUPLICATE_NUMBER_GROUPS {
+            continue;
+        }
+        let mut ordered = positions.to_vec();
+        ordered.sort_by(|left, right| {
+            window.vouchers[*left]
+                .key()
+                .cmp(window.vouchers[*right].key())
+        });
+        let first = &window.vouchers[ordered[0]];
+        duplicate_numbers.push(DuplicateNumberGroup {
+            voucher_type: label(&first.voucher_type),
+            voucher_number: first
+                .voucher_number
+                .as_deref()
+                .map(label)
+                .unwrap_or_default(),
+            book_keys: ordered
+                .iter()
+                .take(MAX_KEYS_PER_DUPLICATE_GROUP)
+                .map(|position| window.vouchers[*position].key().to_string())
+                .collect(),
+            book_voucher_count: positions.len(),
+        });
+    }
+
+    let mut unbalanced: Vec<&BookVoucher> = window
+        .vouchers
+        .iter()
+        .filter(|voucher| !voucher.balanced())
+        .collect();
+    unbalanced.sort_by(|left, right| left.key().cmp(right.key()));
+
+    let unmatched_book_vouchers = window
+        .vouchers
+        .iter()
+        .enumerate()
+        .filter(|(position, voucher)| {
+            proposed_type_keys.contains(voucher.type_key.as_str()) && !touched.contains(position)
+        })
+        .count();
+
+    BookObservations {
+        duplicate_numbers,
+        duplicate_number_group_count,
+        duplicate_numbers_truncated: duplicate_number_group_count > MAX_DUPLICATE_NUMBER_GROUPS,
+        unbalanced_vouchers: unbalanced
+            .iter()
+            .take(MAX_UNBALANCED_LISTED)
+            .map(|voucher| voucher.key().to_string())
+            .collect(),
+        unbalanced_voucher_count: unbalanced.len(),
+        unmatched_book_vouchers,
+        window_voucher_count: window.vouchers.len(),
+        remote_id_observed: !index.by_remote_id.is_empty(),
+    }
+}
+
+/// Bounds an echoed observation label. See `MAX_OBSERVATION_LABEL_CHARS`.
+/// Bounds a value echoed back to the caller, and says so when it shortened one.
+///
+/// The marker is not decoration. Every comparison upstream runs on the *full*
+/// values, so two names differing only past the bound would otherwise serialize
+/// as one identical pair sitting beside a claim that they differ. The marker
+/// does not recover the distinction -- nothing at this bound can -- but it
+/// keeps the report from asserting something false about what it is showing.
+///
+/// It is appended *outside* `MAX_OBSERVATION_LABEL_CHARS` rather than taking a
+/// character of content to make room, and that is deliberate. Spending a
+/// character would make two values differing at exactly the bound serialize
+/// identically -- turning a difference that was visible before this marker
+/// existed into one that is not, which is the failure the marker is here to
+/// prevent, reintroduced one position earlier. The constant bounds the echoed
+/// *value*; one character of annotation on top of it bounds nothing worth
+/// bounding.
+fn label(value: &str) -> String {
+    if value.chars().count() <= MAX_OBSERVATION_LABEL_CHARS {
+        return value.to_string();
+    }
+    let mut bounded: String = value.chars().take(MAX_OBSERVATION_LABEL_CHARS).collect();
+    bounded.push(SHORTENED);
+    bounded
+}
+
+/// The key a *voucher number* is compared on, which is deliberately narrower
+/// than the one master names use.
+///
+/// `comparison_key` folds case and unifies dash and quote variants, and that
+/// fold is not arbitrary: §3.3b measured Tally's own master-name matching and
+/// the key follows it. **No such measurement exists for voucher numbers.**
+/// Applying the name fold to them was an assumption wearing a measurement's
+/// clothes, and it fails in the silent direction: folding produces *more*
+/// matches, a wrong match on a number is a `Present`, and a `Present` tells a
+/// caller an invoice is already filed. Two distinct invoices numbered `a-1`
+/// and `A-1` would have suppressed one another.
+///
+/// Only outer whitespace is a transport artefact in the current adapter.
+/// Unicode composition, internal whitespace, case and punctuation are content
+/// until something measures otherwise. This narrows toward the noisy failure:
+/// an unmatched variant costs a duplicate a person can see.
+fn number_key_of(value: &str) -> String {
+    value.trim().to_string()
+}
+
+fn keep_strongest(
+    found: &mut BTreeMap<usize, CandidateRule>,
+    position: usize,
+    rule: CandidateRule,
+) {
+    found
+        .entry(position)
+        .and_modify(|held| {
+            if rule.rank() < held.rank() {
+                *held = rule;
+            }
+        })
+        .or_insert(rule);
+}
+
+/// Builds the *retained* candidates, ordered, and reports how many there were.
+///
+/// Two properties, and the second is why this is one function rather than
+/// three call sites. **Ordering is part of the contract** — rule, then book key
+/// — so a dense collision exposes the same subset however Tally happened to
+/// order its rows, and a reviewer comparing two runs of an unchanged book does
+/// not see a different twenty-five. And the cap is applied **before** the
+/// clone: a window can hold thousands of vouchers on one number, and cloning
+/// them all to discard all but twenty-five is millions of allocations for a
+/// bounded answer. Sorting `(position, rule)` pairs allocates nothing.
+fn candidates_ranked(
+    window: &BookWindow,
+    entries: &mut [(usize, CandidateRule)],
+) -> (Vec<PresenceCandidate>, usize) {
+    entries.sort_by(|(left, left_rule), (right, right_rule)| {
+        left_rule.rank().cmp(&right_rule.rank()).then_with(|| {
+            window.vouchers[*left]
+                .key()
+                .cmp(window.vouchers[*right].key())
+        })
+    });
+    let found = entries.len();
+    let retained = entries
+        .iter()
+        .take(MAX_CANDIDATES_PER_PROPOSAL)
+        .map(|(position, rule)| PresenceCandidate {
+            book_key: window.vouchers[*position].key().to_string(),
+            rule: *rule,
+        })
+        .collect();
+    (retained, found)
+}
+
+fn candidates_from(
+    window: &BookWindow,
+    positions: &[usize],
+    rule: CandidateRule,
+) -> (Vec<PresenceCandidate>, usize) {
+    let mut entries = positions
+        .iter()
+        .map(|position| (*position, rule))
+        .collect::<Vec<_>>();
+    candidates_ranked(window, &mut entries)
+}
+
+fn undecided(
+    reason: UndecidedReason,
+    (candidates, found): (Vec<PresenceCandidate>, usize),
+) -> Undecided {
+    Undecided {
+        reason,
+        candidates_truncated: candidates.len() < found,
+        candidates,
+        candidate_count: found,
+    }
+}
+
+/// One definition of a voucher's magnitude, used by both sides so the two can
+/// never compute it differently. It is the sum of the positive entry amounts,
+/// which is defined whether or not the voucher balances.
+fn magnitude_of(
+    entries: &[ObservedEntry<'_>],
+) -> Result<(ExactDecimal, bool, BTreeSet<String>, BTreeSet<String>), PresenceError> {
+    if entries.is_empty() {
+        return Err(PresenceError::EntriesEmpty);
+    }
+    if entries.len() > MAX_ENTRIES_PER_VOUCHER {
+        return Err(PresenceError::TooManyEntries);
+    }
+    let mut total = ExactDecimalAccumulator::default();
+    let mut positive = ExactDecimalAccumulator::default();
+    let mut observed_ledgers = BTreeSet::new();
+    let mut ledger_keys = BTreeSet::new();
+    for entry in entries {
+        let amount = ExactDecimal::parse(entry.amount.to_string())
+            .map_err(|_| PresenceError::AmountInvalid)?;
+        total.add(amount.as_str());
+        if !amount.is_negative() {
+            positive.add(amount.as_str());
+        }
+        let ledger = validated_text(entry.ledger)?;
+        observed_ledgers.insert(ledger.clone());
+        ledger_keys.insert(comparison_key(&ledger));
+    }
+    let magnitude = ExactDecimal::parse(positive.canonical_string())
+        .map_err(|_| PresenceError::AmountInvalid)?;
+    Ok((magnitude, total.is_zero(), observed_ledgers, ledger_keys))
+}
+
+fn validated_text(value: &str) -> Result<String, PresenceError> {
+    if value.trim().is_empty() {
+        return Err(PresenceError::TextBlank);
+    }
+    if value.chars().count() > MAX_TEXT_CHARS {
+        return Err(PresenceError::TextTooLong);
+    }
+    if value.chars().any(|character| {
+        character.is_control() || matches!(character, '\u{2028}' | '\u{2029}' | '\u{feff}')
+    }) {
+        return Err(PresenceError::TextUnsafe);
+    }
+    Ok(value.to_string())
+}
+
+#[cfg(test)]
+#[path = "book_presence_tests.rs"]
+mod tests;

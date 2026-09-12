@@ -1,6 +1,9 @@
 //! Public tool catalog and argument admission before any Tally read.
 use super::*;
 
+const NONBLANK_PATTERN: &str = r"\S";
+const DATE_WIRE_PATTERN: &str = "^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$";
+
 pub(super) fn validate_tool_arguments(name: &str, args: &Value) -> Result<(), String> {
     let arguments = args
         .as_object()
@@ -90,6 +93,84 @@ pub(super) fn validate_tool_arguments(name: &str, args: &Value) -> Result<(), St
     Ok(())
 }
 
+/// Validates a value against a published schema fragment, recursively.
+///
+/// [`validate_tool_arguments`] deliberately stops at the outer selectors,
+/// because every tool that predates nested inputs owns its own typed boundary
+/// below that line and tightening the shared path would change their refusal
+/// codes. A tool whose `inputSchema` *does* describe nested objects calls this
+/// instead of restating those bounds in its parser: two copies of one bound
+/// drift, and the copy that drifts is the one nobody is looking at.
+///
+/// It enforces exactly what the fragment states — `type`, `enum`, string
+/// bounds and patterns, array bounds, `required`, and `additionalProperties:
+/// false` — and nothing it does not, so a schema remains the single
+/// description of what a caller may send.
+pub(super) fn validate_against_schema(
+    value: &Value,
+    schema: &Value,
+    key: &str,
+) -> Result<(), String> {
+    let invalid = || format!("argument_invalid:{key}");
+    if schema["enum"]
+        .as_array()
+        .is_some_and(|allowed| !allowed.contains(value))
+    {
+        return Err(invalid());
+    }
+    match schema["type"].as_str() {
+        Some("string") => {
+            let text = value.as_str().ok_or_else(invalid)?;
+            validate_string_bounds(text, schema, key)?;
+        }
+        Some("integer") => {
+            let number = value.as_u64().ok_or_else(invalid)?;
+            if schema["minimum"].as_u64().is_some_and(|min| number < min) {
+                return Err(invalid());
+            }
+        }
+        Some("array") => {
+            let items = value.as_array().ok_or_else(invalid)?;
+            if schema["minItems"]
+                .as_u64()
+                .is_some_and(|min| items.len() < min as usize)
+                || schema["maxItems"]
+                    .as_u64()
+                    .is_some_and(|max| items.len() > max as usize)
+            {
+                return Err(invalid());
+            }
+            for item in items {
+                validate_against_schema(item, &schema["items"], key)?;
+            }
+        }
+        Some("object") => {
+            let object = value.as_object().ok_or_else(invalid)?;
+            let properties = schema["properties"].as_object();
+            if schema["additionalProperties"] == Value::Bool(false)
+                && object
+                    .keys()
+                    .any(|name| !properties.is_some_and(|properties| properties.contains_key(name)))
+            {
+                return Err(invalid());
+            }
+            for required in schema["required"].as_array().into_iter().flatten() {
+                let name = required.as_str().ok_or_else(invalid)?;
+                if !object.contains_key(name) {
+                    return Err(invalid());
+                }
+            }
+            for (name, member) in object {
+                if let Some(fragment) = properties.and_then(|properties| properties.get(name)) {
+                    validate_against_schema(member, fragment, key)?;
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn validate_string_bounds(text: &str, schema: &Value, key: &str) -> Result<(), String> {
     let length = text.chars().count();
     if schema["minLength"]
@@ -98,11 +179,45 @@ fn validate_string_bounds(text: &str, schema: &Value, key: &str) -> Result<(), S
         || schema["maxLength"]
             .as_u64()
             .is_some_and(|max| length > max as usize)
-        || (schema["pattern"] == r"\S" && text.trim().is_empty())
+        || schema["pattern"]
+            .as_str()
+            .is_some_and(|pattern| !published_pattern_matches(pattern, text))
     {
         return Err(format!("argument_invalid:{key}"));
     }
     Ok(())
+}
+
+/// Recognize the finite pattern vocabulary in the published local-tool schema.
+///
+/// Pattern text is schema authority, but accepting an arbitrary new expression
+/// would add an unbounded compile/cache decision to the admission path. Unknown
+/// patterns therefore refuse input until their exact wire shape is implemented
+/// and reviewed here. Calendar validity stays with `normalized_date` at the
+/// typed boundary; this only preserves the published lexical shape.
+fn published_pattern_matches(pattern: &str, text: &str) -> bool {
+    match pattern {
+        NONBLANK_PATTERN => text.chars().any(|character| !character.is_whitespace()),
+        DATE_WIRE_PATTERN => {
+            let bytes = text.as_bytes();
+            let Some((year, remainder)) = bytes.split_at_checked(4) else {
+                return false;
+            };
+            if !year.iter().all(u8::is_ascii_digit) {
+                return false;
+            }
+            let remainder = remainder.strip_prefix(b"-").unwrap_or(remainder);
+            let Some((month, remainder)) = remainder.split_at_checked(2) else {
+                return false;
+            };
+            if !month.iter().all(u8::is_ascii_digit) {
+                return false;
+            }
+            let remainder = remainder.strip_prefix(b"-").unwrap_or(remainder);
+            remainder.len() == 2 && remainder.iter().all(u8::is_ascii_digit)
+        }
+        _ => false,
+    }
 }
 
 pub(super) fn tool_definitions(import_enabled: bool, writes_enabled: bool) -> Value {
@@ -129,6 +244,7 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
         "ledger_movement",
         "trial_balance",
         "vouchers",
+        "voucher_presence",
         "changed_since",
         "read_evidence",
         "egress_log",
@@ -190,6 +306,24 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
                     "vouchers" => (
                         "Return literal-window voucher evidence with curated metadata and redaction. Reads the full source window before selectors and output pagination; limit does not reduce Tally work. Use narrow dates; dense windows are unqualified and can fail source limits.",
                         json!({"type":"object","additionalProperties":false,"required":["company_guid","from","to"],"properties":{"company_guid":{"type":"string","minLength":1},"from":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"to":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"voucher_type":{"type":"string","maxLength":agent_import::MAX_MASTER_NAME_CHARS},"ledger":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"},"offset":{"type":"integer","minimum":0,"default":0},"limit":{"type":"integer","minimum":1,"default":500}}}),
+                    ),
+                    "voucher_presence" => (
+                        "For a qualified complete window, answer which of 1\u{2013}500 proposed vouchers are already in the book. At present, the adapter has no source-completeness evidence for a nonempty window, so it refuses one as `presence_window_incomplete` and emits no operational presence verdict. `presence` is present, possibly_present or absent, and only `present` names a book voucher. The conditional decision basis can use a voucher number on a voucher type you declare `manual` \u{2014} unique on both sides, within an observed voucher type, and never onto a cancelled or optional voucher. It neither accepts nor reads client remote identifiers. Date, party and amount only ever produce candidates, with the rule that surfaced each and no ranking or score. Every voucher type a proposal names needs a declared numbering method; under `automatic` Tally discards the supplied number, so nothing can be decided from it. `absent` means absent from this window, so cover the dates the book could hold. Reads the full window before comparing; dense windows can fail source limits. Party names bind through the same rules as validate_masters. A reported difference on a `present` voucher is a finding for a person, not a work item: correcting a voucher by Alter or Cancel silently creates a duplicate instead (\u{00a7}9.7), and no Bridge path can correct a voucher it did not write. This never dispatches import XML to Tally.",
+                        json!({"type":"object","additionalProperties":false,"required":["company_guid","from","to","numbering","vouchers"],"properties":{
+                            "company_guid":{"type":"string","minLength":1},
+                            "offset":{"type":"integer","minimum":0,"default":0},
+                            "limit":{"type":"integer","minimum":1,"default":500},
+                            "from":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},
+                            "to":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},
+                            "numbering":{"type":"array","minItems":1,"maxItems":presence::MAX_PRESENCE_VOUCHER_TYPES,"items":{"type":"object","additionalProperties":false,"required":["voucher_type","numbering_method"],"properties":{"voucher_type":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"},"numbering_method":{"type":"string","enum":["manual","automatic","unknown"]}}}},
+                            "vouchers":{"type":"array","minItems":1,"maxItems":presence::MAX_PRESENCE_VOUCHERS,"items":{"type":"object","additionalProperties":false,"required":["date","voucher_type","entries"],"properties":{
+                                "date":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},
+                                "voucher_type":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"},
+                                "voucher_number":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"},
+                                "party":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"},
+                                "entries":{"type":"array","minItems":1,"maxItems":presence::MAX_PRESENCE_ENTRIES,"items":{"type":"object","additionalProperties":false,"required":["ledger","amount"],"properties":{"ledger":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"},"amount":{"type":"string","minLength":1,"maxLength":64,"pattern":r"\S"}}}}
+                            }}}
+                        }}),
                     ),
                     "changed_since" => (
                         "Return snapshot-pinned AlterID voucher and master evidence. Continue a truncated scan with both returned AlterID cursors and snapshot values; deletion detection remains unsupported.",
