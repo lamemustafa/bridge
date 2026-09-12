@@ -173,7 +173,9 @@ function catalogBindingSummary(binding: SourceDraftCatalogBinding | null, total:
     // — slicing put the right one out of view about a third of the time across
     // sixteen live catalogues: `TALLY_PROTOCOL_REFERENCE.md` §9.4c states the
     // rule, `TEST_CORPUS.md` §9.1 carries the counts and their scope — and a
-    // fuller source name fixes it. A **truncated** listing is this report
+    // fuller source name can fix that name-family case. An identifier conflict
+    // requires the complete observed catalogue and intended identity; rewriting
+    // the name alone cannot resolve it. A **truncated** listing is this report
     // running out of room on earlier rows; the source name is fine and nothing
     // the operator writes here would change it.
     //
@@ -183,8 +185,12 @@ function catalogBindingSummary(binding: SourceDraftCatalogBinding | null, total:
     // sentence and told the operator the report had run out of room when it
     // had not.
     switch (binding.candidate_listing) {
-      case "withheld":
-        return `${catalogRefusalLead(binding.unbound_reason)} This source line matches ${count} existing ledgers and tells them apart from none of them, so none is listed. Use a fuller source name, or choose from the full list of ${total}.`;
+      case "withheld": {
+        const action = isIdentifierConflict(binding.unbound_reason)
+          ? `Review this source line against the complete observed catalogue and confirm the intended identity before choosing from the full list of ${total}.`
+          : `Use a fuller source name, or choose from the full list of ${total}.`;
+        return `${catalogRefusalLead(binding.unbound_reason)} This source line matches ${count} existing ledgers and tells them apart from none of them, so none is listed. ${action}`;
+      }
       case "truncated":
         return `${catalogRefusalLead(binding.unbound_reason)} ${count} existing ledgers are involved, but this report ran out of room to list them. Choose from the full list of ${total}.`;
       case "none":
@@ -204,19 +210,25 @@ function catalogBindingSummary(binding: SourceDraftCatalogBinding | null, total:
   return `${lead} Nothing is chosen; ${listed} possible ${shown === 1 ? "ledger is" : "ledgers are"} listed first, and the full list of ${total} follows.`;
 }
 
+function isIdentifierConflict(reason: string | null) {
+  return reason === "master_binding_identifier_conflict"
+    || reason === "master_binding_identifier_name_conflict";
+}
+
 /// Why binding refused, where the reason changes what the operator should look
 /// at. A conflict is not a weak match: both sides of it are strong, and they
 /// disagree.
 function catalogRefusalLead(reason: string | null) {
   switch (reason) {
     case "master_binding_identifier_name_conflict":
-      return "This source name matches one existing ledger exactly, while an identifier inside it matches a different one, and they disagree.";
+      return "This source name matches one existing ledger exactly, while an identifier inside it matches a different one, and they disagree. Review the complete observed catalogue and confirm the intended identity before choosing.";
     case "master_binding_identifier_conflict":
       // Two different shapes reach this reason: one identifier carried by
       // several ledgers, and several identifiers each reaching a different
-      // ledger. Naming only the first sent the operator hunting for a duplicate
-      // that does not exist.
-      return "The identifiers in this source line do not agree on one existing ledger — either one of them appears in several, or they point at different ones.";
+      // ledger. The operator must compare against the complete observed
+      // catalogue and confirm the intended identity; rewriting the name alone
+      // cannot resolve an identifier conflict.
+      return "The identifiers in this source line do not agree on one existing ledger. Review it against the complete observed catalogue and confirm the intended identity before choosing.";
     case "master_binding_name_ambiguous":
       // Not "separators": `TALLY_PROTOCOL_REFERENCE.md` §9.4d measured which
       // ones fold on the release this writes to — space, hyphen and slash do,
