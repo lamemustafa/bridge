@@ -2,6 +2,7 @@
 # Decide whether a pull request may be merged, and say why not when it may not.
 #
 # Usage: scripts/merge-gate.sh <pr-number> [--repo OWNER/NAME]
+#        [--independent-review-sha FULL_SHA] (explicit manual review attestation)
 # Exit:  0 may merge, 1 must not, 2 could not determine.
 #
 # Every positive result is bound to one server-observed head, base tip, complete
@@ -72,6 +73,13 @@ if [ -z "$OWNER" ] || [ -z "$NAME" ] || [ "$OWNER" = "$REPO" ] || [[ "$REPO" == 
   || ! [[ "$OWNER" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
   || ! [[ "$NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
   echo "--repo must be OWNER/NAME, got '$REPO'" >&2
+  exit 2
+fi
+
+# This command encodes Bridge-specific master workflow and surface policy.
+# An arbitrary repository's passing checks cannot qualify that contract.
+if [ "$REPO" != "lamemustafa/bridge" ]; then
+  echo "unsupported repository: this gate implements lamemustafa/bridge policy" >&2
   exit 2
 fi
 
@@ -755,8 +763,12 @@ $added"
   }
   # Join separators only inside a mobile-shaped run. A global separator-free
   # projection fuses unrelated values and creates false identifiers.
-  normalized_phone=$(grep -Eo '[6-9][0-9]{4}[][()+. _-]{0,3}[0-9]{5}' <<<"$redacted" \
-    | sed -E 's/[][()+. _-]//g' | grep -E '^[6-9][0-9]{9}$' || true)
+  phone_status=0
+  phone_matches=$(grep -Eo '(^|[^[:alnum:]])[6-9]([ ()+._-]{0,3}[0-9]){9}([^[:alnum:]]|$)' <<<"$redacted") || phone_status=$?
+  if [ "$phone_status" -gt 1 ]; then
+    unknown "formatted phone scan expression failed"
+  fi
+  normalized_phone=$(sed -E 's/[^0-9]//g' <<<"$phone_matches")
   scan_shapes="$redacted
 $normalized_phone"
   hits_status=0

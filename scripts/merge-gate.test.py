@@ -47,17 +47,17 @@ if args[:2] == ["pr", "view"]:
     body = (
         "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
         "## Validation and evidence\n\n`python3 scripts/merge-gate.test.py`\n\n"
-        "- [x] [Errors](https://github.com/example/repo/blob/HEAD/review-checklist.md#L10)"
+        "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10)"
     )
     if scenario == "body-loses-evidence" and view_count > 0:
         body = (
             "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
-            "- [x] [Errors](https://github.com/example/repo/blob/HEAD/review-checklist.md#L10)"
+            "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10)"
         )
     elif scenario == "body-loses-functional" and view_count > 0:
         body = (
             "## Validation and evidence\n\n`python3 scripts/merge-gate.test.py`\n\n"
-            "- [x] [Errors](https://github.com/example/repo/blob/HEAD/review-checklist.md#L10)"
+            "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10)"
         )
     if scenario == "checklist-foreign":
         body = "- [x] [Errors](https://github.com/other/repo/blob/HEAD/review-checklist.md#L10)"
@@ -68,19 +68,19 @@ if args[:2] == ["pr", "view"]:
             "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
             "## Validation and evidence\n\n`python3 scripts/merge-gate.test.py`\n\n"
             "- [x] One completed [`review-checklist.md`](../review-checklist.md) line is\n"
-            "      linked here: https://github.com/example/repo/blob/HEAD/review-checklist.md#L10"
+            "      linked here: https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10"
         )
     elif scenario == "missing-functional-summary":
         body = (
             "## Validation and evidence\n\n`python3 scripts/merge-gate.test.py`\n\n"
-            "- [x] [Errors](https://github.com/example/repo/blob/HEAD/review-checklist.md#L10)"
+            "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10)"
         )
     elif scenario == "missing-test-summary":
         body = (
             "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
-            "- [x] [Errors](https://github.com/example/repo/blob/HEAD/review-checklist.md#L10)"
+            "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10)"
         )
-    one_file = scenario in {"files-empty", "formatted-phone", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates"}
+    one_file = scenario in {"files-empty", "formatted-phone", "formatted-phone-grouped", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates"}
     selected_base = new_head if scenario == "base-oid-mismatch" else base
     emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
@@ -115,15 +115,18 @@ elif args[:2] == ["pr", "diff"]:
         emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+safe text\n")
     elif scenario == "diff-truncated-payload":
         emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +2 @@\n+first line\n")
+    elif scenario == "formatted-phone-grouped":
+        phone = "6" + "98 765-4321"
+        emit(f"diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic {phone}\n")
     elif scenario == "metadata-only":
         emit("diff --git a/docs/example.md b/docs/example.md\nsimilarity index 100%\nrename from docs/example.md\nrename to docs/example.md\n")
     elif scenario == "metadata-incomplete":
         emit("diff --git a/docs/example.md b/docs/example.md\nsimilarity index 100%\nrename from docs/example.md\nrename to docs/example.md\n")
     elif scenario == "hunk-header-phone":
         phone = "6" + "9876" + "54321"
-        emit(f"diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n++++ b/synthetic {phone}\n")
+        emit(f"diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+++ b/synthetic {phone}\n")
     elif scenario == "hunk-header-literals":
-        emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +2 @@\n++++ b/safe\n++++ /dev/null\n")
+        emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +2 @@\n+++ b/safe\n+++ /dev/null\n")
     elif scenario == "hunk-binary-literal":
         emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+GIT binary patch\n")
     elif scenario == "separated-dates":
@@ -202,7 +205,7 @@ elif args and args[0] == "api":
     elif "/pulls/321/files" in joined:
         if scenario == "files-empty":
             emit([[]])
-        elif scenario == "formatted-phone":
+        elif scenario in {"formatted-phone", "formatted-phone-grouped"}:
             emit([[{"filename": "docs/contact.md", "status": "added", "additions": 1, "deletions": 0}]])
         elif scenario == "path-id":
             path_id = "ABCDE" + "1234" + "F"
@@ -280,7 +283,7 @@ class MergeGateControls(unittest.TestCase):
         counter.write_text("0")
         env["GATE_COUNTER"] = str(counter)
         return subprocess.run(
-            [str(SCRIPT), "321", "--repo", "example/repo", *extra_args],
+            [str(SCRIPT), "321", "--repo", "lamemustafa/bridge", *extra_args],
             cwd=ROOT,
             env=env,
             text=True,
@@ -362,6 +365,9 @@ class MergeGateControls(unittest.TestCase):
 
     def test_formatted_phone_is_scanned(self):
         self.assert_blocked("formatted-phone", "privacy scan found")
+
+    def test_grouped_formatted_phone_is_scanned(self):
+        self.assert_blocked("formatted-phone-grouped", "privacy scan found")
 
     def test_header_shaped_added_payload_is_still_scanned(self):
         self.assert_blocked("hunk-header-phone", "privacy scan found")
@@ -456,7 +462,7 @@ class MergeGateControls(unittest.TestCase):
         env = os.environ.copy()
         env["PATH"] = f"{self.bin}:{env['PATH']}"
         result = subprocess.run(
-            [str(SCRIPT), "321;echo unsafe", "--repo", "example/repo"],
+            [str(SCRIPT), "321;echo unsafe", "--repo", "lamemustafa/bridge"],
             cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, check=False,
         )
@@ -467,12 +473,23 @@ class MergeGateControls(unittest.TestCase):
         env = os.environ.copy()
         env["PATH"] = f"{self.bin}:{env['PATH']}"
         result = subprocess.run(
-            [str(SCRIPT), "321", "--repo", "example/repo;echo unsafe"],
+            [str(SCRIPT), "321", "--repo", "lamemustafa/bridge;echo unsafe"],
             cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, check=False,
         )
         self.assertEqual(result.returncode, 2)
         self.assertIn("--repo must be OWNER/NAME", result.stderr)
+
+    def test_other_repository_policy_is_not_assumed(self):
+        env = os.environ.copy()
+        env["PATH"] = f"{self.bin}:{env['PATH']}"
+        result = subprocess.run(
+            [str(SCRIPT), "321", "--repo", "example/other"],
+            cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("unsupported repository", result.stderr)
 
     def test_missing_functional_summary_blocks(self):
         self.assert_blocked("missing-functional-summary", "functional summary")
