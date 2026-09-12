@@ -268,6 +268,16 @@ with tempfile.TemporaryDirectory() as directory:
              for m in fresh.WORD.finditer(destination.read_text())}
     check("main preserves the captured wrapped short mask's structural Xs",
           bool(re.fullmatch(r"XX\d{3}-", words[box])), repr(words[box]))
+# Cropping away the reference must also remove its mask authority. The input
+# is still the unchanged real capture; only the CLI's retained region varies.
+with tempfile.TemporaryDirectory() as directory:
+    destination = pathlib.Path(directory) / "short-only.xml"
+    fresh = load()
+    with contextlib.redirect_stdout(io.StringIO()):
+        fresh.main(str(fixture), str(destination), [(0, [(701, 712.5)])], "SBI")
+    words = [match.group(5) for match in fresh.WORD.finditer(destination.read_text())]
+    check("mask-only capture crop fabricates short Xs without retained context",
+          len(words) == 1 and "X" not in words[0].upper(), repr(words))
 # Same captured word in an adjacent column must not receive mask authority.
 shifted = page.replace('xMin="143.660000" yMin="701.384000" xMax="183.680000"',
                        'xMin="222.900000" yMin="701.384000" xMax="262.920000"')

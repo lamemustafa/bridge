@@ -526,7 +526,12 @@ def main(source, destination, keep, bank):
     # call `_scrub_plain` with strings that are already decoded.
     pages = pathlib.Path(source).read_text(encoding="utf-8").split("<page ")[1:]
     regions = list(_kept_words(pages, keep))
-    contexts = [_page_short_masks(pages[index]) for index, _ in keep]
+    # Qualification must survive the retained region selection. A mask-only
+    # crop has no IMPS field context in the emitted fixture and is fabricated.
+    contexts = [_page_short_masks(
+        "\n".join(f'<word xMin="{x0}" yMin="{y0}" xMax="{x1}" yMax="{y1}">'
+                  f'{body}</word>' for x0, y0, x1, y1, body in words))
+        for _, words in regions]
     # Two passes, and the first one has to be complete before the second starts.
     # A replacement is only safe once the allocator knows every token the
     # capture contains: otherwise a fabricated value can equal some *other*
