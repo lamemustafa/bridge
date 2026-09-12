@@ -1451,18 +1451,15 @@ async fn a_batch_id_the_writer_could_not_have_made_is_refused() {
     }
 }
 
-/// A declared pattern is documentation until something evaluates it, and the
-/// shared validator evaluates exactly one: the `\S` special case. Every other
-/// regular expression in a published schema is inert.
-///
-/// So the transaction label's alphabet is enforced with the writer's own
-/// `valid_txn_id`. A label `build_import_xml` would refuse cannot have
-/// produced a narration marker; deriving one anyway yields an identity no book
-/// can hold, and on an empty window that reads as `absent` rather than as the
-/// input error it is. Against the live simulator, so zero bytes means the
-/// refusal really did come before the reads.
+/// The published nested transaction-label pattern is evaluated by the shared
+/// schema validator before proposal parsing. Schema recursion keeps the declared
+/// top-level argument code, so a bad nested label reports
+/// `argument_invalid:vouchers`, rather than inventing a leaf-code contract.
+/// The typed parser retains the writer's `valid_txn_id` check as a defensive
+/// boundary. Against the live simulator, zero bytes proves the schema refusal
+/// happened before any read.
 #[tokio::test]
-async fn a_transaction_label_the_writer_would_refuse_is_refused_here() {
+async fn a_transaction_label_outside_the_published_nested_schema_is_refused_before_reads() {
     let simulator = SequenceSimulator::spawn(presence_plans()).expect("simulator");
     let directory = tempfile::tempdir().expect("directory");
     let server = Server::new(Settings {
@@ -1495,14 +1492,14 @@ async fn a_transaction_label_the_writer_would_refuse_is_refused_here() {
             .unwrap_or_default()
             .to_string();
         assert_eq!(
-            code == "argument_invalid:bridge_txn_id",
+            code == "argument_invalid:vouchers",
             refused,
             "label {label:?} produced {code:?}"
         );
         if refused {
             assert_eq!(
                 response.value["structuredContent"]["evidence"]["bytes"], 0,
-                "a label the writer would refuse must cost no read"
+                "a nested-schema refusal must cost no read"
             );
         }
     }

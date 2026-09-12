@@ -351,7 +351,7 @@
     },
     {
       "path": "src-tauri/src/agent_presence_tests.rs",
-      "sha256": "9c58dd72d5febab66a0aed39d4165f57039663d69448a3bb525e10797142b95e"
+      "sha256": "bd5ebc4eaf15f68ab9bde2c40ae52d830cc84004c3da436b2dd23ec32fba3232"
     },
     {
       "path": "src-tauri/src/agent_read_profiles.rs",
@@ -866,5 +866,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "6b2e38fe31a6f6f94f13512df459aeed3dfbad30d70d982a1be79ea81121c228"
+  "manifest_sha256": "9d8e1b5db2afc5c76bfafb3b591a3bd46d52cf578e8124f1b5fd03877fdec935"
 }
