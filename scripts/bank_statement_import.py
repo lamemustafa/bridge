@@ -1561,8 +1561,13 @@ def _open_regular_output(path, expected_identity):
         raise
 
 
-def _owned_path(path, handle):
-    """Record a pathname and retain the descriptor that pins its inode."""
+def _owned_path(path, handle, *, created):
+    """Record a pathname and retain the descriptor that pins its inode.
+
+    `created` is explicit because a registration failure has opposite cleanup
+    authority for a new private path and an existing output. Only the former
+    may be unlinked while recovery establishes descriptor ownership.
+    """
     try:
         identity = _fd_identity(handle)
     except BaseException as error:
@@ -1577,16 +1582,17 @@ def _owned_path(path, handle):
                 identity = _fd_identity(handle)
             except BaseException:
                 identity = None
-            if identity is None:
-                if os.path.lexists(path):
-                    failures.append(str(path))
-            else:
-                _unlink_for_cleanup(path, identity, failures)
+            if created:
+                if identity is None:
+                    if os.path.lexists(path):
+                        failures.append(str(path))
+                else:
+                    _unlink_for_cleanup(path, identity, failures)
         finally:
             try:
                 os.close(handle)
             except OSError:
-                if os.path.lexists(path):
+                if created and os.path.lexists(path):
                     failures.append(str(path))
         if failures:
             _append_cleanup_detail(
@@ -1920,14 +1926,14 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 handle, temporary = tempfile.mkstemp(
                     dir=os.path.dirname(real_path),
                     prefix=os.path.basename(real_path) + ".", suffix=".part")
-                record = _owned_path(temporary, handle)
+                record = _owned_path(temporary, handle, created=True)
                 claimed.append(record)
                 staged.append({"temporary": record, "supplied_path": path,
                                "real_path": real_path,
                                "original_identity": _file_identity(real_path)})
             else:
                 handle = _open_private(path, accept_inherited)
-                record = _owned_path(path, handle)
+                record = _owned_path(path, handle, created=True)
                 claimed.append(record)
         if after_claim is not None:
             after_claim()
@@ -1947,7 +1953,7 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             backup_handle, backup = tempfile.mkstemp(
                 dir=os.path.dirname(real_path),
                 prefix=os.path.basename(real_path) + ".", suffix=".bak")
-            pending_backup = _owned_path(backup, backup_handle)
+            pending_backup = _owned_path(backup, backup_handle, created=True)
             pending_swap = {"backup": pending_backup, "destination": real_path,
                             "original_identity": original_identity,
                             "staged_identity": temporary["identity"],
@@ -1957,7 +1963,8 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             # This ownership pin both prevents original-inode ABA reuse and
             # captures metadata before the backup read can update atime.
             original_handle = _open_regular_output(real_path, original_identity)
-            pending_swap["original"] = _owned_path(real_path, original_handle)
+            pending_swap["original"] = _owned_path(
+                real_path, original_handle, created=False)
             pending_swap["metadata"] = _metadata_from_handle(
                 real_path, original_handle)
             _copy_private_backup(real_path, original_identity, backup_handle)
@@ -2021,9 +2028,7 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             if pending_swap["original"] is not None:
                 _close_owned_path(pending_swap["original"], cleanup_failures)
         if pending_backup is not None and (
-                pending_swap is None
-                or pending_backup["path"] != pending_swap["backup"]["path"]
-                or pending_backup["identity"] != pending_swap["backup"]["identity"]):
+                pending_swap is None or pending_backup is not pending_swap["backup"]):
             _cleanup_owned_path(pending_backup, cleanup_failures)
         for swap in reversed(replaced):
             # An interrupt can arrive after `_record_replaced_swap` appends but

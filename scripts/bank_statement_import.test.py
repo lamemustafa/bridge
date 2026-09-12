@@ -1736,7 +1736,7 @@ def test_ownership_registration_failure_reconciles_a_created_path_and_closes_its
             m.os.close = observe_close
             try:
                 try:
-                    m._owned_path(path, handle)
+                    m._owned_path(path, handle, created=True)
                     raise AssertionError("the original identity failure must escape")
                 except BaseException as error:
                     assert error is failure
@@ -1765,7 +1765,7 @@ def test_ownership_registration_preserves_an_unproven_reclaimed_path(m):
         m._fd_identity = fail_identity
         try:
             try:
-                m._owned_path(path, handle)
+                m._owned_path(path, handle, created=True)
                 raise AssertionError("the identity failure must escape")
             except OSError as error:
                 notes = "\n".join(getattr(error, "__notes__", []))
@@ -1774,6 +1774,38 @@ def test_ownership_registration_preserves_an_unproven_reclaimed_path(m):
 
         assert path.read_text() == "foreign writer bytes"
         assert str(path) in notes
+
+
+def test_original_pin_registration_failure_preserves_existing_output(m):
+    """The original pin is not newly created cleanup authority."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "previous.xml"
+        destination.write_text("old bytes")
+        real_identity = m._fd_identity
+        calls = 0
+
+        def fail_original_pin(handle):
+            nonlocal calls
+            calls += 1
+            # Staged output and private backup register first. The third pin
+            # is the old destination opened for backup and metadata capture.
+            if calls == 3:
+                raise OSError("controlled original pin fstat failure")
+            return real_identity(handle)
+
+        m._fd_identity = fail_original_pin
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("the controlled original-pin failure must escape")
+            except OSError as error:
+                assert "controlled original pin fstat failure" in str(error)
+        finally:
+            m._fd_identity = real_identity
+
+        assert destination.read_text() == "old bytes"
+        assert sorted(path.name for path in root.iterdir()) == ["previous.xml"]
 
 
 def test_restore_reconciles_a_backup_replace_that_raised_after_effect(m):
@@ -2315,8 +2347,8 @@ def test_rollback_keeps_a_foreign_destination_and_private_backup(m):
             closed_handles.append(handle)
             return real_close(handle)
 
-        def observe_owned_path(path, handle):
-            record = real_owned_path(path, handle)
+        def observe_owned_path(path, handle, *, created):
+            record = real_owned_path(path, handle, created=created)
             if os.path.basename(path).startswith("first.xml."):
                 owned_handles[pathlib.Path(path).suffix] = record["pin"]
             return record
