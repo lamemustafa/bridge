@@ -14,6 +14,8 @@ expected string only tests the cases somebody thought of.
 Run: python3 scripts/sanitise-bbox-capture.test.py
 """
 import contextlib
+import datetime
+import decimal
 import importlib.util
 import io
 import itertools
@@ -51,17 +53,17 @@ def check(name, condition, detail=""):
 # The generation gate must reject both directions of class corruption. These
 # controls exercise its bounded two-dictionary proof without fabricating a
 # statement or weakening the real parser-path checks below.
-for label, source, output, expected in (
-    ("party classes preserve", ["A", "B", "A"], ["X", "Y", "X"], True),
-    ("party false merge rejects", ["A", "B"], ["X", "X"], False),
-    ("party false split rejects", ["A", "A"], ["X", "Y"], False),
-    ("party sentinel rejects", ["UNRESOLVED"], ["X"], False),
+for label, source, output, expected, category in (
+    ("party classes preserve", ["A", "B", "A"], ["X", "Y", "X"], True, None),
+    ("party false merge rejects", ["A", "B"], ["X", "X"], False, "party_partition_merged"),
+    ("party false split rejects", ["A", "A"], ["X", "Y"], False, "party_partition_split"),
+    ("party sentinel rejects", ["UNRESOLVED"], ["X"], False, "party_evidence_underdetermined"),
 ):
     rejected = False
     try:
         m._assert_party_partition(source, output, "sbi")
     except m.EvidenceRefusal as refusal:
-        rejected = refusal.category in {"party_partition_merged", "party_partition_split", "party_evidence_underdetermined"}
+        rejected = refusal.category == category
     check(label, rejected is (not expected))
 
 try:
@@ -646,6 +648,30 @@ check("the digits behind an X run are replaced", out != "XXXXXXXX1234", f"-> {ou
 # Devanagari name and every byte of it is ASCII. Without the decode this check
 # reported both fixtures clean while `scrub()` was copying such names through.
 WORD_BODY = re.compile(r"<word[^>]*>(.*?)</word>", re.S)
+# Debit and credit are different preserved facts, even though both are one-sided.
+class _EvidenceParser:
+    D = decimal.Decimal
+    @staticmethod
+    def parse_pages(pages, bank): return pages
+    @staticmethod
+    def _key(value): return value.upper()
+class _EvidenceBank:
+    debit_column, credit_column, balance_column, date_column = "dr", "cr", "bal", "date"
+    @staticmethod
+    def parse_date(value): return datetime.date(2026, 8, 1)
+    @staticmethod
+    def reference(row): return ("REF", "123456789012")
+    @staticmethod
+    def party(row): return "PARTY"
+try:
+    m._validate_parser_evidence(_EvidenceParser, _EvidenceBank,
+        [{"date":"02/08/26", "dr":"100.00", "cr":"", "bal":"900.00"}],
+        [{"date":"03/08/26", "dr":"", "cr":"100.00", "bal":"900.00"}], "hdfc")
+except m.EvidenceRefusal as refusal:
+    check("debit-credit side swap refuses with row context", refusal.category == "accounting_row_shape_misaligned" and refusal.bank == "hdfc" and refusal.row_index == 0)
+else:
+    check("debit-credit side swap refuses with row context", False)
+
 for fixture in sorted(pathlib.Path(__file__).with_name("fixtures").glob("*-bbox-capture.xml")):
     bodies = WORD_BODY.findall(fixture.read_text(encoding="utf-8"))
     assert bodies, f"{fixture.name}: no words matched — this check is checking nothing"
@@ -720,9 +746,14 @@ for fixture in sorted(pathlib.Path(__file__).with_name("fixtures").glob("*-bbox-
                 if expected_refusal:
                     check(f"{fixture.name} page {page} refusal emits no destination",
                           not pathlib.Path(destination).exists())
-                continue
-            produced = identifying_tokens(
-                fresh, WORD_BODY.findall(pathlib.Path(destination).read_text()))
+                    # Keep exercising the same reservation and scrub pipeline even
+                    # when the new parser gate correctly refuses emission.
+                    produced = identifying_tokens(fresh, [fresh.scrub(body) for _, words in fresh._kept_words(pages, keep) for *_, body in words])
+                else:
+                    produced = set()
+            else:
+                produced = identifying_tokens(
+                    fresh, WORD_BODY.findall(pathlib.Path(destination).read_text()))
         # A comparison against an empty input set proves nothing.
         check(
             f"{fixture.name} page {page} has identifying tokens to check",

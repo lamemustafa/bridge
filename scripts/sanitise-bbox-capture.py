@@ -46,10 +46,13 @@ _dates = {}
 
 
 class EvidenceRefusal(SystemExit):
-    """A stable, machine-checkable reason why a fixture cannot be emitted."""
-    def __init__(self, category):
-        self.category = category
-        super().__init__(f"sanitise: {category}")
+    """A stable reason, with optional non-sensitive parser location context."""
+    def __init__(self, category, bank=None, row_index=None):
+        self.category, self.bank, self.row_index = category, bank, row_index
+        context = "" if bank is None else f" bank={bank}"
+        if row_index is not None:
+            context += f" row={row_index}"
+        super().__init__(f"sanitise: {category}{context}")
 
 
 def _fake_date(token):
@@ -556,20 +559,20 @@ def _validate_parser_evidence(parser, bank, source_pages, output_pages, bank_nam
                         parser.D(value)
             source_ref = bank.reference(source)
             output_ref = bank.reference(output)
-            source_shape = (sum(bool(source.get(column)) for column in (bank.debit_column, bank.credit_column)) == 1,
-                            bool(source.get(bank.balance_column)), source_ref[0], len(str(source_ref[1])))
-            output_shape = (sum(bool(output.get(column)) for column in (bank.debit_column, bank.credit_column)) == 1,
-                            bool(output.get(bank.balance_column)), output_ref[0], len(str(output_ref[1])))
-            if not source_shape[0] or not source_shape[1] or not output_shape[0] or not output_shape[1]:
-                raise EvidenceRefusal("accounting_row_incomplete")
+            source_side = tuple(bool(source.get(column)) for column in (bank.debit_column, bank.credit_column))
+            output_side = tuple(bool(output.get(column)) for column in (bank.debit_column, bank.credit_column))
+            source_shape = (source_side, bool(source.get(bank.balance_column)), source_ref[0], len(str(source_ref[1])))
+            output_shape = (output_side, bool(output.get(bank.balance_column)), output_ref[0], len(str(output_ref[1])))
+            if sum(source_side) != 1 or not source_shape[1] or sum(output_side) != 1 or not output_shape[1]:
+                raise EvidenceRefusal("accounting_row_incomplete", bank_name, index)
             if source_shape != output_shape:
-                raise EvidenceRefusal("accounting_row_shape_misaligned")
+                raise EvidenceRefusal("accounting_row_shape_misaligned", bank_name, index)
             source_keys.append(parser._key(bank.party(source)))
             output_keys.append(parser._key(bank.party(output)))
         except SystemExit:
             raise
         except (KeyError, IndexError, TypeError, ValueError, decimal.InvalidOperation) as error:
-            raise EvidenceRefusal("row_alignment_invalid") from error
+            raise EvidenceRefusal("row_alignment_invalid", bank_name, index) from error
 
     _assert_party_partition(source_dates, output_dates, bank_name)
     _assert_party_partition(source_keys, output_keys, bank_name)
