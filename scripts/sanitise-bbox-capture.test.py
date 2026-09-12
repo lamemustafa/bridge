@@ -311,6 +311,17 @@ check(
     f"ALPHA={m.ALPHA!r}",
 )
 
+# Fixed mask letters and replaceable lowercase letters have different spaces.
+# Ordinary words must not advance a mask's one-digit allocation cursor.
+fresh = load()
+values, stopped = scrub_all(fresh, [letter * 4 + "1" for letter in "abcdefghi"] + ["xxxx1"])
+check(
+    "lowercase mask allocation is independent of ordinary lowercase words",
+    stopped is None and len(values) == 10 and values[-1].startswith("xxxx")
+    and values[-1] != "xxxx1",
+    stopped or repr(values[-1:]),
+)
+
 # ...and that the reservation actually holds: a mask shape must keep its space
 # even after a flood of same-length tokens masked somewhere else.
 fresh = load()

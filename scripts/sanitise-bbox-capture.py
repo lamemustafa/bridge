@@ -296,7 +296,9 @@ def _fake_token(token):
         total *= len(alphabet)
 
     shape = _shape_of(token)
-    index = _next.get(shape, 0)
+    # Fixed mask positions do not share the ordinary token allocation space.
+    allocation_key = (shape, tuple(positions))
+    index = _next.get(allocation_key, 0)
     candidate = None
     while index < total:
         digits, built = index, list(token)
@@ -336,7 +338,7 @@ def _fake_token(token):
             f"through. Shorten the capture, or widen this shape's alphabet "
             f"(ALPHA for letters, DIGITS for digits)."
         )
-    _next[shape] = index
+    _next[allocation_key] = index
     _seen[token] = candidate
     _taken.add(candidate.upper())
     return candidate
