@@ -908,7 +908,9 @@ voucher by reusing a key.
 
 **Not the outbox, though.** `REMOTEID` prevents a duplicate; it does not tell you, after a crash,
 *what you sent*. The `REMOTEID` **attribute** does not echo the client key on readback (below), so
-a resend is only safe while the exact key and payload are still on disk. Be precise about the
+the exact key and payload must remain on disk for read-only reconciliation. They do not
+authorize a resend after an unknown outcome; restart behaviour remains unqualified. See
+`IMPLEMENTATION_GUIDE.md` §§3.3–3.5 and the playbook's held recovery flow. Be precise about the
 field: the key itself does survive anywhere Tally does not own — a narration marker comes back —
 and a categorical "Tally does not return the key" would send recovery work to discard the one
 attribution channel that works. The durable dispatch intent stays — see the
@@ -1165,14 +1167,14 @@ symmetry is exactly the property the separator result does not have.
 | --- | --- |
 | ASCII case folding | **VERIFIED** — lowercase matched |
 | supplying a **space** where the master has a **hyphen** | **VERIFIED** — `BRIDGE PROBE LEDGER A` matched `BRIDGE-PROBE-LEDGER-A` |
-| supplying a **hyphen** where the master has a **space** | **UNVERIFIED here** — the reverse direction was never sent on this SKU. Measured **matched** on licensed 7.1, §9.4d |
+| supplying a **hyphen** where the master has a **space** | **UNVERIFIED here** — the reverse direction was never sent on this SKU. Measured **matched** on licensed 7.1 Silver, §9.4d |
 | one trailing space ignored | **VERIFIED** |
 | **two or more** trailing spaces ignored | **UNVERIFIED** — only one was sent |
-| *leading* whitespace ignored | **UNVERIFIED here**. Measured **matched** on licensed 7.1, §9.4d |
-| runs of internal whitespace collapsed to one | **UNVERIFIED here** — only a single space was tested. Measured **matched** on licensed 7.1, §9.4d |
+| *leading* whitespace ignored | **UNVERIFIED here**. Measured **matched** on licensed 7.1 Silver, §9.4d |
+| runs of internal whitespace collapsed to one | **UNVERIFIED here** — only a single space was tested. Measured **matched** on licensed 7.1 Silver, §9.4d |
 | non-ASCII case folding (Devanagari, Tamil, Bengali, Turkish dotted I) | **UNVERIFIED** |
 | **Unicode canonical equivalence (NFC/NFD)** | **MEASURED — folding it is wrong.** See below. |
-| any other separator (underscore, en dash, `/`) treated as a space | **UNVERIFIED here**, and §9.4d splits it on licensed 7.1: `/` **matched**, underscore and en dash **rejected**. Not one row — do not fold them together |
+| any other separator (underscore, en dash, `/`) treated as a space | **UNVERIFIED here**, and §9.4d splits it on licensed 7.1 Silver: `/` **matched**, underscore and en dash **rejected**. Not one row — do not fold them together |
 
 **A wider result exists for a different SKU.** §9.4d re-ran this measurement on **licensed
 TallyPrime 7.1** and found the gateway folds more than these rows establish. It is a separate
@@ -1290,7 +1292,7 @@ voucher each, then the **day book was read back** to record which master each vo
 posted against — the counters alone would not have said. Every created voucher was then deleted by
 `REMOTEID` and the day read back empty (eight from the first run, two from the second).
 
-| Supplied against a live master | Licensed 7.1 | §9.4b on Educational |
+| Supplied against a live master | Licensed 7.1 Silver | §9.4b on Educational |
 | --- | --- | --- |
 | exact | **matched** | matched |
 | ASCII lowercase | **matched** | matched |
@@ -1322,7 +1324,7 @@ ledger present in every company:
 | `Profit & Loss` | **rejected** — a missing suffix word |
 | `Profit & Loss A/c AND CO` | **rejected** — an added suffix word, what the first run really sent |
 
-So §9.4b's abbreviation findings hold on licensed 7.1 as well, and this section now says which
+So §9.4b's abbreviation findings hold on licensed 7.1 Silver as well, and this section now says which
 of them it measured rather than which it meant to.
 
 **Composition was measured separately, because twelve single-axis results do not license it.**
@@ -1346,7 +1348,7 @@ All eight posted against the intended master, confirmed by day-book readback. **
 compose**, and a canonical form applying every measured transformation before comparing is
 licensed by measurement rather than by extrapolation from the single-axis rows.
 
-**What this says.** On licensed 7.1, Tally treats **space, hyphen and slash** as interchangeable
+**What this says.** On licensed 7.1 Silver, Tally treats **space, hyphen and slash** as interchangeable
 separators, collapses internal whitespace runs, ignores leading and trailing whitespace, folds
 **ASCII** case, and is otherwise **exact on codepoints**.
 
@@ -1406,7 +1408,7 @@ habits, not against real operator input.
 identify the created master. `LASTVCHID` is populated for vouchers. Non-numeric
 `LASTVCHID` text is also accepted without error when parsed back.
 
-For the implementation's readback identity policy, see `IMPLEMENTATION_GUIDE.md` §3.6
+For the implementation's readback identity policy, see `IMPLEMENTATION_GUIDE.md` §3.5
 and `PROMPT_PLAYBOOK.md` Phase 4 step 4. Their prescriptions are separate from this observation.
 
 ---

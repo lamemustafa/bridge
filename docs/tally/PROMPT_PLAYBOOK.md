@@ -304,7 +304,7 @@ Implement:
    - On §0's Edit Log 7.0 Educational baseline, §9.4b's
      `accepts(candidate, tally_name)` permits only the measured directional
      transformations; do not infer their reverse.
-   - For LEDGERS on licensed 7.1, use §9.4d's measured canonical fold:
+   - For LEDGERS on licensed 7.1 Silver (`education_mode=false`), use §9.4d's measured canonical fold:
      ASCII case; space, hyphen and slash as separators; surrounding
      whitespace removed; internal runs collapsed; their measured
      compositions. Preserve every other codepoint, including NFC/NFD,
@@ -680,8 +680,9 @@ Implement — write core (masters):
    spellings and reading the **day book** back to see which master each
    posted against. That is observed write behaviour on the SKU this
    project writes to, for **ledgers**.
-   So: for **ledgers on licensed 7.1**, match under §9.4d's measured
-   rows. For **every other master type** — stock items, groups, voucher
+   So: for **ledgers on licensed 7.1 Silver (`education_mode=false`)**,
+   match under §9.4d's measured rows. Gold, other tiers and unqualified
+   versions remain exact-codepoint only. For **every other master type** — stock items, groups, voucher
    types — §9.4d measured nothing, so match on **exact codepoints** and
    let a case or separator difference fail loudly.
    **A compatibility result cannot widen this.** `compatibility/README`
