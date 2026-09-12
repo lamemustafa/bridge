@@ -462,6 +462,7 @@ fn party_names_are_marked_for_egress_and_accounting_selectors_are_not() {
         "differences": [
             {"field": "party", "proposed": "Debtor As Written", "observed": "Bridge Nested Debtor WR4"},
             {"field": "amount", "proposed": "12.5", "observed": "11.5"},
+            {"field": "voucher_type", "proposed": "Sales", "observed": "Receipt"},
         ],
     });
     let marked = mark_presence_party_names(entry);
@@ -475,6 +476,8 @@ fn party_names_are_marked_for_egress_and_accounting_selectors_are_not() {
     );
     // An amount is not a party name and must not be wrapped.
     assert_eq!(marked["differences"][1]["proposed"], "12.5");
+    assert_eq!(marked["differences"][2]["field"], "voucher_type");
+    assert_eq!(marked["differences"][2]["observed"], "Receipt");
     assert_eq!(marked["voucher_number"], "JV-1");
     let masked = redact_value(marked, Redaction::MaskParties);
     let text = masked.to_string();

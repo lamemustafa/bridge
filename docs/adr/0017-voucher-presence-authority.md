@@ -611,3 +611,12 @@ human-approved batch — this ADR does not move.
   configuration, presented as an observation, and it decides whether the
   strongest key is trusted. Exactly the shape of value this project has already
   been burned by.
+
+### Unread remote identity and identity findings
+
+A proposed REMOTEID is stronger than every resemblance. If the window did not
+fetch that column, every undecided result that retained a candidate still uses
+remote_id_evidence_unavailable; its candidates and touched-book count remain
+intact for review. A unique observed REMOTEID can identify a voucher across
+exact voucher-type spellings, but the report must then carry a voucher_type
+difference with both spellings rather than presenting an empty difference set.
