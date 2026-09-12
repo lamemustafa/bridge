@@ -244,8 +244,10 @@ fn run(
     );
     names.sort();
     names.dedup();
-    let complete_catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("complete catalog");
-    let request = PresenceRequest::new(window, &complete_catalog, numbering, proposals).expect("request");
+    let complete_catalog =
+        MasterCatalog::new(MasterClass::Ledger, &names).expect("complete catalog");
+    let request =
+        PresenceRequest::new(window, &complete_catalog, numbering, proposals).expect("request");
     assess(&request)
 }
 
@@ -426,8 +428,7 @@ fn a_repeated_identical_declaration_is_accepted() {
 
 #[test]
 fn numbering_declarations_bound_duplicate_iterator_work() {
-    let entries = (0..=MAX_NUMBERING_DECLARATIONS)
-        .map(|_| ("Sales", NumberingMethod::Manual));
+    let entries = (0..=MAX_NUMBERING_DECLARATIONS).map(|_| ("Sales", NumberingMethod::Manual));
     assert_eq!(
         NumberingDeclaration::new(entries).expect_err("declaration count is bounded"),
         PresenceError::NumberingDeclarationsTooMany
@@ -436,8 +437,7 @@ fn numbering_declarations_bound_duplicate_iterator_work() {
 
 #[test]
 fn numbering_declarations_bound_aggregate_bytes_while_consuming_duplicates() {
-    let entries = (0..)
-        .map(|_| ("X".repeat(MAX_TEXT_CHARS), NumberingMethod::Manual));
+    let entries = (0..).map(|_| ("X".repeat(MAX_TEXT_CHARS), NumberingMethod::Manual));
     assert_eq!(
         NumberingDeclaration::new(entries).expect_err("declaration bytes are bounded"),
         PresenceError::NumberingDeclarationBytesTooLarge
@@ -473,8 +473,9 @@ fn aggregate_proposal_window_resemblance_work_is_refused() {
 
 #[test]
 fn request_refuses_a_window_ledger_missing_from_its_catalog() {
-    let window = window(&[BookRow::new("book-1", "20260812", "AA0118")
-        .rows(vec![["Uncatalogued Ledger", "0.00"]])]);
+    let window =
+        window(&[BookRow::new("book-1", "20260812", "AA0118")
+            .rows(vec![["Uncatalogued Ledger", "0.00"]])]);
     let proposals = [ProposalRow::new(0, "20260812", "AA0118").build()];
     assert_eq!(
         PresenceRequest::new(
@@ -2136,8 +2137,7 @@ fn a_remote_id_and_a_number_selecting_different_vouchers_do_not_settle() {
 
 #[test]
 fn a_remote_id_with_an_absent_manual_number_is_an_identity_conflict() {
-    let window =
-        window(&[BookRow::new("book-1", "20260812", "AA0118").remote_id("tally-1")]);
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118").remote_id("tally-1")]);
     let proposals = [ProposalRow::new(0, "20260812", "AA0999")
         .remote_id("tally-1")
         .build()];

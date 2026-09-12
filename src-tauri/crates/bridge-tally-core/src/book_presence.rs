@@ -182,7 +182,9 @@ impl PresenceError {
             Self::NumberingMethodUndeclared => "presence_numbering_method_undeclared",
             Self::NumberingMethodConflict => "presence_numbering_method_conflict",
             Self::NumberingDeclarationsTooMany => "presence_numbering_declarations_too_many",
-            Self::NumberingDeclarationBytesTooLarge => "presence_numbering_declaration_bytes_too_large",
+            Self::NumberingDeclarationBytesTooLarge => {
+                "presence_numbering_declaration_bytes_too_large"
+            }
             Self::TextBlank => "presence_text_blank",
             Self::TextTooLong => "presence_text_too_long",
             Self::TextUnsafe => "presence_text_unsafe",
@@ -367,7 +369,8 @@ impl BookVoucher {
                 .collect::<Result<BTreeSet<_>, _>>()?,
             _ => BTreeSet::new(),
         };
-        let (magnitude, balanced, mut observed_ledgers, mut ledger_keys) = magnitude_of(input.entries)?;
+        let (magnitude, balanced, mut observed_ledgers, mut ledger_keys) =
+            magnitude_of(input.entries)?;
         if let Some(party) = party.as_deref() {
             observed_ledgers.insert(party.to_string());
             ledger_keys.insert(comparison_key(party));
@@ -556,8 +559,13 @@ impl BookWindow {
             {
                 return Err(PresenceError::WindowNarrationContradiction);
             }
-            let retained_memberships = voucher.ledger_keys.len().checked_add(voucher.observed_ledgers.len()).ok_or(PresenceError::WindowLedgerMembershipsTooMany)?;
-            ledger_memberships = ledger_memberships.checked_add(retained_memberships)
+            let retained_memberships = voucher
+                .ledger_keys
+                .len()
+                .checked_add(voucher.observed_ledgers.len())
+                .ok_or(PresenceError::WindowLedgerMembershipsTooMany)?;
+            ledger_memberships = ledger_memberships
+                .checked_add(retained_memberships)
                 .ok_or(PresenceError::WindowLedgerMembershipsTooMany)?;
             if ledger_memberships > MAX_WINDOW_LEDGER_MEMBERSHIPS {
                 return Err(PresenceError::WindowLedgerMembershipsTooMany);
