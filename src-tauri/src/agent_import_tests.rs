@@ -278,29 +278,48 @@ fn schema_balance_matcher_rendering_and_ledger_append_are_fail_closed() {
         validate_payload(&unbalanced),
         Err("voucher_not_balanced".to_string())
     );
+    // ASCII case and one trailing space are transformations
+    // `TALLY_PROTOCOL_REFERENCE.md` §9.4b measured Tally performing, so they
+    // name the same live ledger: they bind and report its exact spelling. Only
+    // byte equality is `exact`, which is what build_import_xml admits.
+    for wanted in ["bank ", "bank", "BANK"] {
+        let matched = one_master_match(wanted, &["Bank"]);
+        assert_eq!(matched["match_state"], "normalized");
+        assert_eq!(
+            matched["exact_live_spelling"][super::super::PARTY_NAME_MARKER],
+            "Bank"
+        );
+    }
+    // A non-breaking space, an en dash and a curly quote are **not** on that
+    // list. Each still reaches its master through the wide fold, so the caller
+    // sees one candidate and confirms it; what it no longer gets is an answer
+    // and a live spelling to copy into the exact-only write gate.
+    for (wanted, live) in [
+        ("A\u{a0}B", "A B"),
+        ("Fees-Admin", "Fees\u{2013}Admin"),
+        ("Bob's", "Bob\u{2019}s"),
+    ] {
+        let matched = one_master_match(wanted, &[live]);
+        assert_eq!(
+            matched["match_state"], "near_miss",
+            "{wanted} resolved on an unverified fold"
+        );
+        assert!(matched.get("exact_live_spelling").is_none());
+        assert_eq!(
+            matched["candidates"][0]["name"][super::super::PARTY_NAME_MARKER],
+            live
+        );
+    }
+    assert_eq!(one_master_match("Bank", &["Bank"])["match_state"], "exact");
+    // A shorter name that a live ledger extends is a near-miss with one
+    // candidate, and one candidate is still not a decision.
+    let near = one_master_match("Bank", &["Bank Charges"]);
+    assert_eq!(near["match_state"], "near_miss");
+    assert_eq!(near["reason"], "master_binding_near_miss");
+    assert!(near.get("exact_live_spelling").is_none());
     assert_eq!(
-        master_match("bank ", &["Bank".to_string()])["match_state"],
-        "near_miss"
-    );
-    assert_eq!(
-        master_match("bank", &["Bank".to_string()])["match_state"],
-        "near_miss"
-    );
-    assert_eq!(
-        master_match("A\u{a0}B", &["A B".to_string()])["match_state"],
-        "near_miss"
-    );
-    assert_eq!(
-        master_match("Fees-Admin", &["Fees–Admin".to_string()])["match_state"],
-        "near_miss"
-    );
-    assert_eq!(
-        master_match("Bob's", &["Bob’s".to_string()])["match_state"],
-        "near_miss"
-    );
-    assert_eq!(
-        master_match("Bank", &["Bank Charges".to_string()])["match_state"],
-        "near_miss"
+        near["candidates"][0]["name"][super::super::PARTY_NAME_MARKER],
+        "Bank Charges"
     );
     let xml = render_import_xml("Book & Co", &input.vouchers, "batch-render");
     assert!(xml.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
@@ -1483,27 +1502,109 @@ fn native_captured_import_readback_keeps_direct_amounts_and_padded_identifiers()
     }
 }
 
+/// Binds one name against a fabricated catalogue and returns its rendered row.
+fn one_master_match(wanted: &str, catalogue: &[&str]) -> Value {
+    let catalogue = catalogue
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect::<Vec<_>>();
+    master_report(
+        &source_entities(&[wanted.to_string()]).expect("fabricated name parses"),
+        &catalogue,
+    )
+    .expect("fabricated catalogue binds")
+    .remove(0)
+}
+
 #[test]
 fn master_match_bounds_suggestions_before_copying_names_and_preserves_ambiguity() {
     let catalogue = (0..100)
         .map(|index| format!("Ledger {index:03}"))
         .collect::<Vec<_>>();
-    let matched = master_match("L", &catalogue);
+    let borrowed = catalogue.iter().map(String::as_str).collect::<Vec<_>>();
+    // A name reaching a whole family distinguishes none of it. Measured against
+    // live books, listing an arbitrary capped slice omitted the right master
+    // about a third of the time, so the family is counted and not listed.
+    let matched = one_master_match("Ledger", &borrowed);
     assert_eq!(matched["match_state"], "near_miss");
+    assert_eq!(
+        matched["reason"],
+        "master_binding_no_discriminating_candidate"
+    );
     assert_eq!(matched["candidate_count"], 100);
     assert_eq!(matched["candidates_truncated"], true);
-    assert_eq!(matched["candidates"].as_array().unwrap().len(), 25);
+    assert!(matched["candidates"].as_array().unwrap().is_empty());
+    // A family inside the bound is still listed in full.
+    let small = (0..5)
+        .map(|index| format!("Small {index:02}"))
+        .collect::<Vec<_>>();
+    let small_ref = small.iter().map(String::as_str).collect::<Vec<_>>();
+    let listed = one_master_match("Small", &small_ref);
+    assert_eq!(listed["candidates"].as_array().unwrap().len(), 5);
     assert_eq!(
-        master_match("Ledger 099", &catalogue)["match_state"],
+        one_master_match("Ledger 099", &borrowed)["match_state"],
         "exact"
     );
+    // A single pathological live name is bounded by bytes before it is copied
+    // into a result, and its true count is still reported.
     let huge = format!("Large{}", "x".repeat(8192));
-    let limited = master_match("L", std::slice::from_ref(&huge));
+    let limited = one_master_match("Large", &[huge.as_str()]);
     assert_eq!(limited["match_state"], "near_miss");
     assert_eq!(limited["candidate_count"], 1);
     assert_eq!(limited["candidates_truncated"], true);
     assert!(limited["candidates"].as_array().unwrap().is_empty());
     assert!(!limited.to_string().contains(&huge));
+}
+
+#[test]
+fn a_catalogue_that_was_never_read_refuses_instead_of_reporting_everything_missing() {
+    // "Nobody read the ledger list out of Tally first" is the recorded cause
+    // of the one failed engagement, so an empty catalogue must not look like
+    // an answer. P5: nothing-found and request-failed stay distinguishable.
+    assert_eq!(
+        master_report(&source_entities(&["Bank".to_string()]).expect("valid"), &[]),
+        Err("master_catalog_empty".to_string())
+    );
+}
+
+#[test]
+fn an_embedded_identifier_decides_where_the_name_offers_wrong_candidates() {
+    // Fabricated from a placeholder alphabet: the live ledger carries a number
+    // the operator typed into its name, and the requested name matches no live
+    // spelling. The number is the key; the name is a hint.
+    let matched = one_master_match(
+        "GAMMA. EPSILON 5550000001",
+        &["GAMMA (5550000001)", "GAMMA ALPHA", "GAMMA BETA"],
+    );
+    assert_eq!(matched["match_state"], "identifier");
+    assert_eq!(
+        matched["exact_live_spelling"][super::super::PARTY_NAME_MARKER],
+        "GAMMA (5550000001)"
+    );
+}
+
+#[test]
+fn a_near_miss_never_names_a_live_spelling_and_retains_its_identity() {
+    let matched = one_master_match(
+        "PARTY 5550000001",
+        &["ALPHA (5550000001)", "BETA (5550000001)"],
+    );
+    assert_eq!(matched["match_state"], "near_miss");
+    assert_eq!(matched["reason"], "master_binding_identifier_conflict");
+    assert!(matched.get("exact_live_spelling").is_none());
+    assert_eq!(matched["candidate_count"], 2);
+    assert_eq!(
+        matched["unresolved_identity"][0]["value"][super::super::PARTY_NAME_MARKER],
+        "5550000001"
+    );
+}
+
+#[test]
+fn nothing_defensible_is_reported_missing_with_no_candidate() {
+    let matched = one_master_match("Zeta Placeholder", &["Bank", "Cash"]);
+    assert_eq!(matched["match_state"], "missing");
+    assert_eq!(matched["reason"], "master_binding_no_candidate");
+    assert!(matched["candidates"].as_array().unwrap().is_empty());
 }
 
 #[tokio::test]

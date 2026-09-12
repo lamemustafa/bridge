@@ -349,6 +349,164 @@ bytes, so it cannot support any claim about the exact bytes a real instance rece
 
 ---
 
+## 9. Master-binding ledgers in `BRIDGE CORPUS OPENING`
+
+**VERIFIED 2026-09-10** for the seeding and the coverage counts; the binding behaviour built on
+them is **PARTIAL**. Scope of each, so neither is read for more than it covers:
+
+| claim | confidence | what establishes it |
+| --- | --- | --- |
+| The ten ledgers exist in that company and nowhere else | **VERIFIED** | `CREATED=10, ALTERED=0, ERRORS=0`, then a readback of the ledger list naming all ten, plus a readback of a guard company showing none |
+| No book carried an embedded **numeric** identifier before this | **VERIFIED** | all 16 loaded companies read through the `StandardLedgerCatalogV1` request, responses written to files and parsed from the files; 470 names, **0 numeric**. Exactly **one** name yielded a *code* identifier, so the absence is of the numeric shape only — stated narrowly because these counts are what justify the rule's strictness |
+| The identifier rule behaves correctly against live-read names | **PARTIAL** | exercised against these ten seeded names only, on one instance, one licence tier, one Tally build. Fabricated *source* names against live *catalogue* names — no real source document has been bound end to end |
+| The shipped consumer path runs end to end against a real instance | **VERIFIED 2026-09-11**, all ten rows | the branch's own `bridge_mcp` binary driven over stdio against licensed TallyPrime 7.1 Silver, reading this company's catalogue over the wire and returning the binder's report. Run twice — before and after the resolving fold was narrowed — against the same catalogue digest; see §9.2 |
+| Binding is safe on catalogues generally | **UNVERIFIED** | one company, one instance, one Tally build, and every *source* name fabricated. No engagement has run a real document through this path; the mutation sweep is fabricated mutations of live names, not observed operator input |
+
+**Added 2026-09-10.** Ten ledgers prefixed `MB `, seeded so the master-binding
+identifier rule has live coverage. Before this, across 470 live ledger names read from all
+16 loaded companies, **not one yielded a numeric identifier and exactly one yielded a code
+identifier** — so the numeric rule had no live coverage at all and the code rule had a
+single instance. The rule that distinguishes `bridge_tally_core::master_binding` from fuzzy
+matching was otherwise qualified by fabricated data alone.
+
+| ledger | what it exercises |
+| --- | --- |
+| `MB PILOT ALPHA (5550001001)` | a unique embedded number |
+| `MB PARTY BETA (5550001002)`, `MB PARTY GAMMA (5550001003)` | the same, for name-vs-identifier cases |
+| `MB PARTY DELTA (5550001009)`, `MB PARTY EPSILON (5550001009)` | **two masters sharing one identifier** — must refuse, never bind |
+| `MB ITEM PH01AB00` | a code identifier, matched across punctuation |
+| `MB PURCHASES FY2025`, `MB SALES FY2025` | a shared fiscal-period label that must **not** be treated as an identifier |
+| `MB TRADING COMPANY`, `MB TRADING COMPANY LIMITED` | a truncation / near-duplicate pair |
+
+**Chosen company.** `BRIDGE CORPUS OPENING` (GUID `915d42f8-42ae-4b03-8291-55f596e3a2ea`),
+because it verifies as a single identity tuple and had only eight ledgers. **Not**
+`BRIDGE PROBE B SANDBOX`, despite that being where corpus manufacturing was first proven:
+it and `BRIDGE PROBE B SANDBOX - (from 1-Apr-26)` share one GUID, and Bridge's own read
+path refuses that company with `company_identity_ambiguous`. Do not write to it by name.
+
+**Blast radius, deliberately small.** All ten are parented to `Suspense A/c`, which is not
+a party group, so receivable/payable and ageing measurements on this book are unaffected.
+They carry no opening balance and no vouchers. Every name is prefixed `MB `, so they are
+trivially identifiable and removable. Master `AlterID` for this company did move; anything
+pinning `ALTMSTID` for `BRIDGE CORPUS OPENING` predates 2026-09-10.
+
+**Import method.** `REPORTNAME=All Masters`, `ACTION="Create"`, one pilot ledger sent and
+verified in the intended company *and confirmed absent from a guard company* before the
+remaining nine. Counters were `CREATED=10, ALTERED=0, ERRORS=0`, and every name was
+confirmed by a readback of the ledger list — counters alone prove nothing, since Tally
+rewrites imports silently. **Do not re-send the create file:** an identical `Create` is a
+silent `Alter` that overwrites.
+
+### 9.1 Candidate quality across sixteen live catalogues, 2026-09-10
+
+**VERIFIED for the counts; the rule they justify is PARTIAL.** Recorded here because the binder
+encodes this result in two comments and a status name, and a measurement that lives only in an
+implementation comment cannot be audited (P6, P9).
+
+**Procedure.** Every ledger name of all 16 loaded companies was read through
+`StandardLedgerCatalogV1`, responses written to files and parsed from the files. 434 fabricated
+source names — mutations of those live names — were bound against their own company's catalogue,
+and each result was checked for whether the master the mutation came from appeared at all.
+
+| | listing a capped slice of a prefix family | withholding a family over `MAX_PREFIX_FAMILY` |
+| --- | --- | --- |
+| intended master present in the candidate list | **65.6%** | **100%** (434 of 434) |
+| median candidates offered per source name | **40** | **2** |
+| share of the catalogue offered | **62.8%** | — |
+
+**What drove it.** `CatalogPrefix` produced 12,108 of 12,793 candidates, almost all from
+sequentially-numbered party families — a truncated `DN Party 0` reaches `DN Party 001`…`120` and
+separates none of them. Capping the list at `MAX_CANDIDATES_PER_ENTITY` then printed an arbitrary
+25 of them, and the arbitrariness is the defect: **the intended master was absent from about a
+third of the lists.** So a family over the bound is counted and deliberately not listed, which is
+what `NoDiscriminatingCandidate` means.
+
+**Scope, so this is not read for more than it covers.** Two instances, 16 companies, one Tally
+build. The catalogue side is live; every *source* name is a fabricated mutation, so this measures
+how the rule behaves against real naming habits, not against real operator input. The 100% is a
+property of this corpus and these mutations, not a guarantee. It says the withholding rule fixed
+the failure it was written for; it does not say candidate lists are sufficient in general.
+
+---
+
+### 9.2 The end-to-end slice, 2026-09-11
+
+**VERIFIED.** The reviewable claim before this was that the binder had never run through the
+surface that ships it: the crate had tests, and the catalogue side had live coverage, but no
+run had gone request-to-report through the consumer. This one does.
+
+**Procedure.** `cargo build --bin bridge_mcp`, first at commit `9e34cd77` and again at
+`330bd696` after the resolving fold was narrowed, then the binary driven
+over stdio with a real MCP session — `initialize`, `notifications/initialized`,
+`tools/call validate_masters` — against `http://127.0.0.1:9001`, TallyPrime 7.1, licence tier
+**silver**, `education_mode=false`. The tool read this company's ledger catalogue over the wire
+(89,576 bytes, `evidence.state=complete`) and returned the binder's report. Ten fabricated source
+names, chosen so that every decision the binder can reach is reached against **live-read master
+names**.
+
+| requested (fabricated) | returned | what it establishes |
+| --- | --- | --- |
+| `MB PILOT ALPHA (5550001001)` | `exact` | byte equality |
+| `mb pilot alpha (5550001001)` | `identifier` | the identifier is consulted **before** the name, so a case variant never reached the fold |
+| `MB-PILOT-ALPHA-(5550001001)` | `near_miss`, 1 candidate, `normalized_equal` | the unverified separator direction **suggests and does not resolve** — it returned `normalized` before the fold was narrowed |
+| `Alpha Pilot Account 5550001001` | `identifier` | **the rule this module exists for**: a name sharing no word with the master bound on its embedded number |
+| `Zeta Holdings 5550001009` | `near_miss`, 2 candidates, `shared_identifier` | one identifier on two masters refuses and shows both |
+| `MB TRADING COMPANY LTD` | `near_miss`, 2 candidates | a truncation surfaces both neighbours and chooses neither |
+| `MB EXPENSES FY2025` | `near_miss`, 2 candidates, `shared_token` | a shared period label did **not** become an identifier |
+| `MB ITEM PH-01-AB-00` | `identifier` | a code matched across punctuation |
+| `Zeta Nowhere Traders` | `missing`, `listing: "none"` | an absence stated as an absence, not as an empty list |
+| `MB PARTY BETA` | `near_miss`, 4 candidates | a prefix family surfaced whole |
+
+**`exact_live_spelling` appeared on bound rows only** — `exact`, `identifier`, `normalized` —
+and on no refusal. The same ten names sent to the **previously installed** server, same company
+and instance minutes earlier, returned `exact_live_spelling` alongside `match_state: "near_miss"`
+for two of them. That field on a refusal is a guess wearing the shape of an answer, and it is
+what this change deletes; the two runs are the before and after on one real instance.
+
+**What this slice does not establish.** One company, one instance, one Tally build, one licence
+tier. Every *source* name is fabricated — a real source document has still never been bound, so
+nothing here speaks to how operator-written names actually differ from master names. It exercises
+the MCP consumer; the desktop consumer shares the crate but was not driven.
+
+**Superseded in part, 2026-09-12.** The separator row below was read as a defect and drove a
+narrowing of the resolving fold. `TALLY_PROTOCOL_REFERENCE.md` §9.4d then measured that same
+equivalence directly on **licensed** TallyPrime 7.1 and found Tally does accept it — along with
+leading whitespace, collapsed runs and a slash — so the fold was widened back to what the gateway
+actually does. Read the paragraph below as the history it is: the row's `normalized` result was
+right, and the reasoning that called it wrong was working from §9.4b's Educational scope.
+
+**It found a defect, which is the reason to run these.** On the first run the third row *bound*
+`MB-PILOT-ALPHA-(5550001001)` to a master carrying spaces. That is the **reverse** of the
+direction `TALLY_PROTOCOL_REFERENCE.md` §9.4b measured, and §9.4b marks it **UNVERIFIED** — so
+the binder was resolving on evidence that does not support resolving, which is exactly what
+§9.4b exists to prevent. Nothing in the unit suite said so, because the suite encoded the same
+assumption the implementation did.
+
+**The second run, after the narrowing, is what closes it.** Same ten names, same company, same
+catalogue — `catalogue_evidence_sha256` `0767077c…` on both runs, so the book did not move
+underneath the comparison. Row three now returns a near-miss carrying
+`MB PILOT ALPHA (5550001001)` as its **sole** candidate under `normalized_equal`, and reports the
+code it could not resolve on. That is the whole intent of the two-fold split in one row: the
+looser fold still reaches the master, and no longer answers for it. The other nine rows returned
+identically across both runs.
+
+So this table is VERIFIED for all ten rows, at `330bd696`. ADR 0016 §3 records the narrowing and
+its cost.
+
+**The catalogue digest has since moved, and a mismatch is not drift.** Qualifying §9.4d needed two
+ledgers — `MB-PROBE-LEDGER-A` and `MB CAFÉ PROBE` — and they remain in this company under
+`Suspense A/c` carrying no balances, so that the measurement is repeatable. Both post-date the
+runs above, so `catalogue_evidence_sha256` for `BRIDGE CORPUS OPENING` no longer equals
+`0767077c…`. Anyone re-running this slice should expect a different digest and check the ledger
+list before treating it as the book changing underneath them.
+
+**What it found within minutes.** The `DELTA`/`EPSILON` pair exposed a defect no fabricated
+fixture had produced: a *byte-exact* request for `MB PARTY DELTA (5550001009)` was being
+refused as `IdentifierConflict`, because the number in its name is shared. That made the
+ledger permanently unimportable, since the write gate admits `exact` only. Byte equality is
+now decisive over an ambiguous identifier; only a *decisive* identifier pointing elsewhere
+outranks an exact name.
+
 ## 6. Changelog
 
 | Date | Change |
