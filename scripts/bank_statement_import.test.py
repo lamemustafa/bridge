@@ -1578,6 +1578,42 @@ def test_an_interrupt_after_a_swap_restores_the_previous_output(m):
         assert sorted(p.name for p in pathlib.Path(directory).iterdir()) == ["previous.xml"]
 
 
+def test_restore_reconciles_a_backup_replace_that_raised_after_effect(m):
+    """A restore rename can report an error after it has moved the private
+    backup. Its new identity then proves recovery completed and must not be
+    reported as a missing retained backup."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first = root / "first.xml"
+        second = root / "second.csv"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_replace = m.os.replace
+
+        def fail_second_swap_and_restore(src, dst):
+            if str(src).endswith(".part") and os.path.basename(dst) == "second.csv":
+                raise OSError("simulated second swap failure")
+            result = real_replace(src, dst)
+            if str(src).endswith(".bak"):
+                raise OSError("simulated restore failure after effect")
+            return result
+
+        m.os.replace = fail_second_swap_and_restore
+        try:
+            try:
+                m.write_outputs([(str(first), "new first"),
+                                 (str(second), "new second")])
+                raise AssertionError("the second target's swap must fail")
+            except OSError as error:
+                assert not getattr(error, "__notes__", [])
+        finally:
+            m.os.replace = real_replace
+
+        assert first.read_text() == "first old"
+        assert second.read_text() == "second old"
+        assert sorted(path.name for path in root.iterdir()) == ["first.xml", "second.csv"]
+
+
 def test_write_outputs_reports_a_retained_backup_after_commit(m):
     """Successful replacement is not a successful command when cleanup leaves
     prior bank-statement bytes at an undisclosed random backup path."""
@@ -1742,6 +1778,37 @@ def test_cleanup_keeps_a_reclaimed_owned_path(m):
 
         assert owned.read_text() == "foreign writer bytes"
         assert failures == [str(owned)]
+
+
+def test_writer_refuses_when_the_private_backup_path_is_reclaimed(m):
+    """The commit boundary must still name this run's backup; if it does not,
+    do not overwrite the destination without a recoverable owned copy."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "previous.xml"
+        foreign = root / "foreign.xml"
+        destination.write_text("old bytes")
+        real_copy = m._copy_private_backup
+
+        def reclaim_backup_after_copy(src, identity, backup_handle):
+            result = real_copy(src, identity, backup_handle)
+            backup, = root.glob("previous.xml.*.bak")
+            foreign.write_text("foreign writer bytes")
+            os.replace(foreign, backup)
+            return result
+
+        m._copy_private_backup = reclaim_backup_after_copy
+        try:
+            refusal = refuses(m, "output_path_changed", m.write_outputs,
+                              [(str(destination), "new bytes")])
+        finally:
+            m._copy_private_backup = real_copy
+
+        backups = list(root.glob("previous.xml.*.bak"))
+        assert destination.read_text() == "old bytes"
+        assert len(backups) == 1
+        assert backups[0].read_text() == "foreign writer bytes"
+        assert str(backups[0]) in str(refusal.code)
 
 
 def test_rollback_keeps_a_foreign_destination_and_private_backup(m):

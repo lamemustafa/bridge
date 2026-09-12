@@ -1618,11 +1618,15 @@ def _restore_backup(backup, backup_identity, destination, original_identity,
         os.replace(backup, destination)
     except OSError:
         try:
-            restored = _file_identity(destination) == original_identity
+            restored = _file_identity(destination) == backup_identity
         except OSError:
             restored = False
         if not restored:
-            failures.append(backup)
+            try:
+                backup_retained = _entry_identity(backup) == backup_identity
+            except OSError:
+                backup_retained = False
+            failures.append(backup if backup_retained else destination)
 
 
 def _note_cleanup_failures(error, failures):
@@ -1732,7 +1736,6 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             backup_handle, backup = tempfile.mkstemp(
                 dir=os.path.dirname(real_path),
                 prefix=os.path.basename(real_path) + ".", suffix=".bak")
-            os.fchmod(backup_handle, 0o600)
             pending_backup = {"path": backup, "handle": backup_handle,
                               "identity": _fd_identity(backup_handle)}
             _copy_private_backup(real_path, original_identity, backup_handle)
@@ -1758,6 +1761,12 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 raise Refusal(
                     "output_path_changed",
                     f"{supplied_path} staged output changed before replacement",
+                )
+            if _entry_identity(pending_swap["backup"]["path"]) != \
+                    pending_swap["backup"]["identity"]:
+                raise Refusal(
+                    "output_path_changed",
+                    f"{supplied_path} rollback copy changed before replacement",
                 )
             os.replace(temporary["path"], real_path)
             replaced.append(pending_swap)
