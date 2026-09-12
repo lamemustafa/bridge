@@ -249,6 +249,17 @@ pub(super) fn require_current_catalog_binding(
 /// Preserve company-verification failures that have an existing source-draft
 /// catalog result. Every other verification refusal remains a scope refusal:
 /// this service cannot safely infer a more specific source-draft result.
+///
+/// `error.code` is an `&str`, not an enum, so the compiler cannot force this match to
+/// stay exhaustive the way `classify_transport_error` in `standard_ledger_catalog.rs`
+/// can be for `TallyTransportError`. The nine codes below are exactly the ones
+/// `tally_runtime_command_error` (`src-tauri/src/commands.rs`) can emit -- a string
+/// contract enforced only by this comment and by
+/// `catalogue_company_verification_preserves_typed_error_codes`. Each is listed and
+/// classified individually, including the two that fall to `scope_invalid`
+/// (`company_base_currency_changed`, `tally_company_context_failed`): both are genuine
+/// company-scope problems, so that is a deliberate choice, not a fallthrough. The `_`
+/// arm is a documented conservative default for any other code, current or future.
 fn company_verification_error_code(error: &crate::commands::TallyCommandError) -> &'static str {
     match error.code {
         "endpoint_unreachable"
@@ -257,6 +268,13 @@ fn company_verification_error_code(error: &crate::commands::TallyCommandError) -
         | "tally_runtime_temporarily_unavailable" => "source_draft_catalogue_transport_failed",
         "response_validation_failed" => "source_draft_catalogue_malformed_response",
         "untrusted_discovery_limit_exceeded" => "source_draft_catalogue_bounds_invalid",
+        // The endpoint configuration was never valid enough to evaluate a company at
+        // all -- reporting this as an invalid company selection tells the operator to
+        // fix the wrong thing.
+        "endpoint_configuration_invalid" => "source_draft_catalogue_endpoint_invalid",
+        "company_base_currency_changed" | "tally_company_context_failed" => {
+            "source_draft_catalogue_scope_invalid"
+        }
         _ => "source_draft_catalogue_scope_invalid",
     }
 }
@@ -271,8 +289,12 @@ pub(super) async fn load_existing_ledger_targets(
     request: SourceDraftCatalogLoadRequest,
 ) -> CommandResult<SourceDraftCatalogTargets> {
     let snapshot = store.catalog_load_snapshot(&request)?;
+    // No company has been evaluated yet at this point, so a rejected endpoint
+    // must not read as an invalid company selection -- see
+    // `company_verification_error_code`, which makes the same distinction for
+    // the verification call just below this one.
     let endpoint = EndpointKey::from_config(&request.config)
-        .map_err(|_| error("source_draft_catalogue_scope_invalid"))?;
+        .map_err(|_| error("source_draft_catalogue_endpoint_invalid"))?;
     let identity = crate::commands::verify_observed_company_tuple(
         runtime,
         &request.config,
@@ -300,8 +322,12 @@ pub(super) async fn apply_existing_ledger_target(
     request: SourceDraftCatalogApplyRequest,
 ) -> CommandResult<SourceDraftDto> {
     let snapshot = store.catalog_apply_snapshot(&request)?;
+    // No company has been evaluated yet at this point, so a rejected endpoint
+    // must not read as an invalid company selection -- see
+    // `company_verification_error_code`, which makes the same distinction for
+    // the verification call just below this one.
     let endpoint = EndpointKey::from_config(&request.config)
-        .map_err(|_| error("source_draft_catalogue_scope_invalid"))?;
+        .map_err(|_| error("source_draft_catalogue_endpoint_invalid"))?;
     if endpoint != snapshot.endpoint {
         return Err(error("source_draft_catalogue_invalidated"));
     }
@@ -910,6 +936,16 @@ mod tests {
         }
     }
 
+    // Non-loopback, so `EndpointKey::from_config` itself refuses it -- distinct from
+    // `unreachable_config`, which is a loopback address that simply has nothing
+    // listening. This must fail before any company is ever evaluated.
+    fn invalid_endpoint_config() -> TallyConfig {
+        TallyConfig {
+            host: "example.com".into(),
+            port: 9000,
+        }
+    }
+
     #[test]
     fn catalogue_company_verification_preserves_typed_error_codes() {
         let command_error = |code| crate::commands::TallyCommandError {
@@ -943,15 +979,30 @@ mod tests {
             "source_draft_catalogue_bounds_invalid"
         );
 
+        // A code `tally_runtime_command_error` does not emit: exercises the documented
+        // conservative default, not one of the nine classified codes.
         assert_eq!(
             company_verification_error_code(&command_error("reviewed_company_scope_changed")),
             "source_draft_catalogue_scope_invalid"
         );
 
+        // The endpoint was never valid, so no company was ever evaluated -- this must not
+        // read as an invalid company selection.
         assert_eq!(
             company_verification_error_code(&command_error("endpoint_configuration_invalid")),
-            "source_draft_catalogue_scope_invalid"
+            "source_draft_catalogue_endpoint_invalid"
         );
+
+        // Genuine company-scope problems: deliberately `scope_invalid`, not a fallthrough.
+        for code in [
+            "company_base_currency_changed",
+            "tally_company_context_failed",
+        ] {
+            assert_eq!(
+                company_verification_error_code(&command_error(code)),
+                "source_draft_catalogue_scope_invalid"
+            );
+        }
     }
 
     #[tokio::test]
@@ -991,6 +1042,48 @@ mod tests {
                 .await
                 .expect_err("an unreachable company list must not become a scope refusal");
         assert_eq!(apply_error.code, "source_draft_catalogue_transport_failed");
+    }
+
+    /// Drives the load and apply services themselves, not the classifier directly:
+    /// both call `EndpointKey::from_config` before company verification ever runs
+    /// (lines above in this file), so a classifier-only test could pass while this
+    /// path stayed unreachable in the real load/apply flows -- see issues #282/#286.
+    #[tokio::test]
+    async fn catalogue_services_classify_invalid_endpoint_as_endpoint_invalid() {
+        let config = invalid_endpoint_config();
+
+        let load_store = SourceDraftStore::default();
+        let load_draft_id = install_active_draft_without_catalog(&load_store);
+        let load_error = load_existing_ledger_targets(
+            &load_store,
+            &TallyRuntime::default(),
+            SourceDraftCatalogLoadRequest {
+                draft_id: load_draft_id.to_string(),
+                config: config.clone(),
+                selected_company: selected_company(),
+            },
+        )
+        .await
+        .expect_err("a non-loopback endpoint must not become a scope refusal");
+        assert_eq!(load_error.code, "source_draft_catalogue_endpoint_invalid");
+
+        let apply_store = SourceDraftStore::default();
+        let (draft_id, capture_id, names, _) = install_active_catalog(&apply_store);
+        let proposals = apply_store
+            .active
+            .lock()
+            .expect("active store")
+            .as_ref()
+            .expect("active source draft")
+            .proposals
+            .clone();
+        let mut request = apply_request(draft_id, 1, capture_id, names[0].clone(), proposals);
+        request.config = config;
+        let apply_error =
+            apply_existing_ledger_target(&apply_store, &TallyRuntime::default(), request)
+                .await
+                .expect_err("a non-loopback endpoint must not become a scope refusal");
+        assert_eq!(apply_error.code, "source_draft_catalogue_endpoint_invalid");
     }
 
     #[tokio::test]
