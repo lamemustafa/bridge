@@ -848,6 +848,36 @@ test("a family withheld under a different reason is not reported as a full repor
   root.unmount();
 });
 
+test("a materialized withheld family keeps its exact count", async () => {
+  // Listing state and count precision are independent: a full prefix-family
+  // union may deliberately withhold names without making its count an estimate.
+  const withheldFamily = {
+    ...catalog,
+    targets: ["DN Party 001", "DN Party 002", "DN Party 003"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: null,
+      bound_basis: null,
+      unbound_reason: "master_binding_no_discriminating_candidate",
+      candidates: [],
+      candidate_count: 30,
+      candidate_count_is_lower_bound: false,
+      candidate_listing: "withheld",
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(withheldFamily);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  expect(host.textContent).toContain("matches 30 existing ledgers and tells them apart from none of them, so none is listed");
+  expect(host.textContent).not.toContain("matches at least 30 existing ledgers");
+  root.unmount();
+});
+
 test("a source line that separates no ledger says so instead of counting nothing", async () => {
   // The state the live measurement made necessary: the name reaches a whole
   // family and tells none of them apart, so listing an arbitrary slice would

@@ -301,39 +301,39 @@ Candidates are capped at `MAX_CANDIDATES_PER_ENTITY` (25). The core retains
 `candidate_count`, listing state and `Candidates::count_is_lower_bound()`.
 The MCP and desktop projections expose `candidate_count_is_lower_bound`: true
 means the number is a conservative lower bound and must be shown as "at least N".
-A withheld or core-truncated listing does not establish an exact union count.
-A later consumer-only copy cap can shorten a complete listing while retaining
-an exact count; `candidates_truncated` alone therefore does not describe count
-precision.
+The core sets it only when unmaterialized identifier families prevent an exact
+union count. A withheld prefix family or a core-truncated list can retain an
+exact union count; listing completeness and count precision are separate facts.
+A later consumer-only copy cap can likewise shorten a complete listing while
+retaining an exact count.
 
 ### 4a. An empty candidate list is three different facts, and the producer says which
 
 `candidates` can be empty for three unrelated reasons, and they mean opposite
 things to anyone deciding what to do next:
 
-| `reason` | what empty means |
-| --- | --- |
-| `NoCandidate` | no master resembles this name at all |
-| `NoDiscriminatingCandidate` | at least `candidate_count` masters resemble it when the count is a lower bound, and none is separable — **many exist**, none is worth showing |
-| any, with an incomplete listing | the list was cut, by the per-entity cap or by the report's aggregate byte budget |
+**Key the row on the listing state, not on the reason.** Withholding is not the
+property of one reason: a source identifier held by more than
+`MAX_CANDIDATES_PER_ENTITY` masters is withheld under `IdentifierConflict`, and a
+name reaching a family it cannot separate is withheld under
+`NoDiscriminatingCandidate`. A consumer that keys on the reason misses the first,
+which is exactly the defect the preparation screen shipped with.
+
+| `candidate_listing` | what empty means | which `reason` |
+| --- | --- | --- |
+| `none` | no master resembles this name at all | `NoCandidate` |
+| `withheld` | **many exist**, the binder declined to print an arbitrary slice, and `candidate_count` says how many | either `NoDiscriminatingCandidate` (a name reaching a family) or `IdentifierConflict` (an identifier held by a family) |
+| `truncated` | the list was cut, by the per-entity cap or by the report's aggregate byte budget | any |
+
+`candidate_count` is exact unless `candidate_count_is_lower_bound` says
+otherwise, which happens only where an unmaterialized union prevents an exact
+total: two or more skipped identifier families, or one beside masters the name
+reached. One skipped family alone is a single set, and its size is its length.
 
 So `candidates.is_empty()` alone answers nothing. The disambiguators are
-`reason`, `candidate_count`, `candidate_count_is_lower_bound` and the listing
-state, and a consumer that reads the empty vector as "nothing exists" is wrong
-in two cases out of three.
-
-**The listing state is named differently at each boundary, and a consumer must
-use the one its own boundary carries.** The core's `Candidates` is a tagged
-enum — `none`, `listed`, `truncated`, `withheld` — reachable in Rust through
-`Candidates::listing()` and on the agent surface as the `listing` field. The
-**desktop** DTO flattens it to `candidate_listing`, carrying the same four
-words. `candidates_truncated` is **not** the desktop discriminator: the field
-of that name on `SourceDraftCatalogBinding` was removed, because as a boolean
-it was `is_incomplete()` and so could not separate a withheld family from an
-exhausted budget — the distinction the two rows above turn on. The agent
-surface keeps a field of that name, but it means something narrower there: that
-*its own* 8 KiB rendering cap cut the list, which is why it can be true beside
-an exact count.
+`reason`, `candidate_count`, `candidate_count_is_lower_bound` and
+`candidate_listing`, and a consumer that
+reads the empty vector as "nothing exists" is wrong in two cases out of three.
 
 This is stated here, in the producer's contract, rather than left to each
 consumer to rediscover, because **it has already been got wrong twice by

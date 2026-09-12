@@ -907,8 +907,8 @@ fn a_catalog_is_bounded_by_total_bytes_and_not_only_by_count() {
 fn repeating_one_source_name_does_not_repeat_the_search_or_change_the_answer() {
     // A draft may name one ledger on every row, and the candidate search is not
     // cheap when the name reaches a family. Remembering it must not change what
-    // the report says — the memo is keyed on the source key and the masters its
-    // identifiers reached, which is all `collect_candidates` reads.
+    // the report says — the memo is keyed on both source folds and the masters
+    // its identifiers reached, which are all `collect_candidates` reads.
     let names = (0..60)
         .map(|index| format!("Acme Branch {index:05}"))
         .collect::<Vec<_>>();
@@ -977,6 +977,37 @@ fn repeating_one_source_name_does_not_repeat_the_search_or_change_the_answer() {
         candidate_names(&report.entities()[1]),
         ["Party Delta (5550001007)", "Party Gamma (5550001007)"],
         "the memo handed one entity another's candidates"
+    );
+}
+
+#[test]
+fn distinct_resolving_folds_never_share_a_candidate_memo_entry() {
+    // `comparison_key` normalizes the en dash to a hyphen, so both source
+    // spellings have one wide key. The resolving fold keeps the en dash as
+    // content, though: only the ASCII-hyphen spelling collides with both
+    // observed catalog names. Different unmatched hints still derive an empty
+    // identifier match set, which made the old `(wide_key, matches)` memo key
+    // hand the first candidate list to the second source.
+    let catalog = ledgers(&["AB/CD", "AB CD", "Beta Supply"]);
+    let entities = vec![
+        SourceEntity::with_identifier_hints(0, "AB-CD", ["5550001001"]).expect("valid"),
+        SourceEntity::with_identifier_hints(1, "AB–CD", ["5550001002"]).expect("valid"),
+    ];
+
+    super::CANDIDATE_SEARCHES.with(|count| count.set(0));
+    let report = bound(&catalog, &entities);
+    assert_eq!(
+        super::CANDIDATE_SEARCHES.with(std::cell::Cell::get),
+        2,
+        "spellings with different resolving folds must each run their own search"
+    );
+    assert_eq!(reason(&report.entities()[0]), UnboundReason::NameAmbiguous);
+    assert_eq!(candidate_names(&report.entities()[0]), ["AB CD", "AB/CD"]);
+    assert_eq!(reason(&report.entities()[1]), UnboundReason::NearMiss);
+    assert_eq!(
+        candidate_names(&report.entities()[1]),
+        ["AB CD"],
+        "the en-dash spelling must not inherit the ASCII-hyphen collision"
     );
 }
 
@@ -1580,19 +1611,20 @@ fn the_listing_variant_says_what_an_absent_candidate_means() {
         .map(|index| format!("ALPHAGROUP UNIT {index:02}"))
         .collect::<Vec<_>>();
     let family = MasterCatalog::new(MasterClass::Ledger, &family).expect("valid");
+    let binding = bind_one_name(&family, "ALPHAGROUP");
+    let withheld = &binding.unresolved().expect("unbound").candidates;
     assert_eq!(
-        bind_one_name(&family, "ALPHAGROUP")
-            .unresolved()
-            .expect("unbound")
-            .candidates,
-        Candidates::Withheld {
+        withheld,
+        &Candidates::Withheld {
             found: MAX_PREFIX_FAMILY + 5,
-            // A prefix family is unioned with the listed candidates before it
-            // is withheld, so its count is exact — the listing is incomplete
-            // and the number is not a floor. Those are different questions.
             count_is_lower_bound: false,
         },
         "many exist and none separates them"
+    );
+    assert!(withheld.is_incomplete());
+    assert!(
+        !withheld.count_is_lower_bound(),
+        "the prefix family was materialized, so its union is exact"
     );
 
     let listed = ledgers(&["ALPHA SALE", "ALPHA SALES", "SALES - ALPHA", "Beta Supply"]);
@@ -1610,7 +1642,7 @@ fn only_an_incomplete_listing_may_withhold_an_absence() {
     assert!(!Candidates::Listed { listed: Vec::new() }.is_incomplete());
     assert!(Candidates::Withheld {
         found: 30,
-        count_is_lower_bound: true
+        count_is_lower_bound: false,
     }
     .is_incomplete());
     assert!(Candidates::Truncated {
@@ -1621,22 +1653,19 @@ fn only_an_incomplete_listing_may_withhold_an_absence() {
     .is_incomplete());
     assert!(!Candidates::None.count_is_lower_bound());
     assert!(!Candidates::Listed { listed: Vec::new() }.count_is_lower_bound());
-    assert!(Candidates::Withheld {
+    assert!(!Candidates::Withheld {
         found: 30,
-        count_is_lower_bound: true
+        count_is_lower_bound: false,
     }
     .count_is_lower_bound());
-    // Incomplete and inexact are now independent: a truncated listing whose
-    // count is a true union reports `false` here, which is the whole point.
     assert!(!Candidates::Truncated {
         listed: Vec::new(),
         found: 9,
         count_is_lower_bound: false,
     }
     .count_is_lower_bound());
-    assert!(Candidates::Truncated {
-        listed: Vec::new(),
-        found: 9,
+    assert!(Candidates::Withheld {
+        found: 30,
         count_is_lower_bound: true,
     }
     .count_is_lower_bound());
@@ -1644,14 +1673,14 @@ fn only_an_incomplete_listing_may_withhold_an_absence() {
     assert_eq!(
         Candidates::Withheld {
             found: 30,
-            count_is_lower_bound: true
+            count_is_lower_bound: false,
         }
         .found(),
         30
     );
     assert!(Candidates::Withheld {
         found: 30,
-        count_is_lower_bound: true
+        count_is_lower_bound: false,
     }
     .listed()
     .is_empty());
@@ -2732,7 +2761,7 @@ fn the_listing_word_is_the_one_the_wire_carries() {
         Candidates::Truncated {
             listed: vec![candidate],
             found: 9,
-            count_is_lower_bound: true,
+            count_is_lower_bound: false,
         },
         Candidates::Withheld {
             found: 9,
@@ -2826,17 +2855,47 @@ fn an_exactly_counted_family_is_not_reported_as_a_floor() {
         "a prefix family is counted as a union, so its count is not a floor"
     );
 
-    // The identifier family, by contrast, is a floor.
+    // **One** skipped identifier family, with the name reaching nothing else, is
+    // also exact: there is a single set and its size is its length. Marking it
+    // a floor because withholding happened at all was the coarser rule, and it
+    // hedged a number that was known.
     let shared = (0..MAX_CANDIDATES_PER_ENTITY + 5)
         .map(|index| format!("Shared Party {index:03} (5550007777)"))
         .collect::<Vec<_>>();
     let shared_catalog = MasterCatalog::new(MasterClass::Ledger, &shared).expect("valid");
-    let withheld_loosely = bind_one_name(&shared_catalog, "Zeta Holdings 5550007777");
-    let candidates = &withheld_loosely.unresolved().expect("unbound").candidates;
+    let one_family = bind_one_name(&shared_catalog, "Zeta Holdings 5550007777");
+    let candidates = &one_family.unresolved().expect("unbound").candidates;
     assert!(candidates.is_incomplete());
+    assert_eq!(candidates.found(), MAX_CANDIDATES_PER_ENTITY + 5);
     assert!(
-        candidates.count_is_lower_bound(),
-        "a skipped identifier family is the one case the count cannot be a union"
+        !candidates.count_is_lower_bound(),
+        "one family and nothing from the name is a single set, so its size is exact"
+    );
+
+    // Two skipped families **is** a floor: their overlap is exactly what was not
+    // materialized, so only the larger is counted.
+    let mut two = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Alpha Party {index:03} (5550007777)"))
+        .collect::<Vec<_>>();
+    two.extend(
+        (0..MAX_CANDIDATES_PER_ENTITY + 5)
+            .map(|index| format!("Beta Party {index:03} (5550008888)")),
+    );
+    let two_catalog = MasterCatalog::new(MasterClass::Ledger, &two).expect("valid");
+    let entity =
+        SourceEntity::with_identifier_hints(0, "Zeta Holdings", ["5550007777", "5550008888"])
+            .expect("valid");
+    let both = bound(&two_catalog, &[entity])
+        .entities()
+        .first()
+        .cloned()
+        .expect("one");
+    assert!(
+        both.unresolved()
+            .expect("unbound")
+            .candidates
+            .count_is_lower_bound(),
+        "two disjoint skipped families cannot be unioned without materializing them"
     );
 }
 

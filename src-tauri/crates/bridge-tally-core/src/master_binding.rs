@@ -315,9 +315,6 @@ pub enum Candidates {
     Truncated {
         listed: Vec<Candidate>,
         found: usize,
-        /// Whether `found` is a floor rather than a total. See
-        /// [`Candidates::count_is_lower_bound`].
-        #[serde(default)]
         count_is_lower_bound: bool,
     },
     /// A family this name reaches and separates none of: counted, and
@@ -325,9 +322,6 @@ pub enum Candidates {
     /// master out of view about a third of the time against live books.
     Withheld {
         found: usize,
-        /// Whether `found` is a floor rather than a total. See
-        /// [`Candidates::count_is_lower_bound`].
-        #[serde(default)]
         count_is_lower_bound: bool,
     },
 }
@@ -360,7 +354,8 @@ impl Candidates {
     }
 
     /// Masters found before any truncation or withholding. The value is a
-    /// lower bound when the listing is incomplete; use
+    /// lower bound only when unmaterialized identifier families prevent their
+    /// union from being counted; use
     /// [`Self::count_is_lower_bound`] before presenting it as exact.
     pub fn found(&self) -> usize {
         match self {
@@ -370,22 +365,11 @@ impl Candidates {
         }
     }
 
-    /// Whether `found()` is a floor rather than a total.
-    ///
-    /// **Count precision and listing completeness are different questions**, and
-    /// deriving this from `is_incomplete()` conflated them. A prefix family of a
-    /// hundred masters is counted *exactly* — `collect_candidates` unions it
-    /// with the listed candidates before deciding not to show it — and every
-    /// consumer was told "at least 100" about a number that was 100. Under-
-    /// claiming is the safe direction, but it is still a wrong statement about
-    /// the book, and it trains an operator to discount a hedge that elsewhere
-    /// means something.
-    ///
-    /// The count is a floor in exactly one situation: an **identifier** family
-    /// was too large to expand. Those are not unioned with anything, so the
-    /// reported count is the larger of two possibly-overlapping sets rather
-    /// than their union — see issue #325. Every other path computes a true
-    /// union before it decides what to show.
+    /// Whether `found()` is conservative because large identifier families are
+    /// not expanded, so their overlapping union cannot be counted without
+    /// materializing it. Listing truncation alone does not make a count
+    /// inexact: prefix and report-cap results can retain an exact union while
+    /// showing only part of it.
     pub fn count_is_lower_bound(&self) -> bool {
         match self {
             Self::None | Self::Listed { .. } => false,
@@ -966,10 +950,12 @@ pub fn bind(
     // 1,024 distinct cheap misses at the head of a draft filled it, and the
     // repeated expensive key behind them was then never cached.
     //
-    // The key is the source fold plus the masters its identifiers reached, not
-    // the raw identifier list. Different unmatched hints all reach the same
-    // empty set, so proxy-counting the raw lists re-ran their one expensive
-    // candidate search once per row. Fingerprints keep this prepass bounded by
+    // The key is both source folds plus the masters its identifiers reached,
+    // not the raw identifier list. Different unmatched hints all reach the
+    // same empty set, so proxy-counting the raw lists re-ran their one
+    // expensive candidate search once per row. Both folds are necessary:
+    // `collect_candidates` also reads `binding_key` for a `NormalizedEqual`
+    // candidate. Fingerprints keep this prepass bounded by
     // `MAX_SOURCE_ENTITIES` without holding another owned key/set per entity;
     // the memo itself remains capped and checks the full key before reuse.
     let repeated = repeated_candidate_memo_fingerprints(catalog, entities);
@@ -989,8 +975,7 @@ pub fn bind(
 }
 
 /// What `collect_candidates` produced for one distinct source name, keyed by
-/// the only two things it reads: the source key, and the masters the entity's
-/// identifiers reached.
+/// the two source folds and the masters the entity's identifiers reached.
 ///
 /// A draft may repeat one ledger name across its rows, and the search is not
 /// cheap when it does: a truncated name against a large prefix family
@@ -1041,11 +1026,15 @@ struct IdentifierEvidence<'a> {
     exact: Option<usize>,
     /// Every master the entity's identifiers reached.
     matches: &'a BTreeSet<usize>,
-    /// A **lower bound** on how many masters share this entity's identifiers,
-    /// counted without expanding the families that were skipped: the largest
-    /// skipped family, plus the listed masters that are not in it. Present so a
-    /// withheld listing can still say how many masters are involved.
+    /// How many masters share this entity's identifiers, counted without
+    /// expanding the families that were skipped: the largest skipped family,
+    /// union the listed masters. Present so a withheld listing can still say
+    /// how many masters are involved.
     withheld_holders: usize,
+    /// How many families were too large to expand. Zero or one permits an exact
+    /// total; more than one does not, because the overlap between them is
+    /// exactly what was not materialized.
+    skipped_families: usize,
 }
 
 struct SearchMemo {
@@ -1085,6 +1074,10 @@ fn bind_one(
     // The holders of the largest skipped family, kept by reference so the count
     // below can ask which listed masters are *not* in it. Nothing is cloned.
     let mut largest_withheld: Option<&Vec<usize>> = None;
+    // How many families were skipped, which is what decides whether the count
+    // can be exact: one family's union with the listed masters is computed
+    // below, two disjoint ones cannot be without materializing them.
+    let mut skipped_families = 0_usize;
     for identifier in &entity.identifiers {
         if let Some(holders) = catalog.by_identifier.get(identifier) {
             // An identifier held by more masters than a candidate list may show
@@ -1096,6 +1089,7 @@ fn bind_one(
             // before the candidate memo is even consulted.
             if holders.len() > MAX_CANDIDATES_PER_ENTITY {
                 identifier_conflict = true;
+                skipped_families += 1;
                 if holders.len() > withheld_holders {
                     withheld_holders = holders.len();
                     largest_withheld = Some(holders);
@@ -1140,7 +1134,9 @@ fn bind_one(
     // it, so adding them is sound and costs nothing but a lookup: the union is
     // never built, which is the whole point of skipping. It stays a **lower
     // bound** — two disjoint skipped families are still counted as the larger
-    // alone — and that is what `Candidates::Withheld` means. Over-counting
+    // alone. `Candidates::Withheld` records that no individual names were
+    // listed; its separate precision flag records this lower-bound case.
+    // Over-counting
     // would be worse than under-counting here: two identifiers can be held by
     // overlapping families, so summing their sizes would state a number of
     // masters that do not exist.
@@ -1197,6 +1193,7 @@ fn bind_one(
                 exact,
                 matches: &identifier_matches,
                 withheld_holders,
+                skipped_families,
             },
             budget,
             memo,
@@ -1218,6 +1215,7 @@ fn bind_one(
                 exact,
                 matches: &identifier_matches,
                 withheld_holders,
+                skipped_families,
             },
             budget,
             memo,
@@ -1259,6 +1257,7 @@ fn bind_one(
                     exact,
                     matches: &identifier_matches,
                     withheld_holders,
+                    skipped_families,
                 },
                 budget,
                 memo,
@@ -1271,6 +1270,7 @@ fn bind_one(
                     exact,
                     matches: &identifier_matches,
                     withheld_holders,
+                    skipped_families,
                 },
                 budget,
                 memo,
@@ -1291,7 +1291,7 @@ fn bind_one(
                     reason,
                     candidates,
                     masters_found.max(withheld_holders),
-                    withheld_holders > 0,
+                    count_is_uncertain(skipped_families, masters_found),
                     budget,
                 )
             }
@@ -1317,6 +1317,7 @@ fn unresolved_status(
         exact,
         matches: identifier_matches,
         withheld_holders,
+        skipped_families,
     } = evidence;
     let (mut candidates, masters_found) =
         remembered_candidates(catalog, entity, identifier_matches, memo);
@@ -1335,7 +1336,7 @@ fn unresolved_status(
         reason,
         candidates,
         masters_found.max(withheld_holders),
-        withheld_holders > 0,
+        count_is_uncertain(skipped_families, masters_found),
         budget,
     )
 }
@@ -1346,9 +1347,6 @@ fn unresolved_from(
     reason: UnboundReason,
     candidates: Vec<(usize, CandidateRule)>,
     masters_found: usize,
-    // True when `masters_found` came from a skipped identifier family, which is
-    // the one case the count cannot be a true union. See
-    // `Candidates::count_is_lower_bound`.
     count_is_lower_bound: bool,
     budget: &mut usize,
 ) -> BindingStatus {
@@ -1474,9 +1472,6 @@ fn candidate_memo_fingerprint_for_entity(catalog: &MasterCatalog, entity: &Sourc
     candidate_memo_fingerprint(&entity.key, &entity.binding_key, &identifier_matches)
 }
 
-/// Must hash exactly what `CandidateMemoKey` holds. A fingerprint over less than
-/// the key counts two entities as repeating when they do not, and admits to the
-/// memo a result the second one must not be served.
 fn candidate_memo_fingerprint(
     key: &str,
     binding_key: &str,
@@ -1658,6 +1653,27 @@ fn collect_candidates(
     listed.sort_by(|left, right| candidate_order(catalog, left, right));
     listed.truncate(MAX_CANDIDATES_PER_ENTITY);
     (listed, found)
+}
+
+/// Whether the reported total is a floor rather than a true union.
+///
+/// **Nonzero withholding is not the test**, which is what an earlier version of
+/// this used. Two sets are in play: what the *name* reached, counted exactly by
+/// `collect_candidates`, and what the *identifiers* reached, counted as the
+/// largest skipped family union the listed masters. The total is their union,
+/// and it is knowable in two cases:
+///
+/// - **nothing was skipped** — the identifier matches are already candidates, so
+///   the name's count is the whole of it;
+/// - **one family was skipped and the name reached nothing** — there is only one
+///   set, and its size is exact.
+///
+/// It is a floor only where the two could overlap in a way nobody measured: two
+/// or more skipped families, whose mutual overlap is precisely what was not
+/// materialized, or one skipped family beside masters the name reached, where
+/// the family's overlap with those is equally unmeasured.
+fn count_is_uncertain(skipped_families: usize, name_reached: usize) -> bool {
+    skipped_families > 1 || (skipped_families == 1 && name_reached > 0)
 }
 
 /// How candidates are ordered wherever they are ordered: by the rule that
