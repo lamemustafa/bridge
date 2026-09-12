@@ -118,21 +118,32 @@ def _split_tokens(text):
 MASK_MIN_XS = 4
 
 
+# `bank_statement_import` recognises the short mask `[Xx]+\d+` ONLY inside an
+# `IMPS/` component, behind an alphabetic prefix and hyphens
+# (`^[A-Za-z]+-\s*[Xx]+\d+-`). Outside that, a short run of X with digits is not
+# a masking convention to any parser here — it is a customer token that happens
+# to start with the letter X.
 def _is_mask(token):
-    """Standalone account masks; shorter masks need the SBI IMPS field context."""
+    """True when `token` is a masked account: `[Xx]{4,}` optionally then digits.
+
+    **Only the unambiguous form.** `bank_statement_import` also reads a short
+    `[Xx]+\\d+` inside an `IMPS/` component, and mirroring that here cost four
+    revisions — per character, per token, per word containing `IMPS/`, per
+    position within the word — each one leaking a customer `X` into a public
+    fixture in a narrower place than the last, because a context-free tokeniser
+    cannot reliably mirror a context-sensitive rule.
+
+    Measured before dropping it: the short form preserves **one** token across
+    both committed fixtures, and the importer's own IMPS tests use constructed
+    eight-X masks rather than that token. So the whole feature bought one
+    masked-account shape in one fixture and produced four rounds of findings.
+
+    A sanitiser may be narrower than the parser — the cost is a fabricated mask
+    shape — but never wider, because the cost there is a customer character
+    preserved verbatim. Given a doubt about scope, this is the narrow answer and
+    it needs no context at all to be checked.
+    """
     return bool(re.fullmatch(rf"[Xx]{{{MASK_MIN_XS},}}\d*", token))
-
-
-# Match the parser's masked-account subfield by position. The first IMPS
-# component may be empty in a captured narration, so `*` mirrors the parser's
-# slash-delimited field without widening authority to other X+digit tokens in
-# the same word.
-SHORT_IMPS_MASK = re.compile(r"IMPS/[^/]*/[A-Za-z]+-\s*([Xx]+\d+)-")
-
-
-def _short_mask_spans(text):
-    """Only the mask field in the second slash component is structural."""
-    return {match.span(1) for match in SHORT_IMPS_MASK.finditer(text)}
 
 ALPHA = "ZQVWKJYBGFHLMNPRSTDC"
 # Markup escapes: syntax, held out and restored untouched.
@@ -199,17 +210,17 @@ def reserve_source_tokens(text):
             _source.add(piece.upper())
 
 
-def _shape_of(token, masked=False):
+def _shape_of(token):
     """The classes this token's replacement must reproduce, as a key."""
     return "".join(
-        character if masked and character in "Xx"
+        "X" if character == "X"
         else "9" if character.isdigit()
         else "a" if character.islower()
         else "A"
         for character in token)
 
 
-def _fake_token(token, *, short_mask=False):
+def _fake_token(token):
     """A fabricated token of the same length AND the same character shape.
 
     Shape matters as much as length. The parsers decide where a counterparty
@@ -219,8 +230,8 @@ def _fake_token(token, *, short_mask=False):
     those markers and the fixture stops exercising the boundary logic, which is
     most of what there is to test.
 
-    So: digits map to digits and letters to letters. X is held only for a
-    standalone long mask or a short mask with qualified SBI IMPS field context.
+    So: digits map to digits, letters to letters, and a run of X is left alone
+    because it is a masking convention rather than anybody's data.
 
     **Every non-ASCII character is replaced with an ASCII letter**, one per code
     point, so length and "this is a word" survive but the script does not. That
@@ -230,7 +241,7 @@ def _fake_token(token, *, short_mask=False):
     you capture a statement whose names are not in Latin script — the fixture
     will exercise your boundary logic but will not look like the original.
 
-    Stable per distinct input and mask role, so a counterparty on two rows still
+    Stable per distinct input, so a counterparty appearing on two rows still
     appears twice — the repeat structure is what mapping and suspense logic
     reads. Keyed on first-appearance order rather than on the characters, so
     this is not a cipher over the original text.
@@ -250,10 +261,8 @@ def _fake_token(token, *, short_mask=False):
     per-position alphabets, which is the whole of what shape-preservation
     allows.
     """
-    masked = _is_mask(token) or short_mask
-    key = (token, masked)
-    if key in _seen:
-        return _seen[key]
+    if token in _seen:
+        return _seen[token]
     # An `X` is only a masking convention when the WHOLE token is the shape the
     # parsers actually look for. `bank_statement_import` requires
     # `[Xx]{4,}\d*` to call something a masked account, so a bare `X` or `XX`
@@ -269,7 +278,7 @@ def _fake_token(token, *, short_mask=False):
     # customer letters. Classify the token against the parser's own pattern
     # first, and only then treat `X` as structure; everywhere else an `X` is
     # data like any other letter.
-    if masked:
+    if _is_mask(token):
         positions = [index for index, character in enumerate(token) if character.isdigit()]
         if not positions:
             return token
@@ -286,7 +295,7 @@ def _fake_token(token, *, short_mask=False):
     for alphabet in alphabets:
         total *= len(alphabet)
 
-    shape = _shape_of(token, masked)
+    shape = _shape_of(token)
     index = _next.get(shape, 0)
     candidate = None
     while index < total:
@@ -328,7 +337,7 @@ def _fake_token(token, *, short_mask=False):
             f"(ALPHA for letters, DIGITS for digits)."
         )
     _next[shape] = index
-    _seen[key] = candidate
+    _seen[token] = candidate
     _taken.add(candidate.upper())
     return candidate
 
@@ -357,7 +366,7 @@ def _decode_numeric_entities(text):
     return NUMERIC_ENTITY.sub(one, text)
 
 
-def scrub(text, *, mask_spans=None):
+def scrub(text):
     """Sanitise one word's text, preserving XML *syntax*.
 
     `&amp;` is one character in the document and four in the file. Splitting on
@@ -371,20 +380,18 @@ def scrub(text, *, mask_spans=None):
     customer. A numeric reference is the opposite — see above.
     """
     text = _decode_numeric_entities(text)
-    spans = _short_mask_spans(text) if mask_spans is None else mask_spans
-    out, offset = [], 0
-    for entity in STRUCTURAL_ENTITY.finditer(text):
-        local = {(a - offset, b - offset) for a, b in spans
-                 if offset <= a and b <= entity.start()}
-        out.append(_scrub_plain(text[offset:entity.start()], mask_spans=local))
-        out.append(entity.group())
-        offset = entity.end()
-    local = {(a - offset, b - offset) for a, b in spans if offset <= a}
-    out.append(_scrub_plain(text[offset:], mask_spans=local))
-    return "".join(out)
+    parts = STRUCTURAL_ENTITY.split(text)
+    if len(parts) > 1:
+        entities = STRUCTURAL_ENTITY.findall(text)
+        out = [_scrub_plain(parts[0])]
+        for entity, rest in zip(entities, parts[1:]):
+            out.append(entity)
+            out.append(_scrub_plain(rest))
+        return "".join(out)
+    return _scrub_plain(text)
 
 
-def _scrub_plain(text, *, mask_spans=None):
+def _scrub_plain(text):
     if DATE.match(text):
         return _fake_date(text)
     if YEAR.match(text):
@@ -402,13 +409,14 @@ def _scrub_plain(text, *, mask_spans=None):
         if text not in _days:
             _days[text] = f"{len(_days) % 28 + 1:02d}"
         return _days[text]
-    spans = _short_mask_spans(text) if mask_spans is None else mask_spans
-    out, offset = [], 0
+    # The short mask shape is only a convention inside an IMPS component, so the
+    # decision needs the surrounding field, which the token alone cannot carry.
+    out = []
     for is_token, piece in _split_tokens(text):
         if piece in TEMPLATE:
             out.append(piece)
         elif is_token:
-            out.append(_fake_token(piece, short_mask=(offset, offset + len(piece)) in spans))
+            out.append(_fake_token(piece))
         else:
             # ASCII punctuation and whitespace only. Nothing reaches this branch
             # that could be a name, which is the whole change — previously an
@@ -418,7 +426,6 @@ def _scrub_plain(text, *, mask_spans=None):
             # raw `&`, `<` or `>` here and the output has to stay XML.
             out.append("".join(XML_ESCAPES.get(character, character)
                                for character in piece))
-        offset += len(piece)
     return "".join(out)
 
 
@@ -444,7 +451,7 @@ BANNER_TEMPLATE = """<!--
   default. Distinct source tokens map to distinct fabricated ones in
   first-appearance order, so repeats and name/reference structure survive while
   the substitution is not a cipher over the original text. Character shape is
-  preserved — digits stay digits and qualified mask runs keep their Xs — because the
+  preserved — digits stay digits, a run of X stays a run of X — because the
   parsers find the end of a counterparty name by recognising the shape of the
   field after it.
 
@@ -479,56 +486,6 @@ def _kept_words(pages, keep):
         yield head, words
 
 
-def _page_short_masks(page, retained=None):
-    """Locate wrapped SBI IMPS mask fields using the existing bank profile.
-
-    Keep headers, adjacent columns and separate transactions out of the context.
-    The captured SBI field wraps over three narration lines, so a whole-word
-    predicate alone cannot preserve it without also preserving ordinary names.
-    """
-    from bank_statement_import import SBI, _lines, _table_top
-
-    profile = SBI()
-    lines = _lines(page)
-    top = _table_top(lines, profile)
-    if top is None:
-        return {}
-    rows, current = [], None
-    for y, group in lines:
-        if y <= top:
-            continue
-        cells = {}
-        for x0, _, x1, _, text in group:
-            cells.setdefault(profile.column_of(x0, x1), []).append((x0, x1, text))
-        if profile.is_row_start(cells):
-            current = []
-            rows.append(current)
-        if current is not None:
-            current.extend(word for word in group
-                           if profile.column_of(word[0], word[2]) == "narr")
-    found = {}
-    for row in rows:
-        joined = " ".join(word[4] for word in row)
-        offsets, offset = [], 0
-        for word in row:
-            offsets.append((offset, offset + len(word[4]), word[:4]))
-            offset += len(word[4]) + 1
-        for match in SHORT_IMPS_MASK.finditer(joined):
-            # Full-page geometry establishes row membership, but every word
-            # carrying the qualifying IMPS field must survive the crop. Table
-            # furniture need not be emitted just to preserve a transaction.
-            support = {box for start, end, box in offsets
-                       if start < match.end() and end > match.start()}
-            if retained is not None and not support <= retained:
-                continue
-            a, b = match.span(1)
-            for start, end, box in offsets:
-                if start <= a and b <= end:
-                    found.setdefault(box, set()).add((a - start, b - start))
-
-    return found
-
-
 def main(source, destination, keep, bank):
     """keep: [(page_index, [(y_min, y_max), ...]), ...] regions to retain."""
     # `pdftotext` emits UTF-8. `read_text()` without an encoding decodes with
@@ -539,11 +496,6 @@ def main(source, destination, keep, bank):
     # call `_scrub_plain` with strings that are already decoded.
     pages = pathlib.Path(source).read_text(encoding="utf-8").split("<page ")[1:]
     regions = list(_kept_words(pages, keep))
-    # Qualify against source row geometry, then require the field's context
-    # words to survive the crop. A mask-only selection carries no authority.
-    contexts = [_page_short_masks(pages[index], {
-        tuple(map(float, word[:4])) for word in words})
-        for (index, _), (_, words) in zip(keep, regions)]
     # Two passes, and the first one has to be complete before the second starts.
     # A replacement is only safe once the allocator knows every token the
     # capture contains: otherwise a fabricated value can equal some *other*
@@ -555,10 +507,9 @@ def main(source, destination, keep, bank):
     chunks = [
         "<page " + head + "\n"
         + "\n".join(f'<word xMin="{x0}" yMin="{y0}" xMax="{x1}" yMax="{y1}">'
-                    f'{scrub(body, mask_spans=context.get(tuple(map(float, (x0, y0, x1, y1))), set()))}</word>'
-                    for x0, y0, x1, y1, body in words)
+                    f'{scrub(body)}</word>' for x0, y0, x1, y1, body in words)
         + "\n</page>"
-        for (head, words), context in zip(regions, contexts)
+        for head, words in regions
     ]
     pathlib.Path(destination).write_text(
         BANNER_TEMPLATE.format(bank=bank) + "\n".join(chunks) + "\n", encoding="utf-8")

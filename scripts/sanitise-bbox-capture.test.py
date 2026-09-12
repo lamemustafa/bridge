@@ -213,10 +213,15 @@ for leaky in ("XAVIER", "ABXXCD", "MAX", "X-RAY"):
 # ...while the shape the parsers actually look for is still structure, and
 # survives. `bank_statement_import` calls something a masked account only when
 # the whole token matches `[Xx]{4,}\d*`, so that is the one test applied here.
-# A short X+digits token is ordinary customer data without its IMPS field
-# context. The captured wrapped SBI field is checked through main() below.
+# The short forms carry the second parser path. `bank_statement_import` reads
+# `[Xx]+\d+` inside a UPI/IMPS reference, so `XX1234` is the bank's masking even
+# though it has fewer than MASK_MIN_XS characters — requiring four everywhere
+# fabricated it to `ZZ1111` and destroyed a shape the fixture exists to keep.
+# Without these three rows the union predicate has no test at all: reverting it
+# to the four-X rule left the whole suite green.
+# The short form is gated on IMPS context, so it is tested through the context
+# rather than beside it — see the block below. Only the global shape belongs here.
 for mask, keeps in (("XXXX", True), ("XXXXXX1234", True), ("xxxx5678", True),
-                    ("XX1234", False), ("X99", False), ("xx7", False),
                     ("XX", False), ("X", False), ("XXX", False)):
     out = load()._scrub_plain(mask)
     # For a mask, every X position must survive verbatim and every digit
@@ -233,76 +238,51 @@ for mask, keeps in (("XXXX", True), ("XXXXXX1234", True), ("xxxx5678", True),
         held, f"{mask} -> {out}",
     )
 
-# The same token can be a structural mask in a bank reference and customer
-# data elsewhere. Memoisation must keep those roles separate in both orders.
-for mask_first in (True, False):
-    fresh = load()
-    source = "IMPS/111112 111113/ZZY- X99-NAME"
-    for value in ((source, "X99") if mask_first else ("X99", source)):
-        out = fresh.scrub(value)
-        if value == "X99":
-            check(f"ordinary X99 is fabricated after mask={mask_first}",
-                  "X" not in out.upper(), out)
-        else:
-            check(f"qualified short IMPS mask survives first={mask_first}",
-                  bool(re.search(r"/[^/]+- X\d+-", out)), out)
-for text in ("UPI/X99", "IMPS/X99/NAME", "IMPS/123/NAME-X99",
-             "IMPS/123/NAME-X99Z-OTHER", "IMPS/123/NAME-OTHER/X99-END"):
-    check("short masks outside the exact field are fabricated: " + text,
-          "X" not in load().scrub(text).upper())
+# `bank_statement_import` recognises `[Xx]+\d+` ONLY inside an `IMPS/` component,
+# behind an alphabetic prefix and hyphens. An earlier revision of `_is_mask`
+# applied that shape globally, so `X99` anywhere was classified as a mask and
+# `_fake_token` returned `X11` — carrying a customer's X into a public fixture,
+# the very defect the function exists to prevent, reintroduced by widening the
+# rule past the parser it mirrors.
+#
+# A sanitiser may be NARROWER than the parser: the cost is a fabricated mask
+# shape. It must never be WIDER: the cost there is a customer character kept.
+# The short form `[Xx]+\d+` is NOT preserved, deliberately. The importer reads
+# it inside an `IMPS/` component, and mirroring a context-sensitive rule from a
+# context-free tokeniser cost four revisions — per character, per token, per word
+# containing `IMPS/`, per position within the word — each leaking a customer `X`
+# into a public fixture in a narrower place than the last.
+#
+# Measured before dropping it: the short form preserved ONE token across both
+# committed fixtures, and the importer's own IMPS tests use constructed eight-X
+# masks. One shape in one fixture, four rounds of findings.
+# Asserted by COUNTING X, not by looking for the original token: the token is
+# absent from the output either way, so searching for it proves nothing. An
+# earlier version of this block did exactly that and passed under a mutation
+# that re-admitted the short form.
+for token in ("XX1234", "X99", "xx7", "X1"):
+    for context, expected_x in ((f"TRANSFER TO {token} ACCOUNT", 0),
+                                (f"IMPS/P2A/ABC-{token}-SOMENAME", 0),
+                                (f"IMPS/P2A/ABC-XXXX9999-SOMENAME {token} REF", 4)):
+        out = load()._scrub_plain(context)
+        label = "plain" if "IMPS" not in context else (
+            "the IMPS mask subfield" if f"-{token}-" in context else "beside a real mask")
+        check(
+            f"{token!r} in {label} leaves exactly {expected_x} X in the output",
+            out.upper().count("X") == expected_x,
+            f"{context} -> {out} (X count {out.upper().count('X')})",
+        )
 
-# Position is decisive even when the same short token appears in the same
-# narration word: only the parser's account subfield may preserve its X.
-same_word = load().scrub("IMPS/123/NAME-X99-REF X99")
-check("same-word short token outside the IMPS field is fabricated",
-      bool(re.search(r"IMPS/[^/]+/[A-Za-z]+-X\d+-", same_word))
-      and not bool(re.search(r"\sX\d+", same_word)), same_word)
+# ...and the unambiguous form still survives, in any context, because it needs no
+# context to be recognised.
+for context in ("XXXXXX1234", "IMPS/P2A/ABC-XXXXXX1234-NAME", "ACCT XXXXXX1234 END"):
+    out = load()._scrub_plain(context)
+    check(
+        f"an unambiguous mask survives in {context[:14]!r}",
+        "XXXXXX" in out,
+        out,
+    )
 
-# Captured source geometry proves the wrapped context without inventing a new
-# bank fixture. Pin the mask-bearing box and mutate only its classification.
-fixture = pathlib.Path(__file__).with_name("fixtures") / "sbi-bbox-capture.xml"
-fresh = load()
-page = fixture.read_text(encoding="utf-8").split("<page ")[1]
-contexts = fresh._page_short_masks(page)
-box = (143.66, 701.384, 183.68, 712.484)
-check("captured SBI short mask is located in its narration row",
-      contexts == {box: {(0, 5)}}, repr(contexts))
-with tempfile.TemporaryDirectory() as directory:
-    destination = pathlib.Path(directory) / "out.xml"
-    with contextlib.redirect_stdout(io.StringIO()):
-        fresh.main(str(fixture), str(destination), [(0, [(0, 10000)])], "SBI")
-    words = {tuple(map(float, m.groups()[:4])): m.group(5)
-             for m in fresh.WORD.finditer(destination.read_text())}
-    check("main preserves the captured wrapped short mask's structural Xs",
-          bool(re.fullmatch(r"XX\d{3}-", words[box])), repr(words[box]))
-# Cropping away the reference must also remove its mask authority. The input
-# is still the unchanged real capture; only the CLI's retained region varies.
-with tempfile.TemporaryDirectory() as directory:
-    destination = pathlib.Path(directory) / "short-only.xml"
-    fresh = load()
-    with contextlib.redirect_stdout(io.StringIO()):
-        fresh.main(str(fixture), str(destination), [(0, [(701, 712.5)])], "SBI")
-    words = [match.group(5) for match in fresh.WORD.finditer(destination.read_text())]
-    check("mask-only capture crop fabricates short Xs without retained context",
-          len(words) == 1 and "X" not in words[0].upper(), repr(words))
-# A transaction crop retains the IMPS field while omitting table furniture.
-# Source geometry still establishes the row; all field words remain emitted.
-with tempfile.TemporaryDirectory() as directory:
-    destination = pathlib.Path(directory) / "transaction.xml"
-    fresh = load()
-    with contextlib.redirect_stdout(io.StringIO()):
-        fresh.main(str(fixture), str(destination), [(0, [(665, 736.5)])], "SBI")
-    words = {tuple(map(float, m.groups()[:4])): m.group(5)
-             for m in fresh.WORD.finditer(destination.read_text())}
-    check("transaction crop preserves its retained IMPS mask without a header",
-          bool(re.fullmatch(r"XX\d{3}-", words[box])), repr(words[box]))
-# Same captured word in an adjacent column must not receive mask authority.
-shifted = page.replace('xMin="143.660000" yMin="701.384000" xMax="183.680000"',
-                       'xMin="222.900000" yMin="701.384000" xMax="262.920000"')
-check("adjacent-column mutation loses short-mask authority",
-      not load()._page_short_masks(shifted))
-check("missing IMPS reference context loses short-mask authority",
-      not load()._page_short_masks(page.replace("IMPS/111112", "UPI/111112")))
 
 # The invariant the case above turns on, asserted directly so it cannot be
 # undone by editing one string. A replacement character that is an X must mean
