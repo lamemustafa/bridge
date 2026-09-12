@@ -457,6 +457,48 @@ pub struct BookWindow {
     vouchers: Vec<BookVoucher>,
 }
 
+/// Incremental admission for raw voucher rows. Both adapters and the core
+/// window boundary use this before retaining entry descriptors.
+#[derive(Debug, Default)]
+pub struct RawObservationBudget {
+    vouchers: usize,
+    entries: usize,
+    bytes: usize,
+}
+
+impl RawObservationBudget {
+    pub fn admit<'a>(
+        &mut self,
+        entries: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> Result<(), PresenceError> {
+        self.vouchers = self
+            .vouchers
+            .checked_add(1)
+            .ok_or(PresenceError::WindowTooLarge)?;
+        if self.vouchers > MAX_WINDOW_VOUCHERS {
+            return Err(PresenceError::WindowTooLarge);
+        }
+        for (ledger, amount) in entries {
+            self.entries = self
+                .entries
+                .checked_add(1)
+                .ok_or(PresenceError::WindowRawEntryWorkTooLarge)?;
+            if self.entries > MAX_WINDOW_RAW_ENTRY_WORK {
+                return Err(PresenceError::WindowRawEntryWorkTooLarge);
+            }
+            self.bytes = self
+                .bytes
+                .checked_add(ledger.len())
+                .and_then(|n| n.checked_add(amount.len()))
+                .ok_or(PresenceError::WindowRawEntryBytesTooLarge)?;
+            if self.bytes > MAX_WINDOW_RAW_ENTRY_BYTES {
+                return Err(PresenceError::WindowRawEntryBytesTooLarge);
+            }
+        }
+        Ok(())
+    }
+}
+
 impl BookWindow {
     /// Admits raw observations in aggregate before the per-voucher conversion
     /// performs decimal parsing, string cloning, and comparison-key folding.
@@ -467,31 +509,15 @@ impl BookWindow {
         remote_id_evidence: RemoteIdEvidence,
         observations: impl IntoIterator<Item = ObservedVoucher<'a>>,
     ) -> Result<Self, PresenceError> {
-        let mut raw_entries = 0usize;
-        let mut raw_bytes = 0usize;
+        let mut budget = RawObservationBudget::default();
         let mut vouchers = Vec::new();
         for observation in observations {
-            raw_entries = raw_entries
-                .checked_add(observation.entries.len())
-                .ok_or(PresenceError::WindowRawEntryWorkTooLarge)?;
-            if raw_entries > MAX_WINDOW_RAW_ENTRY_WORK {
-                return Err(PresenceError::WindowRawEntryWorkTooLarge);
-            }
-            let observation_bytes = observation
-                .entries
-                .iter()
-                .try_fold(0usize, |total, entry| {
-                    total
-                        .checked_add(entry.ledger.len())?
-                        .checked_add(entry.amount.len())
-                })
-                .ok_or(PresenceError::WindowRawEntryBytesTooLarge)?;
-            raw_bytes = raw_bytes
-                .checked_add(observation_bytes)
-                .ok_or(PresenceError::WindowRawEntryBytesTooLarge)?;
-            if raw_bytes > MAX_WINDOW_RAW_ENTRY_BYTES {
-                return Err(PresenceError::WindowRawEntryBytesTooLarge);
-            }
+            budget.admit(
+                observation
+                    .entries
+                    .iter()
+                    .map(|entry| (entry.ledger, entry.amount)),
+            )?;
             vouchers.push(BookVoucher::observed(observation)?);
         }
         Self::observed(from, to, read, remote_id_evidence, vouchers)

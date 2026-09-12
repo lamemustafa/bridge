@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 use bridge_tally_core::book_presence::{
     self, BookWindow, NumberingDeclaration, NumberingMethod, ObservedEntry, ObservedVoucher,
     PresenceError, PresenceReport, PresenceRequest, ProposedVoucher, ProposedVoucherInput,
-    RemoteIdEvidence, WindowRead,
+    RawObservationBudget, RemoteIdEvidence, WindowRead,
 };
 use bridge_tally_core::master_binding::{MasterCatalog, MasterClass, SourceEntity};
 
@@ -260,9 +260,20 @@ fn book_window(
     read: WindowRead,
     rows: &[Value],
 ) -> Result<BookWindow, PresenceError> {
-    let entries = rows
-        .iter()
-        .map(|row| {
+    let mut budget = RawObservationBudget::default();
+    let mut entries = Vec::with_capacity(rows.len());
+    for row in rows {
+        let raw = row["amounts"]
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        budget.admit(raw.iter().map(|entry| {
+            (
+                entry["ledger"].as_str().unwrap_or_default(),
+                entry["amount"].as_str().unwrap_or_default(),
+            )
+        }))?;
+        entries.push(
             row["amounts"]
                 .as_array()
                 .map(Vec::as_slice)
@@ -272,9 +283,9 @@ fn book_window(
                     ledger: entry["ledger"].as_str().unwrap_or_default(),
                     amount: entry["amount"].as_str().unwrap_or_default(),
                 })
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
+                .collect::<Vec<_>>(),
+        );
+    }
     let observations = rows
         .iter()
         .zip(&entries)
