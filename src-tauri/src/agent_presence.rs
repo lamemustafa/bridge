@@ -261,7 +261,7 @@ fn book_window(
     rows: &[Value],
 ) -> Result<BookWindow, PresenceError> {
     let mut budget = RawObservationBudget::default();
-    let mut entries = Vec::with_capacity(rows.len());
+    let mut entries = Vec::with_capacity(rows.len().min(book_presence::MAX_WINDOW_VOUCHERS));
     for row in rows {
         let raw = row["amounts"]
             .as_array()
