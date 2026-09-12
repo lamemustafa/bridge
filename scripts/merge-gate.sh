@@ -625,9 +625,13 @@ if [ "$diff_status" -ne 0 ] || [ -z "$diff" ]; then
 else
   # Keep one record per `diff --git` section. A header alone proves only that
   # GitHub named a file; the line counts below prove it supplied the complete
-  # textual payload for that destination.
+  # textual payload for that destination. Parse headers only before a hunk:
+  # payload can itself begin with a header-shaped string and must remain both
+  # counted and privacy-scanned.
   diff_stats="$tmpdir/diff-stats.tsv"
-  awk '
+  added_payload="$tmpdir/added-payload"
+  : >"$added_payload"
+  awk -v added_payload="$added_payload" '
     function emit() {
       if (!in_file) return
       destination = textual_destination != "" ? textual_destination : header_destination
@@ -641,53 +645,80 @@ else
       header_destination = $0
       sub(/^diff --git a\/.* b\//, "", header_destination)
       textual_destination = ""
-      added = deleted = textual = binary = 0
+      added = deleted = textual = binary = in_hunk = 0
       next
     }
-    /^\+\+\+ b\// {
+    !in_hunk && /^\+\+\+ b\// {
       textual_destination = $0
       sub(/^\+\+\+ b\//, "", textual_destination)
       textual = 1
       next
     }
-    /^(Binary files .* differ|GIT binary patch)$/ { binary = 1; next }
-    /^\+/ && $0 !~ /^\+\+\+ / { added++; next }
-    /^-/ && $0 !~ /^--- / { deleted++; next }
+    !in_hunk && /^(Binary files .* differ|GIT binary patch)$/ { binary = 1; next }
+    /^@@ / { in_hunk = 1; next }
+    in_hunk && /^\+/ { added++; print substr($0, 2) > added_payload; next }
+    in_hunk && /^-/ { deleted++; next }
     END { emit() }
   ' <<<"$diff" >"$diff_stats"
 
-  binary_count=$(awk '/^(Binary files .* differ|GIT binary patch)/ && $0 !~ /and \/dev\/null differ/ {n++} END {print n+0}' <<<"$diff")
-  [ "$binary_count" -eq 0 ] || bad "$binary_count binary addition/change(s) require human privacy inspection"
+  coverage_count=0
+  coverage_examples=""
+  metadata_only_count=0
+  metadata_only_examples=""
+  binary_count=0
+  record_coverage_issue() {
+    coverage_count=$((coverage_count + 1))
+    if [ "$coverage_count" -le 8 ]; then
+      coverage_examples="${coverage_examples}${coverage_examples:+; }$1"
+    fi
+  }
+  record_metadata_only() {
+    metadata_only_count=$((metadata_only_count + 1))
+    if [ "$metadata_only_count" -le 8 ]; then
+      metadata_only_examples="${metadata_only_examples}${metadata_only_examples:+; }$1"
+    fi
+  }
   path_text=""
   if [ -s "$changed_records" ]; then
     while IFS=$'\t' read -r filename status rest_added rest_deleted; do
       [ "$status" = "removed" ] && continue
       match_count=$(awk -F '\t' -v filename="$filename" '$1 == filename { count++ } END { print count+0 }' "$diff_stats")
       if [ "$match_count" -ne 1 ]; then
-        unknown "privacy diff omits or duplicates non-removed REST destination '$filename'"
+        record_coverage_issue "omits or duplicates '$filename'"
         continue
       fi
       diff_record=$(awk -F '\t' -v filename="$filename" '$1 == filename { print; exit }' "$diff_stats")
       IFS=$'\t' read -r _ diff_added diff_deleted textual binary <<<"$diff_record"
       if [ "$binary" -eq 1 ]; then
-        # The binary hold above requires human inspection. Its bytes cannot be
-        # reconciled through textual hunks, but its destination was covered.
+        # Its bytes cannot be reconciled through textual hunks.
+        binary_count=$((binary_count + 1))
         continue
       fi
       if [ "$textual" -ne 1 ] && [ "$diff_added" -eq 0 ] && [ "$diff_deleted" -eq 0 ]; then
-        say "note" "metadata-only diff section for '$filename' has no textual payload"
+        if [ "$rest_added" -eq 0 ] && [ "$rest_deleted" -eq 0 ]; then
+          record_metadata_only "$filename"
+        else
+          record_coverage_issue "metadata-only '$filename' conflicts with REST line totals"
+        fi
       elif [ "$textual" -ne 1 ]; then
-        unknown "privacy diff lacks a textual destination for '$filename'"
+        record_coverage_issue "lacks a textual destination for '$filename'"
       elif [ "$diff_added" -ne "$rest_added" ] || [ "$diff_deleted" -ne "$rest_deleted" ]; then
-        unknown "privacy diff line totals for '$filename' differ from REST metadata"
+        record_coverage_issue "line totals for '$filename' differ from REST metadata"
       fi
     done <"$changed_records"
+    [ "$binary_count" -eq 0 ] || bad "$binary_count binary addition/change(s) require human privacy inspection"
+    if [ "$coverage_count" -gt 0 ]; then
+      unknown "privacy diff coverage failed for $coverage_count non-removed REST file(s): $coverage_examples"
+    fi
+    if [ "$metadata_only_count" -gt 0 ]; then
+      say "note" "$metadata_only_count metadata-only diff section(s) have REST 0/0 totals: $metadata_only_examples"
+    fi
     # Destination paths are scan input from the complete REST set, not only
     # from whatever textual patch GitHub happened to render. Removed paths
     # carry no newly added material and are deliberately excluded.
     path_text=$(awk -F '\t' '$2 != "removed" { print $1 }' "$changed_records")
   fi
-  added=$(awk '/^\+/ && $0 !~ /^\+\+\+ (b\/|\/dev\/null)/ { print substr($0, 2) }' <<<"$diff")
+  added=$(cat "$added_payload")
   scan_input="$path_text
 $added"
   redacted=$(sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/<uuid>/g; s/[0-9a-fA-F]{32,}/<digest>/g' <<<"$scan_input")
@@ -722,11 +753,10 @@ $added"
     done <<<"$matches"
     printf '%s\n' "$count"
   }
-  # Phone numbers are often entered with a country prefix and visual
-  # separators. Keep the original text for the general scans, and add one
-  # separator-free view for the phone shape so ordinary formatting cannot
-  # split a customer number into harmless short fragments.
-  normalized_phone=$(tr -d $' ()-.\t' <<<"$redacted")
+  # Join separators only inside a mobile-shaped run. A global separator-free
+  # projection fuses unrelated values and creates false identifiers.
+  normalized_phone=$(grep -Eo '[6-9][0-9]{4}[][()+. _-]{0,3}[0-9]{5}' <<<"$redacted" \
+    | sed -E 's/[][()+. _-]//g' | grep -E '^[6-9][0-9]{9}$' || true)
   scan_shapes="$redacted
 $normalized_phone"
   hits_status=0
@@ -773,6 +803,14 @@ else
   final_body=$(jq -r '.body // ""' <<<"$final_meta")
   if ! checklist_link_ok "$final_body"; then
     bad "PR description changed and no longer carries a completed same-repository line-specific checklist link"
+  fi
+  if [ "$final_body" != "$prbody" ]; then
+    if ! body_section_has_content "$final_body" 'functional summary|outcome and reason'; then
+      bad "PR description changed and no longer carries a non-empty functional summary"
+    fi
+    if ! body_section_has_content "$final_body" 'test or reproduction command|commands and results|validation and evidence'; then
+      bad "PR description changed and no longer carries test or reproduction evidence"
+    fi
   fi
 fi
 if [ -n "$base_tip" ]; then

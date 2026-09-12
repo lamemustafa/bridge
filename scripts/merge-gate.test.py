@@ -49,6 +49,11 @@ if args[:2] == ["pr", "view"]:
         "## Validation and evidence\n\n`python3 scripts/merge-gate.test.py`\n\n"
         "- [x] [Errors](https://github.com/example/repo/blob/HEAD/review-checklist.md#L10)"
     )
+    if scenario == "body-loses-evidence" and view_count > 0:
+        body = (
+            "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
+            "- [x] [Errors](https://github.com/example/repo/blob/HEAD/review-checklist.md#L10)"
+        )
     if scenario == "checklist-foreign":
         body = "- [x] [Errors](https://github.com/other/repo/blob/HEAD/review-checklist.md#L10)"
     elif scenario == "checklist-unlinked":
@@ -70,7 +75,7 @@ if args[:2] == ["pr", "view"]:
             "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
             "- [x] [Errors](https://github.com/example/repo/blob/HEAD/review-checklist.md#L10)"
         )
-    one_file = scenario in {"files-empty", "formatted-phone", "path-id", "binary-delete", "metadata-only"}
+    one_file = scenario in {"files-empty", "formatted-phone", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "separated-dates"}
     selected_base = new_head if scenario == "base-oid-mismatch" else base
     emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
@@ -107,6 +112,15 @@ elif args[:2] == ["pr", "diff"]:
         emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +2 @@\n+first line\n")
     elif scenario == "metadata-only":
         emit("diff --git a/docs/example.md b/docs/example.md\nsimilarity index 100%\nrename from docs/example.md\nrename to docs/example.md\n")
+    elif scenario == "metadata-incomplete":
+        emit("diff --git a/docs/example.md b/docs/example.md\nsimilarity index 100%\nrename from docs/example.md\nrename to docs/example.md\n")
+    elif scenario == "hunk-header-phone":
+        phone = "6" + "9876" + "54321"
+        emit(f"diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n++++ b/synthetic {phone}\n")
+    elif scenario == "hunk-header-literals":
+        emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +2 @@\n++++ b/safe\n++++ /dev/null\n")
+    elif scenario == "separated-dates":
+        emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+2026-09-12 2026-09-13\n")
     elif scenario == "surface-unpins":
         emit("diff --git a/src/example.rs b/src/example.rs\n--- a/src/example.rs\n+++ b/src/example.rs\n@@ -0,0 +1 @@\n+safe text\n"
              "diff --git a/docs/tally/compatibility/compatibility-surface.json b/docs/tally/compatibility/compatibility-surface.json\n"
@@ -190,6 +204,14 @@ elif args and args[0] == "api":
             emit([[{"filename": "docs/old.png", "status": "removed", "additions": 0, "deletions": 0}]])
         elif scenario == "metadata-only":
             emit([[{"filename": "docs/example.md", "status": "modified", "additions": 0, "deletions": 0}]])
+        elif scenario == "metadata-incomplete":
+            emit([[{"filename": "docs/example.md", "status": "modified", "additions": 1, "deletions": 0}]])
+        elif scenario == "hunk-header-phone":
+            emit([[{"filename": "docs/example.md", "status": "modified", "additions": 1, "deletions": 0}]])
+        elif scenario == "hunk-header-literals":
+            emit([[{"filename": "docs/example.md", "status": "modified", "additions": 2, "deletions": 0}]])
+        elif scenario == "separated-dates":
+            emit([[{"filename": "docs/example.md", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "malformed-files":
             emit([[{"filename": "docs/example.md", "status": "added", "additions": 1, "deletions": 0}], [{"filename": 3, "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "missing-file-status":
@@ -332,6 +354,17 @@ class MergeGateControls(unittest.TestCase):
     def test_formatted_phone_is_scanned(self):
         self.assert_blocked("formatted-phone", "privacy scan found")
 
+    def test_header_shaped_added_payload_is_still_scanned(self):
+        self.assert_blocked("hunk-header-phone", "privacy scan found")
+
+    def test_header_shaped_added_literals_count_as_payload(self):
+        result = self.run_gate("hunk-header-literals")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_unrelated_separator_groups_are_not_fused_into_a_phone(self):
+        result = self.run_gate("separated-dates")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_destination_path_is_scanned(self):
         self.assert_blocked("path-id", "privacy scan found")
 
@@ -393,15 +426,18 @@ class MergeGateControls(unittest.TestCase):
         self.assert_blocked("checklist-unlinked", "same-repository line-specific")
 
     def test_omitted_nonremoved_diff_file_is_indeterminate(self):
-        self.assert_indeterminate("diff-omits-file", "privacy diff omits or duplicates")
+        self.assert_indeterminate("diff-omits-file", "privacy diff coverage failed")
 
     def test_truncated_textual_diff_payload_is_indeterminate(self):
-        self.assert_indeterminate("diff-truncated-payload", "privacy diff line totals")
+        self.assert_indeterminate("diff-truncated-payload", "privacy diff coverage failed")
 
     def test_metadata_only_zero_line_diff_can_pass(self):
         result = self.run_gate("metadata-only")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("metadata-only diff section", result.stdout)
+
+    def test_metadata_only_diff_requires_rest_zero_totals(self):
+        self.assert_indeterminate("metadata-incomplete", "metadata-only 'docs/example.md' conflicts")
 
     def test_pr_selector_must_be_numeric(self):
         env = os.environ.copy()
@@ -430,6 +466,9 @@ class MergeGateControls(unittest.TestCase):
 
     def test_missing_test_summary_blocks(self):
         self.assert_blocked("missing-test-summary", "test or reproduction command")
+
+    def test_final_changed_body_revalidates_test_evidence(self):
+        self.assert_blocked("body-loses-evidence", "description changed and no longer carries test or reproduction evidence")
 
 
 if __name__ == "__main__":
