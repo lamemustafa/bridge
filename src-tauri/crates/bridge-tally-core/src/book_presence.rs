@@ -183,7 +183,9 @@ impl PresenceError {
             Self::NumberingMethodUndeclared => "presence_numbering_method_undeclared",
             Self::NumberingMethodConflict => "presence_numbering_method_conflict",
             Self::NumberingDeclarationsTooMany => "presence_numbering_declarations_too_many",
-            Self::NumberingDeclarationBytesTooLarge => "presence_numbering_declaration_bytes_too_large",
+            Self::NumberingDeclarationBytesTooLarge => {
+                "presence_numbering_declaration_bytes_too_large"
+            }
             Self::TextBlank => "presence_text_blank",
             Self::TextTooLong => "presence_text_too_long",
             Self::TextUnsafe => "presence_text_unsafe",
@@ -313,7 +315,8 @@ impl BookVoucher {
         let voucher_number = input.voucher_number.map(validated_text).transpose()?;
         let remote_id = input.remote_id.map(validated_text).transpose()?;
         let party = input.party.map(validated_text).transpose()?;
-        let (magnitude, balanced, mut observed_ledgers, mut ledger_keys) = magnitude_of(input.entries)?;
+        let (magnitude, balanced, mut observed_ledgers, mut ledger_keys) =
+            magnitude_of(input.entries)?;
         if let Some(party) = party.as_deref() {
             observed_ledgers.insert(party.to_string());
             ledger_keys.insert(comparison_key(party));

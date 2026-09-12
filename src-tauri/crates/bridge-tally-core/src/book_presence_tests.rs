@@ -215,8 +215,10 @@ fn run(
     );
     names.sort();
     names.dedup();
-    let complete_catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("complete catalog");
-    let request = PresenceRequest::new(window, &complete_catalog, numbering, proposals).expect("request");
+    let complete_catalog =
+        MasterCatalog::new(MasterClass::Ledger, &names).expect("complete catalog");
+    let request =
+        PresenceRequest::new(window, &complete_catalog, numbering, proposals).expect("request");
     assess(&request)
 }
 
@@ -393,8 +395,7 @@ fn a_repeated_identical_declaration_is_accepted() {
 
 #[test]
 fn numbering_declarations_bound_duplicate_iterator_work() {
-    let entries = (0..=MAX_NUMBERING_DECLARATIONS)
-        .map(|_| ("Sales", NumberingMethod::Manual));
+    let entries = (0..=MAX_NUMBERING_DECLARATIONS).map(|_| ("Sales", NumberingMethod::Manual));
     assert_eq!(
         NumberingDeclaration::new(entries).expect_err("declaration count is bounded"),
         PresenceError::NumberingDeclarationsTooMany
@@ -403,8 +404,7 @@ fn numbering_declarations_bound_duplicate_iterator_work() {
 
 #[test]
 fn numbering_declarations_bound_aggregate_bytes_while_consuming_duplicates() {
-    let entries = (0..)
-        .map(|_| ("X".repeat(MAX_TEXT_CHARS), NumberingMethod::Manual));
+    let entries = (0..).map(|_| ("X".repeat(MAX_TEXT_CHARS), NumberingMethod::Manual));
     assert_eq!(
         NumberingDeclaration::new(entries).expect_err("declaration bytes are bounded"),
         PresenceError::NumberingDeclarationBytesTooLarge
@@ -413,8 +413,9 @@ fn numbering_declarations_bound_aggregate_bytes_while_consuming_duplicates() {
 
 #[test]
 fn request_refuses_a_window_ledger_missing_from_its_catalog() {
-    let window = window(&[BookRow::new("book-1", "20260812", "AA0118")
-        .rows(vec![["Uncatalogued Ledger", "0.00"]])]);
+    let window =
+        window(&[BookRow::new("book-1", "20260812", "AA0118")
+            .rows(vec![["Uncatalogued Ledger", "0.00"]])]);
     let proposals = [ProposalRow::new(0, "20260812", "AA0118").build()];
     assert_eq!(
         PresenceRequest::new(
@@ -1304,22 +1305,33 @@ fn an_empty_proposal_set_is_refused() {
 #[test]
 fn aggregate_proposal_window_resemblance_work_is_refused() {
     let books = (0..1_001)
-        .map(|index| BookRow::new(
-            Box::leak(format!("book-{index}").into_boxed_str()),
-            "20260812",
-            Box::leak(format!("N{index}").into_boxed_str()),
-        ).build())
+        .map(|index| {
+            BookRow::new(
+                Box::leak(format!("book-{index}").into_boxed_str()),
+                "20260812",
+                Box::leak(format!("N{index}").into_boxed_str()),
+            )
+            .build()
+        })
         .collect::<Vec<_>>();
     let window = BookWindow::observed(
-        "20260801", "20260831", WindowRead::Complete,
-        RemoteIdEvidence::Observed, books,
-    ).expect("window");
+        "20260801",
+        "20260831",
+        WindowRead::Complete,
+        RemoteIdEvidence::Observed,
+        books,
+    )
+    .expect("window");
     let proposals = (0..1_001)
         .map(|index| ProposalRow::new(index, "20260812", "N999999").build())
         .collect::<Vec<_>>();
     let error = PresenceRequest::new(
-        &window, &catalog(), &numbering(NumberingMethod::Manual), &proposals,
-    ).expect_err("quadratic resemblance work must be bounded");
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    )
+    .expect_err("quadratic resemblance work must be bounded");
     assert_eq!(error, PresenceError::ComparisonWorkTooLarge);
 }
 
@@ -1798,7 +1810,10 @@ fn two_proposals_reaching_one_book_voucher_are_both_demoted() {
     // The first proposal's manual number is absent from the book, so its
     // observed REMOTEID cannot override that contradictory identity signal.
     assert_eq!(report.totals().present, 1);
-    assert_eq!(reason(&report.vouchers()[0]), UndecidedReason::IdentityConflict);
+    assert_eq!(
+        reason(&report.vouchers()[0]),
+        UndecidedReason::IdentityConflict
+    );
     assert!(report.vouchers()[1].present_book_key().is_some());
 }
 
