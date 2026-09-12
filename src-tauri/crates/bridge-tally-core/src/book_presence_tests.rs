@@ -445,6 +445,33 @@ fn numbering_declarations_bound_aggregate_bytes_while_consuming_duplicates() {
 }
 
 #[test]
+fn aggregate_proposal_window_resemblance_work_is_refused() {
+    let rows = (0..1_001)
+        .map(|i| {
+            let key = Box::leak(format!("book-{i}").into_boxed_str());
+            BookRow::new(key, "20260812", "AA0118")
+        })
+        .collect::<Vec<_>>();
+    let proposals = (0..1_001)
+        .map(|i| {
+            let number = Box::leak(format!("AA{i:04}").into_boxed_str());
+            ProposalRow::new(i, "20260812", number).build()
+        })
+        .collect::<Vec<_>>();
+    let observed = window(&rows);
+    assert_eq!(
+        PresenceRequest::new(
+            &observed,
+            &catalog(),
+            &numbering(NumberingMethod::Manual),
+            &proposals,
+        )
+        .expect_err("aggregate comparison work is bounded"),
+        PresenceError::ComparisonWorkTooLarge
+    );
+}
+
+#[test]
 fn request_refuses_a_window_ledger_missing_from_its_catalog() {
     let window = window(&[BookRow::new("book-1", "20260812", "AA0118")
         .rows(vec![["Uncatalogued Ledger", "0.00"]])]);
@@ -1506,6 +1533,7 @@ fn every_error_carries_a_distinct_stable_reason_code() {
         PresenceError::WindowDoesNotCover,
         PresenceError::ProposalsEmpty,
         PresenceError::TooManyProposals,
+        PresenceError::ComparisonWorkTooLarge,
         PresenceError::TooManyEntries,
         PresenceError::NumberingMethodUndeclared,
         PresenceError::NumberingMethodConflict,
@@ -1519,7 +1547,7 @@ fn every_error_carries_a_distinct_stable_reason_code() {
     .iter()
     .map(PresenceError::safe_reason_code)
     .collect::<BTreeSet<_>>();
-    assert_eq!(codes.len(), 19);
+    assert_eq!(codes.len(), 20);
     assert!(codes.iter().all(|code| code.starts_with("presence_")));
 }
 
@@ -1820,15 +1848,14 @@ fn two_proposals_reaching_one_book_voucher_are_both_demoted() {
         &numbering(NumberingMethod::Manual),
         &proposals,
     );
-    // Neither may be excluded from an import: only one voucher exists.
-    assert_eq!(report.totals().present, 0);
-    for entry in report.vouchers() {
-        assert_eq!(reason(entry), UndecidedReason::BookVoucherClaimedTwice);
-        assert_eq!(
-            entry.undecided().expect("undecided").candidates[0].book_key,
-            "book-1"
-        );
-    }
+    // The absent manual number contradicts the remote identity. The second
+    // proposal has the sole exact manual number and remains present.
+    assert_eq!(report.totals().present, 1);
+    assert_eq!(
+        reason(&report.vouchers()[0]),
+        UndecidedReason::IdentityConflict
+    );
+    assert_eq!(report.vouchers()[1].present_book_key(), Some("book-1"));
 }
 
 #[test]
@@ -2105,6 +2132,24 @@ fn a_remote_id_and_a_number_selecting_different_vouchers_do_not_settle() {
     assert!(candidates
         .iter()
         .any(|c| c.book_key == "book-2" && c.rule == CandidateRule::SharedVoucherNumber));
+}
+
+#[test]
+fn a_remote_id_with_an_absent_manual_number_is_an_identity_conflict() {
+    let window =
+        window(&[BookRow::new("book-1", "20260812", "AA0118").remote_id("tally-1")]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0999")
+        .remote_id("tally-1")
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert!(entry.present_book_key().is_none());
+    assert_eq!(reason(entry), UndecidedReason::IdentityConflict);
 }
 
 #[test]

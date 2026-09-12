@@ -34,6 +34,8 @@ use serde::{Deserialize, Serialize};
 pub const MAX_WINDOW_VOUCHERS: usize = 20_000;
 /// Most vouchers one proposal set may carry.
 pub const MAX_PROPOSED_VOUCHERS: usize = 5_000;
+/// Maximum proposal-to-window resemblance comparisons per request.
+pub const MAX_PRESENCE_COMPARISONS: usize = 1_000_000;
 /// Most numbering declarations consumed for one presence request.
 pub const MAX_NUMBERING_DECLARATIONS: usize = MAX_PROPOSED_VOUCHERS;
 /// Aggregate UTF-8 bytes accepted while consuming numbering declarations.
@@ -122,6 +124,8 @@ pub enum PresenceError {
     ProposalsEmpty,
     #[error("proposed voucher list exceeded its bound")]
     TooManyProposals,
+    #[error("proposal and book window comparison work exceeded its bound")]
+    ComparisonWorkTooLarge,
     #[error("voucher entry list was empty")]
     EntriesEmpty,
     #[error("voucher entry list exceeded its bound")]
@@ -172,6 +176,7 @@ impl PresenceError {
             Self::WindowDoesNotCover => "presence_window_does_not_cover",
             Self::ProposalsEmpty => "presence_proposals_empty",
             Self::TooManyProposals => "presence_proposals_too_many",
+            Self::ComparisonWorkTooLarge => "presence_comparison_work_too_large",
             Self::EntriesEmpty => "presence_entries_empty",
             Self::TooManyEntries => "presence_entries_too_many",
             Self::NumberingMethodUndeclared => "presence_numbering_method_undeclared",
@@ -1072,6 +1077,13 @@ impl<'a> PresenceRequest<'a> {
         if proposals.len() > MAX_PROPOSED_VOUCHERS {
             return Err(PresenceError::TooManyProposals);
         }
+        let comparison_work = proposals
+            .len()
+            .checked_mul(window.vouchers().len())
+            .ok_or(PresenceError::ComparisonWorkTooLarge)?;
+        if comparison_work > MAX_PRESENCE_COMPARISONS {
+            return Err(PresenceError::ComparisonWorkTooLarge);
+        }
         for proposal in proposals {
             if !window.covers(proposal.date()) {
                 return Err(PresenceError::WindowDoesNotCover);
@@ -1582,6 +1594,24 @@ fn decide(
                 candidates_from(window, &number_matches, CandidateRule::SharedVoucherNumber),
             )),
             with_resemblances(number_matches.iter().copied().collect()),
+        );
+    }
+
+    // A remote identity that uniquely selects a book voucher conflicts with a
+    // supplied manual number absent from that voucher series. Treat the two
+    // identities as contradictory rather than allowing the stronger key to
+    // settle a row whose number evidence disagrees.
+    if remote_id_matches.len() == 1
+        && method == NumberingMethod::Manual
+        && proposal.number_key.is_some()
+        && number_matches.is_empty()
+    {
+        return shell(
+            PresenceStatus::PossiblyPresent(undecided(
+                UndecidedReason::IdentityConflict,
+                candidates_from(window, &remote_id_matches, CandidateRule::SharedRemoteId),
+            )),
+            with_resemblances(remote_id_matches.iter().copied().collect()),
         );
     }
 

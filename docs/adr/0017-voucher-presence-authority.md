@@ -192,8 +192,9 @@ Per proposed voucher, exactly one of:
 | `Absent` | No rule produced any candidate, in a window proven to cover it | including this voucher in the import |
 
 `PossiblyPresent` carries candidates labelled with the **rule that surfaced
-each** — `SharedVoucherNumber`, `SameDatePartyAmount`, `SamePartyAmount`,
-`SameDateAmount`, `SameDateParty` — ordered by rule and then by the book
+each** — `SharedRemoteId`, `SharedNarrationMarker`,
+`SharedVoucherNumber`, `SameDatePartyAmount`, `SamePartyAmount`, `SameDateAmount`,
+`SameDateParty` — ordered by rule and then by the book
 voucher's own ordering. **No candidate is marked best, likely or preferred, and
 no score is emitted anywhere.**
 
