@@ -259,6 +259,47 @@ test("clears saved status when a proposal changes after saving", async () => {
   root.unmount();
 });
 
+test("groups and lists a catalogue of realistic size without losing the narrowing", async () => {
+  // The captured catalogue is nine ledgers, which is a real shape but not a
+  // real size; the fabricated ones here are three. A live company's ledger
+  // count runs into the thousands, and that is where narrowing earns its place
+  // — and where a defect in it would be invisible at three targets. Size is
+  // the one dimension of this control that a capture cannot supply, because
+  // no lab company has thousands of ledgers.
+  const bulk = Array.from({ length: 2_000 }, (_, index) => `Bulk placeholder ledger ${String(index).padStart(4, "0")}`);
+  const large = {
+    ...catalog,
+    targets: [...bulk, "Existing target"].sort(),
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: "Existing target",
+      bound_basis: "exact_name",
+      unbound_reason: null,
+      candidates: [],
+      candidate_count: 0,
+      candidates_truncated: false,
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(large);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  const target = host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!;
+  const groups = Array.from(target.querySelectorAll("optgroup"));
+  expect(groups.map((group) => group.label)).toEqual(["Matched to this source line", "All 2001 existing ledgers"]);
+  // The match leads, alone, out of two thousand and one.
+  expect(Array.from(groups[0].querySelectorAll("option")).map((option) => option.value)).toEqual(["Existing target"]);
+  // And the whole catalogue is still there: narrowing is a shortcut through
+  // the list, never a restriction on it, at any size.
+  expect(groups[1].querySelectorAll("option")).toHaveLength(2_001);
+  expect(target.value).toBe("");
+  root.unmount();
+});
+
 test("keeps the binding result visible beside a saved target nobody has re-read", async () => {
   // `entry.ledger` alone is not a choice. A saved target from an earlier
   // session leaves `catalogSelections` empty, the control shows nothing

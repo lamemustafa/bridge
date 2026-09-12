@@ -772,18 +772,15 @@ mod tests {
         ))
         .expect("the capture's provenance sidecar parses");
         assert_eq!(
-            committed["evidence"]["response_sha256"],
-            provenance["source_response_sha256"],
+            committed["evidence"]["response_sha256"], provenance["source_response_sha256"],
             "the fixture no longer carries the captured response digest"
         );
         assert_eq!(
-            committed["evidence"]["request_sha256"],
-            provenance["source_request_sha256"],
+            committed["evidence"]["request_sha256"], provenance["source_request_sha256"],
             "the fixture no longer carries the captured request digest"
         );
         assert_eq!(
-            committed["evidence"]["bytes"],
-            provenance["source_response_bytes"],
+            committed["evidence"]["bytes"], provenance["source_response_bytes"],
             "the fixture no longer carries the captured response size"
         );
         assert_eq!(
