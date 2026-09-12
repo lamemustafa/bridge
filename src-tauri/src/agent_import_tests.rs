@@ -1733,6 +1733,13 @@ async fn built_batch_guidance_matches_the_saved_native_admission() {
                 .any(|warning| warning.contains("Confirm the loaded company before importing")),
             "company-identity warning missing from a Journal-only batch: {warnings:?}"
         );
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("including a Journal")
+                    && warning.contains("verify_import for read-only reconciliation")),
+            "unknown-outcome guidance must remain read-only for Journal: {warnings:?}"
+        );
         // The check the warning asks for is §9.13's five-element tuple, and
         // the operator can only perform it if the fifth element is visible:
         // endpoint_origin is recorded on the batch and compared on dispatch,
