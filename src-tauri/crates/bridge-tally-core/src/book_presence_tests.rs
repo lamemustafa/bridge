@@ -2321,6 +2321,10 @@ fn remote_identity_reports_an_exact_voucher_type_difference() {
         .expect("type difference serialized");
     assert_eq!(difference.proposed.as_deref(), Some("Sales"));
     assert_eq!(difference.observed.as_deref(), Some("Receipt"));
+    assert_eq!(
+        serde_json::to_value(difference).expect("serialize difference")["field"],
+        "voucher_type"
+    );
 }
 
 // --- the response cap must not distort the observations -----------------

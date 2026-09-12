@@ -1850,20 +1850,9 @@ fn decide(
     }
 
     let touched = found.keys().copied().collect::<BTreeSet<_>>();
-    // The unread REMOTEID outranks every non-decisive resemblance: carrying
-    // candidates forward keeps the operator's work item intact, but it cannot
-    // silently become a weaker reason for withholding absence.
-    if remote_id_unverifiable {
-        let mut ordered = found.into_iter().collect::<Vec<_>>();
-        return shell(
-            PresenceStatus::PossiblyPresent(undecided(
-                UndecidedReason::RemoteIdEvidenceUnavailable,
-                candidates_ranked(window, &mut ordered),
-            )),
-            touched,
-        );
-    }
-    let reason = match (
+    let reason = if remote_id_unverifiable {
+        UndecidedReason::RemoteIdEvidenceUnavailable
+    } else { match (
         number_matches.is_empty(),
         type_observed,
         method == NumberingMethod::Manual,
@@ -1871,7 +1860,7 @@ fn decide(
         (false, false, _) => UndecidedReason::VoucherTypeNotObserved,
         (false, true, false) => UndecidedReason::NumberNotDecisive,
         _ => UndecidedReason::ResemblesBookVoucher,
-    };
+    }};
     // Ordered as (position, rule) pairs before anything is cloned: the order is
     // rule-then-key and only the retained prefix needs a key at all.
     let mut ordered = found.into_iter().collect::<Vec<_>>();
