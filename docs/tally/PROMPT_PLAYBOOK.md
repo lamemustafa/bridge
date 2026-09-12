@@ -305,6 +305,14 @@ Implement:
    must not be accepted). Never a symmetric case-insensitive collation:
    that accepts the unverified direction and can bind a voucher to the
    wrong master.
+   And the same SCOPE GATE that governs Phase 4 step 4 governs here:
+   §9.4b's case and separator rows sit on §0's **Edit Log 7.0
+   Educational** baseline. Where this phase reads a licensed instance,
+   match on exact codepoints; widen to `accepts()` only where a licensed
+   capture or the connected instance's compatibility result qualifies it.
+   A read is not a safe place to be wrong about this — the mirror rows
+   built here are what later binding decisions resolve against, so a fold
+   that merges two masters here merges them everywhere downstream.
    DEVIATION 2026-09-12 (TALLY_PROTOCOL_REFERENCE.md §9.4b): NFC
    normalization of name keys is WITHDRAWN. §9.4b is MEASURED, not
    inferred: an NFD spelling of a UI-created NFC ledger was rejected
@@ -581,10 +589,11 @@ Implement — write core (masters):
 3. Single-writer actor owns the import surface; reads gated during
    dispatch→readback windows; queue depth visible.
 4. Readback verification: after counters accept, re-export the object
-   (masters matched by name via §9.4b's `accepts(candidate, tally_name)`
-   predicate only — directional ASCII case folding; vouchers by
+   (masters matched by name under the SCOPE GATE below — never by a
+   broader rule stated anywhere else in this step; vouchers by
    LASTVCHID) and
-   SCOPE GATE (§9.4b, §0): §9.4b's case-folding and hyphen-for-space rows
+   SCOPE GATE (§9.4b, §0) — THE ONLY NAME-MATCHING RULE IN THIS STEP:
+   §9.4b's case-folding and hyphen-for-space rows
    were measured on the **Edit Log 7.0 Educational** baseline and carry no
    licensed-SKU qualification; only the NFC/NFD row was measured on a
    licensed 7.1 instance, and it points the other way (exact codepoints).
@@ -605,8 +614,11 @@ Implement — write core (masters):
    name" never means NFC/NFD-normalized. An NFD create read back against
    a pre-existing NFC master would resolve as a match and promote the
    wrong object to CONFIRMED — §9.4b measured Tally keeping the two
-   apart. Compare master names on exact codepoints plus only the
-   directional ASCII-case fold; never normalize either side first.
+   apart. Never normalize either side first. This deviation removes
+   normalization; it does not widen what remains — whether any case or
+   separator fold is permitted on top of exact codepoints is decided by
+   the SCOPE GATE above and by nothing in this sentence. On an
+   unqualified licensed SKU that leaves exact codepoints and nothing else.
 5. OutcomeUnknown recovery: on restart, DISPATCHING rows → probe by key +
    fingerprint. A probe MATCH is not itself a confirmation: run the SAME
    full field-level readback diff as the normal dispatch path (step 4) and
