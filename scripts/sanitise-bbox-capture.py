@@ -117,6 +117,26 @@ def _split_tokens(text):
 # account (`[Xx]{4,}\d*`). Below this a run of `X` is data, not a convention.
 MASK_MIN_XS = 4
 
+
+def _is_mask(token):
+    """True when `token` is a masked account to a parser that reads these captures.
+
+    There are **two** such shapes, and honouring only one leaks by the door the
+    other leaves open. `bank_statement_import` recognises `[Xx]{4,}\\d*` when it
+    decides a standalone field is an account (its narration boundary test), and
+    `[Xx]+\\d+` inside a UPI/IMPS reference — where a run as short as `XX1234`
+    is the bank's masking, not a customer's letters. Requiring four Xs
+    everywhere fabricated `XX1234` into `ZZ1111`, destroying a shape the fixture
+    exists to preserve.
+
+    The union is still a whole-token test, which is what keeps `XAVIER`,
+    `ABXXCD` and `MAX` out: an X is structure only when the token is *nothing
+    but* a mask, and the short form additionally requires the digits that make
+    it an account reference rather than an initial.
+    """
+    return bool(re.fullmatch(rf"[Xx]{{{MASK_MIN_XS},}}\d*", token)
+                or re.fullmatch(r"[Xx]+\d+", token))
+
 ALPHA = "ZQVWKJYBGFHLMNPRSTDC"
 # Markup escapes: syntax, held out and restored untouched.
 STRUCTURAL_ENTITY = re.compile(r"&(?:amp|lt|gt|quot|apos);")
@@ -250,7 +270,7 @@ def _fake_token(token):
     # customer letters. Classify the token against the parser's own pattern
     # first, and only then treat `X` as structure; everywhere else an `X` is
     # data like any other letter.
-    if re.fullmatch(rf"[Xx]{{{MASK_MIN_XS},}}\d*", token):
+    if _is_mask(token):
         positions = [index for index, character in enumerate(token) if character.isdigit()]
         if not positions:
             return token
