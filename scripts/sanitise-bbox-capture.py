@@ -235,17 +235,26 @@ def _fake_token(token):
     """
     if token in _seen:
         return _seen[token]
-    positions = [index for index, character in enumerate(token) if character != "X"]
-    if not positions:
-        # An all-`X` token is only a masking convention if it is the shape the
-        # parsers actually look for. `bank_statement_import` requires
-        # `[Xx]{4,}\d*` to call something a masked account, so a bare `X` or
-        # `XX` is not a mask — it is a customer value that happens to be the
-        # letter X, an initial for instance. Returning those verbatim copied
-        # source text into the fixture and bypassed `reserve_source_tokens`
-        # entirely, which is the one check that exists to stop exactly that.
-        if len(token) >= MASK_MIN_XS:
+    # An `X` is only a masking convention when the WHOLE token is the shape the
+    # parsers actually look for. `bank_statement_import` requires
+    # `[Xx]{4,}\d*` to call something a masked account, so a bare `X` or `XX`
+    # is not a mask — it is a customer value that happens to be the letter X,
+    # an initial for instance. Returning those verbatim copied source text into
+    # the fixture and bypassed `reserve_source_tokens` entirely, which is the
+    # one check that exists to stop exactly that.
+    #
+    # Deciding that per CHARACTER rather than per token leaked the same way by
+    # a narrower door: in `XAVIER` or `ABXXCD` the non-X characters make the
+    # free-position list nonempty, so the all-X branch never runs, and every
+    # `X` survives into the fixture as `XZZZZZ` or `ZZXXZZ`. Those `X`s are
+    # customer letters. Classify the token against the parser's own pattern
+    # first, and only then treat `X` as structure; everywhere else an `X` is
+    # data like any other letter.
+    if re.fullmatch(rf"[Xx]{{{MASK_MIN_XS},}}\d*", token):
+        positions = [index for index, character in enumerate(token) if character.isdigit()]
+        if not positions:
             return token
+    else:
         positions = list(range(len(token)))
 
     alphabets = [

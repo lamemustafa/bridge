@@ -193,9 +193,34 @@ check(
     stopped or f"{len(x_out) - len(set(x_out))} collision(s)",
 )
 check(
-    "and the trailing X is still preserved in every one",
-    len(x_out) == len(x_tokens) and all(value.endswith("X") for value in x_out),
+    "and NOT ONE of them keeps its trailing X, because ??X is not a mask",
+    len(x_out) == len(x_tokens) and not any("X" in value for value in x_out),
+    f"{[v for v in x_out if 'X' in v][:5]}",
 )
+
+# The finding this replaced an assertion for. Deciding "is this an X of the
+# masking convention?" per CHARACTER meant any token mixing X with other
+# characters skipped the all-X branch entirely and carried its own X straight
+# into the fixture. A customer initial and a customer name are the obvious
+# cases; both are letters someone typed.
+for leaky in ("XAVIER", "ABXXCD", "MAX", "X-RAY"):
+    check(
+        f"an X inside {leaky!r} is customer data and is fabricated",
+        "X" not in load()._scrub_plain(leaky),
+        f"{leaky} -> {load()._scrub_plain(leaky)}",
+    )
+
+# ...while the shape the parsers actually look for is still structure, and
+# survives. `bank_statement_import` calls something a masked account only when
+# the whole token matches `[Xx]{4,}\d*`, so that is the one test applied here.
+for mask, keeps in (("XXXX", True), ("XXXXXX1234", True), ("xxxx5678", True),
+                    ("XX", False), ("X", False), ("XXX", False)):
+    out = load()._scrub_plain(mask)
+    held = out.lower().startswith("x" * min(4, len(mask))) if keeps else "X" not in out.upper()
+    check(
+        f"{mask!r} is {'preserved as a mask' if keeps else 'fabricated, being too short to be one'}",
+        held, f"{mask} -> {out}",
+    )
 
 # The invariant the case above turns on, asserted directly so it cannot be
 # undone by editing one string. A replacement character that is an X must mean
@@ -211,13 +236,19 @@ check(
 # even after a flood of same-length tokens masked somewhere else.
 fresh = load()
 flood = [f"{a}{b}X" for a in string.ascii_uppercase for b in string.ascii_uppercase][:60]
-masked = [f"{c}XX" for c in string.ascii_uppercase[:10]]
+masked = [f"XXXXXX{n:04d}" for n in range(1, 11)]
 values, stopped = scrub_all(fresh, flood + masked)
 tail = values[len(flood):]
 check(
-    "a ?XX source keeps its own replacement space after 60 ??X sources",
-    stopped is None and len(set(tail)) == len(masked) and all(v.endswith("XX") for v in tail),
+    "a real mask keeps its X run after a flood of 60 tokens merely containing X",
+    stopped is None and len(set(tail)) == len(masked)
+    and all(v.startswith("XXXXXX") for v in tail),
     stopped or f"{tail}",
+)
+check(
+    "and the flood itself carried no X through",
+    not any("X" in v for v in values[:len(flood)]),
+    f"{[v for v in values[:len(flood)] if 'X' in v][:5]}",
 )
 
 # Exhaustion must be loud, and it must still be *reachable*. A `?XX` token has
@@ -232,7 +263,14 @@ check(
 # that way would have quietly turned a guard into a test that can never fail.
 fresh = load()
 try:
-    for word in [f"{c}XX" for c in string.ascii_uppercase]:
+    # A single letter has exactly one free position, so its whole space is the
+    # 20 letters of ALPHA and the 21st such source genuinely cannot be told
+    # apart. This shape is chosen deliberately: `?XX` used to exhaust because
+    # its two X positions were frozen, and now that an X outside a mask is
+    # fabricated like any other letter it has 20**3 replacements and can never
+    # run out. Leaving the old shape here would have turned a live guard into a
+    # test that cannot fail.
+    for word in string.ascii_uppercase:
         fresh._scrub_plain(word)
     check("exhausting the replacement space refuses", False, "it returned instead")
 except SystemExit as stop:
