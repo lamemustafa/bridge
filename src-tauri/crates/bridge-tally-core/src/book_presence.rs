@@ -1852,15 +1852,17 @@ fn decide(
     let touched = found.keys().copied().collect::<BTreeSet<_>>();
     let reason = if remote_id_unverifiable {
         UndecidedReason::RemoteIdEvidenceUnavailable
-    } else { match (
-        number_matches.is_empty(),
-        type_observed,
-        method == NumberingMethod::Manual,
-    ) {
-        (false, false, _) => UndecidedReason::VoucherTypeNotObserved,
-        (false, true, false) => UndecidedReason::NumberNotDecisive,
-        _ => UndecidedReason::ResemblesBookVoucher,
-    }};
+    } else {
+        match (
+            number_matches.is_empty(),
+            type_observed,
+            method == NumberingMethod::Manual,
+        ) {
+            (false, false, _) => UndecidedReason::VoucherTypeNotObserved,
+            (false, true, false) => UndecidedReason::NumberNotDecisive,
+            _ => UndecidedReason::ResemblesBookVoucher,
+        }
+    };
     // Ordered as (position, rule) pairs before anything is cloned: the order is
     // rule-then-key and only the retained prefix needs a key at all.
     let mut ordered = found.into_iter().collect::<Vec<_>>();

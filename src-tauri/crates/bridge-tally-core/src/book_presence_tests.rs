@@ -2264,7 +2264,7 @@ fn a_remote_id_the_window_never_read_withholds_absent() {
     let report = run(
         &unread,
         &catalog(),
-        &numbering(NumberingMethod::Manual),
+        &NumberingDeclaration::new([("Receipt", NumberingMethod::Manual)]).expect("numbering"),
         &proposals,
     );
     let entry = only(&report);
@@ -2298,26 +2298,111 @@ fn the_same_proposal_is_absent_when_the_window_did_read_remote_ids() {
 #[test]
 fn unread_remote_id_outranks_resemblance_but_keeps_its_candidates() {
     let unread = BookWindow::observed(
-        "20260801", "20260831", WindowRead::Complete, RemoteIdEvidence::NotRead,
+        "20260801",
+        "20260831",
+        WindowRead::Complete,
+        RemoteIdEvidence::NotRead,
         vec![BookRow::new("book-1", "20260812", "AA0118").build()],
-    ).expect("window");
-    let proposals = [ProposalRow::new(0, "20260812", "AA0777").remote_id("tally-1").build()];
-    let report = run(&unread, &catalog(), &numbering(NumberingMethod::Automatic), &proposals);
+    )
+    .expect("window");
+    let proposals = [ProposalRow::new(0, "20260812", "AA0777")
+        .remote_id("tally-1")
+        .build()];
+    let report = run(
+        &unread,
+        &catalog(),
+        &numbering(NumberingMethod::Automatic),
+        &proposals,
+    );
     let entry = only(&report);
     assert_eq!(reason(entry), UndecidedReason::RemoteIdEvidenceUnavailable);
-    assert_eq!(entry.undecided().expect("undecided").candidates[0].book_key, "book-1");
+    assert_eq!(
+        entry.undecided().expect("undecided").candidates[0].book_key,
+        "book-1"
+    );
     assert_eq!(report.observations().unmatched_book_vouchers, 0);
+}
+
+#[test]
+fn unread_remote_id_outranks_nondecisive_number_candidates() {
+    let unread = BookWindow::observed(
+        "20260801",
+        "20260831",
+        WindowRead::Complete,
+        RemoteIdEvidence::NotRead,
+        vec![BookRow::new("book-1", "20260812", "AA0118").build()],
+    )
+    .expect("window");
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .remote_id("tally-1")
+        .build()];
+    let report = run(
+        &unread,
+        &catalog(),
+        &numbering(NumberingMethod::Automatic),
+        &proposals,
+    );
+    assert_eq!(
+        reason(only(&report)),
+        UndecidedReason::RemoteIdEvidenceUnavailable
+    );
+    assert_eq!(
+        only(&report).undecided().unwrap().candidates[0].rule,
+        CandidateRule::SharedVoucherNumber
+    );
+}
+
+#[test]
+fn unread_remote_id_outranks_unobserved_type_number_candidates() {
+    let unread = BookWindow::observed(
+        "20260801",
+        "20260831",
+        WindowRead::Complete,
+        RemoteIdEvidence::NotRead,
+        vec![BookRow::new("book-1", "20260812", "AA0118").build()],
+    )
+    .expect("window");
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .voucher_type("Receipt")
+        .remote_id("tally-1")
+        .build()];
+    let report = run(
+        &unread,
+        &catalog(),
+        &NumberingDeclaration::new([("Receipt", NumberingMethod::Manual)]).expect("numbering"),
+        &proposals,
+    );
+    assert_eq!(
+        reason(only(&report)),
+        UndecidedReason::RemoteIdEvidenceUnavailable
+    );
+    assert_eq!(
+        only(&report).undecided().unwrap().candidates[0].rule,
+        CandidateRule::SharedVoucherNumber
+    );
 }
 
 #[test]
 fn remote_identity_reports_an_exact_voucher_type_difference() {
     let window = window(&[BookRow::new("book-1", "20260812", "AA0118")
-        .voucher_type("Receipt").remote_id("tally-1")]);
+        .voucher_type("Receipt")
+        .remote_id("tally-1")]);
     let proposals = [ProposalRow::new(0, "20260812", "AA0118")
-        .voucher_type("Sales").remote_id("tally-1").build()];
-    let report = run(&window, &catalog(), &numbering(NumberingMethod::Manual), &proposals);
-    let PresenceStatus::Present { differences, .. } = &only(&report).status else { panic!("present") };
-    let difference = differences.iter().find(|item| item.field == DifferenceField::VoucherType)
+        .voucher_type("Sales")
+        .remote_id("tally-1")
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let PresenceStatus::Present { differences, .. } = &only(&report).status else {
+        panic!("present")
+    };
+    let difference = differences
+        .iter()
+        .find(|item| item.field == DifferenceField::VoucherType)
         .expect("type difference serialized");
     assert_eq!(difference.proposed.as_deref(), Some("Sales"));
     assert_eq!(difference.observed.as_deref(), Some("Receipt"));
