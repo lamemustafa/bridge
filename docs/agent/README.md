@@ -216,8 +216,10 @@ licence mode, or manually imported file, and only an unnumbered single-voucher
      `candidates`, each labelled with the rule that surfaced it. A single
      candidate is still not a decision. Where `reason` is
      `master_binding_no_discriminating_candidate`, the name reaches
-     `candidate_count` masters that it does not distinguish and none is listed;
-     use a more complete source name, or read the ledger list and choose.
+     `candidate_count` possible masters that it does not distinguish and none
+     is listed. When `candidate_count_is_lower_bound` is true, show this as
+     "at least N", never an exact total. Use a more complete source name,
+     or read the ledger list and choose.
    - `missing` — no live ledger matched. Bridge never creates masters.
 3. Call `build_import_xml` with the payload. It checks exact decimal balance,
    company date extent, live masters, and local journal integrity,
@@ -449,7 +451,9 @@ boundary. `changed_since` is unavailable; existing clients must stop calling it.
 
 `validate_masters` accepts 1–100 nonblank names, each at most 1024 characters.
 Near-miss suggestions are limited to 25 names and 8192 UTF-8 bytes per requested
-name; `candidate_count` and `candidates_truncated` preserve ambiguity. Import
+name; `candidate_count`, `candidate_count_is_lower_bound` and
+`candidates_truncated` preserve ambiguity and count precision. A true lower-bound
+flag means "at least N" even when no candidates are listed. Import
 planning allows 1000 vouchers but at most 100 distinct ledger names per batch.
 Repeated uses of a ledger do not consume additional distinct-name slots.
 Voucher-type and ledger selectors share the 1024-character bound; ledger
