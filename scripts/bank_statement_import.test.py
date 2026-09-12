@@ -98,7 +98,16 @@ HDFC_PAGE = page(
     # them: this is where a customer id or a phone number sits
     (56, [(340, 380, "Cust"), (382, 396, "ID"), (397, 400, ":"),
           (403, 470, "00000000004230")]),
-    (60, [(70, 200, "Statement"), (205, 260, "of"), (265, 340, "account")]),
+    # four more header lines, each with its own distinct number, so the wrong
+    # tails below exercise phone, IFSC, MICR and postcode independently rather
+    # than a single stand-in field
+    (60, [(340, 380, "Phone"), (382, 396, "no."), (397, 400, ":"),
+          (403, 470, "00000000005551")]),
+    (64, [(340, 375, "RTGS/NEFT"), (378, 396, "IFSC"), (397, 400, ":"),
+          (403, 460, "ZZZZ0005552")]),
+    (68, [(340, 372, "MICR"), (397, 400, ":"), (403, 460, "000000005553")]),
+    (72, [(340, 372, "City"), (397, 400, ":"), (403, 460, "ZZZZZ 005554")]),
+    (76, [(70, 200, "Statement"), (205, 260, "of"), (265, 340, "account")]),
     (100, [(5, 30, "Date"), (72, 120, "Narration"), (282, 340, "Chq./Ref.No."),
            (360, 380, "Value"), (382, 396, "Dt"), (402, 452, "Withdrawal"),
            (454, 474, "Amt."), (482, 522, "Deposit"), (524, 544, "Amt."),
@@ -287,9 +296,17 @@ def test_parse_real_hdfc_capture(m):
 
     # the account number is bound from the header block, not from the table
     m.require_account_match(pages, bank, "HDFC CA xx1111")
-    # every one of these is a real number printed in this capture's header —
-    # phone, customer id, IFSC digits, MICR, postcode — and every one passed
-    # before the binding was narrowed to the account-number line
+    # 1112 is real: this capture's sanitised phone number and its MICR code
+    # both end in it, and neither line is the account-number line. Every
+    # *other* header field here (customer id, IFSC, postcode) sanitises to an
+    # unbroken run of the same digit as the account number itself, so its own
+    # tail cannot serve as a wrong value on this fixture without also
+    # matching the real account — `test_account_binding` below carries phone,
+    # IFSC, MICR and postcode as genuinely distinct fields, which a real
+    # capture this heavily redacted cannot. 1113-1115 are real too, but from
+    # the transaction table rather than the header — a different negative
+    # case (a table reference must not stand in for the account), not a sixth
+    # header field. 9876 is printed nowhere in the document at all.
     for wrong in ("xx1112", "xx1113", "xx1114", "xx1115", "xx9876"):
         refuses(m, "account_not_in_statement", m.require_account_match,
                 pages, bank, f"HDFC CA {wrong}")
@@ -392,9 +409,16 @@ def test_account_binding(m):
     # 9012 ends the UPI reference on row 1
     refuses(m, "account_not_in_statement", m.require_account_match,
             [HDFC_PAGE], hdfc, "HDFC CA xx9012")
-    # nor may any other number in the header: 4230 is the customer id
-    refuses(m, "account_not_in_statement", m.require_account_match,
-            [HDFC_PAGE], hdfc, "HDFC CA xx4230")
+    # nor may any other number in the header — and each of these is its own
+    # field with its own distinct value, not one stand-in tried five times, so
+    # a version that fell back to reading the whole header block would be
+    # caught by whichever field it happened to read
+    for label, wrong in (("customer id", "xx4230"), ("phone", "xx5551"),
+                         ("IFSC", "xx5552"), ("MICR", "xx5553"),
+                         ("postcode", "xx5554")):
+        refusal = refuses(m, "account_not_in_statement", m.require_account_match,
+                           [HDFC_PAGE], hdfc, f"HDFC CA {wrong}")
+        assert wrong[2:] in str(refusal), (label, refusal)
     # and a document with no account-number line fails closed
     refuses(m, "no_account_number_line", m.require_account_match,
             [page((10, [(2, 60, "nothing")]))], hdfc, "HDFC CA xx1234")
