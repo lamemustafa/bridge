@@ -2287,6 +2287,32 @@ def test_cleanup_keeps_a_reclaimed_owned_path(m):
         assert failures == [str(owned)]
 
 
+def test_fresh_output_parent_rename_reports_an_unlocated_owned_descriptor(m):
+    """A parent rename preserves a newly created inode under a name cleanup
+    cannot discover. The failure must disclose that fact rather than calling
+    stale-path ENOENT a successful rollback."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory) / "before"
+        moved = pathlib.Path(directory) / "after"
+        root.mkdir()
+        destination = root / "output.xml"
+
+        def rename_parent():
+            os.rename(root, moved)
+
+        try:
+            m.write_outputs([(str(destination), "new bytes")], after_claim=rename_parent)
+            raise AssertionError("a moved fresh output must refuse before commit")
+        except m.Refusal as refusal:
+            assert refusal.category == "output_path_changed"
+            assert "owned output could not be located after cleanup" in str(refusal.code)
+
+        retained = moved / "output.xml"
+        assert retained.read_text() == "new bytes"
+
+
 def test_writer_refuses_when_the_private_backup_path_is_reclaimed(m):
     """The commit boundary must still name this run's backup; if it does not,
     do not overwrite the destination without a recoverable owned copy."""
@@ -2672,6 +2698,40 @@ def test_write_outputs_refuses_a_hard_link_added_after_backup_copy(m):
         assert os.path.samefile(destination, alias)
         assert destination.read_text() == alias.read_text() == "old bytes"
         assert sorted(path.name for path in root.iterdir()) == ["alias.xml", "output.xml"]
+
+
+def test_write_outputs_refuses_a_hard_link_added_to_the_private_backup(m):
+    """The generated backup is ownership-only until commit. A link made after
+    its copy finishes leaves an unknown alias with old statement bytes, so the
+    run must refuse and describe the retention rather than report success."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "output.xml"
+        alias = root / "backup-alias.xml"
+        destination.write_text("old bytes")
+        real_copy = m._copy_private_backup
+
+        def add_link_after_backup_copy(*args):
+            result = real_copy(*args)
+            backup, = root.glob("output.xml.*.bak")
+            os.link(backup, alias)
+            return result
+
+        m._copy_private_backup = add_link_after_backup_copy
+        try:
+            refusal = refuses(
+                m,
+                "rollback_backup_has_multiple_links",
+                m.write_outputs,
+                [(str(destination), "new bytes")],
+            )
+        finally:
+            m._copy_private_backup = real_copy
+
+        assert "unknown hard-link alias" in str(refusal.code)
+        assert destination.read_text() == "old bytes"
+        assert alias.read_text() == "old bytes"
+        assert not list(root.glob("output.xml.*.bak"))
 
 
 def test_committed_new_output_close_failure_is_not_a_retained_backup(m):
