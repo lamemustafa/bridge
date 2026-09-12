@@ -1747,18 +1747,31 @@ def _restore_backup(backup, backup_identity, destination, original_identity,
             failures.append(destination)
 
 
+def _append_cleanup_detail(error, message):
+    """Keep recovery details visible on Python versions without add_note."""
+    # Python prints `SystemExit.code`, not exception notes. A Refusal is a
+    # SystemExit so that command-line validation exits without a traceback;
+    # put the retained location in its visible code rather than hiding it in
+    # an unrendered note.
+    if isinstance(error, Refusal):
+        error.code = f"{error.code}\n{message}"
+        return
+    add_note = getattr(error, "add_note", None)
+    if callable(add_note):
+        add_note(message)
+        return
+    # BaseException.add_note arrived in Python 3.11. OSError can render cached
+    # errno, strerror, and filename fields instead of its mutable `args`, so
+    # retain the original exception intact and write the recovery detail where
+    # an unhandled CLI failure will still show it on Python 3.10.
+    print(message, file=sys.stderr)
+
+
 def _note_cleanup_failures(error, failures):
     if failures:
         retained = ", ".join(sorted(set(failures)))
         message = "output cleanup or rollback failed; retained path(s): " + retained
-        # Python prints `SystemExit.code`, not exception notes. A Refusal is a
-        # SystemExit so that command-line validation exits without a traceback;
-        # put the retained location in its visible code rather than hiding it in
-        # an unrendered note.
-        if isinstance(error, Refusal):
-            error.code = f"{error.code}\n{message}"
-        else:
-            error.add_note(message)
+        _append_cleanup_detail(error, message)
 
 
 def _note_rollback_metadata_scope(error, restored_paths):
@@ -1770,10 +1783,39 @@ def _note_rollback_metadata_scope(error, restored_paths):
         "rollback restored bytes and captured portable metadata for: "
         f"{restored}; extended ACLs and file flags were not verified"
     )
-    if isinstance(error, Refusal):
-        error.code = f"{error.code}\n{message}"
-    else:
-        error.add_note(message)
+    _append_cleanup_detail(error, message)
+
+
+def _cleanup_committed_outputs(replaced, claimed, failures):
+    """Remove old private copies after every replacement has committed."""
+    for swap in replaced:
+        backup = swap["backup"]
+        _unlink_for_cleanup(backup["path"], backup["identity"], failures)
+        _close_owned_path(backup, failures)
+        _close_owned_path(swap["original"], failures)
+    for record in claimed:
+        _close_owned_path(record, failures)
+
+
+def _reconcile_interrupted_committed_cleanup(replaced, claimed, failures):
+    """Close pins and disclose owned old copies without undoing a commit."""
+    for swap in replaced:
+        backup = swap["backup"]
+        try:
+            if _entry_identity(backup["path"]) == backup["identity"]:
+                failures.append(str(backup["path"]))
+            elif os.path.lexists(backup["path"]):
+                failures.append(str(backup["path"]))
+        except FileNotFoundError:
+            pass
+        except OSError:
+            if os.path.lexists(backup["path"]):
+                failures.append(str(backup["path"]))
+        finally:
+            _close_owned_path(backup, failures)
+            _close_owned_path(swap["original"], failures)
+    for record in claimed:
+        _close_owned_path(record, failures)
 
 
 def write_outputs(targets, accept_inherited=False, after_claim=None):
@@ -1832,6 +1874,9 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
     # unlink it only while its identity still equals record["identity"].
     pending_backup = None
     pending_swap = None
+    cleanup_failures = []
+    metadata_scope_warnings = []
+    committed = False
     try:
         for path, _ in targets:
             if os.path.exists(path):
@@ -1911,12 +1956,26 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             os.replace(temporary["path"], real_path)
             replaced.append(pending_swap)
             pending_swap = None
+        # The final replacement is the boundary between rollback and committed
+        # cleanup. Keep it in this same handler so an interrupt before cleanup
+        # starts cannot skip both recovery paths.
+        committed = True
+        _cleanup_committed_outputs(replaced, claimed, cleanup_failures)
+        if cleanup_failures:
+            raise OutputCleanupFailure(cleanup_failures)
     except BaseException as error:
+        if committed:
+            # This is after the transaction committed. Never call
+            # `_restore_backup` here: an interrupt during old-copy cleanup must
+            # preserve the new output, close every ownership pin, and identify
+            # any old private copy that still needs operator cleanup.
+            _reconcile_interrupted_committed_cleanup(
+                replaced, claimed, cleanup_failures)
+            _note_cleanup_failures(error, cleanup_failures)
+            raise
         # Reconcile a swap which may have completed before raising, then undo
         # earlier committed swaps. Cleanup failures remain attached to the
         # original exception with their recoverable locations.
-        cleanup_failures = []
-        metadata_scope_warnings = []
         if pending_swap is not None:
             backup = pending_swap["backup"]
             _restore_backup(backup["path"], backup["identity"],
@@ -1932,6 +1991,12 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
         if pending_backup is not None:
             _cleanup_owned_path(pending_backup, cleanup_failures)
         for swap in reversed(replaced):
+            # An interrupt can arrive after `_record_replaced_swap` appends but
+            # before its caller clears `pending_swap`. That one backup has
+            # already been reconciled above; restoring it twice risks treating
+            # the now-restored destination as a second transaction outcome.
+            if swap is pending_swap:
+                continue
             backup = swap["backup"]
             _restore_backup(backup["path"], backup["identity"], swap["destination"],
                             swap["original_identity"], swap["staged_identity"],
@@ -1944,18 +2009,6 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
         _note_cleanup_failures(error, cleanup_failures)
         _note_rollback_metadata_scope(error, metadata_scope_warnings)
         raise
-    # A successful replacement is not a successful command if an old statement
-    # survives under an undisclosed random name.
-    cleanup_failures = []
-    for swap in replaced:
-        backup = swap["backup"]
-        _unlink_for_cleanup(backup["path"], backup["identity"], cleanup_failures)
-        _close_owned_path(backup, cleanup_failures)
-        _close_owned_path(swap["original"], cleanup_failures)
-    for record in claimed:
-        _close_owned_path(record, cleanup_failures)
-    if cleanup_failures:
-        raise OutputCleanupFailure(cleanup_failures)
 
 
 def _check_paths(args):

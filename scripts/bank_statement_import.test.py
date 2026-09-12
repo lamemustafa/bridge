@@ -34,6 +34,7 @@ import decimal
 import hashlib
 import io
 import importlib.util
+import inspect
 import os
 import pathlib
 import stat
@@ -1615,6 +1616,52 @@ def test_an_interrupt_after_a_swap_restores_the_previous_output(m):
         assert sorted(p.name for p in pathlib.Path(directory).iterdir()) == ["previous.xml"]
 
 
+def test_line_interrupt_after_recording_a_swap_restores_it_once(m):
+    """Trace the real line between append and clearing pending ownership."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "previous.xml"
+        destination.write_text("old bytes")
+        real_restore = m._restore_backup
+        restores = []
+        _, start = inspect.getsourcelines(m.write_outputs)
+        clear_line = start + [
+            index for index, line in enumerate(inspect.getsource(m.write_outputs).splitlines())
+            if line.strip() == "pending_swap = None"
+        ][-1]
+        old_trace = sys.gettrace()
+        fired = False
+
+        def interrupt_after_append(frame, event, _arg):
+            nonlocal fired
+            if (not fired and event == "line" and frame.f_code is m.write_outputs.__code__
+                    and frame.f_lineno == clear_line):
+                fired = True
+                raise KeyboardInterrupt("controlled interrupt after swap append")
+            return interrupt_after_append
+
+        def observe_restore(*args, **kwargs):
+            restores.append(args[0])
+            return real_restore(*args, **kwargs)
+
+        m._restore_backup = observe_restore
+        sys.settrace(interrupt_after_append)
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("the controlled interrupt must escape")
+            except KeyboardInterrupt:
+                pass
+        finally:
+            sys.settrace(old_trace)
+            m._restore_backup = real_restore
+
+        assert fired
+        assert len(restores) == 1, "one swap must have one rollback owner"
+        assert destination.read_text() == "old bytes"
+        assert sorted(path.name for path in root.iterdir()) == ["previous.xml"]
+
+
 def test_restore_reconciles_a_backup_replace_that_raised_after_effect(m):
     """A restore rename can report an error after it has moved the private
     backup. Its new identity then proves recovery completed and must not be
@@ -1715,6 +1762,132 @@ def test_write_outputs_reports_a_retained_backup_after_commit(m):
                 path.unlink()
 
         assert destination.read_text() == "new bytes"
+
+
+def test_interrupt_before_committed_cleanup_keeps_new_output_and_reports_backup(m):
+    """The committed flag covers the line before old-copy cleanup starts."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "previous.xml"
+        destination.write_text("old bytes")
+        real_close = m._close_owned_path
+        closed_paths = []
+        _, start = inspect.getsourcelines(m._cleanup_committed_outputs)
+        cleanup_line = start + next(
+            index for index, line in enumerate(
+                inspect.getsource(m._cleanup_committed_outputs).splitlines())
+            if line.strip() == "for swap in replaced:")
+        old_trace = sys.gettrace()
+        fired = False
+
+        def interrupt_before_cleanup(frame, event, _arg):
+            nonlocal fired
+            if (not fired and event == "line"
+                    and frame.f_code is m._cleanup_committed_outputs.__code__
+                    and frame.f_lineno == cleanup_line):
+                fired = True
+                raise KeyboardInterrupt("controlled interrupt before cleanup")
+            return interrupt_before_cleanup
+
+        def observe_close(record, failures):
+            if record.get("pin") is not None:
+                closed_paths.append(str(record["path"]))
+            return real_close(record, failures)
+
+        m._close_owned_path = observe_close
+        sys.settrace(interrupt_before_cleanup)
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("the controlled interrupt must escape")
+            except KeyboardInterrupt as error:
+                notes = "\n".join(getattr(error, "__notes__", []))
+                backups = list(root.glob("*.bak"))
+                assert len(backups) == 1
+                assert backups[0].read_text() == "old bytes"
+                assert "retained path(s):" in notes
+                assert os.path.realpath(backups[0]) in notes
+        finally:
+            sys.settrace(old_trace)
+            m._close_owned_path = real_close
+            for path in root.glob("*.bak"):
+                path.unlink()
+
+        assert fired
+        assert destination.read_text() == "new bytes"
+        assert os.path.realpath(destination) in closed_paths, closed_paths
+        assert any(path.endswith(".bak") for path in closed_paths)
+        assert any(path.endswith(".part") for path in closed_paths)
+
+
+def test_interrupt_after_backup_unlink_does_not_report_a_phantom_path(m):
+    """A cleanup syscall may interrupt after deletion; name no absent backup."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "previous.xml"
+        destination.write_text("old bytes")
+        real_unlink = m.os.unlink
+        real_close = m._close_owned_path
+        closed_paths = []
+        interrupted_backup = None
+
+        def interrupt_after_backup_unlink(path):
+            nonlocal interrupted_backup
+            result = real_unlink(path)
+            if str(path).endswith(".bak"):
+                interrupted_backup = str(path)
+                raise KeyboardInterrupt("controlled interrupt after backup unlink")
+            return result
+
+        def observe_close(record, failures):
+            if record.get("pin") is not None:
+                closed_paths.append(str(record["path"]))
+            return real_close(record, failures)
+
+        m.os.unlink = interrupt_after_backup_unlink
+        m._close_owned_path = observe_close
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("the controlled interrupt must escape")
+            except KeyboardInterrupt as error:
+                notes = "\n".join(getattr(error, "__notes__", []))
+                assert interrupted_backup is not None
+                assert not pathlib.Path(interrupted_backup).exists()
+                assert os.path.realpath(interrupted_backup) not in notes
+        finally:
+            m.os.unlink = real_unlink
+            m._close_owned_path = real_close
+
+        assert destination.read_text() == "new bytes"
+        assert not list(root.glob("*.bak"))
+        assert os.path.realpath(destination) in closed_paths, closed_paths
+        assert any(path.endswith(".bak") for path in closed_paths)
+        assert any(path.endswith(".part") for path in closed_paths)
+
+
+def test_legacy_oserror_cleanup_diagnostic_reaches_stderr(m):
+    """Python 3.10's OSError rendering ignores args mutations and needs stderr."""
+    program = f'''\
+import errno
+import importlib.util
+
+script = {str(SCRIPT)!r}
+spec = importlib.util.spec_from_file_location("bank_statement_import_subprocess", script)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+class LegacyOSError(OSError):
+    add_note = None
+error = LegacyOSError(errno.EIO, "controlled original failure", "/tmp/legacy-output.xml")
+module._note_cleanup_failures(error, ["/tmp/owned-backup.bak"])
+raise error
+'''
+    done = subprocess.run([sys.executable, "-c", program], text=True,
+                          capture_output=True, check=False)
+    assert done.returncode != 0
+    assert "controlled original failure" in done.stderr
+    assert "/tmp/legacy-output.xml" in done.stderr
+    assert "retained path(s): /tmp/owned-backup.bak" in done.stderr
 
 
 def test_refusal_reports_a_retained_backup_on_stderr(m):
