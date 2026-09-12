@@ -36,6 +36,9 @@ pub const MAX_PROPOSED_VOUCHERS: usize = 5_000;
 /// The individual bounds permit a product that would otherwise make the
 /// indexed resemblance pass quadratic in the two untrusted collections.
 pub const MAX_PRESENCE_COMPARISONS: usize = 1_000_000;
+/// Aggregate indexed resemblance work units, including posting-list walks and
+/// the party-key checks performed for every pooled voucher.
+pub const MAX_PRESENCE_WORK_UNITS: usize = 5_000_000;
 /// Most numbering declarations consumed for one presence request.
 pub const MAX_NUMBERING_DECLARATIONS: usize = MAX_PROPOSED_VOUCHERS;
 /// Aggregate UTF-8 bytes accepted while consuming numbering declarations.
@@ -971,6 +974,10 @@ impl<'a> PresenceRequest<'a> {
             }
         }
         let party_bindings = bind_parties(catalog, proposals)?;
+        let index = WindowIndex::build(window);
+        if resemblance_work_units(proposals, &party_bindings, &index)? > MAX_PRESENCE_WORK_UNITS {
+            return Err(PresenceError::ComparisonWorkTooLarge);
+        }
         Ok(Self {
             window,
             numbering,
@@ -1138,6 +1145,42 @@ impl<'a> WindowIndex<'a> {
         }
         index
     }
+}
+
+/// Conservatively prices the indexed resemblance pass. The bound includes
+/// each proposal's date posting list, every party-key posting list, the pooled
+/// voucher checks, and the per-pooled-voucher `any` over party keys. It applies
+/// even when an identity path settles, because those paths retain the full
+/// resemblance set for observations.
+fn resemblance_work_units(
+    proposals: &[ProposedVoucher],
+    parties: &[PartyResolution],
+    index: &WindowIndex<'_>,
+) -> Result<usize, PresenceError> {
+    let mut total = 0usize;
+    for (proposal, party) in proposals.iter().zip(parties) {
+        let date_posts = index.by_date.get(proposal.date()).map_or(0, Vec::len);
+        let party_posts = party.compare_keys.iter().try_fold(0usize, |sum, key| {
+            sum.checked_add(index.by_ledger.get(key.as_str()).map_or(0, Vec::len))
+                .ok_or(PresenceError::ComparisonWorkTooLarge)
+        })?;
+        let pool_upper = date_posts
+            .checked_add(party_posts)
+            .ok_or(PresenceError::ComparisonWorkTooLarge)?;
+        let party_checks = pool_upper
+            .checked_mul(party.compare_keys.len())
+            .ok_or(PresenceError::ComparisonWorkTooLarge)?;
+        let units = 1usize
+            .checked_add(date_posts)
+            .and_then(|n| n.checked_add(party_posts))
+            .and_then(|n| n.checked_add(pool_upper))
+            .and_then(|n| n.checked_add(party_checks))
+            .ok_or(PresenceError::ComparisonWorkTooLarge)?;
+        total = total
+            .checked_add(units)
+            .ok_or(PresenceError::ComparisonWorkTooLarge)?;
+    }
+    Ok(total)
 }
 
 /// Decides every proposal against the window.
@@ -1329,7 +1372,6 @@ fn decide(
                 // another is two identity signals disagreeing, and ranking one
                 // of them is the move this contract refuses everywhere else.
                 let number_selects_another = method == NumberingMethod::Manual
-                    && type_observed
                     && proposal_number_counts
                         .get(&(
                             proposal.type_key.as_str(),
