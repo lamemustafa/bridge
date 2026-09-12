@@ -183,7 +183,7 @@ function catalogBindingSummary(binding: SourceDraftCatalogBinding | null, total:
     // sentence and told the operator the report had run out of room when it
     // had not.
     if (binding.candidate_listing === "withheld") {
-      return `This source line matches ${count} existing ledgers and tells them apart from none of them, so none is listed. Use a fuller source name, or choose from the full list of ${total}.`;
+      return `${catalogRefusalLead(binding.unbound_reason)} This source line matches ${count} existing ledgers and tells them apart from none of them, so none is listed. Use a fuller source name, or choose from the full list of ${total}.`;
     }
     // Why it refused survives the listing being dropped. Returning only the
     // budget sentence here re-hid the strong disagreement that the branch below

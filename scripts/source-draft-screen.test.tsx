@@ -842,6 +842,8 @@ test("a family withheld under a different reason is not reported as a full repor
   await act(async () => button(host, "Load existing ledgers").click());
 
   expect(host.textContent).toContain("matches at least 30 existing ledgers and tells them apart from none of them, so none is listed");
+  expect(host.textContent).toContain("The identifiers in this source line do not agree on one existing ledger");
+  expect(host.textContent).toContain("either one of them appears in several, or they point at different ones");
   expect(host.textContent).not.toContain("ran out of room");
   root.unmount();
 });
