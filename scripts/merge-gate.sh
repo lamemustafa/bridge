@@ -213,6 +213,40 @@ else
   bad "description does not link review-checklist.md (AGENTS.md requires one completed line per PR)"
 fi
 
+# 7. Pin freshness. The compatibility surface pins the raw bytes of 211 files,
+#    and ANY operation that can change those bytes — an edit, a formatter, a
+#    merge, a rebase taking the base's manifest — invalidates the seal. Nothing
+#    in the local loop re-reads pins before a commit, so CI's gate is the only
+#    thing that notices and every instance reaches a reviewer instead of its
+#    author. Three sessions hit this independently in one day, which makes it a
+#    class rather than a set of mistakes.
+#
+#    Checked without a checkout: if this PR touches a pinned file, it must also
+#    touch the manifest. That does not prove the hashes are right — only CI's
+#    gate does — but it catches the whole observed failure, which is a reseal
+#    that never ran.
+SURFACE=docs/tally/compatibility/compatibility-surface.json
+changed=$(gh pr view "$PR" --repo "$REPO" --json files -q '.files[].path' 2>/dev/null)
+if [ -z "$changed" ]; then
+  bad "could not list changed files for the pin-freshness check"
+else
+  pinned=$(gh api "repos/$REPO/contents/$SURFACE?ref=$head" --jq '.content' 2>/dev/null \
+           | tr -d '\n' | base64 --decode 2>/dev/null \
+           | jq -r '[.. | objects | select(has("path")) | .path] | .[]' 2>/dev/null)
+  if [ -z "$pinned" ]; then
+    say "note" "no compatibility surface at this head — pin-freshness check skipped"
+  else
+    touched=$(comm -12 <(sort -u <<<"$pinned") <(sort -u <<<"$changed") | grep -v "^$SURFACE$" | head -20)
+    if [ -z "$touched" ]; then
+      good "touches no pinned file (nothing to reseal)"
+    elif grep -qx "$SURFACE" <<<"$changed"; then
+      good "touches $(wc -l <<<"$touched" | tr -d ' ') pinned file(s) and the manifest moved with them"
+    else
+      bad "touches pinned file(s) without updating $SURFACE — the reseal did not run: $(tr '\n' ' ' <<<"$touched" | cut -c1-150)"
+    fi
+  fi
+fi
+
 diff=$(gh pr diff "$PR" --repo "$REPO" 2>/dev/null)
 if [ -z "$diff" ]; then
   bad "could not read diff for the privacy scan"
