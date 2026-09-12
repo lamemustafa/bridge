@@ -1042,20 +1042,14 @@ assigned.
 
 **VERIFIED.** Re-sending an identical ledger `ACTION="Create"` returned `CREATED=0,
 ALTERED=1` with no error — the existing master was **overwritten** with the retry payload.
-"No duplicate was made" is not the same as "my create succeeded." Persist `CREATED` and
-`ALTERED` as distinct outcomes.
+The observed counters distinguish an alteration of an existing master from creation
+of a new one. This experiment did not establish protection against a concurrent
+foreign writer or recovery of an unobserved prior master.
 
-**A pre-read is a necessary check, not a mutation-time guarantee.** An earlier revision said
-only "pre-read before creating", which reads as sufficient and is not: a foreign writer can
-create the master between the read and the dispatch, and this section's overwrite then happens
-to a master Bridge never observed — so there is no pre-image and its prior content cannot be
-restored. Narrowing the gap does not close it, and neither does reading again: only a qualified
-mutation-time condition or a proven exclusive-write window covers that interval.
-
-What a create MUST therefore do is assert **`CREATED=1`** on the response. `ALTERED=1` is an
-overwrite alarm and a manual halt, never a success under a different counter. See
-`PROMPT_PLAYBOOK.md` Phase 4 step 3a for the full guard and what the operator is owed when it
-fires.
+The required implementation workflow is maintained in
+[Implementation Guide §3.6](IMPLEMENTATION_GUIDE.md#36-master-re-create-is-a-silent-alter)
+and `PROMPT_PLAYBOOK.md` Phase 4 step 3a. This section records the gateway observation;
+it does not grant dispatch authority from a pre-read.
 
 ### 9.4a A partial ledger `Alter` preserves the omitted Party GSTIN
 
