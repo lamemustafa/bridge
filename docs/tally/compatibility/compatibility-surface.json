@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "db7ca6233a4ea0f37b0d942aef854fcd23e5d29a33c965d1e7ab13ecb5955bba"
+      "sha256": "2d2220d0dc1942eab04034dbfd07f5ecf693cc7d5f47b1e31615fe17e4b2f140"
     },
     {
       "path": ".github/workflows/dependency-security.yml",
@@ -351,7 +351,7 @@
     },
     {
       "path": "src-tauri/src/agent_presence_tests.rs",
-      "sha256": "e2107336f41822a54adeb3df44f11cf2191e9d5a311bc32f86f820e03e16e863"
+      "sha256": "ef022ca6c2e3c3abeb7e536449e7bad55a71f3aabcf388523f11137e16679eb9"
     },
     {
       "path": "src-tauri/src/agent_read_profiles.rs",
@@ -866,5 +866,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "c99a17b560e049028247acc6528c16e6e2df046cc569127de7a7795fee6f0489"
+  "manifest_sha256": "72cd6767640a00f9eb4ccd8c66204b3779995770d0c5e19722a5782bcb30153c"
 }

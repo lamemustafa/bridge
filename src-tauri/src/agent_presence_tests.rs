@@ -413,15 +413,15 @@ async fn nested_arguments_are_bounded_to_the_published_schema() {
 // --- typed parses -------------------------------------------------------
 
 #[test]
-fn one_voucher_type_declared_two_ways_is_refused_before_a_read() {
-    assert_eq!(
-        parse_numbering(&json!({"numbering":[
-            {"voucher_type":"Journal","numbering_method":"manual"},
-            {"voucher_type":"journal","numbering_method":"automatic"},
-        ]}))
-        .expect_err("conflict"),
-        "presence_numbering_method_conflict".to_string()
-    );
+fn case_distinct_voucher_types_keep_independent_numbering_declarations() {
+    // Voucher types are identity, not master names: folding their case could
+    // let two distinct Tally types claim the same manual-number namespace.
+    // Exact duplicates with differing methods still fail in the core type.
+    parse_numbering(&json!({"numbering":[
+        {"voucher_type":"Journal","numbering_method":"manual"},
+        {"voucher_type":"journal","numbering_method":"automatic"},
+    ]}))
+    .expect("case-distinct voucher types are independent");
 }
 
 #[test]
