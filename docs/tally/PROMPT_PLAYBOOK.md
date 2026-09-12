@@ -597,8 +597,8 @@ Implement — write core (masters):
    were measured on the **Edit Log 7.0 Educational** baseline and carry no
    licensed-SKU qualification. NOR DOES THE NFC/NFD ROW: an earlier
    revision of this gate called that capture licensed, and it is not —
-   `tests/fixtures/encoding/PROVENANCE.md` records the 2026-08-19
-   instance behind it as **EDU**. Correcting that makes this gate
+   `src-tauri/crates/bridge-tally-protocol/tests/fixtures/encoding/`
+   `PROVENANCE.md` records the 2026-08-19 instance behind it as **EDU**. Correcting that makes this gate
    stricter, not weaker: **no** row of §9.4b is qualified on a licensed
    SKU, so there is no licensed evidence to widen towards.
    Phase 4 runs against licensed TallyPrime, so on a licensed SKU match
@@ -618,10 +618,22 @@ Implement — write core (masters):
    from the requested name by case or separator alone; otherwise
    **REFUSE and raise it for a human** — a near-collision on an
    unqualified SKU is precisely the case where neither automatic answer
-   is defensible. Compute the near-collision set with the §9.4b fold
-   used only as a *detector*, never as a binder: folding to decide
-   "something similar exists, stop" needs no licensed qualification,
-   because the conclusion is a refusal rather than a write.
+   is defensible. Compute the near-collision set with a fold
+   used only as a *detector*, never as a binder — and **the detector
+   must be wider than the binder, not the same predicate pointed the
+   other way.** §9.4b's `accepts()` is DIRECTIONAL: for a requested
+   `FOO` against an existing `foo`, `accepts(FOO, foo)` is false, so
+   reusing it as the detector misses exactly the collision that would
+   then be created as a duplicate — the hazard surviving inside its
+   own guard. The detector folds SYMMETRICALLY and deliberately
+   over-wide: case-insensitive both ways, hyphen and space
+   interchangeable both ways, leading and trailing whitespace ignored,
+   internal whitespace runs collapsed. Several of those rows are
+   UNVERIFIED as *matching* behaviour, which is precisely why they
+   belong here: an unverified equivalence cannot justify a write, but
+   it is ample reason to stop and ask. A detector that misses a
+   collision creates a duplicate in a client's book; a detector that
+   over-fires costs one question to a human. Fail toward the question.
    ALWAYS cross-check the fetched object against the idempotency key and
    the (date, amount, ledger-set, voucher-type) fingerprint before
    promoting to CONFIRMED — LASTVCHID can be clobbered by a foreign
