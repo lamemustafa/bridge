@@ -809,6 +809,63 @@ test("reports a truncated candidate list truthfully and falls back to the flat c
   root.unmount();
 });
 
+test("does not turn an empty nonzero candidate list into a budget claim", async () => {
+  for (const listing of ["none", "listed"] as const) {
+    const emptyListing = {
+      ...catalog,
+      targets: ["Alpha placeholder", "Beta placeholder"],
+      bindings: [{
+        row_position: 1,
+        entry_position: 1,
+        bound_target: null,
+        bound_basis: null,
+        unbound_reason: "master_binding_near_miss",
+        candidates: [],
+        candidate_count: 4,
+        candidate_count_is_lower_bound: false,
+        candidate_listing: listing,
+      }],
+    };
+    mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(emptyListing);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = await mount(host, { catalogScope, catalogScopeKey: `empty-${listing}` });
+    await act(async () => button(host, "Choose source XML").click());
+    await act(async () => button(host, "Load existing ledgers").click());
+    expect(host.textContent).toContain("Candidate details are unavailable. Choose from the full list of 2.");
+    expect(host.textContent).not.toContain("ran out of room");
+    expect(host.textContent).not.toContain("0 possible");
+    root.unmount();
+  }
+});
+
+test("unknown candidate listing values fail safely at runtime", async () => {
+  const unknownListing = {
+    ...catalog,
+    targets: ["Alpha placeholder"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: null,
+      bound_basis: null,
+      unbound_reason: "master_binding_near_miss",
+      candidates: [],
+      candidate_count: 3,
+      candidate_count_is_lower_bound: false,
+      candidate_listing: "future_state" as never,
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(unknownListing);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "unknown-listing" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  expect(host.textContent).toContain("Candidate details are unavailable. Choose from the full list of 1.");
+  expect(host.textContent).not.toContain("ran out of room");
+  root.unmount();
+});
+
 test("a family withheld under a different reason is not reported as a full report", async () => {
   // The second withheld shape. An identifier held by more masters than a
   // candidate list may show is withheld under `identifier_conflict`, not under

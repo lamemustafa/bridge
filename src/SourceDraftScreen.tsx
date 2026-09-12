@@ -182,13 +182,22 @@ function catalogBindingSummary(binding: SourceDraftCatalogBinding | null, total:
     // about; a family withheld under `identifier_conflict` reached the budget
     // sentence and told the operator the report had run out of room when it
     // had not.
-    if (binding.candidate_listing === "withheld") {
-      return `${catalogRefusalLead(binding.unbound_reason)} This source line matches ${count} existing ledgers and tells them apart from none of them, so none is listed. Use a fuller source name, or choose from the full list of ${total}.`;
+    switch (binding.candidate_listing) {
+      case "withheld":
+        return `${catalogRefusalLead(binding.unbound_reason)} This source line matches ${count} existing ledgers and tells them apart from none of them, so none is listed. Use a fuller source name, or choose from the full list of ${total}.`;
+      case "truncated":
+        return `${catalogRefusalLead(binding.unbound_reason)} ${count} existing ledgers are involved, but this report ran out of room to list them. Choose from the full list of ${total}.`;
+      case "none":
+      case "listed":
+        return `${catalogRefusalLead(binding.unbound_reason)} Candidate details are unavailable. Choose from the full list of ${total}.`;
+      default: {
+        // Keep an unknown wire value safe at runtime, while a new typed state
+        // requires an explicit case here before the frontend can compile.
+        const unexpected: never = binding.candidate_listing;
+        void unexpected;
+        return `${catalogRefusalLead(binding.unbound_reason)} Candidate details are unavailable. Choose from the full list of ${total}.`;
+      }
     }
-    // Why it refused survives the listing being dropped. Returning only the
-    // budget sentence here re-hid the strong disagreement that the branch below
-    // had just been fixed to show — the same defect, one branch over.
-    return `${catalogRefusalLead(binding.unbound_reason)} ${count} existing ledgers are involved, but this report ran out of room to list them. Choose from the full list of ${total}.`;
   }
   const listed = binding.candidate_listing === "truncated" ? `${shown} of ${count}` : `${shown}`;
   const lead = catalogRefusalLead(binding.unbound_reason);
