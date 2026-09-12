@@ -293,6 +293,14 @@ elif args and args[0] == "api":
         emit([{"total_count": total_count, "check_runs": [
             {"id": 1, "name": run_name, "head_sha": run_head, "status": run_status, "conclusion": conclusion},
             {"id": second_id, "name": "Rust format", "head_sha": run_head, "status": "completed", "conclusion": "success"}]}])
+    elif "/commits/" in joined and "/statuses?" in joined:
+        if scenario == "status-truncated":
+            emit([[]])
+        elif scenario in {"status-failed-context", "status-nonempty-pending"}:
+            state = "failure" if scenario == "status-failed-context" else "pending"
+            emit([[{"id": 1, "context": "legacy optional", "state": state, "sha": head}]])
+        else:
+            emit([[]])
     elif "/commits/" in joined and "/status" in joined:
         if scenario == "status-malformed":
             emit({"total_count": "0", "statuses": []})
@@ -305,6 +313,9 @@ elif args and args[0] == "api":
             emit({"state": "pending", "total_count": 1, "statuses": [{"context": "queued", "state": "pending", "sha": head}]})
         elif scenario == "status-empty-pending":
             emit({"state": "pending", "total_count": 0, "statuses": []})
+        elif scenario == "status-truncated":
+            emit({"state": "success", "total_count": 1,
+                  "statuses": [{"id": 1, "context": "legacy optional", "state": "success", "sha": head}]})
         else:
             emit({"state": "success", "total_count": 0, "statuses": []})
     elif "/pulls/321/commits" in joined:
@@ -841,6 +852,9 @@ class MergeGateControls(unittest.TestCase):
 
     def test_nonempty_pending_legacy_status_is_indeterminate(self):
         self.assert_indeterminate("status-nonempty-pending", "commit-status evidence")
+
+    def test_truncated_legacy_status_pages_are_indeterminate(self):
+        self.assert_indeterminate("status-truncated", "complete head-bound commit-status evidence")
 
     def test_validation_commands_must_be_concrete_and_in_validation(self):
         for scenario in ("validation-command-outside", "validation-tool-prose", "validation-placeholder-command"):

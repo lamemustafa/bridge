@@ -244,7 +244,9 @@ else
   elif [ "$(jq 'length' <<<"$buckets")" -eq 0 ]; then
     bad "no checks reported for this PR"
   else
-    context_report=$(jq --arg contexts "$required_contexts" '
+    printf '%s' "$buckets" >"$tmpdir/check-buckets.json"
+    printf '%s\n' "$required_contexts" >"$tmpdir/required-contexts"
+    context_report=$(jq --rawfile contexts "$tmpdir/required-contexts" '
       . as $buckets | ($contexts | split("\n") | map(select(length > 0))) |
       map(. as $context | [$buckets[] | select(.name == $context)] |
         {name: $context, state: (if length == 0 then "missing"
@@ -254,7 +256,7 @@ else
        examples: ([.[] | select(.state != "pass")][0:8] | map(
          "required check \u0027" + (.name | gsub("[[:cntrl:]]"; "?") | .[0:80]) + "\u0027 " +
          (if .state == "missing" then "was not reported" else "is not passing (" + .state + ")" end)))}
-    ' <<<"$buckets")
+    ' <"$tmpdir/check-buckets.json")
     check_bad=$(jq -r '.failed' <<<"$context_report")
     context_count=$(jq -r '.total' <<<"$context_report")
     if [ "$check_bad" -gt 0 ]; then
@@ -296,12 +298,12 @@ if [ "$check_runs_status" -ne 0 ] || ! jq -e --arg head "$head" '
 ' <<<"$check_runs" >/dev/null 2>&1; then
   unknown "could not validate complete head-bound check-run evidence"
 else
-  failed_runs=$(jq --arg contexts "$required_contexts" '
+  failed_runs=$(jq --rawfile contexts "$tmpdir/required-contexts" '
     ($contexts | split("\n")) as $required |
     [.[] | .check_runs[] | . as $run |
       select((.conclusion != "success" and .conclusion != "neutral" and .conclusion != "skipped") or
              (.conclusion != "success" and ($required | index($run.name)) != null))] | length
-  ' <<<"$check_runs")
+  ' <(printf '%s' "$check_runs"))
   if [ "$failed_runs" -gt 0 ]; then
     bad "$failed_runs refreshed check run(s) are failed or required-but-not-successful"
   else
@@ -311,20 +313,29 @@ fi
 : >"$errfile"
 statuses_status=0
 statuses=$(gh api "repos/$REPO/commits/$head/status" 2>"$errfile") || statuses_status=$?
-if [ "$statuses_status" -ne 0 ] || ! jq -e --arg head "$head" '
+printf '%s' "$statuses" >"$tmpdir/combined-status.json"
+legacy_statuses_status=0
+legacy_statuses=$(gh api --paginate --slurp "repos/$REPO/commits/$head/statuses?per_page=100" 2>"$errfile") || legacy_statuses_status=$?
+printf '%s' "$legacy_statuses" >"$tmpdir/legacy-statuses.json"
+if [ "$statuses_status" -ne 0 ] || [ "$legacy_statuses_status" -ne 0 ] || ! jq -e --arg head "$head" --slurpfile pages "$tmpdir/legacy-statuses.json" '
+  . as $combined |
   type == "object" and
-  ((.state == "success") or (.state == "pending" and .total_count == 0 and (.statuses | type == "array" and length == 0))) and
-  (.total_count | type == "number" and floor == . and . >= 0) and
-  (.statuses | type == "array" and all(.[];
+  (($combined.state == "success") or ($combined.state == "pending" and $combined.total_count == 0 and ($combined.statuses | type == "array" and length == 0))) and
+  ($combined.total_count | type == "number" and floor == . and . >= 0) and
+  ($pages | length == 1 and ($pages[0] | type == "array")) and
+  ($pages[0] | all(.[]; type == "array" and all(.[];
     type == "object" and
+    (.id | type == "number" and floor == . and . >= 0) and
     (.context | type == "string" and length > 0) and
     (.state == "success") and
-    ((.sha // $head) | type == "string" and test("^[0-9a-fA-F]{40}$") and . == $head)
-  ))
-' <<<"$statuses" >/dev/null 2>&1; then
-  unknown "could not validate head-bound commit-status evidence"
+    (.sha | type == "string" and test("^[0-9a-fA-F]{40}$") and . == $head)
+  ))) and
+  (($pages[0] | map(length) | add) == $combined.total_count) and
+  (($pages[0] | flatten | map(.id) | unique | length) == $combined.total_count)
+' <"$tmpdir/combined-status.json" >/dev/null 2>&1; then
+  unknown "could not validate complete head-bound commit-status evidence"
 else
-  say "ok" "commit-status response is bound to head $short"
+  say "ok" "complete commit-status pages are bound to head $short"
 fi
 
 # Provider review objects carry an immutable full commit_id even when the
@@ -753,8 +764,11 @@ if [ "$security_reviewer_change" = "true" ]; then
   pr_author=$(jq -er '.user.login | strings | select(length > 0)' <<<"$metadata_pr" 2>/dev/null) || pr_author=""
   security_review=false
   if [ -n "$pr_author" ] && [ "$review_status" -eq 0 ] && [ "$comment_status" -eq 0 ]; then
-    security_review=$(jq -n --arg head "$head" --arg author "$pr_author" --argjson reviews "$reviews" --argjson comments "$comments" '
+    printf '%s' "$reviews" >"$tmpdir/reviews.json"
+    printf '%s' "$comments" >"$tmpdir/comments.json"
+    security_review=$(jq -n --arg head "$head" --arg author "$pr_author" --slurpfile reviews "$tmpdir/reviews.json" --slurpfile comments "$tmpdir/comments.json" '
       def records: if all(.[]; type == "array") then flatten else . end;
+      def source_records: if length == 1 then .[0] else . end;
       def reviewer: (.user.login | type == "string" and length > 0) and
         .user.login != $author and (.user.type == "User" or .user.type == "Bot") and
         ((.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") or
@@ -762,9 +776,9 @@ if [ "$security_reviewer_change" = "true" ]; then
       def focused: (.body | type == "string") and
         (.body | test("(?im)^#{0,6} *security review: *" + $head + " *$")) and
         (.body | test("(?im)^result: *accepted *$"));
-      ([($reviews | records)[] | select(reviewer and focused and .commit_id == $head and
+      ([($reviews | source_records | records)[] | select(reviewer and focused and .commit_id == $head and
          (.state == "APPROVED" or .state == "COMMENTED"))] +
-       [($comments | records)[] | select(reviewer and focused)]) | length > 0
+       [($comments | source_records | records)[] | select(reviewer and focused)]) | length > 0
     ' 2>/dev/null) || security_review=false
   fi
   if [ "$security_review" != "true" ]; then
