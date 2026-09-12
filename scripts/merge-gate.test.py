@@ -109,11 +109,12 @@ if args[:2] == ["pr", "view"]:
             "## Migration compatibility\n\nNo persisted data changes.\n\n"
             "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10)"
         )
-    elif scenario in {"security-notes-present", "surface-unpins"}:
+    elif scenario in {"security-notes-present", "security-none", "security-pending", "surface-unpins"}:
+        security_impact = "None" if scenario == "security-none" else ("pending" if scenario == "security-pending" else "No credential material is added; the Tally path change is reviewed.")
         body = (
             "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
             "## Validation and evidence\n\n`python3 scripts/merge-gate.test.py`\n\n"
-            "## Security impact\n\nNo credential material is added; the Tally path change is reviewed.\n\n"
+            f"## Security impact\n\n{security_impact}\n\n"
             "## Migration compatibility\n\nExisting callers retain their paths and formats.\n\n"
             "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10)"
         )
@@ -140,7 +141,7 @@ if args[:2] == ["pr", "view"]:
         body = body.replace("`python3 scripts/merge-gate.test.py`", "`cargo ...`")
     if scenario == "checklist-heading":
         body = body.replace("#L10", "#L1")
-    if scenario in {"implementation-p4-present", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "migration-rollback-present", "migration-template-wrapped", "security-notes-present", "security-review-valid"}:
+    if scenario in {"implementation-p4-present", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale", "migration-rollback-present", "migration-template-wrapped", "security-notes-present", "security-none", "security-pending", "security-review-valid"}:
         body += (
             "\n## Scope, reuse, and impact\n\n"
             "- Existing component reused: the existing gate parser and file inventory.\n"
@@ -158,7 +159,7 @@ if args[:2] == ["pr", "view"]:
             "\n- Windows validation evidence: Windows CI ran `python3 scripts/merge-gate.test.py`.\n"
             "- macOS validation evidence: macOS CI ran `python3 scripts/merge-gate.test.py`.\n"
         )
-    if scenario in {"platform-evidence-present", "migration-template-wrapped", "security-notes-present", "security-review-valid", "sync-migration-present"}:
+    if scenario in {"platform-evidence-present", "migration-template-wrapped", "security-notes-present", "security-none", "security-pending", "security-review-valid", "sync-migration-present"}:
         body += (
             "\n- Windows validation evidence: Windows CI ran `python3 scripts/merge-gate.test.py`.\n"
             "- macOS validation evidence: macOS CI ran `python3 scripts/merge-gate.test.py`.\n"
@@ -173,7 +174,11 @@ if args[:2] == ["pr", "view"]:
             "\n- [x] Native Windows validation completed: <!-- paste evidence -->\n"
             "- [x] Native macOS validation completed: <!-- paste evidence -->\n"
         )
-    if scenario in {"platform-evidence-present", "platform-checkbox-evidence"}:
+    if scenario == "platform-unaffected-bare":
+        body += "\n- Windows validation evidence: unaffected\n- macOS validation evidence: unaffected\n"
+    if scenario == "platform-unaffected-rationale":
+        body += "\n- Windows validation evidence: unaffected because this changes shared documentation only.\n- macOS validation evidence: unaffected because this changes shared documentation only.\n"
+    if scenario in {"platform-evidence-present", "platform-checkbox-evidence", "platform-unaffected-bare", "platform-unaffected-rationale"}:
         body += (
             "\n## Security impact\n\nNo credential material is added.\n"
             "\n## Migration compatibility\n\nExisting callers retain their paths and formats.\n"
@@ -191,10 +196,19 @@ if args[:2] == ["pr", "view"]:
             "  existing workflow changes):\n"
             "- Destructive database migration: No\n"
         )
+    if scenario == "p4-placeholders":
+        body += (
+            "\n## Scope, reuse, and impact\n\n"
+            "- Existing component reused: N/A\n"
+            "- What is deleted (or why no deletion is justified): TODO\n"
+            "- What breaks if this is not built: pending\n"
+        )
+    if scenario == "workflow-placeholders":
+        body += "\n## Rollback notes\n\nN/A\n\n## Migration compatibility\n\nTBD\n"
     body = body.replace("blob/HEAD", f"blob/{head}")
     if scenario == "checklist-stale-ref":
         body = body.replace(f"blob/{head}", "blob/" + "f" * 40)
-    one_file = scenario in {"files-empty", "formatted-phone", "formatted-phone-grouped", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "home-macos", "home-unix", "home-windows", "crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path", "gitlink", "implementation-p4-missing", "implementation-p4-present", "platform-evidence-missing", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"} or scenario.startswith("home-") or security_case or sync_case
+    one_file = scenario in {"files-empty", "formatted-phone", "formatted-phone-grouped", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "workflow-placeholders", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-none", "security-pending", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "home-macos", "home-unix", "home-windows", "crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path", "gitlink", "implementation-p4-missing", "implementation-p4-present", "p4-placeholders", "platform-evidence-missing", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"} or scenario.startswith("home-") or security_case or sync_case
     selected_base = new_head if scenario == "base-oid-mismatch" else base
     emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
@@ -227,7 +241,7 @@ elif args[:2] == ["pr", "diff"]:
     elif scenario == "path-id":
         path_id = "ABCDE" + "1234" + "F"
         emit(f"diff --git a/docs/safe.md b/docs/{path_id}.md\n--- a/docs/safe.md\n+++ b/docs/{path_id}.md\n@@ -0,0 +1 @@\n+safe text\n")
-    elif scenario in {"security-notes-missing", "security-notes-present"}:
+    elif scenario in {"security-notes-missing", "security-notes-present", "security-none", "security-pending"}:
         emit("diff --git a/src-tauri/src/tally/runtime.rs b/src-tauri/src/tally/runtime.rs\n--- a/src-tauri/src/tally/runtime.rs\n+++ b/src-tauri/src/tally/runtime.rs\n@@ -0,0 +1 @@\n+safe text\n")
     elif scenario in {"security-crate", "security-agent-import", "security-dsc"}:
         paths = {"security-crate": "src-tauri/crates/bridge-tally-core/src/master_binding.rs", "security-agent-import": "src-tauri/src/agent_import.rs", "security-dsc": "src-tauri/src/dsc.rs"}
@@ -294,9 +308,9 @@ elif args[:2] == ["pr", "diff"]:
         emit("diff --git a/docs/a b/example.md b/docs/a b/example.md\nsimilarity index 100%\nrename from docs/a b/example.md\nrename to docs/a b/example.md\n")
     elif scenario == "gitlink":
         emit("diff --git a/vendor/module b/vendor/module\nnew file mode 160000\nindex 0000000..2222222\n--- /dev/null\n+++ b/vendor/module\n@@ -0,0 +1 @@\n+Subproject commit 2222222\n")
-    elif scenario in {"implementation-p4-missing", "implementation-p4-present"}:
+    elif scenario in {"implementation-p4-missing", "implementation-p4-present", "p4-placeholders"}:
         emit("diff --git a/scripts/example.py b/scripts/example.py\n--- a/scripts/example.py\n+++ b/scripts/example.py\n@@ -0,0 +1 @@\n+safe text\n")
-    elif scenario in {"platform-evidence-missing", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment"}:
+    elif scenario in {"platform-evidence-missing", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale"}:
         emit("diff --git a/src-tauri/src/local_files/paths.rs b/src-tauri/src/local_files/paths.rs\n--- a/src-tauri/src/local_files/paths.rs\n+++ b/src-tauri/src/local_files/paths.rs\n@@ -0,0 +1 @@\n+safe text\n")
     elif scenario in {"migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"}:
         emit("diff --git a/src-tauri/migrations/001.sql b/src-tauri/migrations/001.sql\n--- a/src-tauri/migrations/001.sql\n+++ b/src-tauri/migrations/001.sql\n@@ -0,0 +1 @@\n+safe text\n")
@@ -457,7 +471,7 @@ elif args and args[0] == "api":
             emit([[]])
         elif scenario in {"formatted-phone", "formatted-phone-grouped", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized"}:
             emit([[{"filename": "docs/contact.md", "status": "added", "additions": 1, "deletions": 0}]])
-        elif scenario in {"workflow-notes-missing", "workflow-notes-present"}:
+        elif scenario in {"workflow-notes-missing", "workflow-notes-present", "workflow-placeholders"}:
             emit([[{"filename": ".github/workflows/ci.yml", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario in {"workflow-delete", "workflow-delete-notes"}:
             emit([[{"filename": ".github/workflows/ci.yml", "status": "removed", "additions": 0, "deletions": 1}]])
@@ -472,7 +486,7 @@ elif args and args[0] == "api":
         elif scenario == "path-id":
             path_id = "ABCDE" + "1234" + "F"
             emit([[{"filename": f"docs/{path_id}.md", "status": "added", "additions": 1, "deletions": 0}]])
-        elif scenario in {"security-notes-missing", "security-notes-present"}:
+        elif scenario in {"security-notes-missing", "security-notes-present", "security-none", "security-pending"}:
             emit([[{"filename": "src-tauri/src/tally/runtime.rs", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "security-rename-out":
             emit([[{"filename": "src/runtime.rs", "previous_filename": "src-tauri/src/tally/runtime.rs", "status": "renamed", "additions": 0, "deletions": 0}]])
@@ -504,9 +518,9 @@ elif args and args[0] == "api":
             emit([[record]])
         elif scenario == "gitlink":
             emit([[{"filename": "vendor/module", "status": "modified", "additions": 1, "deletions": 1}]])
-        elif scenario in {"implementation-p4-missing", "implementation-p4-present"}:
+        elif scenario in {"implementation-p4-missing", "implementation-p4-present", "p4-placeholders"}:
             emit([[{"filename": "scripts/example.py", "status": "modified", "additions": 1, "deletions": 0}]])
-        elif scenario in {"platform-evidence-missing", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment"}:
+        elif scenario in {"platform-evidence-missing", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale"}:
             emit([[{"filename": "src-tauri/src/local_files/paths.rs", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario in {"migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"}:
             emit([[{"filename": "src-tauri/migrations/001.sql", "status": "modified", "additions": 1, "deletions": 0}]])
@@ -925,6 +939,7 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
 
     def test_workflow_change_requires_rollback_and_migration_notes(self):
         self.assert_blocked("workflow-notes-missing", "workflow change lacks non-empty rollback notes")
+        self.assert_blocked("workflow-placeholders", "workflow change lacks non-empty rollback notes")
 
     def test_workflow_change_with_required_notes_can_pass(self):
         result = self.run_gate("workflow-notes-present")
@@ -952,6 +967,9 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
                 self.assert_blocked(scenario, "security-impact notes")
         result = self.run_gate("security-notes-present")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.run_gate("security-none")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assert_blocked("security-pending", "security-impact notes")
 
     def test_sensitive_paths_without_security_attestation_are_indeterminate(self):
         self.assert_indeterminate("security-review-missing", "security-focused reviewer comment")
@@ -1012,6 +1030,7 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
 
     def test_implementation_additions_need_all_three_p4_answers(self):
         self.assert_blocked("implementation-p4-missing", "all three substantive P4")
+        self.assert_blocked("p4-placeholders", "all three substantive P4")
         result = self.run_gate("implementation-p4-present")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
@@ -1022,6 +1041,9 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
         result = self.run_gate("platform-checkbox-evidence")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assert_blocked("platform-checkbox-comment", "substantive Windows validation")
+        self.assert_blocked("platform-unaffected-bare", "substantive Windows validation")
+        result = self.run_gate("platform-unaffected-rationale")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_database_migration_paths_need_rollback_notes(self):
         self.assert_blocked("migration-rollback-missing", "database migration path lacks non-empty rollback notes")

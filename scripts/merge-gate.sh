@@ -608,8 +608,8 @@ else
 fi
 
 body_section_has_content() {
-  local body="$1" labels="$2"
-  awk -v labels="$labels" '
+  local body="$1" labels="$2" allow_placeholders="${3:-false}"
+  awk -v labels="$labels" -v allow_placeholders="$allow_placeholders" '
     function heading(line, lower) {
       lower = tolower(line)
       sub(/^[[:space:]]*#+[[:space:]]*/, "", lower)
@@ -625,6 +625,19 @@ body_section_has_content() {
              lower ~ /^-[[:space:]]*captured\/fixture\/live scope and known limitations:[[:space:]]*$/ ||
              lower ~ /^-[[:space:]]*manual\/ui evidence[[:space:]]*\(.*\):[[:space:]]*$/
     }
+    function after_colon(line, value) {
+      value = line
+      sub(/^[^:]*:[[:space:]]*/, "", value)
+      return value
+    }
+    function meaningful(value, lower) {
+      gsub(/<!--[[:print:][:space:]]*-->/, "", value)
+      lower = tolower(value)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", lower)
+      if (lower == "") return 0
+      if (allow_placeholders == "true" && lower ~ /^(n\/a|none|no impact)$/) return 1
+      return lower !~ /^(n\/a|none|pending|todo|tbd|not applicable|unaffected|not affected|not impacted|no impact)$/
+    }
     {
       # The canonical PR template uses labelled list fields as well as
       # headings.  Accept a filled field for the requested policy label, but
@@ -638,20 +651,20 @@ body_section_has_content() {
           pending_list = 0
         } else if (lower !~ /^[[:space:]]+/) {
           pending_list = 0
-        } else if (lower ~ /:[[:space:]]*[^[:space:]]/) {
+        } else if (lower ~ /:[[:space:]]*[^[:space:]]/ && meaningful(after_colon(lower))) {
           found = 1
           exit
         } else if (lower ~ /:[[:space:]]*$/) {
           pending_list = 2
         } else if (pending_list == 2 && lower ~ /[^[:space:]]/) {
-          if (!template_prompt($0) && lower !~ /^[[:space:]]*<!--/) {
+          if (!template_prompt($0) && lower !~ /^[[:space:]]*<!--/ && meaningful(lower)) {
             found = 1
             exit
           }
           pending_list = 0
         }
       }
-      if (lower ~ "^[[:space:]]*-[[:space:]]*(" labels ")[^:]*:[[:space:]]*[^[:space:]]" &&
+      if (lower ~ "^[[:space:]]*-[[:space:]]*(" labels ")[^:]*:[[:space:]]*[^[:space:]]" && meaningful(after_colon(lower)) &&
           !template_prompt($0) && lower !~ /^[[:space:]]*-[[:space:]]*\[[ xX]\][[:space:]]/) {
         found = 1
         exit
@@ -663,7 +676,7 @@ body_section_has_content() {
       if (heading($0)) {
         lower = tolower($0)
         sub(/^[[:space:]]*#+[[:space:]]*/, "", lower)
-        if (lower ~ ("^(" labels ")[[:space:]]*:[[:space:]]*[^[:space:]]")) { found = 1; exit }
+        if (lower ~ ("^(" labels ")[[:space:]]*:[[:space:]]*[^[:space:]]") && meaningful(after_colon(lower))) { found = 1; exit }
         waiting = 1
         next
       }
@@ -674,8 +687,7 @@ body_section_has_content() {
       if (waiting && $0 ~ /[^[:space:]]/) {
         if ($0 ~ /^[[:space:]]*<!--/) next
         if (template_prompt($0)) next
-        found = 1
-        exit
+        if (meaningful(lower)) { found = 1; exit }
       }
     }
     END { exit(found ? 0 : 1) }
@@ -752,7 +764,11 @@ for line in sys.stdin.read().splitlines():
         continue
     if re.search(r"(validation|evidence|test|check|unaffected|not applicable|not affected|not impact)", lower):
         value = lower.split(":", 1)[1].strip() if ":" in lower else ""
-        if value and value not in {"none", "n/a", "not applicable"}:
+        placeholders = {
+            "none", "n/a", "not applicable", "unaffected", "not affected",
+            "not impacted", "no impact", "pending", "todo", "tbd",
+        }
+        if value and value not in placeholders:
             raise SystemExit(0)
 raise SystemExit(1)
 ' "$host" <<<"$body"
@@ -856,7 +872,7 @@ if [ "$files_status" -eq 0 ]; then
   ' <<<"$files")
 fi
 if [ "$security_sensitive_change" = "true" ]; then
-  if ! body_section_has_content "$prbody" 'security impact|security implications'; then
+  if ! body_section_has_content "$prbody" 'security impact|security implications' true; then
     bad "DSC, Tally, or credential path change lacks non-empty security-impact notes"
   else
     say "ok" "DSC, Tally, or credential path change includes security-impact notes"
