@@ -1550,6 +1550,12 @@ def _open_regular_output(path, expected_identity):
                 "output_not_regular",
                 f"{path}: an existing output must be a regular file",
             )
+        if stat_result.st_nlink != 1:
+            raise Refusal(
+                "output_has_multiple_links",
+                f"{path}: replacement requires a single-link output; rollback "
+                "cannot preserve hard-link topology",
+            )
         if (stat_result.st_dev, stat_result.st_ino) != expected_identity:
             raise Refusal(
                 "output_path_changed",
@@ -1613,7 +1619,16 @@ def _close_owned_path(record, failures):
     try:
         os.close(handle)
     except OSError:
-        failures.append(record["path"])
+        # close can fail after taking effect. Only an extant owned entry is a
+        # retained-path failure; an already-unlinked backup has no such path.
+        try:
+            if _entry_identity(record["path"]) == record["identity"]:
+                failures.append(record["path"])
+        except FileNotFoundError:
+            pass
+        except OSError:
+            if os.path.lexists(record["path"]):
+                failures.append(record["path"])
 
 
 def _cleanup_owned_path(record, failures):
@@ -1727,9 +1742,7 @@ def _copy_private_backup(source_path, original_identity, backup_handle):
         os.close(source_handle)
 
 
-def _restore_backup(backup, backup_identity, destination, original_identity,
-                    staged_identity, metadata, swap_started, failures,
-                    metadata_scope_warnings):
+def _restore_backup(swap, failures, metadata_scope_warnings):
     """Restore an owned private backup after a caught swap failure.
 
     `os.replace` can report an exception after the filesystem call took effect.
@@ -1737,16 +1750,26 @@ def _restore_backup(backup, backup_identity, destination, original_identity,
     A different inode may be a foreign writer's success, so keep the private
     backup and report the conflict rather than overwriting it.
     """
-    if not swap_started:
-        _unlink_for_cleanup(backup, backup_identity, failures)
-        return
+    backup, backup_identity = swap["backup"]["path"], swap["backup"]["identity"]
+    destination, original_identity = swap["destination"], swap["original_identity"]
+    staged_identity, metadata = swap["staged_identity"], swap["metadata"]
     try:
         current_identity = _file_identity(destination)
     except OSError:
         current_identity = None
-    if current_identity == original_identity:
-        # The replace did not take effect, or a previous reconciliation already
-        # restored it. The extra private copy is ours to remove.
+    if not swap["swap_started"] or current_identity == original_identity:
+        # Backup reads can update atime before any swap. Restore that effect
+        # through the original inode pin, never through a possibly foreign path.
+        # Keep the current mtime and all other metadata: this read did not alter
+        # them, and restoring their old values could erase an external change.
+        original = swap["original"]
+        if original is not None and metadata is not None:
+            try:
+                handle = original["pin"]
+                current = os.fstat(handle)
+                os.utime(handle, ns=(metadata["atime_ns"], current.st_mtime_ns))
+            except OSError:
+                failures.append(destination)
         _unlink_for_cleanup(backup, backup_identity, failures)
         return
     if current_identity != staged_identity:
@@ -2017,13 +2040,7 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
         # original exception with their recoverable locations.
         if pending_swap is not None:
             backup = pending_swap["backup"]
-            _restore_backup(backup["path"], backup["identity"],
-                            pending_swap["destination"],
-                            pending_swap["original_identity"],
-                            pending_swap["staged_identity"],
-                            pending_swap["metadata"],
-                            pending_swap["swap_started"], cleanup_failures,
-                            metadata_scope_warnings)
+            _restore_backup(pending_swap, cleanup_failures, metadata_scope_warnings)
             _close_owned_path(backup, cleanup_failures)
             if pending_swap["original"] is not None:
                 _close_owned_path(pending_swap["original"], cleanup_failures)
@@ -2038,10 +2055,7 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             if swap is pending_swap:
                 continue
             backup = swap["backup"]
-            _restore_backup(backup["path"], backup["identity"], swap["destination"],
-                            swap["original_identity"], swap["staged_identity"],
-                            swap["metadata"], swap["swap_started"], cleanup_failures,
-                            metadata_scope_warnings)
+            _restore_backup(swap, cleanup_failures, metadata_scope_warnings)
             _close_owned_path(backup, cleanup_failures)
             _close_owned_path(swap["original"], cleanup_failures)
         for record in claimed:

@@ -2406,6 +2406,87 @@ def test_rollback_keeps_a_foreign_destination_and_private_backup(m):
         assert second.read_text() == "second old"
 
 
+def test_committed_close_after_effect_does_not_report_missing_backup(m):
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "output.xml"
+        destination.write_text("old bytes")
+        real_close = m.os.close
+        real_owned = m._owned_path
+        backup_handles = set()
+        fired = False
+
+        def observe_owned(path, handle, *, created):
+            record = real_owned(path, handle, created=created)
+            if str(path).endswith(".bak"):
+                backup_handles.add(handle)
+            return record
+
+        def close_then_error(handle):
+            nonlocal fired
+            real_close(handle)
+            if handle in backup_handles and not fired:
+                fired = True
+                raise OSError("controlled close after effect")
+
+        m._owned_path, m.os.close = observe_owned, close_then_error
+        try:
+            m.write_outputs([(str(destination), "new bytes")])
+        finally:
+            m._owned_path, m.os.close = real_owned, real_close
+        assert fired
+        assert destination.read_text() == "new bytes"
+        assert list(pathlib.Path(directory).iterdir()) == [destination]
+
+
+def test_existing_hard_link_output_is_refused_with_topology_unchanged(m):
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "output.xml"
+        alias = pathlib.Path(directory) / "alias.xml"
+        destination.write_text("old bytes")
+        os.link(destination, alias)
+        refuses(m, "output_has_multiple_links", m.write_outputs,
+                [(str(destination), "new bytes")])
+        assert os.path.samefile(destination, alias)
+        assert destination.read_text() == alias.read_text() == "old bytes"
+        assert sorted(p.name for p in pathlib.Path(directory).iterdir()) == ["alias.xml", "output.xml"]
+
+
+def test_preswap_abort_restores_access_time_on_the_original_pin(m):
+    # Inject the access-time effect explicitly so this covers noatime hosts too.
+    for abort_before_replace in (True, False):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = pathlib.Path(directory) / "output.xml"
+            destination.write_text("old bytes")
+            old_atime = 1_600_000_000_000_000_000
+            old_mtime = 1_700_000_000_000_000_000
+            os.utime(destination, ns=(old_atime, old_mtime))
+            real_copy, real_replace = m._copy_private_backup, m.os.replace
+
+            def copy_with_access_time_effect(*args):
+                real_copy(*args)
+                os.utime(destination, ns=(old_mtime, old_mtime))
+                if abort_before_replace:
+                    raise OSError("controlled copy abort")
+
+            def refuse_replace(*_args):
+                raise OSError("controlled replace before effect")
+
+            m._copy_private_backup, m.os.replace = copy_with_access_time_effect, refuse_replace
+            try:
+                try:
+                    m.write_outputs([(str(destination), "new bytes")])
+                    raise AssertionError("the controlled abort must escape")
+                except OSError as error:
+                    assert str(error).startswith("controlled")
+            finally:
+                m._copy_private_backup, m.os.replace = real_copy, real_replace
+            final_stat = destination.stat()
+            assert final_stat.st_atime_ns == old_atime
+            assert final_stat.st_mtime_ns == old_mtime
+            assert destination.read_text() == "old bytes"
+            assert list(pathlib.Path(directory).iterdir()) == [destination]
+
+
 def test_rollback_restores_original_output_metadata(m):
     """A caught later swap failure restores the former bytes and portable
     metadata, while a retained pre-rollback backup stays private."""
