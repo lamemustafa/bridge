@@ -671,9 +671,11 @@ is no natural idempotency: voucher number is not a key.
 
 **What the heading's "narrowed" means.** §3.3a since established that a byte-identical repeat under
 the same `REMOTEID` is an **upsert** on the qualified Journal path — `CREATED=0, ALTERED=1`, no
-duplicate. So on that path a crash-retry of the *same file* is safe on its own, and the sentence
-that used to stand here — that the fingerprint plus an embedded key is "the only thing" preventing a
-duplicate — is no longer true where §3.3a applies.
+duplicate. This is the observed outcome of that repeat, not permission to resend after an unknown
+outcome: retain the original batch identity and reconcile its outcome first. It does not protect
+against an intervening external edit. The sentence that used to stand here — that the fingerprint
+plus an embedded key is "the only thing" preventing a duplicate — is no longer true where §3.3a
+applies.
 
 **And it is not true anywhere else either.** An earlier revision of this paragraph — mine — said it
 "is still true everywhere §3.3a does not reach", which quietly kept the fingerprint alive as a

@@ -322,7 +322,10 @@ Implement:
    (`EXCEPTIONS=1`, ledger does not exist) while the NFC spelling created
    it — Tally matches on exact codepoints. Normalizing before comparing
    resolves a name onto a master Tally itself keeps apart. Name keys
-   compare on exact codepoints; do not NFC/NFD-normalize either side.
+   used to resolve identity compare on exact codepoints; do not
+   NFC/NFD-normalize either side of that decision. A broader comparison
+   may suggest unresolved candidates or refuse a suspected collision, as
+   ADR 0016 permits; it must not merge mirror identities or authorize a write.
 6. Migration: versioned mirror schema evolution for the new fields
    (voucher lines, bill allocations, inventory lines, tax lines) with
    rollback notes.
@@ -367,16 +370,16 @@ Hunt specifically for:
 3. Amount fidelity: any new tax/inventory line parsed through anything but
    ExactDecimal; sign conventions (IsDeemedPositive) mishandled on new
    line types; Dr/Cr balance invariant not re-checked with lines present.
-4. Identity/normalization traps: ANY NFC/NFD normalization of name keys,
-   anywhere in the read or diff path — applied consistently on both reads
-   and diff keys is still a confirmed finding, not only when applied
-   asymmetrically (§9.4b: Tally matches exact codepoints; normalizing
-   resolves a name onto a master Tally itself keeps apart, whether or not
-   both sides agree). A symmetric case-insensitive collation is likewise
-   a finding: §9.4b's `accepts(candidate, tally_name)` folds ASCII case
-   in one direction only (candidate lowered against an uppercase master);
-   a fold that also accepts an uppercase candidate against a lowercase
-   master accepts the unverified direction.
+4. Identity/normalization traps: NFC/NFD normalization used to resolve
+   identity, merge mirror rows, or accept readback is a finding even when
+   applied consistently to both sides (§9.4b preserves those codepoint
+   distinctions). This does not prohibit the broader, non-deciding
+   candidate comparison in ADR 0016 or the conservative refusal detector
+   in Phase 4 step 3a. Those paths may suggest or refuse; they may not
+   resolve identity or authorize a write. Likewise, a symmetric case fold
+   used to resolve identity needs its own qualified scope: §9.4b's
+   `accepts(candidate, tally_name)` measures only the stated direction;
+   use §9.4d only within its separately observed scope.
 5. Bounded-resource regressions: new list explosions (AllInventoryEntries
    on huge vouchers) versus the 32 MiB response cap — is there a paging or
    windowing story? Does a capped response get honestly labeled Partial?
@@ -606,18 +609,34 @@ Implement — write core (masters):
    altered in place, so its group, its opening balance and its GST
    registration are replaced by whatever the new payload carried. A
    duplicate is visible in a ledger list; an overwrite is not.
+   This pre-read is a necessary check, not a mutation-time guarantee.
+   Require a catalogue whose source completeness is qualified for the
+   exact company and master class. A capped, truncated, Partial, failed,
+   or unqualified read cannot authorize creation, even if it is nonempty
+   and contains no collision. Never infer completeness from a row count
+   below the transport cap or from two agreeing bounded reads.
+   Bridge's actor serializes only Bridge: another operator or importer
+   can create the name after this read, before dispatch. Readback cannot
+   recover the previous master after an overwrite. Concurrent automatic
+   master creation therefore remains UNQUALIFIED. Do not enable it until
+   a qualified mutation-time condition or proven exclusive-write window
+   covers that interval; a confirmation or another ordinary pre-read
+   does not establish either. The quiet-company Journal preview in
+   issue #239 is not evidence qualifying this master-create flow.
    Three outcomes, never two:
-   **bind** to an exact-codepoint match;
-   **create** only when NO existing master collides under the detector
+   **bind** to an exact-codepoint match without creating or altering it;
+   **create** only after the completeness and mutation-time prerequisites
+   above are qualified AND no existing master collides under the detector
    below;
-   otherwise **REFUSE and raise it for a human.**
+   otherwise **REFUSE and retain the unresolved proposal.**
    THE DETECTOR IS NOT THE BINDER AND MUST BE WIDER THAN IT.
    §9.4b's `accepts()` is DIRECTIONAL — for a requested `FOO` against an
    existing `foo`, `accepts(FOO, foo)` is false — so reusing it as the
    detector misses exactly the collision it exists to catch. The
    detector folds SYMMETRICALLY and deliberately over-wide:
-   case-insensitive both ways; hyphen and space interchangeable both
-   ways; leading and trailing whitespace ignored; internal whitespace
+   case-insensitive both ways; slash, hyphen and space interchangeable
+   in both directions and in composition; leading and trailing whitespace
+   ignored; internal whitespace
    runs collapsed; **and NFC/NFD canonical equivalents treated as
    colliding.** That last row matters most and is the one most easily
    left out: §9.4b's exact-codepoint result came from an **EDU**
