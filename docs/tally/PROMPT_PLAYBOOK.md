@@ -314,6 +314,11 @@ Implement:
    - Other licensed scopes remain exact-codepoint unless a capture
      qualifies their particular rule. Compatibility live-READ receipts
      do not establish write behaviour (`compatibility/README`).
+   Name keys are exact at storage. Apply any permitted fold only while
+   resolving a request against retained rows; if a fold reaches more than
+   one row, surface ambiguity. Storing folded keys can erase a distinct
+   `Alpha-Beta`/`Alpha Beta` or case-differing row before ambiguity handling
+   can run.
    Resolution still requires unique identity evidence. Never coalesce
    distinct catalogue or mirror identities merely because a fold agrees.
    A read is not a safe place to be wrong about this — the mirror rows
@@ -620,8 +625,12 @@ Implement — write core (masters):
    below the transport cap or from two agreeing bounded reads.
    Bridge's actor serializes only Bridge: another operator or importer
    can create the name after this read, before dispatch. Readback cannot
-   recover the previous master after an overwrite. Concurrent automatic
-   master creation therefore remains UNQUALIFIED. Do not enable it until
+   recover the previous master after an overwrite. The dispatch counters
+   must therefore remain an independent race detector: a create must report
+   `CREATED=1`; `ALTERED=1` is an overwrite alarm and manual halt, never a
+   promotion to CONFIRMED. This detects the race at dispatch but does not
+   prevent it. Concurrent automatic master creation therefore remains
+   UNQUALIFIED. Do not enable it until
    a qualified mutation-time condition or proven exclusive-write window
    covers that interval; a confirmation or another ordinary pre-read
    does not establish either. The quiet-company Journal preview in
