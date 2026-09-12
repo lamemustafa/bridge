@@ -4401,6 +4401,7 @@ fn raw_observation_budget_bounds_aggregate_ambiguous_marker_work_before_conversi
     });
     observations.push(ObservedVoucher {
         key: &keys[full_rows + 1],
+        marker: ObservedMarker::Unidentified(&markers[..1]),
         ..observations[0]
     });
     assert_eq!(
