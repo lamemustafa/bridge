@@ -97,7 +97,7 @@ die() { echo "$1" >&2; exit 2; }
 # outer shape before extracting fields so jq errors cannot become empty values.
 : >"$errfile"
 if ! meta=$(gh pr view "$PR" --repo "$REPO" \
-        --json headRefOid,baseRefOid,baseRefName,mergeable,mergeStateStatus,isDraft,state,body,changedFiles 2>"$errfile"); then
+        --json headRefOid,baseRefOid,baseRefName,mergeable,mergeStateStatus,isDraft,state,title,body,changedFiles 2>"$errfile"); then
   die "could not read PR #$PR in $REPO"
 fi
 if ! jq -e '
@@ -109,6 +109,7 @@ if ! jq -e '
   (.mergeStateStatus | type == "string") and
   (.isDraft | type == "boolean") and
   (.state | type == "string") and
+  (.title | type == "string") and
   (.changedFiles | type == "number" and floor == . and . >= 0)
 ' <<<"$meta" >/dev/null 2>&1; then
   die "PR metadata was not a valid complete JSON object"
@@ -122,6 +123,7 @@ draft=$(jq -r '.isDraft' <<<"$meta")
 pstate=$(jq -r '.state' <<<"$meta")
 changed_files_expected=$(jq -r '.changedFiles' <<<"$meta")
 short=${head:0:7}
+title=$(jq -r '.title' <<<"$meta")
 prbody=$(jq -r '.body // ""' <<<"$meta")
 
 if [ -n "$INDEPENDENT_REVIEW_SHA" ] && ! [[ "$INDEPENDENT_REVIEW_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
@@ -146,6 +148,7 @@ case "$mstate" in
   BLOCKED) bad "merge state BLOCKED — GitHub is refusing this merge" ;;
   CLEAN|HAS_HOOKS) say "ok" "merge state $mstate is not stale" ;;
   UNSTABLE) bad "merge state UNSTABLE — GitHub has not established a mergeable result" ;;
+  DRAFT) bad "merge state DRAFT — the PR is not ready for merge" ;;
   *) unknown "unrecognised merge state '$mstate'" ;;
 esac
 
@@ -207,8 +210,11 @@ elif ! jq -e '
   required_contexts=""
 else
   required_contexts=$(jq -r '((.contexts // []) + ([.checks // [] | .[]? | .context] | map(select(type == "string" and length > 0))) | unique)[]' <<<"$protection")
+  documented_contexts=$'Dependency security\nFrontend build\nGitGuardian Security Checks\nRequired checks\nRust format'
   if [ -z "$required_contexts" ]; then
     unknown "branch protection returned no required status-check contexts"
+  elif missing_documented=$(comm -23 <(sort -u <<<"$documented_contexts") <(sort -u <<<"$required_contexts")) && [ -n "$missing_documented" ]; then
+    bad "branch protection omits $(wc -l <<<"$missing_documented" | tr -d ' ') documented required check context(s)"
   else
     say "ok" "loaded $(wc -l <<<"$required_contexts" | tr -d ' ') required check context(s)"
   fi
@@ -286,11 +292,12 @@ statuses_status=0
 statuses=$(gh api "repos/$REPO/commits/$head/status" 2>"$errfile") || statuses_status=$?
 if [ "$statuses_status" -ne 0 ] || ! jq -e --arg head "$head" '
   type == "object" and
+  (.state == "success") and
   (.total_count | type == "number" and floor == . and . >= 0) and
   (.statuses | type == "array" and all(.[];
     type == "object" and
     (.context | type == "string" and length > 0) and
-    (.state | type == "string" and length > 0) and
+    (.state == "success") and
     ((.sha // $head) | type == "string" and test("^[0-9a-fA-F]{40}$") and . == $head)
   ))
 ' <<<"$statuses" >/dev/null 2>&1; then
@@ -361,11 +368,35 @@ elif [ "$provider_review" != "matched" ] && [ "$summary_good" -eq 1 ]; then
   fi
 fi
 
+# Scan all published PR metadata. Commit messages are paginated because they
+# can become squash subjects or release evidence independently of the patch.
+: >"$errfile"
+metadata_status=0
+metadata_commits=$(gh api --paginate --slurp "repos/$REPO/pulls/$PR/commits?per_page=100" 2>"$errfile") || metadata_status=$?
+if [ "$metadata_status" -ne 0 ] || ! jq -e '
+  type == "array" and (all(.[]; type == "array") or all(.[]; type == "object")) and
+  ((if all(.[]; type == "array") then flatten else . end) |
+   all(.[]; type == "object" and
+    (.sha | type == "string" and test("^[0-9a-fA-F]{40}$")) and
+    (.commit | type == "object") and
+    (.commit.message | type == "string")))
+' <<<"$metadata_commits" >/dev/null 2>&1; then
+  unknown "could not read complete PR commit metadata for the privacy scan"
+  privacy_metadata=""
+else
+  commit_messages=$(jq -r '(if all(.[]; type == "array") then flatten else . end)[].commit.message' <<<"$metadata_commits")
+  privacy_metadata="$title
+$prbody
+$commit_messages"
+fi
+
 # Paginate review threads and count unresolved nodes over every page.
 cursor=""
 open_threads=0
 total_threads=-1
 fetched_threads=0
+thread_ids="$tmpdir/review-thread-ids"
+: >"$thread_ids"
 thread_ok=1
 while :; do
   : >"$errfile"
@@ -375,7 +406,7 @@ while :; do
       query($owner:String!,$name:String!,$pr:Int!,$cursor:String){
         repository(owner:$owner,name:$name){
           pullRequest(number:$pr){ reviewThreads(first:100,after:$cursor){
-            totalCount pageInfo{hasNextPage endCursor} nodes{isResolved}
+            totalCount pageInfo{hasNextPage endCursor} nodes{id isResolved}
           }}
         }
       }' 2>"$errfile") || page_status=$?
@@ -384,12 +415,12 @@ while :; do
       query($owner:String!,$name:String!,$pr:Int!,$cursor:String){
         repository(owner:$owner,name:$name){
           pullRequest(number:$pr){ reviewThreads(first:100,after:$cursor){
-            totalCount pageInfo{hasNextPage endCursor} nodes{isResolved}
+            totalCount pageInfo{hasNextPage endCursor} nodes{id isResolved}
           }}
         }
       }' 2>"$errfile") || page_status=$?
   fi
-  if [ "$page_status" -ne 0 ] || ! jq -e '.data.repository.pullRequest.reviewThreads | type == "object" and (.totalCount | type == "number" and floor == . and . >= 0) and (.pageInfo.hasNextPage | type == "boolean") and (.nodes | type == "array" and all(.[]; .isResolved | type == "boolean"))' <<<"$page" >/dev/null 2>&1; then
+  if [ "$page_status" -ne 0 ] || ! jq -e '.data.repository.pullRequest.reviewThreads | type == "object" and (.totalCount | type == "number" and floor == . and . >= 0) and (.pageInfo.hasNextPage | type == "boolean") and (.nodes | type == "array" and all(.[]; (.id | type == "string" and length > 0) and (.isResolved | type == "boolean")))' <<<"$page" >/dev/null 2>&1; then
     unknown "could not read review threads for $REPO#$PR"
     thread_ok=0
     break
@@ -403,6 +434,7 @@ while :; do
     break
   fi
   page_nodes=$(jq '.data.repository.pullRequest.reviewThreads.nodes | length' <<<"$page")
+  jq -r '.data.repository.pullRequest.reviewThreads.nodes[].id' <<<"$page" >>"$thread_ids"
   fetched_threads=$((fetched_threads + page_nodes))
   if [ "$fetched_threads" -gt "$total_threads" ]; then
     unknown "review-thread pagination exceeded totalCount"
@@ -427,7 +459,10 @@ while :; do
   cursor="$next_cursor"
 done
 if [ "$thread_ok" -eq 1 ]; then
-  if [ "$fetched_threads" -ne "$total_threads" ]; then
+  unique_thread_count=$(sort -u "$thread_ids" | wc -l | tr -d ' ')
+  if [ "$unique_thread_count" -ne "$fetched_threads" ]; then
+    unknown "review-thread pagination repeated thread IDs"
+  elif [ "$fetched_threads" -ne "$total_threads" ]; then
     unknown "review-thread pagination returned $fetched_threads of $total_threads nodes"
   elif [ "$open_threads" -eq 0 ]; then
     say "ok" "0 of $total_threads review threads unresolved"
@@ -439,34 +474,61 @@ fi
 # Require a completed checklist item and a same-repository line permalink.
 # The repository template puts the permalink on the item's indented
 # continuation, so accept it there as well as in an inline Markdown link.
-# A filename in prose, a foreign link, or an unrelated checked item is not
-# completion evidence.
+# A filename in prose, a foreign link, or an anchor outside the current
+# checklist file is not completion evidence.
+read_review_checklist() {
+  local response content decoded decode_status
+  : >"$errfile"
+  response=$(gh api "repos/$REPO/contents/review-checklist.md?ref=$head" 2>"$errfile") || return 1
+  content=$(jq -er 'select(.encoding == "base64") | .content | strings' <<<"$response") || return 1
+  decode_status=0
+  decoded=$(printf '%s' "${content//$'\n'/}" | base64 --decode 2>"$errfile") || decode_status=$?
+  if [ "$decode_status" -ne 0 ]; then
+    decode_status=0
+    decoded=$(printf '%s' "${content//$'\n'/}" | base64 -D 2>"$errfile") || decode_status=$?
+  fi
+  [ "$decode_status" -eq 0 ] && [ -n "$decoded" ] || return 1
+  review_checklist="$decoded"
+}
 checklist_link_ok() {
-  local body="$1" line awaiting_permalink=0
+  local body="$1" checklist="$2" line awaiting_permalink=0 link anchor
   local checked='^[[:space:]]*-[[:space:]]*\[[xX]\][[:space:]]+'
-  local permalink="https://github\\.com/${OWNER}/${NAME}/blob/[^[:space:])]+/review-checklist\\.md#L[0-9]+"
+  local permalink="https://github\.com/${OWNER}/${NAME}/blob/[^[:space:])]+/review-checklist\.md#L[0-9]+"
   while IFS= read -r line; do
     if printf '%s\n' "$line" | grep -Eq "$checked"; then
       if printf '%s\n' "$line" | grep -Eiq "$permalink"; then
-        return 0
-      fi
-      if printf '%s\n' "$line" | grep -Eiq 'review-checklist\.md'; then
+        awaiting_permalink=2
+      elif printf '%s\n' "$line" | grep -Eiq 'review-checklist\.md'; then
         awaiting_permalink=1
       else
         awaiting_permalink=0
       fi
     elif [ "$awaiting_permalink" -eq 1 ] && printf '%s\n' "$line" | grep -Eq '^[[:space:]]+'; then
       if printf '%s\n' "$line" | grep -Eiq "$permalink"; then
-        return 0
+        awaiting_permalink=2
       fi
-    else
+    elif [ "$awaiting_permalink" -ne 2 ]; then
+      awaiting_permalink=0
+    fi
+    if [ "$awaiting_permalink" -eq 2 ]; then
+      while IFS= read -r link; do
+        anchor=${link##*#L}
+        if sed -n "${anchor}p" <<<"$checklist" | grep -q '[^[:space:]]'; then
+          return 0
+        fi
+      done < <(printf '%s\n' "$line" | grep -Eio "$permalink")
       awaiting_permalink=0
     fi
   done <<<"$body"
   return 1
 }
-if ! checklist_link_ok "$prbody"; then
-  bad "description lacks a completed same-repository line-specific review-checklist link"
+review_checklist=""
+checklist_status=0
+read_review_checklist || checklist_status=$?
+if [ "$checklist_status" -ne 0 ]; then
+  unknown "could not read review-checklist content for link validation"
+elif ! checklist_link_ok "$prbody" "$review_checklist"; then
+  bad "description lacks a completed same-repository review-checklist link to an existing line"
 else
   say "ok" "description links a completed review-checklist item"
 fi
@@ -480,6 +542,14 @@ body_section_has_content() {
       return lower ~ ("^(" labels ")[[:space:]]*:[[:space:]]*[^[:space:]]") ||
              lower ~ ("^(" labels ")[[:space:]]*:?[[:space:]]*$")
     }
+    function template_prompt(line, lower) {
+      lower = tolower(line)
+      return lower == "what concrete user or maintainer workflow changes, and why now?" ||
+             lower ~ /^-[[:space:]]*exact candidate sha:[[:space:]]*$/ ||
+             lower ~ /^-[[:space:]]*commands and results[[:space:]]*\(.*\):[[:space:]]*$/ ||
+             lower ~ /^-[[:space:]]*captured\/fixture\/live scope and known limitations:[[:space:]]*$/ ||
+             lower ~ /^-[[:space:]]*manual\/ui evidence[[:space:]]*\(.*\):[[:space:]]*$/
+    }
     {
       if (heading($0)) {
         lower = tolower($0)
@@ -489,7 +559,7 @@ body_section_has_content() {
         next
       }
       if (waiting && $0 ~ /[^[:space:]]/) {
-        if ($0 !~ /^[[:space:]]*#/ && $0 !~ /^[[:space:]]*<!--/) { found = 1; exit }
+        if ($0 !~ /^[[:space:]]*#/ && $0 !~ /^[[:space:]]*<!--/ && !template_prompt($0)) { found = 1; exit }
         waiting = 0
       }
     }
@@ -519,12 +589,12 @@ if [ "$files_status" -ne 0 ] || ! jq -e '
   type == "array" and
   (all(.[]; type == "array" and all(.[];
       type == "object" and
-      ((.filename | type) == "string") and (.filename | length > 0) and (.filename | test("[\\t\\r\\n]") | not) and
+      ((.filename | type) == "string") and (.filename | length > 0) and (.filename | test("[\u0000-\u001F\u007F]") | not) and
       ((.status | type) == "string") and (.status | length > 0) and
       ((.additions | type) == "number") and (.additions | floor == . and . >= 0) and
       ((.deletions | type) == "number") and (.deletions | floor == . and . >= 0))) or
    all(.[]; type == "object" and
-      ((.filename | type) == "string") and (.filename | length > 0) and (.filename | test("[\\t\\r\\n]") | not) and
+      ((.filename | type) == "string") and (.filename | length > 0) and (.filename | test("[\u0000-\u001F\u007F]") | not) and
       ((.status | type) == "string") and (.status | length > 0) and
       ((.additions | type) == "number") and (.additions | floor == . and . >= 0) and
       ((.deletions | type) == "number") and (.deletions | floor == . and . >= 0)))
@@ -631,43 +701,30 @@ diff=$(gh pr diff "$PR" --repo "$REPO" 2>"$errfile") || diff_status=$?
 if [ "$diff_status" -ne 0 ] || [ -z "$diff" ]; then
   unknown "could not read diff for the privacy scan"
 else
-  # Keep one record per `diff --git` section. A header alone proves only that
-  # GitHub named a file; the line counts below prove it supplied the complete
-  # textual payload for that destination. Parse headers only before a hunk:
-  # payload can itself begin with a header-shaped string and must remain both
-  # counted and privacy-scanned.
+  # Parse Git's C-style quoted paths with the existing Python runtime. The
+  # shell receives only JSON/TSV data after the parser has matched every diff
+  # section, so non-ASCII destinations retain their REST filename identity.
   diff_stats="$tmpdir/diff-stats.tsv"
   added_payload="$tmpdir/added-payload"
-  : >"$added_payload"
-  awk -v added_payload="$added_payload" '
-    function emit() {
-      if (!in_file) return
-      destination = textual_destination != "" ? textual_destination : header_destination
-      if (destination != "") {
-        printf "%s\t%d\t%d\t%d\t%d\n", destination, added, deleted, textual, binary
-      }
-    }
-    /^diff --git a\// {
-      emit()
-      in_file = 1
-      header_destination = $0
-      sub(/^diff --git a\/.* b\//, "", header_destination)
-      textual_destination = ""
-      added = deleted = textual = binary = in_hunk = 0
-      next
-    }
-    !in_hunk && /^\+\+\+ b\// {
-      textual_destination = $0
-      sub(/^\+\+\+ b\//, "", textual_destination)
-      textual = 1
-      next
-    }
-    !in_hunk && /^(Binary files .* differ|GIT binary patch)$/ { binary = 1; next }
-    /^@@ / { in_hunk = 1; next }
-    in_hunk && /^\+/ { added++; print substr($0, 2) > added_payload; next }
-    in_hunk && /^-/ { deleted++; next }
-    END { emit() }
-  ' <<<"$diff" >"$diff_stats"
+  parsed_diff_status=0
+  parsed_diff=$(python3 scripts/merge_gate_diff.py <<<"$diff") || parsed_diff_status=$?
+  if [ "$parsed_diff_status" -ne 0 ] || ! jq -e '
+    type == "object" and
+    (.records | type == "array" and all(.[]; type == "object" and
+      (.destination | type == "string" and length > 0) and
+      ((.textual_destination == null) or (.textual_destination | type == "string" and length > 0)) and
+      (.added | type == "number" and floor == . and . >= 0) and
+      (.deleted | type == "number" and floor == . and . >= 0) and
+      (.binary | type == "boolean"))) and
+    (.added_payload | type == "array" and all(.[]; type == "string"))
+  ' <<<"$parsed_diff" >/dev/null 2>&1; then
+    unknown "could not parse diff sections for the privacy scan"
+    : >"$diff_stats"
+    : >"$added_payload"
+  else
+    jq -r '.records[] | [.destination, .added, .deleted, (if .textual_destination == null then 0 else 1 end), (if .binary then 1 else 0 end)] | @tsv' <<<"$parsed_diff" >"$diff_stats"
+    jq -r '.added_payload[]' <<<"$parsed_diff" >"$added_payload"
+
 
   coverage_count=0
   coverage_examples=""
@@ -727,12 +784,13 @@ else
     path_text=$(awk -F '\t' '$2 != "removed" { print $1 }' "$changed_records")
   fi
   added=$(cat "$added_payload")
-  scan_input="$path_text
+  scan_input="$privacy_metadata
+$path_text
 $added"
   redacted=$(sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/<uuid>/g; s/[0-9a-fA-F]{32,}/<digest>/g' <<<"$scan_input")
   exempt=$(grep -Ec '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{32,}' <<<"$scan_input")
   [ "$exempt" -eq 0 ] || say "note" "$exempt added/path line(s) carried generated UUID/digest shapes; inspect those lines"
-  placeholder='^(X+|Z+|A+)[0-9]+(X|Z|A)?$|^[0-9]{2}(X+|Z+|A+)[0-9]+[0-9A-Z]*$|^(0+|1+|2+|3+|4+|5+|6+|7+|8+|9+)$|^(0?1234567890|1234567890[0-9]*)$|^0{6,}[0-9]{1,5}$'
+  placeholder='^(X+|Z+)[0-9]+(X|Z)?$|^[0-9]{2}(X+|Z+)[0-9]+[0-9A-Z]*$|^(0+|1+|2+|3+|4+|5+|6+|7+|8+|9+)$|^(0?1234567890|1234567890[0-9]*)$|^0{6,}[0-9]{1,5}$'
   if printf '%s\n' 'XXXXX1234X' | grep -qE "$placeholder"; then :; else
     probe_status=$?
     if [ "$probe_status" -eq 1 ]; then
@@ -778,9 +836,10 @@ $normalized_phone"
   if [ "$hits_status" -ne 0 ] || [ "$runs_status" -ne 0 ]; then
     unknown "privacy scan expression failed"
   elif [ "$hits" -eq 0 ] && [ "$runs" -eq 0 ]; then
-    say "ok" "added destination paths and payload lines carry no identifier shapes"
+    say "ok" "PR metadata, destination paths, and payload lines carry no identifier shapes"
   else
     bad "privacy scan found $hits identifier shape(s) and $runs unexplained long digit run(s)"
+  fi
   fi
 fi
 
@@ -788,8 +847,8 @@ fi
 : >"$errfile"
 final_meta_status=0
 final_meta=$(gh pr view "$PR" --repo "$REPO" \
-  --json headRefOid,baseRefOid,baseRefName,mergeable,mergeStateStatus,isDraft,state,body,changedFiles 2>"$errfile") || final_meta_status=$?
-if [ "$final_meta_status" -ne 0 ] || ! jq -e 'type == "object" and (.headRefOid | type == "string" and test("^[0-9a-fA-F]{40}$")) and (.baseRefOid | type == "string" and test("^[0-9a-fA-F]{40}$")) and (.baseRefName | type == "string") and (.mergeable | type == "string") and (.mergeStateStatus | type == "string") and (.isDraft | type == "boolean") and (.state | type == "string") and (.changedFiles | type == "number" and floor == . and . >= 0)' <<<"$final_meta" >/dev/null 2>&1; then
+  --json headRefOid,baseRefOid,baseRefName,mergeable,mergeStateStatus,isDraft,state,title,body,changedFiles 2>"$errfile") || final_meta_status=$?
+if [ "$final_meta_status" -ne 0 ] || ! jq -e 'type == "object" and (.headRefOid | type == "string" and test("^[0-9a-fA-F]{40}$")) and (.baseRefOid | type == "string" and test("^[0-9a-fA-F]{40}$")) and (.baseRefName | type == "string") and (.mergeable | type == "string") and (.mergeStateStatus | type == "string") and (.isDraft | type == "boolean") and (.state | type == "string") and (.title | type == "string") and (.changedFiles | type == "number" and floor == . and . >= 0)' <<<"$final_meta" >/dev/null 2>&1; then
   unknown "could not revalidate PR head and base before merge"
 else
   final_head=$(jq -r '.headRefOid' <<<"$final_meta")
@@ -799,6 +858,7 @@ else
   final_state=$(jq -r '.mergeStateStatus' <<<"$final_meta")
   final_draft=$(jq -r '.isDraft' <<<"$final_meta")
   final_pstate=$(jq -r '.state' <<<"$final_meta")
+  final_title=$(jq -r '.title' <<<"$final_meta")
   final_changed_files=$(jq -r '.changedFiles' <<<"$final_meta")
   [ "$final_head" = "$head" ] || bad "PR head moved during preflight"
   [ "$final_base_ref_oid" = "$base_ref_oid" ] || bad "PR base OID moved during preflight"
@@ -809,14 +869,16 @@ else
   [ "$final_changed_files" = "$changed_files_expected" ] || bad "PR changed-file count moved during preflight"
   case "$final_state" in
     CLEAN|HAS_HOOKS) : ;;
-    BEHIND|DIRTY|UNKNOWN|BLOCKED|UNSTABLE) bad "PR merge state changed to $final_state during preflight" ;;
+    BEHIND|DIRTY|UNKNOWN|BLOCKED|UNSTABLE|DRAFT) bad "PR merge state changed to $final_state during preflight" ;;
     *) unknown "PR merge state changed to unrecognised value '$final_state' during preflight" ;;
   esac
   final_body=$(jq -r '.body // ""' <<<"$final_meta")
-  if ! checklist_link_ok "$final_body"; then
+  [ "$final_title" = "$title" ] || bad "PR title changed during preflight"
+  if ! checklist_link_ok "$final_body" "$review_checklist"; then
     bad "PR description changed and no longer carries a completed same-repository line-specific checklist link"
   fi
   if [ "$final_body" != "$prbody" ]; then
+    bad "PR description changed during preflight; re-run metadata privacy scan"
     if ! body_section_has_content "$final_body" 'functional summary|outcome and reason'; then
       bad "PR description changed and no longer carries a non-empty functional summary"
     fi

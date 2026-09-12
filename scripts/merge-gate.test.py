@@ -43,7 +43,10 @@ if args[:2] == ["pr", "view"]:
         with open(counter_path, "w") as counter:
             counter.write(str(view_count + 1))
     selected_head = new_head if scenario == "head-moves" and view_count > 0 else head
-    final_state = "UNKNOWN_VALUE" if scenario == "final-unrecognized" and view_count > 0 else ("BLOCKED" if scenario == "blocked-state" else "CLEAN")
+    final_state = "UNKNOWN_VALUE" if scenario == "final-unrecognized" and view_count > 0 else ("BLOCKED" if scenario == "blocked-state" else ("DRAFT" if scenario == "draft-state" else "CLEAN"))
+    title = "Safe merge gate control"
+    if scenario == "metadata-title-id":
+        title = "Customer " + "ABCDE" + "1234" + "F"
     body = (
         "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
         "## Validation and evidence\n\n`python3 scripts/merge-gate.test.py`\n\n"
@@ -75,16 +78,35 @@ if args[:2] == ["pr", "view"]:
             "## Validation and evidence\n\n`python3 scripts/merge-gate.test.py`\n\n"
             "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10)"
         )
+    elif scenario == "template-functional-prompt":
+        body = (
+            "## Outcome and reason\n\nWhat concrete user or maintainer workflow changes, and why now?\n\n"
+            "## Validation and evidence\n\n`python3 scripts/merge-gate.test.py`\n\n"
+            "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10)"
+        )
+    elif scenario == "template-validation-prompt":
+        body = (
+            "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
+            "## Validation and evidence\n\n- Exact candidate SHA:\n"
+            "- Commands and results (`corepack pnpm ...`, `cargo ...`, or reproduction):\n\n"
+            "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10)"
+        )
+    elif scenario == "checklist-missing-anchor":
+        body = (
+            "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
+            "## Validation and evidence\n\n`python3 scripts/merge-gate.test.py`\n\n"
+            "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L999999)"
+        )
     elif scenario == "missing-test-summary":
         body = (
             "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
             "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10)"
         )
-    one_file = scenario in {"files-empty", "formatted-phone", "formatted-phone-grouped", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates"}
+    one_file = scenario in {"files-empty", "formatted-phone", "formatted-phone-grouped", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "all-a-pan", "masked-pan", "quoted-path", "control-path"}
     selected_base = new_head if scenario == "base-oid-mismatch" else base
     emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
-          "isDraft": False, "state": "OPEN",
+          "isDraft": False, "state": "OPEN", "title": title,
           "body": body, "changedFiles": 1 if one_file else 2})
 elif args[:2] == ["pr", "checks"]:
     if scenario == "checks-silent":
@@ -129,6 +151,14 @@ elif args[:2] == ["pr", "diff"]:
         emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +2 @@\n+++ b/safe\n+++ /dev/null\n")
     elif scenario == "hunk-binary-literal":
         emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+GIT binary patch\n")
+    elif scenario == "all-a-pan":
+        identifier = "AAAAA" + "1234" + "A"
+        emit(f"diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+{identifier}\n")
+    elif scenario == "masked-pan":
+        identifier = "XXXXX" + "1234" + "X"
+        emit(f"diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+{identifier}\n")
+    elif scenario == "quoted-path":
+        emit('diff --git "a/docs/caf\\303\\251.md" "b/docs/caf\\303\\251.md"\n--- "a/docs/caf\\303\\251.md"\n+++ "b/docs/caf\\303\\251.md"\n@@ -0,0 +1 @@\n+safe text\n')
     elif scenario == "separated-dates":
         emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+2026-09-12 2026-09-13\n")
     elif scenario == "surface-unpins":
@@ -140,17 +170,24 @@ elif args[:2] == ["pr", "diff"]:
 elif args and args[0] == "api":
     joined = " ".join(args)
     if "graphql" in args:
+        def thread_nodes(start, count, unresolved=False):
+            return [{"id": f"thread-{index}", "isResolved": not (unresolved and index == start)}
+                    for index in range(start, start + count)]
         has_cursor = "C1" in joined
         if scenario == "threads-empty-more":
             nodes, page_info = [], {"hasNextPage": True, "endCursor": "C1"}
         elif scenario == "threads-short":
-            nodes, page_info = [{"isResolved": True}], {"hasNextPage": False, "endCursor": None}
+            nodes, page_info = thread_nodes(1, 1), {"hasNextPage": False, "endCursor": None}
         elif scenario == "threads-malformed-pagination":
-            nodes, page_info = ([{"isResolved": True}] * 100), {"hasNextPage": True, "endCursor": None}
+            nodes, page_info = thread_nodes(1, 100), {"hasNextPage": True, "endCursor": None}
         elif has_cursor:
-            nodes, page_info = [{"isResolved": scenario != "threads-unresolved-second"}], {"hasNextPage": False, "endCursor": None}
+            if scenario == "threads-duplicate-id":
+                nodes = [{"id": "thread-1", "isResolved": True}]
+            else:
+                nodes = thread_nodes(101, 1, scenario == "threads-unresolved-second")
+            page_info = {"hasNextPage": False, "endCursor": None}
         else:
-            nodes, page_info = ([{"isResolved": True}] * 100), {"hasNextPage": True, "endCursor": "C1"}
+            nodes, page_info = thread_nodes(1, 100), {"hasNextPage": True, "endCursor": "C1"}
         emit({"data": {"repository": {"pullRequest": {"reviewThreads": {
             "totalCount": 101.5 if scenario == "threads-fractional" else (102 if scenario == "threads-total-drift" and has_cursor else 101),
             "pageInfo": page_info, "nodes": nodes
@@ -174,12 +211,24 @@ elif args and args[0] == "api":
     elif "/commits/" in joined and "/status" in joined:
         if scenario == "status-malformed":
             emit({"total_count": "0", "statuses": []})
+        elif scenario == "status-failed-combined":
+            emit({"state": "failure", "total_count": 0, "statuses": []})
+        elif scenario == "status-failed-context":
+            emit({"state": "failure", "total_count": 1,
+                  "statuses": [{"context": "legacy optional", "state": "failure", "sha": head}]})
         else:
             emit({"state": "success", "total_count": 0, "statuses": []})
+    elif "/pulls/321/commits" in joined:
+        message = "safe commit metadata"
+        if scenario == "metadata-commit-id":
+            message = "Customer " + "ABCDE" + "1234" + "F"
+        emit([[{"sha": head, "commit": {"message": message}}]])
     elif "branches/master/protection/required_status_checks" in joined:
-        contexts = ["Required checks", "Rust format"] if scenario == "missing-required" else [
+        contexts = [
             "Frontend build", "Rust format", "GitGuardian Security Checks",
             "Dependency security", "Required checks"]
+        if scenario == "protection-missing-gitguardian":
+            contexts = [context for context in contexts if context != "GitGuardian Security Checks"]
         emit({"contexts": contexts, "checks": []})
     elif "branches/master" in joined:
         emit(base)
@@ -222,8 +271,12 @@ elif args and args[0] == "api":
             emit([[{"filename": "docs/example.md", "status": "modified", "additions": 2, "deletions": 0}]])
         elif scenario == "hunk-binary-literal":
             emit([[{"filename": "docs/example.md", "status": "modified", "additions": 1, "deletions": 0}]])
-        elif scenario == "separated-dates":
+        elif scenario in {"all-a-pan", "masked-pan", "separated-dates"}:
             emit([[{"filename": "docs/example.md", "status": "modified", "additions": 1, "deletions": 0}]])
+        elif scenario == "quoted-path":
+            emit([[{"filename": "docs/café.md", "status": "added", "additions": 1, "deletions": 0}]])
+        elif scenario == "control-path":
+            emit([[{"filename": "docs/unsafe\x1b.md", "status": "added", "additions": 1, "deletions": 0}]])
         elif scenario == "malformed-files":
             emit([[{"filename": "docs/example.md", "status": "added", "additions": 1, "deletions": 0}], [{"filename": 3, "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "missing-file-status":
@@ -237,9 +290,12 @@ elif args and args[0] == "api":
             additions = 2 if scenario == "diff-truncated-payload" else 1
             emit([[{"filename": "docs/example.md", "status": "added", "additions": additions, "deletions": 0}], [{"filename": "docs/second.md", "status": "modified", "additions": 1, "deletions": 0}]])
     elif "/contents/" in joined:
-        if scenario == "surface-fail":
+        if "review-checklist.md" in joined:
+            checklist = "\n" * 9 + "- [ ] Errors are actionable without exposing sensitive values.\n"
+            emit({"encoding": "base64", "content": base64.b64encode(checklist.encode()).decode()})
+        elif scenario == "surface-fail":
             fail("controlled surface read failure")
-        if scenario == "surface-malformed":
+        elif scenario == "surface-malformed":
             emit({"content": "not-base64"})
         else:
             digest = "a" * 64
@@ -502,6 +558,50 @@ class MergeGateControls(unittest.TestCase):
 
     def test_final_changed_body_revalidates_functional_summary(self):
         self.assert_blocked("body-loses-functional", "description changed and no longer carries a non-empty functional summary")
+
+    def test_draft_merge_state_blocks(self):
+        self.assert_blocked("draft-state", "merge state DRAFT")
+
+    def test_documented_required_context_cannot_be_omitted(self):
+        self.assert_blocked("protection-missing-gitguardian", "branch protection omits 1 documented")
+
+    def test_failing_combined_commit_status_blocks(self):
+        self.assert_indeterminate("status-failed-combined", "head-bound commit-status evidence")
+
+    def test_failing_individual_commit_status_blocks(self):
+        self.assert_indeterminate("status-failed-context", "head-bound commit-status evidence")
+
+    def test_duplicate_thread_ids_are_indeterminate(self):
+        self.assert_indeterminate("threads-duplicate-id", "pagination repeated thread IDs")
+
+    def test_checklist_anchor_must_reference_an_existing_line(self):
+        self.assert_blocked("checklist-missing-anchor", "review-checklist link to an existing line")
+
+    def test_template_functional_prompt_does_not_count_as_summary(self):
+        self.assert_blocked("template-functional-prompt", "non-empty functional summary")
+
+    def test_template_validation_prompts_do_not_count_as_evidence(self):
+        self.assert_blocked("template-validation-prompt", "test or reproduction command")
+
+    def test_pr_title_identifier_is_scanned(self):
+        self.assert_blocked("metadata-title-id", "privacy scan found")
+
+    def test_pr_commit_metadata_identifier_is_scanned(self):
+        self.assert_blocked("metadata-commit-id", "privacy scan found")
+
+    def test_all_a_pan_is_not_exempted_as_a_placeholder(self):
+        self.assert_blocked("all-a-pan", "privacy scan found")
+
+    def test_explicit_masked_pan_remains_a_placeholder(self):
+        result = self.run_gate("masked-pan")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_quoted_git_destination_path_is_covered(self):
+        result = self.run_gate("quoted-path")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_control_character_in_destination_path_is_indeterminate(self):
+        self.assert_indeterminate("control-path", "could not read the complete changed-file set")
 
 
 if __name__ == "__main__":
