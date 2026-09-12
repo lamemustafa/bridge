@@ -1274,9 +1274,10 @@ licence tier silver, `education_mode=false`**, ledgers, one lab company.
 
 **Method is §9.4b's own.** Import a voucher naming a folded spelling of a ledger that exists, and
 let Tally answer: a created voucher means the name resolved, a `LINEERROR` naming that ledger
-means it did not. Twelve variants, one voucher each, then the **day book was read back** to record
-which master each voucher actually posted against — the counters alone would not have said. All
-eight created vouchers were then deleted by `REMOTEID` and the day read back empty.
+means it did not. Twelve variants in the first run and six more in the second described below, one
+voucher each, then the **day book was read back** to record which master each voucher actually
+posted against — the counters alone would not have said. Every created voucher was then deleted by
+`REMOTEID` and the day read back empty (eight from the first run, two from the second).
 
 | Supplied against a live master | Licensed 7.1 | §9.4b on Educational |
 | --- | --- | --- |

@@ -608,8 +608,10 @@ fn masters_that_collapse_under_the_fold_are_refused_never_chosen() {
 
 #[test]
 fn the_master_fold_stops_where_tally_stops() {
-    // §3.3b also measured what Tally does NOT normalise: `AND` for `&`, a
-    // missing suffix word, and a singular for a plural were all rejected.
+    // `IMPLEMENTATION_GUIDE.md` §3.3b also measured what Tally does NOT
+    // normalise: `AND` for `&`, a missing suffix word, and a singular for a
+    // plural were all rejected. The first two were re-measured on licensed
+    // 7.1 in §9.4d against `Profit & Loss A/c` and rejected there too.
     // Folding further than the authority would bind names Tally refuses.
     let catalog = ledgers(&["ZZ Ram & Sons Pvt Ltd", "Beta Supply"]);
     for wrong in [
