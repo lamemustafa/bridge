@@ -1008,7 +1008,25 @@ pub fn bind(
 /// served one spelling's candidates to another. `AB-CD` and `AB\u{2013}CD` share a
 /// wide key, because `comparison_key` maps every dash variant to `-`, and
 /// differ under the resolving fold, because only ASCII `-` and `/` fold there.
-type CandidateMemoKey = (String, String, BTreeSet<usize>);
+/// **Named, not a tuple, and that is the point.** This began as
+/// `(String, BTreeSet<usize>)`; adding the resolving fold as a second `String`
+/// silently re-pointed every positional access, and the memo's size guard —
+/// written as `key.1.len()` — went from bounding the identifier-holder *set* to
+/// measuring the binding key's *bytes* against a candidate-count cap. Both
+/// directions broke at once: a repeated name over 25 bytes was never cached, so
+/// the stall this memo exists to prevent came back, and large holder sets lost
+/// their guard entirely. `String` and `BTreeSet` both answer `.len()`, so
+/// nothing failed to compile.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct CandidateMemoKey {
+    /// The wide fold: which masters are worth showing.
+    key: String,
+    /// The resolving fold. `collect_candidates` reads it too, so two spellings
+    /// that agree on the wide fold and differ here are different questions.
+    binding_key: String,
+    /// The masters the entity's identifiers reached.
+    identifier_matches: BTreeSet<usize>,
+}
 type CandidateMemo = BTreeMap<CandidateMemoKey, (Vec<(usize, CandidateRule)>, usize)>;
 
 /// One run's search scratch: what has already been computed, and which source
@@ -1397,15 +1415,16 @@ fn remembered_candidates(
     identifier_matches: &BTreeSet<usize>,
     memo: &mut SearchMemo,
 ) -> (Vec<(usize, CandidateRule)>, usize) {
-    let key = (
-        entity.key.clone(),
-        entity.binding_key.clone(),
-        identifier_matches.clone(),
-    );
+    let key = CandidateMemoKey {
+        key: entity.key.clone(),
+        binding_key: entity.binding_key.clone(),
+        identifier_matches: identifier_matches.clone(),
+    };
     if let Some(remembered) = memo.seen.get(&key) {
         return remembered.clone();
     }
-    let fingerprint = candidate_memo_fingerprint(&key.0, &key.1, &key.2);
+    let fingerprint =
+        candidate_memo_fingerprint(&key.key, &key.binding_key, &key.identifier_matches);
     let computed = collect_candidates(catalog, entity, identifier_matches);
     // Entry *count* alone does not bound a memo whose keys and values are
     // themselves collections, so the key is still size-tested. The **value** is
@@ -1416,8 +1435,8 @@ fn remembered_candidates(
     // search the memo exists for, and a name reaching twenty thousand masters
     // through shared tokens re-ran it once per row.
     debug_assert!(computed.0.len() <= MAX_CANDIDATES_PER_ENTITY);
-    let worth_holding =
-        memo.repeated.contains(&fingerprint) && key.1.len() <= MAX_CANDIDATES_PER_ENTITY;
+    let worth_holding = memo.repeated.contains(&fingerprint)
+        && key.identifier_matches.len() <= MAX_CANDIDATES_PER_ENTITY;
     if worth_holding && memo.seen.len() < MAX_CANDIDATE_MEMO_ENTRIES {
         memo.seen.insert(key, computed.clone());
     }

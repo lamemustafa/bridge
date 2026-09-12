@@ -2839,3 +2839,32 @@ fn an_exactly_counted_family_is_not_reported_as_a_floor() {
         "a skipped identifier family is the one case the count cannot be a union"
     );
 }
+
+#[test]
+fn a_long_repeated_name_is_still_cached() {
+    // The memo's size guard bounds the identifier-holder **set**, because that
+    // set is part of every key the memo stores. Written positionally as
+    // `key.1.len()`, it survived the key gaining a second `String` and started
+    // measuring the binding key's *bytes* against a candidate-count cap
+    // instead — so a repeated name of more than 25 bytes was never cached, and
+    // the stall the memo exists to prevent came back for exactly the drafts
+    // most likely to hit it. Ledger names are routinely longer than 25 bytes.
+    let name = "Zeta Placeholder Holdings Alpha Branch";
+    assert!(
+        name.len() > MAX_CANDIDATES_PER_ENTITY,
+        "this fixture only bites if the name is longer than the candidate cap"
+    );
+    let catalog = ledgers(&["Omega Supply", "Beta Supply"]);
+    let entities = (0..6)
+        .map(|position| SourceEntity::new(position, name).expect("valid"))
+        .collect::<Vec<_>>();
+
+    super::CANDIDATE_SEARCHES.with(|count| count.set(0));
+    let report = bound(&catalog, &entities);
+    let searches = super::CANDIDATE_SEARCHES.with(std::cell::Cell::get);
+    assert_eq!(report.totals().requested, 6);
+    assert_eq!(
+        searches, 1,
+        "a repeated name was searched {searches} times because it is long"
+    );
+}
