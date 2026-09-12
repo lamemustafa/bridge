@@ -1726,22 +1726,24 @@ fn raw_entry_bytes_admit_exact_limit_and_refuse_the_next_byte() {
         ledger: ledger_1024,
         amount,
     };
+    let mut over_tail = exact_entries[2 * MAX_ENTRIES_PER_VOUCHER..].to_vec();
+    *over_tail.last_mut().expect("nonempty tail") = extra;
     let over_rows = [
-        exact_rows[0].clone(),
-        exact_rows[1].clone(),
-        exact_rows[2].clone(),
+        exact_rows[0],
+        exact_rows[1],
         ObservedVoucher {
-            key: "bytes-over",
-            date: "20260812",
-            voucher_type: "Sales",
-            voucher_number: None,
-            remote_id: None,
-            party: None,
-            entries: std::slice::from_ref(&extra),
-            cancelled: false,
-            optional: false,
+            entries: &over_tail,
+            ..exact_rows[2]
         },
     ];
+    assert_eq!(
+        over_rows
+            .iter()
+            .flat_map(|row| row.entries)
+            .map(|entry| entry.ledger.len() + entry.amount.len())
+            .sum::<usize>(),
+        MAX_WINDOW_RAW_ENTRY_BYTES + 1,
+    );
     assert_eq!(
         BookWindow::from_observations(
             "20260801",
