@@ -30,7 +30,20 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// reserved capacity covers a small cohesive feature (source, tests, docs
 /// and manifest) but makes further unreviewed additions an explicit
 /// compatibility-surface decision.
-pub const MAX_SURFACE_FILES: usize = 211;
+///
+/// **Raised twice, by two branches that did not see each other.** 210 to 211 on
+/// master for `src-tauri/src/agent_ledgers.rs`, and 211 to 212 here for
+/// `src-tauri/crates/bridge-tally-core/src/master_binding.rs`. Both reasons
+/// stand and the number carries both; a merge that kept one raise and one pin
+/// would pass the gate with the other file silently unpinned, which is the
+/// failure this constant exists to make loud.
+///
+/// `master_binding.rs` decides `validate_masters` results and, through them,
+/// import admission. Left unpinned, an edit confined to the matcher would leave
+/// the surface digest unchanged and let existing evidence attest behaviour it
+/// never covered. That is the deliberate decision the paragraph above requires,
+/// and it is one file for one named reason — not headroom.
+pub const MAX_SURFACE_FILES: usize = 212;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;

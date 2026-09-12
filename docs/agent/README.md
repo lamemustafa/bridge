@@ -205,8 +205,20 @@ licence mode, or manually imported file, and only an unnumbered single-voucher
 
 1. Call `voucher_schema` and produce a payload matching its schema. Transaction
    IDs are client-supplied, unique within the batch, and retained in the local import ledger.
-2. Call `validate_masters` with every ledger name. Correct every `near_miss`
-   with the exact live spelling; Bridge never creates masters.
+2. Call `validate_masters` with every ledger name. **`build_import_xml` admits
+   `exact` only**, so replace the payload name for every row that is not
+   `exact`, and never invent one:
+   - `normalized` or `identifier` — the row is bound. Copy its
+     `exact_live_spelling` into the payload verbatim; the live name may differ
+     from yours in case, spacing, dash or quote style, and the import file
+     carries whatever you send byte for byte.
+   - `near_miss` — the row is **not** bound and Bridge chose nothing. Pick from
+     `candidates`, each labelled with the rule that surfaced it. A single
+     candidate is still not a decision. Where `reason` is
+     `master_binding_no_discriminating_candidate`, the name reaches
+     `candidate_count` masters that it does not distinguish and none is listed;
+     use a more complete source name, or read the ledger list and choose.
+   - `missing` — no live ledger matched. Bridge never creates masters.
 3. Call `build_import_xml` with the payload. It checks exact decimal balance,
    company date extent, live masters, and local journal integrity,
    repeats the full catalogue to reject intervening changes, then writes `<data_dir>/imports/<batch_id>.xml` and records an append-only
