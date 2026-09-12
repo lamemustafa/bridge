@@ -1778,35 +1778,75 @@ def test_ownership_registration_preserves_an_unproven_reclaimed_path(m):
 
 
 def test_original_pin_registration_failure_preserves_existing_output(m):
-    """The original pin is not newly created cleanup authority."""
+    """A created=False pin failure re-raises the same error and closes its FD."""
     with tempfile.TemporaryDirectory() as directory:
-        root = pathlib.Path(directory)
-        destination = root / "previous.xml"
+        destination = pathlib.Path(directory) / "previous.xml"
         destination.write_text("old bytes")
-        real_identity = m._fd_identity
-        calls = 0
+        handle = os.open(destination, os.O_RDONLY)
+        original = m._fd_identity
+        error = OSError("controlled original pin fstat failure")
 
-        def fail_original_pin(handle):
-            nonlocal calls
-            calls += 1
-            # Staged output registers first; the second pin is the old
-            # destination opened for backup and metadata capture.
-            if calls == 2:
-                raise OSError("controlled original pin fstat failure")
-            return real_identity(handle)
+        def fail_original_pin(candidate):
+            assert candidate == handle
+            raise error
 
         m._fd_identity = fail_original_pin
         try:
             try:
-                m.write_outputs([(str(destination), "new bytes")])
+                m._owned_path(destination, handle, created=False)
                 raise AssertionError("the controlled original-pin failure must escape")
-            except OSError as error:
-                assert "controlled original pin fstat failure" in str(error)
+            except OSError as raised:
+                assert raised is error
         finally:
-            m._fd_identity = real_identity
+            m._fd_identity = original
 
+        try:
+            os.fstat(handle)
+            raise AssertionError("created=False registration failure must close its descriptor")
+        except OSError:
+            pass
         assert destination.read_text() == "old bytes"
-        assert sorted(path.name for path in root.iterdir()) == ["previous.xml"]
+
+
+def test_interrupted_committed_cleanup_preserves_interrupt_when_backup_inspection_fails(m):
+    """EACCES during reconciliation is diagnostic, not a replacement exception."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        backup_path, original_path, claimed_path = root / "old.bak", root / "old.xml", root / "new.xml"
+        for path in (backup_path, original_path, claimed_path):
+            path.write_text(path.name)
+        backup_fd, original_fd, claimed_fd = (os.open(path, os.O_RDONLY) for path in (backup_path, original_path, claimed_path))
+        backup = {"path": backup_path, "identity": m._fd_identity(backup_fd), "pin": backup_fd}
+        original_record = {"path": original_path, "identity": m._fd_identity(original_fd), "pin": original_fd}
+        claimed = {"path": claimed_path, "identity": m._fd_identity(claimed_fd), "pin": claimed_fd}
+        real_entry = m._entry_identity
+        def deny_backup(path):
+            if pathlib.Path(path) == backup_path:
+                raise PermissionError("controlled EACCES")
+            return real_entry(path)
+        m._entry_identity = deny_backup
+        retained, closes = [], []
+        real_close = m._close_owned_path
+        def record_close(record, failures):
+            closes.append(record["path"])
+            return real_close(record, failures)
+        m._close_owned_path = record_close
+        try:
+            original_error = KeyboardInterrupt("controlled interrupt")
+            try:
+                raise original_error
+            except BaseException as caught:
+                m._reconcile_interrupted_committed_cleanup(
+                    [{"backup": backup, "original": original_record}], [claimed], retained, [])
+                assert caught is original_error
+        finally:
+            m._entry_identity = real_entry
+            m._close_owned_path = real_close
+        assert backup_path in closes and original_path in closes and claimed_path in closes
+        assert any("could not inspect committed rollback copy" in value for value in retained)
+        assert backup_path.read_text() == "old.bak"
 
 
 def test_restore_reconciles_a_backup_replace_that_raised_after_effect(m):
@@ -3291,6 +3331,64 @@ def main():
             print(f"ok  {name}")
     print("all offline contract tests passed")
     return 0
+
+def test_interrupted_committed_cleanup_parent_rename_retains_unlocated_backup(m):
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory) / "before"; moved = pathlib.Path(directory) / "after"; root.mkdir()
+        backup_path = root / "old.bak"; original_path = root / "old.xml"; claimed_path = root / "new.xml"
+        for path in (backup_path, original_path, claimed_path): path.write_text(path.name)
+        fds = [os.open(path, os.O_RDONLY) for path in (backup_path, original_path, claimed_path)]
+        records = [{"path": path, "identity": m._fd_identity(fd), "pin": fd} for path, fd in zip((backup_path, original_path, claimed_path), fds)]
+        root.rename(moved)
+        retained=[]
+        m._reconcile_interrupted_committed_cleanup([{"backup":records[0],"original":records[1]}], [records[2]], retained, [])
+        assert any("owned output could not be located after cleanup" in value for value in retained)
+        assert (moved / "old.bak").read_text() == "old.bak"
+
+
+def test_restore_backup_preserves_foreign_symlink_entry(m):
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root=pathlib.Path(directory); destination=root/"destination.xml"; backup=root/"backup.bak"; foreign=root/"foreign.xml"
+        destination.write_text("new bytes"); backup.write_text("old bytes"); foreign.write_text("foreign bytes")
+        backup_fd=os.open(backup, os.O_RDONLY); original_fd=os.open(destination, os.O_RDONLY)
+        swap={"destination":destination,"original_identity":m._fd_identity(original_fd),"staged_identity":m._entry_identity(destination),"metadata":None,"swap_started":True,"backup":{"path":backup,"identity":m._fd_identity(backup_fd),"pin":backup_fd}}
+        destination.unlink(); destination.symlink_to(foreign)
+        failures=[]; warnings=[]
+        m._restore_backup(swap, failures, warnings)
+        assert destination.is_symlink() and foreign.read_text() == "foreign bytes"
+        assert backup.exists()
+        os.close(backup_fd); os.close(original_fd)
+
+
+def test_interrupted_cleanup_skips_closed_missing_backup_and_closes_later_pins(m):
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        gone, later, original, claimed = (root / name for name in ("gone.bak", "later.bak", "old.xml", "new.xml"))
+        for path in (gone, later, original, claimed): path.write_text(path.name)
+        fds = [os.open(path, os.O_RDONLY) for path in (gone, later, original, claimed)]
+        records = [{"path": path, "identity": m._fd_identity(fd), "pin": fd} for path, fd in zip((gone, later, original, claimed), fds)]
+        m._cleanup_owned_path(records[0], [])
+        assert records[0]["pin"] is None and not gone.exists()
+        real_entry=m._entry_identity
+        def deny_later(path):
+            if pathlib.Path(path) == later: raise PermissionError("controlled EACCES")
+            return real_entry(path)
+        m._entry_identity=deny_later
+        retained=[]
+        try:
+            m._reconcile_interrupted_committed_cleanup(
+                [{"backup":records[0],"original":records[2]}, {"backup":records[1],"original":records[2]}],
+                [records[3]], retained, [])
+        finally:
+            m._entry_identity=real_entry
+        assert any("could not inspect committed rollback copy" in value for value in retained)
+        assert records[1]["pin"] is None and records[2]["pin"] is None and records[3]["pin"] is None
 
 
 if __name__ == "__main__":

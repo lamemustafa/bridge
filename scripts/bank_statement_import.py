@@ -1709,16 +1709,18 @@ def _cleanup_owned_path(record, failures):
             # missing entry into a successful cleanup or invent a replacement
             # path; a parent-directory rename is outside this CLI's namespace
             # authority and needs an operator-visible recovery fact.
-            try:
-                stat_result = os.fstat(record["pin"])
-                if ((stat_result.st_dev, stat_result.st_ino) == record["identity"]
-                        and stat_result.st_nlink > 0):
+            pin = record.get("pin")
+            if pin is not None:
+                try:
+                    stat_result = os.fstat(pin)
+                    if ((stat_result.st_dev, stat_result.st_ino) == record["identity"]
+                            and stat_result.st_nlink > 0):
+                        failures.append(
+                            f"owned output could not be located after cleanup: {record['path']}"
+                        )
+                except OSError:
                     failures.append(
                         f"owned output could not be located after cleanup: {record['path']}"
-                    )
-            except OSError:
-                failures.append(
-                    f"owned output could not be located after cleanup: {record['path']}"
                 )
         _close_owned_path(record, failures)
 
@@ -1976,19 +1978,37 @@ def _cleanup_committed_outputs(replaced, claimed, retained_failures, descriptor_
 
 def _reconcile_interrupted_committed_cleanup(
         replaced, claimed, retained_failures, descriptor_failures):
-    """Close pins and disclose owned old copies without undoing a commit."""
+    """Close every pin and disclose old copies without undoing a commit.
+
+    Recovery runs while another exception is already escaping.  Inspection or
+    cleanup failures are diagnostics here: they must never replace that
+    original exception or skip closure of later ownership descriptors.
+    """
     for swap in replaced:
         backup = swap["backup"]
         try:
-            if _entry_identity(backup["path"]) == backup["identity"]:
+            try:
+                still_at_path = _entry_identity(backup["path"]) == backup["identity"]
+            except FileNotFoundError:
+                still_at_path = False
+            except OSError:
+                still_at_path = None
+            if still_at_path is True:
                 retained_failures.append(str(backup["path"]))
-            else:
+            elif still_at_path is False:
                 _cleanup_owned_path(backup, retained_failures)
-        except FileNotFoundError:
-            _cleanup_owned_path(backup, retained_failures)
-        if backup.get("pin") is not None:
+            else:
+                # We cannot identify an entry after an I/O/permission error.
+                # Preserve the original interruption and report no ownership
+                # claim about a possibly foreign pathname.
+                retained_failures.append(
+                    "could not inspect committed rollback copy: " + str(backup["path"]))
+        except OSError:
+            retained_failures.append(
+                "could not reconcile committed rollback copy: " + str(backup["path"]))
+        finally:
             _close_owned_path(backup, retained_failures)
-        _close_owned_path(swap["original"], retained_failures)
+            _close_owned_path(swap["original"], retained_failures)
     for record in claimed:
         _close_owned_path(record, descriptor_failures)
 
