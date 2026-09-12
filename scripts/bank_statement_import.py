@@ -1563,7 +1563,39 @@ def _open_regular_output(path, expected_identity):
 
 def _owned_path(path, handle):
     """Record a pathname and retain the descriptor that pins its inode."""
-    return {"path": path, "identity": _fd_identity(handle), "pin": handle}
+    try:
+        identity = _fd_identity(handle)
+    except BaseException as error:
+        # The creator has already made `path`, but until its descriptor and
+        # pathname agree on one identity it has not entered any ownership list.
+        # Retry once for a transient fstat failure; if that still cannot prove
+        # ownership, preserve a possibly reclaimed pathname and say so rather
+        # than deleting a foreign file during failure cleanup.
+        failures = []
+        try:
+            try:
+                identity = _fd_identity(handle)
+            except BaseException:
+                identity = None
+            if identity is None:
+                if os.path.lexists(path):
+                    failures.append(str(path))
+            else:
+                _unlink_for_cleanup(path, identity, failures)
+        finally:
+            try:
+                os.close(handle)
+            except OSError:
+                if os.path.lexists(path):
+                    failures.append(str(path))
+        if failures:
+            _append_cleanup_detail(
+                error,
+                "output ownership registration failed; retained path(s): "
+                + ", ".join(sorted(set(failures))),
+            )
+        raise
+    return {"path": path, "identity": identity, "pin": handle}
 
 
 def _close_owned_path(record, failures):
@@ -1988,7 +2020,10 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             _close_owned_path(backup, cleanup_failures)
             if pending_swap["original"] is not None:
                 _close_owned_path(pending_swap["original"], cleanup_failures)
-        if pending_backup is not None:
+        if pending_backup is not None and (
+                pending_swap is None
+                or pending_backup["path"] != pending_swap["backup"]["path"]
+                or pending_backup["identity"] != pending_swap["backup"]["identity"]):
             _cleanup_owned_path(pending_backup, cleanup_failures)
         for swap in reversed(replaced):
             # An interrupt can arrive after `_record_replaced_swap` appends but

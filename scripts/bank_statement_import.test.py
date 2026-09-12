@@ -1662,6 +1662,120 @@ def test_line_interrupt_after_recording_a_swap_restores_it_once(m):
         assert sorted(path.name for path in root.iterdir()) == ["previous.xml"]
 
 
+def test_line_interrupt_before_clearing_pending_backup_has_one_cleanup_owner(m):
+    """An interrupt in the alias window must not clean one backup twice."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "previous.xml"
+        destination.write_text("old bytes")
+        _, start = inspect.getsourcelines(m.write_outputs)
+        clear_line = start + [
+            index for index, line in enumerate(inspect.getsource(m.write_outputs).splitlines())
+            if line.strip() == "pending_backup = None"
+        ][-1]
+        real_cleanup = m._cleanup_owned_path
+        cleanup_paths = []
+        old_trace = sys.gettrace()
+        fired = False
+
+        def interrupt_before_clear(frame, event, _arg):
+            nonlocal fired
+            if (not fired and event == "line" and frame.f_code is m.write_outputs.__code__
+                    and frame.f_lineno == clear_line):
+                fired = True
+                raise KeyboardInterrupt("controlled pending-backup interrupt")
+            return interrupt_before_clear
+
+        def observe_cleanup(record, failures):
+            cleanup_paths.append(str(record["path"]))
+            return real_cleanup(record, failures)
+
+        m._cleanup_owned_path = observe_cleanup
+        sys.settrace(interrupt_before_clear)
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("the controlled interrupt must escape")
+            except KeyboardInterrupt:
+                pass
+        finally:
+            sys.settrace(old_trace)
+            m._cleanup_owned_path = real_cleanup
+
+        assert fired
+        assert destination.read_text() == "old bytes"
+        assert not any(path.endswith(".bak") for path in cleanup_paths)
+        assert sorted(path.name for path in root.iterdir()) == ["previous.xml"]
+
+
+def test_ownership_registration_failure_reconciles_a_created_path_and_closes_its_pin(m):
+    """The creator is not in an outer cleanup list until fstat succeeds."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        real_identity = m._fd_identity
+        real_close = m.os.close
+        closed = []
+        for position, failure in enumerate((OSError("fstat I/O"),
+                                            KeyboardInterrupt("fstat interrupt"))):
+            path = root / f"fresh-{position}.xml"
+            handle = m._open_private(path)
+            calls = 0
+
+            def fail_once(candidate):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    raise failure
+                return real_identity(candidate)
+
+            def observe_close(candidate):
+                closed.append(candidate)
+                return real_close(candidate)
+
+            m._fd_identity = fail_once
+            m.os.close = observe_close
+            try:
+                try:
+                    m._owned_path(path, handle)
+                    raise AssertionError("the original identity failure must escape")
+                except BaseException as error:
+                    assert error is failure
+            finally:
+                m._fd_identity = real_identity
+                m.os.close = real_close
+
+            assert not path.exists(), "a reconciled fresh output must not strand a refusal"
+            assert handle in closed
+
+
+def test_ownership_registration_preserves_an_unproven_reclaimed_path(m):
+    """When fstat cannot establish ownership, foreign bytes survive visibly."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        path = root / "fresh.xml"
+        foreign = root / "foreign.xml"
+        handle = m._open_private(path)
+        foreign.write_text("foreign writer bytes")
+        os.replace(foreign, path)
+        real_identity = m._fd_identity
+
+        def fail_identity(_handle):
+            raise OSError("persistent fstat I/O")
+
+        m._fd_identity = fail_identity
+        try:
+            try:
+                m._owned_path(path, handle)
+                raise AssertionError("the identity failure must escape")
+            except OSError as error:
+                notes = "\n".join(getattr(error, "__notes__", []))
+        finally:
+            m._fd_identity = real_identity
+
+        assert path.read_text() == "foreign writer bytes"
+        assert str(path) in notes
+
+
 def test_restore_reconciles_a_backup_replace_that_raised_after_effect(m):
     """A restore rename can report an error after it has moved the private
     backup. Its new identity then proves recovery completed and must not be
