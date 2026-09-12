@@ -1561,7 +1561,36 @@ def _open_regular_output(path, expected_identity):
         raise
 
 
-def _metadata_from_handle(handle):
+def _owned_path(path, handle):
+    """Record a pathname and retain the descriptor that pins its inode."""
+    return {"path": path, "identity": _fd_identity(handle), "pin": handle}
+
+
+def _close_owned_path(record, failures):
+    """Release an ownership pin only after its cleanup decision is complete."""
+    handle = record.get("pin")
+    if handle is None:
+        return
+    record["pin"] = None
+    try:
+        os.close(handle)
+    except OSError:
+        failures.append(record["path"])
+
+
+def _close_write_handle(record, failures):
+    """Close a descriptor used for writing while retaining its ownership pin."""
+    handle = record.get("write_handle")
+    if handle is None:
+        return
+    record["write_handle"] = None
+    try:
+        os.close(handle)
+    except OSError:
+        failures.append(record["path"])
+
+
+def _metadata_from_handle(path, handle):
     """Capture regular-output metadata while its original inode is pinned.
 
     The private backup remains mode 0600. These values are applied only after
@@ -1582,10 +1611,11 @@ def _metadata_from_handle(handle):
                 name: os.getxattr(handle, name)
                 for name in os.listxattr(handle)
             }
-        except OSError:
-            # Metadata restoration below still preserves portable mode and
-            # times. Some filesystems do not expose extended attributes.
-            pass
+        except OSError as error:
+            raise Refusal(
+                "output_metadata_unavailable",
+                f"{path}: could not record extended attributes for rollback: {error}",
+            ) from None
     return metadata
 
 
@@ -1605,25 +1635,15 @@ def _restore_metadata(handle, metadata):
             os.setxattr(handle, name, value)
 
 
-def _close_original_handle(swap, failures):
-    handle = swap.get("original_handle")
-    if handle is None:
-        return
-    swap["original_handle"] = None
-    try:
-        os.close(handle)
-    except OSError:
-        failures.append(swap["destination"])
-
-
 def _copy_private_backup(source_path, original_identity, backup_handle):
     """Copy the original inode into an owner-only backup already opened O_EXCL.
 
-    The source descriptor pins the inode whose bytes are copied. The source
-    path is checked both before and after the copy; that catches an atomic path
-    replacement during preparation. Without filesystem locking, an adversary
-    that modifies the same inode while it is being read remains outside this
-    command's authority, so this does not promise a crash transaction.
+    The caller already pins the original inode through the transaction; this
+    read descriptor pins it while bytes are copied. The source path is checked
+    both before and after the copy; that catches an atomic path replacement
+    during preparation. Without filesystem locking, an adversary that modifies
+    the same inode while it is being read remains outside this command's
+    authority, so this does not promise a crash transaction.
     """
     source_handle = _open_regular_output(source_path, original_identity)
     try:
@@ -1665,7 +1685,7 @@ def _copy_private_backup(source_path, original_identity, backup_handle):
 
 
 def _restore_backup(backup, backup_identity, destination, original_identity,
-                    staged_identity, metadata, failures):
+                    staged_identity, metadata, swap_started, failures):
     """Restore an owned private backup after a caught swap failure.
 
     `os.replace` can report an exception after the filesystem call took effect.
@@ -1673,6 +1693,9 @@ def _restore_backup(backup, backup_identity, destination, original_identity,
     A different inode may be a foreign writer's success, so keep the private
     backup and report the conflict rather than overwriting it.
     """
+    if not swap_started:
+        _unlink_for_cleanup(backup, backup_identity, failures)
+        return
     try:
         current_identity = _file_identity(destination)
     except OSError:
@@ -1798,21 +1821,22 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 handle, temporary = tempfile.mkstemp(
                     dir=os.path.dirname(real_path),
                     prefix=os.path.basename(real_path) + ".", suffix=".part")
-                record = {"path": temporary, "handle": handle,
-                          "identity": _fd_identity(handle)}
+                record = _owned_path(temporary, os.dup(handle))
+                record["write_handle"] = handle
                 claimed.append(record)
                 staged.append({"temporary": record, "supplied_path": path,
                                "real_path": real_path,
                                "original_identity": _file_identity(real_path)})
             else:
                 handle = _open_private(path, accept_inherited)
-                claimed.append({"path": path, "handle": handle,
-                                "identity": _fd_identity(handle)})
+                record = _owned_path(path, os.dup(handle))
+                record["write_handle"] = handle
+                claimed.append(record)
         if after_claim is not None:
             after_claim()
         for (_, text), record in zip(targets, claimed):
-            where, handle = record["path"], record["handle"]
-            record["handle"] = None  # fdopen owns the handle from here
+            where, handle = record["path"], record["write_handle"]
+            record["write_handle"] = None  # fdopen owns the handle from here
             with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
                 stream.write(text)
         # Every payload is on disk. A private copy preserves the old bytes while
@@ -1824,16 +1848,23 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             backup_handle, backup = tempfile.mkstemp(
                 dir=os.path.dirname(real_path),
                 prefix=os.path.basename(real_path) + ".", suffix=".bak")
-            pending_backup = {"path": backup, "handle": backup_handle,
-                              "identity": _fd_identity(backup_handle)}
-            _copy_private_backup(real_path, original_identity, backup_handle)
-            os.close(backup_handle)
-            pending_backup["handle"] = None
+            pending_backup = _owned_path(backup, os.dup(backup_handle))
+            pending_backup["write_handle"] = backup_handle
             pending_swap = {"backup": pending_backup, "destination": real_path,
                             "original_identity": original_identity,
                             "staged_identity": temporary["identity"],
-                            "original_handle": None, "metadata": None}
+                            "original": None, "metadata": None,
+                            "swap_started": False}
             pending_backup = None
+            # This ownership pin both prevents original-inode ABA reuse and
+            # captures metadata before the backup read can update atime.
+            original_handle = _open_regular_output(real_path, original_identity)
+            pending_swap["original"] = _owned_path(real_path, original_handle)
+            pending_swap["metadata"] = _metadata_from_handle(
+                real_path, original_handle)
+            _copy_private_backup(real_path, original_identity, backup_handle)
+            os.close(backup_handle)
+            pending_swap["backup"]["write_handle"] = None
             # The destination stays present until this one atomic replacement.
             # `pending_swap` is set first because an interrupt may arrive after
             # the filesystem call has taken effect but before it returns.
@@ -1857,13 +1888,7 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                     "output_path_changed",
                     f"{supplied_path} rollback copy changed before replacement",
                 )
-            # Hold the original inode through the whole transaction. Once a
-            # replacement unlinks its pathname, this prevents inode reuse from
-            # making a later foreign writer look like the old destination.
-            pending_swap["original_handle"] = _open_regular_output(
-                real_path, original_identity)
-            pending_swap["metadata"] = _metadata_from_handle(
-                pending_swap["original_handle"])
+            pending_swap["swap_started"] = True
             os.replace(temporary["path"], real_path)
             replaced.append(pending_swap)
             pending_swap = None
@@ -1872,36 +1897,36 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
         # earlier committed swaps. Cleanup failures remain attached to the
         # original exception with their recoverable locations.
         cleanup_failures = []
-        if pending_backup is not None and pending_backup["handle"] is not None:
-            try:
-                os.close(pending_backup["handle"])
-            except OSError:
-                cleanup_failures.append(pending_backup["path"])
-            pending_backup["handle"] = None
+        if pending_backup is not None:
+            _close_write_handle(pending_backup, cleanup_failures)
         if pending_swap is not None:
             backup = pending_swap["backup"]
+            _close_write_handle(backup, cleanup_failures)
             _restore_backup(backup["path"], backup["identity"],
                             pending_swap["destination"],
                             pending_swap["original_identity"],
                             pending_swap["staged_identity"],
-                            pending_swap["metadata"], cleanup_failures)
-            _close_original_handle(pending_swap, cleanup_failures)
+                            pending_swap["metadata"],
+                            pending_swap["swap_started"], cleanup_failures)
+            _close_owned_path(backup, cleanup_failures)
+            if pending_swap["original"] is not None:
+                _close_owned_path(pending_swap["original"], cleanup_failures)
         if pending_backup is not None:
             _unlink_for_cleanup(pending_backup["path"], pending_backup["identity"],
                                 cleanup_failures)
+            _close_owned_path(pending_backup, cleanup_failures)
         for swap in reversed(replaced):
             backup = swap["backup"]
+            _close_write_handle(backup, cleanup_failures)
             _restore_backup(backup["path"], backup["identity"], swap["destination"],
                             swap["original_identity"], swap["staged_identity"],
-                            swap["metadata"], cleanup_failures)
-            _close_original_handle(swap, cleanup_failures)
+                            swap["metadata"], swap["swap_started"], cleanup_failures)
+            _close_owned_path(backup, cleanup_failures)
+            _close_owned_path(swap["original"], cleanup_failures)
         for record in claimed:
-            if record["handle"] is not None:
-                try:
-                    os.close(record["handle"])
-                except OSError:
-                    cleanup_failures.append(record["path"])
+            _close_write_handle(record, cleanup_failures)
             _unlink_for_cleanup(record["path"], record["identity"], cleanup_failures)
+            _close_owned_path(record, cleanup_failures)
         _note_cleanup_failures(error, cleanup_failures)
         raise
     # A successful replacement is not a successful command if an old statement
@@ -1910,7 +1935,10 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
     for swap in replaced:
         backup = swap["backup"]
         _unlink_for_cleanup(backup["path"], backup["identity"], cleanup_failures)
-        _close_original_handle(swap, cleanup_failures)
+        _close_owned_path(backup, cleanup_failures)
+        _close_owned_path(swap["original"], cleanup_failures)
+    for record in claimed:
+        _close_owned_path(record, cleanup_failures)
     if cleanup_failures:
         raise OutputCleanupFailure(cleanup_failures)
 

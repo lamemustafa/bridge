@@ -1778,6 +1778,31 @@ def test_backup_copy_refuses_a_fifo_before_reading_it(m):
         assert sorted(path.name for path in root.iterdir()) == ["previous.xml"]
 
 
+def test_backup_refuses_when_original_metadata_cannot_be_recorded(m):
+    """A rollback cannot claim to restore metadata it was unable to capture."""
+    if not hasattr(m.os, "listxattr"):
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "previous.xml"
+        destination.write_text("old bytes")
+        real_listxattr = m.os.listxattr
+
+        def unavailable_xattrs(_):
+            raise OSError("controlled xattr metadata failure")
+
+        m.os.listxattr = unavailable_xattrs
+        try:
+            refusal = refuses(m, "output_metadata_unavailable", m.write_outputs,
+                              [(str(destination), "new bytes")])
+        finally:
+            m.os.listxattr = real_listxattr
+
+        assert "controlled xattr metadata failure" in str(refusal.code)
+        assert destination.read_text() == "old bytes"
+        assert sorted(path.name for path in root.iterdir()) == ["previous.xml"]
+
+
 def test_cleanup_keeps_a_reclaimed_owned_path(m):
     """A cleanup record proves only the path our run made. If that pathname
     changes identity, reporting it is safe; unlinking it is not."""
@@ -1840,11 +1865,40 @@ def test_rollback_keeps_a_foreign_destination_and_private_backup(m):
         first.write_text("first old")
         second.write_text("second old")
         real_replace = m.os.replace
+        real_open_regular = m._open_regular_output
+        real_owned_path = m._owned_path
+        real_close = m.os.close
         swaps = []
+        first_handles, closed_handles = [], []
+        owned_handles = {}
+
+        def observe_first_handles(path, identity):
+            handle = real_open_regular(path, identity)
+            if os.path.samefile(path, first):
+                first_handles.append(handle)
+            return handle
+
+        def observe_closes(handle):
+            closed_handles.append(handle)
+            return real_close(handle)
+
+        def observe_owned_path(path, handle):
+            record = real_owned_path(path, handle)
+            if os.path.basename(path).startswith("first.xml."):
+                owned_handles[pathlib.Path(path).suffix] = record["pin"]
+            return record
 
         def replace_then_conflict(src, dst):
             if str(src).endswith(".part") and os.path.basename(dst) == "first.xml":
                 swaps.append("first")
+                assert len(first_handles) == 2
+                # The first open is the ownership pin captured before the
+                # backup read. It must survive the first swap and the foreign
+                # replacement so that its inode cannot be recycled.
+                assert first_handles[0] not in closed_handles
+                assert first_handles[1] in closed_handles
+                assert owned_handles[".part"] not in closed_handles
+                assert owned_handles[".bak"] not in closed_handles
                 result = real_replace(src, dst)
                 foreign.write_text("foreign writer bytes")
                 real_replace(foreign, first)
@@ -1855,6 +1909,9 @@ def test_rollback_keeps_a_foreign_destination_and_private_backup(m):
             return real_replace(src, dst)
 
         m.os.replace = replace_then_conflict
+        m._open_regular_output = observe_first_handles
+        m._owned_path = observe_owned_path
+        m.os.close = observe_closes
         diagnostic_notes = ""
         try:
             try:
@@ -1867,11 +1924,17 @@ def test_rollback_keeps_a_foreign_destination_and_private_backup(m):
                 )
         finally:
             m.os.replace = real_replace
+            m._open_regular_output = real_open_regular
+            m._owned_path = real_owned_path
+            m.os.close = real_close
 
         backups = list(root.glob("first.xml.*.bak"))
         assert len(backups) == 1
         assert str(backups[0]) in diagnostic_notes
         assert swaps == ["first", "second"]
+        assert first_handles[0] in closed_handles
+        assert owned_handles[".part"] in closed_handles
+        assert owned_handles[".bak"] in closed_handles
         assert stat.S_IMODE(backups[0].stat().st_mode) == 0o600
         assert backups[0].read_text() == "first old"
         assert first.read_text() == "foreign writer bytes"
@@ -1888,8 +1951,9 @@ def test_rollback_restores_original_output_metadata(m):
         first.write_text("first old")
         second.write_text("second old")
         first.chmod(0o640)
+        old_atime_ns = 1_600_000_000_123_456_789
         old_mtime_ns = 1_700_000_000_123_456_789
-        os.utime(first, ns=(old_mtime_ns, old_mtime_ns))
+        os.utime(first, ns=(old_atime_ns, old_mtime_ns))
         xattr_name = "user.bridge_rollback_test"
         xattr_value = b"original metadata"
         preserves_xattr = False
@@ -1920,6 +1984,7 @@ def test_rollback_restores_original_output_metadata(m):
         restored = first.stat()
         assert first.read_text() == "first old"
         assert stat.S_IMODE(restored.st_mode) == 0o640
+        assert restored.st_atime_ns == old_atime_ns
         assert restored.st_mtime_ns == old_mtime_ns
         if preserves_xattr:
             assert os.getxattr(first, xattr_name) == xattr_value
