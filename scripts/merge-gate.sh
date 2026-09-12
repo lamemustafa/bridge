@@ -331,15 +331,31 @@ if [ "$thread_ok" -eq 1 ]; then
   fi
 fi
 
-# Require a completed checkbox whose same-repository link points at a specific
-# checklist line. A filename in prose, a link to another repository, or a
-# checked item beside an unrelated link is not completion evidence.
+# Require a completed checklist item and a same-repository line permalink.
+# The repository template puts the permalink on the item's indented
+# continuation, so accept it there as well as in an inline Markdown link.
+# A filename in prose, a foreign link, or an unrelated checked item is not
+# completion evidence.
 checklist_link_ok() {
-  local body="$1" line
+  local body="$1" line awaiting_permalink=0
+  local checked='^[[:space:]]*-[[:space:]]*\[[xX]\][[:space:]]+'
+  local permalink="https://github\\.com/${OWNER}/${NAME}/blob/[^[:space:])]+/review-checklist\\.md#L[0-9]+"
   while IFS= read -r line; do
-    if printf '%s\n' "$line" | grep -Eiq \
-      "^[[:space:]]*-[[:space:]]*\\[[xX]\\][[:space:]].*\\]\\(https://github\\.com/${OWNER}/${NAME}/blob/[^)]*/review-checklist\\.md#L[0-9]+\\)"; then
-      return 0
+    if printf '%s\n' "$line" | grep -Eq "$checked"; then
+      if printf '%s\n' "$line" | grep -Eiq "$permalink"; then
+        return 0
+      fi
+      if printf '%s\n' "$line" | grep -Eiq 'review-checklist\.md'; then
+        awaiting_permalink=1
+      else
+        awaiting_permalink=0
+      fi
+    elif [ "$awaiting_permalink" -eq 1 ] && printf '%s\n' "$line" | grep -Eq '^[[:space:]]+'; then
+      if printf '%s\n' "$line" | grep -Eiq "$permalink"; then
+        return 0
+      fi
+    else
+      awaiting_permalink=0
     fi
   done <<<"$body"
   return 1
@@ -351,24 +367,32 @@ else
 fi
 
 # Paginate changed files through the REST endpoint; gh pr view hard-codes a
-# first:100 GraphQL fragment in some versions.
+# first:100 GraphQL fragment in some versions. Retain the line counts as well:
+# the privacy scan can only be complete when the textual diff describes every
+# non-removed destination with the byte count GitHub reported.
 : >"$errfile"
 files_status=0
 files=$(gh api --paginate --slurp "repos/$REPO/pulls/$PR/files?per_page=100" 2>"$errfile") || files_status=$?
+changed_records="$tmpdir/changed-files.tsv"
 if [ "$files_status" -ne 0 ] || ! jq -e '
   type == "array" and
   (all(.[]; type == "array" and all(.[];
       type == "object" and
-      (.filename | type == "string" and length > 0) and
-      (.status | type == "string" and length > 0))) or
+      ((.filename | type) == "string") and (.filename | length > 0) and (.filename | test("[\\t\\r\\n]") | not) and
+      ((.status | type) == "string") and (.status | length > 0) and
+      ((.additions | type) == "number") and (.additions | floor == . and . >= 0) and
+      ((.deletions | type) == "number") and (.deletions | floor == . and . >= 0))) or
    all(.[]; type == "object" and
-      (.filename | type == "string" and length > 0) and
-      (.status | type == "string" and length > 0)))
+      ((.filename | type) == "string") and (.filename | length > 0) and (.filename | test("[\\t\\r\\n]") | not) and
+      ((.status | type) == "string") and (.status | length > 0) and
+      ((.additions | type) == "number") and (.additions | floor == . and . >= 0) and
+      ((.deletions | type) == "number") and (.deletions | floor == . and . >= 0)))
 ' <<<"$files" >/dev/null 2>&1; then
   unknown "could not read the complete changed-file set"
   changed=""
 else
-  changed=$(jq -r '(if all(.[]; type == "array") then flatten else . end)[] | .filename // empty' <<<"$files")
+  jq -r '(if all(.[]; type == "array") then flatten else . end)[] | [.filename, .status, .additions, .deletions] | @tsv' <<<"$files" >"$changed_records"
+  changed=$(cut -f1 "$changed_records")
   changed_count=$(jq '(if all(.[]; type == "array") then flatten else . end) | length' <<<"$files")
   unique_changed_count=$(jq '(if all(.[]; type == "array") then flatten else . end) | map(.filename) | unique | length' <<<"$files")
   if [ "$changed_count" -eq 0 ]; then
@@ -380,8 +404,9 @@ else
   fi
 fi
 
-# Read and validate the surface as a required object. Any transport, decoding,
-# or JSON failure is indeterminate; an empty decoded value is not absence.
+# Read and validate the v1 surface as a required object. Any transport,
+# decoding, JSON, or schema failure is indeterminate; an unrelated nested
+# `path` must not turn an incomplete manifest into an empty pin set.
 SURFACE="docs/tally/compatibility/compatibility-surface.json"
 : >"$errfile"
 surface_status=0
@@ -400,11 +425,20 @@ else
     decode_status=0
     decoded=$(printf '%s' "${surface_content//$'\n'/}" | base64 -D 2>"$errfile") || decode_status=$?
   fi
-  if [ "$decode_status" -ne 0 ] || ! jq -e 'type == "object" and ([.. | objects | select(has("path")) | .path] | length > 0)' <<<"$decoded" >/dev/null 2>&1; then
+  if [ "$decode_status" -ne 0 ] || ! jq -e '
+    type == "object" and
+    .schema_version == 1 and
+    ((.manifest_sha256 | type) == "string") and (.manifest_sha256 | test("^[0-9a-f]{64}$")) and
+    (.files | type == "array" and length > 0 and
+      all(.[]; type == "object" and
+        ((.path | type) == "string") and (.path | length > 0) and
+        ((.sha256 | type) == "string") and (.sha256 | test("^[0-9a-f]{64}$")))) and
+    (([.files[].path] | length) == ([.files[].path] | unique | length))
+  ' <<<"$decoded" >/dev/null 2>&1; then
     unknown "compatibility surface could not be decoded and validated"
     pinned=""
   else
-    pinned=$(jq -r '[.. | objects | select(has("path")) | .path] | unique[]' <<<"$decoded")
+    pinned=$(jq -r '.files[].path' <<<"$decoded")
   fi
 fi
 if [ -n "$changed" ] && [ -n "$pinned" ]; then
@@ -427,12 +461,68 @@ diff=$(gh pr diff "$PR" --repo "$REPO" 2>"$errfile") || diff_status=$?
 if [ "$diff_status" -ne 0 ] || [ -z "$diff" ]; then
   unknown "could not read diff for the privacy scan"
 else
+  # Keep one record per `diff --git` section. A header alone proves only that
+  # GitHub named a file; the line counts below prove it supplied the complete
+  # textual payload for that destination.
+  diff_stats="$tmpdir/diff-stats.tsv"
+  awk '
+    function emit() {
+      if (!in_file) return
+      destination = textual_destination != "" ? textual_destination : header_destination
+      if (destination != "") {
+        printf "%s\t%d\t%d\t%d\t%d\n", destination, added, deleted, textual, binary
+      }
+    }
+    /^diff --git a\// {
+      emit()
+      in_file = 1
+      header_destination = $0
+      sub(/^diff --git a\/.* b\//, "", header_destination)
+      textual_destination = ""
+      added = deleted = textual = binary = 0
+      next
+    }
+    /^\+\+\+ b\// {
+      textual_destination = $0
+      sub(/^\+\+\+ b\//, "", textual_destination)
+      textual = 1
+      next
+    }
+    /^(Binary files .* differ|GIT binary patch)$/ { binary = 1; next }
+    /^\+/ && $0 !~ /^\+\+\+ / { added++; next }
+    /^-/ && $0 !~ /^--- / { deleted++; next }
+    END { emit() }
+  ' <<<"$diff" >"$diff_stats"
+
   binary_count=$(awk '/^(Binary files .* differ|GIT binary patch)/ && $0 !~ /and \/dev\/null differ/ {n++} END {print n+0}' <<<"$diff")
   [ "$binary_count" -eq 0 ] || bad "$binary_count binary addition/change(s) require human privacy inspection"
-  path_text=$(awk '
-    /^diff --git a\// { s=$0; sub(/^diff --git a\/.* b\//, "", s); print s }
-    /^\+\+\+ b\// { s=$0; sub(/^\+\+\+ b\//, "", s); print s }
-  ' <<<"$diff")
+  path_text=""
+  if [ -s "$changed_records" ]; then
+    while IFS=$'\t' read -r filename status rest_added rest_deleted; do
+      [ "$status" = "removed" ] && continue
+      match_count=$(awk -F '\t' -v filename="$filename" '$1 == filename { count++ } END { print count+0 }' "$diff_stats")
+      if [ "$match_count" -ne 1 ]; then
+        unknown "privacy diff omits or duplicates non-removed REST destination '$filename'"
+        continue
+      fi
+      diff_record=$(awk -F '\t' -v filename="$filename" '$1 == filename { print; exit }' "$diff_stats")
+      IFS=$'\t' read -r _ diff_added diff_deleted textual binary <<<"$diff_record"
+      if [ "$binary" -eq 1 ]; then
+        # The binary hold above requires human inspection. Its bytes cannot be
+        # reconciled through textual hunks, but its destination was covered.
+        continue
+      fi
+      if [ "$textual" -ne 1 ]; then
+        unknown "privacy diff lacks a textual destination for '$filename'"
+      elif [ "$diff_added" -ne "$rest_added" ] || [ "$diff_deleted" -ne "$rest_deleted" ]; then
+        unknown "privacy diff line totals for '$filename' differ from REST metadata"
+      fi
+    done <"$changed_records"
+    # Destination paths are scan input from the complete REST set, not only
+    # from whatever textual patch GitHub happened to render. Removed paths
+    # carry no newly added material and are deliberately excluded.
+    path_text=$(awk -F '\t' '$2 != "removed" { print $1 }' "$changed_records")
+  fi
   added=$(awk '/^\+/ && $0 !~ /^\+\+\+ (b\/|\/dev\/null)/ { print substr($0, 2) }' <<<"$diff")
   scan_input="$path_text
 $added"

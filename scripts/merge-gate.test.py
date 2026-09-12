@@ -47,10 +47,16 @@ if args[:2] == ["pr", "view"]:
         body = "- [x] [Errors](https://github.com/other/repo/blob/HEAD/review-checklist.md#L10)"
     elif scenario == "checklist-unlinked":
         body = "- [x] review-checklist.md line 10"
+    elif scenario == "checklist-template-continuation":
+        body = (
+            "- [x] One completed [`review-checklist.md`](../review-checklist.md) line is\n"
+            "      linked here: https://github.com/example/repo/blob/HEAD/review-checklist.md#L10"
+        )
+    one_file = scenario in {"files-empty", "formatted-phone", "path-id", "binary-delete"}
     emit({"headRefOid": selected_head, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
           "isDraft": False, "state": "OPEN",
-          "body": body, "changedFiles": 1 if scenario == "files-empty" else 2})
+          "body": body, "changedFiles": 1 if one_file else 2})
 elif args[:2] == ["pr", "checks"]:
     if scenario == "checks-silent":
         raise SystemExit(0)
@@ -69,13 +75,19 @@ elif args[:2] == ["pr", "checks"]:
               {"bucket": "skipping", "name": "Optional documentation"}])
 elif args[:2] == ["pr", "diff"]:
     if scenario == "formatted-phone":
-        emit("diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+Call +91 98765-43210\n")
+        phone = "+91 " + "98765" + "-43210"
+        emit(f"diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+Call {phone}\n")
     elif scenario == "path-id":
-        emit("diff --git a/docs/safe.md b/docs/ABCDE1234F.md\n--- a/docs/safe.md\n+++ b/docs/ABCDE1234F.md\n@@ -0,0 +1 @@\n+safe text\n")
+        path_id = "ABCDE" + "1234" + "F"
+        emit(f"diff --git a/docs/safe.md b/docs/{path_id}.md\n--- a/docs/safe.md\n+++ b/docs/{path_id}.md\n@@ -0,0 +1 @@\n+safe text\n")
     elif scenario == "binary-delete":
         emit("diff --git a/docs/old.png b/docs/old.png\nBinary files a/docs/old.png and /dev/null differ\n")
-    else:
+    elif scenario == "diff-omits-file":
         emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+safe text\n")
+    elif scenario == "diff-truncated-payload":
+        emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +2 @@\n+first line\n")
+    else:
+        emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+safe text\ndiff --git a/docs/second.md b/docs/second.md\n--- a/docs/second.md\n+++ b/docs/second.md\n@@ -0,0 +1 @@\n+other text\n")
 elif args and args[0] == "api":
     joined = " ".join(args)
     if "graphql" in args:
@@ -116,21 +128,33 @@ elif args and args[0] == "api":
     elif "/pulls/321/files" in joined:
         if scenario == "files-empty":
             emit([[]])
+        elif scenario == "formatted-phone":
+            emit([[{"filename": "docs/contact.md", "status": "added", "additions": 1, "deletions": 0}]])
+        elif scenario == "path-id":
+            path_id = "ABCDE" + "1234" + "F"
+            emit([[{"filename": f"docs/{path_id}.md", "status": "added", "additions": 1, "deletions": 0}]])
+        elif scenario == "binary-delete":
+            emit([[{"filename": "docs/old.png", "status": "removed", "additions": 0, "deletions": 0}]])
         elif scenario == "malformed-files":
-            emit([[{"filename": "docs/example.md", "status": "added"}], [{"filename": 3, "status": "modified"}]])
+            emit([[{"filename": "docs/example.md", "status": "added", "additions": 1, "deletions": 0}], [{"filename": 3, "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "missing-file-status":
-            emit([[{"filename": "docs/example.md", "status": "added"}], [{"filename": "docs/second.md"}]])
+            emit([[{"filename": "docs/example.md", "status": "added", "additions": 1, "deletions": 0}], [{"filename": "docs/second.md", "additions": 1, "deletions": 0}]])
         elif scenario == "files-count-mismatch":
-            emit([[{"filename": "docs/example.md", "status": "added"}]])
+            emit([[{"filename": "docs/example.md", "status": "added", "additions": 1, "deletions": 0}]])
         else:
-            emit([[{"filename": "docs/example.md", "status": "added"}], [{"filename": "docs/second.md", "status": "modified"}]])
+            additions = 2 if scenario == "diff-truncated-payload" else 1
+            emit([[{"filename": "docs/example.md", "status": "added", "additions": additions, "deletions": 0}], [{"filename": "docs/second.md", "status": "modified", "additions": 1, "deletions": 0}]])
     elif "/contents/" in joined:
         if scenario == "surface-fail":
             fail("controlled surface read failure")
         if scenario == "surface-malformed":
             emit({"content": "not-base64"})
         else:
-            surface = {"files": [{"path": "src/example.rs"}]}
+            digest = "a" * 64
+            surface = {"schema_version": 1, "manifest_sha256": digest,
+                       "files": [{"path": "src/example.rs", "sha256": digest}]}
+            if scenario == "surface-schema-malformed":
+                surface = {"files": [{"path": "src/example.rs"}]}
             emit({"content": base64.b64encode(json.dumps(surface).encode()).decode()})
     else:
         fail("unknown API fixture")
@@ -245,6 +269,9 @@ class MergeGateControls(unittest.TestCase):
     def test_malformed_surface_is_indeterminate(self):
         self.assert_indeterminate("surface-malformed", "compatibility surface could not be decoded")
 
+    def test_surface_with_no_v1_manifest_schema_is_indeterminate(self):
+        self.assert_indeterminate("surface-schema-malformed", "compatibility surface could not be decoded")
+
     def test_malformed_changed_file_is_indeterminate(self):
         self.assert_indeterminate("malformed-files", "could not read the complete changed-file set")
 
@@ -263,11 +290,22 @@ class MergeGateControls(unittest.TestCase):
     def test_empty_page_cannot_claim_more_threads(self):
         self.assert_indeterminate("threads-empty-more", "no nodes while claiming another page")
 
+    def test_template_checklist_permalink_on_continuation_passes(self):
+        result = self.run_gate("checklist-template-continuation")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("description links a completed review-checklist item", result.stdout)
+
     def test_foreign_checklist_link_blocks(self):
         self.assert_blocked("checklist-foreign", "same-repository line-specific")
 
     def test_unlinked_checklist_text_blocks(self):
         self.assert_blocked("checklist-unlinked", "same-repository line-specific")
+
+    def test_omitted_nonremoved_diff_file_is_indeterminate(self):
+        self.assert_indeterminate("diff-omits-file", "privacy diff omits or duplicates")
+
+    def test_truncated_textual_diff_payload_is_indeterminate(self):
+        self.assert_indeterminate("diff-truncated-payload", "privacy diff line totals")
 
 
 if __name__ == "__main__":
