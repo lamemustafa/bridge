@@ -1291,7 +1291,7 @@ fn bind_one(
                     reason,
                     candidates,
                     masters_found.max(withheld_holders),
-                    count_is_uncertain(skipped_families, masters_found),
+                    count_is_uncertain(skipped_families, masters_found, identifier_matches.len()),
                     budget,
                 )
             }
@@ -1336,7 +1336,7 @@ fn unresolved_status(
         reason,
         candidates,
         masters_found.max(withheld_holders),
-        count_is_uncertain(skipped_families, masters_found),
+        count_is_uncertain(skipped_families, masters_found, identifier_matches.len()),
         budget,
     )
 }
@@ -1657,23 +1657,27 @@ fn collect_candidates(
 
 /// Whether the reported total is a floor rather than a true union.
 ///
-/// **Nonzero withholding is not the test**, which is what an earlier version of
-/// this used. Two sets are in play: what the *name* reached, counted exactly by
-/// `collect_candidates`, and what the *identifiers* reached, counted as the
-/// largest skipped family union the listed masters. The total is their union,
-/// and it is knowable in two cases:
+/// Two sets are in play: what the search reached, counted exactly by
+/// `collect_candidates`, and what the identifiers reached, counted as the
+/// largest skipped family union the materialized matches. The total is their
+/// union, and the question is only ever whether their overlap was measured.
 ///
-/// - **nothing was skipped** — the identifier matches are already candidates, so
-///   the name's count is the whole of it;
-/// - **one family was skipped and the name reached nothing** — there is only one
-///   set, and its size is exact.
+/// **Two quantities look alike here and are not.** `searched` counts everything
+/// `collect_candidates` found — and the materialized identifier matches are
+/// among them, because they are offered as candidates. Those are *already*
+/// unioned into the withheld count exactly, by testing each against the skipped
+/// family. So a nonzero `searched` does not mean the name reached anything; it
+/// may be entirely the identifier matches, and an earlier version of this
+/// predicate read it that way and hedged a total it knew. What is unmeasured is
+/// only the masters the **name** reached beyond those matches, which is
+/// `searched > materialized`.
 ///
-/// It is a floor only where the two could overlap in a way nobody measured: two
-/// or more skipped families, whose mutual overlap is precisely what was not
-/// materialized, or one skipped family beside masters the name reached, where
-/// the family's overlap with those is equally unmeasured.
-fn count_is_uncertain(skipped_families: usize, name_reached: usize) -> bool {
-    skipped_families > 1 || (skipped_families == 1 && name_reached > 0)
+/// It is therefore a floor in exactly two situations: two or more skipped
+/// families, whose mutual overlap is precisely what was not materialized; or
+/// one skipped family beside masters reached by name alone, whose overlap with
+/// that family is equally unmeasured.
+fn count_is_uncertain(skipped_families: usize, searched: usize, materialized: usize) -> bool {
+    skipped_families > 1 || (skipped_families == 1 && searched > materialized)
 }
 
 /// How candidates are ordered wherever they are ordered: by the rule that

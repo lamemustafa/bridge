@@ -2498,9 +2498,15 @@ fn a_withheld_family_counts_the_masters_the_other_identifier_listed_too() {
         family + 1 > MAX_CANDIDATES_PER_ENTITY,
         "this fixture no longer exercises the skip"
     );
+    // And **exact**, not a floor. The `family + 1` above is the union already:
+    // the materialized match was tested against the skipped family and found to
+    // be outside it. A nonzero search result does not mean the name reached
+    // anything — here it is entirely the identifier match, which has already
+    // been accounted for — so hedging this total would claim uncertainty about
+    // a number two lines above assert to be known.
     assert!(
-        unresolved.candidates.count_is_lower_bound(),
-        "the skipped identifier family makes this count conservative"
+        !unresolved.candidates.count_is_lower_bound(),
+        "the one skipped family and the listed match were already unioned exactly"
     );
 }
 
@@ -2896,6 +2902,28 @@ fn an_exactly_counted_family_is_not_reported_as_a_floor() {
             .candidates
             .count_is_lower_bound(),
         "two disjoint skipped families cannot be unioned without materializing them"
+    );
+
+    // And one skipped family beside masters the **name** reached is a floor
+    // too — the positive control for the half of the predicate that is not
+    // about family count. Here the search finds two `Zeta Holdings` masters by
+    // token while the identifier's family is skipped, and whether those two sit
+    // inside that family is exactly what nobody measured.
+    let mut mixed = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Shared Party {index:03} (5550007777)"))
+        .collect::<Vec<_>>();
+    mixed.push("Zeta Holdings Alpha".to_string());
+    mixed.push("Zeta Holdings Beta".to_string());
+    let mixed_catalog = MasterCatalog::new(MasterClass::Ledger, &mixed).expect("valid");
+    let by_name_too = bind_one_name(&mixed_catalog, "Zeta Holdings 5550007777");
+    let candidates = &by_name_too.unresolved().expect("unbound").candidates;
+    assert!(
+        !candidates.listed().is_empty(),
+        "this fixture only bites if the name reached something of its own"
+    );
+    assert!(
+        candidates.count_is_lower_bound(),
+        "masters reached by name may or may not sit inside the skipped family"
     );
 }
 
