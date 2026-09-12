@@ -2185,6 +2185,81 @@ def test_backup_copy_refuses_a_replaced_original_before_commit(m):
         assert sorted(path.name for path in root.iterdir()) == ["previous.xml"]
 
 
+def test_claim_refuses_a_foreign_replacement_after_committing_original_identity(m):
+    """The descriptor, rather than a pre-open stat, commits the old inode.
+
+    An attacker can replace the path before this call opens it; without a
+    lock, that is the file the call is asked to replace. This regression covers
+    the actionable interval: a foreign replacement after the old descriptor
+    establishes identity but before the path is verified must remain untouched.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "previous.xml"
+        foreign = root / "foreign.xml"
+        destination.write_text("old bytes")
+        foreign.write_text("foreign writer bytes")
+        real_owned_path = m._owned_path
+        real_replace = m.os.replace
+
+        def replace_after_identity(path, handle, *, created):
+            record = real_owned_path(path, handle, created=created)
+            if not created and os.path.realpath(path) == os.path.realpath(destination):
+                real_replace(foreign, destination)
+            return record
+
+        m._owned_path = replace_after_identity
+        try:
+            refuses(m, "output_path_changed", m.write_outputs,
+                    [(str(destination), "new bytes")])
+        finally:
+            m._owned_path = real_owned_path
+
+        assert destination.read_text() == "foreign writer bytes"
+        assert sorted(path.name for path in root.iterdir()) == ["previous.xml"]
+
+
+def test_line_interrupt_during_final_validation_rolls_back_replacements(m):
+    """A real line-traced SIGINT at the final validation stays recoverable."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first = root / "first.xml"
+        second = root / "second.csv"
+        first.write_text("first old")
+        second.write_text("second old")
+        _, start = inspect.getsourcelines(m.write_outputs)
+        validation_line = start + next(
+            index for index, line in enumerate(
+                inspect.getsource(m.write_outputs).splitlines())
+            if line.strip() == "if _claimed_output_changed(")
+        old_trace = sys.gettrace()
+        fired = False
+
+        def interrupt_final_validation(frame, event, _arg):
+            nonlocal fired
+            if (not fired and event == "line" and frame.f_code is m.write_outputs.__code__
+                    and frame.f_lineno == validation_line):
+                fired = True
+                raise KeyboardInterrupt("controlled final-validation interrupt")
+            return interrupt_final_validation
+
+        sys.settrace(interrupt_final_validation)
+        try:
+            try:
+                m.write_outputs([(str(first), "new first"),
+                                 (str(second), "new second")])
+                raise AssertionError("the controlled interrupt must escape")
+            except KeyboardInterrupt:
+                pass
+        finally:
+            sys.settrace(old_trace)
+
+        assert fired
+        assert first.read_text() == "first old"
+        assert second.read_text() == "second old"
+        assert sorted(path.name for path in root.iterdir()) == ["first.xml", "second.csv"]
+
+
 def test_backup_copy_refuses_a_fifo_before_reading_it(m):
     """An existing output is data only when it is a regular file; opening a
     FIFO for its rollback copy would otherwise wait for an unrelated writer."""

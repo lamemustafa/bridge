@@ -1573,7 +1573,7 @@ def _unlink_for_cleanup(path, owned_identity, failures):
         return "uncertain"
 
 
-def _open_regular_output(path, expected_identity):
+def _open_regular_output(path, expected_identity=None):
     """Open and pin one existing regular output without waiting on a FIFO."""
     handle = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
     try:
@@ -1589,7 +1589,8 @@ def _open_regular_output(path, expected_identity):
                 f"{path}: replacement requires a single-link output; rollback "
                 "cannot preserve hard-link topology",
             )
-        if (stat_result.st_dev, stat_result.st_ino) != expected_identity:
+        if (expected_identity is not None
+                and (stat_result.st_dev, stat_result.st_ino) != expected_identity):
             raise Refusal(
                 "output_path_changed",
                 f"{path} changed while its rollback copy was prepared",
@@ -1641,6 +1642,22 @@ def _owned_path(path, handle, *, created):
             )
         raise
     return {"path": path, "identity": identity, "pin": handle}
+
+
+def _claimed_output_changed(supplied_path, canonical_path, identity):
+    """Whether the pathname still names the descriptor-backed claimed inode.
+
+    This is deliberately a helper rather than an inner ``try`` in
+    ``write_outputs``. A signal raised while this validation runs must unwind
+    through the transaction's outer recovery handler, which owns every staged
+    replacement and backup.
+    """
+    try:
+        return (_resolve_output_path(supplied_path) != canonical_path
+                or _file_identity(supplied_path) != identity
+                or _entry_identity(canonical_path) != identity)
+    except (FileNotFoundError, OSError):
+        return True
 
 
 def _close_owned_path(record, failures):
@@ -2056,17 +2073,29 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 record["canonical_path"] = real_path
                 record["cleanup_path"] = temporary
                 claimed.append(record)
-                original_identity = _file_identity(real_path)
                 # Pin the original inode at first claim and retain this
                 # descriptor through payload generation and commit. A later
                 # path replacement must not be able to recycle the recorded
                 # identity and make the backup read from foreign bytes.
-                original_handle = _open_regular_output(real_path, original_identity)
+                original_handle = _open_regular_output(real_path, None)
                 original = _owned_path(real_path, original_handle, created=False)
-                staged.append({"temporary": record, "supplied_path": path,
-                               "real_path": real_path,
-                               "original_identity": original_identity,
-                               "original": original})
+                original_identity = original["identity"]
+                state = {"temporary": record, "supplied_path": path,
+                         "real_path": real_path,
+                         "original_identity": original_identity,
+                         "original": original}
+                # The descriptor is the authoritative original identity. The
+                # path must still lead to that inode when the claim commits;
+                # if it changed after open, retain no authority to overwrite
+                # the replacement. A change before open is indistinguishable
+                # from the path state when this claim began; without a lock,
+                # no later operation can establish that it was foreign.
+                staged.append(state)
+                if _file_identity(real_path) != original_identity:
+                    raise Refusal(
+                        "output_path_changed",
+                        f"{path} changed while it was being claimed",
+                    )
             else:
                 supplied_path = path
                 canonical_path = _resolve_output_path(supplied_path)
@@ -2163,13 +2192,8 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
         for record in claimed:
             supplied_path = record["supplied_path"]
             canonical_path = record["canonical_path"]
-            try:
-                changed = (_resolve_output_path(supplied_path) != canonical_path
-                           or _file_identity(supplied_path) != record["identity"]
-                           or _entry_identity(canonical_path) != record["identity"])
-            except (FileNotFoundError, OSError):
-                changed = True
-            if changed:
+            if _claimed_output_changed(
+                    supplied_path, canonical_path, record["identity"]):
                 raise Refusal(
                     "output_path_changed",
                     f"{supplied_path} changed before commit; no output was committed",
