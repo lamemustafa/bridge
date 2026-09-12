@@ -304,12 +304,13 @@ Implement:
    - On §0's Edit Log 7.0 Educational baseline, §9.4b's
      `accepts(candidate, tally_name)` permits only the measured directional
      transformations; do not infer their reverse.
-   - For LEDGERS on licensed 7.1 Silver (`education_mode=false`), use §9.4d's measured canonical fold:
-     ASCII case; space, hyphen and slash as separators; surrounding
-     whitespace removed; internal runs collapsed; their measured
-     compositions. Preserve every other codepoint, including NFC/NFD,
-     en dash and underscore distinctions. This scope permits the full
-     §9.4d fold, not just §9.4b's directional subset.
+   - For LEDGERS on licensed 7.1 Silver (`education_mode=false`), use only
+     §9.4d's individually measured **directional** comparisons; do not turn
+     them into a canonical fold. In particular, its slash row supplied a
+     slash candidate against a space-bearing master. The reverse was not
+     measured, so slash-bearing cross-spellings remain exact-codepoint only
+     until both directions are qualified. Preserve every other codepoint,
+     including NFC/NFD, en dash and underscore distinctions.
    - Other licensed scopes remain exact-codepoint unless a capture
      qualifies their particular rule. Compatibility live-READ receipts
      do not establish write behaviour (`compatibility/README`).
@@ -681,10 +682,13 @@ Implement — write core (masters):
    posted against. That is observed write behaviour on the SKU this
    project writes to, for **ledgers**.
    So: for **ledgers on licensed 7.1 Silver (`education_mode=false`)**,
-   match under §9.4d's measured rows. Gold, other tiers and unqualified
-   versions remain exact-codepoint only. For **every other master type** — stock items, groups, voucher
-   types — §9.4d measured nothing, so match on **exact codepoints** and
-   let a case or separator difference fail loudly.
+   match only under §9.4d's individually measured directional rows. Its
+   slash row does not qualify the reverse, so a slash-bearing cross-spelling
+   is **exact-codepoint only** and fails loudly until both directions are
+   captured. Gold, other tiers and unqualified versions remain exact-codepoint
+   only. For **every other master type** — stock items, groups, voucher types
+   — §9.4d measured nothing, so match on **exact codepoints** and let a case
+   or separator difference fail loudly.
    **A compatibility result cannot widen this.** `compatibility/README`
    defines a cell's evidence as a live-**read** receipt and says it
    "never establishes ... any write behavior". An earlier revision of
