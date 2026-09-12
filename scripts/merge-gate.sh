@@ -514,7 +514,7 @@ read_review_checklist() {
 checklist_link_ok() {
   local body="$1" checklist="$2" line awaiting_permalink=0 link anchor
   local checked='^[[:space:]]*-[[:space:]]*\[[xX]\][[:space:]]+'
-  local permalink="https://github\.com/${OWNER}/${NAME}/blob/[^[:space:])]+/review-checklist\.md#L[0-9]+"
+  local permalink="https://github\.com/${OWNER}/${NAME}/blob/${head}/review-checklist\.md#L[0-9]+"
   while IFS= read -r line; do
     if printf '%s\n' "$line" | grep -Eq "$checked"; then
       if printf '%s\n' "$line" | grep -Eiq "$permalink"; then
@@ -666,7 +666,7 @@ if [ "$files_status" -eq 0 ]; then
   security_sensitive_change=$(jq -r '
     (if all(.[]; type == "array") then flatten else . end) |
     any(.[]; [ .filename, (.previous_filename? // "") ][] |
-      ascii_downcase | test("(^|/)(dsc|credential)([^/]*|/)|(^|/)(src-tauri/|src/)?tally([/_-]|$)|(^|/)docs/tally(/|$)"))
+      ascii_downcase | test("(^|/)(dsc|credential)([^/]*|/)|^src-tauri/(crates/[^/]+/|src/).*(tally|agent_import|source_draft)|^src/.*tally|(^|/)docs/tally(/|$)"))
   ' <<<"$files")
 fi
 if [ "$security_sensitive_change" = "true" ]; then
@@ -860,7 +860,10 @@ $added"
   # Diagnostic counts only: never echo matched home paths, which could repeat
   # the private value in a merge-gate result.
   home_path_status=0
-  home_path_matches=$(grep -Eio '(^|[^[:alnum:]_])(/Users/[^/[:space:]]+|/home/[^/[:space:]]+|[A-Za-z]:\\Users\\[^\\[:space:]]+)(/|\\)' <<<"$scan_input") || home_path_status=$?
+  mac_home='/'"Users"'/[A-Za-z0-9._-]+'
+  unix_home='/'"home"'/[A-Za-z0-9._-]+'
+  windows_home='[A-Za-z]:[\\/]'"Users"'[\\/][A-Za-z0-9._-]+'
+  home_path_matches=$(grep -Eio "(^|[^[:alnum:]_])(${mac_home}|${unix_home}|${windows_home})(\$|/|\\\\|[^[:alnum:]_.-])" <<<"$scan_input") || home_path_status=$?
   if [ "$home_path_status" -gt 1 ]; then
     unknown "developer-home path scan expression failed"
   elif [ "$home_path_status" -eq 0 ]; then

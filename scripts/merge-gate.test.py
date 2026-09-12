@@ -118,7 +118,10 @@ if args[:2] == ["pr", "view"]:
             "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
             "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10)"
         )
-    one_file = scenario in {"files-empty", "formatted-phone", "formatted-phone-grouped", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-rename-out", "home-macos", "home-unix", "home-windows"}
+    body = body.replace("blob/HEAD", f"blob/{head}")
+    if scenario == "checklist-stale-ref":
+        body = body.replace(f"blob/{head}", "blob/" + "f" * 40)
+    one_file = scenario in {"files-empty", "formatted-phone", "formatted-phone-grouped", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "home-macos", "home-unix", "home-windows"}
     selected_base = new_head if scenario == "base-oid-mismatch" else base
     emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
@@ -149,6 +152,9 @@ elif args[:2] == ["pr", "diff"]:
         emit(f"diff --git a/docs/safe.md b/docs/{path_id}.md\n--- a/docs/safe.md\n+++ b/docs/{path_id}.md\n@@ -0,0 +1 @@\n+safe text\n")
     elif scenario in {"security-notes-missing", "security-notes-present"}:
         emit("diff --git a/src-tauri/src/tally/runtime.rs b/src-tauri/src/tally/runtime.rs\n--- a/src-tauri/src/tally/runtime.rs\n+++ b/src-tauri/src/tally/runtime.rs\n@@ -0,0 +1 @@\n+safe text\n")
+    elif scenario in {"security-crate", "security-agent-import", "security-dsc"}:
+        paths = {"security-crate": "src-tauri/crates/bridge-tally-core/src/master_binding.rs", "security-agent-import": "src-tauri/src/agent_import.rs", "security-dsc": "src-tauri/src/dsc.rs"}
+        emit(f"diff --git a/{paths[scenario]} b/{paths[scenario]}\n--- a/{paths[scenario]}\n+++ /dev/null\n@@ -1 +0,0 @@\n-safe text\n")
     elif scenario == "security-rename-out":
         emit("diff --git a/src-tauri/src/tally/runtime.rs b/src/runtime.rs\nsimilarity index 100%\nrename from src-tauri/src/tally/runtime.rs\nrename to src/runtime.rs\n")
     elif scenario in {"home-macos", "home-unix", "home-windows"}:
@@ -332,10 +338,13 @@ elif args and args[0] == "api":
         elif scenario == "path-id":
             path_id = "ABCDE" + "1234" + "F"
             emit([[{"filename": f"docs/{path_id}.md", "status": "added", "additions": 1, "deletions": 0}]])
-        elif scenario in {"security-notes-missing", "security-notes-present"}:
+        elif scenario in {"security-notes-missing", "security-notes-present", "security-crate", "security-agent-import", "security-dsc"}:
             emit([[{"filename": "src-tauri/src/tally/runtime.rs", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "security-rename-out":
             emit([[{"filename": "src/runtime.rs", "previous_filename": "src-tauri/src/tally/runtime.rs", "status": "renamed", "additions": 0, "deletions": 0}]])
+        elif scenario in {"security-crate", "security-agent-import", "security-dsc"}:
+            paths = {"security-crate": "src-tauri/crates/bridge-tally-core/src/master_binding.rs", "security-agent-import": "src-tauri/src/agent_import.rs", "security-dsc": "src-tauri/src/dsc.rs"}
+            emit([[{"filename": paths[scenario], "status": "removed", "additions": 0, "deletions": 1}]])
         elif scenario in {"home-macos", "home-unix", "home-windows"}:
             emit([[{"filename": "docs/example.md", "status": "added", "additions": 1, "deletions": 0}]])
         elif scenario == "binary-delete":
@@ -590,6 +599,9 @@ class MergeGateControls(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("description links a completed review-checklist item", result.stdout)
 
+    def test_checklist_permalink_must_bind_the_full_current_head(self):
+        self.assert_blocked("checklist-stale-ref", "same-repository line-specific")
+
     def test_foreign_checklist_link_blocks(self):
         self.assert_blocked("checklist-foreign", "same-repository line-specific")
 
@@ -749,7 +761,7 @@ class MergeGateControls(unittest.TestCase):
                 self.assert_indeterminate(scenario, "could not read the complete changed-file set")
 
     def test_sensitive_paths_require_security_impact_notes_including_renames(self):
-        for scenario in ("security-notes-missing", "security-rename-out"):
+        for scenario in ("security-notes-missing", "security-rename-out", "security-crate", "security-agent-import", "security-dsc"):
             with self.subTest(scenario=scenario):
                 self.assert_blocked(scenario, "security-impact notes")
         result = self.run_gate("security-notes-present")
@@ -764,8 +776,15 @@ class MergeGateControls(unittest.TestCase):
                 self.assertNotIn("tester", result.stdout)
 
     def test_diff_parser_uses_python38_compatible_prefix_removal(self):
+        import importlib.util
         parser = ROOT / "scripts" / "merge_gate_diff.py"
-        self.assertNotIn(".removeprefix(", parser.read_text())
+        spec = importlib.util.spec_from_file_location("merge_gate_diff", parser)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        class NoRemovePrefix(str):
+            def removeprefix(self, _prefix):
+                raise AssertionError("Python 3.8 lacks str.removeprefix")
+        self.assertEqual(module.diff_destination(NoRemovePrefix("diff --git a/x b/y")), "y")
 
     def test_definite_blocker_wins_over_indeterminate_evidence(self):
         self.assert_blocked("draft-surface-fail", "merge state DRAFT")
