@@ -1184,15 +1184,17 @@ result into them would silently widen the scope of a measurement nobody repeated
 **The NFC/NFD row is the only one with evidence pointing the wrong way**, rather than no evidence
 at all, and it is the one most likely to be folded in by accident.
 
-`tally-matches-master-names-by-exact-codepoint` recorded it on 2026-08-19, **standard TallyPrime
-7.1 in Educational mode** — port 9001, per that capture's provenance sidecar. Note what that is
-*not*: it is neither §0's **Edit Log 7.0** Educational baseline nor a licensed instance, so this row
-inherits neither. Two different products, both in Educational mode, and flattening them into "EDU"
-loses the distinction that decides which other rows it can be read beside. The measurement: a voucher naming a UI-created NFC ledger in its **canonically equivalent NFD** spelling was
+`tally-matches-master-names-by-exact-codepoint` recorded the observation on
+2026-08-19: a voucher naming a UI-created NFC ledger in its **canonically equivalent
+NFD** spelling was
 rejected — `EXCEPTIONS=1`, `LINEERROR` saying the ledger does not exist — while the NFC spelling
 created it. A create with a programmatically-constructed NFD name returned `CREATED=1` and read
-back with identical NFD codepoints, so storage is verbatim too. **Tally matches on exact
-codepoints.** A fold that normalises before comparing therefore resolves a name onto a master Tally
+back with identical NFD codepoints, so storage is verbatim too. **The observed
+instance matched these spellings by exact codepoints.** The checked-in encoding
+provenance records only a TallyPrime EDU instance and date; it does not establish
+release, port, or standard-versus-Edit-Log product identity for this observation.
+Those classifications remain **UNVERIFIED**. This row therefore qualifies neither
+§0's Edit Log 7.0 baseline nor any licensed SKU. A fold that normalises before comparing therefore resolves a name onto a master Tally
 itself keeps apart — the precise failure this section exists to prevent.
 
 **Why it needs saying twice.** This bug shipped, and the fold was then audited against this section

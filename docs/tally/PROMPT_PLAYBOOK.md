@@ -686,9 +686,9 @@ Implement — write core (masters):
    STEP. §9.4b's rows use §0's **Edit Log 7.0 Educational** baseline
    except the separately captured NFC/NFD row. That capture is not licensed —
    `src-tauri/crates/bridge-tally-protocol/tests/fixtures/encoding/`
-   `PROVENANCE.md` records the 2026-08-19 instance as **standard TallyPrime
-   7.1 in Educational mode**. It qualifies neither the Edit Log 7.0
-   Educational baseline nor a licensed SKU.
+   `PROVENANCE.md` records a TallyPrime EDU instance and date only. Its
+   product family and release are **UNVERIFIED** in that evidence, so it
+   qualifies neither the Edit Log 7.0 baseline nor a licensed SKU.
    **§9.4d is the licensed qualification, and it is qualification of a
    WRITE.** It re-ran §9.4b's method on **TallyPrime 7.1, licence tier
    silver, `education_mode=false`** by importing vouchers naming folded
