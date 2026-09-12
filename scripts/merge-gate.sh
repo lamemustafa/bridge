@@ -1,336 +1,490 @@
 #!/usr/bin/env bash
 # Decide whether a pull request may be merged, and say why not when it may not.
 #
-# Every rule here exists because it failed. On 2026-09-12 four PRs were merged
-# before their reviews arrived — one by three seconds — leaving eleven findings,
-# four of them P1, on code already in master. The gate added to stop that then
-# deadlocked a clean PR, because a Codex pass with no findings submits no review
-# object at all. Later the same day two sessions reported a PR "clean, zero open
-# threads" from a query issued seconds before its review posted.
-#
-# The rule underneath all of it: a review is only evidence about the commit it
-# names. "No findings yet" and "not looked yet" are indistinguishable unless you
-# check which commit was looked at.
-#
 # Usage: scripts/merge-gate.sh <pr-number> [--repo OWNER/NAME]
 # Exit:  0 may merge, 1 must not, 2 could not determine.
+#
+# Every positive result is bound to one server-observed head, base tip, complete
+# check set, provider review commit, review-thread set, changed-file set, and
+# readable compatibility surface. Unknown or incomplete evidence is never
+# converted into an empty successful set.
 
 set -uo pipefail
 
-PR=""; REPO=""
+PR=""
+REPO=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repo) REPO="${2:-}"; [ -n "$REPO" ] || { echo "--repo needs OWNER/NAME" >&2; exit 2; }; shift 2 ;;
-    --repo=*) REPO="${1#--repo=}"
-              [ -n "$REPO" ] || { echo "--repo= needs OWNER/NAME" >&2; exit 2; }; shift ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
-    -*) echo "unknown option: $1" >&2; exit 2 ;;
-    *) [ -z "$PR" ] && PR="$1" || { echo "unexpected argument: $1" >&2; exit 2; }; shift ;;
+    --repo)
+      REPO="${2:-}"
+      [ -n "$REPO" ] || { echo "--repo needs OWNER/NAME" >&2; exit 2; }
+      shift 2
+      ;;
+    --repo=*)
+      REPO="${1#--repo=}"
+      [ -n "$REPO" ] || { echo "--repo= needs OWNER/NAME" >&2; exit 2; }
+      shift
+      ;;
+    -h|--help)
+      sed -n '2,13p' "$0"
+      exit 0
+      ;;
+    -*)
+      echo "unknown option: $1" >&2
+      exit 2
+      ;;
+    *)
+      if [ -z "$PR" ]; then
+        PR="$1"
+      else
+        echo "unexpected argument: $1" >&2
+        exit 2
+      fi
+      shift
+      ;;
   esac
 done
 [ -n "$PR" ] || { echo "usage: $0 <pr-number> [--repo OWNER/NAME]" >&2; exit 2; }
 
-# Resolve the repository ONCE, explicitly. Never fall back to a different
-# repository on a transient failure: a same-numbered PR elsewhere with no open
-# threads would read as a clean result for the PR actually being gated.
+# Resolve the repository once. An explicit target must never fall back to the
+# current checkout if one later API call fails.
 if [ -z "$REPO" ]; then
-  REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) \
-    || { echo "could not determine repository; pass --repo OWNER/NAME" >&2; exit 2; }
+  if ! REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null); then
+    echo "could not determine repository; pass --repo OWNER/NAME" >&2
+    exit 2
+  fi
 fi
-OWNER="${REPO%%/*}"; NAME="${REPO##*/}"
-[ -n "$OWNER" ] && [ -n "$NAME" ] && [ "$OWNER" != "$REPO" ] \
-  || { echo "--repo must be OWNER/NAME, got '$REPO'" >&2; exit 2; }
+OWNER="${REPO%%/*}"
+NAME="${REPO##*/}"
+if [ -z "$OWNER" ] || [ -z "$NAME" ] || [ "$OWNER" = "$REPO" ] || [[ "$REPO" == */*/* ]]; then
+  echo "--repo must be OWNER/NAME, got '$REPO'" >&2
+  exit 2
+fi
 
 fail=0
-blocked_seen=0
-errfile=$(mktemp); trap 'rm -f "$errfile"' EXIT
-say()  { printf '  %-6s %s\n' "$1" "$2"; }
-bad()  { say "BLOCK" "$1"; fail=1; }
-good() { say "ok"    "$1"; }
-die()  { echo "$1" >&2; exit 2; }
+uncertain=0
+tmpdir=$(mktemp -d)
+errfile="$tmpdir/error"
+trap 'rm -rf "$tmpdir"' EXIT
+say() { printf '  %-13s %s\n' "$1" "$2"; }
+bad() { say "BLOCK" "$1"; fail=1; }
+unknown() { say "INDETERMINATE" "$1"; uncertain=1; }
+die() { echo "$1" >&2; exit 2; }
 
-meta=$(gh pr view "$PR" --repo "$REPO" \
-        --json headRefOid,baseRefName,mergeable,mergeStateStatus,isDraft,state,body 2>/dev/null) \
-  || die "could not read PR #$PR in $REPO"
-head=$(jq -r .headRefOid <<<"$meta")
-base=$(jq -r .baseRefName <<<"$meta")
-mergeable=$(jq -r .mergeable <<<"$meta")
-mstate=$(jq -r .mergeStateStatus <<<"$meta")
-draft=$(jq -r .isDraft <<<"$meta")
-pstate=$(jq -r .state <<<"$meta")
+# A malformed response is different from a valid empty result. Validate the
+# outer shape before extracting fields so jq errors cannot become empty values.
+: >"$errfile"
+if ! meta=$(gh pr view "$PR" --repo "$REPO" \
+        --json headRefOid,baseRefName,mergeable,mergeStateStatus,isDraft,state,body 2>"$errfile"); then
+  die "could not read PR #$PR in $REPO"
+fi
+if ! jq -e '
+  type == "object" and
+  (.headRefOid | type == "string" and test("^[0-9a-fA-F]{40}$")) and
+  (.baseRefName | type == "string" and length > 0) and
+  (.mergeable | type == "string") and
+  (.mergeStateStatus | type == "string") and
+  (.isDraft | type == "boolean") and
+  (.state | type == "string")
+' <<<"$meta" >/dev/null 2>&1; then
+  die "PR metadata was not a valid complete JSON object"
+fi
+head=$(jq -r '.headRefOid' <<<"$meta")
+base=$(jq -r '.baseRefName' <<<"$meta")
+mergeable=$(jq -r '.mergeable' <<<"$meta")
+mstate=$(jq -r '.mergeStateStatus' <<<"$meta")
+draft=$(jq -r '.isDraft' <<<"$meta")
+pstate=$(jq -r '.state' <<<"$meta")
 short=${head:0:7}
+prbody=$(jq -r '.body // ""' <<<"$meta")
 
 echo "PR #$PR ($REPO)  head=$short  base=$base  $mergeable/$mstate"
-
 [ "$pstate" = "OPEN" ] || bad "PR is $pstate, not OPEN"
 [ "$draft" = "false" ] || bad "draft"
 
-# 1. Mergeable, and not merely "no conflicts". BEHIND means the head has not
-#    seen the current base, so its CI and its review describe a tree that no
-#    longer exists — the branch protection is strict and would refuse anyway.
 case "$mergeable" in
-  MERGEABLE) good "no conflicts" ;;
+  MERGEABLE) say "ok" "no conflicts" ;;
   CONFLICTING) bad "conflicts with $base — rebase first" ;;
-  *) bad "mergeability still UNKNOWN; re-run in a moment" ;;
+  *) unknown "mergeability is '$mergeable'; re-run when GitHub has determined it" ;;
 esac
 case "$mstate" in
   BEHIND) bad "head is BEHIND $base — its checks and review describe a stale tree; rebase" ;;
-  DIRTY)  bad "merge state DIRTY — conflicts" ;;
-  UNKNOWN) bad "merge state UNKNOWN; re-run in a moment" ;;
-  BLOCKED)
-    # GitHub blocks for reasons this script may not model — a missing required
-    # approval, for instance. The checks below usually explain it, but printing
-    # `ok` for BLOCKED reads as approval for a state GitHub is refusing, so say
-    # what it is and let the specific checks account for it.
-    say "note" "merge state BLOCKED — GitHub is refusing; the checks below should say why"
-    blocked_seen=1 ;;
-  CLEAN|HAS_HOOKS|UNSTABLE) good "merge state $mstate is not stale" ;;
-  *) bad "unrecognised merge state '$mstate' — refusing rather than guessing" ;;
+  DIRTY) bad "merge state DIRTY — conflicts" ;;
+  UNKNOWN) unknown "merge state UNKNOWN; re-run in a moment" ;;
+  BLOCKED) bad "merge state BLOCKED — GitHub is refusing this merge" ;;
+  CLEAN|HAS_HOOKS) say "ok" "merge state $mstate is not stale" ;;
+  UNSTABLE) bad "merge state UNSTABLE — GitHub has not established a mergeable result" ;;
+  *) unknown "unrecognised merge state '$mstate'" ;;
 esac
 
-# 2. Based on master. ci.yml fires on pull_request into master ONLY, so a
-#    stacked PR runs no CI at all and a green tick on it measures nothing.
 if [ "$base" = "master" ]; then
-  good "based on master (CI actually runs)"
+  say "ok" "based on master (CI actually runs)"
 else
   bad "based on '$base', not master — ci.yml does not fire, so checks here prove nothing"
 fi
 
-# 3. Every check concluded and none failed. Read the JSON buckets rather than
-#    the human columns: a check name contains spaces, so column-splitting the
-#    text output misreads the bucket. gh's buckets are pass/fail/pending/
-#    skipping/cancel — note `cancel`, not `cancelled`; matching the longer word
-#    left a cancelled check counted as neither failing nor pending, which read
-#    as success.
-# `gh pr checks` exits nonzero both when a check is failing and when the query
-# itself fails, so the status alone cannot be read as a verdict — but empty
-# stdout from a broken query must never be reported as "no checks", which is a
-# statement about the PR rather than about the request.
-buckets=$(gh pr checks "$PR" --repo "$REPO" --json bucket,name 2>"$errfile")
+# Capture the base tip independently. A PR can retain the same base name while
+# the branch advances during this run.
+: >"$errfile"
+base_tip_status=0
+base_tip=$(gh api "repos/$REPO/branches/$base" --jq '.commit.sha' 2>"$errfile") || base_tip_status=$?
+if [ "$base_tip_status" -ne 0 ] || ! [[ "$base_tip" =~ ^[0-9a-fA-F]{40}$ ]]; then
+  unknown "could not read the full current tip of base '$base'"
+  base_tip=""
+else
+  say "ok" "captured base tip ${base_tip:0:7}"
+fi
+
+# Branch protection is the source of required check contexts. A pass list with
+# an omitted required context is not a complete check result.
+: >"$errfile"
+protection_status=0
+protection=$(gh api "repos/$REPO/branches/$base/protection/required_status_checks" 2>"$errfile") || protection_status=$?
+if [ "$protection_status" -ne 0 ]; then
+  unknown "could not read required status-check contexts for $base"
+  required_contexts=""
+elif ! jq -e '
+  type == "object" and
+  ((.contexts // []) | type == "array" and all(.[]; type == "string" and length > 0)) and
+  ((.checks // []) | type == "array" and all(.[]; type == "object" and (.context | type == "string" and length > 0)))
+' <<<"$protection" >/dev/null 2>&1; then
+  unknown "required status-check response was malformed"
+  required_contexts=""
+else
+  required_contexts=$(jq -r '((.contexts // []) + ([.checks // [] | .[]? | .context] | map(select(type == "string" and length > 0))) | unique)[]' <<<"$protection")
+  if [ -z "$required_contexts" ]; then
+    unknown "branch protection returned no required status-check contexts"
+  else
+    say "ok" "loaded $(wc -l <<<"$required_contexts" | tr -d ' ') required check context(s)"
+  fi
+fi
+
+# gh uses pass/fail/pending/skipping/cancel buckets. Preserve command status,
+# then parse JSON and require each protected context individually.
+: >"$errfile"
+check_status=0
+buckets=$(gh pr checks "$PR" --repo "$REPO" --json bucket,name 2>"$errfile") || check_status=$?
 if [ -z "$buckets" ]; then
-  if [ -s "$errfile" ]; then
-    bad "could not query checks: $(tr '\n' ' ' <"$errfile" | cut -c1-120)"
-  else
+  unknown "checks query returned no JSON"
+elif ! jq -e 'type == "array" and all(.[]; type == "object" and (.name | type == "string" and length > 0) and (.bucket | type == "string"))' <<<"$buckets" >/dev/null 2>&1; then
+  unknown "checks query returned malformed JSON"
+else
+  # The first validation accepts only the documented buckets; keep this second
+  # check explicit because jq's precedence is easy to misread in a gate.
+  if ! jq -e 'all(.[]; (.bucket == "pass" or .bucket == "fail" or .bucket == "pending" or .bucket == "skipping" or .bucket == "cancel"))' <<<"$buckets" >/dev/null 2>&1; then
+    unknown "checks query contained an unknown bucket"
+  elif [ "$check_status" -ne 0 ] && [ "$(jq '[.[] | select(.bucket == "fail" or .bucket == "cancel" or .bucket == "pending" or .bucket == "skipping")] | length' <<<"$buckets")" -eq 0 ]; then
+    unknown "checks command failed even though no failing or pending result was returned"
+  elif [ "$(jq 'length' <<<"$buckets")" -eq 0 ]; then
     bad "no checks reported for this PR"
-  fi
-elif [ "$buckets" = "[]" ]; then
-  bad "no checks reported for this PR"
-else
-  pend=$(jq '[.[]|select(.bucket=="pending")]|length' <<<"$buckets")
-  bust=$(jq '[.[]|select(.bucket=="fail" or .bucket=="cancel")]|length' <<<"$buckets")
-  tot=$(jq 'length' <<<"$buckets")
-  [ "$pend" -eq 0 ] || bad "$pend of $tot check(s) still running"
-  [ "$bust" -eq 0 ] || bad "$bust of $tot check(s) failed or were cancelled: $(jq -r '[.[]|select(.bucket=="fail" or .bucket=="cancel")|.name]|join(", ")' <<<"$buckets")"
-  [ "$pend" -eq 0 ] && [ "$bust" -eq 0 ] && good "all $tot checks concluded, none failing or cancelled"
-fi
-
-# 4. A Codex review that names THIS head, and actually completed. The summary
-#    comment is edited in place, so its created_at is meaningless — read the
-#    commit in its table. A clean pass emits no review object, only this row
-#    plus a thumbs-up, which is why the row and not the review list is read.
-#    Paginate: the summary is an ordinary issue comment and the default page is
-#    30, so on a busy PR it is not on the first one.
-#    Filter on the AUTHOR as well as the marker. The marker is just text in a
-#    comment body, so any PR participant could post one carrying a `Completed`
-#    row for the current SHA and the gate would accept it as a review. The
-#    summary is posted by the Codex app; require that login and a Bot type.
-body=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
-        --jq '.[] | select(.user.login=="chatgpt-codex-connector[bot]" and .user.type=="Bot")
-                  | select(.body|contains("codex-pull-request-review-summary")) | .body' 2>"$errfile")
-comment_query_failed=0
-[ -s "$errfile" ] && [ -z "$body" ] && comment_query_failed=1
-row=$(grep -E '^\| (📝|🔍)' <<<"$body" | tail -1)
-if [ "$comment_query_failed" -eq 1 ]; then
-  # "I could not ask" is not "there is no review". Saying the second when the
-  # first is true is the failure this whole script is about.
-  bad "could not read PR comments: $(tr '\n' ' ' <"$errfile" | cut -c1-110)"
-elif [ -z "$row" ]; then
-  bad "no Codex review summary at all"
-elif ! grep -qE "\`$short\`" <<<"$row"; then
-  # Anchored to the backtick cell: an unanchored substring also matches the
-  # row's timestamp and URL, which are not claims about a commit.
-  bad "latest review names a different commit than $short — it has not seen this push"
-elif grep -q 'Completed' <<<"$row"; then
-  # A seven-hex prefix is 28 bits and a matching commit can be ground
-  # deliberately, after which a stale `Completed` row would vouch for code
-  # nobody read. Codex publishes only seven characters, so the prefix cannot be
-  # strengthened — but a ground commit has to be created AFTER the review it is
-  # impersonating, and that is checkable. Require the reviewed row to postdate
-  # the head commit.
-  review_at=$(grep -oE 'datetime="[^"]+"' <<<"$row" | head -1 | sed 's/datetime="//;s/"//')
-  head_at=$(gh api "repos/$REPO/commits/$head" --jq '.commit.committer.date' 2>/dev/null)
-  if [ -n "$review_at" ] && [ -n "$head_at" ] && [[ "$review_at" < "$head_at" ]]; then
-    bad "review at $review_at predates head commit $short ($head_at) — it cannot have seen it"
   else
-    good "review completed on $short${review_at:+ at $review_at}"
+    check_bad=0
+    while IFS= read -r context; do
+      [ -n "$context" ] || continue
+      context_state=$(jq -r --arg context "$context" '
+        map(select(.name == $context)) |
+        if length == 0 then "missing"
+        elif all(.[]; .bucket == "pass") then "pass"
+        else map(.bucket) | unique | join(",")
+        end
+      ' <<<"$buckets")
+      case "$context_state" in
+        pass) say "ok" "required check '$context' passed" ;;
+        missing) bad "required check '$context' was not reported"; check_bad=1 ;;
+        *) bad "required check '$context' is not passing ($context_state)"; check_bad=1 ;;
+      esac
+    done <<<"$required_contexts"
+    all_bad=$(jq '[.[] | select(.bucket == "fail" or .bucket == "cancel" or .bucket == "pending" or .bucket == "skipping")] | length' <<<"$buckets")
+    [ "$all_bad" -eq 0 ] || bad "$all_bad reported check(s) are failing, cancelled, pending, or skipped"
+    [ "$check_bad" -eq 0 ] && [ "$all_bad" -eq 0 ] && say "ok" "all reported checks concluded successfully"
   fi
-else
-  # Running, Failed, Errored — none of these is a review. A failed review run
-  # means nothing looked at the code, which is exactly the state this gate
-  # exists to catch; treating it as completed was the original bug inverted.
-  st=$(grep -oE 'Running|Failed|Errored|Cancelled' <<<"$row" | head -1)
-  bad "review state '${st:-unrecognised}' on $short — only Completed counts"
 fi
 
-# 5. No unresolved threads. required_conversation_resolution is on, so this is
-#    the gate, not a courtesy. Paginate: a first:100 page once hid 19 threads.
-#    Actually paginate. Blocking whenever a second page exists made every busy
-#    PR permanently unmergeable — and a PR accumulates threads precisely by
-#    being reviewed carefully, so the rule punished the PRs it should trust.
-cursor=null; open=0; total=0; ok_threads=1
-while : ; do
-  page=$(gh api graphql -f owner="$OWNER" -f name="$NAME" -F pr="$PR" \
-    -f cursor="$([ "$cursor" = "null" ] && echo "" || echo "$cursor")" -f query='
-    query($owner:String!,$name:String!,$pr:Int!,$cursor:String){
-      repository(owner:$owner,name:$name){
-        pullRequest(number:$pr){
-          reviewThreads(first:100,after:$cursor){
-            totalCount pageInfo{hasNextPage endCursor} nodes{isResolved} }}}}' 2>/dev/null)
-  if [ -z "$page" ] || [ "$(jq -r '.data.repository.pullRequest' <<<"$page")" = "null" ]; then
-    bad "could not read review threads for $REPO#$PR"; ok_threads=0; break
-  fi
-  total=$(jq -r '.data.repository.pullRequest.reviewThreads.totalCount' <<<"$page")
-  open=$(( open + $(jq '[.data.repository.pullRequest.reviewThreads.nodes[]|select(.isResolved==false)]|length' <<<"$page") ))
-  [ "$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$page")" = "true" ] || break
-  cursor=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor' <<<"$page")
-done
-if [ "$ok_threads" -eq 1 ]; then
-  if [ "$open" -eq 0 ]; then good "0 of $total threads unresolved"; else bad "$open of $total threads unresolved"; fi
-fi
-
-# 6. Nothing shaped like client data in what this PR ADDS. Scan the whole merge
-#    diff rather than the author's own commits — a real transaction reference
-#    sat in a comment on public master through two PRs because each author
-#    scanned only what they wrote — but scan ADDED lines only, or the gate
-#    blocks the very PR that deletes a leak.
-# AGENTS.md: "Each PR must link to one line in review-checklist.md as completed
-# before merge." A gate that checks everything except the repository's own
-# stated pre-merge rule is not the gate it claims to be.
-prbody=$(jq -r '.body // ""' <<<"$meta")
-if grep -qiE 'review-checklist' <<<"$prbody"; then
-  good "description links review-checklist.md"
+# Provider review objects carry an immutable full commit_id even when the
+# human-readable summary is abbreviated. No author-controlled commit timestamp
+# is used. A clean summary without a full provider OID is indeterminate and
+# points the operator to independent exact-head acceptance.
+: >"$errfile"
+review_status=0
+reviews=$(gh api --paginate --slurp "repos/$REPO/pulls/$PR/reviews" 2>"$errfile") || review_status=$?
+if [ "$review_status" -ne 0 ]; then
+  unknown "could not read provider review records"
+elif ! jq -e 'type == "array" and (all(.[]; type == "array") or all(.[]; type == "object"))' <<<"$reviews" >/dev/null 2>&1; then
+  unknown "provider review response was malformed"
 else
-  bad "description does not link review-checklist.md (AGENTS.md requires one completed line per PR)"
-fi
-
-# 7. Pin freshness. The compatibility surface pins the raw bytes of 211 files,
-#    and ANY operation that can change those bytes — an edit, a formatter, a
-#    merge, a rebase taking the base's manifest — invalidates the seal. Nothing
-#    in the local loop re-reads pins before a commit, so CI's gate is the only
-#    thing that notices and every instance reaches a reviewer instead of its
-#    author. Three sessions hit this independently in one day, which makes it a
-#    class rather than a set of mistakes.
-#
-#    Checked without a checkout: if this PR touches a pinned file, it must also
-#    touch the manifest. That does not prove the hashes are right — only CI's
-#    gate does — but it catches the whole observed failure, which is a reseal
-#    that never ran.
-SURFACE=docs/tally/compatibility/compatibility-surface.json
-changed=$(gh pr view "$PR" --repo "$REPO" --json files -q '.files[].path' 2>/dev/null)
-if [ -z "$changed" ]; then
-  bad "could not list changed files for the pin-freshness check"
-else
-  pinned=$(gh api "repos/$REPO/contents/$SURFACE?ref=$head" --jq '.content' 2>/dev/null \
-           | tr -d '\n' | base64 --decode 2>/dev/null \
-           | jq -r '[.. | objects | select(has("path")) | .path] | .[]' 2>/dev/null)
-  if [ -z "$pinned" ]; then
-    say "note" "no compatibility surface at this head — pin-freshness check skipped"
+  provider_review=$(jq -r --arg head "$head" '
+    (if all(.[]; type == "array") then flatten else . end) |
+    map(select(.user.login == "chatgpt-codex-connector[bot]" and .user.type == "Bot" and
+               .state == "COMMENTED" and .commit_id == $head)) |
+    if length > 0 then "matched" else "" end
+  ' <<<"$reviews")
+  if [ "$provider_review" = "matched" ]; then
+    say "ok" "provider review records the full current head $short"
   else
-    touched=$(comm -12 <(sort -u <<<"$pinned") <(sort -u <<<"$changed") | grep -v "^$SURFACE$" | head -20)
-    if [ -z "$touched" ]; then
-      good "touches no pinned file (nothing to reseal)"
-    elif grep -qx "$SURFACE" <<<"$changed"; then
-      good "touches $(wc -l <<<"$touched" | tr -d ' ') pinned file(s) and the manifest moved with them"
+    # Read the summary only to distinguish absent evidence from a provider
+    # summary that exposes an abbreviated current prefix.
+    : >"$errfile"
+    comment_status=0
+    comments=$(gh api --paginate --slurp "repos/$REPO/issues/$PR/comments" 2>"$errfile") || comment_status=$?
+    if [ "$comment_status" -ne 0 ]; then
+      unknown "could not read provider review summaries"
+    elif ! jq -e 'type == "array" and (all(.[]; type == "array") or all(.[]; type == "object"))' <<<"$comments" >/dev/null 2>&1; then
+      unknown "provider review-summary response was malformed"
     else
-      bad "touches pinned file(s) without updating $SURFACE — the reseal did not run: $(tr '\n' ' ' <<<"$touched" | cut -c1-150)"
+      summaries=$(jq -r '
+        (if all(.[]; type == "array") then flatten else . end)[] |
+        select(.user.login == "chatgpt-codex-connector[bot]" and .user.type == "Bot") |
+        select((.body // "") | contains("codex-pull-request-review-summary")) |
+        .body
+      ' <<<"$comments")
+      if [ -z "$summaries" ]; then
+        bad "no provider review records or summaries"
+      else
+        current_prefix=0
+        if grep -Fq "\`$short\`" <<<"$summaries"; then current_prefix=1; fi
+        if [ "$current_prefix" -eq 1 ]; then
+          unknown "provider summary exposes only an abbreviated head; obtain full-SHA provider evidence or independently review this exact head"
+        else
+          bad "provider review evidence names a different head"
+        fi
+      fi
     fi
   fi
 fi
 
-diff=$(gh pr diff "$PR" --repo "$REPO" 2>/dev/null)
-if [ -z "$diff" ]; then
-  bad "could not read diff for the privacy scan"
-else
-  # A UUID's last group is twelve hex characters and often all digits; the
-  # canonical RFC example UUID tripped this. Strip UUIDs rather than
-  # widening the placeholder list, which would start excusing real values.
-  # Hex digests are the other machine-generated shape that trips this: a
-  # sha256 in a lockfile or a sealed surface manifest contains long digit runs
-  # by chance, and dropping \b (see below) made them visible. The canonical RFC
-  # example UUID tripped it the same way. Strip digests and UUIDs — both are
-  # generated, neither can carry a client identifier — rather than loosening the
-  # placeholder list, which would start excusing real values. (Deliberately no
-  # example digits in this comment: a literal here is a literal in the diff,
-  # and this scan reads its own file like any other.)
-  # A binary file is a hole in this scan, not an absence of findings: the patch
-  # carries a marker instead of content, so a screenshot or PDF of a client
-  # statement reads exactly like a clean diff. Refuse rather than pass.
-  # A binary DELETION removes a file rather than adding unreadable content, so
-  # it is a cleanup, not a hole — counting it blocked the PR that deletes a
-  # leaked screenshot, the same inversion as scanning removed lines.
-  binaries=$(grep -E '^(Binary files .* differ|GIT binary patch)' <<<"$diff" \
-             | grep -cv 'and /dev/null differ')
-  if [ "$binaries" -gt 0 ]; then
-    bad "$binaries binary change(s) the privacy scan cannot read — inspect by hand before merging: $(grep -E '^\+\+\+ b/' <<<"$diff" | sed 's|^+++ b/||' | tr '\n' ' ' | cut -c1-160)"
-  fi
-  # The unified-diff file header is `+++ ` WITH A SPACE. Filtering `^+++`
-  # discarded any added line whose own content starts with `++`, so
-  # an added line whose content began `++` produced no scannable text at all —
-  # a place to hide a value from the scan, in the scan's own input. (No example
-  # identifier in this comment: the scan reads its own file, and a literal that
-  # illustrates a leak pattern IS the pattern. This is the third time a comment
-  # here has flagged itself, which is the check working rather than failing.)
-  # Identify the header STRUCTURALLY. `+++ ` alone is not enough: an added line
-  # whose content begins with `++` produces exactly that prefix. Git's header
-  # is always `+++ b/<path>` or `+++ /dev/null`, so match those and nothing
-  # else — a payload line that merely starts with `++` is content, and must
-  # reach the scan rather than being mistaken for a header.
-  raw_added=$(grep '^+' <<<"$diff" | grep -vE '^\+\+\+ (b/|/dev/null)')
-  added=$(sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/<uuid>/g' <<<"$raw_added" \
-          | sed -E 's/[0-9a-fA-F]{32,}/<digest>/g')
-  # Exemptions are REPORTED, never silent. Stripping generated-looking values
-  # keeps the false-positive rate low enough that the gate is read at all, but a
-  # blanket exemption that nobody can see is how a real value gets erased — so
-  # say how many were dropped and let the operator judge.
-  exempt=$(( $(grep -cE '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{32,}' <<<"$raw_added") ))
-  [ "$exempt" -eq 0 ] || say "note" "$exempt added line(s) carried a UUID or hex digest, exempted from the scan — check by eye if this PR touches client data"
-  # Placeholders match these shapes too — XXXXX1234X is a fabricated PAN and X
-  # is an uppercase letter. A gate that cries wolf gets ignored, so obvious
-  # placeholders are excluded by an EXPLICIT list; widening the shape itself
-  # would start excusing real values. No backreferences: this must be plain
-  # ERE, and a grep that errors returns nothing, which reads as a clean scan.
-  # `^0{6,}` is the padded-fixture shape: six or more leading zeros then a small
-  # number, as constructed test pages use for MICR and postcode fields. Kept
-  # narrow on purpose — a real account number can begin with a zero or two, so
-  # only a run long enough to be plainly synthetic is excused.
-  placeholder='^(X+|Z+|A+)[0-9]+(X|Z|A)?$|^[0-9]{2}(X+|Z+|A+)[0-9]+[0-9A-Z]*$|^(0+|1+|2+|3+|4+|5+|6+|7+|8+|9+)$|^(0?1234567890|1234567890[0-9]*)$|^0{6,}[0-9]{1,5}$'
-  printf 'XXXXX1234X\n' | grep -qE "$placeholder" \
-    || { bad "privacy-scan pattern failed to compile or match its own probe"; fail=1; }
-  # NO \b around the digit run. The leak that motivated this gate was written
-  # `HDF CH12345678901` — glued to letters — and \b does not match between `H`
-  # and `1`, so the scan that was supposed to catch it could not see it at all.
-  # Case-insensitively: a GSTIN or PAN written in lower or mixed case is the
-  # same identifier, and prose is exactly where it would be written that way.
-  # The placeholder list is applied to the UPPERCASED form for the same reason.
-  hits=$(grep -Eio '[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]{3}|[A-Z]{5}[0-9]{4}[A-Z]|[6-9][0-9]{9}' <<<"$added" \
-          | tr '[:lower:]' '[:upper:]' | sort -u | { grep -cvE "$placeholder" || true; })
-  runs=$(grep -Eo '[0-9]{11,18}' <<<"$added" | sort -u | { grep -cvE "$placeholder" || true; })
-  if [ "$hits" -eq 0 ] && [ "$runs" -eq 0 ]; then
-    good "added lines carry no identifier shapes and no unexplained long digit runs"
+# Paginate review threads and count unresolved nodes over every page.
+cursor=""
+open_threads=0
+total_threads=0
+thread_ok=1
+while :; do
+  : >"$errfile"
+  page_status=0
+  if [ -z "$cursor" ]; then
+    page=$(gh api graphql -f owner="$OWNER" -f name="$NAME" -F pr="$PR" -f cursor="" -f query='
+      query($owner:String!,$name:String!,$pr:Int!,$cursor:String){
+        repository(owner:$owner,name:$name){
+          pullRequest(number:$pr){ reviewThreads(first:100,after:$cursor){
+            totalCount pageInfo{hasNextPage endCursor} nodes{isResolved}
+          }}
+        }
+      }' 2>"$errfile") || page_status=$?
   else
-    bad "privacy scan: $hits identifier shape(s), $runs unexplained long digit run(s) in ADDED lines — inspect before merging"
+    page=$(gh api graphql -f owner="$OWNER" -f name="$NAME" -F pr="$PR" -f cursor="$cursor" -f query='
+      query($owner:String!,$name:String!,$pr:Int!,$cursor:String){
+        repository(owner:$owner,name:$name){
+          pullRequest(number:$pr){ reviewThreads(first:100,after:$cursor){
+            totalCount pageInfo{hasNextPage endCursor} nodes{isResolved}
+          }}
+        }
+      }' 2>"$errfile") || page_status=$?
+  fi
+  if [ "$page_status" -ne 0 ] || ! jq -e '.data.repository.pullRequest.reviewThreads | type == "object" and (.totalCount | type == "number") and (.pageInfo.hasNextPage | type == "boolean") and (.nodes | type == "array" and all(.[]; .isResolved | type == "boolean"))' <<<"$page" >/dev/null 2>&1; then
+    unknown "could not read review threads for $REPO#$PR"
+    thread_ok=0
+    break
+  fi
+  if [ "$total_threads" -eq 0 ]; then total_threads=$(jq -r '.data.repository.pullRequest.reviewThreads.totalCount' <<<"$page"); fi
+  page_open=$(jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length' <<<"$page")
+  open_threads=$((open_threads + page_open))
+  has_next=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$page")
+  [ "$has_next" = "true" ] || break
+  next_cursor=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // empty' <<<"$page")
+  if [ -z "$next_cursor" ] || [ "$next_cursor" = "$cursor" ]; then
+    unknown "review-thread pagination returned no advancing cursor"
+    thread_ok=0
+    break
+  fi
+  cursor="$next_cursor"
+done
+if [ "$thread_ok" -eq 1 ]; then
+  if [ "$open_threads" -eq 0 ]; then
+    say "ok" "0 of $total_threads review threads unresolved"
+  else
+    bad "$open_threads of $total_threads review threads unresolved"
+  fi
+fi
+
+# Require an actual markdown link and a completed checkbox. Matching the words
+# review-checklist alone accepted a description that did not satisfy AGENTS.md.
+if ! grep -Eiq '\[[^]]*review-checklist\.md[^]]*\]\([^)]*review-checklist\.md([^)]*)?\)' <<<"$prbody"; then
+  bad "description does not link review-checklist.md"
+elif ! grep -Eiq '^[[:space:]]*-[[:space:]]*\[[xX]\]' <<<"$prbody"; then
+  bad "description has no completed review-checklist item"
+else
+  say "ok" "description links a completed review-checklist item"
+fi
+
+# Paginate changed files through the REST endpoint; gh pr view hard-codes a
+# first:100 GraphQL fragment in some versions.
+: >"$errfile"
+files_status=0
+files=$(gh api --paginate --slurp "repos/$REPO/pulls/$PR/files?per_page=100" 2>"$errfile") || files_status=$?
+if [ "$files_status" -ne 0 ] || ! jq -e 'type == "array" and all(.[]; type == "array" or type == "object")' <<<"$files" >/dev/null 2>&1; then
+  unknown "could not read the complete changed-file set"
+  changed=""
+else
+  changed=$(jq -r '(if all(.[]; type == "array") then flatten else . end)[] | .filename // empty' <<<"$files")
+  if [ -z "$changed" ]; then unknown "changed-file response contained no filenames"; fi
+fi
+
+# Read and validate the surface as a required object. Any transport, decoding,
+# or JSON failure is indeterminate; an empty decoded value is not absence.
+SURFACE="docs/tally/compatibility/compatibility-surface.json"
+: >"$errfile"
+surface_status=0
+surface=$(gh api "repos/$REPO/contents/$SURFACE?ref=$head" 2>"$errfile") || surface_status=$?
+if [ "$surface_status" -ne 0 ]; then
+  unknown "could not read compatibility surface at $short"
+  pinned=""
+elif ! surface_content=$(jq -er '.content | strings' <<<"$surface"); then
+  unknown "compatibility surface response had no valid base64 content"
+  pinned=""
+else
+  decoded=""
+  decode_status=0
+  decoded=$(printf '%s' "${surface_content//$'\n'/}" | base64 --decode 2>"$errfile") || decode_status=$?
+  if [ "$decode_status" -ne 0 ]; then
+    decode_status=0
+    decoded=$(printf '%s' "${surface_content//$'\n'/}" | base64 -D 2>"$errfile") || decode_status=$?
+  fi
+  if [ "$decode_status" -ne 0 ] || ! jq -e 'type == "object" and ([.. | objects | select(has("path")) | .path] | length > 0)' <<<"$decoded" >/dev/null 2>&1; then
+    unknown "compatibility surface could not be decoded and validated"
+    pinned=""
+  else
+    pinned=$(jq -r '[.. | objects | select(has("path")) | .path] | unique[]' <<<"$decoded")
+  fi
+fi
+if [ -n "$changed" ] && [ -n "$pinned" ]; then
+  touched=$(comm -12 <(sort -u <<<"$pinned") <(sort -u <<<"$changed") | awk -v surface="$SURFACE" '$0 != surface')
+  if [ -z "$touched" ]; then
+    say "ok" "changed files contain no pinned path requiring a reseal"
+  elif grep -Fxq "$SURFACE" <<<"$changed"; then
+    say "ok" "changed pinned paths include the compatibility surface"
+  else
+    bad "changed pinned paths omit the compatibility surface reseal"
+  fi
+fi
+
+# Scan destination paths and added payload lines. Removed/context lines never
+# enter the privacy scan. Binary additions are an explicit human-inspection
+# hold because their bytes are absent from a textual patch.
+: >"$errfile"
+diff_status=0
+diff=$(gh pr diff "$PR" --repo "$REPO" 2>"$errfile") || diff_status=$?
+if [ "$diff_status" -ne 0 ] || [ -z "$diff" ]; then
+  unknown "could not read diff for the privacy scan"
+else
+  binary_count=$(awk '/^(Binary files .* differ|GIT binary patch)/ && $0 !~ /and \/dev\/null differ/ {n++} END {print n+0}' <<<"$diff")
+  [ "$binary_count" -eq 0 ] || bad "$binary_count binary addition/change(s) require human privacy inspection"
+  path_text=$(awk '
+    /^diff --git a\// { s=$0; sub(/^diff --git a\/.* b\//, "", s); print s }
+    /^\+\+\+ b\// { s=$0; sub(/^\+\+\+ b\//, "", s); print s }
+  ' <<<"$diff")
+  added=$(awk '/^\+/ && $0 !~ /^\+\+\+ (b\/|\/dev\/null)/ { print substr($0, 2) }' <<<"$diff")
+  scan_input="$path_text
+$added"
+  redacted=$(sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/<uuid>/g; s/[0-9a-fA-F]{32,}/<digest>/g' <<<"$scan_input")
+  exempt=$(grep -Ec '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{32,}' <<<"$scan_input")
+  [ "$exempt" -eq 0 ] || say "note" "$exempt added/path line(s) carried generated UUID/digest shapes; inspect those lines"
+  placeholder='^(X+|Z+|A+)[0-9]+(X|Z|A)?$|^[0-9]{2}(X+|Z+|A+)[0-9]+[0-9A-Z]*$|^(0+|1+|2+|3+|4+|5+|6+|7+|8+|9+)$|^(0?1234567890|1234567890[0-9]*)$|^0{6,}[0-9]{1,5}$'
+  if printf '%s\n' 'XXXXX1234X' | grep -qE "$placeholder"; then :; else
+    probe_status=$?
+    if [ "$probe_status" -eq 1 ]; then
+      bad "privacy placeholder control did not match its synthetic probe"
+    else
+      unknown "privacy placeholder expression failed"
+    fi
+  fi
+  count_nonplaceholder() {
+    local pattern="$1" input="$2" matches="" status=0 item count=0
+    if matches=$(grep -Eio "$pattern" <<<"$input"); then
+      :
+    else
+      status=$?
+      if [ "$status" -eq 1 ]; then matches=""; else return 2; fi
+    fi
+    while IFS= read -r item; do
+      [ -n "$item" ] || continue
+      item=$(tr '[:lower:]' '[:upper:]' <<<"$item")
+      if printf '%s\n' "$item" | grep -qE "$placeholder"; then
+        :
+      else
+        status=$?
+        [ "$status" -eq 1 ] && count=$((count + 1)) || return 2
+      fi
+    done <<<"$matches"
+    printf '%s\n' "$count"
+  }
+  # Phone numbers are often entered with a country prefix and visual
+  # separators. Keep the original text for the general scans, and add one
+  # separator-free view for the phone shape so ordinary formatting cannot
+  # split a customer number into harmless short fragments.
+  normalized_phone=$(tr -d $' ()-.\t' <<<"$redacted")
+  scan_shapes="$redacted
+$normalized_phone"
+  hits_status=0
+  hits=$(count_nonplaceholder '[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]{3}|[A-Z]{5}[0-9]{4}[A-Z]|[6-9][0-9]{9}' "$scan_shapes") || hits_status=$?
+  runs_status=0
+  runs=$(count_nonplaceholder '[0-9]{11,18}' "$scan_shapes") || runs_status=$?
+  if [ "$hits_status" -ne 0 ] || [ "$runs_status" -ne 0 ]; then
+    unknown "privacy scan expression failed"
+  elif [ "$hits" -eq 0 ] && [ "$runs" -eq 0 ]; then
+    say "ok" "added destination paths and payload lines carry no identifier shapes"
+  else
+    bad "privacy scan found $hits identifier shape(s) and $runs unexplained long digit run(s)"
+  fi
+fi
+
+# Re-read all moving identities immediately before emitting a merge command.
+: >"$errfile"
+final_meta_status=0
+final_meta=$(gh pr view "$PR" --repo "$REPO" \
+  --json headRefOid,baseRefName,mergeable,mergeStateStatus,isDraft,state,body 2>"$errfile") || final_meta_status=$?
+if [ "$final_meta_status" -ne 0 ] || ! jq -e 'type == "object" and (.headRefOid | type == "string") and (.baseRefName | type == "string") and (.mergeable | type == "string") and (.mergeStateStatus | type == "string") and (.isDraft | type == "boolean") and (.state | type == "string")' <<<"$final_meta" >/dev/null 2>&1; then
+  unknown "could not revalidate PR head and base before merge"
+else
+  final_head=$(jq -r '.headRefOid' <<<"$final_meta")
+  final_base=$(jq -r '.baseRefName' <<<"$final_meta")
+  final_mergeable=$(jq -r '.mergeable' <<<"$final_meta")
+  final_state=$(jq -r '.mergeStateStatus' <<<"$final_meta")
+  final_draft=$(jq -r '.isDraft' <<<"$final_meta")
+  final_pstate=$(jq -r '.state' <<<"$final_meta")
+  [ "$final_head" = "$head" ] || bad "PR head moved during preflight"
+  [ "$final_base" = "$base" ] || bad "PR base moved during preflight"
+  [ "$final_mergeable" = "MERGEABLE" ] || bad "PR mergeability changed to $final_mergeable during preflight"
+  [ "$final_draft" = "false" ] || bad "PR became draft during preflight"
+  [ "$final_pstate" = "OPEN" ] || bad "PR state changed to $final_pstate during preflight"
+  case "$final_state" in
+    BEHIND|DIRTY|UNKNOWN|BLOCKED|UNSTABLE) bad "PR merge state changed to $final_state during preflight" ;;
+  esac
+  final_body=$(jq -r '.body // ""' <<<"$final_meta")
+  if ! grep -Eiq '\[[^]]*review-checklist\.md[^]]*\]\([^)]*review-checklist\.md([^)]*)?\)' <<<"$final_body" || ! grep -Eiq '^[[:space:]]*-[[:space:]]*\[[xX]\]' <<<"$final_body"; then
+    bad "PR description changed and no longer carries a completed checklist link"
+  fi
+fi
+if [ -n "$base_tip" ]; then
+  : >"$errfile"
+  final_base_tip_status=0
+  final_base_tip=$(gh api "repos/$REPO/branches/$base" --jq '.commit.sha' 2>"$errfile") || final_base_tip_status=$?
+  if [ "$final_base_tip_status" -ne 0 ] || ! [[ "$final_base_tip" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    unknown "could not revalidate base tip before merge"
+  elif [ "$final_base_tip" != "$base_tip" ]; then
+    bad "base tip moved during preflight"
   fi
 fi
 
 echo
-if [ "$fail" -ne 0 ]; then echo "MUST NOT MERGE"; exit 1; fi
-# 7. Bind the merge to the commit that was actually reviewed. Between this
-#    check and the merge the head can move, and everything above would then
-#    describe a commit the PR no longer points at.
-echo "MAY MERGE — bind the merge to the reviewed commit AND the validated base:"
-echo "  [ \"\$(gh pr view $PR --repo $REPO --json baseRefName -q .baseRefName)\" = \"$base\" ] \\"
-echo "    && gh pr merge $PR --repo $REPO --squash --match-head-commit $head"
-echo
-echo "  (--match-head-commit validates only the head; the base can be changed"
-echo "   after this check without moving the head, so re-read it too.)"
+if [ "$uncertain" -ne 0 ]; then
+  echo "INDETERMINATE — do not merge until the missing evidence is obtained"
+  exit 2
+fi
+if [ "$fail" -ne 0 ]; then
+  echo "MUST NOT MERGE"
+  exit 1
+fi
+
+echo "MAY MERGE — bind the merge to the reviewed head and validated base:"
+printf '  [ "$(gh pr view %s --repo %s --json baseRefName -q .baseRefName)" = "%s" ] \\\n    && gh pr merge %s --repo %s --squash --match-head-commit %s\n' \
+  "$PR" "$REPO" "$base" "$PR" "$REPO" "$head"
 exit 0
