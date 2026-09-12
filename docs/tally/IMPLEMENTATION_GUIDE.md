@@ -585,16 +585,17 @@ has always named. It may overwrite, may partially update, or may duplicate. `TAL
 
 **Consequences.**
 
-*Positive:* this gives real duplicate prevention without a TDL plugin and without a UDF
-fingerprint. For a generate-a-file-the-human-imports design, **re-running the same file is safe.**
+*Positive:* the measured byte-identical Journal repeat produced no duplicate without a TDL plugin
+or UDF fingerprint. That observation does not qualify a resend after an unknown outcome or an
+intervening external edit; the repeated import can alter the existing voucher.
 
 *Not the outbox, and not the narration marker.* Both of those were listed here as unnecessary and
 neither is:
 
 - **The durable dispatch intent stays.** `REMOTEID` prevents a duplicate; it does not tell you,
-  after a crash, *what you sent*. A resend is only safe while the exact key and payload are still
-  on disk, which is what the `row fsynced before dispatch` invariant and the restart-reconciliation
-  flow in `docs/agent/README.md` are for.
+  after a crash, *what you sent*. Preserve the exact key and payload on disk for read-only outcome
+  reconciliation, as required by `row fsynced before dispatch` and `docs/agent/README.md`.
+  Retaining them is not permission to resend after an unknown outcome.
 - **An independent attribution marker stays.** The returned *attribute* does not echo the client
   key — but the key itself survives in any field Tally does not own. The committed capture
   `src-tauri/crates/bridge-tally-protocol/tests/fixtures/agent/native-namespaced-journal.utf16le.xml` returns it inside `NARRATION` as
@@ -611,7 +612,7 @@ proof-of-post claim must account for that — carry your own marker in a field T
 or when the payload differs from the original (partial update semantics). Also untested on
 licensed or standard TallyPrime.
 
-### 3.3b Master-name matching: case- and separator-insensitive, otherwise exact
+### 3.3b Master-name matching: directional alternatives, otherwise exact
 
 **VERIFIED 2026-07-30**, against a ledger named `BRIDGE-PROBE-LEDGER-A` and one named
 `ZZ Ram & Sons Pvt Ltd`:
@@ -627,7 +628,12 @@ licensed or standard TallyPrime.
 | `ZZ Ram & Son Pvt Ltd` (singular for plural) | **rejected** |
 | entirely different name | **rejected** |
 
-So Tally normalises **case and separators** and is otherwise **exact on letters**.
+These rows establish only the supplied candidate against the recorded master;
+they do **not** establish a symmetric case/separator normalizer or canonical
+fold. The shared binder cannot enforce product, release and licence scope, so
+these directional observations do not authorize automatic folded-name binding:
+folded names remain candidates for operator selection and exact revalidation.
+In particular, do not infer a slash rule from this baseline.
 
 > **Promoted to `TALLY_PROTOCOL_REFERENCE.md` §9.4b**, which is where observed gateway behaviour
 > belongs and which carries the consequences for a writer. This entry stays as the measurement
@@ -671,14 +677,53 @@ is no natural idempotency: voucher number is not a key.
 
 **What the heading's "narrowed" means.** §3.3a since established that a byte-identical repeat under
 the same `REMOTEID` is an **upsert** on the qualified Journal path — `CREATED=0, ALTERED=1`, no
-duplicate. So on that path a crash-retry of the *same file* is safe on its own, and the sentence
-that used to stand here — that the fingerprint plus an embedded key is "the only thing" preventing a
-duplicate — is no longer true where §3.3a applies.
+duplicate. This is the observed outcome of that repeat, not permission to resend after an unknown
+outcome: retain the original batch identity and reconcile its outcome first. It does not protect
+against an intervening external edit. The sentence that used to stand here — that the fingerprint
+plus an embedded key is "the only thing" preventing a duplicate — is no longer true where §3.3a
+applies.
 
-It is still true everywhere §3.3a does not reach, and that is most places: a **different** payload
-under the same key is untested (it may overwrite, partially update or duplicate), as is any
-non-Journal voucher type, any other SKU, and a retry across a Tally restart or a company boundary.
-Name which case you are in before relying on either mechanism.
+**And it is not true anywhere else either.** An earlier revision of this paragraph — mine — said it
+"is still true everywhere §3.3a does not reach", which quietly kept the fingerprint alive as a
+duplicate-prevention mechanism in every case §3.3a excludes. §3.4a establishes the opposite: a
+`(date, amount, ledger-set, voucher-type)` tuple **cannot** distinguish a retry from a legitimate
+identical payment, so it prevents no duplicate anywhere. Two paragraphs of one patch contradicting
+each other is how a withdrawn mandate comes back.
+
+What is actually true outside §3.3a's reach is narrower and less comfortable — with **one**
+narrowly qualified exception, and the qualification is tighter than the first correction made it
+look. `TALLY_PROTOCOL_REFERENCE.md` §9.8 measured **one thing**: how a **failed `Alter`** behaves
+under Manual numbering with `PREVENTDUPLICATES=Yes`. It was cleanly rejected — `CREATED=0,
+ALTERED=0, EXCEPTIONS=1` — where automatic numbering silently duplicated. That is the whole result.
+
+Three limits come with it, and §9.8 states two of them itself:
+
+- **Request shape.** The observation is about a failed `Alter`. §9.8's own rule says *"Do not apply
+  the failed-`Alter` observation to a different request identity mechanism."* A crash retry sends a
+  `Create`, which is a different request shape and is **UNVERIFIED**.
+- **SKU.** §9.8 carries no licensed qualification for the numbering path. Its later scope
+  clarification covers a licensed *Journal* `ACTION="Create"` repeat carrying `REMOTEID` and says
+  in terms that it does **not** establish voucher-number identity, the configured numbering method,
+  or other request shapes.
+- **Voucher type.** Journal only, as everywhere else in this section.
+
+So the honest statement is: **for a failed `Alter` on the measured baseline, Manual numbering
+converts a silent duplicate into a clean rejection.** It is not a general duplicate-prevention
+mechanism, and a `Create` retry is not covered by it.
+
+Outside §3.3a's `REMOTEID` path and outside that one measured case, **there is no proven
+duplicate-prevention mechanism at all.** A **different** payload under the same key is untested (it
+may overwrite, partially update or duplicate), as is any non-Journal voucher type, any other SKU,
+and a retry across a Tally restart or a company boundary. Name which case you are in, and where it
+is neither, stop and involve a human rather than reaching for the tuple.
+
+The tuple is withdrawn in every case. §9.8 does not rehabilitate the fingerprint — it reports how
+one failure mode behaves under one setting, which is a different kind of thing entirely.
+
+**Why this needed two corrections.** The first revision withdrew an over-broad claim ("no proven
+mechanism anywhere") and replaced it with another one ("Manual + `PREVENTDUPLICATES` is a proven
+mechanism"), widening §9.8 past both its request shape and its SKU in the act of narrowing
+something else. A claim is not made safe by being a correction.
 
 ### 3.4a Undefined UDF fields are silently discarded — **the plan's primary idempotency key does not work as written**
 
@@ -773,23 +818,38 @@ fingerprint is **co-primary** rather than secondary. Withdrawn: promoting it doe
 to do the job. The tuple is identical for a legitimate recurring or same-day repeat payment, so as
 an automatic dedupe it suppresses real vouchers no matter which tier it is placed in — see §3.4a.
 
-What follows instead is narrower and less comfortable: **there is no proven automatic
-write-confirmation mechanism for Phase 4.** `REMOTEID` upsert covers a byte-identical repeat on the
-Journal path (§3.3a) and nothing beyond it; a destroyed narration marker leaves a write
-unattributable, and the honest response to that is to stop and ask a human, not to substitute a
-signal that cannot tell the two cases apart.
+What follows instead is narrower and less comfortable: **there is no proven mechanism that lets an
+automatic dedupe *decision* be made from the fingerprint tuple.** That is not the same claim as "no
+proven duplicate-prevention mechanism outside §3.3a" — it overstates the gap, but only just. One
+mechanism is proven: `REMOTEID` upsert on a byte-identical repeat on the Journal path (§3.3a). One
+narrower observation sits beside it: under Manual numbering with `PREVENTDUPLICATES=Yes`, a
+**failed `Alter`** is cleanly rejected rather than silently duplicated — `CREATED=0, ALTERED=0,
+EXCEPTIONS=1` (§3.3;
+[`TALLY_PROTOCOL_REFERENCE.md` §9.8](TALLY_PROTOCOL_REFERENCE.md#98-voucher-numbering-method-changes-everything--use-manual)).
+That is a failed-`Alter` result on §9.8's own baseline, not a general rejection mechanism: §9.8
+forbids carrying it to a different request identity mechanism, and a crash retry sends a `Create`.
+Neither reaches a destroyed narration marker or a differently-numbered duplicate under automatic
+numbering; for those cases the honest response is still to stop and ask a human, not to substitute
+the fingerprint as an automatic suppressor — it cannot tell a retry from a legitimate second
+payment no matter which carrier is missing.
 
 ### 3.5 Identity after write
 
-`LASTMID` is **0** on successful master creates — unusable. Read masters back by normalised
-name. `LASTVCHID` is populated for vouchers and usable, subject to a foreign-writer
-cross-check. It also accepts non-numeric text without error when parsed back, so validate it.
+`LASTMID` is **0** on successful master creates — unusable. Read masters back by name — and
+**normalised never means NFC/NFD-normalised**: §9.4b measured Tally matching on exact
+codepoints, so normalising before comparing resolves an NFD create onto a distinct
+pre-existing NFC master and promotes the wrong object. Which name rule applies is the
+SCOPE GATE's question (`PROMPT_PLAYBOOK.md` Phase 4 step 4); on an unqualified licensed SKU
+it is exact codepoints and nothing else. `LASTVCHID` is populated for vouchers and usable,
+subject to a foreign-writer cross-check. It also accepts non-numeric text without error when parsed back, so validate it.
 
 ### 3.6 Master re-create is a silent Alter
 
 Re-sending an identical ledger `ACTION="Create"` returned `CREATED=0, ALTERED=1` — the
-existing master was **overwritten** with the retry payload. Pre-read before creating, and
-persist `CREATED` and `ALTERED` as distinct outbox outcomes.
+existing master was **overwritten** with the retry payload. Persist `CREATED` and `ALTERED` as
+distinct outbox outcomes. A pre-read alone does not authorize creation: use the complete-catalogue
+and mutation-time prerequisites in `PROMPT_PLAYBOOK.md` Phase 4 step 3a; an unqualified case stays
+unresolved without dispatch.
 
 ### 3.7 Company pinning is asymmetric — I2
 
@@ -1116,7 +1176,7 @@ zero; fail closed or quarantine.
 | Modal dialog | Gateway blocked until a human clicks | §5.1 |
 | `ClosingBalance` read as a period figure | Wrong balance, presented as correct | §6.4 |
 | `ACTION="Alter"` + `REMOTEID` | Creates a duplicate. `Create` upserts a **byte-identical** repeat; a *corrected* payload is UNVERIFIED and may overwrite, partially update or duplicate | §3.3a |
-| Master name differing by more than case/separators | Voucher rejected, master NOT auto-created | §3.3b |
+| Master name outside an exact or qualified directional comparison | Voucher rejected, master NOT auto-created | §3.3b |
 | Omitting `BILLALLOCATIONS.LIST` | Allocation becomes `On Account` with no bill identity | §3.3c |
 | Self-referential `$$NumItems` in a collection | Gateway hangs, empty reply | §5.3b |
 | `<COMPUTE>` used for a per-request constant | Per-row work; request exceeds deadline | §2.3a |

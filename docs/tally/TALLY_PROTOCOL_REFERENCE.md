@@ -867,8 +867,13 @@ Read that precisely, because the obvious paraphrase — "Tally does not dedupe o
 number" — is false in two directions. Under **automatic** numbering the supplied number is
 *discarded* (§9.8), so the two sends never shared a stored voucher number and nothing could have
 deduped on it. Under **Manual + `PREVENTDUPLICATES=Yes`**, §9.8 records that a repeated number is
-**cleanly rejected** — a qualified duplicate-rejection mechanism that a reader of this sentence
-would otherwise never look for.
+**cleanly rejected** — a qualified rejection that a reader of this sentence would otherwise never
+look for. Qualified narrowly, though: §9.8 measured a **failed `Alter`**, and its own rule forbids
+carrying that observation to a different request identity mechanism. A crash retry sends a
+`Create`, which is **UNVERIFIED** here, as is the behaviour on any licensed SKU — §9.8's scope
+clarification covers a licensed Journal `REMOTEID` repeat and says in terms that it establishes
+neither voucher-number identity nor the configured numbering method. Do not read this sentence as
+promising a crash-retry is safe under Manual numbering.
 
 So: on the numbering method measured here, a crash-retry duplicates client data unless the
 integrator prevents it.
@@ -903,7 +908,9 @@ voucher by reusing a key.
 
 **Not the outbox, though.** `REMOTEID` prevents a duplicate; it does not tell you, after a crash,
 *what you sent*. The `REMOTEID` **attribute** does not echo the client key on readback (below), so
-a resend is only safe while the exact key and payload are still on disk. Be precise about the
+the exact key and payload must remain on disk for read-only reconciliation. They do not
+authorize a resend after an unknown outcome; restart behaviour remains unqualified. See
+`IMPLEMENTATION_GUIDE.md` §§3.3–3.5 and the playbook's held recovery flow. Be precise about the
 field: the key itself does survive anywhere Tally does not own — a narration marker comes back —
 and a categorical "Tally does not return the key" would send recovery work to discard the one
 attribution channel that works. The durable dispatch intent stays — see the
@@ -1035,8 +1042,14 @@ assigned.
 
 **VERIFIED.** Re-sending an identical ledger `ACTION="Create"` returned `CREATED=0,
 ALTERED=1` with no error — the existing master was **overwritten** with the retry payload.
-"No duplicate was made" is not the same as "my create succeeded." Pre-read before creating,
-and persist `CREATED` and `ALTERED` as distinct outcomes.
+The observed counters distinguish an alteration of an existing master from creation
+of a new one. This experiment did not establish protection against a concurrent
+foreign writer or recovery of an unobserved prior master.
+
+The required implementation workflow is maintained in
+[Implementation Guide §3.6](IMPLEMENTATION_GUIDE.md#36-master-re-create-is-a-silent-alter)
+and `PROMPT_PLAYBOOK.md` Phase 4 step 3a. This section records the gateway observation;
+it does not grant dispatch authority from a pre-read.
 
 ### 9.4a A partial ledger `Alter` preserves the omitted Party GSTIN
 
@@ -1120,7 +1133,10 @@ accepts(candidate, tally_name):
     # `tally_name` is the spelling Tally holds. Each line is one measured
     # result. Do not compose them; do not add a line without a capture.
     return candidate == tally_name                                 # exact — VERIFIED
-        or ascii_lower(candidate) == ascii_lower(tally_name)       # ASCII case — VERIFIED, see below
+        or candidate == ascii_lower(tally_name)                    # candidate is the master lowercased — VERIFIED
+        # NOT included: ascii_lower(candidate) == ascii_lower(tally_name).
+        # That also accepts an UPPERCASE candidate against a lowercase master,
+        # a direction never sent. See the third note below.
         or drop_one_trailing_space(candidate) == tally_name        # ONE trailing space — VERIFIED
         or candidate == tally_name.replace("-", " ")               # space for Tally's hyphen — VERIFIED
 ```
@@ -1133,10 +1149,13 @@ Three things this spelling is careful about, each of which was wrong in an earli
 - **The separator substitution is applied to `tally_name` only.** `tally_name="A-B"` accepts
   `candidate="A B"`; `tally_name="A B"` does **not** accept `candidate="A-B"`. That asymmetry is
   the entire point of the clause and is what a canonical form cannot express.
-- **The case clause folds both sides, and that is broader than the capture.** The measurement sent
-  a lowercase name against a master carrying uppercase; the reverse was not sent. It is written
-  symmetrically because "Tally folds ASCII case" is the claim the capture supports, but a consumer
-  relying on the *uppercase-candidate* direction is relying on an inference. Qualify it before
+- **The case clause is directional, because the capture was.** The measurement sent a **lowercase**
+  candidate against a master carrying uppercase. `ascii_lower(candidate) == ascii_lower(tally_name)`
+  also accepts an **uppercase** candidate against a lowercase master, which was never sent — so the
+  symmetric form asserts a second experiment, exactly as a canonical form does for the separator.
+  An earlier draft admitted that in this note and left the symmetric clause in the predicate
+  anyway; a qualification in the prose does not qualify the code beside it. Written as
+  `candidate == ascii_lower(tally_name)`, the predicate now says only what was sent. Qualify it before
   building on it.
 
 If a further direction is later measured, one clause is added and the table row changes. Until
@@ -1154,14 +1173,14 @@ symmetry is exactly the property the separator result does not have.
 | --- | --- |
 | ASCII case folding | **VERIFIED** — lowercase matched |
 | supplying a **space** where the master has a **hyphen** | **VERIFIED** — `BRIDGE PROBE LEDGER A` matched `BRIDGE-PROBE-LEDGER-A` |
-| supplying a **hyphen** where the master has a **space** | **UNVERIFIED here** — the reverse direction was never sent on this SKU. Measured **matched** on licensed 7.1, §9.4d |
+| supplying a **hyphen** where the master has a **space** | **UNVERIFIED here** — the reverse direction was never sent on this SKU. Measured **matched** on licensed 7.1 Silver, §9.4d |
 | one trailing space ignored | **VERIFIED** |
 | **two or more** trailing spaces ignored | **UNVERIFIED** — only one was sent |
-| *leading* whitespace ignored | **UNVERIFIED here**. Measured **matched** on licensed 7.1, §9.4d |
-| runs of internal whitespace collapsed to one | **UNVERIFIED here** — only a single space was tested. Measured **matched** on licensed 7.1, §9.4d |
+| *leading* whitespace ignored | **UNVERIFIED here**. Measured **matched** on licensed 7.1 Silver, §9.4d |
+| runs of internal whitespace collapsed to one | **UNVERIFIED here** — only a single space was tested. Measured **matched** on licensed 7.1 Silver, §9.4d |
 | non-ASCII case folding (Devanagari, Tamil, Bengali, Turkish dotted I) | **UNVERIFIED** |
 | **Unicode canonical equivalence (NFC/NFD)** | **MEASURED — folding it is wrong.** See below. |
-| any other separator (underscore, en dash, `/`) treated as a space | **UNVERIFIED here**, and §9.4d splits it on licensed 7.1: `/` **matched**, underscore and en dash **rejected**. Not one row — do not fold them together |
+| any other separator (underscore, en dash, `/`) treated as a space | **UNVERIFIED here**, and §9.4d splits it on licensed 7.1 Silver: `/` **matched**, underscore and en dash **rejected**. Not one row — do not fold them together |
 
 **A wider result exists for a different SKU.** §9.4d re-ran this measurement on **licensed
 TallyPrime 7.1** and found the gateway folds more than these rows establish. It is a separate
@@ -1171,12 +1190,17 @@ result into them would silently widen the scope of a measurement nobody repeated
 **The NFC/NFD row is the only one with evidence pointing the wrong way**, rather than no evidence
 at all, and it is the one most likely to be folded in by accident.
 
-`tally-matches-master-names-by-exact-codepoint` recorded it on 2026-08-19, TallyPrime 7.1, port
-9001: a voucher naming a UI-created NFC ledger in its **canonically equivalent NFD** spelling was
+`tally-matches-master-names-by-exact-codepoint` recorded the observation on
+2026-08-19: a voucher naming a UI-created NFC ledger in its **canonically equivalent
+NFD** spelling was
 rejected — `EXCEPTIONS=1`, `LINEERROR` saying the ledger does not exist — while the NFC spelling
 created it. A create with a programmatically-constructed NFD name returned `CREATED=1` and read
-back with identical NFD codepoints, so storage is verbatim too. **Tally matches on exact
-codepoints.** A fold that normalises before comparing therefore resolves a name onto a master Tally
+back with identical NFD codepoints, so storage is verbatim too. **The observed
+instance matched these spellings by exact codepoints.** The checked-in encoding
+provenance records only a TallyPrime EDU instance and date; it does not establish
+release, port, or standard-versus-Edit-Log product identity for this observation.
+Those classifications remain **UNVERIFIED**. This row therefore qualifies neither
+§0's Edit Log 7.0 baseline nor any licensed SKU. A fold that normalises before comparing therefore resolves a name onto a master Tally
 itself keeps apart — the precise failure this section exists to prevent.
 
 **Why it needs saying twice.** This bug shipped, and the fold was then audited against this section
@@ -1279,7 +1303,7 @@ voucher each, then the **day book was read back** to record which master each vo
 posted against — the counters alone would not have said. Every created voucher was then deleted by
 `REMOTEID` and the day read back empty (eight from the first run, two from the second).
 
-| Supplied against a live master | Licensed 7.1 | §9.4b on Educational |
+| Supplied against a live master | Licensed 7.1 Silver | §9.4b on Educational |
 | --- | --- | --- |
 | exact | **matched** | matched |
 | ASCII lowercase | **matched** | matched |
@@ -1311,7 +1335,7 @@ ledger present in every company:
 | `Profit & Loss` | **rejected** — a missing suffix word |
 | `Profit & Loss A/c AND CO` | **rejected** — an added suffix word, what the first run really sent |
 
-So §9.4b's abbreviation findings hold on licensed 7.1 as well, and this section now says which
+So §9.4b's abbreviation findings hold on licensed 7.1 Silver as well, and this section now says which
 of them it measured rather than which it meant to.
 
 **Composition was measured separately, because twelve single-axis results do not license it.**
@@ -1331,23 +1355,28 @@ more variants, same method, same readback and deletion:
 | `  mb-pilot/alpha  (5550001001) ` | all five at once | **matched** |
 | `  mb probe  ledger a ` against `MB-PROBE-LEDGER-A` | case + space-for-hyphen + surrounding + run | **matched** |
 
-All eight posted against the intended master, confirmed by day-book readback. **So the folds
-compose**, and a canonical form applying every measured transformation before comparing is
-licensed by measurement rather than by extrapolation from the single-axis rows.
+All eight posted against the intended master, confirmed by day-book readback. **So the listed
+supplied-to-master transformations compose in those measured directions.** That does not license
+a canonical form: it compares symmetrically and would assert a reverse comparison the probe did
+not send.
 
-**What this says.** On licensed 7.1, Tally treats **space, hyphen and slash** as interchangeable
-separators, collapses internal whitespace runs, ignores leading and trailing whitespace, folds
-**ASCII** case, and is otherwise **exact on codepoints**.
+**What this says.** On licensed 7.1 Silver, the recorded supplied-to-master comparisons accept the
+listed space/hyphen alternatives and the one **slash-candidate to space-master** alternative,
+collapse the measured internal whitespace run, ignore the measured leading and trailing whitespace,
+and fold the measured **ASCII** case. The reverse slash comparison was not sent and requires
+exact codepoints unless separately measured. The recorded slash-candidate to space-master result
+remains qualified only in this product, release, licence tier, entity class and direction; a
+shared binder without those scope inputs cannot use it as automatic binding authority.
 
-> **RULE: separators fold, and the set is `space`, `-`, `/` — nothing else.** An en dash and an
-> underscore are ordinary characters to Tally and are **not** separators, so a fold that treats
-> "punctuation" or "separators" as a class is wider than the gateway and will merge masters it
-> keeps apart.
+> **RULE: use only the recorded directional alternatives; do not fold separators into a canonical
+> form.** The slash result is candidate `/` against master space, not the reverse. An en dash and
+> an underscore were rejected in their recorded directions, so a fold that treats punctuation or
+> separators as a class is wider than the gateway and will merge masters it keeps apart.
 
 That is the trap §9.4b warned about, arriving from the other side: the danger was never only that
-a reader would fold too much, it was that "normalises separators" names no particular set. Two of
-the four separators tested are folded and two are not, and nothing about their appearance predicts
-which.
+a reader would fold too much, it was that "normalises separators" hides both the particular
+substitutions and their directions. Nothing about a separator's appearance predicts which comparison
+the gateway accepts.
 
 **Canonical equivalence is still refused**, consistent with the exact-codepoint finding recorded
 elsewhere in this document: an NFD spelling of an NFC ledger does not resolve. A fold that
@@ -1391,10 +1420,12 @@ habits, not against real operator input.
 
 ### 9.5 Identity after write
 
-**VERIFIED.** `LASTMID` is **0** on successful master creates — unusable for master identity;
-read masters back by normalised name. `LASTVCHID` is populated for vouchers and usable,
-subject to a foreign-writer cross-check. `LASTVCHID` also accepts non-numeric text without
-error when parsed back, so validate it.
+**VERIFIED.** `LASTMID` is **0** on successful master creates, so this counter does not
+identify the created master. `LASTVCHID` is populated for vouchers. Non-numeric
+`LASTVCHID` text is also accepted without error when parsed back.
+
+For the implementation's readback identity policy, see `IMPLEMENTATION_GUIDE.md` §3.5
+and `PROMPT_PLAYBOOK.md` Phase 4 step 4. Their prescriptions are separate from this observation.
 
 ---
 
@@ -1410,7 +1441,11 @@ voucher number survives and how a failed Alter behaves.
 
 Two consequences, both significant:
 
-1. **Voucher-number-based idempotency only works with Manual numbering.** Under automatic
+1. **What was measured is the FAILED-ALTER column, and the consequences below are about that
+   column.** §9.8 sent a failed `Alter`; it did not test a `Create` retry, a restart, or another
+   voucher type, and its own rule below forbids carrying the observation to a different request
+   identity mechanism. Read "idempotency" here as "this failure mode, under this setting".
+   Voucher-number-based idempotency in that sense only works with Manual numbering. Under automatic
    numbering the client-supplied number is thrown away, so any dedupe key built on it is
    silently ineffective. This was not obvious — the create returned `CREATED=1, ERRORS=0`
    and looked entirely successful.

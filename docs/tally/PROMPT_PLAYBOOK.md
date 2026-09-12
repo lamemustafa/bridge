@@ -49,7 +49,8 @@ STILL NON-NEGOTIABLE (unchanged):
 - Exact decimals only; never floating point for amounts.
 - A failed/partial/cancelled run never advances a verified checkpoint.
 - "Posted" is never claimed from counters alone; only from readback.
-- No automatic retry of writes without an idempotency probe first.
+- No automatic resend after an unknown write outcome. Retain the original batch
+  identity and use read-only outcome reconciliation; an inconclusive result stays held.
 - Deletion tombstones only from complete, verified scans.
 - Only synthetic test data. Never commit/log raw books data, GSTINs, PANs,
   narrations, credentials, usernames, or machine paths.
@@ -298,9 +299,46 @@ Implement:
    fix-it list.
 5. Encoding/normalization hardening: UTF-8/UTF-16LE/BOM fixtures;
    non-English (Devanagari, Gujarati, Tamil) company/ledger/narration
-   fixtures in the simulator corpus; NFC normalization + case-insensitive
-   collation for name keys (Tally name uniqueness is effectively
-   case-insensitive).
+   fixtures in the simulator corpus. Scope name-key resolution by SKU and
+   entity class, using the shared ADR 0016 binder:
+   - On §0's Edit Log 7.0 Educational baseline, §9.4b's
+     `accepts(candidate, tally_name)` permits only the measured directional
+     transformations; do not infer their reverse.
+   - For LEDGERS on licensed 7.1 Silver (`education_mode=false`), use only
+     §9.4d's individually measured **directional** comparisons; do not turn
+     them into a canonical fold. In particular, its slash row supplied a
+     slash candidate against a space-bearing master. The reverse was not
+     measured: the supplied slash-to-master-space direction remains a
+     qualified observation in that exact scope; the reverse remains
+     exact-codepoint only. Preserve every other codepoint,
+     including NFC/NFD, en dash and underscore distinctions.
+   - Other licensed scopes remain exact-codepoint unless a capture
+     qualifies their particular rule. Compatibility live-READ receipts
+     do not establish write behaviour (`compatibility/README`).
+   The shared binder has no product/release/licence qualification input, so
+   these observations cannot authorize its automatic folded-name binding.
+   Folded spellings stay candidates: an operator chooses an exact catalogue
+   name and the existing assign path revalidates it.
+   Name keys are exact at storage. Apply any permitted fold only while
+   resolving a request against retained rows; if a fold reaches more than
+   one row, surface ambiguity. Storing folded keys can erase a distinct
+   `Alpha-Beta`/`Alpha Beta` or case-differing row before ambiguity handling
+   can run.
+   Resolution still requires unique identity evidence. Never coalesce
+   distinct catalogue or mirror identities merely because a fold agrees.
+   A read is not a safe place to be wrong about this — the mirror rows
+   built here are what later binding decisions resolve against, so a fold
+   that merges two masters here merges them everywhere downstream.
+   DEVIATION 2026-09-12 (TALLY_PROTOCOL_REFERENCE.md §9.4b): NFC
+   normalization of name keys is WITHDRAWN. §9.4b is MEASURED, not
+   inferred: an NFD spelling of a UI-created NFC ledger was rejected
+   (`EXCEPTIONS=1`, ledger does not exist) while the NFC spelling created
+   it — Tally matches on exact codepoints. Normalizing before comparing
+   resolves a name onto a master Tally itself keeps apart. Name keys
+   used to resolve identity compare on exact codepoints; do not
+   NFC/NFD-normalize either side of that decision. A broader comparison
+   may suggest unresolved candidates or refuse a suspected collision, as
+   ADR 0016 permits; it must not merge mirror identities or authorize a write.
 6. Migration: versioned mirror schema evolution for the new fields
    (voucher lines, bill allocations, inventory lines, tax lines) with
    rollback notes.
@@ -345,9 +383,16 @@ Hunt specifically for:
 3. Amount fidelity: any new tax/inventory line parsed through anything but
    ExactDecimal; sign conventions (IsDeemedPositive) mishandled on new
    line types; Dr/Cr balance invariant not re-checked with lines present.
-4. Identity/normalization traps: NFC normalization applied on read but not
-   on the keys used for diffing (same ledger counted twice); case-collation
-   asymmetry between mirror and reconciliation.
+4. Identity/normalization traps: NFC/NFD normalization used to resolve
+   identity, merge mirror rows, or accept readback is a finding even when
+   applied consistently to both sides (§9.4b preserves those codepoint
+   distinctions). This does not prohibit the broader, non-deciding
+   candidate comparison in ADR 0016 or the conservative refusal detector
+   in Phase 4 step 3a. Those paths may suggest or refuse; they may not
+   resolve identity or authorize a write. Likewise, a symmetric case fold
+   used to resolve identity needs its own qualified scope: §9.4b's
+   `accepts(candidate, tally_name)` measures only the stated direction;
+   use §9.4d only within its separately observed scope.
 5. Bounded-resource regressions: new list explosions (AllInventoryEntries
    on huge vouchers) versus the 32 MiB response cap — is there a paging or
    windowing story? Does a capped response get honestly labeled Partial?
@@ -548,7 +593,7 @@ is simpler), then vouchers (payment/receipt/journal/contra).
 Implement — write core (masters):
 1. Outbox state machine in the mirror DB:
    PENDING → DISPATCHING → {CONFIRMED | CONFIRMED_WITH_DIVERGENCE | REJECTED | OUTCOME_UNKNOWN}
-   OUTCOME_UNKNOWN → probe → {CONFIRMED | CONFIRMED_WITH_DIVERGENCE | PENDING | MANUAL}
+   OUTCOME_UNKNOWN → read-only probe → {CONFIRMED | CONFIRMED_WITH_DIVERGENCE | OUTCOME_UNKNOWN | MANUAL}
    `CONFIRMED_WITH_DIVERGENCE` is the terminal state when readback (step 4)
    proves the write landed but Tally normalized/dropped a field vs intent;
    it is a distinct persisted state, never collapsed into `CONFIRMED`, and it
@@ -562,8 +607,118 @@ Implement — write core (masters):
    MAX_LEDGER_WRITE_BATCH.
 3. Single-writer actor owns the import surface; reads gated during
    dispatch→readback windows; queue depth visible.
+3a. MASTER-CREATION GUARD — **BEFORE DISPATCH, NOT IN READBACK.**
+   This runs on the intent, before any import is sent. Placing it in
+   step 4 was a defect: step 4 begins "after counters accept", and by
+   then `ACTION="Create"` against a name Tally considers matching has
+   already returned `CREATED=0, ALTERED=1` and **silently overwritten
+   the existing master with the retry payload** (IMPLEMENTATION_GUIDE
+   §3.6, plan §8.5). A refusal raised during readback protects nothing;
+   the client's master is already gone. Pre-read, then decide, then
+   dispatch.
+   The harm is an OVERWRITE, not a duplicate. An earlier revision of
+   this guard said a near-collision "makes a SECOND master differing
+   only by case". That is not what was measured: the existing master is
+   altered in place, so its group, its opening balance and its GST
+   registration are replaced by whatever the new payload carried. A
+   duplicate is visible in a ledger list; an overwrite is not.
+   This pre-read is a necessary check, not a mutation-time guarantee.
+   Require a catalogue whose source completeness is qualified for the
+   exact company and master class. A capped, truncated, Partial, failed,
+   or unqualified read cannot authorize creation, even if it is nonempty
+   and contains no collision. Never infer completeness from a row count
+   below the transport cap or from two agreeing bounded reads.
+   Bridge's actor serializes only Bridge: another operator or importer
+   can create the name after this read, before dispatch. Readback cannot
+   recover the previous master after an overwrite. The dispatch counters
+   must therefore remain an independent race detector: a create must report
+   `CREATED=1`; `ALTERED=1` is an overwrite alarm and manual halt, never a
+   promotion to CONFIRMED. A create has no pre-image of a foreign master
+   introduced after the pre-read, so Bridge cannot restore its prior content.
+   Retain the affected name, exact dispatched payload and dispatch time, and
+   tell the operator that the unobserved prior content requires reconstruction
+   from their own records or a Tally backup. This detects the race but does not
+   prevent it. Concurrent automatic master creation therefore remains
+   UNQUALIFIED. Do not enable it until
+   a qualified mutation-time condition or proven exclusive-write window
+   covers that interval; a confirmation or another ordinary pre-read
+   does not establish either. The quiet-company Journal preview in
+   issue #239 is not evidence qualifying this master-create flow.
+   Three outcomes, never two:
+   **bind** to an exact-codepoint match without creating or altering it
+   only after fresh same-company readback also matches every relevant
+   approved master field (including parent/group, GST configuration and
+   opening balance). Missing/unqualified field evidence or any difference
+   is a visible intent conflict: retain the unresolved proposal and block
+   dependent voucher dispatch for manual resolution. A name match alone
+   must never silently discard approved fields;
+   **create** only after the completeness and mutation-time prerequisites
+   above are qualified AND no existing master collides under the detector
+   below;
+   otherwise **REFUSE and retain the unresolved proposal.**
+   Regression acceptance includes an exact-name master with differing
+   approved fields and an unreadable required field: both remain visibly
+   unresolved and neither creates, alters, nor enables a dependent write.
+   THE DETECTOR IS NOT THE BINDER AND MUST BE WIDER THAN IT.
+   §9.4b's `accepts()` is DIRECTIONAL — for a requested `FOO` against an
+   existing `foo`, `accepts(FOO, foo)` is false — so reusing it as the
+   detector misses exactly the collision it exists to catch. The
+   detector folds SYMMETRICALLY and deliberately over-wide:
+   case-insensitive both ways; slash, hyphen and space interchangeable
+   in both directions and in composition; leading and trailing whitespace
+   ignored; internal whitespace
+   runs collapsed; **and NFC/NFD canonical equivalents treated as
+   colliding.** That last row matters most and is the one most easily
+   left out: §9.4b's exact-codepoint result came from an **EDU**
+   instance, so a licensed SKU that folds canonical equivalence is not
+   excluded — and an NFD request beside an existing NFC master would
+   otherwise pass exact lookup *and* the detector, and overwrite it.
+   Detecting NFC/NFD collision does NOT reintroduce NFC normalisation
+   into matching: the binder still compares exact codepoints. One folds
+   to refuse, the other folds to write, and only the second needs
+   evidence.
+   Several detector rows are UNVERIFIED as *matching* behaviour, which
+   is why they belong here: **an unverified equivalence cannot justify a
+   write, but it is ample reason to stop and ask.** A detector that
+   misses a collision overwrites a master in a client's book; a detector
+   that over-fires costs one question to a human. Fail toward the
+   question.
 4. Readback verification: after counters accept, re-export the object
-   (masters by normalized name; vouchers by LASTVCHID) and
+   (masters matched by name under the SCOPE GATE below — never by a
+   broader rule stated anywhere else in this step; vouchers by
+   LASTVCHID) and
+   SCOPE GATE (§9.4b, §9.4d, §0) — THE ONLY NAME-MATCHING RULE IN THIS
+   STEP. §9.4b's rows use §0's **Edit Log 7.0 Educational** baseline
+   except the separately captured NFC/NFD row. That capture is not licensed —
+   `src-tauri/crates/bridge-tally-protocol/tests/fixtures/encoding/`
+   `PROVENANCE.md` records a TallyPrime EDU instance and date only. Its
+   product family and release are **UNVERIFIED** in that evidence, so it
+   qualifies neither the Edit Log 7.0 baseline nor a licensed SKU.
+   **§9.4d is the licensed qualification, and it is qualification of a
+   WRITE.** It re-ran §9.4b's method on **TallyPrime 7.1, licence tier
+   silver, `education_mode=false`** by importing vouchers naming folded
+   spellings and reading the **day book** back to see which master each
+   posted against. That is observed write behaviour on the SKU this
+   project writes to, for **ledgers**.
+   So: for **ledgers on licensed 7.1 Silver (`education_mode=false`)**,
+   match only under §9.4d's individually measured directional rows. Its
+   slash row qualifies a **supplied slash against a space-bearing master**;
+   the unmeasured reverse is **exact-codepoint only** and fails loudly.
+   This observed direction does not authorize automatic folded binding by
+   the shared binder, which cannot enforce the product/release/licence scope.
+   Gold, other tiers and unqualified versions remain exact-codepoint
+   only. For **every other master type** — stock items, groups, voucher types
+   — §9.4d measured nothing, so match on **exact codepoints** and let a case
+   or separator difference fail loudly.
+   **A compatibility result cannot widen this.** `compatibility/README`
+   defines a cell's evidence as a live-**read** receipt and says it
+   "never establishes ... any write behavior". An earlier revision of
+   this gate offered the connected instance's compatibility result as a
+   widening route; it is withdrawn. Only a direct write measurement
+   like §9.4d qualifies a write predicate.
+   Exact-only matching is not automatically the safe answer — see the
+   MASTER-CREATION GUARD at step 3a, which is where the creating case is
+   decided, and which runs before dispatch rather than here.
    ALWAYS cross-check the fetched object against the idempotency key and
    the (date, amount, ledger-set, voucher-type) fingerprint before
    promoting to CONFIRMED — LASTVCHID can be clobbered by a foreign
@@ -571,20 +726,27 @@ Implement — write core (masters):
    else OUTCOME_UNKNOWN. Persist the BridgeID ↔ GUID/MasterID binding.
    Field-diff readback vs intent; divergence → CONFIRMED_WITH_DIVERGENCE,
    surfaced in the Gap Map, never silent.
-5. OutcomeUnknown recovery: on restart, DISPATCHING rows → probe by key +
-   fingerprint. A probe MATCH is not itself a confirmation: run the SAME
-   full field-level readback diff as the normal dispatch path (step 4) and
-   resolve to `CONFIRMED` or `CONFIRMED_WITH_DIVERGENCE` — never promote to
-   `CONFIRMED` on key+fingerprint alone (Tally can retain both identifiers
-   while normalizing/dropping other fields, which would report a divergent
-   write as clean). Re-dispatch ONLY on an unambiguous ABSENCE PROOF that
-   cannot be confused with an edited prior write: because a crash can be
-   followed by a foreign edit that changes the narration and a fingerprint
-   field (so a real prior write matches neither probe), a mere "not found by
-   probe" is inconclusive → stay `OUTCOME_UNKNOWN` or escalate to `MANUAL`,
-   never re-dispatch. Alter with foreign AlterID bump → `MANUAL`. Bounded
-   retries (3, backoff) only from a proven-absent state, then `MANUAL` with
-   evidence.
+   DEVIATION 2026-09-12 (TALLY_PROTOCOL_REFERENCE.md §9.4b): "matched by
+   name" never means NFC/NFD-normalized. An NFD create read back against
+   a pre-existing NFC master would resolve as a match and promote the
+   wrong object to CONFIRMED — §9.4b measured Tally keeping the two
+   apart. Never normalize either side first. This deviation removes
+   normalization; it does not widen what remains — whether any case or
+   separator fold is permitted on top of exact codepoints is decided by
+   the SCOPE GATE above and by nothing in this sentence. On an
+   unqualified licensed SKU that leaves exact codepoints and nothing else.
+5. OutcomeUnknown recovery: on restart, retain the original batch identity,
+   intent and payload for every DISPATCHING row. Reconciliation is read-only;
+   it must never dispatch the original write again. A probe MATCH is not
+   itself a confirmation: run the SAME full field-level readback diff as
+   the normal path (step 4), and resolve to `CONFIRMED` or
+   `CONFIRMED_WITH_DIVERGENCE` only on that evidence. A missing or ambiguous
+   match stays `OUTCOME_UNKNOWN` or goes to `MANUAL`; an edited prior write
+   can match neither key nor fingerprint. A foreign AlterID change goes
+   to `MANUAL`. Bound the read-only reconciliation attempts, not write
+   retries. DEVIATION 2026-09-12: the former absence-proof re-dispatch and
+   three-write-retry branches are withdrawn. No mutation-time absence
+   authority was qualified for them; a probe must not manufacture one.
 
 Implement — voucher writes (after masters CONFIRMED-path is soak-tested):
 6. Voucher Create for payment/receipt/journal/contra with full lines,
@@ -593,13 +755,15 @@ Implement — voucher writes (after masters CONFIRMED-path is soak-tested):
    fallback — WHICH of the two is authoritative is a per-version
    compatibility claim qualified on the licensed lab. The fingerprint
    check is mandatory secondary dedupe regardless (narration is user-
-   editable; never trust the embedded key alone on re-dispatch).
+   editable; neither signal alone authorizes recovery or a resend).
    DEVIATION 2026-09-11 (IMPROVEMENT_PLAN_2026H2 §8.19): "dedupe" here
    means RAISE A FLAG FOR A HUMAN, never suppress automatically. The
    tuple cannot tell a retry from a legitimate second payment — a
    standing instruction, or two invoices settled to one supplier on one
    day, produce the identical tuple — so automatic suppression is a
-   silent under-write. See IMPLEMENTATION_GUIDE.md §6.2.
+   silent under-write. See IMPLEMENTATION_GUIDE.md §3.4a — the signal
+   table and its automatic-suppression constraints. (§6.2 is the Unicode
+   round-trip result and says nothing about fingerprints.)
 7. Cancel qualified as the compensation primitive (ACTION=Cancel by
    REMOTEID/GUID). Alter-by-GUID qualified per version; where flaky, the
    fallback is a Cancel+Create saga bound in one outbox transaction with
@@ -613,20 +777,23 @@ Implement — voucher writes (after masters CONFIRMED-path is soak-tested):
    education-mode and never Verified.
 
 Tests (the non-negotiable five, plus unit coverage):
-- crash mid-dispatch → restart → recovery resolves to exactly-once (probe
-  finds the voucher → CONFIRMED; or absent → re-dispatch), proven by final
-  Tally state in the simulator AND on the licensed lab. Use an OS-agnostic
+- crash mid-dispatch → restart → read-only reconciliation retains the
+  original batch. A matching full readback resolves the outcome; absent
+  or ambiguous evidence remains held for manual review. Assert that no
+  second write dispatch occurs, and verify the final Tally state in the
+  simulator AND on the licensed lab. Use an OS-agnostic
   crashpoint: a test-only injected panic/abort at the point between "outbox
   row committed" and "response parsed" is the primary mechanism (runs on the
   Windows matrix targets). Where an external process kill is used, it must be
   cross-platform — `taskkill /F /PID` on Windows, `kill -9` on POSIX — and the
   licensed-lab evidence must record the Windows result specifically, since the
   compatibility matrix targets Windows;
-- duplicate re-dispatch with edited narration (key destroyed) is still
-  caught by the fingerprint check — "caught" meaning SURFACED FOR REVIEW,
-  not suppressed (deviation 2026-09-11, IMPROVEMENT_PLAN_2026H2 §8.19); a
-  run that passes this case by suppressing the second dispatch is
-  qualifying the defect;
+- after an unknown outcome, an edited narration cannot trigger a second
+  write: reconciliation stays held if the original cannot be established.
+  Separately, a new legitimate payment with the same fingerprint is
+  SURFACED FOR REVIEW, never automatically suppressed (deviation
+  2026-09-11, IMPROVEMENT_PLAN_2026H2 §8.19); exercise both cases so a
+  blanket dedupe rule cannot masquerade as safe recovery;
 - foreign writer interleaves between import and readback → LASTVCHID
   cross-check catches it (no false CONFIRM);
 - alter with concurrent foreign edit → MANUAL, never blind retry;
@@ -700,8 +867,8 @@ Must still hold:
    cannot reach the import surface (the ReadOnlyProfile boundary in
    bridge-tally-read-transport is intact).
 3. Allowlist default remains OFF; no migration flips existing companies on.
-4. No automatic write retry beyond the bounded OutcomeUnknown probe path;
-   REJECTED (semantic) errors never auto-retry.
+4. OutcomeUnknown probes are read-only and never authorize an automatic
+   resend. REJECTED (semantic) errors likewise never auto-retry.
 5. Checkpoint/proof semantics: a write updates the mirror only through
    readback-confirmed state, never by assuming intent; snapshots and
    incremental scans reconcile Bridge-originated writes without double
