@@ -155,6 +155,7 @@ fn the_published_schema_names_the_three_numbering_methods_and_its_bounds() {
     assert!(tool.get("annotations").is_none());
     let description = tool["description"].as_str().expect("tool description");
     assert!(description.contains("manual"));
+    assert!(description.contains("presence_window_incomplete"));
     assert!(!description.contains("REMOTEID"));
 }
 
