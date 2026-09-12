@@ -7,6 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const CHILD_EXPECTED_ROOT: &str = "BRIDGE_MACOS_DISPATCH_LEASE_EXPECTED_ROOT";
+const CHILD_COORDINATION_ROOT: &str = "BRIDGE_MACOS_DISPATCH_LEASE_COORDINATION_ROOT";
 const CHILD_DATA_ROOT: &str = "BRIDGE_MACOS_DISPATCH_LEASE_DATA_ROOT";
 const CHILD_HOME_MODE: &str = "BRIDGE_MACOS_DISPATCH_LEASE_HOME_MODE";
 const CHILD_OVERRIDDEN_HOME: &str = "BRIDGE_MACOS_DISPATCH_LEASE_OVERRIDDEN_HOME";
@@ -17,22 +18,26 @@ const CHILD_RELEASE: &str = "BRIDGE_MACOS_DISPATCH_LEASE_RELEASE";
 #[test]
 fn macos_native_dispatch_lease_contends_across_filtered_and_overridden_home() {
     let directory = tempfile::tempdir().unwrap();
-    let expected_root = crate::local_files::paths::default_dispatch_coordination_dir()
+    let expected_default_root = crate::local_files::paths::default_dispatch_coordination_dir()
         .expect("macOS account coordination root");
-    let endpoint = endpoint(50_000 + (std::process::id() % 10_000) as u16);
 
     for home_mode in [HomeMode::Filtered, HomeMode::Overridden] {
+        let coordination_root = directory.path().join(format!("{home_mode:?}-coordination"));
+        let (port_reservation, port) = reserve_loopback_port().expect("loopback test port");
+        let endpoint = endpoint(port);
+        assert_ne!(coordination_root, expected_default_root);
         let ready = directory.path().join(format!("{home_mode:?}-ready"));
         let release = directory.path().join(format!("{home_mode:?}-release"));
         let data_root = directory.path().join(format!("{home_mode:?}-agent-data"));
         let overridden_home = directory.path().join(format!("{home_mode:?}-home"));
         let mut child = ChildLease::new(
             spawn_child(
-                &expected_root,
+                &expected_default_root,
+                &coordination_root,
                 &data_root,
                 &overridden_home,
                 home_mode,
-                endpoint.port,
+                port,
                 &ready,
                 &release,
             ),
@@ -40,11 +45,15 @@ fn macos_native_dispatch_lease_contends_across_filtered_and_overridden_home() {
         );
         child.wait_for_ready(&ready).unwrap();
         assert_eq!(
-            acquire(&endpoint).err().as_deref(),
+            acquire_at(&coordination_root, &endpoint).err().as_deref(),
             Some("import_admission_busy")
         );
         assert!(child.release().unwrap().success());
-        drop(acquire(&endpoint).expect("lease reacquired after child release"));
+        drop(
+            acquire_at(&coordination_root, &endpoint)
+                .expect("lease reacquired after child release"),
+        );
+        drop(port_reservation);
     }
 }
 
@@ -53,6 +62,8 @@ fn macos_native_dispatch_lease_child() {
     let Some(expected_root) = std::env::var_os(CHILD_EXPECTED_ROOT) else {
         return;
     };
+    let coordination_root =
+        PathBuf::from(std::env::var_os(CHILD_COORDINATION_ROOT).expect("coordination root"));
     let data_root = PathBuf::from(std::env::var_os(CHILD_DATA_ROOT).expect("child data root"));
     let home_mode = std::env::var(CHILD_HOME_MODE).expect("child home mode");
     if home_mode == "filtered" {
@@ -79,7 +90,7 @@ fn macos_native_dispatch_lease_child() {
         .expect("valid child port");
     let ready = PathBuf::from(std::env::var_os(CHILD_READY).expect("child ready path"));
     let release = PathBuf::from(std::env::var_os(CHILD_RELEASE).expect("child release path"));
-    let _lease = acquire(&endpoint(port)).expect("child dispatch lease");
+    let _lease = acquire_at(&coordination_root, &endpoint(port)).expect("child dispatch lease");
     fs::write(ready, b"acquired").expect("child ready marker");
     let deadline = Instant::now() + Duration::from_secs(15);
     while !release.exists() {
@@ -101,8 +112,15 @@ fn endpoint(port: u16) -> TallyEndpointConfig {
     }
 }
 
+fn reserve_loopback_port() -> std::io::Result<(std::net::TcpListener, u16)> {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
+    let port = listener.local_addr()?.port();
+    Ok((listener, port))
+}
+
 fn spawn_child(
     expected_root: &Path,
+    coordination_root: &Path,
     data_root: &Path,
     overridden_home: &Path,
     home_mode: HomeMode,
@@ -119,6 +137,7 @@ fn spawn_child(
         .arg(format!("{module}::macos_native_dispatch_lease_child"))
         .arg("--nocapture")
         .env(CHILD_EXPECTED_ROOT, expected_root)
+        .env(CHILD_COORDINATION_ROOT, coordination_root)
         .env(CHILD_DATA_ROOT, data_root)
         .env("BRIDGE_AGENT_DATA_DIR", data_root)
         .env(CHILD_HOME_MODE, home_mode_name(home_mode))
@@ -170,7 +189,21 @@ impl ChildLease {
 
     fn release(mut self) -> std::io::Result<std::process::ExitStatus> {
         fs::write(&self.release, b"release")?;
-        self.child.wait()
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = self.child.try_wait()? {
+                return Ok(status);
+            }
+            if Instant::now() >= deadline {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "child did not exit after release",
+                ));
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 }
 
