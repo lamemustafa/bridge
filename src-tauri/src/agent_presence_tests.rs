@@ -38,6 +38,88 @@ fn proposal(number: &str, party: &str, total: &str) -> Value {
     })
 }
 
+#[test]
+fn proposal_marker_bytes_are_admitted_before_entry_conversion() {
+    let batch = "bridge-2b1c9f4e-9d3a-4f71-8c2e-5a6b7c8d9e01";
+    let marker = agent_import::import_identity(batch, "txn-001").to_string();
+    assert_eq!(marker.len(), 36);
+    let party = "P".repeat(
+        book_presence::MAX_TEXT_CHARS
+            - "20260901".len()
+            - "Journal".len()
+            - "1".len()
+            - marker.len(),
+    );
+    let mut vouchers = (0..256)
+        .map(|_| {
+            json!({
+                "date": "20260901",
+                "voucher_type": "Journal",
+                "voucher_number": "1",
+                "party": party,
+                "batch_id": batch,
+                "bridge_txn_id": "txn-001",
+                "entries": [{"ledger": "L", "amount": "1"}],
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        parse_proposals(&json!({"vouchers": vouchers}))
+            .expect("exact marker metadata limit")
+            .as_slice()
+            .len(),
+        256
+    );
+    // The public adapter owns this marker. One valid extra party byte must be
+    // rejected by raw admission before an invalid amount can be parsed.
+    vouchers[255]["party"] = json!(format!("{party}P"));
+    vouchers[255]["entries"][0]["amount"] = json!("not-an-amount");
+    assert_eq!(
+        parse_proposals(&json!({"vouchers": vouchers})),
+        Err("presence_proposal_raw_bytes_too_large".to_string())
+    );
+}
+
+#[test]
+fn book_window_admits_marker_metadata_before_entry_descriptors() {
+    let marker =
+        agent_import::import_identity("bridge-2b1c9f4e-9d3a-4f71-8c2e-5a6b7c8d9e01", "txn-001")
+            .to_string();
+    let guid_prefix = "00000000-0000-4000-8000-000000000000";
+    let number = "N".repeat(
+        book_presence::MAX_TEXT_CHARS
+            - format!("{guid_prefix}-00000000").len()
+            - "20260901".len()
+            - "Journal".len()
+            - marker.len(),
+    );
+    let mut rows = (0..256)
+        .map(|position| {
+            json!({
+                "guid": format!("{guid_prefix}-{position:08}"),
+                "date": "20260901",
+                "voucher_type": "Journal",
+                "voucher_number": number,
+                "narration": narration_with(&marker),
+                "amounts": [{"ledger": "L", "amount": "1"}],
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        book_window("20260901", "20260930", WindowRead::Complete, &rows)
+            .expect("exact marker metadata limit")
+            .vouchers()
+            .len(),
+        256
+    );
+    rows[255]["voucher_number"] = json!(format!("{number}N"));
+    rows[255]["amounts"][0]["amount"] = json!("not-an-amount");
+    assert_eq!(
+        book_window("20260901", "20260930", WindowRead::Complete, &rows),
+        Err(PresenceError::WindowRawEntryBytesTooLarge)
+    );
+}
+
 fn args(vouchers: Value, numbering: &str) -> Value {
     json!({
         "company_guid": CAPTURED_GUID,
@@ -237,17 +319,19 @@ fn a_caller_limited_presence_page_includes_its_resume_cursor() {
         voucher_type: "Journal",
         voucher_number: Some(if position == 0 { "JV-0" } else { "JV-1" }),
         remote_id: None,
+        narration_marker: None,
         party: None,
         entries: &entries,
     });
     let proposals = ProposedVoucher::from_inputs(proposal_inputs).expect("proposals");
-    let window = BookWindow::from_observations(
-        "20260901",
-        "20260930",
-        WindowRead::Complete,
-        RemoteIdEvidence::NotRead,
-        std::iter::empty(),
-    )
+    let window = BookWindow::from_observations(ObservedWindow {
+        from: "20260901",
+        to: "20260930",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::NotRead,
+        narration_evidence: ColumnEvidence::NotRead,
+        vouchers: std::iter::empty(),
+    })
     .expect("complete empty window");
     let catalogue = vec!["Cash".to_string(), "Sales".to_string()];
     let catalog = MasterCatalog::new(MasterClass::Ledger, &catalogue).expect("catalog");
@@ -663,7 +747,7 @@ fn every_admission_leaf_is_pinned_by_this_digest() {
     // digest, which is exactly the visibility the seal is for. If this fails
     // and the schema change was deliberate, update the constant *and* reseal
     // — that pairing is the point, not an inconvenience.
-    const PINNED: &str = "6b2f7f67269beaf40631057eeb3ccd563360239393129dc082c0755b5ff3a31c";
+    const PINNED: &str = "785b14835f3235ec009a248ac2b443316e764c584b31f2532aa1335365c5fb40";
     let definitions = tool_definitions(true, false);
     let schema = definitions
         .as_array()
@@ -1201,4 +1285,307 @@ async fn replay_the_twenty_invoice_engagement() {
         response["structuredContent"]["evidence"]["state"],
         "partial"
     );
+}
+
+// ---------------------------------------------------------------------------
+// ADR 0018 — reading the narration marker.
+//
+// These are the adapter's half of the basis. The crate never parses a marker;
+// everything that decides what counts as one is here, so this is where it has
+// to be pinned down.
+// ---------------------------------------------------------------------------
+
+/// A batch id has the shape `render_import_xml` generates for one.
+const BATCH: &str = "bridge-2b1c9f4e-9d3a-4f71-8c2e-5a6b7c8d9e01";
+
+fn narration_with(marker: &str) -> String {
+    format!(
+        "Invoice for the month {}{marker}]",
+        agent_import::NARRATION_MARKER_PREFIX
+    )
+}
+
+/// The one property the whole basis rests on: what the reader accepts is
+/// exactly what the writer writes. If these two ever disagree, presence reports
+/// every voucher Bridge imported as absent and a caller duplicates all of them.
+#[test]
+fn the_reader_accepts_exactly_what_the_writer_derives() {
+    let identity = agent_import::import_identity(BATCH, "txn-001").to_string();
+    let narration = narration_with(&identity);
+    assert_eq!(
+        observed_marker(Some(&narration)),
+        ObservedMarker::Identifying(identity.as_str())
+    );
+    // And the derivation is a function of both halves, not of the label alone.
+    assert_ne!(
+        identity,
+        agent_import::import_identity("bridge-other", "txn-001").to_string(),
+        "the batch is what makes a reused caller label distinct"
+    );
+}
+
+/// The safety property of ADR 0018 §3. An older scheme wrote the caller's
+/// transaction label into the narration, and those labels are reused across
+/// batches; matching one would pair a proposal with an unrelated voucher from
+/// an unrelated import and drop an invoice without a trace.
+#[test]
+fn a_legacy_caller_label_is_never_an_identity() {
+    for label in ["txn-001", "INV-2026-0001", "batch1_txn1"] {
+        assert_eq!(
+            observed_marker(Some(&narration_with(label))),
+            ObservedMarker::Unidentified(&[]),
+            "{label} is a caller label, not a batch-derived identity"
+        );
+    }
+    // Nor is a canonical UUID of some *other* version. `valid_txn_id` admits
+    // hex and hyphens, so a legacy-scheme write could legally have put a v4
+    // UUID in a narration; only the version the writer stamps can have come
+    // from the writer.
+    assert_eq!(
+        observed_marker(Some(&narration_with(
+            "550e8400-e29b-41d4-a716-446655440000"
+        ))),
+        ObservedMarker::Unidentified(&[]),
+        "a canonical v4 UUID is not something import_identity can emit"
+    );
+
+    // Nor is a UUID spelled some other way than the writer spells it.
+    let identity = agent_import::import_identity(BATCH, "txn-001").to_string();
+    for spelling in [
+        identity.replace('-', ""),
+        identity.to_ascii_uppercase(),
+        format!("urn:uuid:{identity}"),
+    ] {
+        assert_eq!(
+            observed_marker(Some(&narration_with(&spelling))),
+            ObservedMarker::Unidentified(&[]),
+            "only the canonical form can have come from the writer"
+        );
+    }
+}
+
+/// Two markers mean the voucher claims two imports, and a malformed one cannot
+/// name any. Both are still Bridge writes, so neither reads as `Absent`.
+#[test]
+fn an_ambiguous_or_malformed_marker_is_a_bridge_write_without_a_name() {
+    let identity = agent_import::import_identity(BATCH, "txn-001").to_string();
+    let other = agent_import::import_identity(BATCH, "txn-002").to_string();
+    let prefix = agent_import::NARRATION_MARKER_PREFIX;
+    for narration in [
+        format!("{prefix}{identity}] {prefix}{other}]"),
+        format!("{prefix}{identity}"),
+        format!("{prefix}]"),
+        format!("{prefix}{identity} with a space]"),
+    ] {
+        assert_eq!(
+            observed_marker(Some(&narration)),
+            ObservedMarker::Unidentified(&[]),
+            "narration {narration:?}"
+        );
+    }
+    // A narration Bridge never touched is a different fact from one it did.
+    assert_eq!(
+        observed_marker(Some("Cheque deposited at the branch")),
+        ObservedMarker::Absent
+    );
+    assert_eq!(observed_marker(None), ObservedMarker::Absent);
+}
+
+/// Half an import identity is a caller error, not something to quietly drop:
+/// ignoring it would skip the strongest key this proposal has and let an
+/// `absent` stand on a comparison that never ran.
+#[tokio::test]
+async fn an_import_identity_must_be_supplied_whole() {
+    let entries =
+        json!([{"ledger":"Cash","amount":"-1.00"},{"ledger":"WR2 Sales","amount":"1.00"}]);
+    let numbering = json!([{"voucher_type":"Journal","numbering_method":"manual"}]);
+    let directory = tempfile::tempdir().expect("directory");
+    let server = offline_server(directory.path());
+    for (half, refused) in [
+        (json!({"batch_id": BATCH}), true),
+        (json!({"bridge_txn_id": "txn-001"}), true),
+        (
+            json!({"batch_id": BATCH, "bridge_txn_id": "txn-001"}),
+            false,
+        ),
+        (json!({}), false),
+    ] {
+        let mut voucher = json!({"date":"20260901","voucher_type":"Journal","entries":entries});
+        for (key, value) in half.as_object().expect("object") {
+            voucher[key] = value.clone();
+        }
+        let response = server
+            .call_tool_response(
+                "voucher_presence",
+                json!({"company_guid":GUID,"from":"20260901","to":"20260930",
+                    "numbering":numbering,"vouchers":[voucher]}),
+            )
+            .await;
+        let code = response.value["structuredContent"]["result"]["error"]["code"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert_eq!(
+            code == "presence_import_identity_incomplete",
+            refused,
+            "half {half} was not treated as {}",
+            if refused { "an error" } else { "acceptable" }
+        );
+    }
+}
+
+/// The admission contract grew two properties, and both have to stay bounded.
+/// Widening either is how a caller reaches a marker it chose rather than one
+/// the writer derived.
+#[test]
+fn the_import_identity_inputs_are_bounded_where_they_are_published() {
+    let definitions = tool_definitions(true, false);
+    let voucher = definitions
+        .as_array()
+        .and_then(|tools| tools.iter().find(|tool| tool["name"] == "voucher_presence"))
+        .expect("voucher_presence tool")["inputSchema"]["properties"]["vouchers"]["items"]
+        .clone();
+    assert_eq!(voucher["additionalProperties"], json!(false));
+    for key in ["batch_id", "bridge_txn_id"] {
+        assert_eq!(
+            voucher["properties"][key]["maxLength"],
+            json!(64),
+            "{key} is unbounded"
+        );
+        assert_eq!(voucher["properties"][key]["minLength"], json!(1));
+    }
+    // The transaction label's alphabet is the writer's, so a caller cannot
+    // smuggle a shape the derivation never produces. Declaring it is not
+    // enforcing it -- see the test below, which is the one that matters.
+    assert_eq!(
+        voucher["properties"]["bridge_txn_id"]["pattern"],
+        json!("^[A-Za-z0-9_-]+$")
+    );
+    // Neither is required: a proposal that supplies no import identity behaves
+    // exactly as it did before ADR 0018.
+    assert_eq!(
+        voucher["required"],
+        json!(["date", "voucher_type", "entries"])
+    );
+    // And a marker still cannot be handed over directly.
+    assert!(voucher["properties"].get("narration_marker").is_none());
+    assert!(voucher["properties"].get("remote_id").is_none());
+}
+
+/// A batch id the writer could not have generated cannot have written a
+/// marker, so deriving one from it yields an identity no book holds. Left
+/// unchecked that is not a harmless miss: under automatic numbering, with
+/// nothing resembling the proposal, the window reports `absent` and a caller
+/// imports a second copy. A mistyped argument must say it is a mistyped
+/// argument. Against the live simulator, so zero bytes means the refusal came
+/// before the reads.
+#[tokio::test]
+async fn a_batch_id_the_writer_could_not_have_made_is_refused() {
+    let simulator = SequenceSimulator::spawn(presence_plans()).expect("simulator");
+    let directory = tempfile::tempdir().expect("directory");
+    let server = Server::new(Settings {
+        endpoint: TallyEndpointConfig {
+            host: simulator.address().ip().to_string(),
+            port: simulator.address().port(),
+        },
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 500,
+        max_bytes: 200_000,
+        redaction: Redaction::None,
+        import_enabled: false,
+        writes_enabled: false,
+    });
+    for (batch, refused) in [
+        (BATCH, false),
+        // Plausible, nonblank, within bounds, and not a shape the writer emits.
+        ("bridge-not-a-uuid", true),
+        ("2b1c9f4e-9d3a-4f71-8c2e-5a6b7c8d9e01", true),
+        ("bridge-2B1C9F4E-9D3A-4F71-8C2E-5A6B7C8D9E01", true),
+        // Canonically spelled and RFC 4122 variant, but the wrong version:
+        // `Uuid::new_v4()` never emits a nil or a v7 UUID, so hashing either
+        // would derive an identity no book holds and read as `absent`.
+        ("bridge-00000000-0000-0000-0000-000000000000", true),
+        ("bridge-017f22e2-79b0-7cc3-98c4-dc0c0c07398f", true),
+    ] {
+        let mut voucher = proposal("JV-1", "Bridge Nested Debtor WR4", "12.50");
+        voucher["batch_id"] = json!(batch);
+        voucher["bridge_txn_id"] = json!("txn-001");
+        let response = server
+            .call_tool_response(
+                "voucher_presence",
+                json!({"company_guid": CAPTURED_GUID, "from":"20260901", "to":"20260930",
+                    "numbering":[{"voucher_type":"Journal","numbering_method":"manual"}],
+                    "vouchers":[voucher]}),
+            )
+            .await;
+        let code = response.value["structuredContent"]["result"]["error"]["code"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert_eq!(
+            code == "argument_invalid:batch_id",
+            refused,
+            "batch id {batch:?} produced {code:?}"
+        );
+        if refused {
+            assert_eq!(
+                response.value["structuredContent"]["evidence"]["bytes"], 0,
+                "a batch id the writer could not have made must cost no read"
+            );
+        }
+    }
+}
+
+/// The published nested transaction-label pattern is evaluated by the shared
+/// schema validator before proposal parsing. Schema recursion keeps the declared
+/// top-level argument code, so a bad nested label reports
+/// `argument_invalid:vouchers`, rather than inventing a leaf-code contract.
+/// The typed parser retains the writer's `valid_txn_id` check as a defensive
+/// boundary. Against the live simulator, zero bytes proves the schema refusal
+/// happened before any read.
+#[tokio::test]
+async fn a_transaction_label_outside_the_published_nested_schema_is_refused_before_reads() {
+    let simulator = SequenceSimulator::spawn(presence_plans()).expect("simulator");
+    let directory = tempfile::tempdir().expect("directory");
+    let server = Server::new(Settings {
+        endpoint: TallyEndpointConfig {
+            host: simulator.address().ip().to_string(),
+            port: simulator.address().port(),
+        },
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 500,
+        max_bytes: 200_000,
+        redaction: Redaction::None,
+        import_enabled: false,
+        writes_enabled: false,
+    });
+    // A space is the case the writer rejects and the declared pattern names.
+    for (label, refused) in [("txn 001", true), ("txn-001", false)] {
+        let mut voucher = proposal("JV-1", "Bridge Nested Debtor WR4", "12.50");
+        voucher["batch_id"] = json!("bridge-2b1c9f4e-9d3a-4f71-8c2e-5a6b7c8d9e01");
+        voucher["bridge_txn_id"] = json!(label);
+        let response = server
+            .call_tool_response(
+                "voucher_presence",
+                json!({"company_guid": CAPTURED_GUID, "from":"20260901", "to":"20260930",
+                    "numbering":[{"voucher_type":"Journal","numbering_method":"manual"}],
+                    "vouchers":[voucher]}),
+            )
+            .await;
+        let code = response.value["structuredContent"]["result"]["error"]["code"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert_eq!(
+            code == "argument_invalid:vouchers",
+            refused,
+            "label {label:?} produced {code:?}"
+        );
+        if refused {
+            assert_eq!(
+                response.value["structuredContent"]["evidence"]["bytes"], 0,
+                "a nested-schema refusal must cost no read"
+            );
+        }
+    }
 }

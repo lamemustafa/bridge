@@ -17,6 +17,14 @@ fn published_pattern_inventory_preserves_the_admitted_wire_shapes() {
         "\u{2003}ledger"
     ));
     assert!(!published_pattern_matches(NONBLANK_PATTERN, " \u{2003}\t"));
+    assert!(published_pattern_matches(
+        BRIDGE_TRANSACTION_ID_PATTERN,
+        "batch_20260901-1"
+    ));
+    assert!(!published_pattern_matches(
+        BRIDGE_TRANSACTION_ID_PATTERN,
+        "batch 20260901"
+    ));
 
     fn patterns(value: &Value, found: &mut Vec<String>) {
         match value {
@@ -46,7 +54,14 @@ fn published_pattern_inventory_preserves_the_admitted_wire_shapes() {
     patterns(&schema["inputSchema"], &mut found);
     found.sort();
     found.dedup();
-    assert_eq!(found, vec![NONBLANK_PATTERN, DATE_WIRE_PATTERN]);
+    assert_eq!(
+        found,
+        vec![
+            NONBLANK_PATTERN,
+            DATE_WIRE_PATTERN,
+            BRIDGE_TRANSACTION_ID_PATTERN
+        ]
+    );
 }
 
 #[tokio::test]

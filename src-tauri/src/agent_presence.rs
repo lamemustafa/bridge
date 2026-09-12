@@ -10,9 +10,10 @@ use std::collections::BTreeSet;
 
 use bridge_tally_core::book_presence::{
     self, BookWindow, NumberingDeclaration, NumberingMethod, ObservedEntry, ObservedVoucher,
-    PresenceError, PresenceReport, PresenceRequest, ProposedVoucher, ProposedVoucherInput,
-    RawObservationBudget, RemoteIdEvidence, WindowRead,
+    ObservedWindow, PresenceError, PresenceReport, PresenceRequest, ProposedVoucher,
+    ProposedVoucherInput, RawObservationBudget, WindowRead,
 };
+use bridge_tally_core::book_presence::{ColumnEvidence, ObservedMarker};
 use bridge_tally_core::master_binding::{MasterCatalog, MasterClass, SourceEntity};
 
 /// Most vouchers one presence request may propose. The window read is
@@ -262,25 +263,64 @@ fn book_window(
 ) -> Result<BookWindow, PresenceError> {
     let mut budget = RawObservationBudget::default();
     let mut entries = Vec::with_capacity(rows.len().min(book_presence::MAX_WINDOW_VOUCHERS));
+    let mut ambiguous = Vec::with_capacity(rows.len().min(book_presence::MAX_WINDOW_VOUCHERS));
     for row in rows {
         let raw = row["amounts"]
             .as_array()
             .map(Vec::as_slice)
             .unwrap_or_default();
-        budget.admit_fields(
-            row["guid"].as_str().unwrap_or_default(),
-            row["date"].as_str().unwrap_or_default(),
-            row["voucher_type"].as_str().unwrap_or_default(),
-            row["voucher_number"].as_str(),
-            None,
-            row["party"].as_str(),
-            raw.iter().map(|entry| {
-                (
-                    entry["ledger"].as_str().unwrap_or_default(),
-                    entry["amount"].as_str().unwrap_or_default(),
-                )
-            }),
-        )?;
+        let narration = row["narration"].as_str();
+        match marker_kind(narration) {
+            MarkerKind::Absent => budget.admit_fields(
+                row["guid"].as_str().unwrap_or_default(),
+                row["date"].as_str().unwrap_or_default(),
+                row["voucher_type"].as_str().unwrap_or_default(),
+                row["voucher_number"].as_str(),
+                None,
+                row["party"].as_str(),
+                None,
+                std::iter::empty(),
+                raw.iter().map(|entry| {
+                    (
+                        entry["ledger"].as_str().unwrap_or_default(),
+                        entry["amount"].as_str().unwrap_or_default(),
+                    )
+                }),
+            )?,
+            MarkerKind::Identifying(marker) => budget.admit_fields(
+                row["guid"].as_str().unwrap_or_default(),
+                row["date"].as_str().unwrap_or_default(),
+                row["voucher_type"].as_str().unwrap_or_default(),
+                row["voucher_number"].as_str(),
+                None,
+                row["party"].as_str(),
+                Some(marker),
+                std::iter::empty(),
+                raw.iter().map(|entry| {
+                    (
+                        entry["ledger"].as_str().unwrap_or_default(),
+                        entry["amount"].as_str().unwrap_or_default(),
+                    )
+                }),
+            )?,
+            MarkerKind::Unidentified => budget.admit_fields(
+                row["guid"].as_str().unwrap_or_default(),
+                row["date"].as_str().unwrap_or_default(),
+                row["voucher_type"].as_str().unwrap_or_default(),
+                row["voucher_number"].as_str(),
+                None,
+                row["party"].as_str(),
+                None,
+                ambiguous_markers_iter(narration),
+                raw.iter().map(|entry| {
+                    (
+                        entry["ledger"].as_str().unwrap_or_default(),
+                        entry["amount"].as_str().unwrap_or_default(),
+                    )
+                }),
+            )?,
+        }
+        ambiguous.push(ambiguous_markers(narration));
         entries.push(
             row["amounts"]
                 .as_array()
@@ -294,23 +334,113 @@ fn book_window(
                 .collect::<Vec<_>>(),
         );
     }
-    let observations = rows
-        .iter()
-        .zip(&entries)
-        .map(|(row, entries)| ObservedVoucher {
-            // The GUID is the identity the window read already proved belongs to
-            // this company, and the same field this tool's sibling already emits.
-            key: row["guid"].as_str().unwrap_or_default(),
-            date: row["date"].as_str().unwrap_or_default(),
-            voucher_type: row["voucher_type"].as_str().unwrap_or_default(),
-            voucher_number: row["voucher_number"].as_str(),
-            remote_id: None,
-            party: row["party"].as_str(),
-            entries,
-            cancelled: row["cancelled"].as_bool().unwrap_or_default(),
-            optional: row["optional"].as_bool().unwrap_or_default(),
-        });
-    BookWindow::from_observations(from, to, read, RemoteIdEvidence::NotRead, observations)
+    let observations =
+        rows.iter()
+            .zip(&entries)
+            .zip(&ambiguous)
+            .map(|((row, entries), ambiguous)| ObservedVoucher {
+                // The GUID is the identity the window read already proved belongs to
+                // this company, and the same field this tool's sibling already emits.
+                key: row["guid"].as_str().unwrap_or_default(),
+                date: row["date"].as_str().unwrap_or_default(),
+                voucher_type: row["voucher_type"].as_str().unwrap_or_default(),
+                voucher_number: row["voucher_number"].as_str(),
+                remote_id: None,
+                party: row["party"].as_str(),
+                marker: match observed_marker(row["narration"].as_str()) {
+                    ObservedMarker::Unidentified(_) => ObservedMarker::Unidentified(ambiguous),
+                    settled => settled,
+                },
+                entries,
+                cancelled: row["cancelled"].as_bool().unwrap_or_default(),
+                optional: row["optional"].as_bool().unwrap_or_default(),
+            });
+    BookWindow::from_observations(ObservedWindow {
+        from,
+        to,
+        read,
+        remote_id_evidence: ColumnEvidence::NotRead,
+        narration_evidence: ColumnEvidence::Observed,
+        vouchers: observations,
+    })
+}
+
+/// Applies the `[BRIDGE:...]` convention to one observed narration.
+///
+/// The convention belongs to the writer, so it is read here and the core crate
+/// receives an opaque string. Two conditions must hold before a marker names
+/// an import, and they fail closed for different reasons (ADR 0018 §3):
+///
+/// - **Exactly one occurrence.** Two mean the voucher claims two imports,
+///   which is the middle case this contract never resolves; `verify_import`
+///   already treats it as an error rather than taking the first.
+/// - **The canonical form this writer produces.** A marker is
+///   `import_identity`'s UUID over a random batch id. An older scheme wrote the
+///   caller's transaction label instead, and those are, in this module's own
+///   words, commonly reused -- matching one would pair a proposal with an
+///   unrelated voucher from an unrelated batch and drop an invoice silently.
+fn observed_marker(narration: Option<&str>) -> ObservedMarker<'_> {
+    match marker_kind(narration) {
+        MarkerKind::Absent => ObservedMarker::Absent,
+        MarkerKind::Identifying(identity) => ObservedMarker::Identifying(identity),
+        MarkerKind::Unidentified => ObservedMarker::Unidentified(&[]),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum MarkerKind<'a> {
+    Absent,
+    Identifying(&'a str),
+    Unidentified,
+}
+
+fn marker_kind(narration: Option<&str>) -> MarkerKind<'_> {
+    let Some(narration) = narration else {
+        return MarkerKind::Absent;
+    };
+    let mut found = agent_import::narration_markers(narration);
+    match found.next() {
+        None => MarkerKind::Absent,
+        Some(Some(identity)) if is_batch_derived(identity) && found.next().is_none() => {
+            MarkerKind::Identifying(identity)
+        }
+        _ => MarkerKind::Unidentified,
+    }
+}
+
+/// The well-formed occurrences in a narration that could not identify one
+/// import. They cannot decide, and they must not be thrown away: a proposal
+/// whose own marker is among them is asking about this exact voucher.
+fn ambiguous_markers(narration: Option<&str>) -> Vec<&str> {
+    ambiguous_markers_iter(narration).collect()
+}
+
+fn ambiguous_markers_iter(narration: Option<&str>) -> impl Iterator<Item = &str> {
+    narration.into_iter().flat_map(|narration| {
+        agent_import::narration_markers(narration)
+            .flatten()
+            .filter(|identity| is_batch_derived(identity))
+    })
+}
+
+/// Whether a marker has the exact shape `import_identity` writes.
+///
+/// Parsing alone is not enough, and neither is the canonical spelling. The
+/// writer builds its identity with `Uuid::Builder::from_custom_bytes`, which
+/// stamps **version 8** and the RFC 4122 variant into the bytes it is given,
+/// so a value that carries any other version cannot have come from it.
+///
+/// That matters because a caller's transaction label may legally be
+/// UUID-shaped: `valid_txn_id` admits hex and hyphens, so a legacy-scheme
+/// write could put a canonical v4 UUID in a narration and this would have
+/// called it batch-derived. Checking the version rejects that whole class
+/// rather than the fraction of it that happens to look wrong.
+fn is_batch_derived(identity: &str) -> bool {
+    uuid::Uuid::parse_str(identity).is_ok_and(|parsed| {
+        parsed.to_string() == identity
+            && parsed.get_version() == Some(uuid::Version::Custom)
+            && parsed.get_variant() == uuid::Variant::RFC4122
+    })
 }
 
 fn parse_numbering(args: &Value) -> Result<NumberingDeclaration, String> {
@@ -352,12 +482,44 @@ fn parse_proposals(
         voucher_number: Option<String>,
         party: Option<String>,
         entries: Vec<(String, String)>,
+        marker: Option<String>,
     }
     let mut raw = Vec::with_capacity(proposed.len().min(book_presence::MAX_PROPOSED_VOUCHERS));
     let mut admission = bridge_tally_core::book_presence::RawProposalBudget::default();
     for (position, voucher) in proposed.iter().enumerate() {
         let raw_date = voucher["date"].as_str().ok_or_else(invalid)?;
         let raw_type = voucher["voucher_type"].as_str().ok_or_else(invalid)?;
+        // Both or neither. Supplying one alone is a caller error, and silently
+        // ignoring it would skip the strongest key this proposal has.
+        let marker = match (
+            voucher["batch_id"].as_str(),
+            voucher["bridge_txn_id"].as_str(),
+        ) {
+            (Some(batch_id), Some(txn_id)) => {
+                // The published pattern is documentation: the shared validator
+                // enforces `minLength`, `maxLength` and the one `\S` special
+                // case, and evaluates no other regular expression. So the
+                // character rule is enforced here, with the writer's own
+                // function -- a label `build_import_xml` would have refused
+                // cannot have produced a marker, and hashing it anyway derives
+                // an identity no book can hold and calls the result `absent`.
+                if !agent_import::valid_txn_id(txn_id) {
+                    return Err("argument_invalid:bridge_txn_id".to_string());
+                }
+                // Same rule, other half of the pair. A mistyped batch id is
+                // not a harmless miss: under automatic numbering, with nothing
+                // resembling the proposal, the derived-but-impossible marker
+                // matches nothing and the window reports `absent` -- which
+                // invites the duplicate import this contract exists to stop.
+                // Bad input should say it is bad input.
+                if !agent_import::valid_batch_id(batch_id) {
+                    return Err("argument_invalid:batch_id".to_string());
+                }
+                Some(agent_import::import_identity(batch_id, txn_id).to_string())
+            }
+            (None, None) => None,
+            _ => return Err("presence_import_identity_incomplete".to_string()),
+        };
         let rows = voucher["entries"].as_array().ok_or_else(invalid)?;
         // Admit the complete borrowed shape before date/decimal parsing or
         // cloning any proposal metadata. The shared core repeats this check
@@ -368,6 +530,7 @@ fn parse_proposals(
                 raw_date,
                 raw_type,
                 voucher["voucher_number"].as_str(),
+                marker.as_deref(),
                 None,
                 voucher["party"].as_str(),
                 rows.iter().map(|entry| {
@@ -397,6 +560,7 @@ fn parse_proposals(
             voucher_number: voucher["voucher_number"].as_str().map(str::to_string),
             party: voucher["party"].as_str().map(str::to_string),
             entries,
+            marker,
         });
     }
     // Materialize entry descriptors so their borrowed slices outlive the
@@ -420,6 +584,7 @@ fn parse_proposals(
             voucher_type: &voucher.voucher_type,
             voucher_number: voucher.voucher_number.as_deref(),
             remote_id: None,
+            narration_marker: voucher.marker.as_deref(),
             party: voucher.party.as_deref(),
             entries: &descriptors[position],
         });

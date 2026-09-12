@@ -3,6 +3,7 @@ use super::*;
 
 const NONBLANK_PATTERN: &str = r"\S";
 const DATE_WIRE_PATTERN: &str = "^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$";
+const BRIDGE_TRANSACTION_ID_PATTERN: &str = "^[A-Za-z0-9_-]+$";
 
 pub(super) fn validate_tool_arguments(name: &str, args: &Value) -> Result<(), String> {
     let arguments = args
@@ -216,8 +217,35 @@ fn published_pattern_matches(pattern: &str, text: &str) -> bool {
             let remainder = remainder.strip_prefix(b"-").unwrap_or(remainder);
             remainder.len() == 2 && remainder.iter().all(u8::is_ascii_digit)
         }
+        BRIDGE_TRANSACTION_ID_PATTERN => {
+            !text.is_empty()
+                && text
+                    .as_bytes()
+                    .iter()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        }
         _ => false,
     }
+}
+
+/// One proposed voucher's admission contract, lifted out of the tool literal.
+///
+/// Nesting it inline exhausted `json!`'s recursion budget; naming it also puts
+/// the shape a caller must satisfy in one readable place. Every bound is
+/// stated here once and read back by the parser rather than restated there.
+fn proposed_voucher_schema() -> Value {
+    json!({"type":"object","additionalProperties":false,"required":["date","voucher_type","entries"],"properties":{
+        "date":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},
+        "voucher_type":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"},
+        "voucher_number":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"},
+        "party":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"},
+        // Supplied together or not at all. Presence derives the narration
+        // marker from these with the same function the writer used; it never
+        // accepts a marker the caller chose. See ADR 0018 §1.
+        "batch_id":{"type":"string","minLength":1,"maxLength":64,"pattern":r"\S"},
+        "bridge_txn_id":{"type":"string","minLength":1,"maxLength":64,"pattern":"^[A-Za-z0-9_-]+$"},
+        "entries":{"type":"array","minItems":1,"maxItems":presence::MAX_PRESENCE_ENTRIES,"items":{"type":"object","additionalProperties":false,"required":["ledger","amount"],"properties":{"ledger":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"},"amount":{"type":"string","minLength":1,"maxLength":64,"pattern":r"\S"}}}}
+    }})
 }
 
 pub(super) fn tool_definitions(import_enabled: bool, writes_enabled: bool) -> Value {
@@ -308,7 +336,7 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
                         json!({"type":"object","additionalProperties":false,"required":["company_guid","from","to"],"properties":{"company_guid":{"type":"string","minLength":1},"from":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"to":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"voucher_type":{"type":"string","maxLength":agent_import::MAX_MASTER_NAME_CHARS},"ledger":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"},"offset":{"type":"integer","minimum":0,"default":0},"limit":{"type":"integer","minimum":1,"default":500}}}),
                     ),
                     "voucher_presence" => (
-                        "For a qualified complete window, answer which of 1\u{2013}500 proposed vouchers are already in the book. At present, the adapter has no source-completeness evidence for a nonempty window, so it refuses one as `presence_window_incomplete` and emits no operational presence verdict. `presence` is present, possibly_present or absent, and only `present` names a book voucher. The conditional decision basis can use a voucher number on a voucher type you declare `manual` \u{2014} unique on both sides, within an observed voucher type, and never onto a cancelled or optional voucher. It neither accepts nor reads client remote identifiers. Date, party and amount only ever produce candidates, with the rule that surfaced each and no ranking or score. Every voucher type a proposal names needs a declared numbering method; under `automatic` Tally discards the supplied number, so nothing can be decided from it. `absent` means absent from this window, so cover the dates the book could hold. Reads the full window before comparing; dense windows can fail source limits. Party names bind through the same rules as validate_masters. A reported difference on a `present` voucher is a finding for a person, not a work item: correcting a voucher by Alter or Cancel silently creates a duplicate instead (\u{00a7}9.7), and no Bridge path can correct a voucher it did not write. This never dispatches import XML to Tally.",
+                        "For a qualified complete window, answer which of 1\u{2013}500 proposed vouchers are already in the book. At present, the adapter has no source-completeness evidence for a nonempty window, so it refuses one as `presence_window_incomplete` and emits no operational presence verdict. `presence` is present, possibly_present or absent, and only `present` names a book voucher. The conditional decision basis can use a voucher number on a voucher type you declare `manual` \u{2014} unique on both sides, within an observed voucher type, and never onto a cancelled or optional voucher; or, for a voucher Bridge wrote, the narration marker derived from the supplied `batch_id` and `bridge_txn_id` together. It neither accepts nor reads client remote identifiers. Supplying only one narration identity component is an error. The marker reaches only the current writer identity scheme; older-scheme Bridge writes stay unidentified rather than matched. Date, party and amount only ever produce candidates, with the rule that surfaced each and no ranking or score. Every voucher type a proposal names needs a declared numbering method; under `automatic` Tally discards the supplied number, so nothing can be decided from it. `absent` means absent from this window, so cover the dates the book could hold. Reads the full window before comparing; dense windows can fail source limits. Party names bind through the same rules as validate_masters. A reported difference on a `present` voucher is a finding for a person, not a work item: correcting a voucher by Alter or Cancel silently creates a duplicate instead (\u{00a7}9.7), and no Bridge path can correct a voucher it did not write. This never dispatches import XML to Tally.",
                         json!({"type":"object","additionalProperties":false,"required":["company_guid","from","to","numbering","vouchers"],"properties":{
                             "company_guid":{"type":"string","minLength":1},
                             "offset":{"type":"integer","minimum":0,"default":0},
@@ -316,13 +344,7 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
                             "from":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},
                             "to":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},
                             "numbering":{"type":"array","minItems":1,"maxItems":presence::MAX_PRESENCE_VOUCHER_TYPES,"items":{"type":"object","additionalProperties":false,"required":["voucher_type","numbering_method"],"properties":{"voucher_type":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"},"numbering_method":{"type":"string","enum":["manual","automatic","unknown"]}}}},
-                            "vouchers":{"type":"array","minItems":1,"maxItems":presence::MAX_PRESENCE_VOUCHERS,"items":{"type":"object","additionalProperties":false,"required":["date","voucher_type","entries"],"properties":{
-                                "date":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},
-                                "voucher_type":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"},
-                                "voucher_number":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"},
-                                "party":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"},
-                                "entries":{"type":"array","minItems":1,"maxItems":presence::MAX_PRESENCE_ENTRIES,"items":{"type":"object","additionalProperties":false,"required":["ledger","amount"],"properties":{"ledger":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"},"amount":{"type":"string","minLength":1,"maxLength":64,"pattern":r"\S"}}}}
-                            }}}
+                            "vouchers":{"type":"array","minItems":1,"maxItems":presence::MAX_PRESENCE_VOUCHERS,"items":proposed_voucher_schema()}
                         }}),
                     ),
                     "changed_since" => (

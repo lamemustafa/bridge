@@ -177,6 +177,12 @@ work units, is refused as `ComparisonWorkTooLarge`. The second limit counts
 posting-list walks and party-key checks, so it still applies when the pair count
 is below one million but one party resolves to many candidate keys.
 
+Ambiguous narration evidence is bounded separately: at most 64 raw marker
+occurrences per voucher, 100,000 retained marker memberships, and 4 MiB of
+marker-key bytes per window are admitted before the marker index is built. The
+typed refusals preserve the same rule as the comparison bounds: no evidence is
+silently truncated into an `Absent` or `Present` verdict.
+
 ### 3. The numbering method is declared, and its absence is an error
 
 The decisive power of a voucher number depends entirely on the voucher type's
@@ -207,9 +213,9 @@ Per proposed voucher, exactly one of:
 | `Absent` | No rule produced any candidate, in a window proven to cover it | including this voucher in the import |
 
 `PossiblyPresent` carries candidates labelled with the **rule that surfaced
-each** — `SharedRemoteId`, `SharedVoucherNumber`,
-`SameDatePartyAmount`, `SamePartyAmount`, `SameDateAmount`, `SameDateParty` —
-ordered by rule and then by the book
+each** — `SharedRemoteId`, `SharedNarrationMarker`,
+`SharedVoucherNumber`, `SameDatePartyAmount`, `SamePartyAmount`, `SameDateAmount`,
+`SameDateParty` — ordered by rule and then by the book
 voucher's own ordering. **No candidate is marked best, likely or preferred, and
 no score is emitted anywhere.**
 

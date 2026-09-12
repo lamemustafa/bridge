@@ -29,7 +29,8 @@ mod cash_bank;
 use cash_bank::{CashBankState, LegRequirement, ObservedMasters};
 #[path = "agent_import_identity.rs"]
 mod identity;
-use identity::{import_identity, ImportIdentityScheme};
+pub(super) use identity::import_identity;
+use identity::ImportIdentityScheme;
 #[path = "agent_import_schema.rs"]
 mod schema;
 pub(super) use schema::voucher_input_schema;
@@ -293,13 +294,15 @@ impl ImportReadSource {
                 return Err("import_verification_identity_invalid".into());
             }
             let narration = row.narration.as_deref().unwrap_or_default();
-            for (index, (start, _)) in narration.match_indices("[BRIDGE:").enumerate() {
-                if index > 0 {
+            let mut markers = narration_markers(narration);
+            if let Some(first) = markers.next() {
+                // More than one means the row claims two imports. Taking the
+                // first would resolve that silently, which is what the
+                // presence contract refuses on the same evidence.
+                if markers.next().is_some() {
                     return Err("import_verification_tag_ambiguous".into());
                 }
-                let tag = narration[start..]
-                    .strip_prefix("[BRIDGE:")
-                    .and_then(|tail| tail.split_once(']').map(|(id, _)| id))
+                let tag = first
                     .filter(|id| valid_txn_id(id))
                     .ok_or_else(|| "import_verification_tag_invalid".to_string())?;
                 if !transaction_tags.insert(tag.to_string()) {
@@ -1534,7 +1537,54 @@ fn validate_import_dates_for_profile(
     Ok(())
 }
 
-fn valid_txn_id(value: &str) -> bool {
+/// The reserved marker this module appends to every imported narration.
+pub(super) const NARRATION_MARKER_PREFIX: &str = "[BRIDGE:";
+
+/// Every reserved marker occurrence in a narration, in the order written.
+///
+/// `None` is an occurrence that never closed -- a malformed marker is still a
+/// marker, and a reader that silently dropped it would report a narration
+/// Bridge plainly touched as carrying nothing. Callers decide what more than
+/// one, or a malformed one, means for them; this only reports what is there.
+pub(super) fn narration_markers(narration: &str) -> impl Iterator<Item = Option<&str>> {
+    narration
+        .match_indices(NARRATION_MARKER_PREFIX)
+        .map(|(start, _)| {
+            narration[start + NARRATION_MARKER_PREFIX.len()..]
+                .split_once(']')
+                .map(|(identity, _)| identity)
+        })
+}
+
+/// The shape `build_import_xml` generates for a batch id: `bridge-` and a
+/// canonical UUID. Read at presence time for the same reason `valid_txn_id`
+/// is -- a batch id the writer could not have produced cannot have written a
+/// marker, so hashing it derives an identity no book holds and the run
+/// reports `absent` where it should have reported bad input.
+///
+/// Canonical spelling alone is not enough: it admits a nil, v1 or v7 UUID
+/// that this writer -- `Uuid::new_v4()`, line below -- could never have
+/// generated. Presence would hash such a value, find it in no book, and
+/// report `absent` for input the writer could not have produced, which is
+/// exactly the wrong answer under automatic numbering and invites a
+/// duplicate import. `is_batch_derived` in `agent_presence.rs` checks the
+/// version its writer stamps for the same reason; this checks version 4.
+pub(in crate::agent) fn valid_batch_id(value: &str) -> bool {
+    value
+        .strip_prefix("bridge-")
+        .and_then(|uuid| Uuid::parse_str(uuid).ok().map(|parsed| (uuid, parsed)))
+        .is_some_and(|(spelled, parsed)| {
+            parsed.to_string() == spelled
+                && parsed.get_version() == Some(uuid::Version::Random)
+                && parsed.get_variant() == uuid::Variant::RFC4122
+        })
+}
+
+/// The character rule `build_import_xml` enforces on a caller's transaction
+/// label. Presence reads it too: a label the writer would have refused cannot
+/// have produced a narration marker, so hashing one would derive an identity
+/// no book can hold. One rule, so read time and write time cannot drift.
+pub(in crate::agent) fn valid_txn_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 64
         && value
@@ -1994,13 +2044,9 @@ fn verify_batch(line: &ImportLedgerLine, observed: &ImportReadSource) -> Result<
     let observed_tags = observed
         .iter()
         .map(|voucher| {
-            voucher
-                .narration
-                .as_deref()?
-                .split_once("[BRIDGE:")?
-                .1
-                .split_once(']')
-                .map(|(tag, _)| tag)
+            narration_markers(voucher.narration.as_deref()?)
+                .next()
+                .flatten()
         })
         .collect::<Vec<_>>();
     let mut tagged = BTreeMap::<&str, VerificationCandidates>::new();

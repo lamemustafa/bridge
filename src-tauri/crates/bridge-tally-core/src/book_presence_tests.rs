@@ -38,6 +38,7 @@ struct BookRow {
     remote_id: Option<&'static str>,
     party: Option<&'static str>,
     rows: Vec<[&'static str; 2]>,
+    marker: ObservedMarker<'static>,
     cancelled: bool,
     optional: bool,
 }
@@ -57,6 +58,7 @@ impl BookRow {
                 ["Output CGST 9%", "900.00"],
                 ["Output SGST 9%", "900.00"],
             ],
+            marker: ObservedMarker::Absent,
             cancelled: false,
             optional: false,
         }
@@ -90,6 +92,23 @@ impl BookRow {
         self
     }
 
+    fn marker(mut self, marker: &'static str) -> Self {
+        self.marker = ObservedMarker::Identifying(marker);
+        self
+    }
+
+    fn unidentified_marker(mut self) -> Self {
+        self.marker = ObservedMarker::Unidentified(&[]);
+        self
+    }
+
+    /// A narration carrying more than one well-formed marker: it identifies
+    /// nothing, and the occurrences are still evidence.
+    fn ambiguous_markers(mut self, markers: &'static [&'static str]) -> Self {
+        self.marker = ObservedMarker::Unidentified(markers);
+        self
+    }
+
     fn cancelled(mut self) -> Self {
         self.cancelled = true;
         self
@@ -109,6 +128,7 @@ impl BookRow {
             voucher_number: self.number,
             remote_id: self.remote_id,
             party: self.party,
+            marker: self.marker,
             entries: &entries,
             cancelled: self.cancelled,
             optional: self.optional,
@@ -124,6 +144,7 @@ struct ProposalRow {
     number: Option<&'static str>,
     remote_id: Option<&'static str>,
     party: Option<&'static str>,
+    marker: Option<&'static str>,
     rows: Vec<[&'static str; 2]>,
 }
 
@@ -136,6 +157,7 @@ impl ProposalRow {
             number: Some(number),
             remote_id: None,
             party: Some("Alpha Traders"),
+            marker: None,
             rows: vec![
                 ["Alpha Traders", "-11800.00"],
                 ["Sales Account", "10000.00"],
@@ -161,6 +183,11 @@ impl ProposalRow {
         self
     }
 
+    fn marker(mut self, marker: &'static str) -> Self {
+        self.marker = Some(marker);
+        self
+    }
+
     fn rows(mut self, rows: Vec<[&'static str; 2]>) -> Self {
         self.rows = rows;
         self
@@ -174,6 +201,7 @@ impl ProposalRow {
             voucher_type: self.voucher_type,
             voucher_number: self.number,
             remote_id: self.remote_id,
+            narration_marker: self.marker,
             party: self.party,
             entries: &entries,
         })
@@ -182,13 +210,14 @@ impl ProposalRow {
 }
 
 fn window(rows: &[BookRow]) -> BookWindow {
-    BookWindow::observed(
-        "20260801",
-        "20260831",
-        WindowRead::Complete,
-        RemoteIdEvidence::Observed,
-        rows.iter().map(BookRow::build).collect(),
-    )
+    BookWindow::observed(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::Observed,
+        narration_evidence: ColumnEvidence::Observed,
+        vouchers: rows.iter().map(BookRow::build).collect(),
+    })
     .expect("window")
 }
 
@@ -235,13 +264,14 @@ fn reason(entry: &VoucherPresence) -> UndecidedReason {
 
 #[test]
 fn a_partial_read_can_never_become_a_window() {
-    let error = BookWindow::observed(
-        "20260801",
-        "20260831",
-        WindowRead::Partial,
-        RemoteIdEvidence::Observed,
-        Vec::new(),
-    )
+    let error = BookWindow::observed(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Partial,
+        remote_id_evidence: ColumnEvidence::Observed,
+        narration_evidence: ColumnEvidence::Observed,
+        vouchers: Vec::new(),
+    })
     .expect_err("a partial read is not a window");
     assert_eq!(error, PresenceError::WindowIncomplete);
     assert_eq!(error.safe_reason_code(), "presence_window_incomplete");
@@ -265,13 +295,14 @@ fn an_empty_complete_window_is_legal_and_reports_everything_absent() {
 fn a_window_refuses_a_voucher_dated_outside_its_own_range() {
     let outside = BookRow::new("book-1", "20260901", "AA0118").build();
     assert_eq!(
-        BookWindow::observed(
-            "20260801",
-            "20260831",
-            WindowRead::Complete,
-            RemoteIdEvidence::Observed,
-            vec![outside]
-        )
+        BookWindow::observed(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers: vec![outside],
+        })
         .expect_err("outside"),
         PresenceError::WindowVoucherOutsideRange
     );
@@ -284,13 +315,14 @@ fn a_window_refuses_the_same_voucher_key_twice() {
         BookRow::new("book-1", "20260813", "AA0119").build(),
     ];
     assert_eq!(
-        BookWindow::observed(
-            "20260801",
-            "20260831",
-            WindowRead::Complete,
-            RemoteIdEvidence::Observed,
-            rows
-        )
+        BookWindow::observed(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers: rows,
+        })
         .expect_err("duplicate"),
         PresenceError::WindowDuplicateVoucherKey
     );
@@ -299,13 +331,14 @@ fn a_window_refuses_the_same_voucher_key_twice() {
 #[test]
 fn a_window_refuses_an_inverted_range() {
     assert_eq!(
-        BookWindow::observed(
-            "20260831",
-            "20260801",
-            WindowRead::Complete,
-            RemoteIdEvidence::Observed,
-            Vec::new()
-        )
+        BookWindow::observed(ObservedWindow {
+            from: "20260831",
+            to: "20260801",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers: Vec::new(),
+        })
         .expect_err("inverted"),
         PresenceError::WindowRangeInvalid
     );
@@ -408,6 +441,33 @@ fn numbering_declarations_bound_aggregate_bytes_while_consuming_duplicates() {
     assert_eq!(
         NumberingDeclaration::new(entries).expect_err("declaration bytes are bounded"),
         PresenceError::NumberingDeclarationBytesTooLarge
+    );
+}
+
+#[test]
+fn aggregate_proposal_window_resemblance_work_is_refused() {
+    let rows = (0..1_001)
+        .map(|i| {
+            let key = Box::leak(format!("book-{i}").into_boxed_str());
+            BookRow::new(key, "20260812", "AA0118")
+        })
+        .collect::<Vec<_>>();
+    let proposals = (0..1_001)
+        .map(|i| {
+            let number = Box::leak(format!("AA{i:04}").into_boxed_str());
+            ProposalRow::new(i, "20260812", number).build()
+        })
+        .collect::<Vec<_>>();
+    let observed = window(&rows);
+    assert_eq!(
+        PresenceRequest::new(
+            &observed,
+            &catalog(),
+            &numbering(NumberingMethod::Manual),
+            &proposals,
+        )
+        .expect_err("aggregate comparison work is bounded"),
+        PresenceError::ComparisonWorkTooLarge
     );
 }
 
@@ -1085,6 +1145,7 @@ fn an_empty_proposal_entry_list_is_refused_at_the_core_boundary() {
             voucher_type: "Sales",
             voucher_number: Some("AA0118"),
             remote_id: None,
+            narration_marker: None,
             party: None,
             entries: &[],
         })
@@ -1329,39 +1390,6 @@ fn an_empty_proposal_set_is_refused() {
 }
 
 #[test]
-fn aggregate_proposal_window_resemblance_work_is_refused() {
-    let books = (0..1_001)
-        .map(|index| {
-            BookRow::new(
-                Box::leak(format!("book-{index}").into_boxed_str()),
-                "20260812",
-                Box::leak(format!("N{index}").into_boxed_str()),
-            )
-            .build()
-        })
-        .collect::<Vec<_>>();
-    let window = BookWindow::observed(
-        "20260801",
-        "20260831",
-        WindowRead::Complete,
-        RemoteIdEvidence::Observed,
-        books,
-    )
-    .expect("window");
-    let proposals = (0..1_001)
-        .map(|index| ProposalRow::new(index, "20260812", "N999999").build())
-        .collect::<Vec<_>>();
-    let error = PresenceRequest::new(
-        &window,
-        &catalog(),
-        &numbering(NumberingMethod::Manual),
-        &proposals,
-    )
-    .expect_err("quadratic resemblance work must be bounded");
-    assert_eq!(error, PresenceError::ComparisonWorkTooLarge);
-}
-
-#[test]
 fn weighted_party_fanout_is_bounded_below_the_pair_product_limit() {
     let names = (0..25)
         .map(|i| Box::leak(format!("Party Key {i}").into_boxed_str()) as &'static str)
@@ -1375,17 +1403,9 @@ fn weighted_party_fanout_is_bounded_below_the_pair_product_limit() {
             )
             .rows(names.iter().map(|name| [*name, "0.00"]).collect())
             .party_field(names[0])
-            .build()
         })
         .collect::<Vec<_>>();
-    let observed = BookWindow::observed(
-        "20260801",
-        "20260831",
-        WindowRead::Complete,
-        RemoteIdEvidence::Observed,
-        rows,
-    )
-    .expect("window");
+    let observed = window(&rows);
     let proposals = (0..500)
         .map(|i| ProposalRow::new(i, "20260812", "P").party("Party").build())
         .collect::<Vec<_>>();
@@ -1461,6 +1481,7 @@ fn observed_input_refuses_blank_unsafe_and_invalid_fields() {
     let rows = [["Alpha Traders", "-1.00"], ["Sales Account", "1.00"]];
     let good = entries(&rows);
     let base = ObservedVoucher {
+        marker: ObservedMarker::Absent,
         key: "book-1",
         date: "20260812",
         voucher_type: "Sales",
@@ -1472,11 +1493,17 @@ fn observed_input_refuses_blank_unsafe_and_invalid_fields() {
         optional: false,
     };
     assert_eq!(
-        BookVoucher::observed(ObservedVoucher { key: "  ", ..base }).expect_err("blank"),
+        BookVoucher::observed(ObservedVoucher {
+            marker: ObservedMarker::Absent,
+            key: "  ",
+            ..base
+        })
+        .expect_err("blank"),
         PresenceError::TextBlank
     );
     assert_eq!(
         BookVoucher::observed(ObservedVoucher {
+            marker: ObservedMarker::Absent,
             voucher_type: "Sales\u{0007}",
             ..base
         })
@@ -1485,6 +1512,7 @@ fn observed_input_refuses_blank_unsafe_and_invalid_fields() {
     );
     assert_eq!(
         BookVoucher::observed(ObservedVoucher {
+            marker: ObservedMarker::Absent,
             date: "2026-08-12",
             ..base
         })
@@ -1495,6 +1523,7 @@ fn observed_input_refuses_blank_unsafe_and_invalid_fields() {
     let bad = entries(&bad);
     assert_eq!(
         BookVoucher::observed(ObservedVoucher {
+            marker: ObservedMarker::Absent,
             entries: &bad,
             ..base
         })
@@ -1524,6 +1553,7 @@ fn a_window_bounds_aggregate_ledger_memberships_before_indexing() {
                 voucher_number: None,
                 remote_id: None,
                 party: None,
+                marker: ObservedMarker::Absent,
                 entries: &entries,
                 cancelled: false,
                 optional: false,
@@ -1532,13 +1562,14 @@ fn a_window_bounds_aggregate_ledger_memberships_before_indexing() {
         })
         .collect();
     assert_eq!(
-        BookWindow::observed(
-            "20260801",
-            "20260831",
-            WindowRead::Complete,
-            RemoteIdEvidence::Observed,
+        BookWindow::observed(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::Observed,
             vouchers,
-        )
+        })
         .expect_err("derived index membership budget"),
         PresenceError::WindowLedgerMembershipsTooMany
     );
@@ -1552,23 +1583,25 @@ fn raw_observations_are_bounded_before_voucher_conversion() {
     };
     let rows = vec![entry; MAX_WINDOW_RAW_ENTRY_WORK + 1];
     assert_eq!(
-        BookWindow::from_observations(
-            "20260801",
-            "20260831",
-            WindowRead::Complete,
-            RemoteIdEvidence::Observed,
-            [ObservedVoucher {
+        BookWindow::from_observations(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::NotRead,
+            vouchers: [ObservedVoucher {
                 key: "book-1",
                 date: "20260812",
                 voucher_type: "Sales",
                 voucher_number: None,
                 remote_id: None,
                 party: None,
+                marker: ObservedMarker::Absent,
                 entries: &rows,
                 cancelled: false,
                 optional: false
             }],
-        )
+        })
         .expect_err("raw entries must be refused before parsing"),
         PresenceError::WindowRawEntryWorkTooLarge
     );
@@ -1578,23 +1611,25 @@ fn raw_observations_are_bounded_before_voucher_conversion() {
         amount: "1.00",
     }];
     assert_eq!(
-        BookWindow::from_observations(
-            "20260801",
-            "20260831",
-            WindowRead::Complete,
-            RemoteIdEvidence::Observed,
-            [ObservedVoucher {
+        BookWindow::from_observations(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::NotRead,
+            vouchers: [ObservedVoucher {
                 key: "book-2",
                 date: "20260812",
                 voucher_type: "Sales",
                 voucher_number: None,
                 remote_id: None,
                 party: None,
+                marker: ObservedMarker::Absent,
                 entries: &oversized,
                 cancelled: false,
                 optional: false
             }],
-        )
+        })
         .expect_err("raw bytes must be refused before cloning"),
         PresenceError::WindowRawEntryBytesTooLarge
     );
@@ -1611,17 +1646,19 @@ fn raw_observations_are_bounded_before_voucher_conversion() {
             voucher_number: None,
             remote_id: None,
             party: None,
+            marker: ObservedMarker::Absent,
             entries,
             cancelled: false,
             optional: false,
         });
-    assert!(BookWindow::from_observations(
-        "20260801",
-        "20260831",
-        WindowRead::Complete,
-        RemoteIdEvidence::Observed,
-        admitted
-    )
+    assert!(BookWindow::from_observations(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::Observed,
+        narration_evidence: ColumnEvidence::NotRead,
+        vouchers: admitted,
+    })
     .is_ok());
 }
 
@@ -1640,6 +1677,7 @@ fn raw_entry_work_is_bounded_across_valid_voucher_sized_rows() {
             voucher_number: None,
             remote_id: None,
             party: None,
+            marker: ObservedMarker::Absent,
             entries: &full_voucher_entries,
             cancelled: false,
             optional: false,
@@ -1652,18 +1690,20 @@ fn raw_entry_work_is_bounded_across_valid_voucher_sized_rows() {
         voucher_number: None,
         remote_id: None,
         party: None,
+        marker: ObservedMarker::Absent,
         entries: std::slice::from_ref(&entry),
         cancelled: false,
         optional: false,
     });
     assert_eq!(
-        BookWindow::from_observations(
-            "20260801",
-            "20260831",
-            WindowRead::Complete,
-            RemoteIdEvidence::Observed,
-            rows,
-        )
+        BookWindow::from_observations(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::NotRead,
+            vouchers: rows,
+        })
         .expect_err("the aggregate raw-entry limit must span valid rows"),
         PresenceError::WindowRawEntryWorkTooLarge
     );
@@ -1687,6 +1727,7 @@ fn raw_entry_bytes_admit_exact_limit_and_refuse_the_next_byte() {
             voucher_number: None,
             remote_id: None,
             party: None,
+            marker: ObservedMarker::Absent,
             entries: &exact_entries[..MAX_ENTRIES_PER_VOUCHER],
             cancelled: false,
             optional: false,
@@ -1698,6 +1739,7 @@ fn raw_entry_bytes_admit_exact_limit_and_refuse_the_next_byte() {
             voucher_number: None,
             remote_id: None,
             party: None,
+            marker: ObservedMarker::Absent,
             entries: &exact_entries[MAX_ENTRIES_PER_VOUCHER..2 * MAX_ENTRIES_PER_VOUCHER],
             cancelled: false,
             optional: false,
@@ -1709,18 +1751,20 @@ fn raw_entry_bytes_admit_exact_limit_and_refuse_the_next_byte() {
             voucher_number: None,
             remote_id: None,
             party: None,
+            marker: ObservedMarker::Absent,
             entries: &exact_entries[2 * MAX_ENTRIES_PER_VOUCHER..],
             cancelled: false,
             optional: false,
         },
     ];
-    assert!(BookWindow::from_observations(
-        "20260801",
-        "20260831",
-        WindowRead::Complete,
-        RemoteIdEvidence::Observed,
-        exact_rows,
-    )
+    assert!(BookWindow::from_observations(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::Observed,
+        narration_evidence: ColumnEvidence::NotRead,
+        vouchers: exact_rows,
+    })
     .is_ok());
     let extra = ObservedEntry {
         ledger: ledger_1024,
@@ -1745,13 +1789,14 @@ fn raw_entry_bytes_admit_exact_limit_and_refuse_the_next_byte() {
         MAX_WINDOW_RAW_ENTRY_BYTES + 1,
     );
     assert_eq!(
-        BookWindow::from_observations(
-            "20260801",
-            "20260831",
-            WindowRead::Complete,
-            RemoteIdEvidence::Observed,
-            over_rows,
-        )
+        BookWindow::from_observations(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::NotRead,
+            vouchers: over_rows,
+        })
         .expect_err("one byte over the aggregate raw-byte limit must refuse"),
         PresenceError::WindowRawEntryBytesTooLarge
     );
@@ -1793,21 +1838,230 @@ fn a_window_bounds_aggregate_ledger_key_bytes_before_indexing() {
         voucher_number: None,
         remote_id: None,
         party: None,
+        marker: ObservedMarker::Absent,
         entries: &entries,
         cancelled: false,
         optional: false,
     })
     .expect("voucher below its own bounds");
     assert_eq!(
-        BookWindow::observed(
-            "20260801",
-            "20260831",
-            WindowRead::Complete,
-            RemoteIdEvidence::Observed,
-            vec![voucher],
-        )
+        BookWindow::observed(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers: vec![voucher],
+        })
         .expect_err("derived index key-byte budget"),
         PresenceError::WindowLedgerKeyBytesTooLarge
+    );
+}
+
+fn ambiguous_marker_voucher(
+    voucher_position: usize,
+    marker_count: usize,
+    entries: &[ObservedEntry<'static>],
+) -> BookVoucher {
+    let markers = Box::leak(
+        (0..marker_count)
+            .map(|marker_position| {
+                Box::leak(
+                    format!("marker-{voucher_position:04}-{marker_position:02}").into_boxed_str(),
+                ) as &'static str
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    ) as &'static [&'static str];
+    BookVoucher::observed(ObservedVoucher {
+        key: Box::leak(format!("book-{voucher_position:04}").into_boxed_str()),
+        date: "20260812",
+        voucher_type: "Sales",
+        voucher_number: None,
+        remote_id: None,
+        party: None,
+        marker: ObservedMarker::Unidentified(markers),
+        entries,
+        cancelled: false,
+        optional: false,
+    })
+    .expect("voucher below its own ambiguous-marker bound")
+}
+
+#[test]
+fn an_ambiguous_narration_bounds_raw_occurrences_before_cloning() {
+    let entries = [
+        ObservedEntry {
+            ledger: "Alpha Traders",
+            amount: "-1.00",
+        },
+        ObservedEntry {
+            ledger: "Sales Account",
+            amount: "1.00",
+        },
+    ];
+    let at_limit = Box::leak(
+        (0..MAX_AMBIGUOUS_MARKERS_PER_VOUCHER)
+            .map(|_| "marker")
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    ) as &'static [&'static str];
+    assert!(
+        BookVoucher::observed(ObservedVoucher {
+            key: "book-at-limit",
+            date: "20260812",
+            voucher_type: "Sales",
+            voucher_number: None,
+            remote_id: None,
+            party: None,
+            marker: ObservedMarker::Unidentified(at_limit),
+            entries: &entries,
+            cancelled: false,
+            optional: false,
+        })
+        .is_ok(),
+        "the declared raw marker limit remains admitted"
+    );
+    let over_limit = Box::leak(
+        (0..=MAX_AMBIGUOUS_MARKERS_PER_VOUCHER)
+            .map(|_| "marker")
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    ) as &'static [&'static str];
+    assert_eq!(
+        BookVoucher::observed(ObservedVoucher {
+            key: "book-over-limit",
+            date: "20260812",
+            voucher_type: "Sales",
+            voucher_number: None,
+            remote_id: None,
+            party: None,
+            marker: ObservedMarker::Unidentified(over_limit),
+            entries: &entries,
+            cancelled: false,
+            optional: false,
+        })
+        .expect_err("raw marker count before a set clone"),
+        PresenceError::TooManyAmbiguousMarkers
+    );
+}
+
+#[test]
+fn a_window_bounds_aggregate_ambiguous_marker_memberships_before_indexing() {
+    let entries = [
+        ObservedEntry {
+            ledger: "Alpha Traders",
+            amount: "-1.00",
+        },
+        ObservedEntry {
+            ledger: "Sales Account",
+            amount: "1.00",
+        },
+    ];
+    let full_vouchers = MAX_WINDOW_AMBIGUOUS_MARKER_MEMBERSHIPS / MAX_AMBIGUOUS_MARKERS_PER_VOUCHER;
+    let remainder = MAX_WINDOW_AMBIGUOUS_MARKER_MEMBERSHIPS % MAX_AMBIGUOUS_MARKERS_PER_VOUCHER;
+    let mut vouchers = (0..full_vouchers)
+        .map(|voucher_position| {
+            ambiguous_marker_voucher(
+                voucher_position,
+                MAX_AMBIGUOUS_MARKERS_PER_VOUCHER,
+                &entries,
+            )
+        })
+        .collect::<Vec<_>>();
+    if remainder > 0 {
+        vouchers.push(ambiguous_marker_voucher(full_vouchers, remainder, &entries));
+    }
+    assert_eq!(
+        vouchers
+            .iter()
+            .map(|voucher| voucher.ambiguous_markers.len())
+            .sum::<usize>(),
+        MAX_WINDOW_AMBIGUOUS_MARKER_MEMBERSHIPS,
+        "fixture reaches the aggregate membership boundary"
+    );
+    assert!(BookWindow::observed(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::Observed,
+        narration_evidence: ColumnEvidence::Observed,
+        vouchers: vouchers.clone(),
+    })
+    .is_ok());
+    vouchers.push(ambiguous_marker_voucher(full_vouchers + 1, 1, &entries));
+    assert_eq!(
+        BookWindow::observed(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers,
+        })
+        .expect_err("derived marker membership budget"),
+        PresenceError::WindowAmbiguousMarkerMembershipsTooMany
+    );
+}
+
+#[test]
+fn a_window_bounds_aggregate_ambiguous_marker_key_bytes_before_indexing() {
+    let entries = [
+        ObservedEntry {
+            ledger: "Alpha Traders",
+            amount: "-1.00",
+        },
+        ObservedEntry {
+            ledger: "Sales Account",
+            amount: "1.00",
+        },
+    ];
+    let vouchers: Vec<_> = (0..(MAX_WINDOW_AMBIGUOUS_MARKER_KEY_BYTES / MAX_TEXT_CHARS + 1))
+        .map(|position| {
+            let marker = Box::leak(
+                format!("{position:05}{}", "x".repeat(MAX_TEXT_CHARS - 5)).into_boxed_str(),
+            ) as &'static str;
+            let markers = Box::leak(vec![marker].into_boxed_slice()) as &'static [&'static str];
+            BookVoucher::observed(ObservedVoucher {
+                key: Box::leak(format!("book-{position:04}").into_boxed_str()),
+                date: "20260812",
+                voucher_type: "Sales",
+                voucher_number: None,
+                remote_id: None,
+                party: None,
+                marker: ObservedMarker::Unidentified(markers),
+                entries: &entries,
+                cancelled: false,
+                optional: false,
+            })
+            .expect("voucher below its own marker bounds")
+        })
+        .collect();
+    let admitted = MAX_WINDOW_AMBIGUOUS_MARKER_KEY_BYTES / MAX_TEXT_CHARS;
+    assert_eq!(
+        admitted * MAX_TEXT_CHARS,
+        MAX_WINDOW_AMBIGUOUS_MARKER_KEY_BYTES
+    );
+    assert!(BookWindow::observed(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::Observed,
+        narration_evidence: ColumnEvidence::Observed,
+        vouchers: vouchers[..admitted].to_vec(),
+    })
+    .is_ok());
+    assert_eq!(
+        BookWindow::observed(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers,
+        })
+        .expect_err("derived marker key-byte budget"),
+        PresenceError::WindowAmbiguousMarkerKeyBytesTooLarge
     );
 }
 
@@ -1819,12 +2073,16 @@ fn every_error_carries_a_distinct_stable_reason_code() {
         PresenceError::WindowTooLarge,
         PresenceError::WindowLedgerMembershipsTooMany,
         PresenceError::WindowLedgerKeyBytesTooLarge,
+        PresenceError::WindowAmbiguousMarkerMembershipsTooMany,
+        PresenceError::WindowAmbiguousMarkerKeyBytesTooLarge,
         PresenceError::WindowVoucherOutsideRange,
         PresenceError::WindowDuplicateVoucherKey,
         PresenceError::WindowDoesNotCover,
         PresenceError::ProposalsEmpty,
         PresenceError::TooManyProposals,
+        PresenceError::ComparisonWorkTooLarge,
         PresenceError::TooManyEntries,
+        PresenceError::TooManyAmbiguousMarkers,
         PresenceError::NumberingMethodUndeclared,
         PresenceError::NumberingMethodConflict,
         PresenceError::TextBlank,
@@ -1837,7 +2095,7 @@ fn every_error_carries_a_distinct_stable_reason_code() {
     .iter()
     .map(PresenceError::safe_reason_code)
     .collect::<BTreeSet<_>>();
-    assert_eq!(codes.len(), 19);
+    assert_eq!(codes.len(), 23);
     assert!(codes.iter().all(|code| code.starts_with("presence_")));
 }
 
@@ -2139,14 +2397,14 @@ fn two_proposals_reaching_one_book_voucher_are_both_demoted() {
         &numbering(NumberingMethod::Manual),
         &proposals,
     );
-    // The first proposal's manual number is absent from the book, so its
-    // observed REMOTEID cannot override that contradictory identity signal.
+    // The absent manual number contradicts the remote identity. The second
+    // proposal has the sole exact manual number and remains present.
     assert_eq!(report.totals().present, 1);
     assert_eq!(
         reason(&report.vouchers()[0]),
         UndecidedReason::IdentityConflict
     );
-    assert!(report.vouchers()[1].present_book_key().is_some());
+    assert_eq!(report.vouchers()[1].present_book_key(), Some("book-1"));
 }
 
 #[test]
@@ -2222,36 +2480,20 @@ fn a_number_match_agreeing_with_the_remote_id_still_settles() {
     assert!(only(&report).present_book_key().is_some());
 }
 
-#[test]
-fn a_remote_id_with_a_manual_number_absent_from_the_book_is_an_identity_conflict() {
-    let window = window(&[BookRow::new("book-1", "20260812", "AA0118").remote_id("tally-1")]);
-    let proposals = [ProposalRow::new(0, "20260812", "AA9999")
-        .remote_id("tally-1")
-        .build()];
-    let report = run(
-        &window,
-        &catalog(),
-        &numbering(NumberingMethod::Manual),
-        &proposals,
-    );
-    let entry = only(&report);
-    assert!(entry.present_book_key().is_none());
-    assert_eq!(reason(entry), UndecidedReason::IdentityConflict);
-}
-
 // --- a key that was never read is not a key that found nothing ----------
 
 #[test]
 fn a_remote_id_the_window_never_read_withholds_absent() {
-    let unread = BookWindow::observed(
-        "20260801",
-        "20260831",
-        WindowRead::Complete,
-        RemoteIdEvidence::NotRead,
-        vec![BookRow::new("book-1", "20260819", "AA0130")
+    let unread = BookWindow::observed(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::NotRead,
+        narration_evidence: ColumnEvidence::Observed,
+        vouchers: vec![BookRow::new("book-1", "20260819", "AA0130")
             .party("Bravo Industries")
             .build()],
-    )
+    })
     .expect("window");
     let proposals = [ProposalRow::new(0, "20260812", "AA0777")
         .remote_id("tally-1")
@@ -2297,13 +2539,14 @@ fn the_same_proposal_is_absent_when_the_window_did_read_remote_ids() {
 
 #[test]
 fn unread_remote_id_outranks_resemblance_but_keeps_its_candidates() {
-    let unread = BookWindow::observed(
-        "20260801",
-        "20260831",
-        WindowRead::Complete,
-        RemoteIdEvidence::NotRead,
-        vec![BookRow::new("book-1", "20260812", "AA0118").build()],
-    )
+    let unread = BookWindow::observed(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::NotRead,
+        narration_evidence: ColumnEvidence::Observed,
+        vouchers: vec![BookRow::new("book-1", "20260812", "AA0118").build()],
+    })
     .expect("window");
     let proposals = [ProposalRow::new(0, "20260812", "AA0777")
         .remote_id("tally-1")
@@ -2324,14 +2567,44 @@ fn unread_remote_id_outranks_resemblance_but_keeps_its_candidates() {
 }
 
 #[test]
+fn unread_narration_outranks_resemblance_but_keeps_its_candidates() {
+    let unread = BookWindow::observed(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::Observed,
+        narration_evidence: ColumnEvidence::NotRead,
+        vouchers: vec![BookRow::new("book-1", "20260812", "AA0118").build()],
+    })
+    .expect("window");
+    let proposals = [ProposalRow::new(0, "20260812", "AA0777")
+        .marker("marker-1")
+        .build()];
+    let report = run(
+        &unread,
+        &catalog(),
+        &numbering(NumberingMethod::Automatic),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert_eq!(reason(entry), UndecidedReason::MarkerEvidenceUnavailable);
+    assert_eq!(
+        entry.undecided().expect("undecided").candidates[0].book_key,
+        "book-1"
+    );
+    assert_eq!(report.observations().unmatched_book_vouchers, 0);
+}
+
+#[test]
 fn unread_remote_id_outranks_nondecisive_number_candidates() {
-    let unread = BookWindow::observed(
-        "20260801",
-        "20260831",
-        WindowRead::Complete,
-        RemoteIdEvidence::NotRead,
-        vec![BookRow::new("book-1", "20260812", "AA0118").build()],
-    )
+    let unread = BookWindow::observed(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::NotRead,
+        narration_evidence: ColumnEvidence::Observed,
+        vouchers: vec![BookRow::new("book-1", "20260812", "AA0118").build()],
+    })
     .expect("window");
     let proposals = [ProposalRow::new(0, "20260812", "AA0118")
         .remote_id("tally-1")
@@ -2354,13 +2627,14 @@ fn unread_remote_id_outranks_nondecisive_number_candidates() {
 
 #[test]
 fn unread_remote_id_outranks_unobserved_type_number_candidates() {
-    let unread = BookWindow::observed(
-        "20260801",
-        "20260831",
-        WindowRead::Complete,
-        RemoteIdEvidence::NotRead,
-        vec![BookRow::new("book-1", "20260812", "AA0118").build()],
-    )
+    let unread = BookWindow::observed(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::NotRead,
+        narration_evidence: ColumnEvidence::Observed,
+        vouchers: vec![BookRow::new("book-1", "20260812", "AA0118").build()],
+    })
     .expect("window");
     let proposals = [ProposalRow::new(0, "20260812", "AA0118")
         .voucher_type("Receipt")
@@ -2491,13 +2765,14 @@ fn a_voucher_with_no_party_field_has_nothing_to_disagree_with() {
 /// the other is unknown — and a wrong `Present` suppresses a real invoice.
 #[test]
 fn a_number_match_cannot_settle_while_the_proposals_remote_id_is_unread() {
-    let unread = BookWindow::observed(
-        "20260801",
-        "20260831",
-        WindowRead::Complete,
-        RemoteIdEvidence::NotRead,
-        vec![BookRow::new("book-1", "20260812", "AA0118").build()],
-    )
+    let unread = BookWindow::observed(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::NotRead,
+        narration_evidence: ColumnEvidence::Observed,
+        vouchers: vec![BookRow::new("book-1", "20260812", "AA0118").build()],
+    })
     .expect("window");
     let proposals = [ProposalRow::new(0, "20260812", "AA0118")
         .remote_id("tally-1")
@@ -2520,13 +2795,14 @@ fn a_number_match_cannot_settle_while_the_proposals_remote_id_is_unread() {
 
 #[test]
 fn a_proposal_without_a_remote_id_still_settles_on_an_unread_window() {
-    let unread = BookWindow::observed(
-        "20260801",
-        "20260831",
-        WindowRead::Complete,
-        RemoteIdEvidence::NotRead,
-        vec![BookRow::new("book-1", "20260812", "AA0118").build()],
-    )
+    let unread = BookWindow::observed(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::NotRead,
+        narration_evidence: ColumnEvidence::Observed,
+        vouchers: vec![BookRow::new("book-1", "20260812", "AA0118").build()],
+    })
     .expect("window");
     let proposals = [ProposalRow::new(0, "20260812", "AA0118").build()];
     let report = run(
@@ -2571,6 +2847,74 @@ fn a_remote_id_and_a_number_selecting_different_vouchers_do_not_settle() {
     assert!(candidates
         .iter()
         .any(|c| c.book_key == "book-2" && c.rule == CandidateRule::SharedVoucherNumber));
+}
+
+#[test]
+fn a_remote_id_with_an_absent_manual_number_is_an_identity_conflict() {
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118").remote_id("tally-1")]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0999")
+        .remote_id("tally-1")
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert!(entry.present_book_key().is_none());
+    assert_eq!(reason(entry), UndecidedReason::IdentityConflict);
+}
+
+#[test]
+fn a_marker_with_an_absent_manual_number_is_an_identity_conflict() {
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118").marker("marker-1")]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0999")
+        .marker("marker-1")
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert!(entry.present_book_key().is_none());
+    assert_eq!(reason(entry), UndecidedReason::IdentityConflict);
+    let candidates = &entry.undecided().expect("undecided").candidates;
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].book_key, "book-1");
+    assert_eq!(candidates[0].rule, CandidateRule::SharedNarrationMarker);
+}
+
+#[test]
+fn an_absent_manual_number_conflict_retains_both_strong_identities() {
+    let window = window(&[
+        BookRow::new("book-1", "20260812", "AA0118").remote_id("remote-1"),
+        BookRow::new("book-2", "20260813", "AA0119").marker("marker-1"),
+    ]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0999")
+        .remote_id("remote-1")
+        .marker("marker-1")
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert!(entry.present_book_key().is_none());
+    assert_eq!(reason(entry), UndecidedReason::IdentityConflict);
+    let candidates = &entry.undecided().expect("undecided").candidates;
+    assert_eq!(candidates.len(), 2);
+    assert!(candidates
+        .iter()
+        .any(|c| c.book_key == "book-1" && c.rule == CandidateRule::SharedRemoteId));
+    assert!(candidates
+        .iter()
+        .any(|c| c.book_key == "book-2" && c.rule == CandidateRule::SharedNarrationMarker));
+    assert_eq!(report.observations().unmatched_book_vouchers, 0);
 }
 
 #[test]
@@ -2723,26 +3067,28 @@ fn a_window_declaring_remote_ids_unread_refuses_to_carry_one() {
         .remote_id("tally-1")
         .build()];
     assert_eq!(
-        BookWindow::observed(
-            "20260801",
-            "20260831",
-            WindowRead::Complete,
-            RemoteIdEvidence::NotRead,
-            carrying,
-        )
+        BookWindow::observed(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::NotRead,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers: carrying,
+        })
         .expect_err("contradiction"),
         PresenceError::WindowRemoteIdContradiction
     );
     // The same vouchers are fine once the window admits it read the column.
-    assert!(BookWindow::observed(
-        "20260801",
-        "20260831",
-        WindowRead::Complete,
-        RemoteIdEvidence::Observed,
-        vec![BookRow::new("book-1", "20260812", "AA0118")
+    assert!(BookWindow::observed(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::Observed,
+        narration_evidence: ColumnEvidence::Observed,
+        vouchers: vec![BookRow::new("book-1", "20260812", "AA0118")
             .remote_id("tally-1")
             .build()],
-    )
+    })
     .is_ok());
 }
 
@@ -2976,6 +3322,11 @@ fn this_contracts_files_are_still_pinned_in_the_compatibility_surface() {
         // contract is the assertion in this file. Unpinned, a loosened schema
         // and its matching test update leave the digest untouched.
         "src-tauri/src/agent_presence_tests.rs",
+        // A narration marker is whatever this derives (ADR 0018). Presence
+        // calls the same function the import writer calls so that a reader and
+        // a writer cannot disagree about one voucher's identity -- which makes
+        // an edit confined to it a silent change to what is reported present.
+        "src-tauri/src/agent_import_identity.rs",
     ] {
         assert!(
             pinned.contains(path),
@@ -3035,6 +3386,7 @@ fn a_pathological_book_key_is_refused_rather_than_truncated() {
     let long: String = "g".repeat(MAX_BOOK_KEY_CHARS + 1);
     assert_eq!(
         BookVoucher::observed(ObservedVoucher {
+            marker: ObservedMarker::Absent,
             key: &long,
             date: "20260812",
             voucher_type: "Sales",
@@ -3050,6 +3402,7 @@ fn a_pathological_book_key_is_refused_rather_than_truncated() {
     );
     // A real Tally GUID — company prefix plus master id — is far inside it.
     assert!(BookVoucher::observed(ObservedVoucher {
+        marker: ObservedMarker::Absent,
         key: "61c6de69-1748-461c-ad3f-162cb949df9f-00000001",
         date: "20260812",
         voucher_type: "Sales",
@@ -3317,6 +3670,558 @@ fn a_number_collision_still_reaches_what_it_only_resembled() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// ADR 0018 — the narration marker as an identity basis.
+//
+// Markers here are canonical-looking opaque strings. This crate never parses
+// one: the `[BRIDGE:...]` convention is applied above it, which is the whole
+// reason the crate can treat them as hashable keys.
+// ---------------------------------------------------------------------------
+
+const MARKER_A: &str = "8f14e45f-ceea-467a-9c1b-7b2f4c8a0001";
+const MARKER_B: &str = "8f14e45f-ceea-467a-9c1b-7b2f4c8a0002";
+
+/// A window whose read did not fetch `NARRATION` at all.
+fn window_without_narration(rows: &[BookRow]) -> BookWindow {
+    BookWindow::observed(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::Observed,
+        narration_evidence: ColumnEvidence::NotRead,
+        vouchers: rows.iter().map(BookRow::build).collect(),
+    })
+    .expect("window")
+}
+
+/// The case the basis exists for: Bridge wrote this voucher, and says so.
+#[test]
+fn a_marker_bridge_wrote_settles_a_present() {
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118").marker(MARKER_A)]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0999")
+        .marker(MARKER_A)
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Automatic),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert_eq!(entry.present_book_key(), Some("book-1"));
+    let PresenceStatus::Present { basis, .. } = &entry.status else {
+        panic!("expected Present");
+    };
+    assert_eq!(*basis, PresenceBasis::NarrationMarker);
+    assert!(report.observations().narration_marker_observed);
+}
+
+/// Under `Automatic` numbering Tally discards the supplied number, so the
+/// manual-number basis does not exist and `REMOTEID` is not fetched by the
+/// shipped read. Without the marker this proposal has no identity at all --
+/// which is exactly the gap ADR 0018 was written to close.
+#[test]
+fn a_marker_decides_where_automatic_numbering_leaves_nothing_else() {
+    let rows = [BookRow::new("book-1", "20260812", "AA0118").marker(MARKER_A)];
+    let unmarked = [ProposalRow::new(0, "20260812", "AA0118").build()];
+    let without = run(
+        &window(&rows),
+        &catalog(),
+        &numbering(NumberingMethod::Automatic),
+        &unmarked,
+    );
+    assert_eq!(
+        reason(only(&without)),
+        UndecidedReason::NumberNotDecisive,
+        "the number matches the book row exactly and still decides nothing"
+    );
+
+    let marked = [ProposalRow::new(0, "20260812", "AA0118")
+        .marker(MARKER_A)
+        .build()];
+    let with = run(
+        &window(&rows),
+        &catalog(),
+        &numbering(NumberingMethod::Automatic),
+        &marked,
+    );
+    assert_eq!(only(&with).present_book_key(), Some("book-1"));
+}
+
+/// Bridge writes a distinct identity per imported voucher, so one marker on two
+/// book rows is a book anomaly. It is still never resolved by picking one.
+#[test]
+fn one_marker_on_two_book_vouchers_decides_nothing() {
+    let window = window(&[
+        BookRow::new("book-1", "20260812", "AA0118").marker(MARKER_A),
+        BookRow::new("book-2", "20260813", "AA0119").marker(MARKER_A),
+    ]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .marker(MARKER_A)
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert_eq!(reason(entry), UndecidedReason::NarrationMarkerCollision);
+    assert_eq!(entry.undecided().expect("undecided").candidate_count, 2);
+}
+
+/// A marker that would otherwise identify one voucher uniquely is not unique
+/// when a *second* book voucher also carries it, even if that second voucher
+/// only carries it ambiguously. Counting solely `by_marker` let the ambiguous
+/// occurrence hide: the identifying voucher looked like the marker's only
+/// home, and `Present` went out for it while the marker actually named two
+/// book vouchers -- the exact middle case ambiguous-marker handling exists to
+/// preserve.
+#[test]
+fn a_marker_shared_with_an_ambiguous_voucher_decides_nothing() {
+    let window = window(&[
+        BookRow::new("book-1", "20260812", "AA0118").marker(MARKER_A),
+        BookRow::new("book-2", "20260813", "AA0119").ambiguous_markers(&[MARKER_A, MARKER_B]),
+    ]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .marker(MARKER_A)
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert_eq!(reason(entry), UndecidedReason::NarrationMarkerCollision);
+    assert_eq!(
+        entry.undecided().expect("undecided").candidate_count,
+        2,
+        "the marker occurs on two book vouchers, so it is not unique"
+    );
+}
+
+/// An occurrence carried by an ambiguous narration is not an identity by
+/// itself, but it still contradicts a manual number that selected another row.
+/// Both rows must remain candidates and reached evidence for the operator.
+#[test]
+fn an_ambiguous_marker_on_another_voucher_blocks_a_manual_number_settlement() {
+    let window = window(&[
+        BookRow::new("book-a", "20260812", "AA0118"),
+        BookRow::new("book-b", "20260813", "BB0229").ambiguous_markers(&[MARKER_A, MARKER_B]),
+    ]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .marker(MARKER_A)
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert!(entry.present_book_key().is_none());
+    assert_eq!(reason(entry), UndecidedReason::IdentityConflict);
+    let undecided = entry.undecided().expect("identity conflict");
+    assert_eq!(undecided.candidate_count, 2);
+    assert_eq!(
+        undecided
+            .candidates
+            .iter()
+            .map(|candidate| candidate.book_key.as_str())
+            .collect::<Vec<_>>(),
+        vec!["book-b", "book-a"],
+        "marker and number evidence both remain visible"
+    );
+    assert_eq!(
+        undecided.candidates[0].rule,
+        CandidateRule::SharedNarrationMarker
+    );
+    assert_eq!(
+        undecided.candidates[1].rule,
+        CandidateRule::SharedVoucherNumber
+    );
+    assert_eq!(report.observations().unmatched_book_vouchers, 0);
+}
+
+/// Proposal-side uniqueness is checked before the book lookup, the same way it
+/// is for a `REMOTEID`: two source rows claiming one identity are undecidable
+/// whether or not the book holds it.
+#[test]
+fn two_proposals_claiming_one_marker_decide_nothing() {
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118").marker(MARKER_A)]);
+    let proposals = [
+        ProposalRow::new(0, "20260812", "AA0118")
+            .marker(MARKER_A)
+            .build(),
+        ProposalRow::new(1, "20260813", "AA0119")
+            .marker(MARKER_A)
+            .build(),
+    ];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    for entry in report.vouchers() {
+        assert_eq!(reason(entry), UndecidedReason::NarrationMarkerCollision);
+    }
+}
+
+#[test]
+fn a_remote_id_collision_retains_each_narration_marker_match() {
+    let window = window(&[
+        BookRow::new("book-1", "20260812", "AA0118").marker(MARKER_A),
+        BookRow::new("book-2", "20260813", "AA0119").marker(MARKER_B),
+    ]);
+    let proposals = [
+        ProposalRow::new(0, "20260812", "AA0118")
+            .remote_id("shared-source-id")
+            .marker(MARKER_A)
+            .build(),
+        ProposalRow::new(1, "20260813", "AA0119")
+            .remote_id("shared-source-id")
+            .marker(MARKER_B)
+            .build(),
+    ];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Automatic),
+        &proposals,
+    );
+    for (entry, expected_key) in report.vouchers().iter().zip(["book-1", "book-2"]) {
+        assert_eq!(reason(entry), UndecidedReason::RemoteIdCollision);
+        let undecided = entry.undecided().expect("collision");
+        assert_eq!(undecided.candidate_count, 1);
+        assert_eq!(undecided.candidates[0].book_key, expected_key);
+        assert_eq!(
+            undecided.candidates[0].rule,
+            CandidateRule::SharedNarrationMarker
+        );
+    }
+    assert_eq!(report.observations().unmatched_book_vouchers, 0);
+}
+
+/// Three identity signals mean three ways to disagree. A marker selecting one
+/// voucher while the manual number selects another is reported, never ranked.
+#[test]
+fn a_marker_and_a_number_selecting_different_vouchers_conflict() {
+    let window = window(&[
+        BookRow::new("book-1", "20260812", "AA0118").marker(MARKER_A),
+        BookRow::new("book-2", "20260813", "AA0777"),
+    ]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0777")
+        .marker(MARKER_A)
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert_eq!(reason(entry), UndecidedReason::IdentityConflict);
+    let keys = entry
+        .undecided()
+        .expect("undecided")
+        .candidates
+        .iter()
+        .map(|candidate| candidate.book_key.as_str())
+        .collect::<BTreeSet<_>>();
+    assert!(
+        keys.contains("book-1") && keys.contains("book-2"),
+        "both sides of the disagreement are shown, not just the stronger one"
+    );
+}
+
+/// `REMOTEID` and the marker can both select the *same* book voucher while the
+/// manual number selects a different one -- three selections naming only two
+/// book vouchers. Mapping every selection straight into a candidate lists the
+/// shared voucher twice and reports one candidate more than there are book
+/// vouchers to look at; the response must collapse to book position first.
+#[test]
+fn a_conflict_naming_one_voucher_twice_reports_it_once() {
+    let window = window(&[
+        BookRow::new("book-1", "20260812", "AA0118")
+            .remote_id("bridge-txn-1")
+            .marker(MARKER_A),
+        BookRow::new("book-2", "20260813", "AA0777"),
+    ]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0777")
+        .remote_id("bridge-txn-1")
+        .marker(MARKER_A)
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert_eq!(reason(entry), UndecidedReason::IdentityConflict);
+    let undecided = entry.undecided().expect("undecided");
+    assert_eq!(
+        undecided.candidate_count, 2,
+        "book-1 is named by two rules but is one book voucher"
+    );
+    let keys = undecided
+        .candidates
+        .iter()
+        .map(|candidate| candidate.book_key.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        keys,
+        vec!["book-1", "book-2"],
+        "each book voucher is listed exactly once"
+    );
+}
+
+/// The other way two identities disagree: they agree on one voucher, and that
+/// voucher names a different marker than the proposal does.
+#[test]
+fn a_number_match_naming_another_marker_is_a_conflict() {
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118").marker(MARKER_B)]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .marker(MARKER_A)
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    assert_eq!(reason(only(&report)), UndecidedReason::IdentityConflict);
+}
+
+/// The same rule as `RemoteIdEvidenceUnavailable`, other column. A number that
+/// is decisive on its own terms still cannot settle while the evidence that
+/// could have contradicted it was never gathered.
+#[test]
+fn a_marker_against_an_unread_narration_withholds_both_verdicts() {
+    let window = window_without_narration(&[BookRow::new("book-1", "20260812", "AA0118")]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .marker(MARKER_A)
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    assert_eq!(
+        reason(only(&report)),
+        UndecidedReason::MarkerEvidenceUnavailable
+    );
+
+    // And an absence is withheld too, on a window holding nothing like it.
+    let empty = window_without_narration(&[]);
+    let away = [ProposalRow::new(0, "20260820", "ZZ9999")
+        .marker(MARKER_A)
+        .build()];
+    let report = run(
+        &empty,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &away,
+    );
+    assert_eq!(
+        reason(only(&report)),
+        UndecidedReason::MarkerEvidenceUnavailable
+    );
+}
+
+/// A window cannot both say narration was never read and carry something read
+/// out of a narration. The two statements contradict.
+#[test]
+fn a_window_that_did_not_read_narration_cannot_carry_a_marker() {
+    for row in [
+        BookRow::new("book-1", "20260812", "AA0118").marker(MARKER_A),
+        BookRow::new("book-1", "20260812", "AA0118").unidentified_marker(),
+    ] {
+        let error = BookWindow::observed(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::NotRead,
+            vouchers: vec![row.build()],
+        })
+        .expect_err("contradiction");
+        assert_eq!(error, PresenceError::WindowNarrationContradiction);
+    }
+}
+
+/// A legacy-scheme marker, two markers, or a malformed one cannot name a single
+/// import, so it never matches. Losing the fact that Bridge wrote the row would
+/// be its own defect, so it is counted for a person instead.
+#[test]
+fn an_unidentifiable_marker_is_counted_and_never_matched() {
+    let window = window(&[
+        BookRow::new("book-1", "20260812", "AA0118").unidentified_marker(),
+        BookRow::new("book-2", "20260820", "AA0119").unidentified_marker(),
+    ]);
+    let proposals = [ProposalRow::new(0, "20260805", "AA0777")
+        .marker(MARKER_A)
+        .party("Bravo Industries")
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    assert_eq!(
+        only(&report).status,
+        PresenceStatus::Absent,
+        "an unidentifiable marker matches nothing, and the window was read"
+    );
+    let observations = report.observations();
+    assert_eq!(observations.unidentified_bridge_writes, 2);
+    assert!(
+        !observations.narration_marker_observed,
+        "nothing identifying was observed, which is a different fact"
+    );
+}
+
+/// A marker landing on a cancelled voucher is the same case as any other
+/// identity landing on one: it occupies the row without being posted.
+#[test]
+fn a_marker_on_a_cancelled_voucher_is_not_present() {
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118")
+        .marker(MARKER_A)
+        .cancelled()]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .marker(MARKER_A)
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    assert_eq!(
+        reason(only(&report)),
+        UndecidedReason::MatchedVoucherNotPosted
+    );
+}
+
+/// One book voucher satisfies at most one proposal *across* bases. Adding a
+/// third basis adds a third way for two proposals to reach one row.
+#[test]
+fn a_marker_and_a_number_cannot_claim_one_voucher_for_two_proposals() {
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118").marker(MARKER_A)]);
+    let mut marker_only = ProposalRow::new(1, "20260813", "AA0119").marker(MARKER_A);
+    // Omitted number evidence permits another identity to settle. A supplied
+    // absent manual number would instead conflict before claiming this row.
+    marker_only.number = None;
+    let proposals = [
+        ProposalRow::new(0, "20260812", "AA0118").build(),
+        marker_only.build(),
+    ];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    // A demotion is not a licence to misdescribe what matched: the proposal
+    // that reached this voucher by its marker must still say so, and the one
+    // that reached it by its number must say that.
+    let rules = report
+        .vouchers()
+        .iter()
+        .map(|entry| {
+            assert_eq!(reason(entry), UndecidedReason::BookVoucherClaimedTwice);
+            entry.undecided().expect("undecided").candidates[0].rule
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rules,
+        vec![
+            CandidateRule::SharedVoucherNumber,
+            CandidateRule::SharedNarrationMarker
+        ]
+    );
+}
+
+/// A voucher whose narration carries this proposal's marker *and* another one
+/// cannot be an identity -- it claims two imports, which this contract never
+/// resolves. But the marker was observed, so `Absent` is not available either:
+/// saying it invites the duplicate the whole contract exists to prevent.
+///
+/// The proposal here shares nothing else with the book row -- different date,
+/// different number, different party, different amount -- so the marker is the
+/// only thing that can surface it, and before this it surfaced nothing.
+#[test]
+fn an_ambiguous_narration_still_withholds_the_absence() {
+    let window = window(&[
+        BookRow::new("book-1", "20260812", "AA0118").ambiguous_markers(&[MARKER_A, MARKER_B])
+    ]);
+    let proposals = [ProposalRow::new(0, "20260820", "ZZ9999")
+        .marker(MARKER_A)
+        .party("Charlie Minerals")
+        .rows(vec![
+            ["Charlie Minerals", "-4200.00"],
+            ["Sales Account", "4200.00"],
+        ])
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert_ne!(
+        entry.status,
+        PresenceStatus::Absent,
+        "the marker was observed in this book, so an absence is not available"
+    );
+    // And it is a candidate, named by the rule that found it -- never a
+    // `Present`, because the voucher claims two imports.
+    let undecided = entry.undecided().expect("undecided");
+    assert_eq!(undecided.candidates[0].book_key, "book-1");
+    assert_eq!(
+        undecided.candidates[0].rule,
+        CandidateRule::SharedNarrationMarker
+    );
+    assert_eq!(report.observations().unidentified_bridge_writes, 1);
+}
+
+/// A `Present` on the marker reports its differences like any other basis --
+/// the ₹36.13 case reached through the channel Bridge actually has.
+#[test]
+fn a_marker_present_still_reports_what_disagrees() {
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118")
+        .marker(MARKER_A)
+        .rows(vec![
+            ["Alpha Traders", "-10900.00"],
+            ["Sales Account", "10000.00"],
+            ["Output CGST 9%", "900.00"],
+        ])]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .marker(MARKER_A)
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let PresenceStatus::Present {
+        differences, basis, ..
+    } = &only(&report).status
+    else {
+        panic!("expected Present");
+    };
+    assert_eq!(*basis, PresenceBasis::NarrationMarker);
+    assert!(differences
+        .iter()
+        .any(|difference| difference.field == DifferenceField::Amount));
+}
+
 #[test]
 fn raw_proposal_budget_counts_all_entry_work_before_conversion() {
     let entries = vec![
@@ -3333,6 +4238,7 @@ fn raw_proposal_budget_counts_all_entry_work_before_conversion() {
             voucher_type: "Receipt",
             voucher_number: Some("1"),
             remote_id: None,
+            narration_marker: None,
             party: None,
             entries: &entries,
         })
@@ -3365,7 +4271,8 @@ fn raw_proposal_budget_counts_metadata_bytes_before_conversion() {
         ledger: "L",
         amount: "1",
     }];
-    let metadata = "x".repeat(16_384 - "20260812".len() - "Receipt".len() - 1);
+    let marker = "m".repeat(36);
+    let metadata = "x".repeat(16_384 - "20260812".len() - "Receipt".len() - 1 - marker.len());
     let extra_byte = format!("{metadata}x");
     assert!(extra_byte.len() <= MAX_TEXT_CHARS);
     let inputs = (0..256)
@@ -3375,6 +4282,7 @@ fn raw_proposal_budget_counts_metadata_bytes_before_conversion() {
             voucher_type: "Receipt",
             voucher_number: Some("1"),
             remote_id: None,
+            narration_marker: Some(marker.as_str()),
             party: Some(metadata.as_str()),
             entries: &rows,
         })
@@ -3385,6 +4293,7 @@ fn raw_proposal_budget_counts_metadata_bytes_before_conversion() {
             v.date.len()
                 + v.voucher_type.len()
                 + v.voucher_number.unwrap().len()
+                + v.narration_marker.unwrap().len()
                 + v.party.unwrap().len()
         })
         .sum::<usize>();
@@ -3417,7 +4326,8 @@ fn raw_observation_budget_counts_retained_voucher_metadata() {
     let keys = (0..256)
         .map(|position| format!("K{position:07}"))
         .collect::<Vec<_>>();
-    let metadata = "x".repeat(16_384 - 8 - "20260812".len() - "Receipt".len());
+    let marker = "m".repeat(36);
+    let metadata = "x".repeat(16_384 - 8 - "20260812".len() - "Receipt".len() - marker.len());
     let extra_byte = format!("{metadata}x");
     assert!(extra_byte.len() <= MAX_TEXT_CHARS);
     let inputs = keys
@@ -3429,6 +4339,7 @@ fn raw_observation_budget_counts_retained_voucher_metadata() {
             voucher_number: None,
             remote_id: Some(metadata.as_str()),
             party: None,
+            marker: ObservedMarker::Identifying(marker.as_str()),
             entries: &rows,
             cancelled: false,
             optional: false,
@@ -3436,17 +4347,24 @@ fn raw_observation_budget_counts_retained_voucher_metadata() {
         .collect::<Vec<_>>();
     let total = inputs
         .iter()
-        .map(|v| v.key.len() + v.date.len() + v.voucher_type.len() + v.remote_id.unwrap().len())
+        .map(|v| {
+            v.key.len()
+                + v.date.len()
+                + v.voucher_type.len()
+                + v.remote_id.unwrap().len()
+                + marker.len()
+        })
         .sum::<usize>();
     assert_eq!(total, MAX_WINDOW_RAW_ENTRY_BYTES);
     assert_eq!(
-        BookWindow::from_observations(
-            "20260801",
-            "20260831",
-            WindowRead::Complete,
-            RemoteIdEvidence::Observed,
-            inputs.iter().copied()
-        )
+        BookWindow::from_observations(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers: inputs.iter().copied(),
+        })
         .expect("exact metadata limit")
         .vouchers()
         .len(),
@@ -3459,14 +4377,207 @@ fn raw_observation_budget_counts_retained_voucher_metadata() {
         MAX_WINDOW_RAW_ENTRY_BYTES + 1
     );
     assert_eq!(
-        BookWindow::from_observations(
-            "20260801",
-            "20260831",
-            WindowRead::Complete,
-            RemoteIdEvidence::Observed,
-            over
-        ),
+        BookWindow::from_observations(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers: over,
+        }),
         Err(PresenceError::WindowRawEntryBytesTooLarge)
+    );
+}
+
+#[test]
+fn raw_observation_budget_counts_ambiguous_marker_bytes_before_conversion() {
+    let rows = [ObservedEntry {
+        ledger: "L",
+        amount: "1",
+    }];
+    let marker = "m".repeat(36);
+    let next_marker = format!("{marker}x");
+    let ambiguous = [marker.as_str()];
+    let next_ambiguous = [next_marker.as_str()];
+    let keys = (0..256)
+        .map(|position| format!("K{position:07}"))
+        .collect::<Vec<_>>();
+    let metadata = "x".repeat(16_384 - 8 - "20260812".len() - "Receipt".len() - marker.len());
+    let inputs = keys
+        .iter()
+        .map(|key| ObservedVoucher {
+            key,
+            date: "20260812",
+            voucher_type: "Receipt",
+            voucher_number: None,
+            remote_id: Some(metadata.as_str()),
+            party: None,
+            marker: ObservedMarker::Unidentified(&ambiguous),
+            entries: &rows,
+            cancelled: false,
+            optional: false,
+        })
+        .collect::<Vec<_>>();
+    let total = inputs
+        .iter()
+        .map(|voucher| {
+            voucher.key.len()
+                + voucher.date.len()
+                + voucher.voucher_type.len()
+                + voucher.remote_id.unwrap().len()
+                + marker.len()
+        })
+        .sum::<usize>();
+    assert_eq!(total, MAX_WINDOW_RAW_ENTRY_BYTES);
+    assert_eq!(
+        BookWindow::from_observations(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers: inputs.iter().copied(),
+        })
+        .expect("exact metadata limit")
+        .vouchers()
+        .len(),
+        256
+    );
+    let mut over = inputs;
+    over[255].marker = ObservedMarker::Unidentified(&next_ambiguous);
+    assert_eq!(total + 1, MAX_WINDOW_RAW_ENTRY_BYTES + 1);
+    assert_eq!(
+        BookWindow::from_observations(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers: over,
+        }),
+        Err(PresenceError::WindowRawEntryBytesTooLarge)
+    );
+}
+
+#[test]
+fn raw_observation_budget_bounds_ambiguous_marker_occurrences_before_conversion() {
+    let rows = [ObservedEntry {
+        ledger: "L",
+        amount: "1",
+    }];
+    let marker = "m";
+    let at_limit = vec![marker; MAX_AMBIGUOUS_MARKERS_PER_VOUCHER];
+    let over_limit = vec![marker; MAX_AMBIGUOUS_MARKERS_PER_VOUCHER + 1];
+    let exact = ObservedVoucher {
+        key: "exact",
+        date: "20260812",
+        voucher_type: "Receipt",
+        voucher_number: None,
+        remote_id: None,
+        party: None,
+        marker: ObservedMarker::Unidentified(&at_limit),
+        entries: &rows,
+        cancelled: false,
+        optional: false,
+    };
+    assert!(BookWindow::from_observations(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::NotRead,
+        narration_evidence: ColumnEvidence::Observed,
+        vouchers: [exact],
+    })
+    .is_ok());
+    assert_eq!(
+        BookWindow::from_observations(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::NotRead,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers: [ObservedVoucher {
+                marker: ObservedMarker::Unidentified(&over_limit),
+                ..exact
+            }],
+        }),
+        Err(PresenceError::TooManyAmbiguousMarkers)
+    );
+}
+
+#[test]
+fn raw_observation_budget_bounds_aggregate_ambiguous_marker_work_before_conversion() {
+    let rows = [ObservedEntry {
+        ledger: "L",
+        amount: "1",
+    }];
+    let markers = vec!["m"; MAX_AMBIGUOUS_MARKERS_PER_VOUCHER];
+    let full_rows = MAX_WINDOW_AMBIGUOUS_MARKER_MEMBERSHIPS / markers.len();
+    let remainder = MAX_WINDOW_AMBIGUOUS_MARKER_MEMBERSHIPS % markers.len();
+    let final_markers = vec!["m"; remainder];
+    let keys = (0..=full_rows + 1)
+        .map(|position| format!("K{position:07}"))
+        .collect::<Vec<_>>();
+    let mut observations = keys[..full_rows]
+        .iter()
+        .map(|key| ObservedVoucher {
+            key,
+            date: "20260812",
+            voucher_type: "Receipt",
+            voucher_number: None,
+            remote_id: None,
+            party: None,
+            marker: ObservedMarker::Unidentified(&markers),
+            entries: &rows,
+            cancelled: false,
+            optional: false,
+        })
+        .collect::<Vec<_>>();
+    observations.push(ObservedVoucher {
+        key: &keys[full_rows],
+        date: "20260812",
+        voucher_type: "Receipt",
+        voucher_number: None,
+        remote_id: None,
+        party: None,
+        marker: ObservedMarker::Unidentified(&final_markers),
+        entries: &rows,
+        cancelled: false,
+        optional: false,
+    });
+    observations.push(ObservedVoucher {
+        key: &keys[full_rows + 1],
+        marker: ObservedMarker::Unidentified(&markers[..1]),
+        ..observations[0]
+    });
+    assert_eq!(
+        full_rows * markers.len() + final_markers.len(),
+        MAX_WINDOW_AMBIGUOUS_MARKER_MEMBERSHIPS
+    );
+    assert_eq!(
+        BookWindow::from_observations(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::NotRead,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers: observations[..=full_rows].iter().copied(),
+        })
+        .expect("exact raw ambiguous marker work")
+        .vouchers()
+        .len(),
+        full_rows + 1
+    );
+    assert_eq!(
+        BookWindow::from_observations(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::NotRead,
+            narration_evidence: ColumnEvidence::Observed,
+            vouchers: observations,
+        }),
+        Err(PresenceError::WindowAmbiguousMarkerMembershipsTooMany)
     );
 }
 
@@ -3490,6 +4601,7 @@ fn raw_proposal_batch_stops_an_unbounded_iterator_at_the_count_limit() {
             voucher_type: "Receipt",
             voucher_number: None,
             remote_id: None,
+            narration_marker: None,
             party: None,
             entries: &rows,
         })
@@ -3514,6 +4626,7 @@ fn proposal_batch_rejects_duplicate_source_positions_before_conversion() {
             voucher_type: "Receipt",
             voucher_number: Some("1"),
             remote_id: None,
+            narration_marker: None,
             party: None,
             entries: &rows,
         },
@@ -3523,6 +4636,7 @@ fn proposal_batch_rejects_duplicate_source_positions_before_conversion() {
             voucher_type: "Receipt",
             voucher_number: Some("2"),
             remote_id: None,
+            narration_marker: None,
             party: None,
             entries: &rows,
         },
@@ -3531,4 +4645,33 @@ fn proposal_batch_rejects_duplicate_source_positions_before_conversion() {
         ProposedVoucher::from_inputs(inputs),
         Err(PresenceError::DuplicateProposalPosition)
     );
+}
+
+#[test]
+fn a_book_number_collision_retains_an_ambiguous_marker_candidate() {
+    let window = window(&[
+        BookRow::new("book-number-a", "20260812", "AA0118"),
+        BookRow::new("book-number-b", "20260813", "AA0118"),
+        BookRow::new("book-ambiguous-marker", "20260814", "BB0229")
+            .ambiguous_markers(&[MARKER_A, MARKER_B]),
+    ]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .marker(MARKER_A)
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert_eq!(reason(entry), UndecidedReason::BookNumberCollision);
+    let undecided = entry.undecided().expect("undecided");
+    assert_eq!(undecided.candidate_count, 3);
+    assert!(undecided
+        .candidates
+        .iter()
+        .any(|candidate| candidate.book_key == "book-ambiguous-marker"
+            && candidate.rule == CandidateRule::SharedNarrationMarker));
+    assert_eq!(report.observations().unmatched_book_vouchers, 0);
 }
