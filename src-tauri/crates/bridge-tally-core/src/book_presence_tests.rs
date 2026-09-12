@@ -2537,6 +2537,155 @@ fn the_same_proposal_is_absent_when_the_window_did_read_remote_ids() {
     assert!(only(&report).is_absent());
 }
 
+#[test]
+fn unread_remote_id_outranks_resemblance_but_keeps_its_candidates() {
+    let unread = BookWindow::observed(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::NotRead,
+        narration_evidence: ColumnEvidence::Observed,
+        vouchers: vec![BookRow::new("book-1", "20260812", "AA0118").build()],
+    })
+    .expect("window");
+    let proposals = [ProposalRow::new(0, "20260812", "AA0777")
+        .remote_id("tally-1")
+        .build()];
+    let report = run(
+        &unread,
+        &catalog(),
+        &numbering(NumberingMethod::Automatic),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert_eq!(reason(entry), UndecidedReason::RemoteIdEvidenceUnavailable);
+    assert_eq!(
+        entry.undecided().expect("undecided").candidates[0].book_key,
+        "book-1"
+    );
+    assert_eq!(report.observations().unmatched_book_vouchers, 0);
+}
+
+#[test]
+fn unread_narration_outranks_resemblance_but_keeps_its_candidates() {
+    let unread = BookWindow::observed(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::Observed,
+        narration_evidence: ColumnEvidence::NotRead,
+        vouchers: vec![BookRow::new("book-1", "20260812", "AA0118").build()],
+    })
+    .expect("window");
+    let proposals = [ProposalRow::new(0, "20260812", "AA0777")
+        .marker("marker-1")
+        .build()];
+    let report = run(
+        &unread,
+        &catalog(),
+        &numbering(NumberingMethod::Automatic),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert_eq!(reason(entry), UndecidedReason::MarkerEvidenceUnavailable);
+    assert_eq!(
+        entry.undecided().expect("undecided").candidates[0].book_key,
+        "book-1"
+    );
+    assert_eq!(report.observations().unmatched_book_vouchers, 0);
+}
+
+#[test]
+fn unread_remote_id_outranks_nondecisive_number_candidates() {
+    let unread = BookWindow::observed(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::NotRead,
+        narration_evidence: ColumnEvidence::Observed,
+        vouchers: vec![BookRow::new("book-1", "20260812", "AA0118").build()],
+    })
+    .expect("window");
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .remote_id("tally-1")
+        .build()];
+    let report = run(
+        &unread,
+        &catalog(),
+        &numbering(NumberingMethod::Automatic),
+        &proposals,
+    );
+    assert_eq!(
+        reason(only(&report)),
+        UndecidedReason::RemoteIdEvidenceUnavailable
+    );
+    assert_eq!(
+        only(&report).undecided().unwrap().candidates[0].rule,
+        CandidateRule::SharedVoucherNumber
+    );
+}
+
+#[test]
+fn unread_remote_id_outranks_unobserved_type_number_candidates() {
+    let unread = BookWindow::observed(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::NotRead,
+        narration_evidence: ColumnEvidence::Observed,
+        vouchers: vec![BookRow::new("book-1", "20260812", "AA0118").build()],
+    })
+    .expect("window");
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .voucher_type("Receipt")
+        .remote_id("tally-1")
+        .build()];
+    let report = run(
+        &unread,
+        &catalog(),
+        &NumberingDeclaration::new([("Receipt", NumberingMethod::Manual)]).expect("numbering"),
+        &proposals,
+    );
+    assert_eq!(
+        reason(only(&report)),
+        UndecidedReason::RemoteIdEvidenceUnavailable
+    );
+    assert_eq!(
+        only(&report).undecided().unwrap().candidates[0].rule,
+        CandidateRule::SharedVoucherNumber
+    );
+}
+
+#[test]
+fn remote_identity_reports_an_exact_voucher_type_difference() {
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118")
+        .voucher_type("Receipt")
+        .remote_id("tally-1")]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .voucher_type("Sales")
+        .remote_id("tally-1")
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let PresenceStatus::Present { differences, .. } = &only(&report).status else {
+        panic!("present")
+    };
+    let difference = differences
+        .iter()
+        .find(|item| item.field == DifferenceField::VoucherType)
+        .expect("type difference serialized");
+    assert_eq!(difference.proposed.as_deref(), Some("Sales"));
+    assert_eq!(difference.observed.as_deref(), Some("Receipt"));
+    assert_eq!(
+        serde_json::to_value(difference).expect("serialize difference")["field"],
+        "voucher_type"
+    );
+}
+
 // --- the response cap must not distort the observations -----------------
 
 #[test]
@@ -4123,8 +4272,7 @@ fn raw_proposal_budget_counts_metadata_bytes_before_conversion() {
         amount: "1",
     }];
     let marker = "m".repeat(36);
-    let metadata =
-        "x".repeat(16_384 - "20260812".len() - "Receipt".len() - 1 - marker.len());
+    let metadata = "x".repeat(16_384 - "20260812".len() - "Receipt".len() - 1 - marker.len());
     let extra_byte = format!("{metadata}x");
     assert!(extra_byte.len() <= MAX_TEXT_CHARS);
     let inputs = (0..256)
@@ -4179,8 +4327,7 @@ fn raw_observation_budget_counts_retained_voucher_metadata() {
         .map(|position| format!("K{position:07}"))
         .collect::<Vec<_>>();
     let marker = "m".repeat(36);
-    let metadata =
-        "x".repeat(16_384 - 8 - "20260812".len() - "Receipt".len() - marker.len());
+    let metadata = "x".repeat(16_384 - 8 - "20260812".len() - "Receipt".len() - marker.len());
     let extra_byte = format!("{metadata}x");
     assert!(extra_byte.len() <= MAX_TEXT_CHARS);
     let inputs = keys
@@ -4255,8 +4402,7 @@ fn raw_observation_budget_counts_ambiguous_marker_bytes_before_conversion() {
     let keys = (0..256)
         .map(|position| format!("K{position:07}"))
         .collect::<Vec<_>>();
-    let metadata =
-        "x".repeat(16_384 - 8 - "20260812".len() - "Receipt".len() - marker.len());
+    let metadata = "x".repeat(16_384 - 8 - "20260812".len() - "Receipt".len() - marker.len());
     let inputs = keys
         .iter()
         .map(|key| ObservedVoucher {

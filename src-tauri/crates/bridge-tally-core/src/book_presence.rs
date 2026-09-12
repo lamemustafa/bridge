@@ -727,9 +727,7 @@ impl RawObservationBudget {
         ambiguous_markers: impl IntoIterator<Item = &'a str>,
         entries: impl IntoIterator<Item = (&'a str, &'a str)>,
     ) -> Result<(), PresenceError> {
-        let mut marker_bytes = identifying_marker
-            .map(str::len)
-            .unwrap_or_default();
+        let mut marker_bytes = identifying_marker.map(str::len).unwrap_or_default();
         let mut ambiguous_count = 0usize;
         for marker in ambiguous_markers {
             ambiguous_count = ambiguous_count
@@ -1190,6 +1188,7 @@ impl UndecidedReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DifferenceField {
+    VoucherType,
     Date,
     Amount,
     Party,
@@ -2169,16 +2168,20 @@ fn decide(
         return shell(PresenceStatus::Absent, BTreeSet::new());
     }
 
-    let reason = match (
-        number_matches.is_empty(),
-        type_observed,
-        method == NumberingMethod::Manual,
-    ) {
-        (false, false, _) => UndecidedReason::VoucherTypeNotObserved,
-        (false, true, false) => UndecidedReason::NumberNotDecisive,
-        _ => UndecidedReason::ResemblesBookVoucher,
-    };
     let touched = found.keys().copied().collect::<BTreeSet<_>>();
+    let reason = if let Some(reason) = skipped_evidence {
+        reason
+    } else {
+        match (
+            number_matches.is_empty(),
+            type_observed,
+            method == NumberingMethod::Manual,
+        ) {
+            (false, false, _) => UndecidedReason::VoucherTypeNotObserved,
+            (false, true, false) => UndecidedReason::NumberNotDecisive,
+            _ => UndecidedReason::ResemblesBookVoucher,
+        }
+    };
     // Ordered as (position, rule) pairs before anything is cloned: the order is
     // rule-then-key and only the retained prefix needs a key at all.
     let mut ordered = found.into_iter().collect::<Vec<_>>();
@@ -2304,6 +2307,13 @@ fn differences(
     voucher: &BookVoucher,
 ) -> Vec<Difference> {
     let mut differences = Vec::new();
+    if voucher.voucher_type != proposal.voucher_type {
+        differences.push(Difference {
+            field: DifferenceField::VoucherType,
+            proposed: Some(proposal.voucher_type.clone()),
+            observed: Some(voucher.voucher_type.clone()),
+        });
+    }
     if voucher.date() != proposal.date() {
         differences.push(Difference {
             field: DifferenceField::Date,
