@@ -1693,6 +1693,9 @@ fn master_match_json(binding: &EntityBinding) -> Value {
                 "reason": unresolved.reason.safe_reason_code(),
                 "listing": listing,
                 "candidate_count": found,
+                "candidate_count_is_lower_bound": unresolved
+                    .candidates
+                    .count_is_lower_bound(),
                 "candidates_truncated": listing != "listed" && listing != "none",
                 "candidates": candidates,
                 "unresolved_identity": unresolved
