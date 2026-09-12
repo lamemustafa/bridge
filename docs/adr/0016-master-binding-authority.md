@@ -214,23 +214,20 @@ candidate even when exactly one observed master shares its key.
 
 **There are two folds, and neither answers in this generic catalog.**
 
-The narrower fold implements exactly the equivalences
-`TALLY_PROTOCOL_REFERENCE.md` §9.4d measured on **licensed TallyPrime 7.1** —
-the SKU this writes to — by naming each spelling in a voucher and reading the
-day book back to see which master it reached:
+The narrower fold is a **historical candidate index**, not a current statement
+of qualified gateway equivalence. It uses the transformations a previous
+implementation treated as equivalent: case, boundary and repeated spaces, and
+ASCII space, `-`, and `/`. That index may be broader than the qualified
+measurements, so it can only order candidate suggestions. The supporting
+observation was scoped to Silver; it measured a slash in the source reaching a
+space in the master, but did not measure the reverse direction. It does not
+establish a generic, symmetric separator rule.
 
-- ASCII case folds;
-- leading and trailing whitespace is ignored;
-- an internal run of spaces collapses;
-- **space, `-` and `/` are one separator**, in both directions.
-
-Everything else is exact on codepoints. The wide fold (`master_identity_key`)
-carries more than that and may only offer candidates. The narrow fold is also a
-candidate rule here: a gateway observation identifies how one observed gateway
-resolved a name, while `MasterCatalog::new(class, names)` carries no product,
-release, tier, endpoint, or operator-approval scope that could authorize a
-different caller to select that master. A write gate cannot repair a wrong
-selection once a caller has copied its returned name.
+The wide fold (`master_identity_key`) carries more still and also only offers
+candidates. `MasterCatalog::new(class, names)` carries no product, release,
+tier, endpoint, or operator-approval scope that could authorize a caller to
+select a folded match. A write gate cannot repair a wrong selection once a
+caller has copied its returned name.
 
 **The two rules that matter are negative, and neither is guessable.** An **en
 dash** and an **underscore** were sent and *rejected*: they are not separators
@@ -249,13 +246,12 @@ authority. That was corrected by narrowing to the three §9.4b had measured,
 which cost 420 of 995 mutation binds and withdrew `X - Y`, a common ledger
 convention.
 
-Then the narrowing turned out to be over-strict, because §9.4b's scope is *Edit
-Log 7.0 Educational* and this project writes to licensed 7.1. Measuring that SKU
-directly (§9.4d) found the gateway wider: the reverse hyphen direction, leading
-whitespace, collapsed runs and slash all match. The fold is symmetric again, one
-key per side, and the asymmetric index the narrow version needed is gone. On the
-mutation book **600 of 995** names a candidate, against 420 under the narrow
-fold. It does not bind in the generic catalog.
+Then a later historical interpretation treated the index as a wider licensed
+7.1 rule and bound **600 of 995** mutation names, against 420 under the narrow
+fold. That was a prior binding result, not a measured candidate count, and is
+withdrawn as authority: its scope and directional support were overstated. The
+index remains only to make the same possible masters visible to an operator; it
+does not bind in the generic catalog.
 
 The lesson is not "measure more". It is that **the scope line of an inherited
 measurement is part of the measurement**: §9.4b was accurate and its scope was

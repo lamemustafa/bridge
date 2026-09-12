@@ -1825,24 +1825,15 @@ fn master_identity_key(value: &str) -> String {
         .join(" ")
 }
 
-/// The fold observed at one gateway: exactly the equivalences
-/// `TALLY_PROTOCOL_REFERENCE.md` §9.4d measured on that observed SKU.
+/// A historical candidate index, retained for deterministic ordering.
 ///
-/// It is retained for deterministic candidate ordering. It cannot resolve a
-/// name through `MasterCatalog`, whose constructor receives neither that
-/// gateway's scope nor explicit operator approval.
-///
-/// §9.4b measured Edit Log 7.0 Educational and marked most of this UNVERIFIED,
-/// so an earlier version of this module resolved on three transformations only
-/// and offered the rest as candidates. §9.4d re-ran that measurement on
-/// **licensed TallyPrime 7.1**, read the day book back to see which master each
-/// name actually reached, and found the gateway wider than the Educational
-/// scope allowed anyone to claim:
-///
-/// - ASCII case folds;
-/// - leading and trailing whitespace is ignored;
-/// - an internal run of spaces collapses;
-/// - **space, `-` and `/` are one separator**, in both directions.
+/// It may be broader than qualified gateway measurements and cannot resolve a
+/// name through `MasterCatalog`, whose constructor receives neither a product,
+/// release, tier, endpoint, nor explicit operator approval. The historical
+/// record was scoped to Silver and measured a slash in the source reaching a
+/// space in the master; it did not establish the reverse direction or a
+/// generic symmetric separator rule. This key can therefore only suggest a
+/// candidate to an operator.
 ///
 /// Everything else is exact on codepoints. So the two rules that matter are
 /// both negative, and neither is guessable from appearance:
@@ -1858,8 +1849,8 @@ fn master_identity_key(value: &str) -> String {
 /// onto a master the gateway keeps apart. It reads like decoding rather than
 /// folding, which is how it survived two audits of this function.
 ///
-/// Both hyphen directions are measured now, so this is symmetric and one key
-/// per side is enough — the asymmetric index an earlier version needed is gone.
+/// The implementation remains symmetric solely for candidate discovery. That
+/// convenience does not claim symmetric gateway behavior.
 fn verified_fold(value: &str) -> String {
     value
         .chars()
@@ -1934,12 +1925,12 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
         } else if token.chars().any(char::is_alphanumeric) {
             previous_was_mask = false;
         }
-        // Only the separators §9.4d measured may be discarded. Filtering to
-        // alphanumerics dropped **every** ASCII punctuation mark, so
+        // This historical parser discards only `-` and `/`, rather than every
+        // ASCII punctuation mark. It is not a claim of gateway equivalence.
+        // Filtering to alphanumerics dropped **every** ASCII punctuation mark, so
         // `AB_123456` and `AB-123456` canonicalized alike and one identifier
-        // bound the other's master — while §9.4d had sent an underscore and
-        // watched Tally *reject* it. The evidence for this fold is one
-        // measurement about hyphens and slashes; everything else stays content.
+        // bound the other's master; underscore remains content rather than
+        // joining the historical candidate normalization.
         let canonical = token
             .chars()
             .filter(|character| !matches!(character, '-' | '/'))
@@ -1977,8 +1968,8 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
             && digits >= MIN_CODE_IDENTIFIER_DIGITS
             && letters >= 2
             && !foreign_content
-            // A separator works in both directions, so the date guard has to
-            // run on both spellings. Removing `-` can *reveal* a date —
+            // This parser removes separators in either spelling, so the date
+            // guard has to run on both spellings. Removing `-` can *reveal* a date —
             // `2025-09-11` becomes `20250911` — and it can just as easily
             // *hide* two: `DATED20250911-20250912` fuses into one sixteen-digit
             // run that reads as no date at all, and `is_period` does not see it
