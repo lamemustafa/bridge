@@ -187,7 +187,7 @@ Per proposed voucher, exactly one of:
 
 | status | meaning | what it authorises |
 | --- | --- | --- |
-| `Present { matched, basis, differences }` | An identity key matched, uniquely on both sides | excluding this voucher from the import |
+| `Present { book_key, basis, differences }` | An identity key matched, uniquely on both sides | excluding this voucher from the import |
 | `PossiblyPresent { reason, candidates, .. }` | Something resembles it, or something prevented a decision | **nothing** |
 | `Absent` | No rule produced any candidate, in a window proven to cover it | including this voucher in the import |
 

@@ -410,6 +410,43 @@ fn a_repeated_identical_declaration_is_accepted() {
     .is_ok());
 }
 
+#[test]
+fn numbering_declarations_bound_duplicate_iterator_work() {
+    let entries = (0..=MAX_NUMBERING_DECLARATIONS)
+        .map(|_| ("Sales", NumberingMethod::Manual));
+    assert_eq!(
+        NumberingDeclaration::new(entries).expect_err("declaration count is bounded"),
+        PresenceError::NumberingDeclarationsTooMany
+    );
+}
+
+#[test]
+fn numbering_declarations_bound_aggregate_bytes_while_consuming_duplicates() {
+    let entries = (0..)
+        .map(|_| ("X".repeat(MAX_TEXT_CHARS), NumberingMethod::Manual));
+    assert_eq!(
+        NumberingDeclaration::new(entries).expect_err("declaration bytes are bounded"),
+        PresenceError::NumberingDeclarationBytesTooLarge
+    );
+}
+
+#[test]
+fn request_refuses_a_window_ledger_missing_from_its_catalog() {
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118")
+        .rows(vec![["Uncatalogued Ledger", "0.00"]])]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118").build()];
+    assert_eq!(
+        PresenceRequest::new(
+            &window,
+            &catalog(),
+            &numbering(NumberingMethod::Manual),
+            &proposals
+        )
+        .expect_err("window ledger is absent from catalog"),
+        PresenceError::CatalogWindowCoverageMissing
+    );
+}
+
 // --- only identity produces Present ------------------------------------
 
 #[test]

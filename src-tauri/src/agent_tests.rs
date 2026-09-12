@@ -1502,7 +1502,7 @@ fn empty_voucher_window_corroboration_handles_all_three_control_branches() {
             "20260902",
             None,
         ),
-        Ok((false, None))
+        Ok((true, Some("nonempty_uncorroborated")))
     );
     assert_eq!(
         corroborate_empty_voucher_window(
