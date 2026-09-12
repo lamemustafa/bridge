@@ -2499,9 +2499,31 @@ fn a_withheld_family_counts_the_masters_the_other_identifier_listed_too() {
         "this fixture no longer exercises the skip"
     );
     assert!(
-        unresolved.candidates.count_is_lower_bound(),
-        "the skipped identifier family makes this count conservative"
+        !unresolved.candidates.count_is_lower_bound(),
+        "one skipped family plus fully materialized matches has an exact union"
     );
+}
+
+#[test]
+fn a_single_withheld_identifier_family_has_an_exact_count() {
+    let names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Shared Party {index:03} (5550007777)"))
+        .collect::<Vec<_>>();
+    let family = names.len();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let entity =
+        SourceEntity::with_identifier_hints(0, "Unrelated Source", ["5550007777"]).expect("valid");
+
+    let binding = bound(&catalog, &[entity])
+        .entities()
+        .first()
+        .cloned()
+        .expect("one entity in, one binding out");
+    let unresolved = binding.unresolved().expect("identifier conflict");
+    assert_eq!(reason(&binding), UnboundReason::IdentifierConflict);
+    assert_eq!(unresolved.candidates.listing(), "withheld");
+    assert_eq!(unresolved.candidates.found(), family);
+    assert!(!unresolved.candidates.count_is_lower_bound());
 }
 
 #[test]

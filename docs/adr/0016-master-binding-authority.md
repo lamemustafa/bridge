@@ -316,6 +316,7 @@ things to anyone deciding what to do next:
 | --- | --- |
 | `NoCandidate` | no master resembles this name at all |
 | `NoDiscriminatingCandidate` | at least `candidate_count` masters resemble it when the count is a lower bound, and none is separable — **many exist**, none is worth showing |
+| any, with `candidate_listing: "withheld"` | a family is deliberately not sliced; `candidate_count_is_lower_bound` says whether multiple unmaterialized families leave its union uncertain |
 | any, with `candidate_listing: "truncated"` | the list was cut, by the per-entity cap or by the report's aggregate byte budget |
 
 So `candidates.is_empty()` alone answers nothing. The disambiguators are

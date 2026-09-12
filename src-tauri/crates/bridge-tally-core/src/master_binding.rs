@@ -1006,6 +1006,9 @@ struct IdentifierEvidence<'a> {
     /// skipped family, plus the listed masters that are not in it. Present so a
     /// withheld listing can still say how many masters are involved.
     withheld_holders: usize,
+    /// Whether multiple distinct unmaterialized families leave their union
+    /// uncertain. A single skipped family plus materialized matches is exact.
+    withheld_count_is_lower_bound: bool,
 }
 
 struct SearchMemo {
@@ -1042,6 +1045,9 @@ fn bind_one(
     // withheld family reported `found() == 0` and `listing: "none"`, telling
     // the operator nothing shares the identifier when hundreds do.
     let mut withheld_holders = 0_usize;
+    // Keep references rather than cloning large holder vectors. Distinct
+    // skipped families are the only source of unknown overlap in this union.
+    let mut withheld_families: Vec<&Vec<usize>> = Vec::new();
     // The holders of the largest skipped family, kept by reference so the count
     // below can ask which listed masters are *not* in it. Nothing is cloned.
     let mut largest_withheld: Option<&Vec<usize>> = None;
@@ -1056,6 +1062,9 @@ fn bind_one(
             // before the candidate memo is even consulted.
             if holders.len() > MAX_CANDIDATES_PER_ENTITY {
                 identifier_conflict = true;
+                if !withheld_families.iter().any(|family| *family == holders) {
+                    withheld_families.push(holders);
+                }
                 if holders.len() > withheld_holders {
                     withheld_holders = holders.len();
                     largest_withheld = Some(holders);
@@ -1093,15 +1102,15 @@ fn bind_one(
 
     // One family's size is not the size of their union. An entity carrying two
     // identifiers — one held by thirty masters and skipped, one reaching a
-    // thirty-first — reported thirty, because the larger of the two counts
-    // ignores every master the other identifier listed.
+    // thirty-first — must count the fully materialized master too.
     //
     // The listed masters that are *not* in the skipped family are disjoint from
     // it, so adding them is sound and costs nothing but a lookup: the union is
-    // never built, which is the whole point of skipping. It stays a **lower
-    // bound** — two disjoint skipped families are still counted as the larger
-    // alone. `Candidates::Withheld` records that no individual names were
-    // listed; its separate precision flag records this lower-bound case.
+    // never built, which is the whole point of skipping. One skipped family is
+    // therefore exact; two distinct skipped families may overlap, so they are
+    // counted conservatively as the larger alone. `Candidates::Withheld`
+    // records that no individual names were listed; its separate precision
+    // flag records only that latter lower-bound case.
     // Over-counting
     // would be worse than under-counting here: two identifiers can be held by
     // overlapping families, so summing their sizes would state a number of
@@ -1120,6 +1129,7 @@ fn bind_one(
         }
         None => withheld_holders,
     };
+    let withheld_count_is_lower_bound = withheld_families.len() > 1;
 
     // An identifier shared by two masters, and an entity whose identifiers
     // reach two masters, are the same refusal: the operator has a naming
@@ -1159,6 +1169,7 @@ fn bind_one(
                 exact,
                 matches: &identifier_matches,
                 withheld_holders,
+                withheld_count_is_lower_bound,
             },
             budget,
             memo,
@@ -1180,6 +1191,7 @@ fn bind_one(
                 exact,
                 matches: &identifier_matches,
                 withheld_holders,
+                withheld_count_is_lower_bound,
             },
             budget,
             memo,
@@ -1221,6 +1233,7 @@ fn bind_one(
                     exact,
                     matches: &identifier_matches,
                     withheld_holders,
+                    withheld_count_is_lower_bound,
                 },
                 budget,
                 memo,
@@ -1233,6 +1246,7 @@ fn bind_one(
                     exact,
                     matches: &identifier_matches,
                     withheld_holders,
+                    withheld_count_is_lower_bound,
                 },
                 budget,
                 memo,
@@ -1253,7 +1267,7 @@ fn bind_one(
                     reason,
                     candidates,
                     masters_found.max(withheld_holders),
-                    withheld_holders > 0,
+                    withheld_count_is_lower_bound,
                     budget,
                 )
             }
@@ -1279,6 +1293,7 @@ fn unresolved_status(
         exact,
         matches: identifier_matches,
         withheld_holders,
+        withheld_count_is_lower_bound,
     } = evidence;
     let (mut candidates, masters_found) =
         remembered_candidates(catalog, entity, identifier_matches, memo);
@@ -1297,7 +1312,7 @@ fn unresolved_status(
         reason,
         candidates,
         masters_found.max(withheld_holders),
-        withheld_holders > 0,
+        withheld_count_is_lower_bound,
         budget,
     )
 }
