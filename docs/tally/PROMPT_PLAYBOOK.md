@@ -581,7 +581,7 @@ is simpler), then vouchers (payment/receipt/journal/contra).
 Implement — write core (masters):
 1. Outbox state machine in the mirror DB:
    PENDING → DISPATCHING → {CONFIRMED | CONFIRMED_WITH_DIVERGENCE | REJECTED | OUTCOME_UNKNOWN}
-   OUTCOME_UNKNOWN → probe → {CONFIRMED | CONFIRMED_WITH_DIVERGENCE | PENDING | MANUAL}
+   OUTCOME_UNKNOWN → read-only probe → {CONFIRMED | CONFIRMED_WITH_DIVERGENCE | OUTCOME_UNKNOWN | MANUAL}
    `CONFIRMED_WITH_DIVERGENCE` is the terminal state when readback (step 4)
    proves the write landed but Tally normalized/dropped a field vs intent;
    it is a distinct persisted state, never collapsed into `CONFIRMED`, and it
