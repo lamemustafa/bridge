@@ -531,6 +531,46 @@ test("names a later invalidation with the generation the previous one returned, 
   root.unmount();
 });
 
+test("does not let a save's stale generation regress one an invalidation already advanced, so the next invalidation still names the advanced value", async () => {
+  let resolveSave!: (value: unknown) => void;
+  let resolveInvalidation!: (generation: number) => void;
+  const pendingSave = new Promise((resolve) => { resolveSave = resolve; });
+  const pendingInvalidation = new Promise<number>((resolve) => { resolveInvalidation = resolve; });
+  mocks.invoke
+    .mockResolvedValueOnce(draft)
+    .mockReturnValueOnce(pendingSave)
+    .mockReturnValueOnce(pendingInvalidation)
+    .mockResolvedValueOnce(99);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+
+  // Issued first, but its DTO is left pending -- it will not resolve until
+  // after the invalidation below has already advanced the generation.
+  await act(async () => button(host, "Save draft").click());
+
+  await act(async () => root.render(<SourceDraftScreen catalogScope={catalogScope} catalogScopeKey="company-two" />));
+  expect(mocks.invoke).toHaveBeenNthCalledWith(3, "desktop_invalidate_source_draft_existing_ledger_targets", {
+    request: { draft_id: draft.draft_id, generation: draft.catalog_generation },
+  });
+  resolveInvalidation(5);
+  await act(async () => { await pendingInvalidation; });
+
+  // The save command started before the invalidation and names the
+  // generation the draft had when it was issued -- older than the 5 the
+  // invalidation just folded in. Resolving it now must not drag the token
+  // back down to that stale value.
+  resolveSave({ ...draft, revision: 2, catalog_generation: draft.catalog_generation });
+  await act(async () => { await pendingSave; });
+
+  await act(async () => root.render(<SourceDraftScreen catalogScope={catalogScope} catalogScopeKey="company-three" />));
+  expect(mocks.invoke).toHaveBeenNthCalledWith(4, "desktop_invalidate_source_draft_existing_ledger_targets", {
+    request: { draft_id: draft.draft_id, generation: 5 },
+  });
+  root.unmount();
+});
+
 test("returns the editor and ledger read control to the current scope after native invalidation rejects", async () => {
   mocks.invoke.mockImplementation((command: string) => {
     if (command === "desktop_pick_source_draft") return Promise.resolve(draft);

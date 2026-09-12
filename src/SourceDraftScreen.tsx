@@ -57,6 +57,25 @@ function cloneDraft(draft: SourceDraft): SourceDraft {
   return { ...draft, rows: draft.rows.map((row) => ({ ...row, entries: row.entries.map((entry) => ({ ...entry })), proposal: cloneProposal(row.proposal) })) };
 }
 
+// Every DTO that can replace the draft in state (save, catalogue apply, the
+// invalidation fold-in) carries a catalog_generation that was only current
+// as of the moment that particular command was issued. Commands do not
+// resolve in issue order, so a slower one's DTO can land after a faster
+// one's -- and unless something stops it, that late DTO drags the visible
+// generation back down. The store's generation only ever advances while a
+// draft is loaded, so for the SAME draft a lower incoming value can only be
+// a stale observation, never a legitimate reset: keep the highest one seen.
+// A DIFFERENT draft's generation is not comparable at all -- it is counting
+// invalidations against an unrelated catalogue -- so route every
+// draft-replacing setDraft call through here and take the incoming draft
+// as-is whenever the draft id changed.
+function withMonotonicGeneration(current: SourceDraft | null, next: SourceDraft): SourceDraft {
+  if (current && current.draft_id === next.draft_id && current.catalog_generation > next.catalog_generation) {
+    return { ...next, catalog_generation: current.catalog_generation };
+  }
+  return next;
+}
+
 function errorMessage(cause: unknown) {
   if (cause instanceof Error) return cause.message;
   if (typeof cause === "string") return cause;
@@ -197,7 +216,7 @@ export function SourceDraftScreen({
         // `desktop_invalidate_source_draft_existing_ledger_targets`.
         if (typeof nextGeneration !== "number" || !mounted.current || operationGeneration.current !== generation) return;
         setDraft((current) => current && current.draft_id === target?.draft_id
-          ? { ...current, catalog_generation: nextGeneration }
+          ? withMonotonicGeneration(current, { ...current, catalog_generation: nextGeneration })
           : current);
       });
     catalogInvalidationTail.current = next;
@@ -253,7 +272,7 @@ export function SourceDraftScreen({
         return;
       }
       const copy = cloneDraft(next);
-      setDraft(copy);
+      setDraft((current) => withMonotonicGeneration(current, copy));
       setDraftDirty(false);
       setSelectedPosition(copy.rows[0]?.position ?? null);
       setPage(0);
@@ -294,7 +313,7 @@ export function SourceDraftScreen({
       });
       if (!mounted.current || !next) return;
       const copy = cloneDraft(next);
-      setDraft(copy);
+      setDraft((current) => withMonotonicGeneration(current, copy));
       setDraftDirty(false);
       setCatalogSelections(currentSessionSelections(copy));
       setSavedPath("Draft saved locally as JSON.");
@@ -369,14 +388,14 @@ export function SourceDraftScreen({
         // The native apply may have committed before a concurrent company-scope
         // invalidation reached it. Keep its new revision visible, but never
         // present the old capture or session binding as current for this scope.
-        setDraft(copy);
+        setDraft((current) => withMonotonicGeneration(current, copy));
         setCatalog(null);
         setCatalogSelections({});
         setCatalogInvalidatedSelections({});
         setSavedPath(null);
         return;
       }
-      setDraft(copy);
+      setDraft((current) => withMonotonicGeneration(current, copy));
       const nextSelections = currentSessionSelections(copy);
       setCatalogInvalidatedSelections((current) => ({
         ...Object.fromEntries(Object.entries(current).filter(([key, target]) => nextSelections[key] !== target)),
