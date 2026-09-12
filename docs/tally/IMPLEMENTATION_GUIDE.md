@@ -682,11 +682,21 @@ duplicate-prevention mechanism in every case §3.3a excludes. §3.4a establishes
 identical payment, so it prevents no duplicate anywhere. Two paragraphs of one patch contradicting
 each other is how a withdrawn mandate comes back.
 
-What is actually true outside §3.3a's reach is narrower and less comfortable: **there is no proven
-duplicate-prevention mechanism there at all.** A **different** payload under the same key is
+What is actually true outside §3.3a's reach is narrower and less comfortable — with **one**
+qualified exception. `TALLY_PROTOCOL_REFERENCE.md` §9.8 is VERIFIED: a voucher type set to
+**Manual** numbering with `PREVENTDUPLICATES=Yes` preserves the supplied number verbatim and
+rejects a duplicate **cleanly** (`CREATED=0, ALTERED=0, EXCEPTIONS=1`). A flow that carries
+voucher-number identity under that configuration therefore *does* have a proven mechanism, and this
+paragraph must not discard it.
+
+Outside **both** §3.3a's `REMOTEID` path and §9.8's Manual + `PREVENTDUPLICATES=Yes` path, **there
+is no proven duplicate-prevention mechanism at all.** A **different** payload under the same key is
 untested (it may overwrite, partially update or duplicate), as is any non-Journal voucher type, any
 other SKU, and a retry across a Tally restart or a company boundary. Name which case you are in,
-and where it is not §3.3a's, stop and involve a human rather than reaching for the tuple.
+and where it is neither of those two, stop and involve a human rather than reaching for the tuple.
+
+The tuple is withdrawn in every case. §9.8 does not rehabilitate the fingerprint — it supplies a
+*different* mechanism, one that rejects at the gateway instead of guessing at the caller.
 
 ### 3.4a Undefined UDF fields are silently discarded — **the plan's primary idempotency key does not work as written**
 

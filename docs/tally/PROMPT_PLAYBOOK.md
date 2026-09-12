@@ -584,6 +584,16 @@ Implement — write core (masters):
    (masters matched by name via §9.4b's `accepts(candidate, tally_name)`
    predicate only — directional ASCII case folding; vouchers by
    LASTVCHID) and
+   SCOPE GATE (§9.4b, §0): §9.4b's case-folding and hyphen-for-space rows
+   were measured on the **Edit Log 7.0 Educational** baseline and carry no
+   licensed-SKU qualification; only the NFC/NFD row was measured on a
+   licensed 7.1 instance, and it points the other way (exact codepoints).
+   Phase 4 runs against licensed TallyPrime, so on a licensed SKU match
+   master names on **exact codepoints** and let a case or separator
+   difference fail loudly. Widen to `accepts()` only where a licensed
+   capture has qualified the predicate, or where the compatibility result
+   for the connected instance says it holds. A fold applied on an
+   unqualified SKU can bind a write to an account Tally keeps distinct.
    ALWAYS cross-check the fetched object against the idempotency key and
    the (date, amount, ledger-set, voucher-type) fingerprint before
    promoting to CONFIRMED — LASTVCHID can be clobbered by a foreign
@@ -625,7 +635,9 @@ Implement — voucher writes (after masters CONFIRMED-path is soak-tested):
    tuple cannot tell a retry from a legitimate second payment — a
    standing instruction, or two invoices settled to one supplier on one
    day, produce the identical tuple — so automatic suppression is a
-   silent under-write. See IMPLEMENTATION_GUIDE.md §6.2.
+   silent under-write. See IMPLEMENTATION_GUIDE.md §3.4a — the signal
+   table and its automatic-suppression constraints. (§6.2 is the Unicode
+   round-trip result and says nothing about fingerprints.)
 7. Cancel qualified as the compensation primitive (ACTION=Cancel by
    REMOTEID/GUID). Alter-by-GUID qualified per version; where flaky, the
    fallback is a Cancel+Create saga bound in one outbox transaction with
