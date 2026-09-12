@@ -201,6 +201,7 @@ fi
 # an omitted required context is not a complete check result.
 : >"$errfile"
 protection_status=0
+required_contexts=""
 protection=$(gh api "repos/$REPO/branches/$base/protection/required_status_checks" 2>"$errfile") || protection_status=$?
 if [ "$protection_status" -ne 0 ]; then
   unknown "could not read required status-check contexts for $base"
@@ -224,6 +225,7 @@ else
     say "ok" "loaded $(wc -l <<<"$required_contexts" | tr -d ' ') required check context(s)"
   fi
 fi
+printf '%s\n' "$required_contexts" >"$tmpdir/required-contexts"
 
 # gh uses pass/fail/pending/skipping/cancel buckets. Preserve command status,
 # then parse JSON and require each protected context individually.
@@ -245,7 +247,7 @@ else
     bad "no checks reported for this PR"
   else
     printf '%s' "$buckets" >"$tmpdir/check-buckets.json"
-    printf '%s\n' "$required_contexts" >"$tmpdir/required-contexts"
+    context_report_status=0
     context_report=$(jq --rawfile contexts "$tmpdir/required-contexts" '
       . as $buckets | ($contexts | split("\n") | map(select(length > 0))) |
       map(. as $context | [$buckets[] | select(.name == $context)] |
@@ -256,9 +258,15 @@ else
        examples: ([.[] | select(.state != "pass")][0:8] | map(
          "required check \u0027" + (.name | gsub("[[:cntrl:]]"; "?") | .[0:80]) + "\u0027 " +
          (if .state == "missing" then "was not reported" else "is not passing (" + .state + ")" end)))}
-    ' <"$tmpdir/check-buckets.json")
-    check_bad=$(jq -r '.failed' <<<"$context_report")
-    context_count=$(jq -r '.total' <<<"$context_report")
+    ' <"$tmpdir/check-buckets.json") || context_report_status=$?
+    if [ "$context_report_status" -ne 0 ] || ! jq -e '. as $report | type == "object" and ($report.total | type == "number" and floor == . and . >= 0) and ($report.failed | type == "number" and floor == . and . >= 0 and . <= $report.total) and ($report.examples | type == "array" and length <= 8 and all(.[]; type == "string"))' <<<"$context_report" >/dev/null 2>&1; then
+      unknown "could not compute bounded required-check diagnostics"
+      check_bad=1
+      context_count=0
+    else
+      check_bad=$(jq -r '.failed' <<<"$context_report")
+      context_count=$(jq -r '.total' <<<"$context_report")
+    fi
     if [ "$check_bad" -gt 0 ]; then
       bad "$check_bad of $context_count required check contexts are not passing; up to 8 bounded examples: $(jq -r '.examples | join("; ")' <<<"$context_report")"
     else
@@ -298,13 +306,16 @@ if [ "$check_runs_status" -ne 0 ] || ! jq -e --arg head "$head" '
 ' <<<"$check_runs" >/dev/null 2>&1; then
   unknown "could not validate complete head-bound check-run evidence"
 else
+  failed_runs_status=0
   failed_runs=$(jq --rawfile contexts "$tmpdir/required-contexts" '
     ($contexts | split("\n")) as $required |
     [.[] | .check_runs[] | . as $run |
       select((.conclusion != "success" and .conclusion != "neutral" and .conclusion != "skipped") or
              (.conclusion != "success" and ($required | index($run.name)) != null))] | length
-  ' <(printf '%s' "$check_runs"))
-  if [ "$failed_runs" -gt 0 ]; then
+  ' <(printf '%s' "$check_runs")) || failed_runs_status=$?
+  if [ "$failed_runs_status" -ne 0 ] || ! [[ "$failed_runs" =~ ^[0-9]+$ ]]; then
+    unknown "could not evaluate refreshed check-run conclusions"
+  elif [ "$failed_runs" -gt 0 ]; then
     bad "$failed_runs refreshed check run(s) are failed or required-but-not-successful"
   else
     say "ok" "completed check-run pages are successful and bound to head $short"
@@ -312,27 +323,27 @@ else
 fi
 : >"$errfile"
 statuses_status=0
-statuses=$(gh api "repos/$REPO/commits/$head/status" 2>"$errfile") || statuses_status=$?
-printf '%s' "$statuses" >"$tmpdir/combined-status.json"
-legacy_statuses_status=0
-legacy_statuses=$(gh api --paginate --slurp "repos/$REPO/commits/$head/statuses?per_page=100" 2>"$errfile") || legacy_statuses_status=$?
-printf '%s' "$legacy_statuses" >"$tmpdir/legacy-statuses.json"
-if [ "$statuses_status" -ne 0 ] || [ "$legacy_statuses_status" -ne 0 ] || ! jq -e --arg head "$head" --slurpfile pages "$tmpdir/legacy-statuses.json" '
-  . as $combined |
-  type == "object" and
-  (($combined.state == "success") or ($combined.state == "pending" and $combined.total_count == 0 and ($combined.statuses | type == "array" and length == 0))) and
-  ($combined.total_count | type == "number" and floor == . and . >= 0) and
-  ($pages | length == 1 and ($pages[0] | type == "array")) and
-  ($pages[0] | all(.[]; type == "array" and all(.[];
-    type == "object" and
-    (.id | type == "number" and floor == . and . >= 0) and
-    (.context | type == "string" and length > 0) and
-    (.state == "success") and
-    (.sha | type == "string" and test("^[0-9a-fA-F]{40}$") and . == $head)
-  ))) and
-  (($pages[0] | map(length) | add) == $combined.total_count) and
-  (($pages[0] | flatten | map(.id) | unique | length) == $combined.total_count)
-' <"$tmpdir/combined-status.json" >/dev/null 2>&1; then
+statuses=$(gh api --paginate --slurp "repos/$REPO/commits/$head/status?per_page=100" 2>"$errfile") || statuses_status=$?
+printf '%s' "$statuses" >"$tmpdir/combined-status-pages.json"
+if [ "$statuses_status" -ne 0 ] || ! jq -e --arg head "$head" '
+  type == "array" and length > 0 and
+  all(.[]; type == "object" and
+    (.sha | type == "string" and test("^[0-9a-fA-F]{40}$") and . == $head) and
+    (.total_count | type == "number" and floor == . and . >= 0) and
+    (.state | type == "string" and (. == "success" or . == "pending")) and
+    (.statuses | type == "array" and all(.[];
+      type == "object" and
+      (.id | type == "number" and floor == . and . >= 0) and
+      (.context | type == "string" and length > 0) and
+      (.state == "success")
+    ))
+  ) and
+  ((map(.total_count) | unique | length) == 1) and
+  ((map(.statuses | length) | add) == .[0].total_count) and
+  ((map(.statuses) | add | map(.id) | unique | length) == .[0].total_count) and
+  ((map(.statuses) | add | map(.context) | unique | length) == .[0].total_count) and
+  (if .[0].state == "pending" then .[0].total_count == 0 and (map(.statuses | length) | add) == 0 else all(.[]; .state == "success") end)
+' <"$tmpdir/combined-status-pages.json" >/dev/null 2>&1; then
   unknown "could not validate complete head-bound commit-status evidence"
 else
   say "ok" "complete commit-status pages are bound to head $short"

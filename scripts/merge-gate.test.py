@@ -293,31 +293,33 @@ elif args and args[0] == "api":
         emit([{"total_count": total_count, "check_runs": [
             {"id": 1, "name": run_name, "head_sha": run_head, "status": run_status, "conclusion": conclusion},
             {"id": second_id, "name": "Rust format", "head_sha": run_head, "status": "completed", "conclusion": "success"}]}])
-    elif "/commits/" in joined and "/statuses?" in joined:
-        if scenario == "status-truncated":
-            emit([[]])
-        elif scenario in {"status-failed-context", "status-nonempty-pending"}:
-            state = "failure" if scenario == "status-failed-context" else "pending"
-            emit([[{"id": 1, "context": "legacy optional", "state": state, "sha": head}]])
-        else:
-            emit([[]])
-    elif "/commits/" in joined and "/status" in joined:
-        if scenario == "status-malformed":
-            emit({"total_count": "0", "statuses": []})
-        elif scenario == "status-failed-combined":
-            emit({"state": "failure", "total_count": 0, "statuses": []})
-        elif scenario == "status-failed-context":
-            emit({"state": "failure", "total_count": 1,
-                  "statuses": [{"context": "legacy optional", "state": "failure", "sha": head}]})
-        elif scenario == "status-nonempty-pending":
-            emit({"state": "pending", "total_count": 1, "statuses": [{"context": "queued", "state": "pending", "sha": head}]})
-        elif scenario == "status-empty-pending":
-            emit({"state": "pending", "total_count": 0, "statuses": []})
+    elif "/commits/" in joined and "/status?" in joined:
+        def status_page(rows, total_count, state="success", page_head=head):
+            return {"sha": page_head, "state": state, "total_count": total_count, "statuses": rows}
+        if scenario == "status-two-page":
+            emit([status_page([{"id": 1, "context": "legacy one", "state": "success"}], 2),
+                  status_page([{"id": 2, "context": "legacy two", "state": "success"}], 2)])
         elif scenario == "status-truncated":
-            emit({"state": "success", "total_count": 1,
-                  "statuses": [{"id": 1, "context": "legacy optional", "state": "success", "sha": head}]})
+            emit([{"sha": head, "state": "success", "total_count": 1, "statuses": []}])
+        elif scenario == "status-duplicate":
+            row = {"id": 1, "context": "legacy one", "state": "success"}
+            emit([{"sha": head, "state": "success", "total_count": 2, "statuses": [row]},
+                  {"sha": head, "state": "success", "total_count": 2, "statuses": [row]}])
+        elif scenario == "status-mixed-head":
+            emit([{"sha": head, "state": "success", "total_count": 2, "statuses": [{"id": 1, "context": "legacy one", "state": "success"}]},
+                  {"sha": new_head, "state": "success", "total_count": 2, "statuses": [{"id": 2, "context": "legacy two", "state": "success"}]}])
+        elif scenario == "status-failed-context":
+            emit([{"sha": head, "state": "failure", "total_count": 1, "statuses": [{"id": 1, "context": "legacy optional", "state": "failure"}]}])
+        elif scenario == "status-nonempty-pending":
+            emit([{"sha": head, "state": "pending", "total_count": 1, "statuses": [{"id": 1, "context": "queued", "state": "pending"}]}])
+        elif scenario == "status-empty-pending":
+            emit([{"sha": head, "state": "pending", "total_count": 0, "statuses": []}])
+        elif scenario == "status-malformed":
+            emit([{"sha": head, "state": "success", "total_count": "0", "statuses": []}])
+        elif scenario == "status-failed-combined":
+            emit([{"sha": head, "state": "failure", "total_count": 0, "statuses": []}])
         else:
-            emit({"state": "success", "total_count": 0, "statuses": []})
+            emit([{"sha": head, "state": "success", "total_count": 0, "statuses": []}])
     elif "/pulls/321/commits" in joined:
         message = "safe commit metadata"
         if scenario == "metadata-commit-id":
@@ -855,6 +857,13 @@ class MergeGateControls(unittest.TestCase):
 
     def test_truncated_legacy_status_pages_are_indeterminate(self):
         self.assert_indeterminate("status-truncated", "complete head-bound commit-status evidence")
+
+    def test_complete_combined_status_pages_bind_head_and_contexts(self):
+        result = self.run_gate("status-two-page")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for scenario in ("status-truncated", "status-duplicate", "status-mixed-head"):
+            with self.subTest(scenario=scenario):
+                self.assert_indeterminate(scenario, "complete head-bound commit-status evidence")
 
     def test_validation_commands_must_be_concrete_and_in_validation(self):
         for scenario in ("validation-command-outside", "validation-tool-prose", "validation-placeholder-command"):
