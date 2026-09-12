@@ -1583,23 +1583,25 @@ fn raw_observations_are_bounded_before_voucher_conversion() {
     };
     let rows = vec![entry; MAX_WINDOW_RAW_ENTRY_WORK + 1];
     assert_eq!(
-        BookWindow::from_observations(
-            "20260801",
-            "20260831",
-            WindowRead::Complete,
-            RemoteIdEvidence::Observed,
-            [ObservedVoucher {
+        BookWindow::from_observations(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::NotRead,
+            vouchers: [ObservedVoucher {
                 key: "book-1",
                 date: "20260812",
                 voucher_type: "Sales",
                 voucher_number: None,
                 remote_id: None,
                 party: None,
+                marker: ObservedMarker::Absent,
                 entries: &rows,
                 cancelled: false,
                 optional: false
             }],
-        )
+        })
         .expect_err("raw entries must be refused before parsing"),
         PresenceError::WindowRawEntryWorkTooLarge
     );
@@ -1609,23 +1611,25 @@ fn raw_observations_are_bounded_before_voucher_conversion() {
         amount: "1.00",
     }];
     assert_eq!(
-        BookWindow::from_observations(
-            "20260801",
-            "20260831",
-            WindowRead::Complete,
-            RemoteIdEvidence::Observed,
-            [ObservedVoucher {
+        BookWindow::from_observations(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::NotRead,
+            vouchers: [ObservedVoucher {
                 key: "book-2",
                 date: "20260812",
                 voucher_type: "Sales",
                 voucher_number: None,
                 remote_id: None,
                 party: None,
+                marker: ObservedMarker::Absent,
                 entries: &oversized,
                 cancelled: false,
                 optional: false
             }],
-        )
+        })
         .expect_err("raw bytes must be refused before cloning"),
         PresenceError::WindowRawEntryBytesTooLarge
     );
@@ -1642,17 +1646,19 @@ fn raw_observations_are_bounded_before_voucher_conversion() {
             voucher_number: None,
             remote_id: None,
             party: None,
+            marker: ObservedMarker::Absent,
             entries,
             cancelled: false,
             optional: false,
         });
-    assert!(BookWindow::from_observations(
-        "20260801",
-        "20260831",
-        WindowRead::Complete,
-        RemoteIdEvidence::Observed,
-        admitted
-    )
+    assert!(BookWindow::from_observations(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::Observed,
+        narration_evidence: ColumnEvidence::NotRead,
+        vouchers: admitted,
+    })
     .is_ok());
 }
 
@@ -1671,6 +1677,7 @@ fn raw_entry_work_is_bounded_across_valid_voucher_sized_rows() {
             voucher_number: None,
             remote_id: None,
             party: None,
+            marker: ObservedMarker::Absent,
             entries: &full_voucher_entries,
             cancelled: false,
             optional: false,
@@ -1683,18 +1690,20 @@ fn raw_entry_work_is_bounded_across_valid_voucher_sized_rows() {
         voucher_number: None,
         remote_id: None,
         party: None,
+        marker: ObservedMarker::Absent,
         entries: std::slice::from_ref(&entry),
         cancelled: false,
         optional: false,
     });
     assert_eq!(
-        BookWindow::from_observations(
-            "20260801",
-            "20260831",
-            WindowRead::Complete,
-            RemoteIdEvidence::Observed,
-            rows,
-        )
+        BookWindow::from_observations(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::NotRead,
+            vouchers: rows,
+        })
         .expect_err("the aggregate raw-entry limit must span valid rows"),
         PresenceError::WindowRawEntryWorkTooLarge
     );
@@ -1718,6 +1727,7 @@ fn raw_entry_bytes_admit_exact_limit_and_refuse_the_next_byte() {
             voucher_number: None,
             remote_id: None,
             party: None,
+            marker: ObservedMarker::Absent,
             entries: &exact_entries[..MAX_ENTRIES_PER_VOUCHER],
             cancelled: false,
             optional: false,
@@ -1729,6 +1739,7 @@ fn raw_entry_bytes_admit_exact_limit_and_refuse_the_next_byte() {
             voucher_number: None,
             remote_id: None,
             party: None,
+            marker: ObservedMarker::Absent,
             entries: &exact_entries[MAX_ENTRIES_PER_VOUCHER..2 * MAX_ENTRIES_PER_VOUCHER],
             cancelled: false,
             optional: false,
@@ -1740,18 +1751,20 @@ fn raw_entry_bytes_admit_exact_limit_and_refuse_the_next_byte() {
             voucher_number: None,
             remote_id: None,
             party: None,
+            marker: ObservedMarker::Absent,
             entries: &exact_entries[2 * MAX_ENTRIES_PER_VOUCHER..],
             cancelled: false,
             optional: false,
         },
     ];
-    assert!(BookWindow::from_observations(
-        "20260801",
-        "20260831",
-        WindowRead::Complete,
-        RemoteIdEvidence::Observed,
-        exact_rows,
-    )
+    assert!(BookWindow::from_observations(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::Observed,
+        narration_evidence: ColumnEvidence::NotRead,
+        vouchers: exact_rows,
+    })
     .is_ok());
     let extra = ObservedEntry {
         ledger: ledger_1024,
@@ -1776,13 +1789,14 @@ fn raw_entry_bytes_admit_exact_limit_and_refuse_the_next_byte() {
         MAX_WINDOW_RAW_ENTRY_BYTES + 1,
     );
     assert_eq!(
-        BookWindow::from_observations(
-            "20260801",
-            "20260831",
-            WindowRead::Complete,
-            RemoteIdEvidence::Observed,
-            over_rows,
-        )
+        BookWindow::from_observations(ObservedWindow {
+            from: "20260801",
+            to: "20260831",
+            read: WindowRead::Complete,
+            remote_id_evidence: ColumnEvidence::Observed,
+            narration_evidence: ColumnEvidence::NotRead,
+            vouchers: over_rows,
+        })
         .expect_err("one byte over the aggregate raw-byte limit must refuse"),
         PresenceError::WindowRawEntryBytesTooLarge
     );
