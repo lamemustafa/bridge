@@ -2685,7 +2685,7 @@ def test_committed_new_output_close_failure_is_not_a_retained_backup(m):
 
         def observe_owned(path, handle, *, created):
             record = real_owned(path, handle, created=created)
-            if created and pathlib.Path(path) == destination:
+            if created and pathlib.Path(path).resolve() == destination.resolve():
                 output_handles.add(handle)
             return record
 
@@ -2710,6 +2710,36 @@ def test_committed_new_output_close_failure_is_not_a_retained_backup(m):
         assert fired
         assert destination.read_text() == "new bytes"
         assert list(pathlib.Path(directory).iterdir()) == [destination]
+
+
+def test_new_output_unlink_after_claim_refuses_and_cleans_owned_canonical_path(m):
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "output.xml"
+        def unlink_after_claim():
+            destination.unlink()
+        refuses(m, "output_path_changed", m.write_outputs,
+                [(str(destination), "new bytes")], False, unlink_after_claim)
+        assert not destination.exists()
+
+
+def test_new_output_parent_retarget_refuses_and_preserves_foreign_path(m):
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        original, foreign = root / "original", root / "foreign"
+        original.mkdir()
+        foreign.mkdir()
+        destination = original / "output.xml"
+        foreign_destination = foreign / "output.xml"
+        foreign_destination.write_text("foreign bytes")
+        def retarget_parent():
+            destination.unlink()
+            original.rmdir()
+            original.symlink_to(foreign, target_is_directory=True)
+        refuses(m, "output_path_changed", m.write_outputs,
+                [(str(destination), "new bytes")], False, retarget_parent)
+        assert foreign_destination.read_text() == "foreign bytes"
+        assert (root / "original").is_symlink(), "foreign retarget must not be deleted"
+        assert (root / "original").joinpath("output.xml").read_text() == "foreign bytes"
 
 def main():
     module = load()

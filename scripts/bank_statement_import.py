@@ -1633,12 +1633,13 @@ def _close_owned_path(record, failures):
         # close can fail after taking effect. Only an extant owned entry is a
         # retained-path failure; an already-unlinked backup has no such path.
         try:
-            if _entry_identity(record["path"]) == record["identity"]:
+            cleanup_path = record.get("cleanup_path", record["path"])
+            if _entry_identity(cleanup_path) == record["identity"]:
                 failures.append(record["path"])
         except FileNotFoundError:
             pass
         except OSError:
-            if os.path.lexists(record["path"]):
+            if os.path.lexists(record.get("cleanup_path", record["path"])):
                 failures.append(record["path"])
 
 
@@ -1653,9 +1654,9 @@ def _cleanup_owned_path(record, failures):
     """
     if os.name == "nt":
         _close_owned_path(record, failures)
-        _unlink_for_cleanup(record["path"], record["identity"], failures)
+        _unlink_for_cleanup(record.get("cleanup_path", record["path"]), record["identity"], failures)
     else:
-        _unlink_for_cleanup(record["path"], record["identity"], failures)
+        _unlink_for_cleanup(record.get("cleanup_path", record["path"]), record["identity"], failures)
         _close_owned_path(record, failures)
 
 
@@ -1961,7 +1962,7 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
     changes the path again after that check remains outside this CLI's locking
     authority.
     """
-    claimed, staged, replaced = [], [], []
+    claimed, staged, replaced, new_outputs = [], [], [], []
     # A record is the one ownership authority for a pathname: cleanup may
     # unlink it only while its identity still equals record["identity"].
     pending_backup = None
@@ -1987,9 +1988,27 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                                "real_path": real_path,
                                "original_identity": _file_identity(real_path)})
             else:
+                supplied_path = path
+                canonical_path = str(pathlib.Path(supplied_path).resolve())
                 handle = _open_private(path, accept_inherited)
-                record = _owned_path(path, handle, created=True)
+                # Keep cleanup on the canonical inode path captured before the
+                # open. The supplied spelling remains an authority that must
+                # still resolve to that same inode at commit time.
+                if (str(pathlib.Path(supplied_path).resolve()) != canonical_path
+                        or _file_identity(canonical_path) != _fd_identity(handle)):
+                    _unlink_for_cleanup(canonical_path, _fd_identity(handle), [])
+                    os.close(handle)
+                    raise Refusal(
+                        "output_path_changed",
+                        f"{supplied_path} changed while it was being claimed",
+                    )
+                record = _owned_path(canonical_path, handle, created=True)
+                record["supplied_path"] = supplied_path
+                record["canonical_path"] = canonical_path
+                record["cleanup_path"] = canonical_path
+                record["path"] = supplied_path
                 claimed.append(record)
+                new_outputs.append(record)
         if after_claim is not None:
             after_claim()
         for (_, text), record in zip(targets, claimed):
@@ -1999,6 +2018,20 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             handle = os.dup(record["pin"])
             with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
                 stream.write(text)
+        for record in new_outputs:
+            supplied_path = record["supplied_path"]
+            canonical_path = record["canonical_path"]
+            try:
+                changed = (str(pathlib.Path(supplied_path).resolve()) != canonical_path
+                           or _entry_identity(supplied_path) != record["identity"]
+                           or _entry_identity(canonical_path) != record["identity"])
+            except (FileNotFoundError, OSError):
+                changed = True
+            if changed:
+                raise Refusal(
+                    "output_path_changed",
+                    f"{supplied_path} changed before commit; no output was committed",
+                )
         # Every payload is on disk. A private copy preserves the old bytes while
         # the requested destination stays present until the atomic replacement.
         for state in staged:
