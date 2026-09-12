@@ -298,7 +298,19 @@ Implement:
    fix-it list.
 5. Encoding/normalization hardening: UTF-8/UTF-16LE/BOM fixtures;
    non-English (Devanagari, Gujarati, Tamil) company/ledger/narration
-   fixtures in the simulator corpus; name-key matching via §9.4b's
+   fixtures in the simulator corpus.
+   NAME KEYS ARE EXACT; FOLDING HAPPENS AT LOOKUP, NEVER AT STORAGE.
+   A catalogue holding both `Alpha-Beta` and `Alpha Beta` holds two
+   masters Tally keeps apart. Routing the KEY through a fold collapses
+   them into one mirror row before any ambiguity handling can run — the
+   second row is not ambiguous, it is **gone**, and nothing downstream
+   can recover a distinction that was destroyed on the way in. The same
+   applies to a case-differing pair under the directional predicate.
+   So: store rows under their exact codepoints; apply any permitted fold
+   when *resolving a request against* those rows, and when a fold
+   reaches more than one row, that is an ambiguity to surface — which is
+   only possible because both rows still exist.
+   With that settled, the resolving fold is §9.4b's
    `accepts(candidate, tally_name)` predicate — directional ASCII case
    folding only (`candidate == ascii_lower(tally_name)`; the reverse, an
    uppercase candidate against a lowercase master, was never measured and
@@ -606,6 +618,22 @@ Implement — write core (masters):
    altered in place, so its group, its opening balance and its GST
    registration are replaced by whatever the new payload carried. A
    duplicate is visible in a ledger list; an overwrite is not.
+   THE PRE-READ CANNOT CLOSE THE WINDOW, SO THE COUNTERS MUST.
+   Another Tally client or an operator can create a colliding master
+   between this pre-read and the dispatch, and §3.6's overwrite then
+   happens anyway. No amount of reading earlier removes that window —
+   Bridge's single-writer actor owns *Bridge's* writes, not Tally's.
+   What closes it is that the gateway reports the collision in the one
+   place it cannot hide: a `Create` that finds a match returns
+   **`CREATED=0, ALTERED=1`**. So a create dispatched from this step
+   MUST assert `CREATED=1`, and `ALTERED=1` is not a success with a
+   different label — it means a master that existed at dispatch time has
+   been overwritten with this payload, and it is an alarm, a halt, and a
+   restore-from-pre-image, never a promotion to CONFIRMED.
+   This is detection, not prevention, and the difference is worth
+   keeping: the guard below narrows the window to the dispatch itself,
+   and the counter check is what makes losing that race loud instead of
+   silent.
    Three outcomes, never two:
    **bind** to an exact-codepoint match;
    **create** only when NO existing master collides under the detector
