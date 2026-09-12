@@ -1069,6 +1069,7 @@ fn an_empty_proposal_entry_list_is_refused_at_the_core_boundary() {
             voucher_number: Some("AA0118"),
             remote_id: None,
             party: None,
+            narration_marker: None,
             entries: &[],
         })
         .expect_err("empty accounting data"),
