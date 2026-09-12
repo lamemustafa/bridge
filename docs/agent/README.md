@@ -175,17 +175,33 @@ valid empty collection remains distinguishable from invalid discovery.
 The MCPB extension exposes `verify_import` by default as a read-only recovery
 tool. `build_import_xml` remains behind `BRIDGE_AGENT_ENABLE_IMPORT=1` for a
 command-line installation, or is enabled with Journal posting as described
-below. A licensed synthetic-lab Journal file cycle and
-exact-file repeat import were observed on 2026-09-06. New file generation accepts
-only `Journal`, with freshly observed supported TallyPrime product and licence mode
-before and after build reads. Release and licence tier are returned as observed
-facts; they do not independently refuse a Journal file. `tally_status` reports
-the observed release and licence tier; the optional status-page banner cannot
-supply these facts. `Payment`, `Receipt`, and `Contra` are refused until each has
-live import/readback evidence. Historical batch records remain readable. The response records
-`live_evidence: "synthetic_lab_readback"` and links to
-[the assessment](ASSESSMENT-2026-09-06.md). This does not qualify every voucher
-type, host, licence mode, or manually imported file.
+below. New file generation accepts `Journal`, `Payment`, `Receipt` and `Contra`, each
+with freshly observed supported TallyPrime product and licence mode before and
+after the build reads. Release and licence tier are returned as observed facts;
+they do not independently refuse a file. `tally_status` reports the observed
+release and licence tier; the optional status-page banner cannot supply these
+facts. Every other voucher type is refused.
+
+The four rest on different observations, and each build reports its own in
+`live_evidence` rather than a single blanket claim:
+
+- `Journal` — a licensed synthetic-lab file cycle and exact-file repeat import
+  observed 2026-09-06; see [the assessment](ASSESSMENT-2026-09-06.md).
+- `Payment`, `Receipt`, `Contra` — a licensed TallyPrime 7.1 Gold bank-statement
+  import observed 2026-09-10; see
+  [reference §9.13](../tally/TALLY_PROTOCOL_REFERENCE.md). These three are
+  admitted only as two entries over two distinct ledgers with no voucher number
+  and no reference, and their money side must be a ledger whose live group
+  ancestry reaches a reserved `Bank Accounts` or `Cash-in-Hand` identity, while
+  their counterparty side must be established as holding no money — money on
+  both sides is a `Contra`, and an unresolvable group is refused too. A money group is admitted only where a captured ledger sits under
+  it, so an overdraft or cash-credit ledger (`Bank OD A/c`, `Bank OCC A/c`) is
+  refused on either side until one is captured. Bill-wise allocation is not supported: every party amount lands On
+  Account, and a build that names a counterparty warns so.
+
+Historical batch records remain readable. None of this qualifies every host,
+licence mode, or manually imported file, and only an unnumbered single-voucher
+`Journal` batch is eligible for native posting.
 
 1. Call `voucher_schema` and produce a payload matching its schema. Transaction
    IDs are client-supplied, unique within the batch, and retained in the local import ledger.
@@ -194,9 +210,14 @@ type, host, licence mode, or manually imported file.
 3. Call `build_import_xml` with the payload. It checks exact decimal balance,
    company date extent, live masters, and local journal integrity,
    repeats the full catalogue to reject intervening changes, then writes `<data_dir>/imports/<batch_id>.xml` and records an append-only
-   `agent-import-ledger.jsonl` line. `voucher_number` is optional: when absent,
-   Tally applies the voucher type's own numbering configuration; when supplied,
-   it is validated and sent so a Manual-type duplicate policy can reject it.
+   `agent-import-ledger.jsonl` line. On a `Journal`, `voucher_number` and
+   `reference` are optional: when a number is absent Tally applies the voucher
+   type's own numbering configuration, and when supplied it is validated and
+   sent so a Manual-type duplicate policy can reject it. On `Payment`,
+   `Receipt` and `Contra` **both fields are refused** — neither element's fate
+   has been observed on those types, and the bank's own reference belongs in
+   the narration, which survives. A payload carrying one is rejected before any
+   live read.
 4. In Tally, with the intended company open, use **Gateway of Tally → Import →
    Vouchers** to import the file. Bridge does not dispatch this manual step.
    Alternatively, use the separately approved MCP or desktop Journal posting
@@ -204,13 +225,17 @@ type, host, licence mode, or manually imported file.
 5. Call `verify_import` with the company GUID and batch ID. It reads the date
    window back, compares the exact signed ledger entries, reports missing or
    divergent rows and duplicates, writes `.proof.json` and `.proof.md`, and
-   appends the verification status to the local import ledger.
+   appends the verification status to the local import ledger. It compares the
+   date, voucher type and entries; it does **not** compare `EFFECTIVEDATE` or
+   `PARTYLEDGERNAME`, which `Payment`, `Receipt` and `Contra` files carry — see
+   the limits noted in reference §9.13.
 
 The file path is deliberately not a direct-posting path. Masters must already
 exist and match exactly. File generation requires fresh supported product/mode
 observations; the checks do not make a later manual import atomic with the earlier reads.
-Education-mode Journal dates must be on day 1, 2, or 31. A different requested
-date is refused as `education_voucher_date_unsupported`; Bridge does not move it.
+In Education mode, voucher dates must be on day 1, 2, or 31 — for every
+voucher type, not only `Journal`. A different requested date is refused as
+`education_voucher_date_unsupported`; Bridge does not move it.
 Optional narration and reference must contain 1–2,000 Unicode characters when
 supplied; omit them when unused. Control characters and the reserved attribution
 marker are refused, including XML entity-encoded marker spellings. Voucher
@@ -457,8 +482,16 @@ New files use `identity_scheme: "batch_v1"`. Each voucher's wire `REMOTEID` and
 narration marker share a UUID derived from the generated batch ID and caller's
 `bridge_txn_id`. The caller ID remains the local transaction label; it is not
 sent directly as Tally's upsert key. Reused labels in independent batches therefore
-have different wire identities. Retry the saved file: rebuilding after losing the
-batch journal creates a new identity and does not deduplicate the business event.
+have different wire identities, so rebuilding after losing the batch journal
+creates a new identity and does not deduplicate the business event.
+
+**Whether to retry the saved file depends on the voucher type.** Exact-file
+repeat is qualified for `Journal` only: a repeat import of the identical file
+returned `CREATED=0, ALTERED=1` and left one voucher. Nothing establishes that
+for `Payment`, `Receipt` or `Contra` — each measured bank file was imported
+exactly once — so a second import of one may create a second set of vouchers.
+For those three, do not re-import: call `verify_import`, which reads the window
+back without writing.
 Historical records without an identity scheme retain their original raw-label
 interpretation. Unknown schemes are refused. Narration markers support readback
 attribution; they are not authenticated provenance.

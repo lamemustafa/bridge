@@ -16,9 +16,7 @@ use super::{
     xml_parser::{self, TallyCompany},
     VerifiedCompanyIdentity,
 };
-use crate::reports::party_ledger_master::{
-    PartyLedgerMasterGroup, PartyLedgerMasterRow, PartyLedgerMasterSource,
-};
+use crate::reports::party_ledger_master::{PartyLedgerMasterRow, PartyLedgerMasterSource};
 use crate::tally::runtime::{
     with_read_evidence, PartyLedgerMasterCurrencyAssertion, RuntimeReadEvidence,
 };
@@ -1125,11 +1123,7 @@ impl TallyClient {
                 parse_native_group_snapshot_with_evidence(&group_body, identity.company_guid())
                     .map_err(party_ledger_master_group_snapshot_error)?
                     .into_iter()
-                    .map(|entry| PartyLedgerMasterGroup {
-                        name: entry.record.name,
-                        parent: entry.record.parent,
-                        reserved_name: entry.record.reserved_name,
-                    })
+                    .map(|entry| entry.record)
                     .collect();
             let closing_extent = self.fetch_company_book_extent(identity).await?;
             if closing_extent != opening_extent {

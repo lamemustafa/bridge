@@ -11,6 +11,13 @@ current source.
 
 ### Changed
 
+- `build_import_xml` now reports `live_evidence` as an array of
+  `{observation, report, voucher_types}` records rather than a single string,
+  and no longer emits `live_evidence_report`. The previous shape could name
+  only one source for a whole batch, so a Payment build cited a report that
+  records Payment being refused. A client branching on the old string value
+  needs updating; the accompanying voucher types make the provenance readable
+  without one.
 - Relicensed future Bridge distributions from the MIT License to the Apache
   License, Version 2.0. The previously published `v0.1.0` release remains
   available under the MIT License that accompanied that release.
@@ -33,6 +40,19 @@ current source.
 
 ### Added
 
+- Local import files may now carry Payment, Receipt and Contra vouchers as well
+  as Journals, so a bank statement can be expressed in the voucher types Tally
+  files it under. Each of the three is admitted only as two entries over two
+  distinct ledgers carrying neither a voucher number nor a reference. The side
+  that must hold money is refused unless that ledger's live group ancestry
+  reaches a reserved Bank Accounts or Cash-in-Hand identity — the two where a
+  captured ledger is observed sitting under a captured group. The counterparty
+  side must be established as holding no money: any money group there means the
+  voucher is really a Contra, and a ledger whose group ancestry cannot be
+  resolved is refused as well, because neither leg is admitted on an absence of
+  evidence. A build that names a
+  counterparty warns that its amount lands On Account. Native posting is
+  unchanged and still accepts only one unnumbered Journal.
 - A local-first Tally Truth Layer with capability passports, explicit truth
   states, encrypted mirror evidence, resumable/adaptive snapshots, Proof of
   Sync and Gap Map output, and a safer operator console. The migrations are

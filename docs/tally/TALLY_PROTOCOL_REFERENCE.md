@@ -653,8 +653,6 @@ company profile described here. It does **not** establish that other releases,
 modes, or Group shapes emit the field; Bridge must continue to fail closed when
 the response lacks or mismatches the selected company GUID.
 
----
-
 ### 8.2a Curated `BILLALLOCATIONS` drops the `On Account` type — **VERIFIED 2026-09-11; single instance**
 
 **Scope: TallyPrime 7.1 Silver, licensed, `education_mode: false`, one company, 144 allocations.**
@@ -705,6 +703,40 @@ allocations with no `BILLTYPE` as "(none)" on both sides and compared the bucket
 typed `On Account` rows sat inside the curated side's "(none)" pile, the tallies matched exactly,
 and the conclusion published was "identical". A comparison whose categories can absorb the
 difference cannot detect the difference — count the absent case as its own bucket.
+
+### 8.2b `RESERVEDNAME` is a group's rename-proof identity, and `NAME` is not — **VERIFIED 2026-08-20**
+
+**Why this matters:** any rule of the form "ledgers under Sundry Debtors are parties" or
+"ledgers under Bank Accounts hold money" is written against a name a user is free to change.
+
+Three observations on the §8.2 collection, over two synthetic companies (28 and 29 groups) on
+TallyPrime 7.1:
+
+1. **Every predefined group carries a non-empty `RESERVEDNAME`, and a user-created group
+   carries an empty one.** The empty value is Tally's own positive signal that the row is
+   user-created — it is not a missing field, and a reader that never requested the attribute
+   at all must be kept distinct from both.
+2. **A predefined group can be renamed over XML and `RESERVEDNAME` survives it.** An
+   `Import Data` / `All Masters` `<GROUP ACTION="Alter">` carrying a `NAME.LIST` renamed the
+   predefined `Suspense A/c` — `ALTERED=1`, group count unchanged, and the readback returned
+   `<GROUP NAME="WR5 Renamed Suspense" RESERVEDNAME="Suspense A/c">`. The book was restored
+   afterwards and the group set verified identical to the committed fixture. Renaming
+   predefined groups is not exotic in books migrated from other software.
+3. **`RESERVENAME` is a different field with the opposite meaning.** In the same readback,
+   `RESERVEDNAME` held the original predefined identity and `RESERVENAME` held the *current*
+   name. They differ by one letter; reaching for the wrong one silently restores the bug.
+
+A group also exposes `PARENTSTRUCTURE` — its whole ancestry chain, separated by raw `U+0003` —
+but **ledgers do not**: fetched explicitly against all 88 ledgers of one company it returned
+zero occurrences. So a ledger-to-group ancestry walk climbs one `PARENT` hop at a time through
+the Group collection; `PARENTSTRUCTURE` is a shortcut for the group tree only. A top-level
+group's `PARENT` is the control-marked reserved root of §1.1, not the word `Primary`.
+
+> **RULE: classify a group by `RESERVEDNAME`; treat an empty one as "user-created, keep
+> climbing"; treat an absent one as no evidence at all.** §9.13's cash/bank gate is built on
+> exactly this.
+
+---
 
 ### 8.3 GST duty head — the vocabulary is irregular and `TAXTYPE` qualifies it — **VERIFIED 2026-09-12; single instance**
 
@@ -1353,6 +1385,216 @@ returned `CREATED=1`.
 
 Note also that `EXCEPTIONS=1` arrived with **no `LINEERROR`** — a parser must treat a
 non-zero `EXCEPTIONS` as failure on its own, without waiting for an error string.
+
+### 9.13 Payment, Receipt and Contra — the bank-statement voucher shapes
+
+**VERIFIED 2026-09-10 (licensed TallyPrime 7.1 Gold; five files imported by hand through
+Gateway of Tally → Import → Vouchers).** **157 vouchers** in total, counted from the retained
+files themselves: **147** of the three bank types across four files — a 1-voucher pilot, 61
+Payments with 54 Receipts, 3 Contras, and 20 Payments with 8 Receipts — plus **10** reallocation
+Journals in a fifth. `CREATED` equalled the voucher count on every file with zero errors and zero
+exceptions, and each affected bank ledger reproduced, on readback, the debit total, credit total
+and closing balance its own statement printed.
+
+*(The session record headlined 148. That figure does not reconcile with its own per-file table
+or with the artifacts, both of which give 157; the count above is taken from the files.)*
+
+**A bank statement cannot be expressed as Journals.** Booking bank lines as Journals reconciles
+arithmetically and misfiles every one of them: wrong voucher register, wrong day book grouping,
+and visibly unlike the book's existing entries. The type decides which side holds the money:
+
+| statement line | voucher | entries |
+| --- | --- | --- |
+| withdrawal | **Payment** | Dr party, Cr bank |
+| deposit | **Receipt** | Dr bank, Cr party |
+| own-account or cash movement | **Contra** | both legs cash/bank |
+
+The imported element shape, per voucher:
+
+```xml
+<VOUCHER VCHTYPE="Payment" ACTION="Create" OBJVIEW="Accounting Voucher View" REMOTEID="...">
+  <DATE>20260801</DATE>
+  <EFFECTIVEDATE>20260801</EFFECTIVEDATE>
+  <VOUCHERTYPENAME>Payment</VOUCHERTYPENAME>
+  <PARTYLEDGERNAME>...</PARTYLEDGERNAME>       <!-- omitted on Contra -->
+  <NARRATION>...</NARRATION>
+  <ALLLEDGERENTRIES.LIST>
+    <LEDGERNAME>...</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-100000.00</AMOUNT>
+  </ALLLEDGERENTRIES.LIST>
+  ...
+</VOUCHER>
+```
+
+Four properties of it are not guessable, and each was measured:
+
+1. **A debit is `ISDEEMEDPOSITIVE Yes` with a NEGATIVE `AMOUNT`.** The flag and the sign say the
+   same thing and must agree; they are not independent fields.
+2. **`EFFECTIVEDATE` accompanied `DATE` on every voucher**, always equal to it. Whether these
+   types import without it was not tested, so omitting it is outside this measurement.
+3. **No `<VOUCHERNUMBER>`.** These types numbered automatically in the observed book, and §9.8
+   established that automatic numbering discards a supplied number in silence. Tally assigned
+   its own. The bank's reference goes in the narration, which survives.
+4. **`REMOTEID` on every voucher.** Delete by the client-supplied `REMOTEID` is the correction
+   path, and §9.12b confirms it on a live book — the value you sent stays addressable as a delete
+   key even though the export shows Tally's own. Use Delete + Create because it is the confirmed
+   path, not because `Alter` is known to fail: §9.12b is explicit that `Alter` is unverified on a
+   licensed profile rather than ruled out. A batch imported without a `REMOTEID` has no correction
+   path at all, which is the point of sending one.
+
+   **But the readback does not echo it in that attribute, and that is a trap.** A `Voucher`
+   collection returns a `REMOTEID` attribute holding *Tally's own* `<company GUID>-<master id>`
+   identifier, not the value the client sent. From the committed live capture
+   `fixtures/agent/native-namespaced-journal.utf16le.xml`, a readback of a voucher Bridge
+   imported:
+
+   ```
+   REMOTEID attribute : 61c6de69-1748-461c-ad3f-162cb949df9f-00000005
+   NARRATION          : ... [BRIDGE:9c8d8de4-c06c-847b-8309-60ba702bf663]
+   ```
+
+   **The client key is not absent from the response — it is in the narration.** §9.8 records
+   that this batch used the same batch-derived UUID for its `REMOTEID` and its narration marker,
+   and the marker came back intact while the attribute did not. The rule is field-specific and
+   more useful stated that way: **Tally overwrites the attribute it owns, and preserves a marker
+   placed in a field it does not.** That is why Bridge attributes readback by the narration tag —
+   a deliberate choice of a durable carrier, not a workaround for a missing one.
+
+   A verifier that compares the observed attribute against the value it sent therefore refuses
+   every legitimate readback. The client value is still *stored*, still matches for a
+   byte-identical repeat (§9.3), and still deletes (§9.12b); it is only unreadable through this
+   attribute.
+
+§9.1b applies unchanged and bites hardest here: a single unescaped `&` in a counterparty name
+rejects the whole file with no field hint.
+
+**Correcting a posted batch — reallocation Journals, not delete-and-recreate.** Lines whose
+counterparty could not be identified were booked against a suspense ledger and corrected later
+by a Journal moving the amount off suspense onto the real ledger. That leaves the bank side
+untouched, keeps the correction auditable, and sidesteps the no-Alter restriction entirely; 10
+such Journals were verified the same day.
+
+**Naming the company does not aim the write.** The generated envelope carries
+`<SVCURRENTCOMPANY>`, and §9.11d records a *verified* case of a mismatched value posting into the
+**loaded** company with `CREATED=1, ERRORS=0, EXCEPTIONS=0`. **Which** mismatches behave that way
+is UNVERIFIED: a separate measurement had an existing-but-unloaded name fail closed, but the
+silent case's instance was never enumerated, so "the name matched nothing" is an inference from
+its shape. Do not reason about which *kind* of wrong name is dangerous — there is a verified
+silent case and no rule saying when it applies. Bridge cannot guard a hand import it never sees,
+so the check is the operator's: immediately before importing, read the company and compare the
+**complete identity tuple** `(canonical_origin, COMPANYNUMBER, GUID, NAME, BOOKSFROM)` — not the
+GUID alone, because §9.11b is verified that a year-end split gives the child its parent's GUID.
+`verify_import` takes a GUID as its argument but already enforces the rest: it refuses with
+`company_identity_mismatch` unless the name, GUID, company number and books-from recorded at
+build time all still match what the instance reports, so a readback aimed at a split sibling
+fails closed. Per §9.11d, neither check closes the window between the check and the send; it is
+narrowed only by running on an instance where no other company is loaded.
+
+**Scope and limits.** One company, one build, two statement layouts, and files imported through
+the UI rather than dispatched by Bridge. Bill-wise allocation was never exercised — every party
+amount landed On Account, which is **not** established as correct for a book that reconciles
+bills. This qualifies the three file shapes. It does not qualify a Bridge dispatch of them,
+which remains one unnumbered Journal (§9.8).
+
+**Which mixes are qualified.** One file may carry more than one voucher type — two of the
+measured files did, 61 Payments with 54 Receipts and 20 with 8, both importing clean. The three
+Contras and the ten reallocation Journals each went in on their own file, so:
+
+| file contents | basis |
+| --- | --- |
+| Payment + Receipt | **observed** |
+| Contra alongside either | **inferred** — Contra renders a strict subset of the Payment shape (same envelope and elements, minus the party), and a statement carrying a transfer line is the ordinary composition |
+| Journal alongside any of the three | **refused** — a Journal renders no `EFFECTIVEDATE`, names no party, may carry a number and a reference, and comes from §9.8's separate lineage. Holding both citations is not evidence for their union |
+
+**What Bridge builds from it.** `build_import_xml` renders exactly this shape for Payment,
+Receipt and Contra, and leaves the Journal shape byte-identical to the file §9.8's own
+measurement ran on. Each of the three is admitted only as two entries over two distinct ledgers,
+carrying neither a supplied voucher number nor a `REFERENCE`: no file carrying either has been
+imported and read back on these types, and `verify_import` compares accounting entries rather
+than those annotations, so nothing downstream would notice Tally dropping or rewriting one.
+
+Both legs are classified, not just the funding one:
+
+| leg | requirement | refused by |
+| --- | --- | --- |
+| Payment credit, Receipt debit, both Contra legs | must be a **admitted** money group | anything else, **including "could not be established"** — a positive fact is required and absent |
+| the counterparty leg of a Payment or Receipt | must be **established as holding no money** | any known money group, **and "could not be established"** |
+
+Both legs need a positive fact; they differ only in which one. An earlier version made the
+counterparty rule the looser of the two — refusing only a leg established *as* money — on the
+reasoning that an unclassifiable counterparty is not evidence of a disguised Contra. Both halves
+of that were weaker than they sounded. An ordinary party never lands unclassified: one under
+`Sundry Debtors` resolves directly, and one under a user-created group walks up to its reserved
+ancestor, so only anomalies reach that state. And the consequences are not symmetric — a
+misjudged money leg makes Tally reject the import, which is loud, while a misjudged counterparty
+files a Contra into the Payment register, which is silent and found later. The silent failure
+earns the stricter rule.
+
+The two columns also ask different questions of the same group, and that gap matters.
+
+**Admitted** means a captured ledger was observed sitting under a captured group — the whole
+edge the classifier walks, not just its far end. A group row proves the identity exists; it does
+not show a ledger's `PARENT` resolving to it. Two identities clear that bar: `Bank Accounts` and
+`Cash-in-Hand`.
+
+**Known money** is wider, and covers two more:
+
+| identity | group row captured | ledger under it captured | admitted |
+| --- | --- | --- | --- |
+| `Bank Accounts`, `Cash-in-Hand` | yes | yes | yes |
+| `Bank OD A/c` | yes | **no** | no |
+| `Bank OCC A/c` | **no** | no | no |
+
+A ledger under either unadmitted identity is refused on a money leg for want of an observed edge,
+and refused on a counterparty leg because it plainly holds money. Both refusals are the same
+ignorance pointed in the safe direction; reading "not admitted" as "not money" would wave through
+exactly the bank-to-bank Payment the counterparty rule exists to catch. The practical cost is
+that an overdraft or cash-credit book cannot be imported through Bridge yet — one
+`List of Ledgers` read against such a book promotes `Bank OD A/c` and removes it.
+
+Classification walks the ledger's group ancestry through `RESERVEDNAME` per §8.2b, so a renamed
+predefined group still classifies. A book whose money ledger sits under a group the Group
+collection does not carry at all is refused the same way.
+
+**What that check does not cover**, written here because a passing verdict invites being read
+for more than it proves:
+
+- It is a **group** check, not a ledger-suitability check. A bill-wise party, a foreign-currency
+  bank account and a ledger requiring cost-centre allocation all classify identically to one
+  needing none of that. It answers where the ledger sits, not whether Tally can use it here.
+- It is true **as of the read**. The build reads the masters twice and refuses if they moved,
+  which establishes stability across the build and nothing after it. The file is imported by
+  hand later and Bridge never observes that import, so a ledger regrouped in between — an
+  ordinary operation — leaves a stale verdict with no later gate. `verify_import` compares
+  entries and would not notice a party that has since become a bank ledger.
+- An **incomplete read refuses rather than admits**: a group missing from a truncated collection
+  reads as unresolvable ancestry. The failure mode of a partial read is a rejected batch, never
+  an accepted one.
+
+**What it still does not do.** Two gaps, both stated here rather than left to be discovered.
+
+Nothing detects a party ledger configured for bill-wise accounting: the catalogue Bridge reads
+carries no such flag, and adding one would mean authoring a request shape with no live capture
+behind it. Every party amount therefore lands On Account, exactly as the measured import did,
+and every build naming a counterparty says so in its warnings.
+
+**Two written elements are not verified: `EFFECTIVEDATE` and `PARTYLEDGERNAME`.** The
+verification collection of §9.8 fetches neither, so `verify_import` compares the date, voucher
+type and signed entries and cannot see whether Tally kept, rewrote or dropped either — nor
+whether an operator later edited them. A readback with a wrong effective date, or a party
+silently dropped, still reports `posted_verified`.
+
+The two are not equally unknown, and the difference decides how to close them:
+
+| element | is it returned by a voucher collection? |
+| --- | --- |
+| `PARTYLEDGERNAME` | **yes, observed** — a captured `Sales` readback carries it populated. Whether the three bank types echo it is not observed |
+| `EFFECTIVEDATE` | **unobserved** — no captured response in this tree carries it |
+
+Neither may be fetched and *required* on that basis alone. Requiring an element that a
+response does not return refuses every legitimate verification, which is a worse failure than
+the one it guards — the same trap as comparing `REMOTEID` above, where the field comes back
+carrying Tally's value rather than the client's. Both close with one live read that adds them to
+the `FETCH` list and looks at what arrives.
 
 ### 9.9 Bulk import throughput
 
@@ -2793,4 +3035,6 @@ UI. Deletion was not exercised at all. Per P6, neither may be built upon.
 | 2026-08-02 | Added §12a from a live measurement session: built-in named reports (qualifying §2.2), per-kind ageing semantics, the two ageing methods, eight import rewrites (extending §9), configuration as a non-diagnostic, the unallocated remainder and its recovery, the `Company` collection ignoring `SVCURRENTCOMPANY` (qualifying §9.11), and a linear volume model with a cheap pre-flight count. |
 | 2026-08-22 | Updated §5.3 with the observed Education `{1,2,31}` boundary rule and the limited TallyPrime Silver arbitrary-day observations; this settles #115 item 1 for the recorded profile. |
 | 2026-08-28 | Added §8.1's read-only ledger-master field-presence observation and explicit public-fixture privacy boundary. |
+| 2026-09-10 | Added §9.13's Payment/Receipt/Contra import shapes from a licensed 7.1 Gold bank-statement import, and §8.2b's `RESERVEDNAME` group-identity rule that its cash/bank gate is built on. |
 | 2026-09-11 | Extended §12a.9 to TallyPrime 7.1 licensed Silver and the `StandardLedgerCatalogV1` profile from a live rename/restore capture (VERIFIED), and recorded three structural facts with separate markers: ledger `RESERVEDNAME` follows the same reserved/not-reserved convention as groups, one of nine populated (VERIFIED), company-scoped ledger GUIDs (PARTIAL — verified on all nine rows of one company). XML-driven rename and deletion remain UNVERIFIED. A later revision the same day withdrew a `CMPINFO` alteration-counter claim that the committed fixtures did not support. |
+| 2026-09-11 | Narrowed §9.13's company-guard paragraph to match §9.11d: which *kind* of mismatched `SVCURRENTCOMPANY` posts silently is UNVERIFIED, so the classification by name shape was withdrawn, and the pre-write check was corrected from the GUID alone to the whole §9.11b identity tuple. |

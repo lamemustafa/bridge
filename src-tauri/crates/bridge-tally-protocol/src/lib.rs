@@ -19,6 +19,7 @@ use sha2::{Digest, Sha256};
 pub mod bills_native_outstandings_probe;
 #[cfg(feature = "bills-payments-observation-parser")]
 pub mod bills_payments_observation;
+pub mod group_ancestry;
 #[cfg(feature = "india-tax-observation-parser")]
 pub mod india_tax_observation;
 #[cfg(feature = "jsonex-parser")]
@@ -1443,12 +1444,31 @@ pub fn parse_standard_ledger_identity_observation(
 /// or desktop review.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StandardLedgerCatalog {
-    entries: Vec<(String, String)>,
+    entries: Vec<StandardLedgerCatalogEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StandardLedgerCatalogEntry {
+    name: String,
+    guid: String,
+    /// The immediate `PARENT` group Tally returned for this ledger, or `None`
+    /// when it returned none. A ledger exposes no `PARENTSTRUCTURE`, so this
+    /// single hop is all the ancestry one catalog response carries; a caller
+    /// that needs the group's own identity must read the Group collection.
+    parent: Option<String>,
 }
 
 impl StandardLedgerCatalog {
     pub fn names(&self) -> impl Iterator<Item = &str> {
-        self.entries.iter().map(|(name, _)| name.as_str())
+        self.entries.iter().map(|entry| entry.name.as_str())
+    }
+
+    /// Each ledger paired with the immediate parent group Tally returned for
+    /// it. `None` is an unobserved parent, never an empty group name.
+    pub fn parents(&self) -> impl Iterator<Item = (&str, Option<&str>)> {
+        self.entries
+            .iter()
+            .map(|entry| (entry.name.as_str(), entry.parent.as_deref()))
     }
 
     pub fn bind_selected(
@@ -1461,14 +1481,14 @@ impl StandardLedgerCatalog {
         let entries = requested
             .into_iter()
             .map(|name| {
-                let (_, guid) = self
+                let entry = self
                     .entries
                     .iter()
-                    .find(|(candidate, _)| candidate == &name)
+                    .find(|candidate| candidate.name == name)
                     .ok_or_else(|| {
                         anyhow::anyhow!("standard ledger catalog omitted requested ledger")
                     })?;
-                Ok((name, guid.clone()))
+                Ok((name, entry.guid.clone()))
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
         Ok(StandardLedgerCatalogBinding { entries })
@@ -1494,8 +1514,8 @@ impl StandardLedgerCatalogBinding {
     /// per binding.
     pub fn matches_catalog(&self, current: &StandardLedgerCatalog) -> bool {
         self.entries.iter().all(|(name, guid)| {
-            current.entries.iter().any(|(candidate, current_guid)| {
-                candidate == name && current_guid.eq_ignore_ascii_case(guid)
+            current.entries.iter().any(|candidate| {
+                &candidate.name == name && candidate.guid.eq_ignore_ascii_case(guid)
             })
         })
     }
@@ -1529,7 +1549,15 @@ pub fn parse_standard_ledger_catalog_with_identities(
     Ok(StandardLedgerCatalog {
         entries: rows
             .into_iter()
-            .map(|row| (row.ledger.name, row.guid))
+            .map(|row| StandardLedgerCatalogEntry {
+                name: row.ledger.name,
+                guid: row.guid,
+                parent: row
+                    .ledger
+                    .parent
+                    .nonempty_returned_text()
+                    .map(str::to_string),
+            })
             .collect(),
     })
 }
@@ -1724,7 +1752,11 @@ fn parse_standard_ledger_identity_row(
                             anyhow::bail!("standard ledger collection repeated ledger parent");
                         }
                         parent_seen = true;
-                        parent = match read_optional_text(reader, child.name())? {
+                        // `read_identifier_text`, not `read_optional_text`: the latter
+                        // trims, which would hand `safe_standard_ledger_parent` an
+                        // already-normalized name and defeat the byte preservation the
+                        // function below exists to provide.
+                        parent = match read_identifier_text(reader, child.name())? {
                             Some(value) => match safe_standard_ledger_parent(&value) {
                                 Some(value) => PartyLedgerMasterFieldObservation::Returned(value),
                                 None => PartyLedgerMasterFieldObservation::NotObserved,
@@ -1856,9 +1888,16 @@ fn normalized_standard_company_guid(value: &str) -> anyhow::Result<String> {
     Ok(value.to_string())
 }
 
+/// Validates a ledger's `PARENT` without normalising it.
+///
+/// The emptiness test reads the trimmed view, but the value is retained
+/// verbatim. A `PARENT` is a foreign reference to a group `NAME`, matched by
+/// exact codepoint, so trimming here would silently resolve a pair that
+/// [`group_ancestry`] is built to refuse — and it would do so upstream of the
+/// walk, where the walk cannot see it.
 fn safe_standard_ledger_parent(value: &str) -> Option<String> {
-    let value = value.trim();
-    if value.is_empty() || value.len() > 1024 || value.chars().any(unsafe_display_character) {
+    if value.trim().is_empty() || value.len() > 1024 || value.chars().any(unsafe_display_character)
+    {
         return None;
     }
     Some(value.to_string())
