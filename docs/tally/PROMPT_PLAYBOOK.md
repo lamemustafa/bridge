@@ -628,8 +628,25 @@ Implement — write core (masters):
    **`CREATED=0, ALTERED=1`**. So a create dispatched from this step
    MUST assert `CREATED=1`, and `ALTERED=1` is not a success with a
    different label — it means a master that existed at dispatch time has
-   been overwritten with this payload, and it is an alarm, a halt, and a
-   restore-from-pre-image, never a promotion to CONFIRMED.
+   been overwritten with this payload, and it is an alarm and a halt,
+   never a promotion to CONFIRMED.
+   AND BRIDGE CANNOT RESTORE IT. The outbox carries a pre-image for
+   ALTERS (step 1), because an alter knows what it is replacing. A
+   create does not: the pre-read found nothing, so there is no
+   pre-image, and the master that a foreign writer created in the window
+   is one Bridge never observed. Its group, opening balance and
+   registration are gone and are not in our records.
+   Saying "restore from the pre-image" here would prescribe a recovery
+   that does not exist for this case. What the operator gets instead is
+   the truth and the material to act on it: the master name, the exact
+   payload that overwrote it, the dispatch time, and a statement that
+   the prior content was never observed by Bridge and must be
+   reconstructed from the client's own records or a Tally backup.
+   This is why the window matters rather than being an acceptable
+   residual: **re-read immediately before dispatch, not once per batch**,
+   because every instruction between the read and the write is window.
+   An unrecoverable failure is not made acceptable by being detected —
+   detection is what stops it compounding.
    This is detection, not prevention, and the difference is worth
    keeping: the guard below narrows the window to the dispatch itself,
    and the counter check is what makes losing that race loud instead of
@@ -676,7 +693,10 @@ Implement — write core (masters):
    the NFC/NFD row included: an earlier revision of this gate called
    that capture licensed and it is not —
    `src-tauri/crates/bridge-tally-protocol/tests/fixtures/encoding/`
-   `PROVENANCE.md` records the 2026-08-19 instance behind it as **EDU**.
+   `PROVENANCE.md` records the 2026-08-19 instance behind it as
+   **standard TallyPrime 7.1 in Educational mode** — which is neither
+   §0's Edit Log 7.0 Educational baseline nor a licensed SKU, so it
+   qualifies neither.
    **§9.4d is the licensed qualification, and it is qualification of a
    WRITE.** It re-ran §9.4b's method on **TallyPrime 7.1, licence tier
    silver, `education_mode=false`** by importing vouchers naming folded
