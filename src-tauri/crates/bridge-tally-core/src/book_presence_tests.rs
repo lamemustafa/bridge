@@ -240,7 +240,7 @@ fn run(
         window
             .vouchers()
             .iter()
-            .flat_map(|voucher| voucher.ledger_keys.iter().cloned()),
+            .flat_map(|voucher| voucher.observed_ledgers.iter().cloned()),
     );
     names.sort();
     names.dedup();
@@ -457,6 +457,33 @@ fn request_refuses_a_window_ledger_missing_from_its_catalog() {
             &proposals
         )
         .expect_err("window ledger is absent from catalog"),
+        PresenceError::CatalogWindowCoverageMissing
+    );
+}
+
+#[test]
+fn request_coverage_uses_the_exact_observed_spelling() {
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118")
+        .party_field("Café")
+        .rows(vec![["Café", "0.00"]])]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118").build()];
+    let exact = catalog_of(&["Café"]);
+    assert!(PresenceRequest::new(
+        &window,
+        &exact,
+        &numbering(NumberingMethod::Manual),
+        &proposals
+    )
+    .is_ok());
+    let folded_only = catalog_of(&["café"]);
+    assert_eq!(
+        PresenceRequest::new(
+            &window,
+            &folded_only,
+            &numbering(NumberingMethod::Manual),
+            &proposals
+        )
+        .expect_err("folded spelling is not exact coverage"),
         PresenceError::CatalogWindowCoverageMissing
     );
 }
@@ -895,7 +922,7 @@ fn candidates_are_ordered_by_rule_then_key_and_never_by_similarity() {
 // --- party matching is master_binding -----------------------------------
 
 #[test]
-fn a_complete_catalogue_keeps_an_embedded_identifier_ambiguity_unresolved() {
+fn a_party_binds_on_an_embedded_identifier_before_any_name() {
     let names = [
         "Alpha (5550000001)",
         "Alpha Traders",
@@ -927,14 +954,10 @@ fn a_complete_catalogue_keeps_an_embedded_identifier_ambiguity_unresolved() {
         &proposals,
     );
     let entry = only(&report);
-    // Completing the catalogue with the observed window spelling introduces a
-    // second holder for this identifier. That is genuine ambiguity, not a
-    // reason to omit the observed ledger from exact coverage.
     assert_eq!(
         entry.party,
-        PartyOutcome::Ambiguous {
-            reason: "master_binding_identifier_conflict".to_string(),
-            candidate_count: 3,
+        PartyOutcome::Bound {
+            catalog_name: "Alpha (5550000001)".to_string()
         }
     );
     assert_eq!(
