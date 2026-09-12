@@ -663,6 +663,9 @@ class _EvidenceBank:
     def reference(row): return ("REF", "123456" + "789012")
     @staticmethod
     def party(row): return "PARTY"
+_real_importer, _ = m._load_parser("hdfc")
+_EvidenceParser._money = staticmethod(_real_importer._money)
+_EvidenceParser._balance = staticmethod(_real_importer._balance)
 try:
     m._validate_parser_evidence(_EvidenceParser, _EvidenceBank,
         [{"date":"02/08/26", "dr":"100.00", "cr":"", "bal":"900.00"}],
@@ -671,6 +674,73 @@ except m.EvidenceRefusal as refusal:
     check("debit-credit side swap refuses with row context", refusal.category == "accounting_row_shape_misaligned" and refusal.bank == "hdfc" and refusal.row_index == 0)
 else:
     check("debit-credit side swap refuses with row context", False)
+
+
+def evidence_row(**changes):
+    row = {"date": "02/08/26", "dr": "100.00", "cr": "", "bal": "900.00"}
+    row.update(changes)
+    return row
+
+
+def evidence_refusal_for(row, bank_name):
+    try:
+        m._validate_parser_evidence(_EvidenceParser, _EvidenceBank, [row], [row], bank_name)
+    except m.EvidenceRefusal as refusal:
+        return refusal
+    return None
+
+
+# The sanitizer's proof must use the import boundary grammar, not Decimal's
+# broader syntax. Exercise both supported profile labels: they share the
+# importer parser, but the refusal must retain the selected bank and row.
+for bank_name, label, row in (
+    ("hdfc", "negative debit", evidence_row(dr="-100.00")),
+    ("sbi", "three-decimal credit", evidence_row(dr="", cr="1.234")),
+    ("hdfc", "three-decimal balance", evidence_row(bal="900.001")),
+):
+    refusal = evidence_refusal_for(row, bank_name)
+    check(
+        f"{bank_name} {label} refuses with non-sensitive row context",
+        refusal is not None and refusal.category == "row_alignment_invalid"
+        and refusal.bank == bank_name and refusal.row_index == 0,
+        str(refusal),
+    )
+
+try:
+    m._validate_parser_evidence(
+        _EvidenceParser, _EvidenceBank,
+        [evidence_row(bal="-900.00")], [evidence_row(bal="-900.00")], "sbi",
+    )
+except m.EvidenceRefusal as refusal:
+    check("signed balance remains valid importer evidence", False, str(refusal))
+else:
+    check("signed balance remains valid importer evidence", True)
+
+
+class _EquivalentDateBank(_EvidenceBank):
+    @staticmethod
+    def parse_date(value):
+        return datetime.datetime.strptime(value, "%d %b %Y").date()
+
+
+# "1 Aug" and "01 Aug" designate one date. If each display string becomes a
+# separate partition key, the sanitizer could emit rows whose typed identities
+# differ from the captured statement. Fail closed before writing output.
+try:
+    m._validate_parser_evidence(
+        _EvidenceParser, _EquivalentDateBank,
+        [evidence_row(date="1 Aug 2026"), evidence_row(date="01 Aug 2026")],
+        [evidence_row(date="01 Aug 2026"), evidence_row(date="02 Aug 2026")], "sbi",
+    )
+except m.EvidenceRefusal as refusal:
+    check(
+        "equivalent source dates cannot split typed date evidence",
+        refusal.category == "party_partition_split" and refusal.bank == "sbi"
+        and refusal.row_index == 1,
+        str(refusal),
+    )
+else:
+    check("equivalent source dates cannot split typed date evidence", False)
 
 for fixture in sorted(pathlib.Path(__file__).with_name("fixtures").glob("*-bbox-capture.xml")):
     bodies = WORD_BODY.findall(fixture.read_text(encoding="utf-8"))

@@ -539,6 +539,10 @@ def _validate_parser_evidence(parser, bank, source_pages, output_pages, bank_nam
     try:
         source_rows = parser.parse_pages(source_pages, bank)
         output_rows = parser.parse_pages(output_pages, bank)
+    except EvidenceRefusal:
+        raise
+    except SystemExit as error:
+        raise EvidenceRefusal("parser_evidence_invalid", bank_name) from error
     except (KeyError, IndexError, TypeError, ValueError, decimal.InvalidOperation) as error:
         raise EvidenceRefusal("parser_evidence_invalid", bank_name) from error
     if not source_rows or not output_rows or len(source_rows) != len(output_rows):
@@ -556,9 +560,9 @@ def _validate_parser_evidence(parser, bank, source_pages, output_pages, bank_nam
                 for column in (bank.debit_column, bank.credit_column):
                     value = str(row.get(column) or "").strip()
                     if value:
-                        getattr(parser, "_money", parser.D)(value)
+                        parser._money(value, column, index + 1)
                 balance = str(row.get(bank.balance_column) or "").strip()
-                getattr(parser, "_balance", parser.D)(balance)
+                parser._balance(balance, bank.balance_column, index + 1)
             source_ref = bank.reference(source)
             output_ref = bank.reference(output)
             source_side = tuple(bool(source.get(column)) for column in (bank.debit_column, bank.credit_column))
@@ -571,9 +575,11 @@ def _validate_parser_evidence(parser, bank, source_pages, output_pages, bank_nam
                 raise EvidenceRefusal("accounting_row_shape_misaligned", bank_name, index)
             source_keys.append(parser._key(bank.party(source)))
             output_keys.append(parser._key(bank.party(output)))
-        except SystemExit:
+        except EvidenceRefusal:
             raise
-        except (KeyError, IndexError, TypeError, ValueError, decimal.InvalidOperation, Exception) as error:
+        except SystemExit as error:
+            raise EvidenceRefusal("row_alignment_invalid", bank_name, index) from error
+        except Exception as error:
             raise EvidenceRefusal("row_alignment_invalid", bank_name, index) from error
 
     _assert_party_partition(source_dates, output_dates, bank_name)
