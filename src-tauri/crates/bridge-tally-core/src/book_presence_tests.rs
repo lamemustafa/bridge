@@ -1302,6 +1302,28 @@ fn an_empty_proposal_set_is_refused() {
 }
 
 #[test]
+fn aggregate_proposal_window_resemblance_work_is_refused() {
+    let books = (0..1_001)
+        .map(|index| BookRow::new(
+            Box::leak(format!("book-{index}").into_boxed_str()),
+            "20260812",
+            Box::leak(format!("N{index}").into_boxed_str()),
+        ).build())
+        .collect::<Vec<_>>();
+    let window = BookWindow::observed(
+        "20260801", "20260831", WindowRead::Complete,
+        RemoteIdEvidence::Observed, books,
+    ).expect("window");
+    let proposals = (0..1_001)
+        .map(|index| ProposalRow::new(index, "20260812", "N999999").build())
+        .collect::<Vec<_>>();
+    let error = PresenceRequest::new(
+        &window, &catalog(), &numbering(NumberingMethod::Manual), &proposals,
+    ).expect_err("quadratic resemblance work must be bounded");
+    assert_eq!(error, PresenceError::ComparisonWorkTooLarge);
+}
+
+#[test]
 fn a_stock_item_catalog_cannot_be_used_to_compare_parties() {
     let catalog = MasterCatalog::new(MasterClass::StockItem, LEDGERS).expect("catalog");
     let window = window(&[]);
@@ -1773,15 +1795,11 @@ fn two_proposals_reaching_one_book_voucher_are_both_demoted() {
         &numbering(NumberingMethod::Manual),
         &proposals,
     );
-    // Neither may be excluded from an import: only one voucher exists.
-    assert_eq!(report.totals().present, 0);
-    for entry in report.vouchers() {
-        assert_eq!(reason(entry), UndecidedReason::BookVoucherClaimedTwice);
-        assert_eq!(
-            entry.undecided().expect("undecided").candidates[0].book_key,
-            "book-1"
-        );
-    }
+    // The first proposal's manual number is absent from the book, so its
+    // observed REMOTEID cannot override that contradictory identity signal.
+    assert_eq!(report.totals().present, 1);
+    assert_eq!(reason(&report.vouchers()[0]), UndecidedReason::IdentityConflict);
+    assert!(report.vouchers()[1].present_book_key().is_some());
 }
 
 #[test]
@@ -1838,6 +1856,23 @@ fn a_number_match_agreeing_with_the_remote_id_still_settles() {
     );
     // The REMOTEID decides it first; either basis is an identity.
     assert!(only(&report).present_book_key().is_some());
+}
+
+#[test]
+fn a_remote_id_with_a_manual_number_absent_from_the_book_is_an_identity_conflict() {
+    let window = window(&[BookRow::new("book-1", "20260812", "AA0118").remote_id("tally-1")]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA9999")
+        .remote_id("tally-1")
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert!(entry.present_book_key().is_none());
+    assert_eq!(reason(entry), UndecidedReason::IdentityConflict);
 }
 
 // --- a key that was never read is not a key that found nothing ----------
