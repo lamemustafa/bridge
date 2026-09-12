@@ -212,14 +212,16 @@ licence mode, or manually imported file, and only an unnumbered single-voucher
      `exact_live_spelling` into the payload verbatim; the live name may differ
      from yours in case, spacing, dash or quote style, and the import file
      carries whatever you send byte for byte.
-   - `near_miss` — the row is **not** bound and Bridge chose nothing. Pick from
-     `candidates`, each labelled with the rule that surfaced it. A single
-     candidate is still not a decision. Where `reason` is
-     `master_binding_no_discriminating_candidate`, the name reaches
-     `candidate_count` possible masters that it does not distinguish and none
-     is listed. When `candidate_count_is_lower_bound` is true, show this as
-     "at least N", never an exact total. Use a more complete source name,
-     or read the ledger list and choose.
+   - `near_miss` — the row is **not** bound and Bridge chose nothing. Where
+     `listing` is `withheld`, `candidates` is empty: there is no listed name to
+     pick. This includes `master_binding_no_discriminating_candidate` and
+     `master_binding_identifier_conflict`. Obtain a more complete source name
+     for an indistinguishable name family; conflicting identifiers require
+     correction of the source identity or explicit operator selection against
+     the observed ledger list. A fuller name alone does not settle conflicting
+     identifiers. Where candidates are listed, each carries its comparison
+     rule; even a single candidate still requires a decision. For every reason,
+     render `candidate_count_is_lower_bound` as "at least N", never an exact total.
    - `missing` — no live ledger matched. Bridge never creates masters.
 3. Call `build_import_xml` with the payload. It checks exact decimal balance,
    company date extent, live masters, and local journal integrity,
