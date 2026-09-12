@@ -278,6 +278,7 @@ test("groups and lists a catalogue of realistic size without losing the narrowin
       unbound_reason: null,
       candidates: [],
       candidate_count: 0,
+      candidate_count_is_lower_bound: false,
       candidate_listing: "listed",
     }],
   };
@@ -317,6 +318,7 @@ test("says so when the operator chooses a different ledger from the one binding 
       unbound_reason: null,
       candidates: [],
       candidate_count: 0,
+      candidate_count_is_lower_bound: false,
       candidate_listing: "none",
     }],
   };
@@ -359,6 +361,7 @@ test("says nothing extra when the operator chooses the ledger binding matched", 
       unbound_reason: null,
       candidates: [],
       candidate_count: 0,
+      candidate_count_is_lower_bound: false,
       candidate_listing: "none",
     }],
   };
@@ -409,6 +412,7 @@ test("keeps the binding result visible beside a saved target nobody has re-read"
       unbound_reason: "master_binding_near_miss",
       candidates: ["Existing target"],
       candidate_count: 1,
+      candidate_count_is_lower_bound: false,
       candidate_listing: "listed",
     }],
   };
@@ -499,6 +503,7 @@ test("lists the bound ledger first without selecting it, and keeps the whole cat
       unbound_reason: null,
       candidates: [],
       candidate_count: 0,
+      candidate_count_is_lower_bound: false,
       candidate_listing: "listed",
     }],
   };
@@ -543,6 +548,7 @@ test("names the refusal when the name and the identifier point at different ledg
       unbound_reason: "master_binding_identifier_name_conflict",
       candidates: ["Alpha placeholder", "Gamma placeholder"],
       candidate_count: 2,
+      candidate_count_is_lower_bound: false,
       candidate_listing: "listed",
     }],
   };
@@ -576,6 +582,7 @@ test("distinguishes the two other refusals that are not weak matches", async () 
         unbound_reason: reason,
         candidates: ["Alpha placeholder", "Gamma placeholder"],
         candidate_count: 2,
+        candidate_count_is_lower_bound: false,
         candidate_listing: "listed",
       }],
     });
@@ -647,6 +654,7 @@ test("a refusal reason survives the candidate listing being dropped", async () =
       unbound_reason: "master_binding_identifier_name_conflict",
       candidates: [],
       candidate_count: 6,
+      candidate_count_is_lower_bound: true,
       candidate_listing: "truncated",
     }],
   });
@@ -677,6 +685,7 @@ test("choosing a target stops the screen saying nothing was chosen, without hidi
       unbound_reason: "master_binding_identifier_name_conflict",
       candidates: ["Alpha placeholder", "Gamma placeholder"],
       candidate_count: 2,
+      candidate_count_is_lower_bound: false,
       candidate_listing: "listed",
     }],
   };
@@ -725,6 +734,7 @@ test("an empty list because the report ran out of room is not a family the name 
       unbound_reason: "master_binding_near_miss",
       candidates: [],
       candidate_count: 7,
+      candidate_count_is_lower_bound: true,
       candidate_listing: "truncated",
     }],
   };
@@ -752,6 +762,7 @@ test("lists candidates first for a near miss and states that nothing was chosen"
       unbound_reason: "master_binding_near_miss",
       candidates: ["Alpha placeholder", "Gamma placeholder"],
       candidate_count: 2,
+      candidate_count_is_lower_bound: false,
       candidate_listing: "listed",
     }],
   };
@@ -784,6 +795,7 @@ test("reports a truncated candidate list truthfully and falls back to the flat c
       unbound_reason: "master_binding_near_miss",
       candidates: ["Alpha placeholder"],
       candidate_count: 40,
+      candidate_count_is_lower_bound: true,
       candidate_listing: "truncated",
     }],
   };
@@ -793,7 +805,7 @@ test("reports a truncated candidate list truthfully and falls back to the flat c
   const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
   await act(async () => button(host, "Choose source XML").click());
   await act(async () => button(host, "Load existing ledgers").click());
-  expect(host.textContent).toContain("1 of 40 possible ledger is listed first");
+  expect(host.textContent).toContain("1 of at least 40 possible ledger is listed first");
   root.unmount();
 });
 
@@ -815,6 +827,7 @@ test("a family withheld under a different reason is not reported as a full repor
       unbound_reason: "master_binding_identifier_conflict",
       candidates: [],
       candidate_count: 30,
+      candidate_count_is_lower_bound: true,
       candidate_listing: "withheld",
     }],
   };
@@ -825,7 +838,7 @@ test("a family withheld under a different reason is not reported as a full repor
   await act(async () => button(host, "Choose source XML").click());
   await act(async () => button(host, "Load existing ledgers").click());
 
-  expect(host.textContent).toContain("matches 30 existing ledgers and tells them apart from none of them, so none is listed");
+  expect(host.textContent).toContain("matches at least 30 existing ledgers and tells them apart from none of them, so none is listed");
   expect(host.textContent).not.toContain("ran out of room");
   root.unmount();
 });
@@ -846,6 +859,7 @@ test("a source line that separates no ledger says so instead of counting nothing
       unbound_reason: "master_binding_no_discriminating_candidate",
       candidates: [],
       candidate_count: 120,
+      candidate_count_is_lower_bound: true,
       candidate_listing: "withheld",
     }],
   };
@@ -856,7 +870,7 @@ test("a source line that separates no ledger says so instead of counting nothing
   await act(async () => button(host, "Choose source XML").click());
   await act(async () => button(host, "Load existing ledgers").click());
 
-  expect(host.textContent).toContain("matches 120 existing ledgers and tells them apart from none of them, so none is listed");
+  expect(host.textContent).toContain("matches at least 120 existing ledgers and tells them apart from none of them, so none is listed");
   expect(host.textContent).not.toContain("0 possible");
   expect(host.textContent).not.toContain("listed first;");
   const target = host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!;

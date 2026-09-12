@@ -1610,6 +1610,14 @@ fn only_an_incomplete_listing_may_withhold_an_absence() {
         found: 9
     }
     .is_incomplete());
+    assert!(!Candidates::None.count_is_lower_bound());
+    assert!(!Candidates::Listed { listed: Vec::new() }.count_is_lower_bound());
+    assert!(Candidates::Withheld { found: 30 }.count_is_lower_bound());
+    assert!(Candidates::Truncated {
+        listed: Vec::new(),
+        found: 9
+    }
+    .count_is_lower_bound());
     // `found` is the total, never the listed length, wherever it is known.
     assert_eq!(Candidates::Withheld { found: 30 }.found(), 30);
     assert!(Candidates::Withheld { found: 30 }.listed().is_empty());
@@ -2427,6 +2435,39 @@ fn a_withheld_family_counts_the_masters_the_other_identifier_listed_too() {
         family + 1 > MAX_CANDIDATES_PER_ENTITY,
         "this fixture no longer exercises the skip"
     );
+    assert!(
+        unresolved.candidates.count_is_lower_bound(),
+        "the skipped identifier family makes this count conservative"
+    );
+}
+
+#[test]
+fn disjoint_withheld_identifier_families_are_marked_as_a_lower_bound() {
+    let mut names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Alpha Party {index:03} (5550007777)"))
+        .collect::<Vec<_>>();
+    names.extend(
+        (0..MAX_CANDIDATES_PER_ENTITY + 5)
+            .map(|index| format!("Beta Party {index:03} (5550008888)")),
+    );
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let entity =
+        SourceEntity::with_identifier_hints(0, "Unrelated Source", ["5550007777", "5550008888"])
+            .expect("valid");
+
+    let binding = bound(&catalog, &[entity])
+        .entities()
+        .first()
+        .cloned()
+        .expect("one entity in, one binding out");
+    let unresolved = binding.unresolved().expect("identifier conflict");
+    assert_eq!(unresolved.candidates.listing(), "withheld");
+    assert_eq!(
+        unresolved.candidates.found(),
+        MAX_CANDIDATES_PER_ENTITY + 5,
+        "the conservative count remains the larger known family"
+    );
+    assert!(unresolved.candidates.count_is_lower_bound());
 }
 
 #[test]

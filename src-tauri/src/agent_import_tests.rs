@@ -1532,6 +1532,7 @@ fn master_match_bounds_suggestions_before_copying_names_and_preserves_ambiguity(
         "master_binding_no_discriminating_candidate"
     );
     assert_eq!(matched["candidate_count"], 100);
+    assert_eq!(matched["candidate_count_is_lower_bound"], true);
     assert_eq!(matched["candidates_truncated"], true);
     assert!(matched["candidates"].as_array().unwrap().is_empty());
     // A family inside the bound is still listed in full.
@@ -1551,6 +1552,10 @@ fn master_match_bounds_suggestions_before_copying_names_and_preserves_ambiguity(
     let limited = one_master_match("Large", &[huge.as_str()]);
     assert_eq!(limited["match_state"], "near_miss");
     assert_eq!(limited["candidate_count"], 1);
+    // The agent's own byte cap can shorten a complete core listing, while
+    // the core count remains exact; this field describes count uncertainty,
+    // not whether this consumer copied every candidate name.
+    assert_eq!(limited["candidate_count_is_lower_bound"], false);
     assert_eq!(limited["candidates_truncated"], true);
     assert!(limited["candidates"].as_array().unwrap().is_empty());
     assert!(!limited.to_string().contains(&huge));
@@ -1593,6 +1598,7 @@ fn a_near_miss_never_names_a_live_spelling_and_retains_its_identity() {
     assert_eq!(matched["reason"], "master_binding_identifier_conflict");
     assert!(matched.get("exact_live_spelling").is_none());
     assert_eq!(matched["candidate_count"], 2);
+    assert_eq!(matched["candidate_count_is_lower_bound"], false);
     assert_eq!(
         matched["unresolved_identity"][0]["value"][super::super::PARTY_NAME_MARKER],
         "5550000001"

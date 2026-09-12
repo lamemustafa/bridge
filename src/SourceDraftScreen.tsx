@@ -143,6 +143,9 @@ function catalogBindingSummary(binding: SourceDraftCatalogBinding | null, total:
   if (binding.candidate_count === 0) {
     return `No existing ledger matched this source line. All ${total} are listed.`;
   }
+  const count = binding.candidate_count_is_lower_bound
+    ? `at least ${binding.candidate_count}`
+    : `${binding.candidate_count}`;
   const shown = binding.candidates.length;
   if (shown === 0) {
     // Two different facts arrive here with an empty list and a nonzero count,
@@ -161,14 +164,14 @@ function catalogBindingSummary(binding: SourceDraftCatalogBinding | null, total:
     // sentence and told the operator the report had run out of room when it
     // had not.
     if (binding.candidate_listing === "withheld") {
-      return `This source line matches ${binding.candidate_count} existing ledgers and tells them apart from none of them, so none is listed. Use a fuller source name, or choose from the full list of ${total}.`;
+      return `This source line matches ${count} existing ledgers and tells them apart from none of them, so none is listed. Use a fuller source name, or choose from the full list of ${total}.`;
     }
     // Why it refused survives the listing being dropped. Returning only the
     // budget sentence here re-hid the strong disagreement that the branch below
     // had just been fixed to show — the same defect, one branch over.
-    return `${catalogRefusalLead(binding.unbound_reason)} ${binding.candidate_count} existing ledgers are involved, but this report ran out of room to list them. Choose from the full list of ${total}.`;
+    return `${catalogRefusalLead(binding.unbound_reason)} ${count} existing ledgers are involved, but this report ran out of room to list them. Choose from the full list of ${total}.`;
   }
-  const listed = binding.candidate_listing === "truncated" ? `${shown} of ${binding.candidate_count}` : `${shown}`;
+  const listed = binding.candidate_listing === "truncated" ? `${shown} of ${count}` : `${shown}`;
   const lead = catalogRefusalLead(binding.unbound_reason);
   return `${lead} Nothing is chosen; ${listed} possible ${shown === 1 ? "ledger is" : "ledgers are"} listed first, and the full list of ${total} follows.`;
 }

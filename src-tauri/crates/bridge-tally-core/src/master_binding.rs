@@ -51,8 +51,9 @@ pub const MAX_CANDIDATES_PER_ENTITY: usize = 25;
 /// can carry tens of thousands of entries that each list 25 long names, and the
 /// clones exist the moment the report is built. A consumer capping its own copy
 /// afterwards bounds only the second copy. This is spent in entity order;
-/// entities past it report their true `candidate_count` with no candidates
-/// listed and truncation flagged.
+/// entities past it report their `candidate_count` with no candidates listed
+/// and truncation flagged. Consumers must inspect
+/// `Candidates::count_is_lower_bound` before presenting that count as exact.
 pub const MAX_REPORT_CANDIDATE_BYTES: usize = 256 * 1024;
 /// Most identifiers one name may carry. Exceeding it is refused, never
 /// truncated.
@@ -347,13 +348,25 @@ impl Candidates {
         }
     }
 
-    /// Masters found before any truncation or withholding.
+    /// Masters found before any truncation or withholding. The value is a
+    /// lower bound when the listing is incomplete; use
+    /// [`Self::count_is_lower_bound`] before presenting it as exact.
     pub fn found(&self) -> usize {
         match self {
             Self::None => 0,
             Self::Listed { listed } => listed.len(),
             Self::Truncated { found, .. } | Self::Withheld { found } => *found,
         }
+    }
+
+    /// Whether `found()` is conservative because the report withheld or
+    /// truncated part of the evidence. Large identifier families are not
+    /// expanded, so overlapping families cannot be distinguished from one
+    /// another without materializing them. Keeping this fact beside the count
+    /// prevents a projection from turning a sound lower bound into a false
+    /// exact total.
+    pub fn count_is_lower_bound(&self) -> bool {
+        self.is_incomplete()
     }
 
     /// Whether masters exist that are not in `listed()`. The predicate a

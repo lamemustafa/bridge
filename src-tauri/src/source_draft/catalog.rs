@@ -82,6 +82,10 @@ pub(crate) struct SourceDraftCatalogBinding {
     pub(crate) unbound_reason: Option<&'static str>,
     pub(crate) candidates: Vec<String>,
     pub(crate) candidate_count: usize,
+    /// `true` when the core could only establish a lower bound because part
+    /// of the candidate evidence was withheld or truncated. The number must
+    /// then be rendered as "at least N" rather than as an exact total.
+    pub(crate) candidate_count_is_lower_bound: bool,
     /// Which of the four candidate states this is, in the word the core type
     /// already tags its serialized form with. Carried rather than inferred: an
     /// empty listing beside a nonzero count is two different results — a family
@@ -192,6 +196,7 @@ fn source_entry_bindings(
                     unbound_reason: None,
                     candidates: Vec::new(),
                     candidate_count: 0,
+                    candidate_count_is_lower_bound: false,
                     candidate_listing: Candidates::None.listing(),
                 },
                 BindingStatus::Ambiguous(unresolved) | BindingStatus::Unmatched(unresolved) => {
@@ -214,6 +219,9 @@ fn source_entry_bindings(
                             .map(|candidate| candidate.catalog_name.clone())
                             .collect(),
                         candidate_count: unresolved.candidates.found(),
+                        candidate_count_is_lower_bound: unresolved
+                            .candidates
+                            .count_is_lower_bound(),
                     }
                 }
             },
