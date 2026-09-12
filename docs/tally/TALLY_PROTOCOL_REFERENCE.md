@@ -1398,7 +1398,7 @@ habits, not against real operator input.
 ### 9.5 Identity after write
 
 **VERIFIED.** `LASTMID` is **0** on successful master creates — unusable for master identity;
-read masters back by normalised name. `LASTVCHID` is populated for vouchers and usable,
+read masters back by name — and **normalised never means NFC/NFD-normalised**: §9.4b measured Tally matching on exact codepoints, so normalising before comparing resolves a name onto a master Tally itself keeps apart. Match under the scope gate in `PROMPT_PLAYBOOK.md` Phase 4 step 4, which on an unqualified licensed SKU is exact codepoints and nothing else. `LASTVCHID` is populated for vouchers and usable,
 subject to a foreign-writer cross-check. `LASTVCHID` also accepts non-numeric text without
 error when parsed back, so validate it.
 
