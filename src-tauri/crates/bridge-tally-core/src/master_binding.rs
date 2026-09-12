@@ -291,7 +291,9 @@ pub enum BindingBasis {
     Identifier,
     /// Byte equality with the observed master name.
     ExactName,
-    /// Equality under the comparison key, unique in the catalog.
+    /// Historical serialized basis retained for reading older records. New
+    /// binding results never use a fold as authority without an explicit,
+    /// scoped operator approval path.
     NormalizedName,
 }
 
@@ -427,9 +429,10 @@ pub struct Unresolved {
 ///   acting on a binding re-reads and revalidates through the admission path
 ///   that owns identity; nothing here is a lease on the book.
 /// - **Not that the name may be written as given.** Only `ExactName` is byte
-///   equality. A `NormalizedName` or `Identifier` bind means the payload and
-///   the live name *differ*, and Bridge's write gate admits `exact` only — use
-///   `catalog_name`, not what was requested.
+///   equality. `NormalizedName` is retained only to deserialize historical
+///   records; current folded names are candidates. An `Identifier` bind means
+///   the payload and live name can differ, and Bridge's write gate admits
+///   `exact` only — use `catalog_name`, not what was requested.
 /// - **Not that this is the right master in business terms.** It establishes
 ///   that one deterministic rule selected one master uniquely. Whether that
 ///   party is the one the document meant is a judgement the rules cannot make.
@@ -676,9 +679,10 @@ impl FallbackBinding {
 pub struct SourceEntity {
     position: usize,
     name: String,
-    /// The wide fold. Suggests; never resolves.
+    /// The wide fold. Suggests candidates; never decides a binding.
     key: String,
-    /// The narrow fold. Resolves.
+    /// The observed gateway fold. In this unscoped catalog it also only
+    /// suggests candidates; authority requires an explicit scoped path.
     binding_key: String,
     identifiers: Vec<Identifier>,
 }
@@ -1217,27 +1221,18 @@ fn bind_one(
             basis: BindingBasis::Identifier,
         }
     } else {
-        // The narrow index, not the wide one: only a transformation Tally was
-        // measured performing may settle which master was meant. Everything the
-        // wide fold reaches and this does not falls through to `collect_candidates`
-        // below, where it is offered as `NormalizedEqual` for a human to confirm.
+        // This catalog carries no scope-qualified authority for a fold. A
+        // gateway observation can inform a candidate search, but cannot make a
+        // name authoritative for a different observed product/tier/scope.
+        // Exact names and identifiers above remain decisive; every folded name
+        // reaches the existing candidate path for a human to confirm.
         match catalog
             .by_binding_key
             .get(&entity.binding_key)
             .map(Vec::as_slice)
         {
-            // §9.4d measured **ledgers**. Whether stock items match by the
-            // same rule is not merely unmeasured, it was never sent — so a
-            // folded stock-item name may suggest and may not resolve. Byte
-            // equality is unaffected: it needs no fold and is checked above.
-            Some([index]) if catalog.class == MasterClass::Ledger => BindingStatus::Bound {
-                catalog_name: catalog.entries[*index].name.clone(),
-                basis: BindingBasis::NormalizedName,
-            },
-            // A single folded match that the class does not license is not an
-            // ambiguity — nothing shares its key. `NameAmbiguous` would tell a
-            // consumer that several masters collided when exactly one did not
-            // qualify, which is a different fact with a different remedy.
+            // A single candidate is not an ambiguity — exactly one master was
+            // found, but the catalog cannot prove the fold names it.
             Some([_]) => unresolved_status(
                 catalog,
                 entity,
@@ -1747,8 +1742,8 @@ fn candidate_order(
 /// against, so trimming it would let `Bank ` claim an exact match on `Bank`
 /// while the import file still carries the trailing space. The comparison key
 /// collapses surrounding whitespace anyway, so the two still meet as a
-/// normalized match — which is a bind the write gate does not admit, and that
-/// is the correct, loud outcome.
+/// normalized candidate. It can help an operator find the observed spelling,
+/// but no generic catalog is authorized to select it.
 fn validated_name(value: &str) -> Result<String, MasterBindingError> {
     validate_name_bounds(value)?;
     Ok(value.to_string())
@@ -1801,12 +1796,12 @@ pub(crate) fn comparison_key(value: &str) -> String {
 /// The **wide** fold: which masters are worth showing a human.
 ///
 /// This is deliberately looser than anything measured, and it may never decide
-/// a binding. `verified_fold` does that. The separation is the whole design:
-/// §9.4b verified three transformations and marks the rest UNVERIFIED, and its
-/// own remedy is that a looser fold may *suggest* while only the measured ones
-/// resolve. So the reverse hyphen direction, collapsed whitespace runs, leading
-/// whitespace and the Unicode dash variants all live here, where the worst they
-/// can do is put the right master in front of an operator.
+/// a binding. The observed gateway fold is narrower, but this catalog has no
+/// product, release, tier, endpoint, or operator-approval scope to treat that
+/// observation as selection authority. Both folds therefore only suggest
+/// candidates here. So the reverse hyphen direction, collapsed whitespace
+/// runs, leading whitespace and the Unicode dash variants all live here, where
+/// the worst they can do is put the right master in front of an operator.
 ///
 /// An earlier version of this module let this fold bind. It read naturally and
 /// was wrong: `X - Y` is a common ledger convention — six of seventeen
@@ -1830,8 +1825,12 @@ fn master_identity_key(value: &str) -> String {
         .join(" ")
 }
 
-/// The fold that may **resolve** a name to a master: exactly the equivalences
-/// `TALLY_PROTOCOL_REFERENCE.md` §9.4d measured on the SKU this writes to.
+/// The fold observed at one gateway: exactly the equivalences
+/// `TALLY_PROTOCOL_REFERENCE.md` §9.4d measured on that observed SKU.
+///
+/// It is retained for deterministic candidate ordering. It cannot resolve a
+/// name through `MasterCatalog`, whose constructor receives neither that
+/// gateway's scope nor explicit operator approval.
 ///
 /// §9.4b measured Edit Log 7.0 Educational and marked most of this UNVERIFIED,
 /// so an earlier version of this module resolved on three transformations only

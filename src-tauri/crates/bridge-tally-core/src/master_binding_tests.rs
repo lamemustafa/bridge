@@ -250,16 +250,14 @@ fn an_exact_name_binds() {
 }
 
 #[test]
-fn case_binds_but_an_unverified_fold_only_suggests() {
-    // ASCII case folding is measured, so it resolves.
+fn every_fold_is_a_candidate_in_an_unscoped_catalog() {
+    // ASCII case folding was observed at one gateway, but the generic catalog
+    // cannot turn that observation into authority.
     let cased = ledgers(&["Alpha Traders", "Beta Supply"]);
-    assert_eq!(
-        bind_one_name(&cased, "ALPHA traders").status,
-        BindingStatus::Bound {
-            catalog_name: "Alpha Traders".to_string(),
-            basis: BindingBasis::NormalizedName,
-        }
-    );
+    let folded = bind_one_name(&cased, "ALPHA traders");
+    assert_eq!(folded.bound_name(), None);
+    assert_eq!(reason(&folded), UnboundReason::NearMiss);
+    assert_eq!(candidate_names(&folded), ["Alpha Traders"]);
 
     // An en dash, a collapsed whitespace run and leading whitespace are all on
     // §9.4b's unverified list. The wide fold still reaches the master, so it is
@@ -644,17 +642,13 @@ fn the_master_fold_stops_where_tally_stops() {
 #[test]
 fn a_trailing_space_never_claims_byte_equality() {
     // `Bank ` against live `Bank` must not report exact: the import file would
-    // still carry the trailing space. Normalized is the correct, loud outcome —
-    // the write gate refuses it.
+    // still carry the trailing space. The generic catalog has no fold authority,
+    // so the observed spelling is offered for an operator to select.
     let catalog = ledgers(&["Bank"]);
     let binding = bind_one_name(&catalog, "Bank ");
-    assert_eq!(
-        binding.status,
-        BindingStatus::Bound {
-            catalog_name: "Bank".to_string(),
-            basis: BindingBasis::NormalizedName,
-        }
-    );
+    assert_eq!(binding.bound_name(), None);
+    assert_eq!(reason(&binding), UnboundReason::NearMiss);
+    assert_eq!(candidate_names(&binding), ["Bank"]);
     assert_eq!(
         binding.source_name, "Bank ",
         "the requested value is echoed verbatim"
@@ -2106,6 +2100,13 @@ fn a_bound_status_serializes_without_a_score_field() {
     assert_eq!(json["basis"], "exact_name");
     assert!(json.get("score").is_none());
     assert!(json.get("confidence").is_none());
+}
+
+#[test]
+fn historical_normalized_basis_remains_deserializable() {
+    let basis: BindingBasis = serde_json::from_str("\"normalized_name\"")
+        .expect("older retained binding basis remains readable");
+    assert_eq!(basis, BindingBasis::NormalizedName);
 }
 
 // ---------------------------------------------------------------------------

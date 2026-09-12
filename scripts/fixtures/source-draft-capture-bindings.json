@@ -12,15 +12,18 @@
       "unbound_reason": null
     },
     {
-      "bound_basis": "normalized_name",
-      "bound_target": "WR2 Sales",
-      "candidate_count": 0,
+      "bound_basis": null,
+      "bound_target": null,
+      "candidate_count": 2,
       "candidate_count_is_lower_bound": false,
-      "candidate_listing": "none",
-      "candidates": [],
+      "candidate_listing": "listed",
+      "candidates": [
+        "WR2 Sales",
+        "WR2 XML Café Naïve Ledger 01A01A2F"
+      ],
       "entry_position": 2,
       "row_position": 1,
-      "unbound_reason": null
+      "unbound_reason": "master_binding_near_miss"
     },
     {
       "bound_basis": null,

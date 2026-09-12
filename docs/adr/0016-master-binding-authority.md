@@ -89,13 +89,13 @@ colliding pair surfaces in the unbound list where an operator can see it.
 Failing a whole read to report one collision would block all the work it was
 performed for.
 
-`MasterClass` is `Ledger` or `StockItem`. Both classes failed in practice and
-the identifier rules are identical for both, but **the name fold is not**:
-§9.4d measured ledgers, and whether a stock item matches by the same rule was
-never sent. So a folded stock-item name may *suggest* and may not resolve —
-byte equality is unaffected, since it needs no fold. The class is carried both
-so a report cannot be applied to the wrong catalog and because the evidence
-behind the two differs.
+`MasterClass` is `Ledger` or `StockItem`. The identifier rules are identical
+for both. Gateway measurements remain useful for candidate ordering, but a
+`MasterCatalog` has no product, release, tier, endpoint, or operator-approval
+scope. Therefore every folded name suggests candidates only, for either class;
+byte equality is unaffected because it needs no fold. The class is carried so
+a report cannot be applied to the wrong catalog and because the evidence behind
+the two still differs.
 
 ### 2. The identifier is the key; the name is a hint
 
@@ -207,15 +207,14 @@ signals disagree, and the disagreement is reported
 (`IdentifierNameConflict`) rather than silently settled in the identifier's
 favour.
 
-### 3. Name matching binds only on an exact or normalized-exact unique hit
+### 3. Name matching binds only on byte equality
 
-`Exact` is byte equality with the observed master name. `Normalized` is equality
-under **Tally's own rule for when two master names are the same**, and only when
-exactly one master shares it.
+`Exact` is byte equality with the observed master name. A folded name is a
+candidate even when exactly one observed master shares its key.
 
-**There are two folds, and which one may answer is the whole of this section.**
+**There are two folds, and neither answers in this generic catalog.**
 
-The resolving fold implements exactly the equivalences
+The narrower fold implements exactly the equivalences
 `TALLY_PROTOCOL_REFERENCE.md` §9.4d measured on **licensed TallyPrime 7.1** —
 the SKU this writes to — by naming each spelling in a voucher and reading the
 day book back to see which master it reached:
@@ -226,7 +225,12 @@ day book back to see which master it reached:
 - **space, `-` and `/` are one separator**, in both directions.
 
 Everything else is exact on codepoints. The wide fold (`master_identity_key`)
-carries more than that and may only offer candidates.
+carries more than that and may only offer candidates. The narrow fold is also a
+candidate rule here: a gateway observation identifies how one observed gateway
+resolved a name, while `MasterCatalog::new(class, names)` carries no product,
+release, tier, endpoint, or operator-approval scope that could authorize a
+different caller to select that master. A write gate cannot repair a wrong
+selection once a caller has copied its returned name.
 
 **The two rules that matter are negative, and neither is guessable.** An **en
 dash** and an **underscore** were sent and *rejected*: they are not separators
@@ -250,7 +254,8 @@ Log 7.0 Educational* and this project writes to licensed 7.1. Measuring that SKU
 directly (§9.4d) found the gateway wider: the reverse hyphen direction, leading
 whitespace, collapsed runs and slash all match. The fold is symmetric again, one
 key per side, and the asymmetric index the narrow version needed is gone. On the
-mutation book **600 of 995** now bind, against 420 under the narrow fold.
+mutation book **600 of 995** names a candidate, against 420 under the narrow
+fold. It does not bind in the generic catalog.
 
 The lesson is not "measure more". It is that **the scope line of an inherited
 measurement is part of the measurement**: §9.4b was accurate and its scope was
@@ -432,14 +437,13 @@ voucher, creates no master, and dispatches nothing.
 ## Consequences
 
 - `agent_import.rs::master_match` and its private `master_key` are deleted and
-  `validate_masters` is re-expressed over the crate. `match_state` gains
-  `normalized` and `identifier` alongside `exact`, `near_miss` and `missing`,
-  and `exact_live_spelling` now appears only on a bound row. A caller reading
-  that field on a near-miss was reading a guess.
-- The old implementation classified *every* normalized-equal name as a
-  near-miss, so a request differing from the live ledger only in case,
-  whitespace, or dash style produced a candidate list instead of an answer.
-  Those now bind and report the live spelling.
+  `validate_masters` is re-expressed over the crate. `match_state` reports
+  `exact`, `identifier`, `near_miss`, or `missing`; folded spellings remain
+  `near_miss` candidates and `exact_live_spelling` appears only on a bound row.
+- `BindingBasis::NormalizedName` remains deserializable for historical records,
+  but current `bind` calls never emit it. Cached or retained bindings cannot
+  turn a folded suggestion into a target: selection still requires the explicit
+  operator apply path and a fresh exact catalog binding.
 - `build_import_xml` and the approved-post recheck still admit **`exact` only**.
   The import file carries the name verbatim, so a normalized or identifier bind
   informs the operator without widening what may be written. This PR does not

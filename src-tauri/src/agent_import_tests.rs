@@ -278,15 +278,15 @@ fn schema_balance_matcher_rendering_and_ledger_append_are_fail_closed() {
         validate_payload(&unbalanced),
         Err("voucher_not_balanced".to_string())
     );
-    // ASCII case and one trailing space are transformations
-    // `TALLY_PROTOCOL_REFERENCE.md` §9.4b measured Tally performing, so they
-    // name the same live ledger: they bind and report its exact spelling. Only
-    // byte equality is `exact`, which is what build_import_xml admits.
+    // The generic agent catalogue carries no scope-qualified fold authority.
+    // It may offer the observed spelling, but only byte equality is `exact`.
     for wanted in ["bank ", "bank", "BANK"] {
         let matched = one_master_match(wanted, &["Bank"]);
-        assert_eq!(matched["match_state"], "normalized");
+        assert_eq!(matched["match_state"], "near_miss");
+        assert_eq!(matched["reason"], "master_binding_near_miss");
+        assert!(matched.get("exact_live_spelling").is_none());
         assert_eq!(
-            matched["exact_live_spelling"][super::super::PARTY_NAME_MARKER],
+            matched["candidates"][0]["name"][super::super::PARTY_NAME_MARKER],
             "Bank"
         );
     }

@@ -165,7 +165,9 @@ pub(super) struct CatalogApplySnapshot {
 /// Binds every source entry's observed ledger name against the captured
 /// catalog. Advisory only: an empty or unusable capture narrows nothing rather
 /// than failing the read the operator just performed, and every returned name
-/// is still revalidated by the apply path before it can become a target.
+/// is still revalidated by the apply path before it can become a target. A
+/// folded name is a candidate only; this generic catalog has no
+/// scope-qualified authority to select it.
 fn source_entry_bindings(
     source: &crate::source_draft_xml::ParsedSource,
     targets: &[String],
@@ -720,11 +722,14 @@ mod tests {
         assert_eq!(state, "complete");
         assert_eq!(bindings.len(), 3);
 
-        // Case alone does not defeat a bind, and the live spelling is named.
+        // A scoped gateway observation does not make this generic catalogue
+        // authoritative: folding can suggest the live spelling, never select it.
         assert_eq!(bindings[0].row_position, 1);
         assert_eq!(bindings[0].entry_position, 1);
-        assert_eq!(bindings[0].bound_target.as_deref(), Some("Alpha Traders"));
-        assert_eq!(bindings[0].bound_basis, Some(BindingBasis::NormalizedName));
+        assert_eq!(bindings[0].bound_target, None);
+        assert_eq!(bindings[0].bound_basis, None);
+        assert_eq!(bindings[0].unbound_reason, Some("master_binding_near_miss"));
+        assert_eq!(bindings[0].candidates, ["Alpha Traders", "GAMMA ALPHA"]);
 
         // The number the operator buried in the ledger name decides where the
         // name offers a wrong candidate.
@@ -798,7 +803,8 @@ mod tests {
                 "<VOUCHER REMOTEID=\"ph-1\" VCHTYPE=\"Receipt\"><DATE>20260901</DATE>",
                 // Byte-exact against a captured name.
                 "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Cash</LEDGERNAME><AMOUNT>1</AMOUNT></ALLLEDGERENTRIES.LIST>",
-                // Case and separator folding, against a captured name.
+                // A fold against a captured name still only suggests a candidate:
+                // this consumer's catalogue does not carry the observation's authority.
                 "<ALLLEDGERENTRIES.LIST><LEDGERNAME>wr2-sales</LEDGERNAME><AMOUNT>-1</AMOUNT></ALLLEDGERENTRIES.LIST>",
                 // `AND` for `&` is rejected by the gateway, so it must not bind.
                 "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Profit AND Loss A/c</LEDGERNAME><AMOUNT>0</AMOUNT></ALLLEDGERENTRIES.LIST>",
@@ -816,8 +822,13 @@ mod tests {
         assert_eq!(bindings[0].bound_target.as_deref(), Some("Cash"));
         assert_eq!(bindings[0].bound_basis, Some(BindingBasis::ExactName));
 
-        assert_eq!(bindings[1].bound_target.as_deref(), Some("WR2 Sales"));
-        assert_eq!(bindings[1].bound_basis, Some(BindingBasis::NormalizedName));
+        assert_eq!(bindings[1].bound_target, None);
+        assert_eq!(bindings[1].bound_basis, None);
+        assert_eq!(bindings[1].unbound_reason, Some("master_binding_near_miss"));
+        assert_eq!(
+            bindings[1].candidates,
+            ["WR2 Sales", "WR2 XML Café Naïve Ledger 01A01A2F"]
+        );
 
         // `&` is not folded — §9.4d sent `AND` for `&` and Tally rejected it —
         // so this refuses against a real catalogue rather than in theory, and
