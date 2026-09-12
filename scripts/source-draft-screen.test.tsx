@@ -300,6 +300,91 @@ test("groups and lists a catalogue of realistic size without losing the narrowin
   root.unmount();
 });
 
+test("says so when the operator chooses a different ledger from the one binding matched", async () => {
+  // A choice settles what the operator wants; it does not settle a
+  // disagreement. Suppressing the summary whenever a `bound_target` merely
+  // existed meant choosing B where the capture defended A left nothing on
+  // screen saying the two differed — while the adjacent line said the target
+  // had been re-read and bound, which reads as agreement.
+  const twoTargets = {
+    ...catalog,
+    targets: ["Bound target", "Other target"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: "Bound target",
+      bound_basis: "exact_name",
+      unbound_reason: null,
+      candidates: [],
+      candidate_count: 0,
+      candidate_listing: "none",
+    }],
+  };
+  const applied = {
+    ...draft,
+    revision: 2,
+    rows: draft.rows.map((item, index) => index === 0 ? {
+      ...item,
+      proposal: { ...item.proposal, entries: [{ ...item.proposal.entries[0], ledger: "Other target" }] },
+    } : item),
+    current_catalog_bindings: [{ row_position: 1, entry_position: 1 }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(twoTargets).mockResolvedValueOnce(applied);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  const target = host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!;
+  await act(async () => setValue(target, "Other target"));
+  expect(target.value).toBe("Other target");
+  expect(host.textContent).toContain("This current-session target was re-read and bound.");
+  // The disagreement survives the choice, and says which ledger it was about.
+  expect(host.textContent).toContain("Automatic binding matched Bound target for this source line, not the ledger chosen here.");
+  root.unmount();
+});
+
+test("says nothing extra when the operator chooses the ledger binding matched", async () => {
+  // The other half: agreement is silence. A summary repeating the binding
+  // beside an identical choice is noise, and it is why the suppression exists.
+  const agreeing = {
+    ...catalog,
+    targets: ["Bound target", "Other target"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: "Bound target",
+      bound_basis: "exact_name",
+      unbound_reason: null,
+      candidates: [],
+      candidate_count: 0,
+      candidate_listing: "none",
+    }],
+  };
+  const applied = {
+    ...draft,
+    revision: 2,
+    rows: draft.rows.map((item, index) => index === 0 ? {
+      ...item,
+      proposal: { ...item.proposal, entries: [{ ...item.proposal.entries[0], ledger: "Bound target" }] },
+    } : item),
+    current_catalog_bindings: [{ row_position: 1, entry_position: 1 }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(agreeing).mockResolvedValueOnce(applied);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  const target = host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!;
+  await act(async () => setValue(target, "Bound target"));
+  expect(target.value).toBe("Bound target");
+  expect(host.textContent).not.toContain("Automatic binding matched");
+  root.unmount();
+});
+
 test("keeps the binding result visible beside a saved target nobody has re-read", async () => {
   // `entry.ledger` alone is not a choice. A saved target from an earlier
   // session leaves `catalogSelections` empty, the control shows nothing

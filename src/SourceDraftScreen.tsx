@@ -105,20 +105,29 @@ function narrowedTargets(binding: SourceDraftCatalogBinding | null) {
 /// name points at one ledger and the number inside it points at another — look
 /// like an ordinary weak match. That is the one case where the operator has
 /// real information to act on, and it was the case being hidden.
-function catalogBindingSummary(binding: SourceDraftCatalogBinding | null, total: number, selected: boolean) {
+function catalogBindingSummary(binding: SourceDraftCatalogBinding | null, total: number, selected: string | null) {
   if (!binding) return null;
-  if (selected) {
+  if (selected !== null) {
     // The operator has chosen. Saying "nothing is chosen" beside their choice
     // is simply false, and it contradicted the adjacent line telling them the
     // target was re-read and bound.
     //
-    // The *reason* still matters though, and is not hidden: an identifier and a
+    // What a choice does *not* do is settle a disagreement. A binding that
+    // matched a different ledger is exactly the fact the operator would want to
+    // see beside their own selection, and taking a boolean here hid it: any
+    // bound target suppressed the summary, so choosing B where the capture
+    // defended A left nothing on screen saying so. The comparison is against
+    // the target, not against whether one exists.
+    if (binding.bound_target) {
+      return binding.bound_target === selected
+        ? null
+        : `Automatic binding matched ${displayCatalogTarget(binding.bound_target)} for this source line, not the ledger chosen here. Your choice stands; nothing has been changed for you.`;
+    }
+    // The *reason* still matters too, and is not hidden: an identifier and a
     // name pointing at different ledgers is grounds to check a choice, not
     // something that stops being true once one is made. So the refusal survives
     // in the past tense, without the guidance that no longer applies.
-    return binding.bound_target
-      ? null
-      : `Automatic binding did not resolve this line. ${catalogRefusalLead(binding.unbound_reason)}`;
+    return `Automatic binding did not resolve this line. ${catalogRefusalLead(binding.unbound_reason)}`;
   }
   if (binding.bound_target) {
     // `identifier` covers both shapes the binder extracts — a numeric run and
@@ -627,7 +636,7 @@ function SourceDraftEditor({ row, disabled, catalog, catalogSelections, catalogI
             const selectedKey = catalogSelectionKey(row.position, index + 1);
             const selectedNow = catalogSelections[selectedKey] === entry.ledger;
             const bindingSummary = catalog
-              ? catalogBindingSummary(binding, catalog.targets.length, selectedNow)
+              ? catalogBindingSummary(binding, catalog.targets.length, selectedNow ? entry.ledger ?? null : null)
               : null;
             return <div className="source-draft-entry" key={`${row.position}-${index}`}>
               <p><span>Source line {index + 1}</span>{sourceEntryLabel(row.entries[index] ?? { position: index, source_ledger: "", source_amount: "", source_polarity: "" })}</p>
