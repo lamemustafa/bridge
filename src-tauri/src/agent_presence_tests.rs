@@ -1455,6 +1455,11 @@ async fn a_batch_id_the_writer_could_not_have_made_is_refused() {
         ("bridge-not-a-uuid", true),
         ("2b1c9f4e-9d3a-4f71-8c2e-5a6b7c8d9e01", true),
         ("bridge-2B1C9F4E-9D3A-4F71-8C2E-5A6B7C8D9E01", true),
+        // Canonically spelled and RFC 4122 variant, but the wrong version:
+        // `Uuid::new_v4()` never emits a nil or a v7 UUID, so hashing either
+        // would derive an identity no book holds and read as `absent`.
+        ("bridge-00000000-0000-0000-0000-000000000000", true),
+        ("bridge-017f22e2-79b0-7cc3-98c4-dc0c0c07398f", true),
     ] {
         let mut voucher = proposal("JV-1", "Bridge Nested Debtor WR4", "12.50");
         voucher["batch_id"] = json!(batch);

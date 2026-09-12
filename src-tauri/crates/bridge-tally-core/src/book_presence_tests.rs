@@ -2592,6 +2592,37 @@ fn one_marker_on_two_book_vouchers_decides_nothing() {
     assert_eq!(entry.undecided().expect("undecided").candidate_count, 2);
 }
 
+/// A marker that would otherwise identify one voucher uniquely is not unique
+/// when a *second* book voucher also carries it, even if that second voucher
+/// only carries it ambiguously. Counting solely `by_marker` let the ambiguous
+/// occurrence hide: the identifying voucher looked like the marker's only
+/// home, and `Present` went out for it while the marker actually named two
+/// book vouchers -- the exact middle case ambiguous-marker handling exists to
+/// preserve.
+#[test]
+fn a_marker_shared_with_an_ambiguous_voucher_decides_nothing() {
+    let window = window(&[
+        BookRow::new("book-1", "20260812", "AA0118").marker(MARKER_A),
+        BookRow::new("book-2", "20260813", "AA0119").ambiguous_markers(&[MARKER_A, MARKER_B]),
+    ]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0118")
+        .marker(MARKER_A)
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert_eq!(reason(entry), UndecidedReason::NarrationMarkerCollision);
+    assert_eq!(
+        entry.undecided().expect("undecided").candidate_count,
+        2,
+        "the marker occurs on two book vouchers, so it is not unique"
+    );
+}
+
 /// Proposal-side uniqueness is checked before the book lookup, the same way it
 /// is for a `REMOTEID`: two source rows claiming one identity are undecidable
 /// whether or not the book holds it.
@@ -2646,6 +2677,48 @@ fn a_marker_and_a_number_selecting_different_vouchers_conflict() {
     assert!(
         keys.contains("book-1") && keys.contains("book-2"),
         "both sides of the disagreement are shown, not just the stronger one"
+    );
+}
+
+/// `REMOTEID` and the marker can both select the *same* book voucher while the
+/// manual number selects a different one -- three selections naming only two
+/// book vouchers. Mapping every selection straight into a candidate lists the
+/// shared voucher twice and reports one candidate more than there are book
+/// vouchers to look at; the response must collapse to book position first.
+#[test]
+fn a_conflict_naming_one_voucher_twice_reports_it_once() {
+    let window = window(&[
+        BookRow::new("book-1", "20260812", "AA0118")
+            .remote_id("bridge-txn-1")
+            .marker(MARKER_A),
+        BookRow::new("book-2", "20260813", "AA0777"),
+    ]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0777")
+        .remote_id("bridge-txn-1")
+        .marker(MARKER_A)
+        .build()];
+    let report = run(
+        &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert_eq!(reason(entry), UndecidedReason::IdentityConflict);
+    let undecided = entry.undecided().expect("undecided");
+    assert_eq!(
+        undecided.candidate_count, 2,
+        "book-1 is named by two rules but is one book voucher"
+    );
+    let keys = undecided
+        .candidates
+        .iter()
+        .map(|candidate| candidate.book_key.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        keys,
+        vec!["book-1", "book-2"],
+        "each book voucher is listed exactly once"
     );
 }
 

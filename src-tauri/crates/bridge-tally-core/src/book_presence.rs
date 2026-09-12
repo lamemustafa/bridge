@@ -1384,6 +1384,21 @@ fn decide(
     };
     let remote_id_matches = lookup(proposal.remote_id.as_deref(), &index.by_remote_id);
     let marker_matches = lookup(proposal.narration_marker.as_deref(), &index.by_marker);
+    // A voucher counted here is still carrying this marker even though it
+    // could not identify anything on its own (`by_ambiguous_marker`). Checking
+    // uniqueness against `marker_matches` alone let one such voucher hide
+    // behind an unrelated identifying one: the identifying voucher looked
+    // unique, and `Present` went out for it while the marker actually named
+    // two book vouchers -- exactly the middle case ambiguous-marker handling
+    // exists to preserve, undone by counting only half of it.
+    let marker_matches_with_ambiguous: Vec<usize> = marker_matches
+        .iter()
+        .copied()
+        .chain(lookup(
+            proposal.narration_marker.as_deref(),
+            &index.by_ambiguous_marker,
+        ))
+        .collect();
 
     // Uniqueness is required on *both* sides, and the proposal side is checked
     // first: two source rows claiming one identity are undecidable whether or
@@ -1401,7 +1416,7 @@ fn decide(
         (
             proposal.narration_marker.as_deref(),
             proposal_marker_counts,
-            &marker_matches,
+            &marker_matches_with_ambiguous,
             PresenceBasis::NarrationMarker,
             UndecidedReason::NarrationMarkerCollision,
         ),
@@ -1483,11 +1498,19 @@ fn decide(
 
     if let Some(&(basis, position)) = selections.first() {
         let touched = with_resemblances(selections.iter().map(|(_, at)| *at).collect());
+        // Two selections can name the *same* book voucher by different rules
+        // (`REMOTEID` and the marker both landing on A while the number
+        // selects B): mapping every selection straight into a candidate would
+        // list A twice and report a `candidate_count` one higher than the
+        // number of book vouchers actually in play. Collapse by position to
+        // the strongest rule first, the same helper `resemblances` uses for
+        // the same reason.
         let ranked = || {
-            let mut entries = selections
-                .iter()
-                .map(|&(basis, at)| (at, basis.candidate_rule()))
-                .collect::<Vec<_>>();
+            let mut found: BTreeMap<usize, CandidateRule> = BTreeMap::new();
+            for &(basis, at) in &selections {
+                keep_strongest(&mut found, at, basis.candidate_rule());
+            }
+            let mut entries = found.into_iter().collect::<Vec<_>>();
             candidates_ranked(window, &mut entries)
         };
         // Two identity signals that disagree are reported, never ranked — the

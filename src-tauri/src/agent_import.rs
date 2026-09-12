@@ -1107,11 +1107,23 @@ pub(super) fn narration_markers(narration: &str) -> impl Iterator<Item = Option<
 /// is -- a batch id the writer could not have produced cannot have written a
 /// marker, so hashing it derives an identity no book holds and the run
 /// reports `absent` where it should have reported bad input.
+///
+/// Canonical spelling alone is not enough: it admits a nil, v1 or v7 UUID
+/// that this writer -- `Uuid::new_v4()`, line below -- could never have
+/// generated. Presence would hash such a value, find it in no book, and
+/// report `absent` for input the writer could not have produced, which is
+/// exactly the wrong answer under automatic numbering and invites a
+/// duplicate import. `is_batch_derived` in `agent_presence.rs` checks the
+/// version its writer stamps for the same reason; this checks version 4.
 pub(in crate::agent) fn valid_batch_id(value: &str) -> bool {
     value
         .strip_prefix("bridge-")
         .and_then(|uuid| Uuid::parse_str(uuid).ok().map(|parsed| (uuid, parsed)))
-        .is_some_and(|(spelled, parsed)| parsed.to_string() == spelled)
+        .is_some_and(|(spelled, parsed)| {
+            parsed.to_string() == spelled
+                && parsed.get_version() == Some(uuid::Version::Random)
+                && parsed.get_variant() == uuid::Variant::RFC4122
+        })
 }
 
 /// The character rule `build_import_xml` enforces on a caller's transaction
