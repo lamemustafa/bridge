@@ -31,8 +31,8 @@ use self::{
     },
 };
 use catalog::{
-    CatalogCapture, SourceDraftCatalogApplyRequest, SourceDraftCatalogLoadRequest,
-    SourceDraftCatalogTargets,
+    CatalogCapture, SourceDraftCatalogApplyRequest, SourceDraftCatalogInvalidateRequest,
+    SourceDraftCatalogLoadRequest, SourceDraftCatalogTargets,
 };
 
 #[derive(Default)]
@@ -131,8 +131,12 @@ pub(crate) async fn desktop_apply_source_draft_existing_ledger_target(
 #[tauri::command]
 pub(crate) fn desktop_invalidate_source_draft_existing_ledger_targets(
     store: State<'_, SourceDraftStore>,
-) -> CommandResult<()> {
-    store.invalidate_catalogue()
+    request: SourceDraftCatalogInvalidateRequest,
+) -> CommandResult<u64> {
+    // The resulting generation, not `()`, is the point: it is what lets the
+    // frontend keep naming the right generation on its next invalidation
+    // even when this one is a no-op. See `SourceDraftStore::invalidate_catalogue`.
+    store.invalidate_catalogue(&request)
 }
 
 #[tauri::command]
@@ -284,6 +288,7 @@ fn dto(active: &ActiveDraft) -> SourceDraftDto {
             })
             .collect(),
         current_catalog_bindings: current_catalog_bindings(active),
+        catalog_generation: active.catalog_generation,
     }
 }
 
