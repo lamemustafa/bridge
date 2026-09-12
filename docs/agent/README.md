@@ -208,10 +208,12 @@ licence mode, or manually imported file, and only an unnumbered single-voucher
 2. Call `validate_masters` with every ledger name. **`build_import_xml` admits
    `exact` only**, so replace the payload name for every row that is not
    `exact`, and never invent one:
-   - `normalized` or `identifier` — the row is bound. Copy its
-     `exact_live_spelling` into the payload verbatim; the live name may differ
-     from yours in case, spacing, dash or quote style, and the import file
-     carries whatever you send byte for byte.
+   - `identifier` — the row is bound by a decisive identifier. Copy its
+     `exact_live_spelling` into the payload verbatim; the import file carries
+     whatever you send byte for byte. Folded names do not bind through this
+     generic catalogue, even when exactly one candidate is found. Historical
+     `normalized` records remain readable, but current validation does not
+     produce them; revalidate against the current catalogue before selection.
    - `near_miss` — the row is **not** bound and Bridge chose nothing. Where
      `listing` is `withheld`, `candidates` is empty: there is no listed name to
      pick. This includes `master_binding_no_discriminating_candidate` and

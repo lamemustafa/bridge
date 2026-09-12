@@ -12,15 +12,18 @@
       "unbound_reason": null
     },
     {
-      "bound_basis": "normalized_name",
-      "bound_target": "WR2 Sales",
-      "candidate_count": 0,
+      "bound_basis": null,
+      "bound_target": null,
+      "candidate_count": 2,
       "candidate_count_is_lower_bound": false,
-      "candidate_listing": "none",
-      "candidates": [],
+      "candidate_listing": "listed",
+      "candidates": [
+        "WR2 Sales",
+        "WR2 XML Café Naïve Ledger 01A01A2F"
+      ],
       "entry_position": 2,
       "row_position": 1,
-      "unbound_reason": null
+      "unbound_reason": "master_binding_near_miss"
     },
     {
       "bound_basis": null,
@@ -43,6 +46,11 @@
     "request_sha256": "46afed275173ae5371c24dbc18ea9998663b03d5e7b6eefc69c1ebfbe2ffb2a0",
     "response_sha256": "f354993704f0feddc27a46d73b4ca10787b6028d9f385d8323994b18e5b34e0f",
     "state": "complete"
+  },
+  "provenance": {
+    "catalogue": "captured StandardLedgerCatalogV1 response",
+    "source_xml": "authored test input",
+    "binding_dto": "derived by the production parser and binder"
   },
   "source_sha256": "41c4de4324e0eb03c46b92aee7b0be0a0a1ff29feb63ffc3b8435cce559810aa",
   "targets": [
