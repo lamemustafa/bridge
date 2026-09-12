@@ -1531,6 +1531,28 @@ def _entry_identity(path):
     return stat_result.st_dev, stat_result.st_ino
 
 
+def _cleanup_entry_state(path, owned_identity=None):
+    """Classify a cleanup name without following a replacement symlink.
+
+    ``lexists`` maps permission errors to false, which would make an
+    inaccessible entry indistinguishable from one that an unlink removed.
+    Recovery needs that distinction before it can close the descriptor pin.
+    """
+    try:
+        identity = _entry_identity(path)
+    except FileNotFoundError:
+        return "missing"
+    except OSError:
+        return "uninspectable"
+    if owned_identity is None:
+        return "present"
+    return "owned" if identity == owned_identity else "reclaimed"
+
+
+def _record_uninspectable_cleanup(path, failures):
+    failures.append(f"could not inspect owned output during cleanup: {path}")
+
+
 def _resolve_output_path(path):
     """Resolve an operator path into the spelling this run is authorised to touch.
 
@@ -1549,14 +1571,19 @@ def _resolve_output_path(path):
 
 def _unlink_for_cleanup(path, owned_identity, failures):
     """Remove a path only while it still names the inode this run created."""
+    state = _cleanup_entry_state(path, owned_identity)
+    if state == "missing":
+        return "missing"
+    if state == "uninspectable":
+        _record_uninspectable_cleanup(path, failures)
+        return "uncertain"
+    if state == "reclaimed":
+        # The pathname has been reclaimed. It is not ours to delete, and
+        # reporting it gives the operator a chance to find the private copy
+        # if it still exists without making a claim about foreign bytes.
+        failures.append(str(path))
+        return "reclaimed"
     try:
-        if _entry_identity(path) != owned_identity:
-            # The pathname has been reclaimed. It is not ours to delete, and
-            # reporting it gives the operator a chance to find the private copy
-            # if it still exists without making a claim about foreign bytes.
-            if os.path.lexists(path):
-                failures.append(str(path))
-            return "reclaimed"
         os.unlink(path)
         return "removed"
     except FileNotFoundError:
@@ -1567,9 +1594,14 @@ def _unlink_for_cleanup(path, owned_identity, failures):
         return "missing"
     except OSError:
         # A filesystem call can report an error after taking effect. Only retain
-        # the path when reconciliation shows bytes may still be present.
-        if os.path.lexists(path):
+        # the path when non-following reconciliation establishes that it remains.
+        state = _cleanup_entry_state(path, owned_identity)
+        if state == "missing":
+            return "missing"
+        if state in ("owned", "reclaimed"):
             failures.append(str(path))
+        elif state == "uninspectable":
+            _record_uninspectable_cleanup(path, failures)
         return "uncertain"
 
 
@@ -1624,16 +1656,27 @@ def _owned_path(path, handle, *, created):
                 identity = None
             if created:
                 if identity is None:
-                    if os.path.lexists(path):
+                    state = _cleanup_entry_state(path)
+                    if state == "present":
                         failures.append(str(path))
+                    elif state == "uninspectable":
+                        _record_uninspectable_cleanup(path, failures)
                 else:
-                    _unlink_for_cleanup(path, identity, failures)
+                    outcome = _unlink_for_cleanup(path, identity, failures)
+                    _reconcile_owned_pin_after_cleanup(
+                        {"path": path, "identity": identity, "pin": handle},
+                        outcome,
+                        failures,
+                    )
         finally:
             try:
                 os.close(handle)
             except OSError:
-                if created and os.path.lexists(path):
+                state = _cleanup_entry_state(path) if created else "missing"
+                if state == "present":
                     failures.append(str(path))
+                elif state == "uninspectable":
+                    _record_uninspectable_cleanup(path, failures)
         if failures:
             _append_cleanup_detail(
                 error,
@@ -1678,8 +1721,34 @@ def _close_owned_path(record, failures):
         except FileNotFoundError:
             pass
         except OSError:
-            if os.path.lexists(cleanup_path):
+            state = _cleanup_entry_state(cleanup_path, record["identity"])
+            if state in ("owned", "reclaimed"):
                 failures.append(cleanup_path)
+            elif state == "uninspectable":
+                _record_uninspectable_cleanup(cleanup_path, failures)
+
+
+def _reconcile_owned_pin_after_cleanup(record, outcome, failures):
+    """Disclose an owned inode whose descriptor proves it remains linked.
+
+    A successful unlink only removes the claimed spelling. A hard-link alias or
+    parent-directory rename can leave the pinned inode linked elsewhere, where
+    this command has neither a pathname nor authority to remove it.
+    """
+    if outcome not in ("removed", "missing", "reclaimed"):
+        return
+    pin = record.get("pin")
+    if pin is None:
+        return
+    try:
+        stat_result = os.fstat(pin)
+    except OSError:
+        _record_uninspectable_cleanup(record["path"], failures)
+        return
+    if ((stat_result.st_dev, stat_result.st_ino) == record["identity"]
+            and stat_result.st_nlink > 0):
+        failures.append(
+            f"owned output could not be located after cleanup: {record['path']}")
 
 
 def _cleanup_owned_path(record, failures):
@@ -1703,25 +1772,7 @@ def _cleanup_owned_path(record, failures):
             # this output. Keep any earlier diagnostics, but replace this
             # pathname with the separate pinned-inode conclusion below.
             del failures[failure_start:]
-        if outcome == "missing" or (outcome == "reclaimed" and "cleanup_path" in record):
-            # The descriptor still proves this is our fresh output, but a
-            # stale parent pathname cannot say where it went. Do not turn a
-            # missing entry into a successful cleanup or invent a replacement
-            # path; a parent-directory rename is outside this CLI's namespace
-            # authority and needs an operator-visible recovery fact.
-            pin = record.get("pin")
-            if pin is not None:
-                try:
-                    stat_result = os.fstat(pin)
-                    if ((stat_result.st_dev, stat_result.st_ino) == record["identity"]
-                            and stat_result.st_nlink > 0):
-                        failures.append(
-                            f"owned output could not be located after cleanup: {record['path']}"
-                        )
-                except OSError:
-                    failures.append(
-                        f"owned output could not be located after cleanup: {record['path']}"
-                )
+        _reconcile_owned_pin_after_cleanup(record, outcome, failures)
         _close_owned_path(record, failures)
 
 
@@ -1866,7 +1917,8 @@ def _restore_backup(swap, failures, metadata_scope_warnings):
     A different inode may be a foreign writer's success, so keep the private
     backup and report the conflict rather than overwriting it.
     """
-    backup, backup_identity = swap["backup"]["path"], swap["backup"]["identity"]
+    backup_record = swap["backup"]
+    backup, backup_identity = backup_record["path"], backup_record["identity"]
     destination, original_identity = swap["destination"], swap["original_identity"]
     staged_identity, metadata = swap["staged_identity"], swap["metadata"]
     try:
@@ -1886,7 +1938,7 @@ def _restore_backup(swap, failures, metadata_scope_warnings):
                 os.utime(handle, ns=(metadata["atime_ns"], current.st_mtime_ns))
             except OSError:
                 failures.append(destination)
-        _unlink_for_cleanup(backup, backup_identity, failures)
+        _cleanup_owned_path(backup_record, failures)
         return
     if current_identity != staged_identity:
         failures.append(backup)
