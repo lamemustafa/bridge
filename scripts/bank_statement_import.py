@@ -1510,9 +1510,36 @@ def _open_private(path, accept_inherited=False):
     if refusal:
         raise refusal
     try:
-        return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
         raise _existing_target_on_windows(path) from None
+    try:
+        # Creation modes are filtered through the process umask.  Reapply the
+        # owner-only contract to the descriptor before any caller writes.
+        os.fchmod(handle, 0o600)
+        return handle
+    except BaseException:
+        os.close(handle)
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise
+
+
+def _private_mkstemp(**kwargs):
+    """Create an owner-only sibling output despite a restrictive umask."""
+    handle, path = tempfile.mkstemp(**kwargs)
+    try:
+        os.fchmod(handle, 0o600)
+        return handle, path
+    except BaseException:
+        os.close(handle)
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise
 
 
 def _file_identity(path):
@@ -1633,7 +1660,7 @@ def _open_regular_output(path, expected_identity=None):
         raise
 
 
-def _owned_path(path, handle, *, created):
+def _owned_path(path, handle, *, created, owned_records=None):
     """Record a pathname and retain the descriptor that pins its inode.
 
     `created` is explicit because a registration failure has opposite cleanup
@@ -1684,7 +1711,12 @@ def _owned_path(path, handle, *, created):
                 + ", ".join(sorted(set(failures))),
             )
         raise
-    return {"path": path, "identity": identity, "pin": handle}
+    record = {"path": path, "identity": identity, "pin": handle}
+    if owned_records is not None:
+        # Insert before returning to the caller: an interrupt after successful
+        # registration still leaves one cleanup authority for this new inode.
+        owned_records.append(record)
+    return record
 
 
 def _claimed_output_changed(supplied_path, canonical_path, identity):
@@ -2146,6 +2178,10 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
     authority.
     """
     claimed, staged, replaced = [], [], []
+    # These hold pins which successfully registered but have not yet been
+    # transferred into a staged swap.  They close or clean up an interrupt in
+    # the small caller-side handoff interval.
+    unpaired_originals, unpaired_backups = [], []
     # A record is the one ownership authority for a pathname: cleanup may
     # unlink it only while its identity still equals record["identity"].
     pending_backup = None
@@ -2167,7 +2203,9 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 # requested current path; a replacement after it is detected
                 # before this run has authority to create or swap output.
                 original_handle = _open_regular_output(real_path, None)
-                original = _owned_path(real_path, original_handle, created=False)
+                original = _owned_path(
+                    real_path, original_handle, created=False,
+                    owned_records=unpaired_originals)
                 original_identity = original["identity"]
                 state = {"temporary": None, "supplied_path": path,
                          "real_path": real_path,
@@ -2179,28 +2217,31 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                         "output_path_changed",
                         f"{path} changed while it was being claimed",
                     )
-                handle, temporary = tempfile.mkstemp(
+                handle, temporary = _private_mkstemp(
                     dir=os.path.dirname(real_path),
                     prefix=os.path.basename(real_path) + ".", suffix=".part")
-                record = _owned_path(temporary, handle, created=True)
+                record = _owned_path(temporary, handle, created=True,
+                                     owned_records=claimed)
                 record["supplied_path"] = path
                 record["canonical_path"] = real_path
                 record["cleanup_path"] = temporary
-                claimed.append(record)
                 state["temporary"] = record
             else:
                 supplied_path = path
                 canonical_path = _resolve_output_path(supplied_path)
-                handle = _open_private(canonical_path, accept_inherited)
+                # Register this newly created inode before returning to an
+                # interruptible caller line.  The record is the cleanup owner
+                # even if a signal arrives before its path metadata is filled.
+                record = _owned_path(
+                    canonical_path, _open_private(canonical_path, accept_inherited),
+                    created=True, owned_records=claimed)
                 # Keep cleanup on the canonical inode path captured before the
                 # open. The supplied spelling remains an authority that must
                 # still resolve to that same inode at commit time.
-                record = _owned_path(canonical_path, handle, created=True)
                 record["supplied_path"] = supplied_path
                 record["canonical_path"] = canonical_path
                 record["cleanup_path"] = canonical_path
                 record["path"] = supplied_path
-                claimed.append(record)
                 try:
                     claimed_path_changed = (
                         _resolve_output_path(supplied_path) != canonical_path
@@ -2227,10 +2268,11 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             temporary = state["temporary"]
             supplied_path, real_path = state["supplied_path"], state["real_path"]
             original_identity = state["original_identity"]
-            backup_handle, backup = tempfile.mkstemp(
+            backup_handle, backup = _private_mkstemp(
                 dir=os.path.dirname(real_path),
                 prefix=os.path.basename(real_path) + ".", suffix=".bak")
-            pending_backup = _owned_path(backup, backup_handle, created=True)
+            pending_backup = _owned_path(
+                backup, backup_handle, created=True, owned_records=unpaired_backups)
             pending_swap = {"backup": pending_backup, "destination": real_path,
                             "original_identity": original_identity,
                             "staged_identity": temporary["identity"],
@@ -2249,8 +2291,22 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             # Revalidate *after* the backup operation: it is a filesystem call
             # an attacker can use to retarget the supplied symlink before this
             # commit. The pending backup lets the refusal cleanly undo itself.
-            if (os.path.realpath(supplied_path) != real_path
-                    or _file_identity(real_path) != original_identity):
+            try:
+                existing_output_changed = (
+                    os.path.realpath(supplied_path) != real_path
+                    or _file_identity(real_path) != original_identity)
+            except FileNotFoundError:
+                # A missing leaf under its original parent is a commit-boundary
+                # path change.  A vanished parent can leave pinned private
+                # outputs under an unknown spelling, so preserve its existing
+                # recovery path and diagnostic rather than misclassifying it.
+                if os.path.isdir(os.path.dirname(real_path)):
+                    existing_output_changed = True
+                else:
+                    raise
+            except OSError:
+                existing_output_changed = True
+            if existing_output_changed:
                 raise Refusal(
                     "output_path_changed",
                     f"{supplied_path} changed after it was claimed; no output was replaced",
@@ -2302,6 +2358,11 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
         # cleanup. Keep it in this same handler so an interrupt before cleanup
         # starts cannot skip both recovery paths.
         committed = True
+        # The rollback handler still needs the old .part spelling until this
+        # boundary.  Once committed, bind close diagnostics to the live output.
+        for state in staged:
+            state["temporary"]["path"] = state["real_path"]
+            state["temporary"]["cleanup_path"] = state["real_path"]
         _cleanup_committed_outputs(
             replaced, claimed, cleanup_failures, descriptor_close_failures)
         if cleanup_failures:
@@ -2355,6 +2416,24 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
         # be unlinked as if it were a fresh output.
         for state in staged:
             _close_owned_path(state["original"], cleanup_failures)
+        # A signal can interrupt after _owned_path registered a backup or
+        # original pin but before its caller transferred it to pending_swap or
+        # staged.  Reconcile only those unpaired records here; paired records
+        # were handled above with their transaction state.
+        paired_originals = {id(state["original"]) for state in staged}
+        if pending_swap is not None and pending_swap["original"] is not None:
+            paired_originals.add(id(pending_swap["original"]))
+        paired_backups = {id(swap["backup"]) for swap in replaced}
+        if pending_swap is not None:
+            paired_backups.add(id(pending_swap["backup"]))
+        if pending_backup is not None:
+            paired_backups.add(id(pending_backup))
+        for record in unpaired_backups:
+            if id(record) not in paired_backups:
+                _cleanup_owned_path(record, cleanup_failures)
+        for record in unpaired_originals:
+            if id(record) not in paired_originals:
+                _close_owned_path(record, cleanup_failures)
         _note_cleanup_failures(error, cleanup_failures)
         _note_rollback_metadata_scope(error, metadata_scope_warnings)
         raise

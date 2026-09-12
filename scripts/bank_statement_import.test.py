@@ -2042,7 +2042,7 @@ def test_interrupt_before_committed_cleanup_keeps_new_output_and_reports_backup(
         assert destination.read_text() == "new bytes"
         assert os.path.realpath(destination) in closed_paths, closed_paths
         assert any(path.endswith(".bak") for path in closed_paths)
-        assert any(path.endswith(".part") for path in closed_paths)
+        assert not any(path.endswith(".part") for path in closed_paths)
 
 
 def test_interrupt_after_backup_unlink_does_not_report_a_phantom_path(m):
@@ -2088,7 +2088,7 @@ def test_interrupt_after_backup_unlink_does_not_report_a_phantom_path(m):
         assert not list(root.glob("*.bak"))
         assert os.path.realpath(destination) in closed_paths, closed_paths
         assert any(path.endswith(".bak") for path in closed_paths)
-        assert any(path.endswith(".part") for path in closed_paths)
+        assert not any(path.endswith(".part") for path in closed_paths)
 
 
 def test_legacy_oserror_cleanup_diagnostic_reaches_stderr(m):
@@ -2283,8 +2283,8 @@ def test_claim_refuses_a_foreign_replacement_after_committing_original_identity(
         real_owned_path = m._owned_path
         real_replace = m.os.replace
 
-        def replace_after_identity(path, handle, *, created):
-            record = real_owned_path(path, handle, created=created)
+        def replace_after_identity(path, handle, *, created, **kwargs):
+            record = real_owned_path(path, handle, created=created, **kwargs)
             if not created and os.path.realpath(path) == os.path.realpath(destination):
                 real_replace(foreign, destination)
             return record
@@ -2721,8 +2721,8 @@ def test_rollback_keeps_a_foreign_destination_and_private_backup(m):
             closed_handles.append(handle)
             return real_close(handle)
 
-        def observe_owned_path(path, handle, *, created):
-            record = real_owned_path(path, handle, created=created)
+        def observe_owned_path(path, handle, *, created, **kwargs):
+            record = real_owned_path(path, handle, created=created, **kwargs)
             if os.path.basename(path).startswith("first.xml."):
                 owned_handles[pathlib.Path(path).suffix] = record["pin"]
             return record
@@ -2837,8 +2837,8 @@ def test_committed_close_after_effect_does_not_report_missing_backup(m):
         backup_handles = set()
         fired = False
 
-        def observe_owned(path, handle, *, created):
-            record = real_owned(path, handle, created=created)
+        def observe_owned(path, handle, *, created, **kwargs):
+            record = real_owned(path, handle, created=created, **kwargs)
             if str(path).endswith(".bak"):
                 backup_handles.add(handle)
             return record
@@ -3139,8 +3139,8 @@ def test_committed_new_output_close_failure_is_not_a_retained_backup(m):
         output_handles = set()
         fired = False
 
-        def observe_owned(path, handle, *, created):
-            record = real_owned(path, handle, created=created)
+        def observe_owned(path, handle, *, created, **kwargs):
+            record = real_owned(path, handle, created=created, **kwargs)
             if created and pathlib.Path(path).resolve() == destination.resolve():
                 output_handles.add(handle)
             return record
@@ -3839,6 +3839,188 @@ def test_earlier_backup_alias_is_revalidated_after_later_swap(m):
         assert first.read_text() == "new first"
         assert second.read_text() == "old second"
         assert backup.read_text() == alias.read_text() == "old first"
+
+
+def test_interrupt_during_fresh_creation_closes_and_unlinks_the_output(m):
+    """A real SIGINT after open(2) still unwinds the private creation helper."""
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "fresh.xml"
+        _, start = inspect.getsourcelines(m._open_private)
+        fchmod_line = start + next(
+            offset for offset, line in enumerate(inspect.getsource(m._open_private).splitlines())
+            if line.strip() == "os.fchmod(handle, 0o600)")
+        old_trace, old_handler = sys.gettrace(), signal.getsignal(signal.SIGINT)
+        fired = False
+
+        def interrupt_after_open(frame, event, _arg):
+            nonlocal fired
+            if (not fired and event == "line" and frame.f_code is m._open_private.__code__
+                    and frame.f_lineno == fchmod_line):
+                fired = True
+                signal.raise_signal(signal.SIGINT)
+            return interrupt_after_open
+
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        sys.settrace(interrupt_after_open)
+        try:
+            try:
+                m.write_outputs([(str(destination), "fresh bytes")])
+                raise AssertionError("the controlled interrupt must escape")
+            except KeyboardInterrupt:
+                pass
+        finally:
+            sys.settrace(old_trace)
+            signal.signal(signal.SIGINT, old_handler)
+
+        assert fired
+        assert not destination.exists()
+
+
+def test_interrupt_after_fresh_registration_cleans_the_requested_output(m):
+    """A SIGINT after registration has a claimed cleanup owner already."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "fresh.xml"
+        _, start = inspect.getsourcelines(m._owned_path)
+        return_line = start + next(
+            offset for offset, line in enumerate(inspect.getsource(m._owned_path).splitlines())
+            if line.strip() == "return record")
+        old_trace, old_handler = sys.gettrace(), signal.getsignal(signal.SIGINT)
+        fired = False
+
+        def interrupt_after_registration(frame, event, _arg):
+            nonlocal fired
+            if (not fired and event == "line" and frame.f_code is m._owned_path.__code__
+                    and frame.f_lineno == return_line
+                    and frame.f_locals.get("created")
+                    and frame.f_locals.get("owned_records") is not None):
+                fired = True
+                signal.raise_signal(signal.SIGINT)
+            return interrupt_after_registration
+
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        sys.settrace(interrupt_after_registration)
+        try:
+            try:
+                m.write_outputs([(str(destination), "fresh bytes")])
+                raise AssertionError("the controlled interrupt must escape")
+            except KeyboardInterrupt:
+                pass
+        finally:
+            sys.settrace(old_trace)
+            signal.signal(signal.SIGINT, old_handler)
+
+        assert fired
+        assert not destination.exists()
+        assert list(root.iterdir()) == []
+
+
+def test_existing_output_removed_after_backup_is_a_typed_path_refusal(m):
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "output.xml"
+        destination.write_text("old bytes")
+        real_copy = m._copy_private_backup
+
+        def copy_then_remove(*args):
+            result = real_copy(*args)
+            destination.unlink()
+            return result
+
+        m._copy_private_backup = copy_then_remove
+        try:
+            refusal = refuses(m, "output_path_changed", m.write_outputs,
+                              [(str(destination), "new bytes")])
+        finally:
+            m._copy_private_backup = real_copy
+
+        assert "changed after it was claimed" in str(refusal.code)
+        assert not destination.exists()
+        assert list(root.iterdir()) == []
+
+
+def test_committed_existing_output_close_failure_reports_destination(m):
+    """The post-rename staged pin must not inspect its stale .part spelling."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "output.xml"
+        destination.write_text("old bytes")
+        real_owned, real_close = m._owned_path, m.os.close
+        staged_handles, leaked = set(), []
+
+        def observe_owned(path, handle, *, created, **kwargs):
+            record = real_owned(path, handle, created=created, **kwargs)
+            if created and str(path).endswith(".part"):
+                staged_handles.add(handle)
+            return record
+
+        def fail_before_close(handle):
+            if handle in staged_handles:
+                leaked.append(handle)
+                raise OSError("controlled staged close failure")
+            return real_close(handle)
+
+        m._owned_path, m.os.close = observe_owned, fail_before_close
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("the close failure must be reported")
+            except m.OutputDescriptorCloseFailure as failure:
+                assert failure.output_paths == (str(destination.resolve()),)
+        finally:
+            m._owned_path, m.os.close = real_owned, real_close
+            for handle in leaked:
+                try:
+                    real_close(handle)
+                except OSError:
+                    pass
+
+        assert leaked
+        assert destination.read_text() == "new bytes"
+
+
+def test_owner_only_outputs_survive_a_restrictive_umask(m):
+    """Use a child process so an extreme umask cannot affect this test process."""
+    program = f'''\
+import importlib.util
+import os
+import pathlib
+import stat
+import tempfile
+
+script = {str(SCRIPT)!r}
+spec = importlib.util.spec_from_file_location("bank_statement_import_subprocess", script)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+with tempfile.TemporaryDirectory() as directory:
+    root = pathlib.Path(directory)
+    fresh = root / "fresh.xml"
+    existing = root / "existing.xml"
+    existing.write_text("old bytes")
+    observed = []
+    real_copy = module._copy_private_backup
+    def observe_private_modes(*args):
+        result = real_copy(*args)
+        for path in root.glob("existing.xml.*"):
+            observed.append(stat.S_IMODE(path.stat().st_mode))
+        return result
+    old_umask = os.umask(0o777)
+    try:
+        module.write_outputs([(str(fresh), "fresh bytes")])
+        module._copy_private_backup = observe_private_modes
+        module.write_outputs([(str(existing), "new bytes")])
+    finally:
+        os.umask(old_umask)
+        module._copy_private_backup = real_copy
+    assert stat.S_IMODE(fresh.stat().st_mode) == 0o600
+    assert stat.S_IMODE(existing.stat().st_mode) == 0o600
+    assert observed and all(mode == 0o600 for mode in observed), observed
+'''
+    done = subprocess.run([sys.executable, "-c", program], text=True,
+                          capture_output=True, check=False)
+    assert done.returncode == 0, done.stderr
+
 
 
 def main():
