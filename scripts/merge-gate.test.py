@@ -100,6 +100,13 @@ if args[:2] == ["pr", "view"]:
             "## Migration compatibility\n\nNo persisted data changes.\n\n"
             "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10)"
         )
+    elif scenario in {"security-notes-present", "surface-unpins"}:
+        body = (
+            "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
+            "## Validation and evidence\n\n`python3 scripts/merge-gate.test.py`\n\n"
+            "## Security impact\n\nNo credential material is added; the Tally path change is reviewed.\n\n"
+            "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10)"
+        )
     elif scenario == "checklist-missing-anchor":
         body = (
             "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
@@ -111,7 +118,7 @@ if args[:2] == ["pr", "view"]:
             "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
             "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10)"
         )
-    one_file = scenario in {"files-empty", "formatted-phone", "formatted-phone-grouped", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false"}
+    one_file = scenario in {"files-empty", "formatted-phone", "formatted-phone-grouped", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-rename-out", "home-macos", "home-unix", "home-windows"}
     selected_base = new_head if scenario == "base-oid-mismatch" else base
     emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
@@ -140,6 +147,13 @@ elif args[:2] == ["pr", "diff"]:
     elif scenario == "path-id":
         path_id = "ABCDE" + "1234" + "F"
         emit(f"diff --git a/docs/safe.md b/docs/{path_id}.md\n--- a/docs/safe.md\n+++ b/docs/{path_id}.md\n@@ -0,0 +1 @@\n+safe text\n")
+    elif scenario in {"security-notes-missing", "security-notes-present"}:
+        emit("diff --git a/src-tauri/src/tally/runtime.rs b/src-tauri/src/tally/runtime.rs\n--- a/src-tauri/src/tally/runtime.rs\n+++ b/src-tauri/src/tally/runtime.rs\n@@ -0,0 +1 @@\n+safe text\n")
+    elif scenario == "security-rename-out":
+        emit("diff --git a/src-tauri/src/tally/runtime.rs b/src/runtime.rs\nsimilarity index 100%\nrename from src-tauri/src/tally/runtime.rs\nrename to src/runtime.rs\n")
+    elif scenario in {"home-macos", "home-unix", "home-windows"}:
+        homes = {"home-macos": "/" + "Users" + "/" + "tester" + "/work", "home-unix": "/" + "home" + "/" + "tester" + "/work", "home-windows": "C:" + "\\" + "Users" + "\\" + "tester" + "\\work"}
+        emit(f"diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+{homes[scenario]}\n")
     elif scenario == "binary-delete":
         emit("diff --git a/docs/old.png b/docs/old.png\nBinary files a/docs/old.png and /dev/null differ\n")
     elif scenario == "diff-omits-file":
@@ -318,6 +332,12 @@ elif args and args[0] == "api":
         elif scenario == "path-id":
             path_id = "ABCDE" + "1234" + "F"
             emit([[{"filename": f"docs/{path_id}.md", "status": "added", "additions": 1, "deletions": 0}]])
+        elif scenario in {"security-notes-missing", "security-notes-present"}:
+            emit([[{"filename": "src-tauri/src/tally/runtime.rs", "status": "modified", "additions": 1, "deletions": 0}]])
+        elif scenario == "security-rename-out":
+            emit([[{"filename": "src/runtime.rs", "previous_filename": "src-tauri/src/tally/runtime.rs", "status": "renamed", "additions": 0, "deletions": 0}]])
+        elif scenario in {"home-macos", "home-unix", "home-windows"}:
+            emit([[{"filename": "docs/example.md", "status": "added", "additions": 1, "deletions": 0}]])
         elif scenario == "binary-delete":
             emit([[{"filename": "docs/old.png", "status": "removed", "additions": 0, "deletions": 0}]])
         elif scenario == "metadata-only":
@@ -727,6 +747,25 @@ class MergeGateControls(unittest.TestCase):
         for scenario in ("renamed-previous-missing", "renamed-previous-null", "renamed-previous-false"):
             with self.subTest(scenario=scenario):
                 self.assert_indeterminate(scenario, "could not read the complete changed-file set")
+
+    def test_sensitive_paths_require_security_impact_notes_including_renames(self):
+        for scenario in ("security-notes-missing", "security-rename-out"):
+            with self.subTest(scenario=scenario):
+                self.assert_blocked(scenario, "security-impact notes")
+        result = self.run_gate("security-notes-present")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_developer_home_path_shapes_are_scanned_without_echoing_values(self):
+        for scenario in ("home-macos", "home-unix", "home-windows"):
+            with self.subTest(scenario=scenario):
+                result = self.run_gate(scenario)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("developer-home path shape", result.stdout)
+                self.assertNotIn("tester", result.stdout)
+
+    def test_diff_parser_uses_python38_compatible_prefix_removal(self):
+        parser = ROOT / "scripts" / "merge_gate_diff.py"
+        self.assertNotIn(".removeprefix(", parser.read_text())
 
     def test_definite_blocker_wins_over_indeterminate_evidence(self):
         self.assert_blocked("draft-surface-fail", "merge state DRAFT")

@@ -656,6 +656,26 @@ if [ -n "$files_status" ] && [ "$files_status" -eq 0 ]; then
               ((.previous_filename? // "") | startswith(".github/workflows/")))
   ' <<<"$files")
 fi
+
+# The review contract requires an explicit security-impact statement whenever
+# either spelling of a renamed path touches a DSC, credential, or Tally surface.
+# Use the complete REST inventory, not rendered hunks, so removals and renames
+# cannot bypass the requirement.
+security_sensitive_change=0
+if [ "$files_status" -eq 0 ]; then
+  security_sensitive_change=$(jq -r '
+    (if all(.[]; type == "array") then flatten else . end) |
+    any(.[]; [ .filename, (.previous_filename? // "") ][] |
+      ascii_downcase | test("(^|/)(dsc|credential)([^/]*|/)|(^|/)(src-tauri/|src/)?tally([/_-]|$)|(^|/)docs/tally(/|$)"))
+  ' <<<"$files")
+fi
+if [ "$security_sensitive_change" = "true" ]; then
+  if ! body_section_has_content "$prbody" 'security impact|security implications'; then
+    bad "DSC, Tally, or credential path change lacks non-empty security-impact notes"
+  else
+    say "ok" "DSC, Tally, or credential path change includes security-impact notes"
+  fi
+fi
 if [ "$workflow_change" = "true" ]; then
   if ! body_section_has_content "$prbody" 'rollback notes|rollback'; then
     bad "workflow change lacks non-empty rollback notes"
@@ -837,6 +857,16 @@ else
   scan_input="$privacy_metadata
 $path_text
 $added"
+  # Diagnostic counts only: never echo matched home paths, which could repeat
+  # the private value in a merge-gate result.
+  home_path_status=0
+  home_path_matches=$(grep -Eio '(^|[^[:alnum:]_])(/Users/[^/[:space:]]+|/home/[^/[:space:]]+|[A-Za-z]:\\Users\\[^\\[:space:]]+)(/|\\)' <<<"$scan_input") || home_path_status=$?
+  if [ "$home_path_status" -gt 1 ]; then
+    unknown "developer-home path scan expression failed"
+  elif [ "$home_path_status" -eq 0 ]; then
+    home_path_count=$(grep -Ec '.' <<<"$home_path_matches")
+    bad "privacy scan found $home_path_count developer-home path shape(s)"
+  fi
   redacted=$(sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/<uuid>/g; s/[0-9a-fA-F]{32,}/<digest>/g' <<<"$scan_input")
   exempt=$(grep -Ec '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{32,}' <<<"$scan_input")
   [ "$exempt" -eq 0 ] || say "note" "$exempt added/path line(s) carried generated UUID/digest shapes; inspect those lines"

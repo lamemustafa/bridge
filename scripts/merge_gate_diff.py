@@ -6,6 +6,11 @@ import json
 import sys
 
 
+def remove_prefix(value: str, prefix: str) -> str:
+    """Python 3.8-compatible equivalent of str.removeprefix."""
+    return value[len(prefix):] if value.startswith(prefix) else value
+
+
 def decode_quoted_path(value: str) -> str:
     if not (value.startswith('"') and value.endswith('"')):
         raise ValueError("expected quoted path")
@@ -57,7 +62,7 @@ def quoted_token(value: str, start: int) -> tuple[str, int]:
 
 
 def diff_destination(line: str) -> str:
-    value = line.removeprefix("diff --git ")
+    value = remove_prefix(line, "diff --git ")
     if value.startswith('"'):
         _source, index = quoted_token(value, 0)
         if index >= len(value) or value[index] != " ":
@@ -76,7 +81,7 @@ def diff_destination(line: str) -> str:
 
 
 def textual_destination(line: str) -> str | None:
-    value = line.removeprefix("+++ ")
+    value = remove_prefix(line, "+++ ")
     if value == "/dev/null":
         return None
     if value.startswith('"'):
