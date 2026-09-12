@@ -389,7 +389,7 @@ test("names the refusal when the name and the identifier point at different ledg
 test("distinguishes the two other refusals that are not weak matches", async () => {
   for (const [reason, phrase] of [
     ["master_binding_identifier_conflict", "do not agree on one existing ledger"],
-    ["master_binding_name_ambiguous", "once case and separators are set aside"],
+    ["master_binding_name_ambiguous", "spaces against hyphens or slashes are set aside"],
   ] as const) {
     mocks.invoke.mockReset();
     mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce({
@@ -415,6 +415,84 @@ test("distinguishes the two other refusals that are not weak matches", async () 
     root.unmount();
     host.remove();
   }
+});
+
+test("a refusal reason survives the candidate listing being dropped", async () => {
+  // The budget-exhaustion branch returned only the budget sentence, which
+  // re-hid the strong disagreement the neighbouring branch had just been fixed
+  // to show. Same defect, one branch over: a conflict arriving with no room to
+  // list its candidates is still a conflict.
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce({
+    ...catalog,
+    targets: ["Alpha placeholder", "Beta placeholder"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: null,
+      bound_basis: null,
+      unbound_reason: "master_binding_identifier_name_conflict",
+      candidates: [],
+      candidate_count: 6,
+      candidates_truncated: true,
+    }],
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  expect(host.textContent).toContain("matches one existing ledger exactly, while an identifier inside it matches a different one");
+  expect(host.textContent).toContain("ran out of room to list them");
+  root.unmount();
+});
+
+test("choosing a target stops the screen saying nothing was chosen, without hiding why", async () => {
+  // The refusal summary kept rendering beneath a selected target, saying
+  // "nothing is chosen" directly beside the line telling the operator their
+  // target was re-read and bound. The reason still matters after the choice —
+  // an identifier and a name pointing at different ledgers is grounds to check
+  // it — so it survives in the past tense rather than being hidden.
+  const conflicted = {
+    ...catalog,
+    targets: ["Alpha placeholder", "Beta placeholder", "Gamma placeholder"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: null,
+      bound_basis: null,
+      unbound_reason: "master_binding_identifier_name_conflict",
+      candidates: ["Alpha placeholder", "Gamma placeholder"],
+      candidate_count: 2,
+      candidates_truncated: false,
+    }],
+  };
+  // Selecting a target goes through the apply path, which re-reads: the draft
+  // it returns is what puts the ledger on the entry.
+  const chosen = {
+    ...draft,
+    revision: 2,
+    rows: draft.rows.map((item, index) => index === 0 ? {
+      ...item,
+      proposal: { ...item.proposal, entries: [{ ...item.proposal.entries[0], ledger: "Alpha placeholder" }] },
+    } : item),
+    current_catalog_bindings: [{ row_position: 1, entry_position: 1 }],
+  };
+  mocks.invoke
+    .mockResolvedValueOnce(draft)
+    .mockResolvedValueOnce(conflicted)
+    .mockResolvedValueOnce(chosen);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  expect(host.textContent).toContain("Nothing is chosen;");
+
+  await act(async () => setValue(host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!, "Alpha placeholder"));
+  expect(host.textContent).not.toContain("Nothing is chosen;");
+  expect(host.textContent).toContain("Automatic binding did not resolve this line.");
+  expect(host.textContent).toContain("they disagree");
+  root.unmount();
 });
 
 test("an empty list because the report ran out of room is not a family the name cannot separate", async () => {
@@ -476,7 +554,7 @@ test("lists candidates first for a near miss and states that nothing was chosen"
   expect(groups).toEqual(["Possible for this source line", "All 3 existing ledgers"]);
   const possible = Array.from(target.querySelectorAll("optgroup")[0].querySelectorAll("option")).map((option) => option.value);
   expect(possible).toEqual(["Alpha placeholder", "Gamma placeholder"]);
-  expect(host.textContent).toContain("No single ledger matched this source line, so nothing is chosen. 2 possible ledgers are listed first; the full list of 3 follows.");
+  expect(host.textContent).toContain("No single ledger matched this source line. Nothing is chosen; 2 possible ledgers are listed first, and the full list of 3 follows.");
   root.unmount();
 });
 

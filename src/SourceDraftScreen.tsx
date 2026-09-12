@@ -105,8 +105,21 @@ function narrowedTargets(binding: SourceDraftCatalogBinding | null) {
 /// name points at one ledger and the number inside it points at another — look
 /// like an ordinary weak match. That is the one case where the operator has
 /// real information to act on, and it was the case being hidden.
-function catalogBindingSummary(binding: SourceDraftCatalogBinding | null, total: number) {
+function catalogBindingSummary(binding: SourceDraftCatalogBinding | null, total: number, selected: boolean) {
   if (!binding) return null;
+  if (selected) {
+    // The operator has chosen. Saying "nothing is chosen" beside their choice
+    // is simply false, and it contradicted the adjacent line telling them the
+    // target was re-read and bound.
+    //
+    // The *reason* still matters though, and is not hidden: an identifier and a
+    // name pointing at different ledgers is grounds to check a choice, not
+    // something that stops being true once one is made. So the refusal survives
+    // in the past tense, without the guidance that no longer applies.
+    return binding.bound_target
+      ? null
+      : `Automatic binding did not resolve this line. ${catalogRefusalLead(binding.unbound_reason)}`;
+  }
   if (binding.bound_target) {
     // `identifier` covers both shapes the binder extracts — a numeric run and
     // an alphanumeric code such as a registration or part number — and the DTO
@@ -135,11 +148,14 @@ function catalogBindingSummary(binding: SourceDraftCatalogBinding | null, total:
     if (binding.unbound_reason === "master_binding_no_discriminating_candidate") {
       return `This source line matches ${binding.candidate_count} existing ledgers and tells them apart from none of them, so none is listed. Use a fuller source name, or choose from the full list of ${total}.`;
     }
-    return `This source line matches ${binding.candidate_count} existing ledgers, but this report ran out of room to list them. Choose from the full list of ${total}.`;
+    // Why it refused survives the listing being dropped. Returning only the
+    // budget sentence here re-hid the strong disagreement that the branch below
+    // had just been fixed to show — the same defect, one branch over.
+    return `${catalogRefusalLead(binding.unbound_reason)} ${binding.candidate_count} existing ledgers are involved, but this report ran out of room to list them. Choose from the full list of ${total}.`;
   }
   const listed = binding.candidates_truncated ? `${shown} of ${binding.candidate_count}` : `${shown}`;
   const lead = catalogRefusalLead(binding.unbound_reason);
-  return `${lead} ${listed} possible ${shown === 1 ? "ledger is" : "ledgers are"} listed first; the full list of ${total} follows.`;
+  return `${lead} Nothing is chosen; ${listed} possible ${shown === 1 ? "ledger is" : "ledgers are"} listed first, and the full list of ${total} follows.`;
 }
 
 /// Why binding refused, where the reason changes what the operator should look
@@ -148,7 +164,7 @@ function catalogBindingSummary(binding: SourceDraftCatalogBinding | null, total:
 function catalogRefusalLead(reason: string | null) {
   switch (reason) {
     case "master_binding_identifier_name_conflict":
-      return "This source name matches one existing ledger exactly, while an identifier inside it matches a different one. They disagree, so nothing is chosen.";
+      return "This source name matches one existing ledger exactly, while an identifier inside it matches a different one, and they disagree.";
     case "master_binding_identifier_conflict":
       // Two different shapes reach this reason: one identifier carried by
       // several ledgers, and several identifiers each reaching a different
@@ -156,9 +172,14 @@ function catalogRefusalLead(reason: string | null) {
       // that does not exist.
       return "The identifiers in this source line do not agree on one existing ledger — either one of them appears in several, or they point at different ones.";
     case "master_binding_name_ambiguous":
-      return "More than one existing ledger carries this name once case and separators are set aside, and nothing measured says which one Tally would pick.";
+      // Not "separators": `TALLY_PROTOCOL_REFERENCE.md` §9.4d measured which
+      // ones fold on the release this writes to — space, hyphen and slash do,
+      // an en dash and an underscore do not. Naming the class would send an
+      // operator hunting for en-dash and underscore variants that played no
+      // part in the refusal, and it is the generalisation §9.4d exists to stop.
+      return "More than one existing ledger carries this name once upper and lower case, surrounding and repeated spaces, and spaces against hyphens or slashes are set aside, and nothing measured says which one Tally would pick.";
     default:
-      return "No single ledger matched this source line, so nothing is chosen.";
+      return "No single ledger matched this source line.";
   }
 }
 
@@ -590,7 +611,9 @@ function SourceDraftEditor({ row, disabled, catalog, catalogSelections, catalogI
             const entryId = (name: string) => fieldId(`entry-${index}-${name}`);
             const binding = catalogBindingFor(catalog, row.position, index + 1);
             const narrowed = narrowedTargets(binding);
-            const bindingSummary = catalog ? catalogBindingSummary(binding, catalog.targets.length) : null;
+            const bindingSummary = catalog
+              ? catalogBindingSummary(binding, catalog.targets.length, Boolean(entry.ledger))
+              : null;
             return <div className="source-draft-entry" key={`${row.position}-${index}`}>
               <p><span>Source line {index + 1}</span>{sourceEntryLabel(row.entries[index] ?? { position: index, source_ledger: "", source_amount: "", source_polarity: "" })}</p>
               <div className="source-draft-field">
