@@ -1052,7 +1052,15 @@ fn bind_one(
                 // materialization. Dropping it made the invariant
                 // size-dependent: a hint pointing entirely elsewhere let the
                 // exact name bind, but only once the family grew past the cap.
-                if exact.is_some_and(|index| !holders.contains(&index)) {
+                // `by_identifier` is filled by pushing entry indices from the
+                // ascending `entries.iter().enumerate()` walk in `new`, so
+                // this exact holder vector is sorted by construction. Keep
+                // the assertion beside the lookup that relies on it.
+                debug_assert!(
+                    holders.is_sorted(),
+                    "identifier holder lists are built in entry order"
+                );
+                if exact.is_some_and(|index| holders.binary_search(&index).is_err()) {
                     large_holder_points_elsewhere = true;
                 }
                 continue;
