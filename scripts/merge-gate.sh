@@ -371,17 +371,35 @@ fi
 # Scan all published PR metadata. Commit messages are paginated because they
 # can become squash subjects or release evidence independently of the patch.
 : >"$errfile"
+metadata_pr_status=0
+metadata_pr=$(gh api "repos/$REPO/pulls/$PR" 2>"$errfile") || metadata_pr_status=$?
+if [ "$metadata_pr_status" -ne 0 ] || ! jq -e --arg head "$head" '
+  type == "object" and
+  (.commits | type == "number" and floor == . and . > 0 and . <= 250) and
+  (.head | type == "object" and
+   (.sha | type == "string" and test("^[0-9a-fA-F]{40}$") and . == $head))
+' <<<"$metadata_pr" >/dev/null 2>&1; then
+  unknown "could not prove complete head-bound PR commit metadata for the privacy scan"
+  privacy_metadata=""
+else
+  metadata_commit_total=$(jq -r '.commits' <<<"$metadata_pr")
+fi
+
+: >"$errfile"
 metadata_status=0
 metadata_commits=$(gh api --paginate --slurp "repos/$REPO/pulls/$PR/commits?per_page=100" 2>"$errfile") || metadata_status=$?
-if [ "$metadata_status" -ne 0 ] || ! jq -e '
+if [ -z "${metadata_commit_total:-}" ] || [ "$metadata_status" -ne 0 ] || ! jq -e --argjson expected "$metadata_commit_total" --arg head "$head" '
   type == "array" and (all(.[]; type == "array") or all(.[]; type == "object")) and
   ((if all(.[]; type == "array") then flatten else . end) |
+   length == $expected and
+   ([.[].sha] | unique | length) == $expected and
+   any(.[]; .sha == $head) and
    all(.[]; type == "object" and
     (.sha | type == "string" and test("^[0-9a-fA-F]{40}$")) and
     (.commit | type == "object") and
     (.commit.message | type == "string")))
 ' <<<"$metadata_commits" >/dev/null 2>&1; then
-  unknown "could not read complete PR commit metadata for the privacy scan"
+  unknown "could not prove complete head-bound PR commit metadata for the privacy scan"
   privacy_metadata=""
 else
   commit_messages=$(jq -r '(if all(.[]; type == "array") then flatten else . end)[].commit.message' <<<"$metadata_commits")

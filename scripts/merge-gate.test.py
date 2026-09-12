@@ -222,7 +222,20 @@ elif args and args[0] == "api":
         message = "safe commit metadata"
         if scenario == "metadata-commit-id":
             message = "Customer " + "ABCDE" + "1234" + "F"
-        emit([[{"sha": head, "commit": {"message": message}}]])
+        commits = [{"sha": head, "commit": {"message": message}}]
+        if scenario == "metadata-duplicate":
+            commits.append({"sha": head, "commit": {"message": message}})
+        emit([commits])
+    elif any(arg.endswith("/pulls/321") for arg in args):
+        commits = 1
+        metadata_head = head
+        if scenario == "metadata-capped":
+            commits = 251
+        elif scenario in {"metadata-truncated", "metadata-duplicate"}:
+            commits = 2
+        elif scenario == "metadata-head-mismatch":
+            metadata_head = new_head
+        emit({"commits": commits, "head": {"sha": metadata_head}})
     elif "branches/master/protection/required_status_checks" in joined:
         contexts = [
             "Frontend build", "Rust format", "GitGuardian Security Checks",
@@ -588,6 +601,18 @@ class MergeGateControls(unittest.TestCase):
 
     def test_pr_commit_metadata_identifier_is_scanned(self):
         self.assert_blocked("metadata-commit-id", "privacy scan found")
+
+    def test_capped_commit_metadata_is_indeterminate(self):
+        self.assert_indeterminate("metadata-capped", "complete head-bound PR commit metadata")
+
+    def test_truncated_commit_metadata_is_indeterminate(self):
+        self.assert_indeterminate("metadata-truncated", "complete head-bound PR commit metadata")
+
+    def test_duplicate_commit_metadata_is_indeterminate(self):
+        self.assert_indeterminate("metadata-duplicate", "complete head-bound PR commit metadata")
+
+    def test_commit_metadata_head_mismatch_is_indeterminate(self):
+        self.assert_indeterminate("metadata-head-mismatch", "complete head-bound PR commit metadata")
 
     def test_all_a_pan_is_not_exempted_as_a_placeholder(self):
         self.assert_blocked("all-a-pan", "privacy scan found")
