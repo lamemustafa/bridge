@@ -595,8 +595,12 @@ Implement — write core (masters):
    SCOPE GATE (§9.4b, §0) — THE ONLY NAME-MATCHING RULE IN THIS STEP:
    §9.4b's case-folding and hyphen-for-space rows
    were measured on the **Edit Log 7.0 Educational** baseline and carry no
-   licensed-SKU qualification; only the NFC/NFD row was measured on a
-   licensed 7.1 instance, and it points the other way (exact codepoints).
+   licensed-SKU qualification. NOR DOES THE NFC/NFD ROW: an earlier
+   revision of this gate called that capture licensed, and it is not —
+   `tests/fixtures/encoding/PROVENANCE.md` records the 2026-08-19
+   instance behind it as **EDU**. Correcting that makes this gate
+   stricter, not weaker: **no** row of §9.4b is qualified on a licensed
+   SKU, so there is no licensed evidence to widen towards.
    Phase 4 runs against licensed TallyPrime, so on a licensed SKU match
    master names on **exact codepoints** and let a case or separator
    difference fail loudly. Widen to `accepts()` only where a licensed
