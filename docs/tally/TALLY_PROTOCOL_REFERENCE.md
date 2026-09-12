@@ -1363,8 +1363,10 @@ not send.
 **What this says.** On licensed 7.1 Silver, the recorded supplied-to-master comparisons accept the
 listed space/hyphen alternatives and the one **slash-candidate to space-master** alternative,
 collapse the measured internal whitespace run, ignore the measured leading and trailing whitespace,
-and fold the measured **ASCII** case. The reverse slash comparison was not sent. Cross-spellings
-involving slash therefore require exact codepoints unless that direction is separately measured.
+and fold the measured **ASCII** case. The reverse slash comparison was not sent and requires
+exact codepoints unless separately measured. The recorded slash-candidate to space-master result
+remains qualified only in this product, release, licence tier, entity class and direction; a
+shared binder without those scope inputs cannot use it as automatic binding authority.
 
 > **RULE: use only the recorded directional alternatives; do not fold separators into a canonical
 > form.** The slash result is candidate `/` against master space, not the reverse. An en dash and
