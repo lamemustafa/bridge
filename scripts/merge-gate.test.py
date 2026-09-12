@@ -135,12 +135,22 @@ if args[:2] == ["pr", "view"]:
             body += "\n## Migration compatibility\n\nNo persisted format change.\n"
     if scenario == "validation-command-outside":
         body = body.replace("`python3 scripts/merge-gate.test.py`", "Tests not run") + "\n## Rollback\n`cargo test`\n"
+    if scenario == "validation-html-comment":
+        body = body.replace("`python3 scripts/merge-gate.test.py`", "Tests not run <!-- `cargo test` -->")
+    if scenario == "unterminated-html-comment":
+        body += "\n<!-- hidden through EOF"
+    if scenario == "hidden-comment-identifier":
+        body += "\n<!-- " + "ABCDE" + "1234" + "F -->"
+    if scenario == "body-comment-drift" and view_count > 0:
+        body += "\n<!-- changed metadata -->"
     if scenario == "validation-tool-prose":
         body = body.replace("`python3 scripts/merge-gate.test.py`", "Tests not run; cargo is available")
     if scenario == "validation-placeholder-command":
         body = body.replace("`python3 scripts/merge-gate.test.py`", "`cargo ...`")
     if scenario == "checklist-heading":
         body = body.replace("#L10", "#L1")
+    if scenario == "checklist-anchor-suffix":
+        body = body.replace("#L10", "#L10junk")
     if scenario in {"implementation-p4-present", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale", "migration-rollback-present", "migration-template-wrapped", "security-notes-present", "security-none", "security-pending", "security-review-valid"}:
         body += (
             "\n## Scope, reuse, and impact\n\n"
@@ -208,7 +218,7 @@ if args[:2] == ["pr", "view"]:
     body = body.replace("blob/HEAD", f"blob/{head}")
     if scenario == "checklist-stale-ref":
         body = body.replace(f"blob/{head}", "blob/" + "f" * 40)
-    one_file = scenario in {"files-empty", "formatted-phone", "formatted-phone-grouped", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "workflow-placeholders", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-none", "security-pending", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "home-macos", "home-unix", "home-windows", "crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path", "gitlink", "implementation-p4-missing", "implementation-p4-present", "p4-placeholders", "platform-evidence-missing", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"} or scenario.startswith("home-") or security_case or sync_case
+    one_file = scenario in {"files-empty", "formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-two-lines", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "workflow-placeholders", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-none", "security-pending", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "home-macos", "home-unix", "home-windows", "crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path", "gitlink", "implementation-p4-missing", "implementation-p4-present", "implementation-p4-shell", "p4-placeholders", "platform-evidence-missing", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"} or scenario.startswith("home-") or security_case or sync_case
     selected_base = new_head if scenario == "base-oid-mismatch" else base
     emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
@@ -281,7 +291,13 @@ elif args[:2] == ["pr", "diff"]:
             "phone-parenthesized": "(" + "69876" + ") 54321",
         }
         emit(f"diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic {phones[scenario]}\n")
+    elif scenario == "unicode-phone":
+        emit("diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic 69876\u00a054321\n")
+    elif scenario == "unicode-phone-two-lines":
+        emit("diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +2 @@\n+69876\n+54321\n")
     elif scenario == "metadata-only":
+        emit("diff --git a/docs/example.md b/docs/example.md\nsimilarity index 100%\nrename from docs/example.md\nrename to docs/example.md\n")
+    elif scenario == "metadata-private":
         emit("diff --git a/docs/example.md b/docs/example.md\nsimilarity index 100%\nrename from docs/example.md\nrename to docs/example.md\n")
     elif scenario == "metadata-incomplete":
         emit("diff --git a/docs/example.md b/docs/example.md\nsimilarity index 100%\nrename from docs/example.md\nrename to docs/example.md\n")
@@ -308,8 +324,9 @@ elif args[:2] == ["pr", "diff"]:
         emit("diff --git a/docs/a b/example.md b/docs/a b/example.md\nsimilarity index 100%\nrename from docs/a b/example.md\nrename to docs/a b/example.md\n")
     elif scenario == "gitlink":
         emit("diff --git a/vendor/module b/vendor/module\nnew file mode 160000\nindex 0000000..2222222\n--- /dev/null\n+++ b/vendor/module\n@@ -0,0 +1 @@\n+Subproject commit 2222222\n")
-    elif scenario in {"implementation-p4-missing", "implementation-p4-present", "p4-placeholders"}:
-        emit("diff --git a/scripts/example.py b/scripts/example.py\n--- a/scripts/example.py\n+++ b/scripts/example.py\n@@ -0,0 +1 @@\n+safe text\n")
+    elif scenario in {"implementation-p4-missing", "implementation-p4-present", "implementation-p4-shell", "p4-placeholders"}:
+        suffix = "sh" if scenario == "implementation-p4-shell" else "py"
+        emit(f"diff --git a/scripts/example.{suffix} b/scripts/example.{suffix}\n--- a/scripts/example.{suffix}\n+++ b/scripts/example.{suffix}\n@@ -0,0 +1 @@\n+safe text\n")
     elif scenario in {"platform-evidence-missing", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale"}:
         emit("diff --git a/src-tauri/src/local_files/paths.rs b/src-tauri/src/local_files/paths.rs\n--- a/src-tauri/src/local_files/paths.rs\n+++ b/src-tauri/src/local_files/paths.rs\n@@ -0,0 +1 @@\n+safe text\n")
     elif scenario in {"migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"}:
@@ -432,6 +449,8 @@ elif args and args[0] == "api":
             contexts = [context for context in contexts if context != "GitGuardian Security Checks"]
         if scenario == "required-context-output-bound":
             contexts += ["control-" + str(i) + "-" + "z" * 10000 for i in range(50)]
+        if scenario == "required-context-unexpected":
+            contexts += ["Unexpected required context"]
         emit({"strict": scenario != "protection-nonstrict", "contexts": contexts, "checks": []})
     elif "branches/master" in joined:
         emit(base)
@@ -469,8 +488,8 @@ elif args and args[0] == "api":
             emit([[{"filename": "docs/retired.rs", "previous_filename": "src-tauri/src/sync.rs", "status": "renamed", "additions": 0, "deletions": 0}]])
         elif scenario == "files-empty":
             emit([[]])
-        elif scenario in {"formatted-phone", "formatted-phone-grouped", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized"}:
-            emit([[{"filename": "docs/contact.md", "status": "added", "additions": 1, "deletions": 0}]])
+        elif scenario in {"formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-two-lines", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized"}:
+            emit([[{"filename": "docs/contact.md", "status": "added", "additions": 2 if scenario == "unicode-phone-two-lines" else 1, "deletions": 0}]])
         elif scenario in {"workflow-notes-missing", "workflow-notes-present", "workflow-placeholders"}:
             emit([[{"filename": ".github/workflows/ci.yml", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario in {"workflow-delete", "workflow-delete-notes"}:
@@ -499,6 +518,8 @@ elif args and args[0] == "api":
             emit([[{"filename": "docs/old.png", "status": "removed", "additions": 0, "deletions": 0}]])
         elif scenario == "metadata-only":
             emit([[{"filename": "docs/example.md", "status": "modified", "additions": 0, "deletions": 0}]])
+        elif scenario == "metadata-private":
+            emit([[{"filename": "/Users/tester/" + "x" * 300, "status": "modified", "additions": 0, "deletions": 0}]])
         elif scenario == "metadata-incomplete":
             emit([[{"filename": "docs/example.md", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "hunk-header-phone":
@@ -518,8 +539,9 @@ elif args and args[0] == "api":
             emit([[record]])
         elif scenario == "gitlink":
             emit([[{"filename": "vendor/module", "status": "modified", "additions": 1, "deletions": 1}]])
-        elif scenario in {"implementation-p4-missing", "implementation-p4-present", "p4-placeholders"}:
-            emit([[{"filename": "scripts/example.py", "status": "modified", "additions": 1, "deletions": 0}]])
+        elif scenario in {"implementation-p4-missing", "implementation-p4-present", "implementation-p4-shell", "p4-placeholders"}:
+            suffix = "sh" if scenario == "implementation-p4-shell" else "py"
+            emit([[{"filename": f"scripts/example.{suffix}", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario in {"platform-evidence-missing", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale"}:
             emit([[{"filename": "src-tauri/src/local_files/paths.rs", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario in {"migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"}:
@@ -646,6 +668,9 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
     def test_missing_required_context_blocks(self):
         self.assert_blocked("missing-required", "required check 'Rust format' was not reported")
 
+    def test_unexpected_required_context_blocks(self):
+        self.assert_blocked("required-context-unexpected", "undocumented required check context")
+
     def test_cancelled_check_blocks(self):
         self.assert_blocked("cancel-check", "failing, cancelled, or pending")
 
@@ -690,6 +715,15 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
     def test_formatted_phone_is_scanned(self):
         self.assert_blocked("formatted-phone", "privacy scan found")
 
+    def test_hidden_metadata_identifier_is_still_scanned(self):
+        self.assert_blocked("hidden-comment-identifier", "privacy scan found")
+
+    def test_unterminated_comment_is_indeterminate(self):
+        self.assert_indeterminate("unterminated-html-comment", "could not extract visible")
+
+    def test_raw_html_comment_drift_blocks_revalidation(self):
+        self.assert_blocked("body-comment-drift", "description changed during preflight")
+
     def test_repeated_digit_phone_is_scanned(self):
         self.assert_blocked("repeated-phone", "privacy scan found")
 
@@ -697,9 +731,11 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
         self.assert_blocked("formatted-phone-grouped", "privacy scan found")
 
     def test_separated_indian_mobile_styles_are_scanned(self):
-        for scenario in ("phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized"):
+        for scenario in ("phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "unicode-phone"):
             with self.subTest(scenario=scenario):
                 self.assert_blocked(scenario, "privacy scan found")
+        result = self.run_gate("unicode-phone-two-lines")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_header_shaped_added_payload_is_still_scanned(self):
         self.assert_blocked("hunk-header-phone", "privacy scan found")
@@ -784,6 +820,7 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
 
     def test_checklist_permalink_must_bind_the_full_current_head(self):
         self.assert_blocked("checklist-stale-ref", "same-repository line-specific")
+        self.assert_blocked("checklist-anchor-suffix", "same-repository line-specific")
 
     def test_foreign_checklist_link_blocks(self):
         self.assert_blocked("checklist-foreign", "same-repository line-specific")
@@ -801,6 +838,11 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
         result = self.run_gate("metadata-only")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("metadata-only diff section", result.stdout)
+
+    def test_metadata_only_examples_are_redacted_and_bounded(self):
+        result = self.run_gate("metadata-private")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertNotIn("tester", result.stdout)
 
     def test_metadata_only_diff_requires_rest_zero_totals(self):
         self.assert_indeterminate("metadata-incomplete", "metadata-only 'docs/example.md' conflicts")
@@ -995,7 +1037,7 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
                 self.assert_indeterminate(scenario, "complete head-bound commit-status evidence")
 
     def test_validation_commands_must_be_concrete_and_in_validation(self):
-        for scenario in ("validation-command-outside", "validation-tool-prose", "validation-placeholder-command"):
+        for scenario in ("validation-command-outside", "validation-tool-prose", "validation-placeholder-command", "validation-html-comment"):
             with self.subTest(scenario=scenario):
                 self.assert_blocked(scenario, "actual test or reproduction command")
 
@@ -1030,6 +1072,7 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
 
     def test_implementation_additions_need_all_three_p4_answers(self):
         self.assert_blocked("implementation-p4-missing", "all three substantive P4")
+        self.assert_blocked("implementation-p4-shell", "all three substantive P4")
         self.assert_blocked("p4-placeholders", "all three substantive P4")
         result = self.run_gate("implementation-p4-present")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

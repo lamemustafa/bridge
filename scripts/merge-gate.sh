@@ -99,6 +99,8 @@ die() { echo "$1" >&2; exit 2; }
 
 # A malformed response is different from a valid empty result. Validate the
 # outer shape before extracting fields so jq errors cannot become empty values.
+# Independent acceptance decides whether a change is a production regression,
+# whether its branch is dedicated, and whether it carries the required type:rectify label.
 : >"$errfile"
 if ! meta=$(gh pr view "$PR" --repo "$REPO" \
         --json headRefOid,baseRefOid,baseRefName,mergeable,mergeStateStatus,isDraft,state,title,body,changedFiles 2>"$errfile"); then
@@ -128,7 +130,17 @@ pstate=$(jq -r '.state' <<<"$meta")
 changed_files_expected=$(jq -r '.changedFiles' <<<"$meta")
 short=${head:0:7}
 title=$(jq -r '.title' <<<"$meta")
-prbody=$(jq -r '.body // ""' <<<"$meta")
+raw_prbody=$(jq -r '.body // ""' <<<"$meta")
+prbody="$raw_prbody"
+visible_body_status=0
+prbody=$(python3 -c 'import re, sys
+text = sys.stdin.read()
+if text.count("<!--") != text.count("-->"): raise SystemExit(2)
+print(re.sub(r"<!--.*?-->", "", text, flags=re.S), end="")' <<<"$prbody") || visible_body_status=$?
+if [ "$visible_body_status" -ne 0 ]; then
+  unknown "could not extract visible PR description content"
+  prbody=""
+fi
 
 if [ -n "$INDEPENDENT_REVIEW_SHA" ] && ! [[ "$INDEPENDENT_REVIEW_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
   bad "independent review attestation must be a full 40-hex commit SHA"
@@ -221,6 +233,8 @@ else
     unknown "branch protection returned no required status-check contexts"
   elif missing_documented=$(comm -23 <(sort -u <<<"$documented_contexts") <(sort -u <<<"$required_contexts")) && [ -n "$missing_documented" ]; then
     bad "branch protection omits $(wc -l <<<"$missing_documented" | tr -d ' ') documented required check context(s)"
+  elif unexpected_documented=$(comm -13 <(sort -u <<<"$documented_contexts") <(sort -u <<<"$required_contexts")) && [ -n "$unexpected_documented" ]; then
+    bad "branch protection includes $(wc -l <<<"$unexpected_documented" | tr -d ' ') undocumented required check context(s)"
   else
     say "ok" "loaded $(wc -l <<<"$required_contexts" | tr -d ' ') required check context(s)"
   fi
@@ -459,8 +473,8 @@ else
      .commit.committer.name, .commit.committer.email,
      (.author.login? // null), (.committer.login? // null)] |
     map(select(. != null))[]' <<<"$metadata_commits")
-  privacy_metadata="$title
-$prbody
+privacy_metadata="$title
+$raw_prbody
 $commit_messages"
 fi
 
@@ -568,9 +582,10 @@ checklist_link_ok() {
   local body="$1" checklist="$2" line awaiting_permalink=0 link anchor
   local checked='^[[:space:]]*-[[:space:]]*\[[xX]\][[:space:]]+'
   local permalink="https://github\.com/${OWNER}/${NAME}/blob/${head}/review-checklist\.md#L[0-9]+"
+  local permalink_boundary="${permalink}"'([[:space:]]|\)|$)'
   while IFS= read -r line; do
     if printf '%s\n' "$line" | grep -Eq "$checked"; then
-      if printf '%s\n' "$line" | grep -Eiq "$permalink"; then
+      if printf '%s\n' "$line" | grep -Eiq "$permalink_boundary"; then
         awaiting_permalink=2
       elif printf '%s\n' "$line" | grep -Eiq 'review-checklist\.md'; then
         awaiting_permalink=1
@@ -578,7 +593,7 @@ checklist_link_ok() {
         awaiting_permalink=0
       fi
     elif [ "$awaiting_permalink" -eq 1 ] && printf '%s\n' "$line" | grep -Eq '^[[:space:]]+'; then
-      if printf '%s\n' "$line" | grep -Eiq "$permalink"; then
+      if printf '%s\n' "$line" | grep -Eiq "$permalink_boundary"; then
         awaiting_permalink=2
       fi
     elif [ "$awaiting_permalink" -ne 2 ]; then
@@ -587,10 +602,11 @@ checklist_link_ok() {
     if [ "$awaiting_permalink" -eq 2 ]; then
       while IFS= read -r link; do
         anchor=${link##*#L}
+        anchor=${anchor%%[^0-9]*}
         if sed -n "${anchor}p" <<<"$checklist" | grep -Eq '^[[:space:]]*-[[:space:]]*\[[ xX]\][[:space:]]+[^[:space:]]'; then
           return 0
         fi
-      done < <(printf '%s\n' "$line" | grep -Eio "$permalink")
+      done < <(printf '%s\n' "$line" | grep -Eio "$permalink_boundary")
       awaiting_permalink=0
     fi
   done <<<"$body"
@@ -708,8 +724,9 @@ body_has_validation_command() {
   # A tool name mentioned in prose or an unrelated section is not a command.
   python3 -c '
 import re, shlex, sys
+text = re.sub(r"<!--.*?-->", "", sys.stdin.read(), flags=re.S)
 active = fenced = False
-for line in sys.stdin.read().splitlines():
+for line in text.splitlines():
     heading = re.match(r"^\s*#{1,6}\s+(.+?)\s*$", line)
     if heading:
         active = bool(re.fullmatch(r"(?:test or reproduction command|commands and results|validation and evidence):?", heading[1], re.I))
@@ -844,7 +861,7 @@ migration_change=false
 if [ "$files_status" -eq 0 ]; then
   implementation_code_added=$(jq -r '
     (if all(.[]; type == "array") then flatten else . end) |
-    any(.[]; (.additions > 0) and (.filename | test("\\.(rs|ts|tsx|js|mjs|py|go|java|kt|swift|c|cc|cpp|h|hpp)$")))
+    any(.[]; (.additions > 0) and (.filename | test("\\.(rs|ts|tsx|js|mjs|py|go|java|kt|swift|c|cc|cpp|h|hpp|sh|bash)$")))
   ' <<<"$files")
   platform_sensitive_change=$(jq -r '
     (if all(.[]; type == "array") then flatten else . end) |
@@ -1059,16 +1076,23 @@ else
   metadata_only_examples=""
   binary_count=0
   gitlink_count=0
+  bounded_coverage_name() {
+    local item
+    item=$(sed -E 's#/(Users|home)/[^/[:space:]]+#<home>#g; s#[A-Za-z]:[\\/]+Users[\\/]+[^\\/[:space:]]+#<home>#g' <<<"$1")
+    printf '%s' "${item:0:160}"
+  }
   record_coverage_issue() {
     coverage_count=$((coverage_count + 1))
     if [ "$coverage_count" -le 8 ]; then
-      coverage_examples="${coverage_examples}${coverage_examples:+; }$1"
+      local item
+      item=$(bounded_coverage_name "$1")
+      coverage_examples="${coverage_examples}${coverage_examples:+; }$item"
     fi
   }
   record_metadata_only() {
     metadata_only_count=$((metadata_only_count + 1))
     if [ "$metadata_only_count" -le 8 ]; then
-      metadata_only_examples="${metadata_only_examples}${metadata_only_examples:+; }$1"
+      metadata_only_examples="${metadata_only_examples}${metadata_only_examples:+; }$(bounded_coverage_name "$1")"
     fi
   }
   path_text=""
@@ -1169,10 +1193,16 @@ $added"
   # identifiers, including adjacent date fragments. Alongside mobile numbers,
   # accept only 4-4-4 and 4-4-4-4 grouped long-number forms.
   phone_status=0
-  phone_matches=$(grep -Eo '(^|[^[:alnum:]])[6-9]([ ()+._-]{0,3}[0-9]){9}([^[:alnum:]]|$)' <<<"$redacted") || phone_status=$?
+  normalized_status=0
+  normalized_whitespace=$(python3 -c 'import sys, unicodedata; print("".join(" " if unicodedata.category(char) == "Zs" else char for char in sys.stdin.read()), end="")' <<<"$redacted") || normalized_status=$?
+  if [ "$normalized_status" -ne 0 ]; then
+    unknown "Unicode whitespace normalization failed"
+    normalized_whitespace=""
+  fi
+  phone_matches=$(grep -Eo '(^|[^[:alnum:]])[6-9]([ ()+._-]{0,3}[0-9]){9}([^[:alnum:]]|$)' <<<"$normalized_whitespace") || phone_status=$?
   grouped_number_status=0
   grouped_number_matches=$(grep -Eo '(^|[^[:alnum:]])[0-9]{4}([ ._-])[0-9]{4}\2[0-9]{4}(\2[0-9]{4})?([^[:alnum:]]|$)' <<<"$redacted") || grouped_number_status=$?
-  if [ "$phone_status" -gt 1 ] || [ "$grouped_number_status" -gt 1 ]; then
+  if [ "$normalized_status" -ne 0 ] || [ "$phone_status" -gt 1 ] || [ "$grouped_number_status" -gt 1 ]; then
     unknown "formatted identifier scan expression failed"
   fi
   normalized_phone=$(sed -E 's/[^0-9]//g' <<<"$phone_matches")
@@ -1223,12 +1253,19 @@ else
     BEHIND|DIRTY|UNKNOWN|BLOCKED|UNSTABLE|DRAFT) bad "PR merge state changed to $final_state during preflight" ;;
     *) unknown "PR merge state changed to unrecognised value '$final_state' during preflight" ;;
   esac
-  final_body=$(jq -r '.body // ""' <<<"$final_meta")
+  raw_final_body=$(jq -r '.body // ""' <<<"$final_meta")
+  final_body="$raw_final_body"
+  final_visible_status=0
+  final_body=$(python3 -c 'import re, sys
+text = sys.stdin.read()
+if text.count("<!--") != text.count("-->"): raise SystemExit(2)
+print(re.sub(r"<!--.*?-->", "", text, flags=re.S), end="")' <<<"$final_body") || final_visible_status=$?
+  [ "$final_visible_status" -eq 0 ] || unknown "could not extract final visible PR description content"
   [ "$final_title" = "$title" ] || bad "PR title changed during preflight"
   if ! checklist_link_ok "$final_body" "$review_checklist"; then
     bad "PR description changed and no longer carries a completed same-repository line-specific checklist link"
   fi
-  if [ "$final_body" != "$prbody" ]; then
+  if [ "$raw_final_body" != "$raw_prbody" ]; then
     bad "PR description changed during preflight; re-run metadata privacy scan"
     if ! body_section_has_content "$final_body" 'functional summary|outcome and reason'; then
       bad "PR description changed and no longer carries a non-empty functional summary"
