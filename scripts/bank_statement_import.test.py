@@ -2579,6 +2579,52 @@ def test_rollback_keeps_a_foreign_destination_and_private_backup(m):
         assert second.read_text() == "second old"
 
 
+def test_original_inode_pin_blocks_after_claim_replacement_before_backup(m):
+    """A same-name replacement after claim cannot make backup copy foreign bytes."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "output.xml"
+        foreign = root / "foreign.xml"
+        destination.write_text("original bytes")
+        real_open = m._open_regular_output
+        original_handles = []
+
+        def observe_original(path, identity):
+            handle = real_open(path, identity)
+            if os.path.realpath(path) == os.path.realpath(destination):
+                original_handles.append(handle)
+            return handle
+
+        def replace_after_claim():
+            assert original_handles, "the original inode must be pinned before the hook"
+            assert os.pread(original_handles[0], 32, 0) == b"original bytes"
+            foreign.write_text("foreign bytes")
+            os.replace(foreign, destination)
+            assert os.pread(original_handles[0], 32, 0) == b"original bytes"
+
+        m._open_regular_output = observe_original
+        try:
+            refusal = refuses(
+                m,
+                "output_path_changed",
+                m.write_outputs,
+                [(str(destination), "new bytes")],
+                False,
+                replace_after_claim,
+            )
+        finally:
+            m._open_regular_output = real_open
+        assert "changed" in str(refusal.code)
+        assert destination.read_text() == "foreign bytes"
+        assert original_handles
+        try:
+            os.fstat(original_handles[0])
+        except OSError:
+            pass
+        else:
+            raise AssertionError("the original pin must be closed during recovery")
+
+
 def test_committed_close_after_effect_does_not_report_missing_backup(m):
     with tempfile.TemporaryDirectory() as directory:
         destination = pathlib.Path(directory) / "output.xml"

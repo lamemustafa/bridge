@@ -2056,9 +2056,17 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 record["canonical_path"] = real_path
                 record["cleanup_path"] = temporary
                 claimed.append(record)
+                original_identity = _file_identity(real_path)
+                # Pin the original inode at first claim and retain this
+                # descriptor through payload generation and commit. A later
+                # path replacement must not be able to recycle the recorded
+                # identity and make the backup read from foreign bytes.
+                original_handle = _open_regular_output(real_path, original_identity)
+                original = _owned_path(real_path, original_handle, created=False)
                 staged.append({"temporary": record, "supplied_path": path,
                                "real_path": real_path,
-                               "original_identity": _file_identity(real_path)})
+                               "original_identity": original_identity,
+                               "original": original})
             else:
                 supplied_path = path
                 canonical_path = _resolve_output_path(supplied_path)
@@ -2110,11 +2118,9 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             pending_backup = None
             # This ownership pin both prevents original-inode ABA reuse and
             # captures metadata before the backup read can update atime.
-            original_handle = _open_regular_output(real_path, original_identity)
-            pending_swap["original"] = _owned_path(
-                real_path, original_handle, created=False)
+            pending_swap["original"] = state["original"]
             pending_swap["metadata"] = _metadata_from_handle(
-                real_path, original_handle)
+                real_path, pending_swap["original"]["pin"])
             _copy_private_backup(real_path, original_identity, backup_handle)
             # The destination stays present until this one atomic replacement.
             # `pending_swap` is set first because an interrupt may arrive after
@@ -2227,6 +2233,12 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             _close_owned_path(swap["original"], cleanup_failures)
         for record in claimed:
             _cleanup_owned_path(record, cleanup_failures)
+        # Existing destinations are pinned at first claim, before they enter a
+        # swap record. Close any pin whose state never reached the rollback
+        # loops above; it is a descriptor-only ownership record and must never
+        # be unlinked as if it were a fresh output.
+        for state in staged:
+            _close_owned_path(state["original"], cleanup_failures)
         _note_cleanup_failures(error, cleanup_failures)
         _note_rollback_metadata_scope(error, metadata_scope_warnings)
         raise
