@@ -150,7 +150,7 @@ elif args[:2] == ["pr", "diff"]:
         phone = "6" + "98 765-4321"
         emit(f"diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic {phone}\n")
     elif scenario in {"grouped-identifier-12", "grouped-identifier-16"}:
-        identifier = "8421 7654 9012" if scenario.endswith("12") else "8421-7654-9012-3456"
+        identifier = "8421 " + "7654 9012" if scenario.endswith("12") else "8421-" + "7654-9012-3456"
         emit(f"diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic {identifier}\n")
     elif scenario in {"workflow-notes-missing", "workflow-notes-present"}:
         emit("diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ -0,0 +1 @@\n+safe workflow text\n")
