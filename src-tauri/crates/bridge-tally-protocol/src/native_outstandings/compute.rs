@@ -1,11 +1,12 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use bridge_tally_primitives::{ExactDecimal, TallyDate};
 
+use crate::group_ancestry::{AncestryGap, GroupIndex};
 use crate::outstandings_shared::{
     AgeingBillCounts, AgeingBuckets, OutstandingsReport, PartyOutstanding,
 };
-use crate::{is_tally_reserved_root, TallyNamedMaster};
+use crate::TallyNamedMaster;
 
 use super::model::{
     AgeingAnchor, LedgerSnapshotEntry, NativeBillRow, NativeOutstandingsError,
@@ -332,15 +333,7 @@ fn compute_residuals(
     ledgers: &[LedgerSnapshotEntry],
     group_snapshot: NativeGroupSnapshot<'_>,
 ) -> Result<(Vec<PartyResidual>, ExactDecimal, bool), NativeOutstandingsError> {
-    let (groups, legacy_tolerances) = match group_snapshot {
-        NativeGroupSnapshot::Complete([]) => {
-            return Err(NativeOutstandingsError::InvalidResponse(
-                "group_snapshot_empty",
-            ))
-        }
-        NativeGroupSnapshot::Complete(groups) => (groups, false),
-        NativeGroupSnapshot::LegacyFixtureWithoutGroups => (&[] as &[TallyNamedMaster], true),
-    };
+    let groups = party_groups(group_snapshot)?;
     let mut receivable_sums = BTreeMap::<&str, ExactDecimal>::new();
     for row in receivable_rows {
         let entry = receivable_sums
@@ -363,9 +356,8 @@ fn compute_residuals(
     let mut residuals = Vec::new();
     let mut residual_total = ExactDecimal::zero();
     let mut has_unaged_receivable = false;
-    let group_parents = group_parent_map(groups, legacy_tolerances)?;
     for ledger in ledgers {
-        if !is_party_ledger(ledger, &group_parents, legacy_tolerances)? {
+        if !is_party_ledger(ledger, &groups)? {
             continue;
         }
         let zero = ExactDecimal::zero();
@@ -400,130 +392,131 @@ fn compute_residuals(
     Ok((residuals, residual_total, has_unaged_receivable))
 }
 
-/// A group's resolved ancestry link plus the identity key predefined-party
-/// classification matches against. See [`group_identity_key`].
-struct GroupAncestry {
-    parent: Option<String>,
-    identity: String,
+/// The group evidence a party classification walks.
+///
+/// The traversal itself is [`GroupIndex`], shared with the Schedule III and
+/// cash/bank classifiers. What stays here is this report's own policy: which
+/// snapshots are coherent enough to walk at all, what each refusal means for
+/// an outstandings read, and the one historical tolerance below.
+enum PartyGroups {
+    /// A complete snapshot, checked for coherence and indexed for the walk.
+    Complete(GroupIndex),
+    /// The labelled historical fixture path. It carries *no* group rows at
+    /// all, so there is nothing to climb: the only classification available is
+    /// a direct comparison of the ledger's own parent `NAME`. That tolerance
+    /// lives here rather than inside the shared traversal precisely because it
+    /// is not a property of Tally's group model — it is an accommodation for
+    /// fixtures captured before group ancestry was part of the evidence set.
+    LegacyFixtureWithoutGroups,
 }
 
-/// The identity a group is classified by: Tally's own immutable
-/// `RESERVEDNAME` when a complete reader captured it. The explicit legacy
-/// fixture mode is the only mode allowed to fall back to the group's mutable
-/// `NAME` when no `RESERVEDNAME` evidence exists at all.
+/// Validates a group snapshot and indexes it for repeated ancestry walks.
 ///
-/// `RESERVEDNAME` is Tally's field for exactly this purpose: a predefined
-/// group carries its original identity there for life, impervious to the
-/// group later being renamed over `Import Data`. Matching `NAME` instead is
-/// the defect this classification used to have -- rename "Sundry Debtors"
-/// and every one of its ledgers silently vanishes from the outstandings
-/// report with no error.
-///
-/// The three states of `reserved_name`, and why each is handled the way it
-/// is:
-/// - `Some(non-empty)`: a trustworthy predefined identity. Used outright,
-///   even where it disagrees with the group's current `NAME` -- that
-///   disagreement is exactly the renamed-group case this function exists to
-///   still get right.
-/// - `Some("")`: Tally's own explicit signal that this specific group is
-///   user-created, not predefined. This is deliberately NOT treated as "no
-///   evidence, fall back to NAME": a custom group a user happens to name
-///   "Sundry Debtors" is not the predefined group Tally ships (predefined
-///   groups cannot be deleted, only renamed, so the real one -- wherever its
-///   `NAME` now points -- is a different row carrying the non-empty
-///   `RESERVEDNAME`). Falling back to `NAME` here would let that lookalike
-///   masquerade as the real predefined group, reintroducing a mirror image
-///   of the very bug being fixed. A ledger under such a group can still
-///   reach the report through `is_party_ledger`'s other trigger
-///   (`bill_wise_on`); only a bill-wise-off ledger there is affected.
-/// - `None`: a complete snapshot promised group rows with this identity
-///   field, so its absence is a contradiction and fails closed. Only
-///   [`NativeGroupSnapshot::LegacyFixtureWithoutGroups`] can use the old
-///   NAME-only tolerance; that variant has no group rows, so this branch
-///   exists to make the evidence boundary explicit rather than to smooth a
-///   complete read.
-fn group_identity_key(
-    group: &TallyNamedMaster,
-    legacy_tolerances: bool,
-) -> Result<String, NativeOutstandingsError> {
-    match group.reserved_name.as_deref() {
-        Some(reserved) => Ok(normalized_group_name(reserved)),
-        None if legacy_tolerances => Ok(normalized_group_name(&group.name)),
-        None => Err(NativeOutstandingsError::InvalidResponse(
-            "group_reserved_name_missing",
-        )),
-    }
-}
-
-fn group_parent_map(
-    groups: &[TallyNamedMaster],
-    legacy_tolerances: bool,
-) -> Result<BTreeMap<String, GroupAncestry>, NativeOutstandingsError> {
-    let mut parents = BTreeMap::new();
+/// The coherence rules are deliberately applied to the **whole collection**,
+/// not only to the rows a particular walk happens to reach: an incoherent
+/// group snapshot fails the entire report rather than yielding a partial one
+/// that silently omits parties. [`GroupIndex`] reports the same conditions
+/// per-walk ([`AncestryGap::GroupNameRepeated`],
+/// [`AncestryGap::ReservedNameMissing`]), which is the right shape for a
+/// classifier answering one ledger at a time and the wrong shape for a report
+/// that must be whole or refused.
+fn party_groups(snapshot: NativeGroupSnapshot<'_>) -> Result<PartyGroups, NativeOutstandingsError> {
+    let groups = match snapshot {
+        NativeGroupSnapshot::Complete([]) => {
+            return Err(NativeOutstandingsError::InvalidResponse(
+                "group_snapshot_empty",
+            ))
+        }
+        NativeGroupSnapshot::Complete(groups) => groups,
+        NativeGroupSnapshot::LegacyFixtureWithoutGroups => {
+            return Ok(PartyGroups::LegacyFixtureWithoutGroups)
+        }
+    };
+    // Duplicate detection stays on the normalized name, as it was before the
+    // walk was shared. It is the stricter reading — two rows differing only by
+    // case refuse rather than resolve — and loosening a refusal was no part of
+    // sharing a traversal.
+    let mut seen = BTreeSet::new();
     for group in groups {
         let name = normalized_group_name(&group.name);
-        if name.is_empty() || parents.contains_key(&name) {
+        if name.is_empty() || !seen.insert(name) {
             return Err(NativeOutstandingsError::InvalidResponse(
                 "group_name_missing_or_duplicate",
             ));
         }
-        parents.insert(
-            name,
-            GroupAncestry {
-                parent: group
-                    .parent
-                    .nonempty_returned_text()
-                    .map(normalized_group_name)
-                    .filter(|parent| !parent.is_empty()),
-                identity: group_identity_key(group, legacy_tolerances)?,
-            },
-        );
+        if group.reserved_name.is_none() {
+            return Err(NativeOutstandingsError::InvalidResponse(
+                "group_reserved_name_missing",
+            ));
+        }
     }
-    Ok(parents)
+    Ok(PartyGroups::Complete(GroupIndex::build(
+        groups.iter().cloned(),
+    )))
+}
+
+/// Whether a group's predefined identity is one the outstandings report
+/// treats as a party.
+///
+/// Compared loosely, and only here: the two literals are hand-written in this
+/// file rather than read from Tally, which is the one comparison
+/// [`group_ancestry`](crate::group_ancestry) documents as legitimately loose.
+/// Every hop that got the classifier to this point was matched exactly.
+fn is_party_group_identity(identity: &str) -> bool {
+    matches!(
+        normalized_group_name(identity).as_str(),
+        "sundry debtors" | "sundry creditors"
+    )
 }
 
 fn is_party_ledger(
     ledger: &LedgerSnapshotEntry,
-    group_parents: &BTreeMap<String, GroupAncestry>,
-    legacy_tolerances: bool,
+    groups: &PartyGroups,
 ) -> Result<bool, NativeOutstandingsError> {
+    // Bill-wise tracking is a party fact stated by the ledger itself, so it
+    // answers before any ancestry is consulted.
     if ledger.bill_wise_on {
         return Ok(true);
     }
     let Some(parent) = ledger.parent.as_deref() else {
         return Ok(false);
     };
-    let mut current = normalized_group_name(parent);
-    for _ in 0..=group_parents.len() {
-        if is_tally_reserved_root(&current) || current.is_empty() {
-            return Ok(false);
+    let index = match groups {
+        PartyGroups::LegacyFixtureWithoutGroups => {
+            // No group rows exist, so the walk would refuse on its first hop.
+            // Comparing the ledger's own parent NAME is all this path ever
+            // did: the fallback could never fire at a deeper hop, because
+            // there were never any hops to take.
+            return Ok(is_party_group_identity(parent));
         }
-        let Some(ancestry) = group_parents.get(&current) else {
-            // A missing group is a contradiction for a read that claims
-            // complete ancestry. Only the deliberately labelled historical
-            // no-group fixture path may retain the direct NAME comparison.
-            if !legacy_tolerances {
-                return Err(NativeOutstandingsError::InvalidResponse(
-                    "ledger_group_parent_unresolved",
-                ));
-            }
-            return Ok(matches!(
-                current.as_str(),
-                "sundry debtors" | "sundry creditors"
-            ));
-        };
-        let identity = ancestry.identity.as_str();
-        if matches!(identity, "sundry debtors" | "sundry creditors") {
-            return Ok(true);
-        }
-        match ancestry.parent.as_ref() {
-            Some(parent) => current = parent.clone(),
-            None => return Ok(false),
-        }
+        PartyGroups::Complete(index) => index,
+    };
+    match index.reserved_ancestor(Some(parent)) {
+        // The nearest predefined ancestor classifies the ledger. Climbing on
+        // past a predefined identity that is not a party would let a group
+        // higher up overrule the one Tally placed closest — measured across
+        // both captured companies (28 and 29 groups), no predefined group has
+        // a party group above it, so this is a sharper rule and not a
+        // different answer on any observed book.
+        Ok(identity) => Ok(is_party_group_identity(identity)),
+        // Neither a parent nor the account root is a classification, and
+        // neither is an error: an ordinary non-party ledger reaches both.
+        Err(AncestryGap::NoParent | AncestryGap::ReachedRoot) => Ok(false),
+        // A read claiming complete ancestry that cannot resolve a hop is a
+        // contradiction, and this report refuses rather than drop the party.
+        Err(AncestryGap::GroupAbsent) => Err(NativeOutstandingsError::InvalidResponse(
+            "ledger_group_parent_unresolved",
+        )),
+        Err(AncestryGap::GroupNameRepeated) => Err(NativeOutstandingsError::InvalidResponse(
+            "group_name_missing_or_duplicate",
+        )),
+        Err(AncestryGap::ReservedNameMissing) => Err(NativeOutstandingsError::InvalidResponse(
+            "group_reserved_name_missing",
+        )),
+        Err(AncestryGap::Cycle | AncestryGap::Exhausted) => Err(
+            NativeOutstandingsError::InvalidResponse("group_parent_cycle"),
+        ),
     }
-    Err(NativeOutstandingsError::InvalidResponse(
-        "group_parent_cycle",
-    ))
 }
 
 fn normalized_group_name(value: &str) -> String {

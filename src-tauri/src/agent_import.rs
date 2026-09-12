@@ -13,6 +13,9 @@ use bridge_tally_core::master_binding::{
     SourceEntity,
 };
 use bridge_tally_core::ExactDecimal;
+use bridge_tally_protocol::native_outstandings::{
+    parse_native_group_snapshot, render_native_group_snapshot_request,
+};
 use bridge_tally_protocol::outstandings_shared::DateBoundaryProfile;
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -21,6 +24,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{Seek, SeekFrom, Write};
 
+#[path = "agent_import_cash_bank.rs"]
+mod cash_bank;
+use cash_bank::{CashBankState, LegRequirement, ObservedMasters};
 #[path = "agent_import_identity.rs"]
 mod identity;
 use identity::{import_identity, ImportIdentityScheme};
@@ -117,9 +123,67 @@ impl VoucherType {
     }
 }
 
-// Other variants remain readable in historical batch records. New files require
-// the live import/readback evidence recorded in docs/agent/ASSESSMENT-2026-09-06.md.
-const LIVE_QUALIFIED_VOUCHER_TYPES: &[VoucherType] = &[VoucherType::Journal];
+/// Which sides of a voucher type are constrained, and how.
+///
+/// This is the whole of what distinguishes Payment, Receipt and Contra from a
+/// Journal on the write path: a Journal names no party and constrains no side.
+struct BankVoucherShape {
+    legs: &'static [(EntrySide, LegRequirement)],
+}
+
+impl BankVoucherShape {
+    /// The side rendered as `PARTYLEDGERNAME`, which is the counterparty leg by
+    /// definition. A Contra moves money between two of the company's own
+    /// accounts, so it has no counterparty leg and names no party.
+    fn party_side(&self) -> Option<&EntrySide> {
+        self.legs
+            .iter()
+            .find(|(_, requirement)| *requirement == LegRequirement::Counterparty)
+            .map(|(side, _)| side)
+    }
+}
+
+impl VoucherType {
+    /// `None` for a Journal, whose qualified file shape predates and does not
+    /// carry these elements.
+    fn bank_shape(&self) -> Option<BankVoucherShape> {
+        match self {
+            // Payment: Dr party, Cr bank. Receipt: Dr bank, Cr party.
+            Self::Payment => Some(BankVoucherShape {
+                legs: &[
+                    (EntrySide::Cr, LegRequirement::Money),
+                    (EntrySide::Dr, LegRequirement::Counterparty),
+                ],
+            }),
+            Self::Receipt => Some(BankVoucherShape {
+                legs: &[
+                    (EntrySide::Dr, LegRequirement::Money),
+                    (EntrySide::Cr, LegRequirement::Counterparty),
+                ],
+            }),
+            Self::Contra => Some(BankVoucherShape {
+                legs: &[
+                    (EntrySide::Dr, LegRequirement::Money),
+                    (EntrySide::Cr, LegRequirement::Money),
+                ],
+            }),
+            Self::Journal => None,
+        }
+    }
+}
+
+// Every variant here carries live import/readback evidence for the exact file
+// shape this module renders for it: Journal in
+// docs/agent/ASSESSMENT-2026-09-06.md, and Payment/Receipt/Contra in
+// docs/tally/TALLY_PROTOCOL_REFERENCE.md §9.13. Adding a `VoucherType` variant
+// does not qualify it; the build refuses any type absent from this list, so
+// evidence has to arrive before the file can.
+const LIVE_QUALIFIED_VOUCHER_TYPES: &[VoucherType] = &[
+    VoucherType::Journal,
+    VoucherType::Payment,
+    VoucherType::Receipt,
+    VoucherType::Contra,
+];
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 enum EntrySide {
@@ -253,13 +317,17 @@ impl Server {
         Ok(ToolOutcome {
             payload: json!({"result": {"schema": schema, "rules": [
                 "bridge_txn_id is client-supplied, unique within this batch, 1-64 ASCII characters from [A-Za-z0-9_-]",
-                "new files accept only Journal, the voucher type with recorded live import/readback evidence",
+                "new files accept Journal, Payment, Receipt and Contra, the voucher types with recorded live import/readback evidence",
+                "a Journal takes any balanced set of entries and may carry a voucher_number",
+                "Payment, Receipt and Contra take exactly two entries over two distinct ledgers, and neither voucher_number nor reference: neither element's fate on these types has been observed, and the bank's own reference belongs in the narration, which survives",
+                "a Payment credits, and a Receipt debits, a ledger whose live group ancestry reaches Bank Accounts or Cash-in-Hand; both Contra legs must name one, and a leg that cannot be established is refused",
+                "the other leg of a Payment or Receipt must be established as holding no money: a ledger under any money group is refused there, because money on both sides is a Contra whatever the type says, and so is one whose group ancestry cannot be resolved at all",
                 "each voucher has at least two entries and exact debit total equals credit total",
                 "amounts are positive decimal strings with exactly two fractional digits",
                 "dates must be within the selected company's BOOKSFROM through today",
                 "ledger names must exactly match the live catalogue; validate_masters before build_import_xml",
                 "a batch may contain at most 100 distinct ledger names of at most 1024 characters each"
-            ], "limits": {"import_mode_qualification": "New files require freshly observed supported TallyPrime product and licence mode before and after the build reads. Release and licence tier are reported as observed facts; Journal is the only voucher type with recorded import/readback evidence."}}}),
+            ], "limits": {"import_mode_qualification": "New files require freshly observed supported TallyPrime product and licence mode before and after the build reads. Release and licence tier are reported as observed facts. Journal, Payment, Receipt and Contra are the voucher types with recorded import/readback evidence, each only in the exact file shape this schema admits; a multi-entry Payment, Receipt or Contra and every other voucher type are refused. Only an unnumbered single-voucher Journal batch is eligible for post_import; the other types are import-only."}}}),
             evidence: local_evidence("voucher_schema"),
             company_guid: None,
             truncated: false,
@@ -277,24 +345,28 @@ impl Server {
             .collect::<Option<Vec<_>>>()
             .filter(|names| !names.is_empty())
             .ok_or_else(|| "ledgers_required".to_string())?;
+        // Before either read. A name the core refuses is refused at any
+        // catalogue, so verifying the company and reading its ledgers first
+        // would spend two live round trips — and retain evidence of them — to
+        // reach a failure that was decidable from the request alone.
+        let entities =
+            source_entities(&ledgers.into_iter().map(str::to_string).collect::<Vec<_>>())
+                .map_err(ToolFailure::from)?;
         let (company, identity, identity_evidence) = self.verified_company(guid).await?;
         let (catalogue, evidence) = self
             .read_ledger_catalogue(&identity, &company.name)
             .await
             .map_err(|failure| failure.with_prior_evidence(identity_evidence.clone()))?;
-        let report = master_report(
-            &ledgers.into_iter().map(str::to_string).collect::<Vec<_>>(),
-            &catalogue,
-        )
-        // The catalogue read already succeeded, so its request/response
-        // commitments belong in the failure too; attaching identity evidence
-        // alone would omit a Tally read that actually happened.
-        .map_err(|code| {
-            ToolFailure::from(code).with_prior_evidence(combine_evidence(
-                identity_evidence.clone(),
-                evidence.clone(),
-            ))
-        })?;
+        let report = master_report(&entities, &catalogue)
+            // The catalogue read already succeeded, so its request/response
+            // commitments belong in the failure too; attaching identity evidence
+            // alone would omit a Tally read that actually happened.
+            .map_err(|code| {
+                ToolFailure::from(code).with_prior_evidence(combine_evidence(
+                    identity_evidence.clone(),
+                    evidence.clone(),
+                ))
+            })?;
         let hash = sha256_json(&catalogue);
         Ok(ToolOutcome {
             payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"masters": report, "catalogue_evidence_sha256": hash}}),
@@ -359,13 +431,7 @@ impl Server {
         let mut payload = parse_payload(args)?;
         validate_payload(&payload)?;
         let (debit, credit) = totals(&payload.vouchers)?;
-        if payload
-            .vouchers
-            .iter()
-            .any(|voucher| !LIVE_QUALIFIED_VOUCHER_TYPES.contains(&voucher.voucher_type))
-        {
-            return Err("import_voucher_type_unqualified".to_string().into());
-        }
+        refuse_unqualified_types(&payload.vouchers, LIVE_QUALIFIED_VOUCHER_TYPES)?;
         normalize_payload_dates(&mut payload)?;
         let opening_profile = self.qualified_import_profile().await?;
         validate_import_dates_for_profile(&payload, &opening_profile).map_err(|code| {
@@ -378,8 +444,10 @@ impl Server {
             .map_err(|failure| failure.with_prior_evidence(mode_evidence.clone()))?;
         let mut accumulated = combine_evidence(mode_evidence, identity_evidence.clone());
         let result: Result<ToolOutcome, ToolFailure> = async {
-            let (catalogue, catalogue_evidence) =
-                self.read_ledger_catalogue(&identity, &company.name).await?;
+            let (catalogue, ledger_masters, catalogue_evidence) = self
+                .read_import_ledger_catalogue(&identity, &company.name)
+                .await
+                .map(|(names, catalogue, _, evidence)| (names, catalogue, evidence))?;
             accumulated = combine_evidence(accumulated.clone(), catalogue_evidence.clone());
             let report = masters_for_payload(&payload, &catalogue)?;
             if report.iter().any(|value| value["match_state"] != "exact") {
@@ -393,6 +461,32 @@ impl Server {
                     company_guid: Some(payload.company_guid),
                     truncated: false,
                 });
+            }
+            // Only a payload carrying a cash/bank voucher reads the group
+            // collection, so a Journal-only batch keeps the request sequence its
+            // own qualification was measured on.
+            let mut group_evidence = None;
+            if renders_bank_shape(&payload.vouchers) {
+                let (groups, evidence) = self.read_group_collection(&identity, &company.name).await?;
+                accumulated = combine_evidence(accumulated.clone(), evidence.clone());
+                let observed = ObservedMasters::new(ledger_masters.parents(), groups);
+                let refusals =
+                    cash_bank_refusals(&payload, &observed, self.settings.max_bytes);
+                if refusals.is_refused() {
+                    return Ok(ToolOutcome {
+                        payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
+                            "state":"refused", "reason":"cash_bank_ledger_not_established",
+                            "refused_ledgers":refusals.ledgers, "refused_leg_count":refusals.legs,
+                            "refused_ledgers_omitted":refusals.omitted,
+                            "group_evidence_sha256":evidence.response_sha256,
+                            "next_step":"No file was written. Each refused leg says which ledger and why: cash_bank must reach Bank Accounts or Cash-in-Hand, not_cash_bank must reach a group holding no money, and an unresolvable group is refused either way. Fix the payload or the ledger's group, then build again. Raise BRIDGE_AGENT_MAX_BYTES if refused_ledgers_omitted is above zero."
+                        }}),
+                        evidence: accumulated.clone(),
+                        company_guid: Some(payload.company_guid),
+                        truncated: false,
+                    });
+                }
+                group_evidence = Some(evidence);
             }
             validate_dates(&payload, company.books_from.as_deref())?;
             let _admission_lock = self.lock_import_admission()?;
@@ -408,6 +502,17 @@ impl Server {
             // This proves stability across these observations, not an atomic snapshot.
             if catalogue_evidence.response_sha256 != repeated_catalogue_evidence.response_sha256 {
                 return Err("import_catalogue_changed".to_string().into());
+            }
+            // The classification that admitted these legs rests on the group
+            // collection as much as on the catalogue, so hold it to the same
+            // stability requirement rather than trusting a single observation.
+            if let Some(group_evidence) = group_evidence {
+                let (_, repeated_group_evidence) =
+                    self.read_group_collection(&identity, &company.name).await?;
+                accumulated = combine_evidence(accumulated.clone(), repeated_group_evidence.clone());
+                if group_evidence.response_sha256 != repeated_group_evidence.response_sha256 {
+                    return Err("import_groups_changed".to_string().into());
+                }
             }
             let date_from = payload
                 .vouchers
@@ -487,17 +592,30 @@ impl Server {
             // successful build.
             let native_post_eligible = self.settings.writes_enabled
                 && post::admit_saved_journal(&line, &self.settings.endpoint).is_ok();
-            let (warnings, next_step) =
-                build_import_guidance(self.settings.writes_enabled, native_post_eligible);
+            let (warnings, next_step) = build_import_guidance(
+                self.settings.writes_enabled,
+                native_post_eligible,
+                renders_bank_shape(&line.vouchers),
+                line.vouchers.iter().any(|voucher| {
+                    voucher
+                        .voucher_type
+                        .bank_shape()
+                        .is_some_and(|shape| shape.party_side().is_some())
+                }),
+            );
             Ok(ToolOutcome {
                 payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
                     "batch_id": batch_id, "path": path, "sha256": sha256,
                     "voucher_count": line.vouchers.len(), "total_debit": debit.as_str(), "total_credit": credit.as_str(),
-                    "live_evidence": "synthetic_lab_readback",
+                    "live_evidence": live_evidence(&line.vouchers),
                     "verification_preflight": verification_preflight,
                     "identity_scheme": line.identity_scheme,
+                    // The fifth element of §9.13's identity tuple. It is
+                    // recorded on the batch and compared on dispatch, but a
+                    // hand import never reaches that check — so the operator
+                    // is asked to compare it and must be able to see it.
+                    "endpoint_origin": line.endpoint_origin,
                     "observed_profile": opening_profile.observed_profile,
-                    "live_evidence_report": "docs/agent/ASSESSMENT-2026-09-06.md",
                     "warnings": warnings,
                     "next_step": next_step
                 }}),
@@ -689,6 +807,23 @@ impl Server {
             request,
             evidence,
         ))
+    }
+
+    /// The company's group tree, read only when a payload needs one leg
+    /// classified as cash or bank. A ledger row carries a single `PARENT` hop
+    /// and no `PARENTSTRUCTURE`, so the group identities live here.
+    async fn read_group_collection(
+        &self,
+        identity: &super::VerifiedCompanyIdentity,
+        company_name: &str,
+    ) -> Result<(Vec<bridge_tally_protocol::TallyNamedMaster>, Evidence), ToolFailure> {
+        let request_xml = render_native_group_snapshot_request(company_name);
+        let (xml, evidence) = self.post_read(identity, request_xml).await?;
+        let groups = parse_native_group_snapshot(&xml, identity.company_guid()).map_err(|_| {
+            ToolFailure::from("group_export_invalid".to_string())
+                .with_prior_evidence(evidence.clone())
+        })?;
+        Ok((groups, evidence))
     }
 
     async fn pre_import_mark(
@@ -931,37 +1066,167 @@ fn nonempty_company_field(value: &str) -> Result<String, String> {
 fn build_import_guidance(
     writes_enabled: bool,
     native_post_eligible: bool,
+    bank_types: bool,
+    names_a_counterparty: bool,
 ) -> (Value, &'static str) {
     let preflight_warning =
         "The preflight observes the current verification window. The import or subsequent changes can make later readback exceed the source limits.";
+    // §9.11d and §9.13: a mismatched SVCURRENTCOMPANY is verified to post into
+    // whatever company Tally has loaded, CREATED=1 and no error. Deliberately
+    // NOT gated on bank_types — the hazard is general to any import, and
+    // warning only on the bank path would imply the Journal path is safe. The
+    // wording stays neutral between a hand import and a native post because
+    // this is emitted at build time, before which one happens is known.
+    let company_identity_warning =
+        "Confirm the loaded company before importing. A mismatched SVCURRENTCOMPANY is verified to post into whatever company Tally has loaded, with CREATED=1 and no error, so naming a company does not aim the write. Compare the whole identity immediately before importing — endpoint origin, name, GUID, company number and books-from, all five. Not the GUID alone, because a year-end split gives the child its parent's GUID; and not the company fields alone, because a second local Tally can hold a copy of the same company and a hand import is never checked against the endpoint this batch was built from. The endpoint_origin this batch recorded is returned beside it. Prefer an instance with no other company loaded.";
+    // §9.13: every party amount in the observed import landed On Account, and
+    // that is explicitly not established as correct for a book that reconciles
+    // bills. Bridge cannot yet tell the two kinds of book apart — the ledger
+    // catalogue it reads carries no bill-wise flag — so the limit is stated
+    // rather than silently accepted on the operator's behalf.
+    // §9.8 qualified exact-file repeat on the Journal path only, and §9.13
+    // imported each bank file exactly once. A caller recovering an uncertain
+    // outcome must not reach for the same remedy on both.
+    let repeat_warning = bank_types.then_some(
+        "Do not re-import this file if the outcome is uncertain. Exact-file repeat is qualified for Journal only; for Payment, Receipt and Contra a second import may create a second set of vouchers. Call verify_import, which reads the window back without writing.",
+    );
+    // agent_import_cash_bank.rs's module header documents this gap: the build
+    // proves master stability across the build only, and says nothing about
+    // afterwards, so a regroup between build and hand import is invisible to
+    // verify_import.
+    let stale_classification_warning = bank_types.then_some(
+        "This file's Payment, Receipt and Contra split came from the group collection read during this build. Regrouping a ledger afterwards is an ordinary Tally operation and would silently make the voucher type wrong — a counterparty moved under a cash or bank group should have become a Contra. verify_import compares the entries as built, not current ancestry, so nothing catches it later. If any master changed since this batch was built, discard it and build again.",
+    );
+    // The qualified slice is §9.13's, measured on one licensed instance. This
+    // repo's settled position — see `observe_import_profile`'s own comment —
+    // is that a release or tier label is evidence recorded on this path, not
+    // a categorical admission gate, so a build against a different release or
+    // tier is reported here rather than refused or vouched for.
+    let release_evidence_warning = bank_types.then_some(
+        "The Payment, Receipt and Contra file shapes were measured on licensed TallyPrime 7.1 Gold only. This endpoint's observed product, release, tier and mode are returned beside this batch. Release and tier are recorded as evidence on this path rather than used as an admission gate, so a build against a different release is neither refused nor proven.",
+    );
+    let allocation_warning = names_a_counterparty.then_some(
+        "This batch names a counterparty on a Payment or Receipt and carries no bill allocation, so each amount lands On Account. If that ledger is configured for bill-wise accounting, the entry will need allocating in Tally afterwards; Bridge does not read that configuration and cannot warn per ledger.",
+    );
+    let warnings = |first: &str| {
+        json!(std::iter::once(first)
+            .chain(std::iter::once(preflight_warning))
+            .chain(std::iter::once(company_identity_warning))
+            .chain(repeat_warning)
+            .chain(stale_classification_warning)
+            .chain(release_evidence_warning)
+            .chain(allocation_warning)
+            .collect::<Vec<_>>())
+    };
+    let manual_import_next_step = "Confirm the loaded company matches this batch, import the file in Tally (Gateway of Tally → Import → Vouchers), then call verify_import";
     if writes_enabled && native_post_eligible {
         (
-            json!([
+            warnings(
                 "No import XML was sent to Tally. To post this saved batch, call post_import; it requires a separate native approval. If you import the file manually, call verify_import afterward and do not call post_import for that batch.",
-                preflight_warning
-            ]),
+            ),
             "Call post_import with this company_guid and batch_id; the local user must review and approve it before one posting attempt.",
         )
     } else if writes_enabled {
         (
-            json!([
+            warnings(
                 "No import XML was sent to Tally. This saved batch is not eligible for native posting because native posting requires one unnumbered Journal with a reviewable preview. Import the written file manually, then use verify_import; do not call post_import for this batch.",
-                preflight_warning
-            ]),
-            "Import this file in Tally (Gateway of Tally → Import → Vouchers) with the company open, then call verify_import",
+            ),
+            manual_import_next_step,
         )
     } else {
         (
-            json!([
+            warnings(
                 "No import XML was sent to Tally. Import the written file manually, then use verify_import.",
-                preflight_warning
-            ]),
-            "Import this file in Tally (Gateway of Tally → Import → Vouchers) with the company open, then call verify_import",
+            ),
+            manual_import_next_step,
         )
     }
 }
 
+/// The live observation each voucher type in this batch actually rests on.
+///
+/// A Journal file rests on the synthetic-lab import/readback recorded in the
+/// 2026-09-06 assessment — a report that in the same breath records Payment,
+/// Receipt and Contra being refused. Those three rest on the licensed 7.1
+/// import recorded as reference §9.13 instead. Citing either for the other
+/// would look auditable and be wrong. The two never share a file — mixing the
+/// rendered shapes is refused — but the map stays general so a batch of several
+/// bank types reports the one source they share, once.
+fn live_evidence(vouchers: &[ImportVoucher]) -> Vec<Value> {
+    let mut sources = BTreeMap::<(&str, &str), BTreeSet<&str>>::new();
+    for voucher in vouchers {
+        let source = match voucher.voucher_type.bank_shape() {
+            None => (
+                "synthetic_lab_readback",
+                "docs/agent/ASSESSMENT-2026-09-06.md",
+            ),
+            Some(_) => (
+                "licensed_bank_voucher_import",
+                "docs/tally/TALLY_PROTOCOL_REFERENCE.md",
+            ),
+        };
+        sources
+            .entry(source)
+            .or_default()
+            .insert(voucher.voucher_type.as_str());
+    }
+    sources
+        .into_iter()
+        .map(|((observation, report), voucher_types)| {
+            json!({"observation":observation, "report":report,
+                "voucher_types":voucher_types.into_iter().collect::<Vec<_>>()})
+        })
+        .collect()
+}
+
+/// The last gate before any read: a voucher type absent from the qualified
+/// list never reaches a live request, let alone a written file. `qualified` is
+/// a parameter so the guard itself stays exercised even while every declared
+/// `VoucherType` happens to be qualified.
+fn refuse_unqualified_types(
+    vouchers: &[ImportVoucher],
+    qualified: &[VoucherType],
+) -> Result<(), String> {
+    vouchers
+        .iter()
+        .all(|voucher| qualified.contains(&voucher.voucher_type))
+        .then_some(())
+        .ok_or_else(|| "import_voucher_type_unqualified".to_string())
+}
+
+/// Whether this batch renders the bank shape at all.
+///
+/// After `validate_payload` a batch is homogeneous by shape, so this is both
+/// "any" and "all" — the group read, the guidance and the evidence record can
+/// each ask it once and get a whole-batch answer.
+fn renders_bank_shape(vouchers: &[ImportVoucher]) -> bool {
+    vouchers
+        .iter()
+        .any(|voucher| voucher.voucher_type.bank_shape().is_some())
+}
+
+/// A file may carry more than one voucher type — the measured statement files
+/// mixed Payment and Receipt freely, 61+54 in one and 20+8 in another, both
+/// imported clean. What it may not do is mix two rendered *shapes*.
+///
+/// The three bank types share one shape: `EFFECTIVEDATE` beside `DATE`, a party
+/// on the counterparty side, never a number or reference. A Journal's shape
+/// carries none of that and comes from a separate qualification lineage
+/// (§9.8 against §9.13). No file mixing the two has been imported — the
+/// reallocation Journals went in on their own — so the union is refused rather
+/// than assumed from holding both citations at once.
+fn refuse_mixed_shapes(vouchers: &[ImportVoucher]) -> Result<(), String> {
+    let bank = vouchers
+        .iter()
+        .filter(|voucher| voucher.voucher_type.bank_shape().is_some())
+        .count();
+    (bank == 0 || bank == vouchers.len())
+        .then_some(())
+        .ok_or_else(|| "voucher_type_shapes_mixed".to_string())
+}
+
 fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
+    refuse_mixed_shapes(&payload.vouchers)?;
     if payload.company_guid.trim().is_empty()
         || payload.vouchers.is_empty()
         || payload.vouchers.len() > MAX_VOUCHERS
@@ -1026,8 +1291,197 @@ fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
         if !debit.numeric_eq(&credit) {
             return Err("voucher_not_balanced".to_string());
         }
+        if voucher.voucher_type.bank_shape().is_some() {
+            validate_bank_voucher_shape(voucher)?;
+        }
     }
     Ok(())
+}
+
+/// Payment, Receipt and Contra are admitted only in the two-entry shape that
+/// was imported and read back live: one debit, one credit, two distinct
+/// ledgers, and neither a supplied voucher number nor a reference.
+///
+/// A multi-leg Payment is a perfectly ordinary Tally voucher and is
+/// deliberately not admitted. No such file has been imported and read back
+/// here, and the readback pairing that verify_import relies on has never been
+/// exercised on one; a Journal remains available for a batch that needs it.
+fn validate_bank_voucher_shape(voucher: &ImportVoucher) -> Result<(), String> {
+    let [first, second] = voucher.entries.as_slice() else {
+        return Err("voucher_entry_pair_required".to_string());
+    };
+    if first.side == second.side {
+        return Err("voucher_entry_pair_required".to_string());
+    }
+    if first.ledger == second.ledger {
+        return Err("voucher_entry_ledger_repeated".to_string());
+    }
+    // A supplied VOUCHERNUMBER's fate is decided by the *voucher type's*
+    // numbering method (§9.8), which is per-type configuration this build has
+    // never read: under Automatic, Tally discards the number without reporting
+    // it; under Manual it keeps it. The observed book numbered these types
+    // automatically, and that is one book — so the number is refused because
+    // its fate is unobserved, not because every company is automatic. Reading
+    // the method would need its own qualified voucher-type read contract,
+    // which §9.8 says cannot be inferred; native posting refuses a supplied
+    // number for exactly this reason. The bank's own reference belongs in the
+    // narration, which survives either way.
+    if voucher.voucher_number.is_some() {
+        return Err("voucher_number_unqualified_for_type".to_string());
+    }
+    // §9.13's measured shape carries no REFERENCE element. Tally may well
+    // accept one here, but no file carrying it has been imported and read
+    // back on these types, and verify_import compares accounting entries
+    // rather than this annotation, so nothing downstream would notice if it
+    // were dropped or rewritten. Refuse it rather than write an unmeasured
+    // variant while claiming the qualified shape.
+    if voucher.reference.is_some() {
+        return Err("voucher_reference_unqualified_for_type".to_string());
+    }
+    Ok(())
+}
+
+fn entry_for_side<'a>(voucher: &'a ImportVoucher, side: &EntrySide) -> Option<&'a ImportEntry> {
+    voucher.entries.iter().find(|entry| &entry.side == side)
+}
+
+/// Every constrained (voucher, side, ledger) in the payload, with what that
+/// leg must be. Empty for a Journal-only batch, which is what keeps the group
+/// read off that path entirely.
+fn constrained_legs(
+    payload: &ImportPayload,
+) -> Vec<(&ImportVoucher, &EntrySide, &str, LegRequirement)> {
+    payload
+        .vouchers
+        .iter()
+        .flat_map(|voucher| {
+            voucher
+                .voucher_type
+                .bank_shape()
+                .into_iter()
+                .flat_map(move |shape| {
+                    shape.legs.iter().filter_map(move |(side, requirement)| {
+                        entry_for_side(voucher, side)
+                            .map(|entry| (voucher, side, entry.ledger.as_str(), *requirement))
+                    })
+                })
+        })
+        .collect()
+}
+
+/// One row per constrained leg, in payload order, whether or not it passed.
+/// A refusal names every failing leg at once: a caller fixing them one build
+/// at a time pays a full live read cycle for each.
+/// What a batch's constrained legs refuse, and why.
+///
+/// Empty `ledgers` means every constrained leg was admitted.
+struct CashBankRefusals {
+    /// One row per distinct failing (ledger, requirement), not per leg. A
+    /// ledger in the wrong group fails identically in every voucher that names
+    /// it, and 400 copies of one problem is not 400 problems.
+    ///
+    /// This is what bounds the result. `validate_payload` already caps a batch
+    /// at `MAX_MASTER_NAMES` distinct ledger names, and a ledger can be
+    /// constrained at most once per side, so these rows cannot exceed 200
+    /// however many vouchers the batch carries. Emitting one row per leg had no
+    /// such bound: a 1,000-voucher batch produced up to 2,000 rows, and once
+    /// that passed the response cap the whole actionable refusal collapsed into
+    /// a generic size error.
+    ledgers: Vec<Value>,
+    /// Failing legs before deduplication, so a caller can tell one misfiled
+    /// ledger from one that poisons the entire batch.
+    legs: usize,
+    /// Distinct failures the byte budget left out. Deduplication bounds the
+    /// row *count*; it does not bound their size, and a ledger name may be
+    /// 1,024 characters.
+    omitted: usize,
+}
+
+/// How many serialized bytes the refusal diagnostics may occupy, given the
+/// caller's configured response cap.
+///
+/// Row count alone is not a bound on size: a batch may carry
+/// `MAX_MASTER_NAMES` names of `MAX_MASTER_NAME_CHARS` each, which passes even
+/// the default cap on names alone before any detail text. The share is a
+/// quarter because the diagnostics are one field among several in the refusal
+/// and the transport repeats structured content as text, so the frame carries
+/// roughly twice what is measured here. `max_bytes` is configurable down to
+/// 256, where a quarter leaves room for nothing — which is why one row always
+/// goes out regardless, and the rest are counted rather than dropped silently.
+fn refusal_diagnostic_budget(max_bytes: usize) -> usize {
+    (max_bytes / 4).min(32 * 1024)
+}
+
+impl CashBankRefusals {
+    /// Whether the batch is refused.
+    ///
+    /// This is `legs`, never `ledgers`. The row vector is presentation and is
+    /// bounded by a *display* budget, so at a small configured response cap it
+    /// can be empty while legs still failed. Gating on it once let a batch with
+    /// failing cash/bank legs write its file, which made an accounting check
+    /// switchable by `BRIDGE_AGENT_MAX_BYTES`.
+    fn is_refused(&self) -> bool {
+        self.legs > 0
+    }
+}
+
+fn cash_bank_refusals(
+    payload: &ImportPayload,
+    observed: &ObservedMasters,
+    max_bytes: usize,
+) -> CashBankRefusals {
+    let mut classified = BTreeMap::<&str, CashBankState>::new();
+    let mut refused = BTreeMap::<(&str, &'static str), Value>::new();
+    let mut legs = 0_usize;
+    for (voucher, side, ledger, requirement) in constrained_legs(payload) {
+        let state = classified
+            .entry(ledger)
+            .or_insert_with(|| observed.classify(ledger))
+            .clone();
+        let admitted = requirement.admits(&state);
+        if admitted {
+            continue;
+        }
+        legs += 1;
+        let requires = match requirement {
+            LegRequirement::Money => "cash_bank",
+            LegRequirement::Counterparty => "not_cash_bank",
+        };
+        refused.entry((ledger, requires)).or_insert_with(|| {
+            json!({
+                "ledger": party_name(ledger),
+                "requires": requires,
+                "side": side,
+                "state": state.state(),
+                "refused_because": requirement.refusal(&state, voucher.voucher_type.as_str()),
+                // One voucher a caller can open to see the problem, rather
+                // than every voucher that repeats it.
+                "first_bridge_txn_id": voucher.bridge_txn_id,
+            })
+        });
+    }
+    let mut budget = refusal_diagnostic_budget(max_bytes);
+    let distinct = refused.len();
+    let ledgers = refused
+        .into_values()
+        // Filter rather than stop at the first row that will not fit: an
+        // oversized row is one long ledger name, not a reason to discard every
+        // shorter refusal behind it. Budget is only spent on rows that are
+        // kept, so the remainder stays available.
+        .filter(|row| {
+            let cost = serde_json::to_string(row).map_or(usize::MAX, |text| text.len());
+            let affordable = cost <= budget;
+            if affordable {
+                budget -= cost;
+            }
+            affordable
+        })
+        .collect::<Vec<_>>();
+    CashBankRefusals {
+        omitted: distinct.saturating_sub(ledgers.len()),
+        ledgers,
+        legs,
+    }
 }
 
 fn contains_reserved_marker(value: &str) -> bool {
@@ -1125,7 +1579,27 @@ fn masters_for_payload(
     payload: &ImportPayload,
     catalogue: &[String],
 ) -> Result<Vec<Value>, String> {
-    master_report(&requested_ledger_names(payload), catalogue)
+    master_report(
+        &source_entities(&requested_ledger_names(payload))?,
+        catalogue,
+    )
+}
+
+/// Parses requested names into source entities, which is where the core's own
+/// bounds are enforced — a control character, or more identifiers than one name
+/// may carry.
+///
+/// Kept separate from `master_report` so a caller can run it **before** it
+/// reads Tally. A request the core will refuse cannot succeed at any catalogue,
+/// so spending a live read and collecting evidence of it first buys nothing and
+/// costs an external round trip against the operator's books.
+fn source_entities(requested: &[String]) -> Result<Vec<SourceEntity>, String> {
+    requested
+        .iter()
+        .enumerate()
+        .map(|(position, name)| SourceEntity::new(position, name))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.safe_reason_code().to_string())
 }
 
 fn requested_ledger_names(payload: &ImportPayload) -> Vec<String> {
@@ -1150,16 +1624,10 @@ const MAX_CANDIDATE_RESULT_BYTES: usize = 8_192;
 /// desktop preparation screen cannot drift apart; see
 /// `docs/adr/0016-master-binding-authority.md`. This function only renders the
 /// report, and it never promotes a candidate into a spelling.
-fn master_report(requested: &[String], catalogue: &[String]) -> Result<Vec<Value>, String> {
+fn master_report(entities: &[SourceEntity], catalogue: &[String]) -> Result<Vec<Value>, String> {
     let catalog = MasterCatalog::new(MasterClass::Ledger, catalogue)
         .map_err(|error| error.safe_reason_code().to_string())?;
-    let entities = requested
-        .iter()
-        .enumerate()
-        .map(|(position, name)| SourceEntity::new(position, name))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.safe_reason_code().to_string())?;
-    let report = master_binding::bind(&catalog, &entities)
+    let report = master_binding::bind(&catalog, entities)
         .map_err(|error| error.safe_reason_code().to_string())?;
     Ok(report.entities().iter().map(master_match_json).collect())
 }
@@ -1290,14 +1758,46 @@ fn render_voucher_xml(voucher: &ImportVoucher, remote_id: Uuid, attribution_id: 
         .as_deref()
         .map(|value| format!("<VOUCHERNUMBER>{}</VOUCHERNUMBER>", xml_escape(value)))
         .unwrap_or_default();
-    let entries = voucher.entries.iter().map(|entry| {
+    let shape = voucher.voucher_type.bank_shape();
+    // §9.13's measured files put the debit first in every voucher, and a
+    // caller's ordering is not a fact about the batch. Canonicalise rather than
+    // refuse: it costs the caller nothing and removes the variance entirely.
+    // A Journal keeps the caller's order, since its own measured file did.
+    let mut ordered = voucher.entries.iter().collect::<Vec<_>>();
+    if shape.is_some() {
+        ordered.sort_by_key(|entry| match entry.side {
+            EntrySide::Dr => 0,
+            EntrySide::Cr => 1,
+        });
+    }
+    let entries = ordered.iter().map(|entry| {
         let amount = match entry.side { EntrySide::Dr => format!("-{}", entry.amount), EntrySide::Cr => entry.amount.clone() };
         format!("<ALLLEDGERENTRIES.LIST><LEDGERNAME>{}</LEDGERNAME><ISDEEMEDPOSITIVE>{}</ISDEEMEDPOSITIVE><AMOUNT>{}</AMOUNT></ALLLEDGERENTRIES.LIST>", xml_escape(&entry.ledger), entry.side.tally_positive(), amount)
     }).collect::<String>();
+    let date = normalized_date(&voucher.date).unwrap_or_default();
+    // §9.13: the imported Payment/Receipt/Contra files carried EFFECTIVEDATE
+    // beside DATE, and named the party on the side opposite the money. The
+    // Journal shape qualified in §9.8 carries neither element, and is left
+    // byte-identical to the file that measurement actually ran on.
+    let effective_date = shape
+        .as_ref()
+        .map(|_| format!("<EFFECTIVEDATE>{date}</EFFECTIVEDATE>"))
+        .unwrap_or_default();
+    let party = shape
+        .as_ref()
+        .and_then(BankVoucherShape::party_side)
+        .and_then(|side| entry_for_side(voucher, side))
+        .map(|entry| {
+            format!(
+                "<PARTYLEDGERNAME>{}</PARTYLEDGERNAME>",
+                xml_escape(&entry.ledger)
+            )
+        })
+        .unwrap_or_default();
     // The qualified human-import slice uses Create + stable client REMOTEID;
     // native posting uses a separate private REMOTEID and no supplied number.
     // See docs/tally/TALLY_PROTOCOL_REFERENCE.md §9.8 for scope and limits.
-    format!("<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><VOUCHER REMOTEID=\"{}\" VCHTYPE=\"{}\" ACTION=\"Create\" OBJVIEW=\"Accounting Voucher View\"><DATE>{}</DATE><VOUCHERTYPENAME>{}</VOUCHERTYPENAME>{voucher_number}{narration}{reference}{entries}</VOUCHER></TALLYMESSAGE>", remote_id, voucher.voucher_type.as_str(), normalized_date(&voucher.date).unwrap_or_default(), voucher.voucher_type.as_str())
+    format!("<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><VOUCHER REMOTEID=\"{}\" VCHTYPE=\"{}\" ACTION=\"Create\" OBJVIEW=\"Accounting Voucher View\"><DATE>{date}</DATE>{effective_date}<VOUCHERTYPENAME>{}</VOUCHERTYPENAME>{party}{voucher_number}{narration}{reference}{entries}</VOUCHER></TALLYMESSAGE>", remote_id, voucher.voucher_type.as_str(), voucher.voucher_type.as_str())
 }
 
 fn render_import_verification_read(company: &str, from: &str, to: &str) -> String {
@@ -1855,7 +2355,7 @@ fn alter_id_delta(mark: &PreImportMark, observed: &[ReadVoucher]) -> Value {
 
 fn render_proof_markdown(proof: &Value) -> String {
     let mut output = format!(
-        "# Journal verification — {}\n\n",
+        "# Voucher import verification — {}\n\n",
         proof["batch_id"].as_str().unwrap_or("unknown")
     );
     let dispatch_state = proof["dispatch"]["state"].as_str();

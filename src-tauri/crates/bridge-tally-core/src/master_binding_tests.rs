@@ -84,27 +84,125 @@ fn unusable_names_are_refused_at_the_boundary() {
 }
 
 #[test]
-fn an_observed_master_name_is_retained_verbatim_while_a_source_name_is_trimmed() {
-    // A caller writes the bound name back to Tally byte for byte. Trimming an
-    // observed name here would report a spelling that does not exist and
-    // refuse at the write gate with no explanation.
-    let catalog = ledgers(&["  Alpha Traders  ", "Beta Supply"]);
-    assert_eq!(catalog.names().next(), Some("  Alpha Traders  "));
-    let binding = bind_one_name(&catalog, "Alpha Traders");
-    assert_eq!(binding.bound_name(), Some("  Alpha Traders  "));
-    assert_eq!(binding.source_name, "Alpha Traders");
+fn the_measured_transformations_compose() {
+    // Twelve single-axis results license each transformation alone and say
+    // nothing about applying several at once — which is what a canonical form
+    // does on every comparison. Two reviewers raised that independently, so
+    // §9.4d measured it rather than arguing it: eight composed variants, all
+    // matched, all confirmed by day-book readback against the intended master.
+    let catalog = ledgers(&[
+        "MB PILOT ALPHA (5550001001)",
+        "MB-PROBE-LEDGER-A",
+        "Beta Supply",
+    ]);
+    for (supplied, expected) in [
+        (
+            "  mb pilot alpha (5550001001)  ",
+            "MB PILOT ALPHA (5550001001)",
+        ),
+        ("mb-pilot-alpha-(5550001001)", "MB PILOT ALPHA (5550001001)"),
+        (
+            "  mb-pilot-alpha-(5550001001)  ",
+            "MB PILOT ALPHA (5550001001)",
+        ),
+        (
+            "MB/PILOT  ALPHA (5550001001)",
+            "MB PILOT ALPHA (5550001001)",
+        ),
+        ("mb-pilot alpha/(5550001001)", "MB PILOT ALPHA (5550001001)"),
+        (
+            "  mb-pilot/alpha  (5550001001) ",
+            "MB PILOT ALPHA (5550001001)",
+        ),
+        ("  mb probe  ledger a ", "MB-PROBE-LEDGER-A"),
+    ] {
+        assert_eq!(
+            bind_one_name(&catalog, supplied).bound_name(),
+            Some(expected),
+            "{supplied:?} did not compose to {expected:?}"
+        );
+    }
+
+    // Composition does not create equivalences out of unmeasured parts: an en
+    // dash stays rejected however much measured folding surrounds it.
+    let dashed = ledgers(&["Alpha \u{2013} Traders", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&dashed, "  alpha   traders ").bound_name(),
+        None,
+        "an unmeasured transformation was carried in by composition"
+    );
 }
 
 #[test]
-fn names_differing_only_in_surrounding_whitespace_are_an_ambiguity_not_a_refused_catalog() {
-    let catalog = ledgers(&["Alpha Traders", "Alpha Traders "]);
+fn surrounding_and_repeated_whitespace_is_folded_on_both_sides() {
+    // §9.4d: leading whitespace, one trailing space and a collapsed internal
+    // run all matched on licensed 7.1, in both directions.
+    for (master, source) in [
+        ("Alpha Traders", "Alpha Traders "),
+        ("Alpha Traders ", "Alpha Traders"),
+        ("Alpha Traders", "  Alpha Traders"),
+        ("  Alpha Traders", "Alpha Traders"),
+        ("Alpha Traders", "Alpha  Traders"),
+        ("Alpha  Traders", "Alpha Traders"),
+    ] {
+        let catalog = ledgers(&[master, "Beta Supply"]);
+        assert_eq!(
+            bind_one_name(&catalog, source).bound_name(),
+            Some(master),
+            "{source:?} did not reach {master:?}"
+        );
+    }
+
+    // An observed name is still retained byte for byte: a caller writes it back.
+    let catalog = ledgers(&["Alpha Traders ", "Beta Supply"]);
+    assert_eq!(catalog.names().next(), Some("Alpha Traders "));
     let binding = bind_one_name(&catalog, "Alpha Traders");
-    // Byte equality still picks the exact one; the near-identical sibling is
-    // not a reason to fail the whole read.
-    assert_eq!(binding.bound_name(), Some("Alpha Traders"));
-    let other = bind_one_name(&catalog, "alpha traders");
+    assert_eq!(binding.bound_name(), Some("Alpha Traders "));
+    assert_eq!(
+        binding.source_name, "Alpha Traders",
+        "a source name is recorded as the document wrote it"
+    );
+
+    // ASCII space only. A no-break space was never sent, so it stays an
+    // ordinary character rather than joining the separator set on the strength
+    // of looking like whitespace.
+    let nbsp = ledgers(&["Alpha\u{a0}Traders", "Beta Supply"]);
+    assert_eq!(bind_one_name(&nbsp, "Alpha Traders").bound_name(), None);
+}
+
+#[test]
+fn near_identical_masters_are_an_ambiguity_where_they_collide_and_never_a_refused_catalog() {
+    // A catalog holding two names one fold or another could merge must not fail
+    // the whole read. Whether they are *ambiguous* is a separate question, and
+    // the answer changed when the fold was held to what §9.4b measured.
+
+    // Case-only siblings do collide: ASCII case folding is verified, so both
+    // answer to one key and a third spelling resolves to neither.
+    let cased = ledgers(&["Alpha Traders", "alpha traders"]);
+    assert_eq!(
+        bind_one_name(&cased, "Alpha Traders").bound_name(),
+        Some("Alpha Traders"),
+        "byte equality still picks the exact one"
+    );
+    let other = bind_one_name(&cased, "ALPHA TRADERS");
     assert_eq!(reason(&other), UnboundReason::NameAmbiguous);
-    assert_eq!(candidate_names(&other), ["Alpha Traders", "Alpha Traders "]);
+    assert_eq!(candidate_names(&other), ["Alpha Traders", "alpha traders"]);
+
+    // Two masters differing only in trailing whitespace collapse under the
+    // measured fold too, so they are an ambiguity rather than a refused
+    // catalog — and byte equality still picks one where the source has it.
+    let spaced = ledgers(&["Alpha Traders", "Alpha Traders "]);
+    assert_eq!(
+        bind_one_name(&spaced, "Alpha Traders ").bound_name(),
+        Some("Alpha Traders "),
+        "byte equality outranks the fold"
+    );
+    let ambiguous = bind_one_name(&spaced, "alpha traders");
+    assert_eq!(reason(&ambiguous), UnboundReason::NameAmbiguous);
+    assert_eq!(
+        candidate_names(&ambiguous),
+        ["Alpha Traders", "Alpha Traders "]
+    );
 }
 
 #[test]
@@ -152,15 +250,31 @@ fn an_exact_name_binds() {
 }
 
 #[test]
-fn case_whitespace_and_dash_style_do_not_defeat_a_bind() {
-    let catalog = ledgers(&["Alpha \u{2013} Traders", "Beta Supply"]);
-    let binding = bind_one_name(&catalog, "  alpha - TRADERS  ");
+fn case_binds_but_an_unverified_fold_only_suggests() {
+    // ASCII case folding is measured, so it resolves.
+    let cased = ledgers(&["Alpha Traders", "Beta Supply"]);
     assert_eq!(
-        binding.status,
+        bind_one_name(&cased, "ALPHA traders").status,
         BindingStatus::Bound {
-            catalog_name: "Alpha \u{2013} Traders".to_string(),
+            catalog_name: "Alpha Traders".to_string(),
             basis: BindingBasis::NormalizedName,
         }
+    );
+
+    // An en dash, a collapsed whitespace run and leading whitespace are all on
+    // §9.4b's unverified list. The wide fold still reaches the master, so it is
+    // offered — a candidate a human confirms, which is exactly what §9.4b says
+    // a looser fold is for. Nothing is lost here except the automatic answer.
+    let catalog = ledgers(&["Alpha \u{2013} Traders", "Beta Supply"]);
+    let binding = bind_one_name(&catalog, "  alpha - TRADERS  ");
+    assert_eq!(binding.bound_name(), None);
+    assert_eq!(reason(&binding), UnboundReason::NearMiss);
+    assert_eq!(
+        binding.unresolved().expect("unbound").candidates.listed(),
+        [Candidate {
+            catalog_name: "Alpha \u{2013} Traders".to_string(),
+            rule: CandidateRule::NormalizedEqual,
+        }]
     );
 }
 
@@ -415,31 +529,89 @@ fn a_decisive_identifier_pointing_elsewhere_still_outranks_a_byte_exact_name() {
 }
 
 #[test]
-fn a_hyphen_matches_a_space_because_tally_says_so() {
-    // IMPLEMENTATION_GUIDE.md §3.3b, measured: Tally's own master-name matching
-    // treats a hyphen as a space. Being stricter than the authority refuses
-    // names Tally would accept, and `X - Y` is a common ledger convention.
-    let catalog = ledgers(&["Bank - HDFC Current", "Beta Supply"]);
-    let binding = bind_one_name(&catalog, "Bank HDFC Current");
+fn space_hyphen_and_slash_are_one_separator_in_both_directions() {
+    // `TALLY_PROTOCOL_REFERENCE.md` §9.4d, measured on licensed TallyPrime 7.1
+    // by naming each spelling in a voucher and reading the day book back to see
+    // which master it reached. Both hyphen directions matched, and so did a
+    // slash — so this fold is symmetric, and one key per side is enough.
+    for (master, source) in [
+        ("BRIDGE-PROBE-LEDGER-A", "BRIDGE PROBE LEDGER A"),
+        ("BRIDGE PROBE LEDGER A", "BRIDGE-PROBE-LEDGER-A"),
+        ("BRIDGE PROBE LEDGER A", "BRIDGE/PROBE/LEDGER/A"),
+        ("BRIDGE/PROBE/LEDGER/A", "BRIDGE-PROBE-LEDGER-A"),
+    ] {
+        let catalog = ledgers(&[master, "Beta Supply"]);
+        assert_eq!(
+            bind_one_name(&catalog, source).bound_name(),
+            Some(master),
+            "{source} did not reach {master}"
+        );
+    }
+
+    // `X - Y` is a common ledger convention, and it needs the separator step
+    // and the whitespace-run step together. Both are measured, so it resolves.
+    let spaced_hyphen = ledgers(&["Bank - HDFC Current", "Beta Supply"]);
     assert_eq!(
-        binding.status,
-        BindingStatus::Bound {
-            catalog_name: "Bank - HDFC Current".to_string(),
-            basis: BindingBasis::NormalizedName,
-        }
+        bind_one_name(&spaced_hyphen, "Bank HDFC Current").bound_name(),
+        Some("Bank - HDFC Current")
     );
-    // And the reverse direction.
-    let hyphenated = ledgers(&["BRIDGE PROBE LEDGER A", "Beta Supply"]);
+
+    // An en dash and an underscore were **sent and rejected**. They are not
+    // separators to Tally, however much they look like them, so they may only
+    // suggest — this is the half of §9.4d that a "normalises separators"
+    // reading would get wrong in the dangerous direction.
+    for (master, source) in [
+        ("Alpha \u{2013} Traders", "Alpha Traders"),
+        ("Alpha_Traders", "Alpha Traders"),
+    ] {
+        let catalog = ledgers(&[master, "Beta Supply"]);
+        let binding = bind_one_name(&catalog, source);
+        assert_eq!(
+            binding.bound_name(),
+            None,
+            "{source} resolved onto {master} on an equivalence Tally rejects"
+        );
+        assert_eq!(candidate_names(&binding), [master]);
+    }
+}
+
+#[test]
+fn masters_that_collapse_under_the_fold_are_refused_never_chosen() {
+    // `TALLY_PROTOCOL_REFERENCE.md` §9.4b requires prefer-exact,
+    // refuse-ambiguous, never-pick. `A-B` and `A B` collapse under the three
+    // verified transformations and nothing measured says which one Tally would
+    // choose, so a fold that returns the first match is the failure mode.
+    let catalog = ledgers(&["Alpha-Beta", "Alpha Beta", "Gamma"]);
+
+    // Prefer-exact: byte equality outranks a key shared by two masters.
     assert_eq!(
-        bind_one_name(&hyphenated, "BRIDGE-PROBE-LEDGER-A").bound_name(),
-        Some("BRIDGE PROBE LEDGER A")
+        bind_one_name(&catalog, "Alpha Beta").bound_name(),
+        Some("Alpha Beta")
     );
+    assert_eq!(
+        bind_one_name(&catalog, "Alpha-Beta").bound_name(),
+        Some("Alpha-Beta")
+    );
+
+    // Refuse-ambiguous, never-pick: with no exact spelling to prefer, the
+    // collapse is reported with both masters offered, not resolved to one.
+    // Both spellings answer to one key now that §9.4d has measured the hyphen
+    // in both directions, so a third spelling reaching both is an ambiguity —
+    // and Tally agrees, because it would match that name to either.
+    for spelling in ["alpha beta", "ALPHA  BETA", "alpha/beta"] {
+        let binding = bind_one_name(&catalog, spelling);
+        assert_eq!(reason(&binding), UnboundReason::NameAmbiguous, "{spelling}");
+        assert_eq!(binding.bound_name(), None);
+        assert_eq!(candidate_names(&binding), ["Alpha Beta", "Alpha-Beta"]);
+    }
 }
 
 #[test]
 fn the_master_fold_stops_where_tally_stops() {
-    // §3.3b also measured what Tally does NOT normalise: `AND` for `&`, a
-    // missing suffix word, and a singular for a plural were all rejected.
+    // `IMPLEMENTATION_GUIDE.md` §3.3b also measured what Tally does NOT
+    // normalise: `AND` for `&`, a missing suffix word, and a singular for a
+    // plural were all rejected. The first two were re-measured on licensed
+    // 7.1 in §9.4d against `Profit & Loss A/c` and rejected there too.
     // Folding further than the authority would bind names Tally refuses.
     let catalog = ledgers(&["ZZ Ram & Sons Pvt Ltd", "Beta Supply"]);
     for wrong in [
@@ -451,6 +623,20 @@ fn the_master_fold_stops_where_tally_stops() {
             bind_one_name(&catalog, wrong).bound_name(),
             None,
             "{wrong:?} bound, but Tally rejects it"
+        );
+    }
+
+    // The *absent-master* direction, which prefer-exact and refuse-ambiguous
+    // do not cover: the requested master is not in the book and one different
+    // ledger collapses onto the request, so there is one candidate and no
+    // ambiguity to refuse. Uniqueness under a fold is only as meaningful as
+    // the fold, and `&` has to stay significant for this to hold.
+    for (requested, present) in [("A & B", "AB"), ("AB", "A & B")] {
+        let only = ledgers(&[present, "Gamma"]);
+        assert_eq!(
+            bind_one_name(&only, requested).bound_name(),
+            None,
+            "{requested:?} bound to {present:?}, which Tally treats as a different master"
         );
     }
 }
@@ -520,8 +706,19 @@ fn a_fiscal_period_label_is_not_an_identity_bearing_code() {
         // canonicalization strips, so the test has to see the raw token.
         "FY2025-26",
         "FY2025/26",
+        // The comparison key folds these dash variants; the period boundary
+        // has to admit the same set or the range fuses instead of splitting.
+        "FY2025\u{2013}26",
+        "FY2025\u{2014}26",
+        "2025\u{2013}2026",
         "2025-2026",
         "APR2025-MAR2026",
+        // Written without the separator, the range arrives as one run that
+        // every length test above missed, and the token passed as a code.
+        "FY202425",
+        "FY20242025",
+        "AY202526",
+        "202425FY",
     ] {
         assert!(
             entity(&format!("Purchases {label}"))
@@ -530,15 +727,527 @@ fn a_fiscal_period_label_is_not_an_identity_bearing_code() {
             "{label} was treated as a code identifier"
         );
     }
-    let catalog = ledgers(&["Sales FY2025", "Beta Supply"]);
-    let binding = bind_one_name(&catalog, "Purchases FY2025");
+    for label in ["FY2025", "FY202425"] {
+        let catalog = ledgers(&[&format!("Sales {label}"), "Beta Supply"]);
+        let binding = bind_one_name(&catalog, &format!("Purchases {label}"));
+        assert_eq!(
+            binding.bound_name(),
+            None,
+            "the shared period label {label} bound two unrelated ledgers"
+        );
+    }
+    // A genuine identity-bearing code still is one.
+    assert_eq!(entity("Item PH01AB00").identifiers().len(), 1);
+}
+
+#[test]
+fn a_name_in_another_script_does_not_shed_its_letters_into_a_code() {
+    // Canonicalization keeps only ASCII, so a Devanagari party name fused to an
+    // ASCII suffix yielded the code `AB12345678` — a string the name never
+    // contained — and reached an unrelated bank ledger. The ASCII spelling of
+    // the same shape never did, which is what makes it a defect rather than a
+    // policy: the boundary was an ASCII boundary wearing a general name.
+    let party = "\u{92a}\u{93e}\u{930}\u{94d}\u{91f}\u{940}";
+    let fused = format!("{party}AB12345678");
+    assert!(
+        entity(&fused).identifiers().is_empty(),
+        "a dropped non-ASCII prefix manufactured a code"
+    );
+    let catalog = ledgers(&["Bank AB12345678", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&catalog, &fused).bound_name(),
+        None,
+        "a party name must not reach a bank ledger by shedding its script"
+    );
+    // The ASCII spelling this is measured against, unchanged: it keeps every
+    // letter, so it carries a code of its own and reaches no bank.
+    assert_eq!(
+        entity("PartyAB12345678").identifiers(),
+        [Identifier {
+            kind: IdentifierKind::Code,
+            value: "PARTYAB12345678".to_string(),
+        }]
+    );
+    assert_eq!(
+        bind_one_name(&catalog, "PartyAB12345678").bound_name(),
+        None
+    );
+    // A code standing on its own beside a name in any script is still a code.
+    assert_eq!(
+        entity(&format!("{party} AB12345678")).identifiers().len(),
+        1
+    );
+
+    // Letters were the first guard and were too narrow: `char::is_alphabetic`
+    // is false for a Devanagari digit, so non-ASCII numerals walked through it
+    // and canonicalization dropped them just the same. The numeric branch had
+    // the identical hole, which no thread named — a trailing run of Devanagari
+    // digits is not alphabetic either, so the ASCII digits before it were
+    // emitted as a whole account number.
+    let digits = "\u{967}\u{968}\u{969}";
+    for fused in [
+        format!("Purchases AB{digits}12345678"),
+        format!("Purchases 12345678{digits}"),
+        format!("Purchases {digits}12345678"),
+    ] {
+        assert!(
+            entity(&fused).identifiers().is_empty(),
+            "{fused} manufactured an identifier out of what canonicalization dropped"
+        );
+    }
+    let bank = ledgers(&["Bank AB12345678", "Bank 12345678", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&bank, &format!("Purchases AB{digits}12345678")).bound_name(),
+        None
+    );
+    assert_eq!(
+        bind_one_name(&bank, &format!("Purchases 12345678{digits}")).bound_name(),
+        None
+    );
+    // Only the separators §9.4d measured are discarded from a code. An ASCII
+    // hyphen and slash are; a non-breaking hyphen is not, because §9.4d sent a
+    // non-ASCII dash and watched Tally reject it. So a code punctuated with one
+    // no longer agrees with the plain spelling — a refusal, which is the safe
+    // direction, and the token is still admitted as a candidate by name.
+    assert_eq!(
+        entity("Item PH-01/AB-00").identifiers(),
+        entity("Item PH01AB00").identifiers()
+    );
+    assert_ne!(
+        entity("Item PH\u{2011}01AB00").identifiers(),
+        entity("Item PH01AB00").identifiers()
+    );
+}
+
+#[test]
+fn two_encodings_of_one_name_are_two_masters_to_tally_and_so_to_this() {
+    // Measured 2026-08-19 on TallyPrime 7.1: a voucher naming a UI-created
+    // ledger in its canonically equivalent NFD spelling was rejected with
+    // `EXCEPTIONS=1` and a LINEERROR saying the ledger does not exist, while
+    // the NFC spelling created it. Tally stores the bytes it was given and
+    // matches on exact codepoints, so these are different masters to Tally and
+    // must be different masters here.
+    //
+    // This is stronger than the UNVERIFIED rows in §9.4b's table: folding it
+    // is not unproven, it is proven wrong. It reads like decoding rather than
+    // folding, which is why it nearly stayed in the resolving fold.
+    let precomposed = "Caf\u{e9} Traders";
+    let decomposed = "Cafe\u{301} Traders";
+    let catalog = ledgers(&[precomposed, "Beta Supply"]);
+    let binding = bind_one_name(&catalog, decomposed);
     assert_eq!(
         binding.bound_name(),
         None,
-        "a shared period label must not bind two unrelated ledgers"
+        "an NFD source name resolved onto an NFC master Tally keeps apart"
     );
-    // A genuine identity-bearing code still is one.
+    // The wide fold still reaches it, so an operator sees the one master worth
+    // looking at rather than nothing at all.
+    assert_eq!(candidate_names(&binding), [precomposed]);
+    // And the spelling Tally would actually match still binds.
+    assert_eq!(
+        bind_one_name(&catalog, precomposed).bound_name(),
+        Some(precomposed)
+    );
+}
+
+#[test]
+fn a_date_fused_into_a_code_shaped_token_is_still_a_date() {
+    // `is_plausible_date` guarded the numeric branch only, and `is_period`
+    // never sees this one: its eight-digit case admits a year followed by a
+    // year, and `0911` is neither. So `DATED20250911` cleared every code test
+    // and two unrelated ledgers bound to each other on a shared date label.
+    for label in [
+        "DATED20250911",
+        "DT20250911",
+        "INV20250911",
+        "DATED11092025",
+    ] {
+        assert!(
+            entity(&format!("Purchases {label}"))
+                .identifiers()
+                .is_empty(),
+            "{label} was treated as a code identifier"
+        );
+    }
+    let catalog = ledgers(&["Sales DATED20250911", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&catalog, "Purchases DATED20250911").bound_name(),
+        None,
+        "a shared date label must not bind two unrelated ledgers"
+    );
+    // A run no calendar would produce is still a code, and a longer run is not
+    // a date at all — the test is on eight digits exactly.
     assert_eq!(entity("Item PH01AB00").identifiers().len(), 1);
+    assert_eq!(entity("Party AB5550001001").identifiers().len(), 1);
+}
+
+#[test]
+fn a_catalog_is_bounded_by_total_bytes_and_not_only_by_count() {
+    // Both documented bounds can hold while their product does not: 20,000
+    // names of 16,384 characters satisfies each and is 327 MB before the
+    // constructor builds keys, tokens and four indexes over them. The bound has
+    // to be on the aggregate, and has to fire while the iterator is consumed.
+    let long = "N".repeat(MAX_NAME_CHARS);
+    let many = (0..600)
+        .map(|index| format!("{index:04}{}", &long[..MAX_NAME_CHARS - 4]))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        MasterCatalog::new(MasterClass::Ledger, &many),
+        Err(MasterBindingError::CatalogTooLarge)
+    );
+    // A catalog far larger than any observed book still loads: the largest read
+    // here is 470 names, so the bound must not be reachable in practice.
+    let ordinary = (0..5_000)
+        .map(|index| format!("Placeholder Party {index:05}"))
+        .collect::<Vec<_>>();
+    assert!(MasterCatalog::new(MasterClass::Ledger, &ordinary).is_ok());
+}
+
+#[test]
+fn repeating_one_source_name_does_not_repeat_the_search_or_change_the_answer() {
+    // A draft may name one ledger on every row, and the candidate search is not
+    // cheap when the name reaches a family. Remembering it must not change what
+    // the report says — the memo is keyed on the source key and the masters its
+    // identifiers reached, which is all `collect_candidates` reads.
+    let names = (0..60)
+        .map(|index| format!("Acme Branch {index:05}"))
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+
+    let alone = bind_one_name(&catalog, "Acme Branch");
+    let repeated = (0..40)
+        .map(|position| SourceEntity::new(position, "Acme Branch").expect("valid"))
+        .collect::<Vec<_>>();
+    // Counted, not assumed. The first version of this memo was consulted on the
+    // conflict and ambiguity paths but not on the ordinary near miss — which is
+    // the case this test uses — and every assertion below still passed, because
+    // they check the answer rather than the work. `Acme Branch` matches no
+    // master exactly, by identifier or by the narrow fold, so all forty entities
+    // take that path.
+    super::CANDIDATE_SEARCHES.with(|count| count.set(0));
+    let report = bound(&catalog, &repeated);
+    assert_eq!(
+        super::CANDIDATE_SEARCHES.with(std::cell::Cell::get),
+        1,
+        "forty rows naming one ledger ran the candidate search more than once"
+    );
+    assert_eq!(report.totals().requested, 40);
+    assert_eq!(report.totals().bound, 0);
+    for entity in report.entities() {
+        assert_eq!(
+            entity.status, alone.status,
+            "remembering the search changed the answer"
+        );
+    }
+
+    // Same key, different spelling: one is byte-exact and one is not, and the
+    // shared memo must not leak the exact hit into the other's answer.
+    let mixed = vec![
+        SourceEntity::new(0, "Acme Branch 00007").expect("valid"),
+        SourceEntity::new(1, "acme branch 00007").expect("valid"),
+    ];
+    let report = bound(&catalog, &mixed);
+    assert_eq!(report.entities()[0].bound_name(), Some("Acme Branch 00007"));
+    assert_eq!(
+        report.entities()[1].bound_name(),
+        Some("Acme Branch 00007"),
+        "a normalized hit is still a hit"
+    );
+
+    // Same source *name*, different identifier hints. The key is identical, so
+    // a memo keyed on the key alone would hand the second entity the first
+    // one's candidates — a different pair of ledgers entirely. This is the case
+    // that proves the second half of the memo key, and nothing else reaches it.
+    let shared = ledgers(&[
+        "Party Alpha (5550001009)",
+        "Party Beta (5550001009)",
+        "Party Gamma (5550001007)",
+        "Party Delta (5550001007)",
+    ]);
+    let hinted = vec![
+        SourceEntity::with_identifier_hints(0, "Zeta Holdings", ["5550001009"]).expect("valid"),
+        SourceEntity::with_identifier_hints(1, "Zeta Holdings", ["5550001007"]).expect("valid"),
+    ];
+    let report = bound(&shared, &hinted);
+    assert_eq!(
+        candidate_names(&report.entities()[0]),
+        ["Party Alpha (5550001009)", "Party Beta (5550001009)"]
+    );
+    assert_eq!(
+        candidate_names(&report.entities()[1]),
+        ["Party Delta (5550001007)", "Party Gamma (5550001007)"],
+        "the memo handed one entity another's candidates"
+    );
+}
+
+#[test]
+fn a_retained_identity_stays_short_enough_to_write_back() {
+    // An unresolved entity carries its identifiers into a fallback so the money
+    // can be found later, and the documented way to carry them is a narration —
+    // which the import path refuses over 2,000 characters. Unbounded values let
+    // `assign_fallback` succeed while producing a tag nobody could write, which
+    // fails at the write rather than here.
+    let long_run = "5".repeat(400);
+    assert!(
+        entity(&format!("Party {long_run}"))
+            .identifiers()
+            .is_empty(),
+        "a 400-digit run is not an account number"
+    );
+    let long_code = format!("AB{}", "7".repeat(400));
+    assert!(entity(&format!("Party {long_code}"))
+        .identifiers()
+        .is_empty());
+
+    // The bound is on the value, so the tag stays complete rather than
+    // truncated — a truncated identity is worse than none, because it looks
+    // usable. Thirty-two of the longest admitted identifiers still fit.
+    let hints = (0..MAX_IDENTIFIERS_PER_NAME)
+        .map(|index| format!("{index:02}{}", "5".repeat(MAX_IDENTIFIER_CHARS - 2)))
+        .collect::<Vec<_>>();
+    let source =
+        SourceEntity::with_identifier_hints(0, "Zeta Holdings", hints.iter().map(String::as_str))
+            .expect("the longest admitted identifiers are still admitted");
+    let catalog = ledgers(&["Alpha Traders", "Beta Supply"]);
+    let report = bound(&catalog, &[source]);
+    let tag = report
+        .assign_fallback(0, &catalog, "Alpha Traders")
+        .expect("a fallback in the same catalog")
+        .retained_tag();
+    assert!(
+        tag.len() <= 2_000,
+        "a retained identity of {} characters cannot be written back",
+        tag.len()
+    );
+    // Complete, not truncated: every identifier is still in it.
+    assert_eq!(tag.matches("numeric:").count(), MAX_IDENTIFIERS_PER_NAME);
+}
+
+#[test]
+fn an_identifier_held_by_a_whole_family_is_a_conflict_without_expanding_it() {
+    // One identifier on more masters than a candidate list may show is already
+    // a conflict, and its holders are a family this entity does not separate.
+    // Building the set anyway cloned it per source row, before the candidate
+    // memo was consulted — the cost is paid on a result nothing can use.
+    let names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Shared Party {index:03} (5550009999)"))
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    // Counted, not inferred. Refusing to expand and expanding then refusing
+    // produce the same verdict, so only a count can tell them apart.
+    super::HOLDER_EXPANSIONS.with(|count| count.set(0));
+    let binding = bind_one_name(&catalog, "Zeta Holdings 5550009999");
+    assert_eq!(
+        super::HOLDER_EXPANSIONS.with(std::cell::Cell::get),
+        0,
+        "a family larger than any candidate list was expanded anyway"
+    );
+    assert_eq!(
+        binding.bound_name(),
+        None,
+        "a shared identifier never binds"
+    );
+    assert_eq!(reason(&binding), UnboundReason::IdentifierConflict);
+    // The identity is still reported, so the operator can still find the money.
+    assert_eq!(
+        binding.unresolved().expect("unbound").unresolved_identity,
+        [Identifier {
+            kind: IdentifierKind::Numeric,
+            value: "5550009999".to_string(),
+        }]
+    );
+}
+
+#[test]
+fn a_hint_pointing_elsewhere_outranks_an_exact_name_at_any_family_size() {
+    // The large-holder skip added for cost made this invariant size-dependent:
+    // below the cap the holder set was built and `identifier_points_elsewhere`
+    // saw that it did not contain the exact master; above the cap the set was
+    // skipped, the signal went with it, and the exact name bound while the
+    // hint pointed entirely elsewhere. Skipping the expansion must not skip
+    // the question the expansion was asked.
+    let mut names = vec!["Alpha Traders".to_string()];
+    names.extend(
+        (0..MAX_CANDIDATES_PER_ENTITY + 5)
+            .map(|index| format!("Other Party {index:03} (5550008888)")),
+    );
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let source =
+        SourceEntity::with_identifier_hints(0, "Alpha Traders", ["5550008888"]).expect("valid");
+    let report = bound(&catalog, &[source]);
+    let binding = &report.entities()[0];
+    assert_eq!(
+        binding.bound_name(),
+        None,
+        "a byte-exact name bound while its hint pointed at a different family"
+    );
+    assert_eq!(reason(binding), UnboundReason::IdentifierNameConflict);
+
+    // Below the cap the same shape already behaved; both sides of the boundary
+    // are asserted so the fix cannot regress on one of them alone.
+    let mut small = vec!["Alpha Traders".to_string()];
+    small.extend((0..3).map(|index| format!("Other Party {index:03} (5550008888)")));
+    let small = MasterCatalog::new(MasterClass::Ledger, &small).expect("valid");
+    let source =
+        SourceEntity::with_identifier_hints(0, "Alpha Traders", ["5550008888"]).expect("valid");
+    let report = bound(&small, &[source]);
+    assert_eq!(
+        reason(&report.entities()[0]),
+        UnboundReason::IdentifierNameConflict
+    );
+}
+
+#[test]
+fn a_date_range_is_dates_even_after_its_separator_is_removed() {
+    // `20250911-20250912` fuses to sixteen digits, which is no length
+    // `is_plausible_date` recognizes, and `is_period` reads neither half as a
+    // year range. So a date *range* walked through a guard a single date does
+    // not — the fusing is what hid the components, so they are checked first.
+    for range in [
+        "20250911-20250912",
+        "20250911/20250912",
+        "01012026-02012026",
+        "20250911-20250912-20250913",
+    ] {
+        assert!(
+            entity(&format!("Purchases {range}"))
+                .identifiers()
+                .is_empty(),
+            "{range} was treated as an identifier"
+        );
+    }
+    let catalog = ledgers(&["Sales 20250911-20250912", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&catalog, "Purchases 20250911-20250912").bound_name(),
+        None,
+        "a shared date range must not bind two unrelated ledgers"
+    );
+    // A punctuated account number is untouched: no component reads as a date.
+    assert_eq!(entity("Party 5550001-002").identifiers().len(), 1);
+}
+
+#[test]
+fn a_stock_item_may_suggest_on_a_fold_but_not_resolve_on_one() {
+    // §9.4d measured **ledgers**. Whether stock items match by the same rule
+    // was never sent, so the same folded pair that resolves for a ledger may
+    // only be offered for a stock item.
+    let folded = ["Sales-Item", "Beta Supply"];
+    let ledger = MasterCatalog::new(MasterClass::Ledger, folded).expect("valid");
+    assert_eq!(
+        bind_one_name(&ledger, "sales item").bound_name(),
+        Some("Sales-Item")
+    );
+
+    let items = MasterCatalog::new(MasterClass::StockItem, folded).expect("valid");
+    let source = SourceEntity::new(0, "sales item").expect("valid");
+    let report = bind(&items, &[source]).expect("valid");
+    let binding = &report.entities()[0];
+    assert_eq!(
+        binding.bound_name(),
+        None,
+        "a stock item resolved on an unmeasured fold"
+    );
+    assert_eq!(candidate_names(binding), ["Sales-Item"]);
+    // A lone unlicensed fold is a **near miss**, not an ambiguity. Nothing
+    // shares its key; one master simply did not qualify, and `NameAmbiguous`
+    // would tell a consumer several masters collided — a different fact with a
+    // different remedy.
+    assert_eq!(reason(binding), UnboundReason::NearMiss);
+
+    // Byte equality needs no fold and is unaffected by the class.
+    let exact = SourceEntity::new(0, "Sales-Item").expect("valid");
+    let report = bind(&items, &[exact]).expect("valid");
+    assert_eq!(report.entities()[0].bound_name(), Some("Sales-Item"));
+}
+
+#[test]
+fn a_repeated_key_is_remembered_however_many_distinct_ones_precede_it() {
+    // The entry cap made the memo's protection depend on **source order**:
+    // enough distinct cheap misses at the head of a draft filled it, and the
+    // repeated expensive key behind them was then never cached — the stall the
+    // memo exists to prevent, reachable by reordering the same rows.
+    let names = (0..60)
+        .map(|index| format!("Acme Branch {index:05}"))
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+
+    let mut entities = (0..MAX_CANDIDATE_MEMO_ENTRIES)
+        .map(|index| SourceEntity::new(index, &format!("Distinct Miss {index:05}")).expect("valid"))
+        .collect::<Vec<_>>();
+    entities.extend((0..4).map(|offset| {
+        SourceEntity::new(MAX_CANDIDATE_MEMO_ENTRIES + offset, "Acme Branch").expect("valid")
+    }));
+
+    super::CANDIDATE_SEARCHES.with(|count| count.set(0));
+    let report = bound(&catalog, &entities);
+    let searches = super::CANDIDATE_SEARCHES.with(std::cell::Cell::get);
+    assert_eq!(report.totals().requested, MAX_CANDIDATE_MEMO_ENTRIES + 4);
+    // One search for the repeated key, not four. The distinct misses each cost
+    // one of their own, so the total is bounded by the distinct count plus one.
+    assert!(
+        searches <= MAX_CANDIDATE_MEMO_ENTRIES + 1,
+        "the repeated key was searched more than once: {searches} searches"
+    );
+}
+
+#[test]
+fn unmeasured_punctuation_keeps_two_codes_apart() {
+    // Canonicalization filtered to alphanumerics, so **every** ASCII
+    // punctuation mark was discarded and `AB_123456` canonicalized the same as
+    // `AB-123456` — while §9.4d had sent an underscore at a live master and
+    // watched Tally reject it. The fold's evidence is about hyphens and
+    // slashes; everything else is content.
+    let catalog = ledgers(&["Sales AB-123456", "Beta Supply"]);
+    let binding = bind_one_name(&catalog, "Purchases AB_123456");
+    assert_eq!(
+        binding.bound_name(),
+        None,
+        "an underscore was treated as a hyphen on evidence that says it is not"
+    );
+    // The measured separators still agree, and the contrast is the point: with
+    // a hyphen the two codes are one identifier and the bind is the
+    // identifier-first rule working; with an underscore they are two
+    // identifiers and nothing binds.
+    let measured = ledgers(&["Sales PH-01-AB-00", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&measured, "Purchases PH01AB00").bound_name(),
+        Some("Sales PH-01-AB-00"),
+        "a hyphen and no hyphen are one code, which §9.4d measured"
+    );
+    assert_eq!(
+        entity("Item PH-01-AB-00").identifiers(),
+        entity("Item PH01AB00").identifiers()
+    );
+    assert_ne!(
+        entity("Item AB_123456").identifiers(),
+        entity("Item AB-123456").identifiers()
+    );
+}
+
+#[test]
+fn a_withheld_family_still_reports_how_many_share_the_identifier() {
+    // Skipping the expansion discarded the holder count with the set, so a
+    // withheld family reported `found() == 0` and an empty listing — telling
+    // the operator nothing shares the identifier when hundreds do. The count is
+    // the one thing a reader still needs from a set too large to show.
+    let names = (0..MAX_CANDIDATES_PER_ENTITY + 7)
+        .map(|index| format!("Shared Party {index:03} (5550007777)"))
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let source =
+        SourceEntity::with_identifier_hints(0, "Zeta Holdings", ["5550007777"]).expect("valid");
+    let report = bound(&catalog, &[source]);
+    let unresolved = report.entities()[0].unresolved().expect("unbound");
+    assert_eq!(unresolved.reason, UnboundReason::IdentifierConflict);
+    assert_eq!(
+        unresolved.candidates.found(),
+        MAX_CANDIDATES_PER_ENTITY + 7,
+        "a withheld family reported no holders at all"
+    );
+    assert!(
+        unresolved.candidates.is_incomplete(),
+        "a count without a listing must say the listing is incomplete"
+    );
 }
 
 #[test]
@@ -608,10 +1317,17 @@ fn conflicting_identifiers_outrank_a_byte_exact_name_but_a_shared_one_does_not()
     let binding = &report.entities()[0];
     assert_eq!(reason(binding), UnboundReason::IdentifierNameConflict);
     // Every master the evidence reached is offered, so the operator sees the
-    // disagreement rather than one side of it.
+    // disagreement rather than one side of it — and the byte-exact name leads,
+    // labelled as itself. This refusal exists *because* byte equality was
+    // observed, so burying that under the identifier that outranked it left
+    // the operator reading two facts without being told one of them was exact.
     assert_eq!(
         candidate_names(binding),
-        ["BETA 11111111", "GAMMA 22222222", "ACME"]
+        ["ACME", "BETA 11111111", "GAMMA 22222222"]
+    );
+    assert_eq!(
+        binding.unresolved().expect("unbound").candidates.listed()[0].rule,
+        CandidateRule::ExactName
     );
 
     // The shared-identifier case must keep binding: one identifier reached the
@@ -637,6 +1353,29 @@ fn conflicting_identifiers_outrank_a_byte_exact_name_but_a_shared_one_does_not()
     assert_eq!(
         reason(&report.entities()[0]),
         UnboundReason::IdentifierNameConflict
+    );
+}
+
+#[test]
+fn an_indic_name_is_not_torn_apart_at_its_joins() {
+    // `char::is_alphanumeric` is false for a Devanagari virama — the halant
+    // that joins consonants — and false for a nukta. Splitting on "not
+    // alphanumeric" cut these names at the joins, so a shared word stopped
+    // being a shared token. These names are in the books this binder reads.
+    let catalog = ledgers(&[
+        "\u{936}\u{94d}\u{930}\u{940} \u{917}\u{923}\u{947}\u{936} \u{91f}\u{94d}\u{930}\u{947}\u{921}\u{930}\u{94d}\u{938}",
+        "\u{930}\u{93e}\u{92f} \u{90f}\u{923}\u{94d}\u{921} \u{938}\u{928}\u{94d}\u{938}",
+        "Beta Supply",
+    ]);
+    // The second book's distinctive word, which the virama used to fragment
+    // away entirely, now reaches its own master.
+    let binding = bind_one_name(&catalog, "\u{938}\u{928}\u{94d}\u{938}");
+    assert!(
+        candidate_names(&binding)
+            .iter()
+            .any(|name| name.contains("\u{930}\u{93e}\u{92f}")),
+        "a shared Indic word did not surface its master: {:?}",
+        candidate_names(&binding)
     );
 }
 
@@ -678,9 +1417,93 @@ fn a_masked_value_identifies_nothing() {
         bind_one_name(&punctuated, "Purchases ********12345678").bound_name(),
         None
     );
+    // A mask and the digits it hides are often written apart; that is the same
+    // statement, and reading tokens independently lost the relationship.
+    for separated in ["Purchases **** 12345678", "Purchases #### 12345678"] {
+        assert!(
+            entity(separated).identifiers().is_empty(),
+            "{separated} exposed its suffix as an identifier"
+        );
+    }
+    // A mask spelled with letters is the same statement as one spelled with
+    // punctuation, and it too is written apart from the digits it hides. Read
+    // token by token, `XXXX` failed the punctuation test and the visible suffix
+    // escaped as a whole account number.
+    for separated in [
+        "Purchases XXXX 12345678",
+        "Purchases XXXXXXXX 12345678",
+        "Purchases (XXXX) 12345678",
+    ] {
+        assert!(
+            entity(separated).identifiers().is_empty(),
+            "{separated} exposed its suffix as an identifier"
+        );
+    }
+    let alphabetic = ledgers(&["Sales XXXX 12345678", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&alphabetic, "Purchases XXXX 12345678").bound_name(),
+        None,
+        "a masked last-eight must not bind two unrelated ledgers"
+    );
+    // A suffix shaped as a code is no less hidden than one shaped as a number.
+    assert!(entity("Purchases XXXX AB12345678").identifiers().is_empty());
+    // A delimiter between the mask and its suffix does not unmask it. Reading
+    // the state token by token, a `-` reset it and the suffix walked out.
+    for punctuated in [
+        "Purchases XXXX - 12345678",
+        "Purchases **** / 12345678",
+        "Purchases XXXX . 12345678",
+        "Purchases XXXX - - 12345678",
+    ] {
+        assert!(
+            entity(punctuated).identifiers().is_empty(),
+            "{punctuated} exposed its suffix as an identifier"
+        );
+    }
+    let separated = ledgers(&["Sales XXXX - 12345678", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&separated, "Purchases XXXX - 12345678").bound_name(),
+        None
+    );
+    // An ordinary word after a mask does end it, or nothing downstream of one
+    // could ever identify anything again.
+    assert_eq!(
+        entity("Purchases XXXX Invoice 5550001001")
+            .identifiers()
+            .len(),
+        1
+    );
+    // Ordinary words are not masks, however repetitive: only a run of one
+    // repeated letter is, and one letter alone is an ordinary word.
+    assert_eq!(entity("Purchases Unit 5550001001").identifiers().len(), 1);
+    assert_eq!(entity("Purchases A 5550001001").identifiers().len(), 1);
+    // A mask is a shape, not a list of glyphs. Enumerating four of them lost
+    // to a dotted and an underscored mask, and would have lost to the next.
+    for shaped in [
+        "Purchases ........12345678",
+        "Purchases ____ 12345678",
+        "Purchases ~~~ 12345678",
+        "Purchases --- 12345678",
+    ] {
+        assert!(
+            entity(shaped).identifiers().is_empty(),
+            "{shaped} exposed its suffix as an identifier"
+        );
+    }
+    let dotted = ledgers(&["Sales ........12345678", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&dotted, "Purchases ........12345678").bound_name(),
+        None
+    );
     // Ordinary punctuation around a whole number is not a mask.
     assert_eq!(entity("Party (5550001001)").identifiers().len(), 1);
     assert_eq!(entity("Party 5550001-002").identifiers().len(), 1);
+    // Names punctuate; they do not repeat punctuation. Two of a character is
+    // ordinary noise, so the run has to be longer than an operator's slip.
+    assert_eq!(entity("S.K. Traders 5550001001").identifiers().len(), 1);
+    assert_eq!(entity("Party -- 5550001001").identifiers().len(), 1);
+    // And a number following an ordinary word is untouched.
+    assert_eq!(entity("Invoice 5550001001").identifiers().len(), 1);
 }
 
 #[test]
@@ -897,6 +1720,24 @@ fn an_identifier_hint_is_bounded_before_anything_scans_it() {
         SourceEntity::with_identifier_hints(0, "Alpha Traders", [huge.as_str()]),
         Err(MasterBindingError::NameTooLong)
     );
+    // Bounding each hint does not bound the iterator. Repeated hints fold to
+    // one identifier, so the deduplicated check never fired however many
+    // arrived, while every one of them was scanned and copied first.
+    let repeated = vec!["5550001001"; MAX_IDENTIFIERS_PER_NAME + 1];
+    assert_eq!(
+        SourceEntity::with_identifier_hints(0, "Alpha Traders", repeated),
+        Err(MasterBindingError::TooManyIdentifiers)
+    );
+    // The bound admits everything a usable entity could carry.
+    let distinct = (0..MAX_IDENTIFIERS_PER_NAME)
+        .map(|index| format!("555000{index:04}"))
+        .collect::<Vec<_>>();
+    assert!(SourceEntity::with_identifier_hints(
+        0,
+        "Alpha Traders",
+        distinct.iter().map(String::as_str)
+    )
+    .is_ok());
 }
 
 #[test]
@@ -1232,7 +2073,9 @@ fn fabricated_document() -> Vec<(&'static str, Option<&'static str>, Expected)> 
         // Named exactly as the book spells it.
         ("Cash", None, Expected::Bound("Cash")),
         ("CGST OUTPUT 9%", None, Expected::Bound("CGST OUTPUT 9%")),
-        // Case and spacing noise from the source system.
+        // Case noise alone resolves, and so does spacing noise: §9.4d measured
+        // leading whitespace and a collapsed run matching on licensed 7.1.
+        ("cgst output 9%", None, Expected::Bound("CGST OUTPUT 9%")),
         (
             "  cgst   output 9%  ",
             None,
@@ -1330,8 +2173,8 @@ fn a_document_against_a_realistic_book_binds_only_where_a_human_would() {
 
     // The shape of the answer, pinned so a loosened threshold moves a number.
     let totals = report.totals();
-    assert_eq!(totals.requested, 12);
-    assert_eq!(totals.bound, 7);
+    assert_eq!(totals.requested, 13);
+    assert_eq!(totals.bound, 8);
     assert_eq!(totals.ambiguous, 3);
     assert_eq!(totals.unmatched, 2);
     assert_eq!(totals.requested, totals.bound + totals.unbound);
@@ -1410,8 +2253,18 @@ fn no_mutation_of_a_master_name_ever_binds_to_a_different_master() {
         .map(|name| (comparison_key(name), name.as_str()))
         .collect::<BTreeMap<_, _>>();
 
+    // What the *wide* fold would resolve. Narrowing the resolving fold to the
+    // three transformations §9.4b verified is only defensible if it withdraws
+    // answers, never masters, so the cases it used to settle are tracked by
+    // name rather than by a percentage that drifts with the fixture.
+    let wide = names
+        .iter()
+        .map(|name| (master_identity_key(name), name.as_str()))
+        .collect::<BTreeMap<_, _>>();
+
     let mut checked = 0_usize;
     let mut self_bound = 0_usize;
+    let mut self_offered = 0_usize;
     for name in &names {
         for mutation in source_mutations(name) {
             let key = comparison_key(&mutation);
@@ -1420,8 +2273,20 @@ fn no_mutation_of_a_master_name_ever_binds_to_a_different_master() {
             }
             checked += 1;
             let binding = bind_one_name(&catalog, &mutation);
+            let wide_would_bind = wide.get(&master_identity_key(&mutation)) == Some(&name.as_str());
             match binding.bound_name() {
-                None => {}
+                None => {
+                    let offered = candidate_names(&binding).iter().any(|shown| shown == name);
+                    if offered {
+                        self_offered += 1;
+                    }
+                    // The invariant that makes the narrowing a trade rather than
+                    // a loss: anything the wide fold settled is still shown.
+                    assert!(
+                        !wide_would_bind || offered,
+                        "narrowing the fold hid {name:?} from its own mutation {mutation:?}"
+                    );
+                }
                 Some(bound_to) => {
                     assert_eq!(
                         bound_to, name,
@@ -1436,10 +2301,26 @@ fn no_mutation_of_a_master_name_ever_binds_to_a_different_master() {
         checked > 900,
         "the sweep must actually cover the book: {checked}"
     );
-    // Most mutations are case and spacing noise, which must still bind.
+    // Most of this book's mutations are spacing and separator noise, and §9.4d
+    // measured Tally folding all of it on the SKU this writes to — so most of
+    // them resolve again. The per-case invariant above still holds and is the
+    // point: anything the wide fold reaches is bound or shown, never hidden.
+    //
+    // On this book the two folds now agree on every mutation, so the sweep does
+    // **not** exercise the gap between them. The cases that still separate them
+    // — an en dash, an underscore, an NFD spelling — are covered by
+    // `space_hyphen_and_slash_are_one_separator_in_both_directions` and
+    // `two_encodings_of_one_name_are_two_masters_to_tally_and_so_to_this`
+    // instead, and this comment exists so nobody reads a green sweep as
+    // evidence about them.
     assert!(
         self_bound * 2 > checked,
-        "only {self_bound} of {checked} mutations bound at all"
+        "most mutations should resolve once the fold matches the gateway: \
+         {self_bound} bound of {checked}"
+    );
+    assert!(
+        self_bound + self_offered > checked * 2 / 3,
+        "{self_bound} bound and {self_offered} offered of {checked}"
     );
 }
 
@@ -1470,4 +2351,256 @@ fn a_number_typed_into_a_master_name_finds_it_from_any_source_name() {
             "the number typed into {name:?} did not find it"
         );
     }
+}
+
+#[test]
+fn a_dash_variant_does_not_spell_a_short_code_into_a_decisive_one() {
+    // The code threshold was `canonical.len()`, which is UTF-8 bytes. An en
+    // dash is three of them, so `AB–123` measured eight and cleared a bound
+    // meant for eight *characters* while carrying five alphanumerics. Its
+    // ASCII twin reduces to `AB123` and is refused, so the same code decided
+    // or did not on the strength of which dash the document happened to use —
+    // and the wrong master was reached only in the spelling nobody checks.
+    let catalog = ledgers(&["Sales AB\u{2013}123", "Beta Supply"]);
+    let binding = bind_one_name(&catalog, "Purchases AB\u{2013}123");
+    assert_eq!(
+        binding.bound_name(),
+        None,
+        "five alphanumerics identifier-bound because one of them was three bytes"
+    );
+
+    // Padding is the same defect without the twin to compare against: bytes
+    // counted the dashes, characters would have counted them too.
+    let padded = ledgers(&["Sales AB\u{2013}\u{2013}\u{2013}123", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&padded, "Purchases AB\u{2013}\u{2013}\u{2013}123").bound_name(),
+        None,
+        "a code padded with dashes cleared the threshold on its punctuation"
+    );
+
+    // The measured shape still binds: `PH-01-AB-00` is eight alphanumerics
+    // once the separators §9.4d measured are discarded, and it identifies.
+    let stock = ledgers(&["Sales PH-01-AB-00", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&stock, "Purchases PH01AB00").bound_name(),
+        Some("Sales PH-01-AB-00"),
+        "the fold §9.4d measured stopped working"
+    );
+}
+
+#[test]
+fn a_withheld_family_counts_the_masters_the_other_identifier_listed_too() {
+    // The count was the largest skipped family's size, which ignores every
+    // master the entity's *other* identifiers reached. Thirty masters share
+    // one number and a thirty-first carries the other: the operator was told
+    // thirty, and the master that made the two disagree was not in the number.
+    let mut names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Shared Party {index:03} (5550007777)"))
+        .collect::<Vec<_>>();
+    names.push("Lone Party (5550008888)".to_string());
+    let family = MAX_CANDIDATES_PER_ENTITY + 5;
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+
+    let entity =
+        SourceEntity::with_identifier_hints(0, "Zeta Holdings", ["5550007777", "5550008888"])
+            .expect("valid");
+    let binding = bound(&catalog, &[entity])
+        .entities()
+        .first()
+        .cloned()
+        .expect("one entity in, one binding out");
+
+    assert_eq!(reason(&binding), UnboundReason::IdentifierConflict);
+    let unresolved = binding.unresolved().expect("unbound");
+    assert!(
+        unresolved.candidates.is_incomplete(),
+        "the family was listed"
+    );
+    assert_eq!(
+        unresolved.candidates.found(),
+        family + 1,
+        "the master the other identifier listed was not counted"
+    );
+    // Still without building the union: the large family is a membership test,
+    // never an expansion.
+    assert!(
+        family + 1 > MAX_CANDIDATES_PER_ENTITY,
+        "this fixture no longer exercises the skip"
+    );
+}
+
+#[test]
+fn hint_variants_of_one_name_do_not_crowd_out_a_key_that_repeats() {
+    // The memo is keyed by the source key *and* the masters the identifiers
+    // reached, but repetition was counted on the key alone. Every hint variant
+    // of one name therefore counted as repeated, filled the memo with entries
+    // nothing asks for twice, and the pair that genuinely repeated behind them
+    // could no longer be inserted — the same stall as the source-order defect,
+    // through a different door.
+    let names = (0..60)
+        .map(|index| format!("Acme Branch {index:05}"))
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+
+    // Distinct hints, one name: same key, different memo key, each asked once.
+    let mut entities = (0..MAX_CANDIDATE_MEMO_ENTRIES)
+        .map(|index| {
+            SourceEntity::with_identifier_hints(
+                index,
+                "Acme Branch",
+                [format!("5550{index:06}").as_str()],
+            )
+            .expect("valid")
+        })
+        .collect::<Vec<_>>();
+    // And then a pair that does repeat, four times over.
+    entities.extend((0..4).map(|offset| {
+        SourceEntity::with_identifier_hints(
+            MAX_CANDIDATE_MEMO_ENTRIES + offset,
+            "Acme Branch",
+            ["5559999999"],
+        )
+        .expect("valid")
+    }));
+
+    super::CANDIDATE_SEARCHES.with(|count| count.set(0));
+    let report = bound(&catalog, &entities);
+    let searches = super::CANDIDATE_SEARCHES.with(std::cell::Cell::get);
+    assert_eq!(report.totals().requested, MAX_CANDIDATE_MEMO_ENTRIES + 4);
+    assert!(
+        searches <= MAX_CANDIDATE_MEMO_ENTRIES + 1,
+        "the repeated pair was searched more than once behind {MAX_CANDIDATE_MEMO_ENTRIES} variants: {searches} searches"
+    );
+}
+
+#[test]
+fn a_request_within_every_other_bound_is_still_refused_on_its_total_size() {
+    // The count bound and the per-name bound do not bound their product. Each
+    // of these names is valid, and the list is well inside the entity count;
+    // together they are more than the aggregate the catalog side has always
+    // had, and this module would have cloned them into a report first.
+    // One long token rather than many short ones: the aggregate is what this
+    // test is about, and a name of 1,800 words would spend the whole test in
+    // identifier extraction proving nothing extra.
+    let name = format!("Zeta{}", "z".repeat(MAX_NAME_CHARS - 5));
+    assert!(
+        name.chars().count() < MAX_NAME_CHARS,
+        "each name must stay individually valid"
+    );
+    let catalog = ledgers(&["Alpha Supply", "Beta Supply"]);
+    let entities = (0..1_200)
+        .map(|index| SourceEntity::new(index, &name).expect("each name is valid alone"))
+        .collect::<Vec<_>>();
+    assert!(
+        entities.len() < MAX_SOURCE_ENTITIES,
+        "the count bound must not be what refuses this"
+    );
+    assert_eq!(
+        bind(&catalog, &entities),
+        Err(MasterBindingError::SourceNamesTooLarge)
+    );
+
+    // And the bound does not refuse an ordinary request: the same names, well
+    // under the aggregate, bind as before.
+    let ordinary = (0..40)
+        .map(|index| SourceEntity::new(index, &name).expect("valid"))
+        .collect::<Vec<_>>();
+    assert!(bind(&catalog, &ordinary).is_ok());
+}
+
+#[test]
+fn a_date_range_fused_by_its_own_separator_is_still_dates() {
+    // The separator works in both directions. Removing `-` reveals a date in
+    // `2025-09-11`, and hides two in `DATED20250911-20250912`: the canonical
+    // carries one sixteen-digit run that reads as no date, and `is_period` does
+    // not see it either, because its eight-digit case admits a year followed by
+    // a year and `0911` is neither. A period label is the single thing two
+    // unrelated masters most reliably share, so identifying on one is the
+    // wrong-party bind this guard exists to prevent.
+    let catalog = ledgers(&["Sales DATED20250911-20250912", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&catalog, "Purchases DATED20250911-20250912").bound_name(),
+        None,
+        "a fused date range identified two unrelated masters with each other"
+    );
+
+    // The direction the canonical check exists for still holds: a date written
+    // with separators is a date once they are removed.
+    let punctuated = ledgers(&["Sales 2025-09-11", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&punctuated, "Purchases 2025-09-11").bound_name(),
+        None,
+        "a punctuated date identified"
+    );
+
+    // And a genuine code still identifies, so the guard has not swallowed the
+    // rule it guards.
+    let coded = ledgers(&["Sales AB-123456", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&coded, "Purchases AB-123456").bound_name(),
+        Some("Sales AB-123456"),
+        "the identifier rule stopped working"
+    );
+}
+
+#[test]
+fn the_expensive_repeated_search_is_the_one_the_memo_keeps() {
+    // `worth_holding` refused to cache a result larger than the candidate cap,
+    // which read as prudence and excluded exactly the search the memo exists
+    // for: a name reaching a large family through shared tokens re-ran it once
+    // per row. The search now returns a capped list and the full count, so
+    // every result is small enough to hold.
+    // Forty masters carry one distinctive token, in a catalog of four hundred.
+    // Forty is exactly the common-token limit rather than over it, so the token
+    // still discriminates and the search returns all forty — more than the
+    // candidate cap, which is what made the old memo refuse to hold it. The
+    // token sits at the end of each name so this reaches the shared-token rule
+    // rather than the prefix family, which withholds instead of listing.
+    let mut names = (0..360)
+        .map(|index| format!("Alpha Placeholder {index:04}"))
+        .collect::<Vec<_>>();
+    names.extend((0..40).map(|index| format!("Beta Placeholder {index:04} Zetaomega")));
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+
+    let entities = (0..64)
+        .map(|index| SourceEntity::new(index, "Zetaomega").expect("valid"))
+        .collect::<Vec<_>>();
+
+    super::CANDIDATE_SEARCHES.with(|count| count.set(0));
+    let report = bound(&catalog, &entities);
+    let searches = super::CANDIDATE_SEARCHES.with(std::cell::Cell::get);
+    assert_eq!(report.totals().requested, 64);
+    assert_eq!(
+        searches, 1,
+        "a repeated name reaching a large family was searched {searches} times"
+    );
+
+    // The count the operator sees is the whole union, not the capped listing.
+    let unresolved = report.entities()[0].unresolved().expect("unbound");
+    assert!(
+        unresolved.candidates.found() > MAX_CANDIDATES_PER_ENTITY,
+        "this fixture no longer exercises a result larger than the cap"
+    );
+    assert!(unresolved.candidates.listed().len() <= MAX_CANDIDATES_PER_ENTITY);
+}
+
+#[test]
+fn an_ambiguity_lists_every_master_that_caused_it() {
+    // The reason is decided on the resolving fold and the candidates were
+    // gathered from the wide one, which is not always coarser: the wide fold
+    // replaces `-` but not `/`, so `AB/CD` and `AB CD` are one master to
+    // `verified_fold` and two to `master_identity_key`. Both tokens are below
+    // the shared-token threshold, so nothing else restored the space spelling,
+    // and the operator was shown an ambiguity with a complete-looking list of
+    // one — asked to choose between masters they could not see.
+    let catalog = ledgers(&["AB/CD", "AB CD", "Beta Supply"]);
+    let binding = bind_one_name(&catalog, "ab/cd");
+    assert_eq!(reason(&binding), UnboundReason::NameAmbiguous);
+    assert_eq!(binding.bound_name(), None);
+    assert_eq!(candidate_names(&binding), ["AB CD", "AB/CD"]);
+    assert_eq!(
+        binding.unresolved().expect("unbound").candidates.found(),
+        2,
+        "the count agreed with the short list rather than with the collision"
+    );
 }

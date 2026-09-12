@@ -6,7 +6,9 @@
 use std::collections::BTreeSet;
 
 use bridge_tally_core::{ExactDecimal, TallyDate};
-use bridge_tally_protocol::{PartyLedgerMasterFieldObservation, PartyLedgerMasterFields};
+use bridge_tally_protocol::{
+    PartyLedgerMasterFieldObservation, PartyLedgerMasterFields, TallyNamedMaster,
+};
 
 use crate::tally::OutstandingsCurrencyAssertion;
 
@@ -39,7 +41,7 @@ pub(crate) struct PartyLedgerMasterSource {
     /// Native group rows captured in the same company-bracketed read as the
     /// ledger rows. Schedule III classification remains a pure derivation of
     /// this source; it never performs an independent reader call.
-    pub(crate) groups: Vec<PartyLedgerMasterGroup>,
+    pub(crate) groups: Vec<TallyNamedMaster>,
 }
 
 #[derive(Debug, Clone)]
@@ -54,15 +56,6 @@ pub(crate) struct PartyLedgerMasterRow {
     pub(crate) opening_balance: ExactDecimal,
     /// `None` is an empty Tally `CLOSINGBALANCE`, not a zero balance.
     pub(crate) closing_balance: Option<ExactDecimal>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct PartyLedgerMasterGroup {
-    pub(crate) name: String,
-    pub(crate) parent: PartyLedgerMasterFieldObservation,
-    /// `Some("")` is Tally's explicit user-created-group signal. It must not
-    /// be treated as an alias for a built-in Schedule III category.
-    pub(crate) reserved_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -298,11 +291,7 @@ mod tests {
         )
         .expect("captured group response parses")
         .into_iter()
-        .map(|entry| PartyLedgerMasterGroup {
-            name: entry.record.name,
-            parent: entry.record.parent,
-            reserved_name: entry.record.reserved_name,
-        })
+        .map(|entry| entry.record)
         .collect();
         let source = PartyLedgerMasterSource {
             company: "BRIDGE MASTER FIELDS LAB".to_string(),

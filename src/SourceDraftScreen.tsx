@@ -6,6 +6,7 @@ import {
   SourceDraft,
   SourceDraftAction,
   SourceDraftCatalogTargets,
+  SourceDraftCurrentCatalogBinding,
   SourceDraftProposedEntry,
   SourceDraftProposal,
   SourceDraftRow,
@@ -22,11 +23,30 @@ function catalogSelectionKey(rowPosition: number, entryPosition: number) {
   return `${rowPosition}:${entryPosition}`;
 }
 
-function retainCurrentSessionSelections(draft: SourceDraft, selections: Record<string, string>) {
-  return Object.fromEntries(Object.entries(selections).filter(([key, target]) => {
-    const [rowPosition, entryPosition] = key.split(":").map(Number);
-    return draft.rows.find((row) => row.position === rowPosition)?.proposal.entries[entryPosition - 1]?.ledger === target;
-  }));
+function selectionsFor(rows: SourceDraftRow[], bindings: SourceDraftCurrentCatalogBinding[]) {
+  return Object.fromEntries(bindings.map(({ row_position, entry_position }) => {
+    const target = rows.find((row) => row.position === row_position)?.proposal.entries[entry_position - 1]?.ledger;
+    return [catalogSelectionKey(row_position, entry_position), target ?? ""];
+  }).filter(([, target]) => target !== ""));
+}
+
+function currentSessionSelections(draft: SourceDraft) {
+  return selectionsFor(draft.rows, draft.current_catalog_bindings);
+}
+
+// A refused apply settles the other retained bindings from the same read, and
+// reports the survivors. An absent field means the failure carries no such
+// evidence; an empty array means the read disproved every binding, so the two
+// must not be collapsed.
+function settledBindingsOf(cause: unknown): SourceDraftCurrentCatalogBinding[] | null {
+  if (!cause || typeof cause !== "object") return null;
+  const reported = (cause as { current_catalog_bindings?: unknown }).current_catalog_bindings;
+  if (!Array.isArray(reported)) return null;
+  return reported.every((binding) => !!binding && typeof binding === "object"
+    && typeof (binding as SourceDraftCurrentCatalogBinding).row_position === "number"
+    && typeof (binding as SourceDraftCurrentCatalogBinding).entry_position === "number")
+    ? (reported as SourceDraftCurrentCatalogBinding[])
+    : null;
 }
 
 function cloneProposal(proposal: SourceDraftProposal): SourceDraftProposal {
@@ -114,6 +134,7 @@ export function SourceDraftScreen({
   const [savedPath, setSavedPath] = React.useState<string | null>(null);
   const [catalog, setCatalog] = React.useState<SourceDraftCatalogTargets | null>(null);
   const [catalogSelections, setCatalogSelections] = React.useState<Record<string, string>>({});
+  const [catalogInvalidatedSelections, setCatalogInvalidatedSelections] = React.useState<Record<string, string>>({});
   const [catalogInvalidating, setCatalogInvalidating] = React.useState(false);
   const mounted = React.useRef(true);
   const actionRef = React.useRef<SourceDraftAction>(null);
@@ -173,6 +194,7 @@ export function SourceDraftScreen({
     const invalidationGeneration = ++operationGeneration.current;
     setCatalog(null);
     setCatalogSelections({});
+    setCatalogInvalidatedSelections({});
     setCatalogInvalidating(true);
     void invalidateNativeCatalog()
       .catch((cause) => {
@@ -208,6 +230,7 @@ export function SourceDraftScreen({
       setSavedPath(null);
       setCatalog(null);
       setCatalogSelections({});
+      setCatalogInvalidatedSelections({});
       operationGeneration.current += 1;
       setCatalogInvalidating(false);
       setPendingAction(null);
@@ -243,7 +266,7 @@ export function SourceDraftScreen({
       const copy = cloneDraft(next);
       setDraft(copy);
       setDraftDirty(false);
-      setCatalogSelections((current) => retainCurrentSessionSelections(copy, current));
+      setCatalogSelections(currentSessionSelections(copy));
       setSavedPath("Draft saved locally as JSON.");
     } catch (cause) {
       if (mounted.current) setError(errorMessage(cause));
@@ -319,17 +342,35 @@ export function SourceDraftScreen({
         setDraft(copy);
         setCatalog(null);
         setCatalogSelections({});
+        setCatalogInvalidatedSelections({});
         setSavedPath(null);
         return;
       }
       setDraft(copy);
-      setCatalogSelections((current) => ({
-        ...retainCurrentSessionSelections(copy, current),
-        [catalogSelectionKey(rowPosition, entryPosition)]: targetName,
+      const nextSelections = currentSessionSelections(copy);
+      setCatalogInvalidatedSelections((current) => ({
+        ...Object.fromEntries(Object.entries(current).filter(([key, target]) => nextSelections[key] !== target)),
+        ...Object.fromEntries(Object.entries(catalogSelections).filter(([key, target]) => nextSelections[key] !== target)),
       }));
+      setCatalogSelections(nextSelections);
       setSavedPath(null);
     } catch (cause) {
-      if (mounted.current && generation === operationGeneration.current) setError(errorMessage(cause));
+      if (mounted.current && generation === operationGeneration.current) {
+        setError(errorMessage(cause));
+        // The refusal was decided by a fresh read, and that read is evidence
+        // about the rows it did not refuse. Applying it here is what keeps a
+        // row from still reading as bound-this-session after Bridge has
+        // established that it is not.
+        const settled = settledBindingsOf(cause);
+        if (settled && draft) {
+          const nextSelections = selectionsFor(draft.rows, settled);
+          setCatalogInvalidatedSelections((current) => ({
+            ...current,
+            ...Object.fromEntries(Object.entries(catalogSelections).filter(([key, target]) => nextSelections[key] !== target)),
+          }));
+          setCatalogSelections(nextSelections);
+        }
+      }
     } finally {
       actionRef.current = null;
       endBusy();
@@ -370,6 +411,7 @@ export function SourceDraftScreen({
       if (!mounted.current || generation !== operationGeneration.current) return;
       setCatalog(null);
       setCatalogSelections({});
+      setCatalogInvalidatedSelections({});
       setDraft((current) => current && ({
         ...current,
         rows: current.rows.map((row) => row.position === rowPosition ? {
@@ -431,7 +473,7 @@ export function SourceDraftScreen({
               <table className="source-draft-list"><caption className="visually-hidden">Source rows</caption><thead><tr><th scope="col">Row</th><th scope="col">Source observation</th><th scope="col">Proposal</th></tr></thead><tbody>{pageRows.map((row) => <tr key={row.position} className={row.position === selectedPosition ? "is-selected" : ""}><th scope="row"><button type="button" className="source-draft-row-button" onClick={() => setSelectedPosition(row.position)} disabled={interactionDisabled} aria-pressed={row.position === selectedPosition}>#{row.position}</button></th><td><strong>{displayDate(row.source_date)}</strong><span>{displayObserved(row.source_voucher_type, "Empty voucher type")}</span><span>{displayObserved(row.source_narration, "Empty narration")}</span></td><td><span className="source-draft-state">{hasStartedProposal(row) ? "Proposal started" : "No proposal"}</span><span>{row.proposal.entries.length} entry lines</span></td></tr>)}</tbody></table>
               <div className="source-draft-pagination"><span>Rows {draft.rows.length === 0 ? 0 : page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, draft.rows.length)} of {draft.rows.length}</span><div><button className="secondary-action" type="button" onClick={() => changePage((value) => Math.max(0, value - 1))} disabled={page === 0 || interactionDisabled}>Previous</button><button className="secondary-action" type="button" onClick={() => changePage((value) => Math.min(pageCount - 1, value + 1))} disabled={page >= pageCount - 1 || interactionDisabled}>Next</button></div></div>
             </div>
-            {selectedRow && <SourceDraftEditor row={selectedRow} disabled={interactionDisabled || catalogInvalidating} catalog={catalog} catalogSelections={catalogSelections} onSelectExistingLedger={applyExistingLedgerTarget} onClearExistingLedger={clearExistingLedgerTarget} onUpdateProposal={updateProposal} onUpdateEntry={updateEntry} onClose={() => setSelectedPosition(null)} />}
+            {selectedRow && <SourceDraftEditor row={selectedRow} disabled={interactionDisabled || catalogInvalidating} catalog={catalog} catalogSelections={catalogSelections} catalogInvalidatedSelections={catalogInvalidatedSelections} onSelectExistingLedger={applyExistingLedgerTarget} onClearExistingLedger={clearExistingLedgerTarget} onUpdateProposal={updateProposal} onUpdateEntry={updateEntry} onClose={() => setSelectedPosition(null)} />}
           </div>
         </>
       )}
@@ -439,7 +481,7 @@ export function SourceDraftScreen({
   );
 }
 
-function SourceDraftEditor({ row, disabled, catalog, catalogSelections, onSelectExistingLedger, onClearExistingLedger, onUpdateProposal, onUpdateEntry, onClose }: { row: SourceDraftRow; disabled: boolean; catalog: SourceDraftCatalogTargets | null; catalogSelections: Record<string, string>; onSelectExistingLedger: (rowPosition: number, entryPosition: number, targetName: string) => void; onClearExistingLedger: (rowPosition: number, entryPosition: number) => void; onUpdateProposal: (change: (proposal: SourceDraftProposal) => SourceDraftProposal) => void; onUpdateEntry: (position: number, change: (entry: SourceDraftProposedEntry) => SourceDraftProposedEntry) => void; onClose: () => void }) {
+function SourceDraftEditor({ row, disabled, catalog, catalogSelections, catalogInvalidatedSelections, onSelectExistingLedger, onClearExistingLedger, onUpdateProposal, onUpdateEntry, onClose }: { row: SourceDraftRow; disabled: boolean; catalog: SourceDraftCatalogTargets | null; catalogSelections: Record<string, string>; catalogInvalidatedSelections: Record<string, string>; onSelectExistingLedger: (rowPosition: number, entryPosition: number, targetName: string) => void; onClearExistingLedger: (rowPosition: number, entryPosition: number) => void; onUpdateProposal: (change: (proposal: SourceDraftProposal) => SourceDraftProposal) => void; onUpdateEntry: (position: number, change: (entry: SourceDraftProposedEntry) => SourceDraftProposedEntry) => void; onClose: () => void }) {
   const proposal = row.proposal;
   const choices = unenteredOperatorChoices(row);
   const fieldId = (name: string) => `source-draft-${row.position}-${name}`;
@@ -477,7 +519,7 @@ function SourceDraftEditor({ row, disabled, catalog, catalogSelections, onSelect
                     {catalog.targets.map((target) => <option key={target} value={target}>{displayCatalogTarget(target)}</option>)}
                   </select>
                   {entry.ledger && <button className="secondary-action source-draft-clear-target" type="button" onClick={() => onClearExistingLedger(row.position, index + 1)} disabled={disabled}>Clear target</button>}
-                  <p className="source-draft-catalogue-state">{catalogSelections[catalogSelectionKey(row.position, index + 1)] === entry.ledger ? "This current-session target was re-read and bound. It remains an unapproved proposal." : entry.ledger ? `Saved unverified target: ${entry.ledger}. Select it to check it against this current capture.` : "Choose a current existing ledger to make an unapproved proposal."}</p>
+                  <p className="source-draft-catalogue-state">{catalogSelections[catalogSelectionKey(row.position, index + 1)] === entry.ledger ? "This current-session target was re-read and bound. It remains an unapproved proposal." : catalogInvalidatedSelections[catalogSelectionKey(row.position, index + 1)] === entry.ledger ? `Tally changed after this target was bound. Saved unverified target: ${entry.ledger}. Select it to check it against this current capture.` : entry.ledger ? `Saved unverified target: ${entry.ledger}. Select it to check it against this current capture.` : "Choose a current existing ledger to make an unapproved proposal."}</p>
                 </> : <>
                   <input id={entryId("ledger")} placeholder="Unverified ledger name" value={entry.ledger ?? ""} onChange={(event) => onUpdateEntry(index, (current) => ({ ...current, ledger: emptyToNull(event.target.value) }))} disabled={disabled} />
                   <p className="source-draft-catalogue-state">{entry.ledger ? `Saved unverified target: ${entry.ledger}` : "Load existing ledgers to choose a target."}</p>

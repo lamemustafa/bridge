@@ -44,7 +44,10 @@ pub(in crate::agent) fn voucher_input_schema() -> Value {
                 "type":"string", "pattern":r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
                 "not":{"pattern":LINE_TERMINATORS}
             },
-            "voucher_type":{"enum":LIVE_QUALIFIED_VOUCHER_TYPES},
+            "voucher_type":{
+                "enum":LIVE_QUALIFIED_VOUCHER_TYPES,
+                "description":"Journal takes any balanced set of entries and may carry voucher_number and reference. Payment, Receipt and Contra take exactly two entries over two distinct ledgers and neither of those fields, and are refused unless the money side names a ledger whose live group ancestry reaches Bank Accounts or Cash-in-Hand: the credit on a Payment, the debit on a Receipt, both legs on a Contra. The remaining leg of a Payment or Receipt must be established as holding no money: any money group there means the voucher is really a Contra, and a ledger whose group ancestry cannot be resolved is refused as well. These rules span fields and live masters, so the server enforces them after admission rather than here."
+            },
             "narration":text, "reference":text,
             "voucher_number":{
                 "type":"string", "minLength":1, "maxLength":32,

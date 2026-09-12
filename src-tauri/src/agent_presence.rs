@@ -121,11 +121,13 @@ impl Server {
                 None,
             )?;
 
-            // An empty window is only an empty window once the existing
-            // corroboration says so. Anything less becomes `WindowIncomplete`
-            // at the crate boundary rather than a report full of "absent".
-            let mut read = WindowRead::Complete;
-            let mut reason = None;
+            // A window can only license `Absent` when its cardinality is
+            // independently established. The existing empty-window control
+            // can establish that narrow case. A nonempty response has no
+            // source-side count, so a well-formed bounded response cannot be
+            // promoted to Complete merely because it contains rows.
+            let mut read = WindowRead::Partial;
+            let mut reason = Some("nonempty_window_unqualified");
             if rows.is_empty() {
                 let (read_evidence, partial, corroboration) = self
                     .corroborate_empty_voucher_read(&identity, &company.name, &from, &to, None)
@@ -138,7 +140,12 @@ impl Server {
                         evidence.state = "partial";
                         evidence.reason_code = corroboration.map(str::to_string);
                     }
+                } else {
+                    read = WindowRead::Complete;
                 }
+            } else if let Some(evidence) = accumulated.as_mut() {
+                evidence.state = "partial";
+                evidence.reason_code = reason.map(str::to_string);
             }
 
             // The verdict is built from two independently timed observations,
@@ -391,8 +398,9 @@ fn presence_result(
         .take(limit)
         .map(|entry| mark_presence_party_names(serde_json::to_value(entry).unwrap_or_default()))
         .collect::<Vec<_>>();
-    let truncated = offset.saturating_add(items.len()) < total;
-    let result = json!({
+    let next_offset = offset.saturating_add(items.len());
+    let truncated = next_offset < total;
+    let mut result = json!({
         "profile": "agent_voucher_presence_v1",
         // Every verdict is relative to this window. `absent` means absent from
         // this range and never absent from the book.
@@ -407,6 +415,9 @@ fn presence_result(
         ),
         "catalogue_evidence_sha256": sha256_json(&catalogue.to_vec()),
     });
+    if truncated {
+        result["next_offset"] = json!(next_offset);
+    }
     (result, truncated)
 }
 

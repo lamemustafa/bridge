@@ -1228,6 +1228,13 @@ fn decide(
                 // of them is the move this contract refuses everywhere else.
                 let number_selects_another = method == NumberingMethod::Manual
                     && type_observed
+                    && proposal_number_counts
+                        .get(&(
+                            proposal.type_key.as_str(),
+                            proposal.number_key.as_deref().unwrap_or_default(),
+                        ))
+                        .copied()
+                        == Some(1)
                     && number_matches.len() == 1
                     && number_matches[0] != matches[0];
                 if number_selects_another {
@@ -1571,7 +1578,13 @@ fn observe(
         if duplicate_numbers.len() >= MAX_DUPLICATE_NUMBER_GROUPS {
             continue;
         }
-        let first = &window.vouchers[positions[0]];
+        let mut ordered = positions.iter().copied().collect::<Vec<_>>();
+        ordered.sort_by(|left, right| {
+            window.vouchers[*left]
+                .key()
+                .cmp(window.vouchers[*right].key())
+        });
+        let first = &window.vouchers[ordered[0]];
         duplicate_numbers.push(DuplicateNumberGroup {
             voucher_type: label(&first.voucher_type),
             voucher_number: first
@@ -1579,7 +1592,7 @@ fn observe(
                 .as_deref()
                 .map(label)
                 .unwrap_or_default(),
-            book_keys: positions
+            book_keys: ordered
                 .iter()
                 .take(MAX_KEYS_PER_DUPLICATE_GROUP)
                 .map(|position| window.vouchers[*position].key().to_string())
@@ -1657,19 +1670,13 @@ fn label(value: &str) -> String {
 /// caller an invoice is already filed. Two distinct invoices numbered `a-1`
 /// and `A-1` would have suppressed one another.
 ///
-/// What remains is encoding, not semantics. NFC because the same number typed
-/// two ways is the same number, and whitespace collapse because Tally pads its
-/// own fields -- both are artefacts of transport. Case and punctuation are
+/// What remains is encoding, not semantics. NFC and outer whitespace trimming
+/// handle transport artefacts. Internal whitespace, case and punctuation are
 /// content until something measures otherwise, and this narrows toward the
 /// noisy failure: an unmatched punctuation variant reads as absent, which
 /// costs a duplicate a person can see.
 fn number_key_of(value: &str) -> String {
-    value
-        .nfc()
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    value.nfc().collect::<String>().trim().to_string()
 }
 
 fn keep_strongest(

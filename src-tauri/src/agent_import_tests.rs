@@ -30,9 +30,12 @@ fn captured_catalogue_payload() -> ImportPayload {
     input
 }
 
+/// The shared valid batch. Its Payment and Receipt carry no `reference`,
+/// which these types refuse: the qualified bank shape has no such element.
+/// `agent_import_post_tests` covers reference rendering on a Journal.
 fn payload() -> ImportPayload {
     serde_json::from_value(json!({"company_guid":GUID,"vouchers":[
-        {"bridge_txn_id":"txn-001","date":"2026-09-01","voucher_type":"Payment","narration":"Paid & settled","reference":"REF-1","entries":[{"ledger":"Expense","amount":"12.50","side":"Dr"},{"ledger":"Bank","amount":"12.50","side":"Cr"}]},
+        {"bridge_txn_id":"txn-001","date":"2026-09-01","voucher_type":"Payment","narration":"Paid & settled","entries":[{"ledger":"Expense","amount":"12.50","side":"Dr"},{"ledger":"Bank","amount":"12.50","side":"Cr"}]},
         {"bridge_txn_id":"txn-002","date":"2026-09-02","voucher_type":"Receipt","entries":[{"ledger":"Bank","amount":"7.50","side":"Dr"},{"ledger":"Income","amount":"7.50","side":"Cr"}]}
     ]})).expect("sample payload")
 }
@@ -275,9 +278,10 @@ fn schema_balance_matcher_rendering_and_ledger_append_are_fail_closed() {
         validate_payload(&unbalanced),
         Err("voucher_not_balanced".to_string())
     );
-    // Case, whitespace style, dash style and quote style name the same live
-    // ledger, so they bind and report its exact spelling. Only byte equality
-    // is `exact`, which is what build_import_xml admits.
+    // ASCII case and one trailing space are transformations
+    // `TALLY_PROTOCOL_REFERENCE.md` §9.4b measured Tally performing, so they
+    // name the same live ledger: they bind and report its exact spelling. Only
+    // byte equality is `exact`, which is what build_import_xml admits.
     for wanted in ["bank ", "bank", "BANK"] {
         let matched = one_master_match(wanted, &["Bank"]);
         assert_eq!(matched["match_state"], "normalized");
@@ -286,18 +290,26 @@ fn schema_balance_matcher_rendering_and_ledger_append_are_fail_closed() {
             "Bank"
         );
     }
-    assert_eq!(
-        one_master_match("A\u{a0}B", &["A B"])["match_state"],
-        "normalized"
-    );
-    assert_eq!(
-        one_master_match("Fees-Admin", &["Fees–Admin"])["match_state"],
-        "normalized"
-    );
-    assert_eq!(
-        one_master_match("Bob's", &["Bob’s"])["match_state"],
-        "normalized"
-    );
+    // A non-breaking space, an en dash and a curly quote are **not** on that
+    // list. Each still reaches its master through the wide fold, so the caller
+    // sees one candidate and confirms it; what it no longer gets is an answer
+    // and a live spelling to copy into the exact-only write gate.
+    for (wanted, live) in [
+        ("A\u{a0}B", "A B"),
+        ("Fees-Admin", "Fees\u{2013}Admin"),
+        ("Bob's", "Bob\u{2019}s"),
+    ] {
+        let matched = one_master_match(wanted, &[live]);
+        assert_eq!(
+            matched["match_state"], "near_miss",
+            "{wanted} resolved on an unverified fold"
+        );
+        assert!(matched.get("exact_live_spelling").is_none());
+        assert_eq!(
+            matched["candidates"][0]["name"][super::super::PARTY_NAME_MARKER],
+            live
+        );
+    }
     assert_eq!(one_master_match("Bank", &["Bank"])["match_state"], "exact");
     // A shorter name that a live ledger extends is a near-miss with one
     // candidate, and one candidate is still not a decision.
@@ -1322,7 +1334,9 @@ async fn simulator_verification_is_independent_of_the_output_row_limit() {
         assert_eq!(saved.txn_ids, ["txn-001", "txn-002"]);
         assert_eq!(
             built.payload["result"]["live_evidence"],
-            "synthetic_lab_readback"
+            json!([{"observation":"synthetic_lab_readback",
+                "report":"docs/agent/ASSESSMENT-2026-09-06.md",
+                "voucher_types":["Journal"]}])
         );
         assert!(directory
             .path()
@@ -1494,9 +1508,12 @@ fn one_master_match(wanted: &str, catalogue: &[&str]) -> Value {
         .iter()
         .map(|name| (*name).to_string())
         .collect::<Vec<_>>();
-    master_report(&[wanted.to_string()], &catalogue)
-        .expect("fabricated catalogue binds")
-        .remove(0)
+    master_report(
+        &source_entities(&[wanted.to_string()]).expect("fabricated name parses"),
+        &catalogue,
+    )
+    .expect("fabricated catalogue binds")
+    .remove(0)
 }
 
 #[test]
@@ -1545,7 +1562,7 @@ fn a_catalogue_that_was_never_read_refuses_instead_of_reporting_everything_missi
     // of the one failed engagement, so an empty catalogue must not look like
     // an answer. P5: nothing-found and request-failed stay distinguishable.
     assert_eq!(
-        master_report(&["Bank".to_string()], &[]),
+        master_report(&source_entities(&["Bank".to_string()]).expect("valid"), &[]),
         Err("master_catalog_empty".to_string())
     );
 }
@@ -1692,13 +1709,59 @@ async fn built_batch_guidance_matches_the_saved_native_admission() {
         assert_eq!(result["voucher_count"], voucher_count);
         let next_step = result["next_step"].as_str().unwrap();
         assert_eq!(next_step.starts_with("Call post_import"), native);
-        assert_eq!(next_step.starts_with("Import this file in Tally"), !native);
+        assert_eq!(
+            next_step.starts_with("Confirm the loaded company matches this batch"),
+            !native
+        );
         if writes_enabled {
             assert!(result["warnings"][0]
                 .as_str()
                 .unwrap()
                 .contains("do not call post_import"));
         }
+        // The company-identity warning is unconditional: present for this
+        // Journal-only batch exactly as it would be for a bank one.
+        let warnings = result["warnings"]
+            .as_array()
+            .expect("warnings array")
+            .iter()
+            .map(|value| value.as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("Confirm the loaded company before importing")),
+            "company-identity warning missing from a Journal-only batch: {warnings:?}"
+        );
+        // The check the warning asks for is §9.13's five-element tuple, and
+        // the operator can only perform it if the fifth element is visible:
+        // endpoint_origin is recorded on the batch and compared on dispatch,
+        // but a hand import never reaches that check.
+        assert!(
+            warnings.iter().any(|warning| warning
+                .contains("endpoint origin, name, GUID, company number and books-from, all five")),
+            "the identity warning must enumerate the whole tuple: {warnings:?}"
+        );
+        assert!(
+            result["endpoint_origin"].is_string(),
+            "the batch must expose the endpoint origin the warning tells the operator to compare"
+        );
+        // The stale-classification warning is bank-gated and must not appear
+        // for a Journal-only batch.
+        assert!(
+            !warnings
+                .iter()
+                .any(|warning| warning.contains("Regrouping a ledger afterwards")),
+            "stale-classification warning leaked into a Journal-only batch: {warnings:?}"
+        );
+        // The release-evidence warning is bank-gated too: §9.13's licensed
+        // 7.1 Gold measurement has nothing to do with a Journal-only batch.
+        assert!(
+            !warnings
+                .iter()
+                .any(|warning| warning.contains("measured on licensed TallyPrime 7.1 Gold only")),
+            "release-evidence warning leaked into a Journal-only batch: {warnings:?}"
+        );
         assert_eq!(simulator.finish().unwrap().len(), 32);
     }
 }
@@ -1737,6 +1800,9 @@ fn test_duplicates(observed: &[ReadVoucher]) -> Result<Vec<Value>, String> {
 
 #[path = "agent_import_qualification_tests.rs"]
 mod qualification_tests;
+
+#[path = "agent_import_bank_tests.rs"]
+mod bank_tests;
 
 fn qualified_import_cycle_plans() -> Vec<ScenarioPlan> {
     let cycle = import_cycle_plans();

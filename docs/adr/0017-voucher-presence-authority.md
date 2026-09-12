@@ -257,12 +257,11 @@ a `Present`, and a `Present` tells a caller the invoice is already filed. Two
 distinct invoices numbered `aa-0118` and `AA-0118` would each have suppressed
 the other.
 
-So a number is compared on NFC and collapsed whitespace only. Both are
-transport artefacts: the same number typed two ways is the same number, and
-Tally pads its own fields. Case and punctuation are **content** until something
-measures otherwise, and treating them so fails toward the noisy direction —
-an unmatched punctuation variant reads as absent, which costs a duplicate a
-person can see rather than an invoice nobody does.
+So a number is compared on NFC and **outer whitespace trimming only**. Outer
+padding is a transport artefact; internal whitespace, case and punctuation are
+**content** until voucher-number evidence measures an equivalence. Treating
+them so fails toward the noisy direction — a non-match withholds a decisive
+identity result rather than treating two distinct invoices as the same one.
 
 Voucher *types* keep the master key, because a voucher type is a Tally master
 and §3.3b measured that case.
@@ -384,8 +383,8 @@ reported alongside the verdicts rather than discarded:
   book voucher. This is the twenty-five-invoice finding, computed rather than
   noticed.
 - `unbalanced_vouchers` — a book voucher whose entries do not sum to zero.
-- `unclaimed_book_vouchers` — how many vouchers in the window no proposal
-  matched. Counted only; listing them is a different report.
+- `unmatched_book_vouchers` — how many vouchers of a proposed type no proposal
+  matched **or resembled**. Counted only; listing them is a different report.
 
 These sit **outside** the paged rows, so a consumer's response machinery cannot
 trim them: an unbounded echo here could push a complete report past a byte
@@ -445,13 +444,11 @@ human-approved batch — this ADR does not move.
   copies of every bound in the tree, and the copy that drifts is the one nobody
   is looking at. The helper lives beside the existing validator so the next
   tool with a nested schema reuses it rather than restating anything.
-- Voucher numbers and voucher-type names fold through
-  `master_binding::comparison_key` — the *same* key master names use, now an
-  explicit crate-wide contract point owned by ADR 0016 rather than a private
-  helper. A second, subtly different normalizer is exactly the divergence that
-  ADR was written to end, and it would diverge silently: two folds agree on
-  every name anyone tests by hand and disagree on the punctuation nobody thinks
-  to try. This contract consumes that function and defines no fold of its own.
+- Voucher-type names fold through `master_binding::comparison_key`. Voucher
+  numbers have a separate, deliberately narrower key: NFC plus outer transport
+  whitespace trimming only. Internal whitespace, case, and punctuation remain
+  content until voucher-number evidence establishes an equivalence; a broader
+  master-name fold could manufacture `Present` for two distinct invoices.
 - **The desktop source-draft flow is deliberately not wired yet, and the reason
   is a shape gap rather than a scheduling one.** A draft row carries a
   `source_remote_id`, a date, a voucher type and entries — but no voucher
@@ -485,24 +482,25 @@ human-approved batch — this ADR does not move.
   already holds a voucher with that tuple, so the tuple would let a pre-existing
   voucher stand in for one that was never written. Both motivating engagements were hand-keyed
   and would not have had one regardless.
-- The window is read in full before any comparison; `vouchers`' own pagination
-  bounds output, not Tally's work. A window past `MAX_WINDOW_VOUCHERS` is
+- The adapter requests the whole window before any comparison; `vouchers`' own
+  pagination bounds output, not Tally's work. That request is not evidence that
+  a nonempty response is complete, so the presence adapter refuses it pending
+  the source-side control total below. A window past `MAX_WINDOW_VOUCHERS` is
   refused with a narrow-the-range error rather than silently truncated.
-- **The completeness guarantee is exactly as strong as the window read, and no
-  stronger.** Three ways a window read can go wrong are closed: a transport or
+- **Nonempty window qualification is unavailable until the read has a source-side
+  control total.** A nonempty response is therefore represented as `Partial`
+  and refused at the `BookWindow` boundary; it cannot issue `Absent`. Three
+  other ways a window read can go wrong are closed: a transport or
   source-limit failure never produces a window because the read itself fails; a
   malformed or short body fails the strict parse; and the paired read refuses a
   pair whose two responses differ. The case that remains open is a
   **well-formed response that is silently short** — Tally answering a dense
   window with fewer vouchers than it holds and saying nothing. No layer beneath
   this contract detects that, and a deterministic short answer agrees with
-  itself across the pair, so pairing does not catch it either. `BookWindow`
-  therefore inherits the `vouchers` profile's own qualification, which states
-  that dense windows are unqualified. Closing it needs a source-side control
-  total — a count the window read asserts about itself — and that is a separate
-  read contract with its own live evidence. Until then, prefer several narrow
-  windows to one dense one, and read `Absent` as scoped to a window that was
-  read narrow enough to trust.
+  itself across the pair, so pairing does not catch it either. Closing the
+  unavailable qualification needs a source-side control total — a count the
+  window read asserts about itself — and that is a separate read contract with
+  its own live evidence.
 
 - **A widened re-read was built, measured and rejected**, and the reasoning is
   recorded here so the next attempt starts past it rather than at it. The idea
@@ -551,28 +549,13 @@ human-approved batch — this ADR does not move.
   behaviour of the rules, and are not, and may not be presented as, evidence
   about any Tally instance.
 
-- **Twenty verdicts have been checked against a real book**, and the scope of
-  that check matters more than the fact of it. On a licensed TallyPrime 7.1
-  Silver instance (`education_mode: false`), over an 82-voucher window of a
-  dense synthetic corpus: fifteen invoices the book already held returned
-  `Present` on `ManualVoucherNumber` with no differences, one shortened by a
-  fixed amount returned `Present` **with exactly that amount difference**, and
-  four invoices for a party the book had never seen returned `Absent`.
-
-  Four limits travel with that result and none of them is incidental.
-  **It is read-only**: the proposals are built from the book's own rows, so the
-  present ones are present by construction — it shows the rules identify a
-  voucher they were shown, not one posted independently. **The shortfall is on
-  the wrong side**: the engagement's voucher was short in the *book*, and a
-  read-only harness can only shorten the proposal, so the difference detected
-  is the same one with the sides reversed. **The numbering method is the
-  operator's assertion**, not the book's: the replay refuses any voucher type
-  the operator has not declared manually numbered, because declaring an
-  automatically numbered type `manual` would manufacture the very `Present`
-  verdicts being offered as evidence. And it says **nothing about window
-  completeness** — it runs over a window whose completeness rests on the same
-  unproven cardinality described above, so it is evidence about the *rules* and
-  not about the read.
+- A prior owner-authorized, read-only replay exercised the decision rules using
+  proposals built from observed rows. It did not establish source completeness,
+  operational `Absent` capability, or a qualified nonempty window. The current
+  adapter therefore refuses a nonempty window as `presence_window_incomplete` before it
+  emits verdicts. The replay remains useful for controlled rule characterization
+  and for checking admissible perturbation seeds; it is not merge evidence for
+  a presence decision against a live company.
 
 ## Alternatives rejected
 

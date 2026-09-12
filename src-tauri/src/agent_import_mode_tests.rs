@@ -130,7 +130,9 @@ async fn import_build_requires_an_observed_mode_bracket_and_retains_probe_eviden
             let result = result.unwrap();
             assert_eq!(
                 result.payload["result"]["live_evidence"],
-                "synthetic_lab_readback"
+                json!([{"observation":"synthetic_lab_readback",
+                    "report":"docs/agent/ASSESSMENT-2026-09-06.md",
+                    "voucher_types":["Journal"]}])
             );
             assert_eq!(
                 result.payload["result"]["verification_preflight"],

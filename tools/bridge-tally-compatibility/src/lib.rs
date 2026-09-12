@@ -31,39 +31,20 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// and manifest) but makes further unreviewed additions an explicit
 /// compatibility-surface decision.
 ///
-/// Raised from 210 to 211 to admit
-/// `src-tauri/crates/bridge-tally-core/src/master_binding.rs`. That file
-/// decides `validate_masters` results and, through them, import admission;
-/// left unpinned, an edit confined to the matcher would leave the surface
-/// digest unchanged and let existing evidence attest behaviour it never
-/// covered. This is the deliberate decision the paragraph above requires, and
-/// it is one file for one named reason — not headroom.
+/// **Raised three times by branches that did not see each other.** 210 to 211
+/// on master for `src-tauri/src/agent_ledgers.rs`, 211 to 212 for
+/// `src-tauri/crates/bridge-tally-core/src/master_binding.rs`, and 212 to 215
+/// for the voucher-presence engine plus its adapter and admission-contract
+/// assertion. Each reason stands; a merge that keeps a raise but loses its pin
+/// would pass the gate with behavior silently outside the evidence boundary,
+/// which is the failure this constant exists to make loud.
 ///
-/// Raised again from 211 to 213 to admit
-/// `src-tauri/crates/bridge-tally-core/src/book_presence.rs` and
-/// `src-tauri/src/agent_presence.rs`. Together they decide whether a proposed
-/// voucher is reported as already in the book. Tally has no idempotency
-/// (`TALLY_PROTOCOL_REFERENCE.md` §9.3), so an edit confined to either file
-/// could turn a `present` into an `absent` — duplicating a filed invoice — or
-/// the reverse, dropping one silently, while the surface digest and the
-/// evidence attesting the reads beneath both stayed unchanged. Two files for
-/// one named reason, one per surface; still not headroom.
-///
-/// Raised again from 213 to 214 to admit
-/// `src-tauri/src/agent_presence_tests.rs`. The admission contract for
-/// `voucher_presence` -- which properties are accepted, their bounds, and the
-/// refusal of anything undeclared -- is published from `agent_catalog.rs`, and
-/// `agent_presence.rs` deliberately *reads* those bounds rather than restating
-/// them. Loosening the published schema therefore changes what the tool
-/// admits without touching a pinned file. The one place the contract is
-/// stated independently is the assertion in this test, so a schema loosened
-/// together with its corresponding test update -- the normal, unsuspicious
-/// pairing -- would otherwise leave the digest unchanged and let existing
-/// evidence attest an admission contract it never covered. Pinning
-/// `agent_catalog.rs` instead would put every tool-description edit in the
-/// repository through a reseal; this pin binds the statement of the contract
-/// rather than the file that happens to carry it. One file, one named reason.
-pub const MAX_SURFACE_FILES: usize = 214;
+/// `master_binding.rs` decides `validate_masters` results and, through them,
+/// import admission. Left unpinned, an edit confined to the matcher would leave
+/// the surface digest unchanged and let existing evidence attest behaviour it
+/// never covered. That is the deliberate decision the paragraph above requires,
+/// and it is one file for one named reason — not headroom.
+pub const MAX_SURFACE_FILES: usize = 215;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
@@ -74,8 +55,16 @@ const REQUIRED_SURFACE_DIRECTORIES: [&str; 2] =
 /// Compatibility evidence binds the selected-ledger constructor and the native
 /// lifecycle implementation, error fallback, and frontend admission points, rather than
 /// trusting only their callers.
-const REQUIRED_SURFACE_FILES: [&str; 5] = [
+///
+/// `agent_ledgers.rs` renders the agent ledger reads. It is here rather than left as a
+/// judgment pin because a judgment pin can be dropped during a conflict resolution and
+/// the gate still returns `compatibility_gate_passed` -- measured, by deleting this very
+/// entry and resealing. A required path cannot be dropped silently, and
+/// `gate_rejects_each_omitted_required_lifecycle_path` iterates this list, so adding it
+/// here is what covers its omission.
+const REQUIRED_SURFACE_FILES: [&str; 6] = [
     "src-tauri/src/agent_desktop_journal.rs",
+    "src-tauri/src/agent_ledgers.rs",
     "src-tauri/src/source_draft/lifecycle.rs",
     "src/JournalPostingScreen.tsx",
     "src/ErrorBoundary.tsx",
@@ -2489,7 +2478,7 @@ mod tests {
     }
 
     #[test]
-    fn surface_file_cap_refuses_one_more_than_the_cap() {
+    fn surface_file_cap_refuses_one_entry_above_the_cap() {
         let oversized = CompatibilitySurfaceManifest {
             schema_version: SURFACE_SCHEMA_VERSION,
             files: (0..MAX_SURFACE_FILES + 1)
