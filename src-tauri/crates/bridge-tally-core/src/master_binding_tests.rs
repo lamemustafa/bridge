@@ -2352,3 +2352,158 @@ fn a_number_typed_into_a_master_name_finds_it_from_any_source_name() {
         );
     }
 }
+
+#[test]
+fn a_dash_variant_does_not_spell_a_short_code_into_a_decisive_one() {
+    // The code threshold was `canonical.len()`, which is UTF-8 bytes. An en
+    // dash is three of them, so `AB–123` measured eight and cleared a bound
+    // meant for eight *characters* while carrying five alphanumerics. Its
+    // ASCII twin reduces to `AB123` and is refused, so the same code decided
+    // or did not on the strength of which dash the document happened to use —
+    // and the wrong master was reached only in the spelling nobody checks.
+    let catalog = ledgers(&["Sales AB\u{2013}123", "Beta Supply"]);
+    let binding = bind_one_name(&catalog, "Purchases AB\u{2013}123");
+    assert_eq!(
+        binding.bound_name(),
+        None,
+        "five alphanumerics identifier-bound because one of them was three bytes"
+    );
+
+    // Padding is the same defect without the twin to compare against: bytes
+    // counted the dashes, characters would have counted them too.
+    let padded = ledgers(&["Sales AB\u{2013}\u{2013}\u{2013}123", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&padded, "Purchases AB\u{2013}\u{2013}\u{2013}123").bound_name(),
+        None,
+        "a code padded with dashes cleared the threshold on its punctuation"
+    );
+
+    // The measured shape still binds: `PH-01-AB-00` is eight alphanumerics
+    // once the separators §9.4d measured are discarded, and it identifies.
+    let stock = ledgers(&["Sales PH-01-AB-00", "Beta Supply"]);
+    assert_eq!(
+        bind_one_name(&stock, "Purchases PH01AB00").bound_name(),
+        Some("Sales PH-01-AB-00"),
+        "the fold §9.4d measured stopped working"
+    );
+}
+
+#[test]
+fn a_withheld_family_counts_the_masters_the_other_identifier_listed_too() {
+    // The count was the largest skipped family's size, which ignores every
+    // master the entity's *other* identifiers reached. Thirty masters share
+    // one number and a thirty-first carries the other: the operator was told
+    // thirty, and the master that made the two disagree was not in the number.
+    let mut names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Shared Party {index:03} (5550007777)"))
+        .collect::<Vec<_>>();
+    names.push("Lone Party (5550008888)".to_string());
+    let family = MAX_CANDIDATES_PER_ENTITY + 5;
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+
+    let entity =
+        SourceEntity::with_identifier_hints(0, "Zeta Holdings", ["5550007777", "5550008888"])
+            .expect("valid");
+    let binding = bound(&catalog, &[entity])
+        .entities()
+        .first()
+        .cloned()
+        .expect("one entity in, one binding out");
+
+    assert_eq!(reason(&binding), UnboundReason::IdentifierConflict);
+    let unresolved = binding.unresolved().expect("unbound");
+    assert!(
+        unresolved.candidates.is_incomplete(),
+        "the family was listed"
+    );
+    assert_eq!(
+        unresolved.candidates.found(),
+        family + 1,
+        "the master the other identifier listed was not counted"
+    );
+    // Still without building the union: the large family is a membership test,
+    // never an expansion.
+    assert!(
+        family + 1 > MAX_CANDIDATES_PER_ENTITY,
+        "this fixture no longer exercises the skip"
+    );
+}
+
+#[test]
+fn hint_variants_of_one_name_do_not_crowd_out_a_key_that_repeats() {
+    // The memo is keyed by the source key *and* the masters the identifiers
+    // reached, but repetition was counted on the key alone. Every hint variant
+    // of one name therefore counted as repeated, filled the memo with entries
+    // nothing asks for twice, and the pair that genuinely repeated behind them
+    // could no longer be inserted — the same stall as the source-order defect,
+    // through a different door.
+    let names = (0..60)
+        .map(|index| format!("Acme Branch {index:05}"))
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+
+    // Distinct hints, one name: same key, different memo key, each asked once.
+    let mut entities = (0..MAX_CANDIDATE_MEMO_ENTRIES)
+        .map(|index| {
+            SourceEntity::with_identifier_hints(
+                index,
+                "Acme Branch",
+                [format!("5550{index:06}").as_str()],
+            )
+            .expect("valid")
+        })
+        .collect::<Vec<_>>();
+    // And then a pair that does repeat, four times over.
+    entities.extend((0..4).map(|offset| {
+        SourceEntity::with_identifier_hints(
+            MAX_CANDIDATE_MEMO_ENTRIES + offset,
+            "Acme Branch",
+            ["5559999999"],
+        )
+        .expect("valid")
+    }));
+
+    super::CANDIDATE_SEARCHES.with(|count| count.set(0));
+    let report = bound(&catalog, &entities);
+    let searches = super::CANDIDATE_SEARCHES.with(std::cell::Cell::get);
+    assert_eq!(report.totals().requested, MAX_CANDIDATE_MEMO_ENTRIES + 4);
+    assert!(
+        searches <= MAX_CANDIDATE_MEMO_ENTRIES + 1,
+        "the repeated pair was searched more than once behind {MAX_CANDIDATE_MEMO_ENTRIES} variants: {searches} searches"
+    );
+}
+
+#[test]
+fn a_request_within_every_other_bound_is_still_refused_on_its_total_size() {
+    // The count bound and the per-name bound do not bound their product. Each
+    // of these names is valid, and the list is well inside the entity count;
+    // together they are more than the aggregate the catalog side has always
+    // had, and this module would have cloned them into a report first.
+    // One long token rather than many short ones: the aggregate is what this
+    // test is about, and a name of 1,800 words would spend the whole test in
+    // identifier extraction proving nothing extra.
+    let name = format!("Zeta{}", "z".repeat(MAX_NAME_CHARS - 5));
+    assert!(
+        name.chars().count() < MAX_NAME_CHARS,
+        "each name must stay individually valid"
+    );
+    let catalog = ledgers(&["Alpha Supply", "Beta Supply"]);
+    let entities = (0..1_200)
+        .map(|index| SourceEntity::new(index, &name).expect("each name is valid alone"))
+        .collect::<Vec<_>>();
+    assert!(
+        entities.len() < MAX_SOURCE_ENTITIES,
+        "the count bound must not be what refuses this"
+    );
+    assert_eq!(
+        bind(&catalog, &entities),
+        Err(MasterBindingError::SourceNamesTooLarge)
+    );
+
+    // And the bound does not refuse an ordinary request: the same names, well
+    // under the aggregate, bind as before.
+    let ordinary = (0..40)
+        .map(|index| SourceEntity::new(index, &name).expect("valid"))
+        .collect::<Vec<_>>();
+    assert!(bind(&catalog, &ordinary).is_ok());
+}
