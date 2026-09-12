@@ -297,6 +297,51 @@ def test_parse_real_hdfc_capture(m):
                 pages, bank, f"HDFC CA {wrong}")
 
 
+def test_real_hdfc_capture_binds_the_account_no_geometry_only(m):
+    """The unchanged capture pins the header field, not a convenient tail.
+
+    Customer values are sanitised, so several header numbers intentionally end
+    alike.  Its captured labels and coordinates still prove which field the
+    production selector reads.  A postcode label is not present in this
+    capture; this test makes no claim about an absent field.
+    """
+    bank = m.HDFC()
+    pages = capture("hdfc-bbox-capture.xml")
+
+    selected = [
+        [(round(x0, 3), round(y0, 3), round(x1, 3), round(y1, 3), text)
+         for x0, y0, x1, y1, text in group
+         if text in {"Account", "No"}]
+        for _, group in m._lines(pages[0])
+        if m._matches(group, bank.account_anchors)
+    ]
+    assert selected == [[
+        (340.157, 149.001, 367.261, 156.201, "Account"),
+        (369.261, 149.001, 379.037, 156.201, "No"),
+    ]], selected
+    account = m.require_account_match(pages, bank, "xx1111111")
+    assert account == "11111111111111"
+
+    # Mutation controls select existing captured header geometry.  They prove
+    # that the production Account/No selector excludes phone, customer-id,
+    # IFSC and MICR rows even where their sanitised numeric tails overlap.
+    original = bank.account_anchors
+    try:
+        bank.account_anchors = (("Phone", "no."),)
+        assert m.require_account_match(pages, bank, "xx1112") == "11111112"
+
+        bank.account_anchors = (("Cust", "ID"),)
+        assert m.require_account_match(pages, bank, "xx111111111") == "111111111"
+
+        bank.account_anchors = (("RTGS/NEFT", "IFSC"),)
+        assert m.require_account_match(pages, bank, "xx1111111") == "1111111"
+
+        bank.account_anchors = (("MICR",),)
+        assert m.require_account_match(pages, bank, "xx1112") == "111111112"
+    finally:
+        bank.account_anchors = original
+
+
 def test_parse_real_sbi_capture(m):
     """SBI stacks the date over the year, repeats a three-line column header on
     every page, and wraps the narration mid-token across five lines. All three
