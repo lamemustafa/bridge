@@ -2728,18 +2728,49 @@ def test_new_output_parent_retarget_refuses_and_preserves_foreign_path(m):
         original, foreign = root / "original", root / "foreign"
         original.mkdir()
         foreign.mkdir()
-        destination = original / "output.xml"
         foreign_destination = foreign / "output.xml"
         foreign_destination.write_text("foreign bytes")
+        destination = root / "linked" / "output.xml"
+        (root / "linked").symlink_to(original, target_is_directory=True)
         def retarget_parent():
             destination.unlink()
-            original.rmdir()
-            original.symlink_to(foreign, target_is_directory=True)
+            (root / "linked").unlink()
+            (root / "linked").symlink_to(foreign, target_is_directory=True)
         refuses(m, "output_path_changed", m.write_outputs,
                 [(str(destination), "new bytes")], False, retarget_parent)
         assert foreign_destination.read_text() == "foreign bytes"
-        assert (root / "original").is_symlink(), "foreign retarget must not be deleted"
-        assert (root / "original").joinpath("output.xml").read_text() == "foreign bytes"
+        assert original.exists() and not (original / "output.xml").exists()
+        assert (root / "linked").is_symlink(), "foreign retarget must not be deleted"
+        assert (root / "linked").joinpath("output.xml").read_text() == "foreign bytes"
+
+
+def test_new_output_replace_after_claim_preserves_foreign_bytes(m):
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination, foreign = root / "output.xml", root / "foreign.xml"
+        def replace_after_claim():
+            foreign.write_text("foreign bytes")
+            os.replace(foreign, destination)
+        refuses(m, "output_path_changed", m.write_outputs,
+                [(str(destination), "new bytes")], False, replace_after_claim)
+        assert destination.read_text() == "foreign bytes"
+
+
+def test_new_output_claim_inspection_failure_cleans_owned_path(m):
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "output.xml"
+        real_identity = m._file_identity
+        def fail_identity(path):
+            if pathlib.Path(path).resolve() == destination.resolve():
+                raise OSError("controlled claim inspection failure")
+            return real_identity(path)
+        m._file_identity = fail_identity
+        try:
+            refuses(m, "output_path_changed", m.write_outputs,
+                    [(str(destination), "new bytes")])
+        finally:
+            m._file_identity = real_identity
+        assert not destination.exists()
 
 def main():
     module = load()

@@ -1994,14 +1994,6 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 # Keep cleanup on the canonical inode path captured before the
                 # open. The supplied spelling remains an authority that must
                 # still resolve to that same inode at commit time.
-                if (str(pathlib.Path(supplied_path).resolve()) != canonical_path
-                        or _file_identity(canonical_path) != _fd_identity(handle)):
-                    _unlink_for_cleanup(canonical_path, _fd_identity(handle), [])
-                    os.close(handle)
-                    raise Refusal(
-                        "output_path_changed",
-                        f"{supplied_path} changed while it was being claimed",
-                    )
                 record = _owned_path(canonical_path, handle, created=True)
                 record["supplied_path"] = supplied_path
                 record["canonical_path"] = canonical_path
@@ -2009,6 +2001,17 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 record["path"] = supplied_path
                 claimed.append(record)
                 new_outputs.append(record)
+                try:
+                    claimed_path_changed = (
+                        str(pathlib.Path(supplied_path).resolve()) != canonical_path
+                        or _file_identity(canonical_path) != record["identity"])
+                except (FileNotFoundError, OSError):
+                    claimed_path_changed = True
+                if claimed_path_changed:
+                    raise Refusal(
+                        "output_path_changed",
+                        f"{supplied_path} changed while it was being claimed",
+                    )
         if after_claim is not None:
             after_claim()
         for (_, text), record in zip(targets, claimed):
@@ -2018,20 +2021,6 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             handle = os.dup(record["pin"])
             with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
                 stream.write(text)
-        for record in new_outputs:
-            supplied_path = record["supplied_path"]
-            canonical_path = record["canonical_path"]
-            try:
-                changed = (str(pathlib.Path(supplied_path).resolve()) != canonical_path
-                           or _entry_identity(supplied_path) != record["identity"]
-                           or _entry_identity(canonical_path) != record["identity"])
-            except (FileNotFoundError, OSError):
-                changed = True
-            if changed:
-                raise Refusal(
-                    "output_path_changed",
-                    f"{supplied_path} changed before commit; no output was committed",
-                )
         # Every payload is on disk. A private copy preserves the old bytes while
         # the requested destination stays present until the atomic replacement.
         for state in staged:
@@ -2088,6 +2077,22 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             os.replace(temporary["path"], real_path)
             replaced.append(pending_swap)
             pending_swap = None
+        # Keep this after every staged filesystem operation and before the
+        # committed boundary. Any changed new path still rolls back swaps.
+        for record in new_outputs:
+            supplied_path = record["supplied_path"]
+            canonical_path = record["canonical_path"]
+            try:
+                changed = (str(pathlib.Path(supplied_path).resolve()) != canonical_path
+                           or _entry_identity(supplied_path) != record["identity"]
+                           or _entry_identity(canonical_path) != record["identity"])
+            except (FileNotFoundError, OSError):
+                changed = True
+            if changed:
+                raise Refusal(
+                    "output_path_changed",
+                    f"{supplied_path} changed before commit; no output was committed",
+                )
         # The final replacement is the boundary between rollback and committed
         # cleanup. Keep it in this same handler so an interrupt before cleanup
         # starts cannot skip both recovery paths.
