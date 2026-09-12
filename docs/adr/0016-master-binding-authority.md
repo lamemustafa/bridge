@@ -205,77 +205,58 @@ exactly one master shares it.
 
 **There are two folds, and which one may answer is the whole of this section.**
 
-`TALLY_PROTOCOL_REFERENCE.md` §9.4b sent named variants at a live master and
-recorded which Tally accepted. Exactly three: ASCII case folding, one trailing
-space, and a **space supplied where the master carries a hyphen**. `AND` for
-`&`, a missing suffix word and a singular for a plural were rejected. §9.4b
-marks everything else UNVERIFIED and states the rule this section now follows —
-*a fold is only as safe as its least-verified step, and a looser fold may
-**suggest**, never resolve.*
+The resolving fold implements exactly the equivalences
+`TALLY_PROTOCOL_REFERENCE.md` §9.4d measured on **licensed TallyPrime 7.1** —
+the SKU this writes to — by naming each spelling in a voucher and reading the
+day book back to see which master it reached:
 
-- The **narrow fold** resolves. It implements those three and nothing else. The
-  hyphen step is directional, because the measurement was: a source **space**
-  was sent at a master **hyphen**, and the reverse was never sent. A symmetric
-  key cannot express a direction, so the master side of the index answers to
-  both its own spelling and its hyphens-as-spaces, while the source side answers
-  only to its own. A source hyphen therefore finds no master space.
-- The **wide fold** suggests. It carries the reverse hyphen direction, collapsed
-  whitespace runs, leading whitespace and the Unicode dash variants — and
-  everything it reaches is offered as a `NormalizedEqual` candidate for a human
-  to confirm.
+- ASCII case folds;
+- leading and trailing whitespace is ignored;
+- an internal run of spaces collapses;
+- **space, `-` and `/` are one separator**, in both directions.
 
-**One transformation is not merely unverified — it is measured wrong, and it is
-the one that nearly slipped through.** Canonical equivalence looks like decoding
-rather than folding: NFC and NFD spell the same characters, and no operator can
-type them differently on purpose. But Tally stores a master name as the bytes
-that created it and matches on exact codepoints. A voucher naming a UI-created
-ledger in its canonically equivalent NFD spelling was **rejected** —
-`EXCEPTIONS=1`, `LINEERROR`, ledger does not exist — while the NFC spelling
-created it (measured 2026-08-19, TallyPrime 7.1). So they are different masters
-to Tally, and folding them here would resolve a source name onto a master Tally
-itself keeps apart. NFC stays in the wide fold, where it can only suggest.
+Everything else is exact on codepoints. The wide fold (`master_identity_key`)
+carries more than that and may only offer candidates.
 
-The general lesson is worth more than the case: **a step that reads like
-decoding deserves the same evidence as a step that reads like folding.** This
-one survived two reviews of the fold by not looking like part of it.
+**The two rules that matter are negative, and neither is guessable.** An **en
+dash** and an **underscore** were sent and *rejected*: they are not separators
+to Tally however much they look like ones, so a fold that treats "punctuation"
+or "separators" as a class is wider than the gateway and merges masters it keeps
+apart. And **canonical equivalence is not folded** — an NFD spelling of an NFC
+master is a different master, consistent with the exact-codepoint finding
+recorded against this release.
 
-**Neither side is trimmed.** An earlier draft of this section said
-`SourceEntity` trims what the document gave it. It does not — `validated_name`
-bounds a name and returns it unchanged, and a master is retained byte for byte
-because a caller writes it back. The claim was written from what seemed
-reasonable rather than from the constructor, and a contract that describes
-behaviour the implementation does not have is worse than no contract: a consumer
-following it expects a bind and gets a candidate.
+**This section has been wrong twice, in both directions, and the record is
+worth more than the conclusion.**
 
-What actually happens is narrower, and directional. **One trailing space is
-dropped from the source key, and from nothing else** — because that is the
-shape §9.4b measured: a name carrying a trailing space was *supplied* against a
-clean live master and Tally matched it. So `"Alpha Traders "` resolves to a
-live `Alpha Traders`, while a master spelled `"Alpha Traders "` does not resolve
-from a clean source name; it is offered as a candidate. Leading whitespace is
-unverified in both directions and is dropped from neither.
+It first claimed the fold "stops exactly where Tally stops" while resolving on
+four transformations §9.4b marked UNVERIFIED — a Bridge guess wearing Tally's
+authority. That was corrected by narrowing to the three §9.4b had measured,
+which cost 420 of 995 mutation binds and withdrew `X - Y`, a common ledger
+convention.
 
-**This was got wrong first, and the correction is the useful record.** An
-earlier version of this ADR claimed the fold "stops exactly where Tally stops"
-while the implementation resolved on four transformations §9.4b marks
-UNVERIFIED. It read naturally, which is exactly the skimming-implementer failure
-§9.4b was written to prevent, and the live slice in `TEST_CORPUS.md` §9 caught
-it binding that way against a real instance.
+Then the narrowing turned out to be over-strict, because §9.4b's scope is *Edit
+Log 7.0 Educational* and this project writes to licensed 7.1. Measuring that SKU
+directly (§9.4d) found the gateway wider: the reverse hyphen direction, leading
+whitespace, collapsed runs and slash all match. The fold is symmetric again, one
+key per side, and the asymmetric index the narrow version needed is gone. On the
+mutation book **600 of 995** now bind, against 420 under the narrow fold.
 
-**The cost is real and is stated here rather than discovered later.** `X - Y` is
-a common ledger convention — six of the seventeen hyphenated names in the
-observed books take that shape — and reaching it from `X Y` needs the measured
-hyphen step *and* a whitespace run collapsed. So those no longer resolve. On the
-fabricated mutation book, 420 of 995 mutations bind where most once did.
+The lesson is not "measure more". It is that **the scope line of an inherited
+measurement is part of the measurement**: §9.4b was accurate and its scope was
+the thing being skipped, by me in one direction and then by the narrowing in the
+other.
 
-**What makes that a trade and not a loss** is measured alongside it: every
-mutation the wide fold would have resolved is still shown, as a candidate
-carrying the right master. The sweep asserts it case by case rather than as a
-percentage. So narrowing the fold costs a confirmation, never a search — which
-is the trade §9.4b prescribes and the same one §4 makes for every other
-near-miss in this module. A binder that answers from unverified evidence has not
-saved the operator a step; it has moved the step to wherever the wrong posting
-is found.
+**What still holds regardless of which way the evidence moves.** A fold that
+merges two **live** masters never resolves — the pair is an ambiguity and both
+surface (§4). Two masters differing only in case, trailing whitespace or
+separator style collapse under the measured fold and are refused there, which is
+also what Tally implies, since it would match that source name to either.
+
+**Trimming.** Neither side is trimmed on the way in: `validated_name` bounds a
+name and returns it unchanged, and an observed master is retained byte for byte
+because a caller writes it back. Whitespace is handled by the fold, not by
+editing the stored text.
 
 This fold is deliberately **separate from the general comparison key**, which is
 shared with other contracts for voucher numbers and voucher-type names. §9.4b

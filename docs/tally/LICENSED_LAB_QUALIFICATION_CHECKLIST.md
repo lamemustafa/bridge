@@ -39,7 +39,7 @@ Each row: **ID · question · how · consumed by**.
 | ID | Question | How | Consumed by |
 | --- | --- | --- | --- |
 | B1 | Inline-TDL **UDF definition on import**: accepted? persisted? exported back on read? survives foreign Alter of the voucher? | Create with BridgeTxnID UDF; read back; alter in UI; read again | Idempotency key authority decision (UDF vs narration) per version |
-| B2 | Narration-suffix key: survives UI edits? truncation limits (observed narration max length)? | Long-narration create + UI edit | Fallback key + fingerprint mandate |
+| B2 | Narration-suffix key: survives UI edits? truncation limits (observed narration max length)? | Long-narration create + UI edit | Fallback key + fingerprint **as a review flag, not an automatic suppressor** (deviation 2026-09-11, `IMPROVEMENT_PLAN_2026H2.md` §8.19) |
 | B3 | Master name uniqueness: case sensitivity, leading/trailing space handling, Unicode normalization (QF-IN names differing only by case/NFC form) | Create near-collision pairs | Name-keyed idempotency, dedupe |
 | B4 | Voucher **auto-numbering**: methods (Automatic, Manual, Auto-manual, Multi-user auto) vs imported VOUCHERNUMBER — is a supplied number honored, ignored, or collided? Number behavior on Cancel (reserved?) and on Alter | Import into voucher types configured per method | Duplicate prevention; number display in review grid |
 | B5 | Multi-currency voucher create/read round-trip (rate, forex gain/loss ledger) | QF-EN with USD party | Scope decision: in/out of Phase 4 |

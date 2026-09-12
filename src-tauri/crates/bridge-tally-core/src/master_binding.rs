@@ -51,6 +51,21 @@ pub const MAX_IDENTIFIERS_PER_NAME: usize = 32;
 /// excludes a year, a rate, a house number and a masked last-four; a mobile,
 /// an account number and a customer code all clear it.
 pub const MIN_NUMERIC_IDENTIFIER_DIGITS: usize = 8;
+/// The longest run that can still be somebody's identifier.
+///
+/// This bounds `retained_tag`, which is the point. An unresolved entity carries
+/// its identifiers into a fallback so an operator can find the money later, and
+/// the documented way to carry them is a narration — which `agent_import`
+/// refuses over 2,000 characters. Unbounded values made `assign_fallback`
+/// succeed while producing a readback identity that could not be written, which
+/// is a worse failure than refusing: it is discovered at the write, not here.
+///
+/// Bounding the *value* rather than truncating the tag keeps the tag complete.
+/// Thirty-two identifiers at this length, with their `kind:` prefixes and
+/// separators, stay under that narration limit. A run longer than this is not
+/// an account number, a registration or a part code; it is a digit sequence
+/// that happens to be long, and treating it as an identity was never right.
+const MAX_IDENTIFIER_CHARS: usize = 48;
 /// Alphanumeric characters a mixed letter-and-digit token needs before it is
 /// treated as a code identifier.
 ///
@@ -643,7 +658,7 @@ impl SourceEntity {
         Ok(Self {
             position,
             key: master_identity_key(&name),
-            binding_key: source_binding_key(&name),
+            binding_key: verified_fold(&name),
             name,
             identifiers,
         })
@@ -745,9 +760,10 @@ impl MasterCatalog {
         let mut by_token: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         for (index, entry) in entries.iter().enumerate() {
             by_key.entry(entry.key.clone()).or_default().push(index);
-            for binding_key in master_binding_keys(&entry.name) {
-                by_binding_key.entry(binding_key).or_default().push(index);
-            }
+            by_binding_key
+                .entry(verified_fold(&entry.name))
+                .or_default()
+                .push(index);
             for identifier in &entry.identifiers {
                 by_identifier
                     .entry(identifier.clone())
@@ -889,6 +905,19 @@ fn bind_one(
     let mut identifier_conflict = false;
     for identifier in &entity.identifiers {
         if let Some(holders) = catalog.by_identifier.get(identifier) {
+            // An identifier held by more masters than a candidate list may show
+            // is already a conflict, and its holders are a family this entity
+            // does not separate — the same shape `collect_candidates` withholds
+            // rather than slices. Nothing downstream can use the set, so it is
+            // not built: a catalog where one identifier is held by 20,000
+            // masters would otherwise clone 20,000 elements per source row,
+            // before the candidate memo is even consulted.
+            if holders.len() > MAX_CANDIDATES_PER_ENTITY {
+                identifier_conflict = true;
+                continue;
+            }
+            #[cfg(test)]
+            HOLDER_EXPANSIONS.with(|count| count.set(count.get() + 1));
             let reached = holders.iter().copied().collect::<BTreeSet<_>>();
             if reached.len() > 1 {
                 identifier_conflict = true;
@@ -986,7 +1015,7 @@ fn bind_one(
             ),
             None => {
                 let (candidates, masters_found) =
-                    collect_candidates(catalog, entity, &identifier_matches);
+                    remembered_candidates(catalog, entity, &identifier_matches, memo);
                 let reason = if !candidates.is_empty() {
                     UnboundReason::NearMiss
                 } else if masters_found > MAX_PREFIX_FAMILY {
@@ -1015,17 +1044,8 @@ fn unresolved_status(
     budget: &mut usize,
     memo: &mut CandidateMemo,
 ) -> BindingStatus {
-    let memo_key = (entity.key.clone(), identifier_matches.clone());
-    let (mut candidates, masters_found) = match memo.get(&memo_key) {
-        Some(remembered) => remembered.clone(),
-        None => {
-            let computed = collect_candidates(catalog, entity, identifier_matches);
-            if memo.len() < MAX_CANDIDATE_MEMO_ENTRIES {
-                memo.insert(memo_key, computed.clone());
-            }
-            computed
-        }
-    };
+    let (mut candidates, masters_found) =
+        remembered_candidates(catalog, entity, identifier_matches, memo);
     if let Some(index) = exact {
         if !candidates.iter().any(|(candidate, _)| *candidate == index) {
             candidates.push((index, CandidateRule::NormalizedEqual));
@@ -1093,6 +1113,57 @@ fn unresolved_from(
     }
 }
 
+/// `collect_candidates` behind its memo, and the only way to reach it.
+///
+/// The first version of this memo sat inside `unresolved_status`, which reaches
+/// the search for an identifier conflict and for a name ambiguity — but **not**
+/// for an ordinary near miss, which is the one case the cost was reported
+/// against. Routing one more call site would have fixed that instance and left
+/// the next one to be noticed; one entry point makes it structural.
+fn remembered_candidates(
+    catalog: &MasterCatalog,
+    entity: &SourceEntity,
+    identifier_matches: &BTreeSet<usize>,
+    memo: &mut CandidateMemo,
+) -> (Vec<(usize, CandidateRule)>, usize) {
+    let key = (entity.key.clone(), identifier_matches.clone());
+    if let Some(remembered) = memo.get(&key) {
+        return remembered.clone();
+    }
+    let computed = collect_candidates(catalog, entity, identifier_matches);
+    // Entry *count* alone does not bound a memo whose keys and values are
+    // themselves collections. Caching a large result would retain exactly what
+    // recomputing it costs, multiplied by the cap — trading a stall for the
+    // memory the aggregate bounds elsewhere exist to prevent. A large result is
+    // cheap to recompute relative to what holding it costs, so it is not held.
+    let worth_holding =
+        key.1.len() <= MAX_CANDIDATES_PER_ENTITY && computed.0.len() <= MAX_CANDIDATES_PER_ENTITY;
+    if worth_holding && memo.len() < MAX_CANDIDATE_MEMO_ENTRIES {
+        memo.insert(key, computed.clone());
+    }
+    computed
+}
+
+// Counts holder sets actually materialized, for the same reason as the search
+// counter below: the *outcome* of expanding a family and of refusing to is
+// identical — a conflict either way — so a test asserting the outcome cannot
+// tell whether the work was done.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static HOLDER_EXPANSIONS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+// Counts searches that actually ran, so a test can prove the memo is consulted
+// rather than assume it. A test asserting only that the answer is right passes
+// whether or not the search ran — which is exactly how the near-miss path
+// stayed unmemoized through a green suite.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static CANDIDATE_SEARCHES: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
 /// Produces every defensible master, each labelled with the rule that surfaced
 /// it. The strongest rule wins where several apply. Nothing here ranks by
 /// similarity, and nothing here chooses.
@@ -1101,6 +1172,8 @@ fn collect_candidates(
     entity: &SourceEntity,
     identifier_matches: &BTreeSet<usize>,
 ) -> (Vec<(usize, CandidateRule)>, usize) {
+    #[cfg(test)]
+    CANDIDATE_SEARCHES.with(|count| count.set(count.get() + 1));
     // Masters this name reaches by prefix. The key index is ordered, so this is
     // a range walk rather than a scan of the catalog per entity.
     let extending = if entity.key.chars().count() >= MIN_PREFIX_KEY_CHARS {
@@ -1295,60 +1368,52 @@ fn master_identity_key(value: &str) -> String {
         .join(" ")
 }
 
-/// The fold that may **resolve** a name to a master, held to exactly what
-/// `TALLY_PROTOCOL_REFERENCE.md` §9.4b measured Tally doing.
+/// The fold that may **resolve** a name to a master: exactly the equivalences
+/// `TALLY_PROTOCOL_REFERENCE.md` §9.4d measured on the SKU this writes to.
 ///
-/// Three transformations were verified: ASCII case folding, one trailing space
-/// ignored, and a **space supplied where the master carries a hyphen**. That
-/// last one is directional — `BRIDGE PROBE LEDGER A` was sent against a live
-/// `BRIDGE-PROBE-LEDGER-A`, and the reverse was never sent — so it cannot be a
-/// symmetric replacement in a shared key. It lives in `master_binding_keys`,
-/// on the master side only, which is the side the evidence is about.
+/// §9.4b measured Edit Log 7.0 Educational and marked most of this UNVERIFIED,
+/// so an earlier version of this module resolved on three transformations only
+/// and offered the rest as candidates. §9.4d re-ran that measurement on
+/// **licensed TallyPrime 7.1**, read the day book back to see which master each
+/// name actually reached, and found the gateway wider than the Educational
+/// scope allowed anyone to claim:
 ///
-/// **Canonical equivalence is not folded here, and that one is measured rather
-/// than merely unverified.** A voucher naming a UI-created `Cafe\u{301}...`
-/// ledger in its canonically equivalent NFD spelling was rejected —
-/// `EXCEPTIONS=1`, `LINEERROR`, ledger does not exist — while the NFC spelling
-/// created it. Tally stores a master name as the bytes that made it and matches
-/// on exact codepoints, so NFC and NFD spellings are *different masters*.
-/// Folding them together here would resolve a source name onto a master Tally
-/// itself keeps apart. It reads like decoding rather than folding, which is
-/// exactly why it nearly stayed.
+/// - ASCII case folds;
+/// - leading and trailing whitespace is ignored;
+/// - an internal run of spaces collapses;
+/// - **space, `-` and `/` are one separator**, in both directions.
 ///
-/// Every other unverified step — the reverse hyphen direction, collapsed
-/// whitespace runs, leading whitespace, Unicode dash variants, non-ASCII case —
-/// is deliberately absent too. None is lost: `master_identity_key` carries them
-/// all, and everything it reaches is offered as a candidate.
+/// Everything else is exact on codepoints. So the two rules that matter are
+/// both negative, and neither is guessable from appearance:
+///
+/// **An en dash and an underscore are not separators.** They were sent and
+/// rejected. A fold that treats "punctuation" or "separators" as a class is
+/// wider than the gateway and merges masters Tally keeps apart — which is why
+/// the separator set here is written out rather than described.
+///
+/// **Canonical equivalence is not folded.** An NFD spelling of an NFC master
+/// was rejected here too, consistent with the exact-codepoint finding recorded
+/// against this same release. Normalizing before comparing would resolve a name
+/// onto a master the gateway keeps apart. It reads like decoding rather than
+/// folding, which is how it survived two audits of this function.
+///
+/// Both hyphen directions are measured now, so this is symmetric and one key
+/// per side is enough — the asymmetric index an earlier version needed is gone.
 fn verified_fold(value: &str) -> String {
-    value.to_ascii_lowercase()
-}
-
-/// The key a **source** name is looked up by.
-///
-/// One trailing space is dropped here and nowhere else, because that is how it
-/// was measured: §9.4b *supplied* a name carrying a trailing space against a
-/// clean live master and Tally matched it. The reverse — a master carrying a
-/// trailing space, reached from a clean source name — was never sent, and
-/// stripping on the master side quietly asserted it. Same directional trap as
-/// the hyphen, one row further down the same table.
-fn source_binding_key(value: &str) -> String {
-    verified_fold(value.strip_suffix(' ').unwrap_or(value))
-}
-
-/// The keys a **master** name answers to.
-///
-/// Its own, and — because a source space was measured matching a master hyphen
-/// — the same name with its hyphens read as spaces. Offering the second from
-/// the master side is what keeps the measured direction measured: a source
-/// hyphen finds no master space, while a source space finds a master hyphen.
-///
-/// Two masters that answer to one key are an ambiguity and are refused there,
-/// which is the same answer Tally's own behaviour implies: it would match that
-/// source name to both.
-fn master_binding_keys(value: &str) -> BTreeSet<String> {
-    let base = verified_fold(value);
-    let hyphens_as_spaces = base.replace('-', " ");
-    BTreeSet::from([base, hyphens_as_spaces])
+    value
+        .chars()
+        .map(|character| match character {
+            '-' | '/' => ' ',
+            other => other.to_ascii_lowercase(),
+        })
+        .collect::<String>()
+        // ASCII space only. A tab and a no-break space were never sent, so they
+        // stay ordinary characters rather than joining the separator set on the
+        // strength of looking like whitespace.
+        .split(' ')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Splits a comparison key into words.
@@ -1439,6 +1504,7 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
             && !masked
             && !is_period(token)
             && !is_masked(&canonical)
+            && canonical.len() <= MAX_IDENTIFIER_CHARS
         {
             identifiers.insert(Identifier {
                 kind: IdentifierKind::Code,
@@ -1463,6 +1529,7 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
         }) {
             let digits = run.chars().filter(char::is_ascii_digit).collect::<String>();
             if digits.len() >= MIN_NUMERIC_IDENTIFIER_DIGITS
+                && digits.len() <= MAX_IDENTIFIER_CHARS
                 && !is_plausible_date(&digits)
                 && !is_period(run)
             {
