@@ -231,19 +231,17 @@ fn a_caller_limited_presence_page_includes_its_resume_cursor() {
             amount: "1.00",
         },
     ];
-    let proposals = [0, 1].map(|position| {
-        ProposedVoucher::new(ProposedVoucherInput {
-            position,
-            date: "20260901",
-            voucher_type: "Journal",
-            voucher_number: Some(if position == 0 { "JV-0" } else { "JV-1" }),
-            narration_marker: None,
-            remote_id: None,
-            party: None,
-            entries: &entries,
-        })
-        .expect("proposal")
+    let proposal_inputs = [0, 1].map(|position| ProposedVoucherInput {
+        position,
+        date: "20260901",
+        voucher_type: "Journal",
+        voucher_number: Some(if position == 0 { "JV-0" } else { "JV-1" }),
+        remote_id: None,
+        narration_marker: None,
+        party: None,
+        entries: &entries,
     });
+    let proposals = ProposedVoucher::from_inputs(proposal_inputs).expect("proposals");
     let window = BookWindow::from_observations(ObservedWindow {
         from: "20260901",
         to: "20260930",

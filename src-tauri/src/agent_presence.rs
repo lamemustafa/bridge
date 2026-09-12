@@ -78,7 +78,7 @@ impl Server {
         // they are settled here rather than after three Tally reads. The crate
         // enforces them again at its own boundary; this only stops a request
         // that was always going to be refused from exercising the endpoint.
-        for proposal in &proposals {
+        for proposal in proposals.iter() {
             // A party's *entity shape* -- how many identifiers its name
             // carries -- is decided entirely by the caller's text, and the
             // crate parses it inside `PresenceRequest::new`, three reads
@@ -268,12 +268,20 @@ fn book_window(
             .as_array()
             .map(Vec::as_slice)
             .unwrap_or_default();
-        budget.admit(raw.iter().map(|entry| {
-            (
-                entry["ledger"].as_str().unwrap_or_default(),
-                entry["amount"].as_str().unwrap_or_default(),
-            )
-        }))?;
+        budget.admit_fields(
+            row["guid"].as_str().unwrap_or_default(),
+            row["date"].as_str().unwrap_or_default(),
+            row["voucher_type"].as_str().unwrap_or_default(),
+            row["voucher_number"].as_str(),
+            None,
+            row["party"].as_str(),
+            raw.iter().map(|entry| {
+                (
+                    entry["ledger"].as_str().unwrap_or_default(),
+                    entry["amount"].as_str().unwrap_or_default(),
+                )
+            }),
+        )?;
         entries.push(
             row["amounts"]
                 .as_array()
@@ -407,15 +415,27 @@ fn parse_numbering(args: &Value) -> Result<NumberingDeclaration, String> {
     NumberingDeclaration::new(entries).map_err(|error| error.safe_reason_code().to_string())
 }
 
-fn parse_proposals(args: &Value) -> Result<Vec<ProposedVoucher>, String> {
+fn parse_proposals(
+    args: &Value,
+) -> Result<bridge_tally_core::book_presence::ProposedBatch, String> {
     let proposed = args
         .get("vouchers")
         .and_then(Value::as_array)
         .ok_or_else(|| "vouchers_required".to_string())?;
     let invalid = || "argument_invalid:vouchers".to_string();
-    let mut parsed = Vec::with_capacity(proposed.len());
+    struct RawProposal {
+        date: String,
+        voucher_type: String,
+        voucher_number: Option<String>,
+        party: Option<String>,
+        entries: Vec<(String, String)>,
+        marker: Option<String>,
+    }
+    let mut raw = Vec::with_capacity(proposed.len().min(book_presence::MAX_PROPOSED_VOUCHERS));
+    let mut admission = bridge_tally_core::book_presence::RawProposalBudget::default();
     for (position, voucher) in proposed.iter().enumerate() {
-        let date = normalized_date(voucher["date"].as_str().ok_or_else(invalid)?)?;
+        let raw_date = voucher["date"].as_str().ok_or_else(invalid)?;
+        let raw_type = voucher["voucher_type"].as_str().ok_or_else(invalid)?;
         // Both or neither. Supplying one alone is a caller error, and silently
         // ignoring it would skip the strongest key this proposal has.
         let marker = match (
@@ -448,37 +468,73 @@ fn parse_proposals(args: &Value) -> Result<Vec<ProposedVoucher>, String> {
             _ => return Err("presence_import_identity_incomplete".to_string()),
         };
         let rows = voucher["entries"].as_array().ok_or_else(invalid)?;
+        // Admit the complete borrowed shape before date/decimal parsing or
+        // cloning any proposal metadata. The shared core repeats this check
+        // for callers that do not use the JSON adapter.
+        admission
+            .admit_parts(
+                position,
+                raw_date,
+                raw_type,
+                voucher["voucher_number"].as_str(),
+                None,
+                voucher["party"].as_str(),
+                rows.iter().map(|entry| {
+                    (
+                        entry["ledger"].as_str().unwrap_or_default(),
+                        entry["amount"].as_str().unwrap_or_default(),
+                    )
+                }),
+            )
+            .map_err(|error| error.safe_reason_code().to_string())?;
+        let date = normalized_date(raw_date)?;
         let entries = rows
             .iter()
             .map(|entry| {
-                Ok(ObservedEntry {
-                    ledger: entry["ledger"].as_str().ok_or_else(invalid)?,
-                    amount: entry["amount"].as_str().ok_or_else(invalid)?,
-                })
+                Ok((
+                    entry["ledger"].as_str().ok_or_else(invalid)?.to_string(),
+                    entry["amount"].as_str().ok_or_else(invalid)?.to_string(),
+                ))
             })
             .collect::<Result<Vec<_>, String>>()?;
-        parsed.push(
-            ProposedVoucher::new(ProposedVoucherInput {
-                position,
-                date: &date,
-                voucher_type: voucher["voucher_type"].as_str().ok_or_else(invalid)?,
-                voucher_number: voucher["voucher_number"].as_str(),
-                // Not an accepted input: the shipped read cannot fetch
-                // REMOTEID, so a supplied one could only ever withhold a
-                // verdict. The crate keeps the basis for callers that can.
-                remote_id: None,
-                party: voucher["party"].as_str(),
-                // Derived, never accepted: a caller handing over a marker
-                // string could name a legacy label and match an unrelated
-                // import. See ADR 0018 §1 -- the input shape is the safety
-                // argument, not a validation rule someone has to remember.
-                narration_marker: marker.as_deref(),
-                entries: &entries,
-            })
-            .map_err(|error| error.safe_reason_code().to_string())?,
-        );
+        raw.push(RawProposal {
+            date,
+            voucher_type: voucher["voucher_type"]
+                .as_str()
+                .ok_or_else(invalid)?
+                .to_string(),
+            voucher_number: voucher["voucher_number"].as_str().map(str::to_string),
+            party: voucher["party"].as_str().map(str::to_string),
+            entries,
+            marker,
+        });
     }
-    Ok(parsed)
+    // Materialize entry descriptors so their borrowed slices outlive the
+    // batch conversion; admission still precedes decimal parsing and clones.
+    let descriptors: Vec<Vec<ObservedEntry<'_>>> = raw
+        .iter()
+        .map(|voucher| {
+            voucher
+                .entries
+                .iter()
+                .map(|(ledger, amount)| ObservedEntry { ledger, amount })
+                .collect()
+        })
+        .collect();
+    let inputs = raw
+        .iter()
+        .enumerate()
+        .map(|(position, voucher)| ProposedVoucherInput {
+            position,
+            date: &voucher.date,
+            voucher_type: &voucher.voucher_type,
+            voucher_number: voucher.voucher_number.as_deref(),
+            remote_id: None,
+            narration_marker: voucher.marker.as_deref(),
+            party: voucher.party.as_deref(),
+            entries: &descriptors[position],
+        });
+    ProposedVoucher::from_inputs(inputs).map_err(|error| error.safe_reason_code().to_string())
 }
 
 /// Bounds the fixed observations, so a diagnostic can never cost the answer.

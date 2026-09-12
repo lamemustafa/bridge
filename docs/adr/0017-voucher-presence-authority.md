@@ -164,7 +164,14 @@ and widening the window is the caller's decision, made in the open.
 
 Raw book observations are admitted before decimal parsing, cloning, or folding:
 **100,000** total entries and **4 MiB** of entry ledger-and-amount bytes are
-the aggregate limits. Admission is also bounded before comparison: a request above **1,000,000**
+the entry limits. Retained voucher metadata is separately bounded to **4 MiB**
+before cloning. Raw proposal batches likewise admit at most **5,000** proposals,
+**100,000** entries, **4 MiB** of entry bytes and **4 MiB** of retained metadata.
+The opaque admitted batch is required by the core request, so separately
+converted vectors cannot be concatenated around admission. Source positions
+must be unique across that batch.
+
+Admission is also bounded before comparison: a request above **1,000,000**
 proposal/window pairs, or above **5,000,000** aggregate indexed resemblance
 work units, is refused as `ComparisonWorkTooLarge`. The second limit counts
 posting-list walks and party-key checks, so it still applies when the pair count
@@ -282,8 +289,10 @@ padding is a transport artefact; internal whitespace, case and punctuation are
 them so fails toward the noisy direction — a non-match withholds a decisive
 identity result rather than treating two distinct invoices as the same one.
 
-Voucher *types* keep the master key, because a voucher type is a Tally master
-and §3.3b measured that case.
+Voucher *types* preserve the source spelling exactly. No case, whitespace, or
+separator folding is qualified for voucher types; the type must match the
+declared numbering spelling exactly. The master-name comparison key is for
+ledger names only, and must not be reused for voucher types.
 
 A manual number decides only
 **within an observed voucher type** — numbers are a per-type series, so a match
