@@ -1642,13 +1642,47 @@ def test_restore_reconciles_a_backup_replace_that_raised_after_effect(m):
                                  (str(second), "new second")])
                 raise AssertionError("the second target's swap must fail")
             except OSError as error:
-                assert not getattr(error, "__notes__", [])
+                notes = getattr(error, "__notes__", [])
+                assert len(notes) == 1
+                assert str(first) in notes[0]
+                assert "extended ACLs and file flags were not verified" in notes[0]
+                assert ".bak" not in notes[0]
         finally:
             m.os.replace = real_replace
 
         assert first.read_text() == "first old"
         assert second.read_text() == "second old"
         assert sorted(path.name for path in root.iterdir()) == ["first.xml", "second.csv"]
+
+
+def test_refusal_reports_rollback_metadata_scope_in_its_visible_code(m):
+    """Refusal is SystemExit, so rollback scope must be added to `code`, not
+    only an exception note that an unhandled process would omit."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first = root / "first.xml"
+        second = root / "second.csv"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_replace = m.os.replace
+
+        def replace_first_then_refuse_second(src, dst):
+            if str(src).endswith(".part") and os.path.basename(dst) == "second.csv":
+                raise m.Refusal("controlled_refusal", "controlled second swap refusal")
+            return real_replace(src, dst)
+
+        m.os.replace = replace_first_then_refuse_second
+        try:
+            refusal = refuses(m, "controlled_refusal", m.write_outputs,
+                              [(str(first), "new first"),
+                               (str(second), "new second")])
+        finally:
+            m.os.replace = real_replace
+
+        assert str(first) in str(refusal.code)
+        assert "extended ACLs and file flags were not verified" in str(refusal.code)
+        assert first.read_text() == "first old"
+        assert second.read_text() == "second old"
 
 
 def test_write_outputs_reports_a_retained_backup_after_commit(m):
@@ -1726,6 +1760,40 @@ with tempfile.TemporaryDirectory() as directory:
     assert "output_path_changed" in done.stderr, done.stderr
     assert "retained path(s):" in done.stderr, done.stderr
     assert ".bak" in done.stderr, done.stderr
+
+
+def test_refusal_reports_rollback_metadata_scope_on_stderr(m):
+    """The ACL/file-flag limitation must survive unhandled SystemExit
+    rendering, where Python omits ordinary exception notes."""
+    program = f'''\
+import importlib.util
+import os
+import pathlib
+import tempfile
+
+script = {str(SCRIPT)!r}
+spec = importlib.util.spec_from_file_location("bank_statement_import_subprocess", script)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+with tempfile.TemporaryDirectory() as directory:
+    root = pathlib.Path(directory)
+    first = root / "first.xml"
+    second = root / "second.csv"
+    first.write_text("first old")
+    second.write_text("second old")
+    real_replace = module.os.replace
+    def replace_first_then_refuse_second(src, dst):
+        if str(src).endswith(".part") and os.path.basename(dst) == "second.csv":
+            raise module.Refusal("controlled_refusal", "controlled second swap refusal")
+        return real_replace(src, dst)
+    module.os.replace = replace_first_then_refuse_second
+    module.write_outputs([(str(first), "new first"), (str(second), "new second")])
+'''
+    done = subprocess.run([sys.executable, "-c", program], text=True,
+                          capture_output=True, check=False)
+    assert done.returncode != 0
+    assert "controlled_refusal" in done.stderr, done.stderr
+    assert "extended ACLs and file flags were not verified" in done.stderr, done.stderr
 
 
 def test_a_failed_swap_rolls_back_every_staged_replacement(m):

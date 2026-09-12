@@ -1690,7 +1690,8 @@ def _copy_private_backup(source_path, original_identity, backup_handle):
 
 
 def _restore_backup(backup, backup_identity, destination, original_identity,
-                    staged_identity, metadata, swap_started, failures):
+                    staged_identity, metadata, swap_started, failures,
+                    metadata_scope_warnings):
     """Restore an owned private backup after a caught swap failure.
 
     `os.replace` can report an exception after the filesystem call took effect.
@@ -1741,6 +1742,7 @@ def _restore_backup(backup, backup_identity, destination, original_identity,
                 _restore_metadata(restore_handle, metadata)
             finally:
                 os.close(restore_handle)
+            metadata_scope_warnings.append(destination)
         except (OSError, Refusal):
             failures.append(destination)
 
@@ -1757,6 +1759,21 @@ def _note_cleanup_failures(error, failures):
             error.code = f"{error.code}\n{message}"
         else:
             error.add_note(message)
+
+
+def _note_rollback_metadata_scope(error, restored_paths):
+    """Disclose metadata classes not established by this caught rollback."""
+    if not restored_paths:
+        return
+    restored = ", ".join(sorted(set(restored_paths)))
+    message = (
+        "rollback restored bytes and captured portable metadata for: "
+        f"{restored}; extended ACLs and file flags were not verified"
+    )
+    if isinstance(error, Refusal):
+        error.code = f"{error.code}\n{message}"
+    else:
+        error.add_note(message)
 
 
 def write_outputs(targets, accept_inherited=False, after_claim=None):
@@ -1899,6 +1916,7 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
         # earlier committed swaps. Cleanup failures remain attached to the
         # original exception with their recoverable locations.
         cleanup_failures = []
+        metadata_scope_warnings = []
         if pending_swap is not None:
             backup = pending_swap["backup"]
             _restore_backup(backup["path"], backup["identity"],
@@ -1906,7 +1924,8 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                             pending_swap["original_identity"],
                             pending_swap["staged_identity"],
                             pending_swap["metadata"],
-                            pending_swap["swap_started"], cleanup_failures)
+                            pending_swap["swap_started"], cleanup_failures,
+                            metadata_scope_warnings)
             _close_owned_path(backup, cleanup_failures)
             if pending_swap["original"] is not None:
                 _close_owned_path(pending_swap["original"], cleanup_failures)
@@ -1916,12 +1935,14 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             backup = swap["backup"]
             _restore_backup(backup["path"], backup["identity"], swap["destination"],
                             swap["original_identity"], swap["staged_identity"],
-                            swap["metadata"], swap["swap_started"], cleanup_failures)
+                            swap["metadata"], swap["swap_started"], cleanup_failures,
+                            metadata_scope_warnings)
             _close_owned_path(backup, cleanup_failures)
             _close_owned_path(swap["original"], cleanup_failures)
         for record in claimed:
             _cleanup_owned_path(record, cleanup_failures)
         _note_cleanup_failures(error, cleanup_failures)
+        _note_rollback_metadata_scope(error, metadata_scope_warnings)
         raise
     # A successful replacement is not a successful command if an old statement
     # survives under an undisclosed random name.
