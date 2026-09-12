@@ -413,7 +413,9 @@ Re-sending the identical ledger `ACTION="Create"` returned `CREATED=0, ALTERED=1
 
 ### 8.6 `LASTMID` is 0 on successful master creates; `LASTVCHID` works
 
-Both ledger creates returned `LASTMID=0` despite `CREATED=1`. **Confirms §5.1.4's choice**: masters must be read back by normalized name. `LASTVCHID` is populated for vouchers and usable, still subject to the foreign-writer cross-check.
+Both ledger creates returned `LASTMID=0` despite `CREATED=1`. **Confirms §5.1.4's choice**: masters must be read back by name, matched via `TALLY_PROTOCOL_REFERENCE.md` §9.4b's `accepts(candidate, tally_name)` predicate — directional ASCII case folding only. `LASTVCHID` is populated for vouchers and usable, still subject to the foreign-writer cross-check.
+
+DEVIATION 2026-09-12 (`TALLY_PROTOCOL_REFERENCE.md` §9.4b): "normalized name" here never means NFC/NFD normalization, which is WITHDRAWN. §9.4b is MEASURED: Tally matches master names on exact codepoints, so an NFD create read back with NFC folding applied would resolve onto a pre-existing, distinct NFC master and promote the wrong object. Compare on exact codepoints plus only the directional case fold.
 
 ### 8.7 AlterID high-water marks move — Drift Sentinel's mechanism is sound
 
