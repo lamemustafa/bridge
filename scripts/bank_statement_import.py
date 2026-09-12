@@ -1508,8 +1508,27 @@ def _file_identity(path):
     return stat_result.st_dev, stat_result.st_ino
 
 
-def _unlink_for_cleanup(path, failures):
+def _fd_identity(handle):
+    stat_result = os.fstat(handle)
+    return stat_result.st_dev, stat_result.st_ino
+
+
+def _entry_identity(path):
+    """The inode `unlink` would remove, without following a replacement link."""
+    stat_result = os.lstat(path)
+    return stat_result.st_dev, stat_result.st_ino
+
+
+def _unlink_for_cleanup(path, owned_identity, failures):
+    """Remove a path only while it still names the inode this run created."""
     try:
+        if _entry_identity(path) != owned_identity:
+            # The pathname has been reclaimed. It is not ours to delete, and
+            # reporting it gives the operator a chance to find the private copy
+            # if it still exists without making a claim about foreign bytes.
+            if os.path.lexists(path):
+                failures.append(str(path))
+            return
         os.unlink(path)
     except FileNotFoundError:
         pass
@@ -1517,33 +1536,92 @@ def _unlink_for_cleanup(path, failures):
         # A filesystem call can report an error after taking effect. Only retain
         # the path when reconciliation shows bytes may still be present.
         if os.path.lexists(path):
-            failures.append(path)
+            failures.append(str(path))
 
 
-def _restore_backup(backup, destination, original_identity, failures):
-    """Restore a hard-link backup after a caught swap failure.
+def _copy_private_backup(source_path, original_identity, backup_handle):
+    """Copy the original inode into an owner-only backup already opened O_EXCL.
+
+    The source descriptor pins the inode whose bytes are copied. The source
+    path is checked both before and after the copy; that catches an atomic path
+    replacement during preparation. Without filesystem locking, an adversary
+    that modifies the same inode while it is being read remains outside this
+    command's authority, so this does not promise a crash transaction.
+    """
+    source_handle = os.open(source_path, os.O_RDONLY)
+    try:
+        if _fd_identity(source_handle) != original_identity:
+            raise Refusal(
+                "output_path_changed",
+                f"{source_path} changed while its rollback copy was prepared",
+            )
+        copied = hashlib.sha256()
+        while True:
+            chunk = os.read(source_handle, 1024 * 1024)
+            if not chunk:
+                break
+            copied.update(chunk)
+            view = memoryview(chunk)
+            while view:
+                written = os.write(backup_handle, view)
+                if written == 0:
+                    raise OSError("private backup write made no progress")
+                view = view[written:]
+        os.fsync(backup_handle)
+        os.lseek(backup_handle, 0, os.SEEK_SET)
+        verified = hashlib.sha256()
+        while True:
+            chunk = os.read(backup_handle, 1024 * 1024)
+            if not chunk:
+                break
+            verified.update(chunk)
+        if copied.digest() != verified.digest():
+            raise OSError("private backup did not retain the copied bytes")
+        if (_fd_identity(source_handle) != original_identity
+                or _file_identity(source_path) != original_identity):
+            raise Refusal(
+                "output_path_changed",
+                f"{source_path} changed while its rollback copy was prepared",
+            )
+    finally:
+        os.close(source_handle)
+
+
+def _restore_backup(backup, backup_identity, destination, original_identity,
+                    staged_identity, failures):
+    """Restore an owned private backup after a caught swap failure.
 
     `os.replace` can report an exception after the filesystem call took effect.
-    If the destination is already the original inode, reconciliation proves the
-    old bytes are back; otherwise leave the backup in place and name it in the
-    error rather than guessing which bytes survived.
+    Roll back only when the destination still names this run's staged inode.
+    A different inode may be a foreign writer's success, so keep the private
+    backup and report the conflict rather than overwriting it.
     """
     try:
-        os.replace(backup, destination)
-        # POSIX rename is a no-op when source and destination already name the
-        # same inode. That is the expected recovery path when the interrupted
-        # replacement never took effect, and it leaves the hard-link backup to
-        # be removed explicitly.
-        _unlink_for_cleanup(backup, failures)
+        current_identity = _file_identity(destination)
+    except OSError:
+        current_identity = None
+    if current_identity == original_identity:
+        # The replace did not take effect, or a previous reconciliation already
+        # restored it. The extra private copy is ours to remove.
+        _unlink_for_cleanup(backup, backup_identity, failures)
         return
+    if current_identity != staged_identity:
+        failures.append(backup)
+        return
+    try:
+        if _entry_identity(backup) != backup_identity:
+            failures.append(backup)
+            return
+        # This observes ownership immediately before the replace. POSIX has no
+        # compare-and-swap rename, so a hostile concurrent rename after this
+        # check is still outside the CLI's locking authority.
+        os.replace(backup, destination)
     except OSError:
         try:
             restored = _file_identity(destination) == original_identity
         except OSError:
             restored = False
-        if restored:
-            _unlink_for_cleanup(backup, failures)
-        else:
+        if not restored:
             failures.append(backup)
 
 
@@ -1597,12 +1675,13 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
     plain file and leave whatever else reads through that link looking at
     stale content.
 
-    Before replacing an existing POSIX destination, its old inode is hard-linked
-    to a private sibling backup. The destination therefore remains present until
-    one `os.replace` atomically changes it from old bytes to new bytes. This is
-    rollback for exceptions caught in this process, not a multi-file crash
-    transaction: a process or host crash can retain private `.bak` files and
-    leave different destinations at different committed versions.
+    Before replacing an existing POSIX destination, its old inode is copied from
+    an opened descriptor to a private sibling backup. The destination therefore
+    remains present until one `os.replace` atomically changes it from old bytes
+    to new bytes. This is rollback for exceptions caught in this process, not a
+    multi-file crash transaction: a process or host crash can retain private
+    `.bak` files and leave different destinations at different committed
+    versions.
 
     The supplied destination's resolved path and inode are revalidated right
     before that replacement. A symlink (or symlinked parent) retargeted after
@@ -1611,10 +1690,11 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
     changes the path again after that check remains outside this CLI's locking
     authority.
     """
-    claimed, staged = [], []
-    replaced = []  # (backup, path, original identity) already swapped in
-    pending_backup = None  # reservation which may now hold a hard link
-    pending_swap = None  # backup preserved before a replace which may have run
+    claimed, staged, replaced = [], [], []
+    # A record is the one ownership authority for a pathname: cleanup may
+    # unlink it only while its identity still equals record["identity"].
+    pending_backup = None
+    pending_swap = None
     try:
         for path, _ in targets:
             if os.path.exists(path):
@@ -1626,28 +1706,41 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 handle, temporary = tempfile.mkstemp(
                     dir=os.path.dirname(real_path),
                     prefix=os.path.basename(real_path) + ".", suffix=".part")
-                claimed.append((temporary, handle))
-                staged.append((temporary, path, real_path, _file_identity(real_path)))
+                record = {"path": temporary, "handle": handle,
+                          "identity": _fd_identity(handle)}
+                claimed.append(record)
+                staged.append({"temporary": record, "supplied_path": path,
+                               "real_path": real_path,
+                               "original_identity": _file_identity(real_path)})
             else:
-                claimed.append((path, _open_private(path, accept_inherited)))
+                handle = _open_private(path, accept_inherited)
+                claimed.append({"path": path, "handle": handle,
+                                "identity": _fd_identity(handle)})
         if after_claim is not None:
             after_claim()
-        for index, ((_, text), (where, handle)) in enumerate(zip(targets, claimed)):
-            claimed[index] = (where, None)  # fdopen owns the handle from here
+        for (_, text), record in zip(targets, claimed):
+            where, handle = record["path"], record["handle"]
+            record["handle"] = None  # fdopen owns the handle from here
             with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
                 stream.write(text)
-            os.chmod(where, 0o600)
-        # Every payload is on disk. Each backup is a second link to the old
-        # inode, so creating it never removes the requested destination.
-        for temporary, supplied_path, real_path, original_identity in staged:
+        # Every payload is on disk. A private copy preserves the old bytes while
+        # the requested destination stays present until the atomic replacement.
+        for state in staged:
+            temporary = state["temporary"]
+            supplied_path, real_path = state["supplied_path"], state["real_path"]
+            original_identity = state["original_identity"]
             backup_handle, backup = tempfile.mkstemp(
                 dir=os.path.dirname(real_path),
                 prefix=os.path.basename(real_path) + ".", suffix=".bak")
+            os.fchmod(backup_handle, 0o600)
+            pending_backup = {"path": backup, "handle": backup_handle,
+                              "identity": _fd_identity(backup_handle)}
+            _copy_private_backup(real_path, original_identity, backup_handle)
             os.close(backup_handle)
-            pending_backup = backup
-            os.unlink(backup)
-            os.link(real_path, backup)
-            pending_swap = (backup, real_path, original_identity)
+            pending_backup["handle"] = None
+            pending_swap = {"backup": pending_backup, "destination": real_path,
+                            "original_identity": original_identity,
+                            "staged_identity": temporary["identity"]}
             pending_backup = None
             # The destination stays present until this one atomic replacement.
             # `pending_swap` is set first because an interrupt may arrive after
@@ -1661,7 +1754,12 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                     "output_path_changed",
                     f"{supplied_path} changed after it was claimed; no output was replaced",
                 )
-            os.replace(temporary, real_path)
+            if _entry_identity(temporary["path"]) != temporary["identity"]:
+                raise Refusal(
+                    "output_path_changed",
+                    f"{supplied_path} staged output changed before replacement",
+                )
+            os.replace(temporary["path"], real_path)
             replaced.append(pending_swap)
             pending_swap = None
     except BaseException as error:
@@ -1669,26 +1767,41 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
         # earlier committed swaps. Cleanup failures remain attached to the
         # original exception with their recoverable locations.
         cleanup_failures = []
+        if pending_backup is not None and pending_backup["handle"] is not None:
+            try:
+                os.close(pending_backup["handle"])
+            except OSError:
+                cleanup_failures.append(pending_backup["path"])
+            pending_backup["handle"] = None
         if pending_swap is not None:
-            _restore_backup(*pending_swap, cleanup_failures)
+            backup = pending_swap["backup"]
+            _restore_backup(backup["path"], backup["identity"],
+                            pending_swap["destination"],
+                            pending_swap["original_identity"],
+                            pending_swap["staged_identity"], cleanup_failures)
         if pending_backup is not None:
-            _unlink_for_cleanup(pending_backup, cleanup_failures)
-        for backup, real_path, original_identity in reversed(replaced):
-            _restore_backup(backup, real_path, original_identity, cleanup_failures)
-        for where, handle in claimed:
-            if handle is not None:
+            _unlink_for_cleanup(pending_backup["path"], pending_backup["identity"],
+                                cleanup_failures)
+        for swap in reversed(replaced):
+            backup = swap["backup"]
+            _restore_backup(backup["path"], backup["identity"], swap["destination"],
+                            swap["original_identity"], swap["staged_identity"],
+                            cleanup_failures)
+        for record in claimed:
+            if record["handle"] is not None:
                 try:
-                    os.close(handle)
+                    os.close(record["handle"])
                 except OSError:
-                    cleanup_failures.append(where)
-            _unlink_for_cleanup(where, cleanup_failures)
+                    cleanup_failures.append(record["path"])
+            _unlink_for_cleanup(record["path"], record["identity"], cleanup_failures)
         _note_cleanup_failures(error, cleanup_failures)
         raise
     # A successful replacement is not a successful command if an old statement
     # survives under an undisclosed random name.
     cleanup_failures = []
-    for backup, _, _ in replaced:
-        _unlink_for_cleanup(backup, cleanup_failures)
+    for swap in replaced:
+        backup = swap["backup"]
+        _unlink_for_cleanup(backup["path"], backup["identity"], cleanup_failures)
     if cleanup_failures:
         raise OutputCleanupFailure(cleanup_failures)
 

@@ -1467,19 +1467,19 @@ def test_write_outputs_revalidates_a_symlink_after_backup_preparation(m):
         first.write_text("first old")
         second.write_text("second old")
         link.symlink_to(first)
-        real_link = m.os.link
+        real_copy = m._copy_private_backup
 
-        def retarget_after_backup(src, dst):
-            result = real_link(src, dst)
+        def retarget_after_backup(src, identity, backup_handle):
+            result = real_copy(src, identity, backup_handle)
             link.unlink()
             link.symlink_to(second)
             return result
 
-        m.os.link = retarget_after_backup
+        m._copy_private_backup = retarget_after_backup
         try:
             refuses(m, "output_path_changed", m.write_outputs, [(str(link), "new bytes")])
         finally:
-            m.os.link = real_link
+            m._copy_private_backup = real_copy
 
         assert first.read_text() == "first old"
         assert second.read_text() == "second old"
@@ -1487,45 +1487,54 @@ def test_write_outputs_revalidates_a_symlink_after_backup_preparation(m):
         assert sorted(p.name for p in root.iterdir()) == ["first.xml", "out.xml", "second.xml"]
 
 
-def test_write_outputs_keeps_destination_during_backup_preparation(m):
-    """A backup is a second link to the old inode, so the requested output is
-    still readable until the one atomic replacement. This catches a regression
-    back to moving the destination aside before the replacement is ready."""
+def test_write_outputs_keeps_destination_during_private_backup_preparation(m):
+    """The requested output remains readable while its private backup is made.
+
+    `os.link` deliberately fails here: writable filesystems without hard-link
+    support still need the same caught-exception rollback behavior.
+    """
     with tempfile.TemporaryDirectory() as directory:
         destination = pathlib.Path(directory, "previous.xml")
         destination.write_text("old bytes")
+        real_copy = m._copy_private_backup
         real_link = m.os.link
         observed = []
 
-        def link_while_observing(src, dst):
-            result = real_link(src, dst)
+        def copy_while_observing(src, identity, backup_handle):
+            result = real_copy(src, identity, backup_handle)
             observed.append((destination.exists(), destination.read_text()))
             return result
 
-        m.os.link = link_while_observing
+        m._copy_private_backup = copy_while_observing
+        m.os.link = lambda *_: (_ for _ in ()).throw(OSError("hard links unavailable"))
         try:
             m.write_outputs([(str(destination), "new bytes")])
         finally:
+            m._copy_private_backup = real_copy
             m.os.link = real_link
 
         assert observed == [(True, "old bytes")]
         assert destination.read_text() == "new bytes"
 
 
-def test_an_interrupt_after_a_backup_link_preserves_the_previous_output(m):
-    """Unlike a rename-to-backup, an interrupt after hard-link creation leaves
-    the requested destination intact; the exception cleanup may remove only the
-    extra link."""
+def test_an_interrupt_after_private_backup_preserves_the_previous_output(m):
+    """The exclusive backup is private while interruption can still occur, and
+    cleanup removes only that owned copy while leaving the destination intact."""
     with tempfile.TemporaryDirectory() as directory:
         destination = pathlib.Path(directory, "previous.xml")
         destination.write_text("old bytes")
-        real_link = m.os.link
+        root = pathlib.Path(directory)
+        real_copy = m._copy_private_backup
+        modes = []
 
-        def interrupt_after_backup_link(src, dst):
-            result = real_link(src, dst)
-            raise KeyboardInterrupt("controlled interrupt after backup link")
+        def interrupt_after_backup_copy(src, identity, backup_handle):
+            result = real_copy(src, identity, backup_handle)
+            backups = list(root.glob("*.bak"))
+            assert len(backups) == 1
+            modes.append(stat.S_IMODE(backups[0].stat().st_mode))
+            raise KeyboardInterrupt("controlled interrupt after private backup")
 
-        m.os.link = interrupt_after_backup_link
+        m._copy_private_backup = interrupt_after_backup_copy
         try:
             try:
                 m.write_outputs([(str(destination), "new bytes")])
@@ -1533,8 +1542,9 @@ def test_an_interrupt_after_a_backup_link_preserves_the_previous_output(m):
             except KeyboardInterrupt:
                 pass
         finally:
-            m.os.link = real_link
+            m._copy_private_backup = real_copy
 
+        assert modes == [0o600]
         assert destination.read_text() == "old bytes"
         assert sorted(p.name for p in pathlib.Path(directory).iterdir()) == ["previous.xml"]
 
@@ -1621,19 +1631,19 @@ with tempfile.TemporaryDirectory() as directory:
     first.write_text("first old")
     second.write_text("second old")
     link.symlink_to(first)
-    real_link = module.os.link
+    real_copy = module._copy_private_backup
     real_cleanup = module._unlink_for_cleanup
-    def retarget_after_backup(src, dst):
-        result = real_link(src, dst)
+    def retarget_after_backup(src, identity, backup_handle):
+        result = real_copy(src, identity, backup_handle)
         link.unlink()
         link.symlink_to(second)
         return result
-    def retain_backup(path, failures):
+    def retain_backup(path, identity, failures):
         if str(path).endswith(".bak"):
             failures.append(path)
         else:
-            real_cleanup(path, failures)
-    module.os.link = retarget_after_backup
+            real_cleanup(path, identity, failures)
+    module._copy_private_backup = retarget_after_backup
     module._unlink_for_cleanup = retain_backup
     module.write_outputs([(str(link), "new bytes")])
 '''
@@ -1664,7 +1674,6 @@ def test_a_failed_swap_rolls_back_every_staged_replacement(m):
         def flaky_replace(src, dst):
             calls["n"] += 1
             # The first destination's swap lands, then the second swap fails.
-            # Its backup is a hard link, so only the replacement calls count.
             if calls["n"] == 2:
                 raise OSError("simulated failure mid-sequence")
             return real_replace(src, dst)
@@ -1687,6 +1696,95 @@ def test_a_failed_swap_rolls_back_every_staged_replacement(m):
         assert sorted(p.name for p in pathlib.Path(directory).iterdir()) == \
             ["first.xml", "second.csv"], \
             sorted(p.name for p in pathlib.Path(directory).iterdir())
+
+
+def test_backup_copy_refuses_a_replaced_original_before_commit(m):
+    """Rollback bytes need the original inode's provenance, not whatever
+    happened to occupy its name while the private copy was being prepared."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "previous.xml"
+        replacement = root / "foreign.xml"
+        destination.write_text("old bytes")
+        replacement.write_text("foreign writer bytes")
+        real_copy = m._copy_private_backup
+        real_replace = m.os.replace
+
+        def replace_before_copy(src, identity, backup_handle):
+            real_replace(replacement, destination)
+            return real_copy(src, identity, backup_handle)
+
+        m._copy_private_backup = replace_before_copy
+        try:
+            refuses(m, "output_path_changed", m.write_outputs,
+                    [(str(destination), "new bytes")])
+        finally:
+            m._copy_private_backup = real_copy
+
+        assert destination.read_text() == "foreign writer bytes"
+        assert sorted(path.name for path in root.iterdir()) == ["previous.xml"]
+
+
+def test_cleanup_keeps_a_reclaimed_owned_path(m):
+    """A cleanup record proves only the path our run made. If that pathname
+    changes identity, reporting it is safe; unlinking it is not."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        owned = root / "output.xml.pending"
+        foreign = root / "foreign.xml"
+        owned.write_text("our temporary bytes")
+        identity = m._entry_identity(owned)
+        foreign.write_text("foreign writer bytes")
+        os.replace(foreign, owned)
+        failures = []
+
+        m._unlink_for_cleanup(owned, identity, failures)
+
+        assert owned.read_text() == "foreign writer bytes"
+        assert failures == [str(owned)]
+
+
+def test_rollback_keeps_a_foreign_destination_and_private_backup(m):
+    """When an external writer replaces an already-swapped destination before
+    another target fails, rollback must retain the owned backup rather than
+    overwriting that writer's bytes."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first = root / "first.xml"
+        second = root / "second.csv"
+        foreign = root / "foreign.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_replace = m.os.replace
+
+        def replace_then_conflict(src, dst):
+            if str(src).endswith(".part") and os.path.basename(dst) == "first.xml":
+                result = real_replace(src, dst)
+                foreign.write_text("foreign writer bytes")
+                real_replace(foreign, first)
+                return result
+            if str(src).endswith(".part") and os.path.basename(dst) == "second.csv":
+                raise OSError("simulated failure after foreign writer")
+            return real_replace(src, dst)
+
+        m.os.replace = replace_then_conflict
+        try:
+            try:
+                m.write_outputs([(str(first), "new first"),
+                                 (str(second), "new second")])
+                raise AssertionError("the second target's swap must fail")
+            except OSError as error:
+                assert any(str(path).endswith(".bak")
+                           for path in getattr(error, "__notes__", []))
+        finally:
+            m.os.replace = real_replace
+
+        backups = list(root.glob("first.xml.*.bak"))
+        assert len(backups) == 1
+        assert stat.S_IMODE(backups[0].stat().st_mode) == 0o600
+        assert backups[0].read_text() == "first old"
+        assert first.read_text() == "foreign writer bytes"
+        assert second.read_text() == "second old"
 
 
 def test_a_case_insensitive_collision_is_refused_before_anything_is_written(m):
