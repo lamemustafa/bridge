@@ -75,7 +75,7 @@ die() { echo "$1" >&2; exit 2; }
 # outer shape before extracting fields so jq errors cannot become empty values.
 : >"$errfile"
 if ! meta=$(gh pr view "$PR" --repo "$REPO" \
-        --json headRefOid,baseRefName,mergeable,mergeStateStatus,isDraft,state,body 2>"$errfile"); then
+        --json headRefOid,baseRefName,mergeable,mergeStateStatus,isDraft,state,body,changedFiles 2>"$errfile"); then
   die "could not read PR #$PR in $REPO"
 fi
 if ! jq -e '
@@ -85,7 +85,8 @@ if ! jq -e '
   (.mergeable | type == "string") and
   (.mergeStateStatus | type == "string") and
   (.isDraft | type == "boolean") and
-  (.state | type == "string")
+  (.state | type == "string") and
+  (.changedFiles | type == "number" and floor == . and . >= 0)
 ' <<<"$meta" >/dev/null 2>&1; then
   die "PR metadata was not a valid complete JSON object"
 fi
@@ -95,6 +96,7 @@ mergeable=$(jq -r '.mergeable' <<<"$meta")
 mstate=$(jq -r '.mergeStateStatus' <<<"$meta")
 draft=$(jq -r '.isDraft' <<<"$meta")
 pstate=$(jq -r '.state' <<<"$meta")
+changed_files_expected=$(jq -r '.changedFiles' <<<"$meta")
 short=${head:0:7}
 prbody=$(jq -r '.body // ""' <<<"$meta")
 
@@ -173,7 +175,7 @@ else
   # check explicit because jq's precedence is easy to misread in a gate.
   if ! jq -e 'all(.[]; (.bucket == "pass" or .bucket == "fail" or .bucket == "pending" or .bucket == "skipping" or .bucket == "cancel"))' <<<"$buckets" >/dev/null 2>&1; then
     unknown "checks query contained an unknown bucket"
-  elif [ "$check_status" -ne 0 ] && [ "$(jq '[.[] | select(.bucket == "fail" or .bucket == "cancel" or .bucket == "pending" or .bucket == "skipping")] | length' <<<"$buckets")" -eq 0 ]; then
+  elif [ "$check_status" -ne 0 ] && [ "$(jq '[.[] | select(.bucket == "fail" or .bucket == "cancel" or .bucket == "pending")] | length' <<<"$buckets")" -eq 0 ]; then
     unknown "checks command failed even though no failing or pending result was returned"
   elif [ "$(jq 'length' <<<"$buckets")" -eq 0 ]; then
     bad "no checks reported for this PR"
@@ -194,8 +196,10 @@ else
         *) bad "required check '$context' is not passing ($context_state)"; check_bad=1 ;;
       esac
     done <<<"$required_contexts"
-    all_bad=$(jq '[.[] | select(.bucket == "fail" or .bucket == "cancel" or .bucket == "pending" or .bucket == "skipping")] | length' <<<"$buckets")
-    [ "$all_bad" -eq 0 ] || bad "$all_bad reported check(s) are failing, cancelled, pending, or skipped"
+    all_bad=$(jq '[.[] | select(.bucket == "fail" or .bucket == "cancel" or .bucket == "pending")] | length' <<<"$buckets")
+    skipped=$(jq '[.[] | select(.bucket == "skipping")] | length' <<<"$buckets")
+    [ "$all_bad" -eq 0 ] || bad "$all_bad reported check(s) are failing, cancelled, or pending"
+    [ "$skipped" -eq 0 ] || say "note" "$skipped optional check(s) are skipped; required skipped contexts remain blocking"
     [ "$check_bad" -eq 0 ] && [ "$all_bad" -eq 0 ] && say "ok" "all reported checks concluded successfully"
   fi
 fi
@@ -256,6 +260,7 @@ fi
 cursor=""
 open_threads=0
 total_threads=0
+fetched_threads=0
 thread_ok=1
 while :; do
   : >"$errfile"
@@ -284,7 +289,16 @@ while :; do
     thread_ok=0
     break
   fi
-  if [ "$total_threads" -eq 0 ]; then total_threads=$(jq -r '.data.repository.pullRequest.reviewThreads.totalCount' <<<"$page"); fi
+  page_total=$(jq -r '.data.repository.pullRequest.reviewThreads.totalCount' <<<"$page")
+  if [ "$total_threads" -eq 0 ]; then
+    total_threads="$page_total"
+  elif [ "$page_total" -ne "$total_threads" ]; then
+    unknown "review-thread totalCount changed during pagination"
+    thread_ok=0
+    break
+  fi
+  page_nodes=$(jq '.data.repository.pullRequest.reviewThreads.nodes | length' <<<"$page")
+  fetched_threads=$((fetched_threads + page_nodes))
   page_open=$(jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length' <<<"$page")
   open_threads=$((open_threads + page_open))
   has_next=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$page")
@@ -298,19 +312,30 @@ while :; do
   cursor="$next_cursor"
 done
 if [ "$thread_ok" -eq 1 ]; then
-  if [ "$open_threads" -eq 0 ]; then
+  if [ "$fetched_threads" -ne "$total_threads" ]; then
+    unknown "review-thread pagination returned $fetched_threads of $total_threads nodes"
+  elif [ "$open_threads" -eq 0 ]; then
     say "ok" "0 of $total_threads review threads unresolved"
   else
     bad "$open_threads of $total_threads review threads unresolved"
   fi
 fi
 
-# Require an actual markdown link and a completed checkbox. Matching the words
-# review-checklist alone accepted a description that did not satisfy AGENTS.md.
-if ! grep -Eiq '\[[^]]*review-checklist\.md[^]]*\]\([^)]*review-checklist\.md([^)]*)?\)' <<<"$prbody"; then
-  bad "description does not link review-checklist.md"
-elif ! grep -Eiq '^[[:space:]]*-[[:space:]]*\[[xX]\]' <<<"$prbody"; then
-  bad "description has no completed review-checklist item"
+# Require a completed checkbox whose same-repository link points at a specific
+# checklist line. A filename in prose, a link to another repository, or a
+# checked item beside an unrelated link is not completion evidence.
+checklist_link_ok() {
+  local body="$1" line
+  while IFS= read -r line; do
+    if printf '%s\n' "$line" | grep -Eiq \
+      "^[[:space:]]*-[[:space:]]*\\[[xX]\\][[:space:]].*\\]\\(https://github\\.com/${OWNER}/${NAME}/blob/[^)]*/review-checklist\\.md#L[0-9]+\\)"; then
+      return 0
+    fi
+  done <<<"$body"
+  return 1
+}
+if ! checklist_link_ok "$prbody"; then
+  bad "description lacks a completed same-repository line-specific review-checklist link"
 else
   say "ok" "description links a completed review-checklist item"
 fi
@@ -320,12 +345,29 @@ fi
 : >"$errfile"
 files_status=0
 files=$(gh api --paginate --slurp "repos/$REPO/pulls/$PR/files?per_page=100" 2>"$errfile") || files_status=$?
-if [ "$files_status" -ne 0 ] || ! jq -e 'type == "array" and all(.[]; type == "array" or type == "object")' <<<"$files" >/dev/null 2>&1; then
+if [ "$files_status" -ne 0 ] || ! jq -e '
+  type == "array" and
+  (all(.[]; type == "array" and all(.[];
+      type == "object" and
+      (.filename | type == "string" and length > 0) and
+      (.status | type == "string" and length > 0))) or
+   all(.[]; type == "object" and
+      (.filename | type == "string" and length > 0) and
+      (.status | type == "string" and length > 0)))
+' <<<"$files" >/dev/null 2>&1; then
   unknown "could not read the complete changed-file set"
   changed=""
 else
   changed=$(jq -r '(if all(.[]; type == "array") then flatten else . end)[] | .filename // empty' <<<"$files")
-  if [ -z "$changed" ]; then unknown "changed-file response contained no filenames"; fi
+  changed_count=$(wc -l <<<"$changed" | tr -d ' ')
+  unique_changed_count=$(sort -u <<<"$changed" | wc -l | tr -d ' ')
+  if [ "$changed_count" -eq 0 ]; then
+    unknown "changed-file response contained no filenames"
+  elif [ "$changed_files_expected" -gt 3000 ]; then
+    unknown "PR reports $changed_files_expected changed files beyond the REST files API cap"
+  elif [ "$changed_count" -ne "$changed_files_expected" ] || [ "$unique_changed_count" -ne "$changed_count" ]; then
+    unknown "changed-file response has $changed_count unique records; PR metadata reports $changed_files_expected"
+  fi
 fi
 
 # Read and validate the surface as a required object. Any transport, decoding,
@@ -440,8 +482,8 @@ fi
 : >"$errfile"
 final_meta_status=0
 final_meta=$(gh pr view "$PR" --repo "$REPO" \
-  --json headRefOid,baseRefName,mergeable,mergeStateStatus,isDraft,state,body 2>"$errfile") || final_meta_status=$?
-if [ "$final_meta_status" -ne 0 ] || ! jq -e 'type == "object" and (.headRefOid | type == "string") and (.baseRefName | type == "string") and (.mergeable | type == "string") and (.mergeStateStatus | type == "string") and (.isDraft | type == "boolean") and (.state | type == "string")' <<<"$final_meta" >/dev/null 2>&1; then
+  --json headRefOid,baseRefName,mergeable,mergeStateStatus,isDraft,state,body,changedFiles 2>"$errfile") || final_meta_status=$?
+if [ "$final_meta_status" -ne 0 ] || ! jq -e 'type == "object" and (.headRefOid | type == "string") and (.baseRefName | type == "string") and (.mergeable | type == "string") and (.mergeStateStatus | type == "string") and (.isDraft | type == "boolean") and (.state | type == "string") and (.changedFiles | type == "number" and floor == . and . >= 0)' <<<"$final_meta" >/dev/null 2>&1; then
   unknown "could not revalidate PR head and base before merge"
 else
   final_head=$(jq -r '.headRefOid' <<<"$final_meta")
@@ -450,17 +492,21 @@ else
   final_state=$(jq -r '.mergeStateStatus' <<<"$final_meta")
   final_draft=$(jq -r '.isDraft' <<<"$final_meta")
   final_pstate=$(jq -r '.state' <<<"$final_meta")
+  final_changed_files=$(jq -r '.changedFiles' <<<"$final_meta")
   [ "$final_head" = "$head" ] || bad "PR head moved during preflight"
   [ "$final_base" = "$base" ] || bad "PR base moved during preflight"
   [ "$final_mergeable" = "MERGEABLE" ] || bad "PR mergeability changed to $final_mergeable during preflight"
   [ "$final_draft" = "false" ] || bad "PR became draft during preflight"
   [ "$final_pstate" = "OPEN" ] || bad "PR state changed to $final_pstate during preflight"
+  [ "$final_changed_files" = "$changed_files_expected" ] || bad "PR changed-file count moved during preflight"
   case "$final_state" in
+    CLEAN|HAS_HOOKS) : ;;
     BEHIND|DIRTY|UNKNOWN|BLOCKED|UNSTABLE) bad "PR merge state changed to $final_state during preflight" ;;
+    *) unknown "PR merge state changed to unrecognised value '$final_state' during preflight" ;;
   esac
   final_body=$(jq -r '.body // ""' <<<"$final_meta")
-  if ! grep -Eiq '\[[^]]*review-checklist\.md[^]]*\]\([^)]*review-checklist\.md([^)]*)?\)' <<<"$final_body" || ! grep -Eiq '^[[:space:]]*-[[:space:]]*\[[xX]\]' <<<"$final_body"; then
-    bad "PR description changed and no longer carries a completed checklist link"
+  if ! checklist_link_ok "$final_body"; then
+    bad "PR description changed and no longer carries a completed same-repository line-specific checklist link"
   fi
 fi
 if [ -n "$base_tip" ]; then

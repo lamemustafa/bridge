@@ -41,16 +41,23 @@ if args[:2] == ["pr", "view"]:
         with open(counter_path, "w") as counter:
             counter.write(str(view_count + 1))
     selected_head = new_head if scenario == "head-moves" and view_count > 0 else head
+    final_state = "UNKNOWN_VALUE" if scenario == "final-unrecognized" and view_count > 0 else ("BLOCKED" if scenario == "blocked-state" else "CLEAN")
+    body = "- [x] [Errors](https://github.com/example/repo/blob/HEAD/review-checklist.md#L10)"
+    if scenario == "checklist-foreign":
+        body = "- [x] [Errors](https://github.com/other/repo/blob/HEAD/review-checklist.md#L10)"
+    elif scenario == "checklist-unlinked":
+        body = "- [x] review-checklist.md line 10"
     emit({"headRefOid": selected_head, "baseRefName": "master",
-          "mergeable": "MERGEABLE", "mergeStateStatus":
-          "BLOCKED" if scenario == "blocked-state" else "CLEAN",
+          "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
           "isDraft": False, "state": "OPEN",
-          "body": "[review-checklist.md](../blob/master/review-checklist.md)\n- [x] evidence"})
+          "body": body, "changedFiles": 2})
 elif args[:2] == ["pr", "checks"]:
     if scenario == "checks-silent":
         raise SystemExit(0)
     if scenario == "cancel-check":
         emit([{"bucket": "cancel", "name": "Required checks"}])
+    elif scenario == "required-skip":
+        emit([{"bucket": "skipping", "name": "Required checks"}, {"bucket": "pass", "name": "Rust format"}])
     elif scenario == "missing-required":
         emit([{"bucket": "pass", "name": "Required checks"}])
     else:
@@ -58,7 +65,8 @@ elif args[:2] == ["pr", "checks"]:
               {"bucket": "pass", "name": "Rust format"},
               {"bucket": "pass", "name": "GitGuardian Security Checks"},
               {"bucket": "pass", "name": "Dependency security"},
-              {"bucket": "pass", "name": "Required checks"}])
+              {"bucket": "pass", "name": "Required checks"},
+              {"bucket": "skipping", "name": "Optional documentation"}])
 elif args[:2] == ["pr", "diff"]:
     if scenario == "formatted-phone":
         emit("diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+Call +91 98765-43210\n")
@@ -72,10 +80,17 @@ elif args and args[0] == "api":
     joined = " ".join(args)
     if "graphql" in args:
         has_cursor = "C1" in joined
+        if scenario == "threads-short":
+            nodes, page_info = [{"isResolved": True}], {"hasNextPage": False, "endCursor": None}
+        elif scenario == "threads-malformed-pagination":
+            nodes, page_info = ([{"isResolved": True}] * 100), {"hasNextPage": True, "endCursor": None}
+        elif has_cursor:
+            nodes, page_info = [{"isResolved": scenario != "threads-unresolved-second"}], {"hasNextPage": False, "endCursor": None}
+        else:
+            nodes, page_info = ([{"isResolved": True}] * 100), {"hasNextPage": True, "endCursor": "C1"}
         emit({"data": {"repository": {"pullRequest": {"reviewThreads": {
-            "totalCount": 101 if not has_cursor else 101,
-            "pageInfo": {"hasNextPage": False, "endCursor": None},
-            "nodes": ([{"isResolved": True}] if not has_cursor else [{"isResolved": True}])
+            "totalCount": 102 if scenario == "threads-total-drift" and has_cursor else 101,
+            "pageInfo": page_info, "nodes": nodes
         }}}}})
     elif "branches/master/protection/required_status_checks" in joined:
         contexts = ["Required checks", "Rust format"] if scenario == "missing-required" else [
@@ -97,7 +112,14 @@ elif args and args[0] == "api":
         else:
             emit([[]])
     elif "/pulls/321/files" in joined:
-        emit([[{"filename": "docs/example.md"}], [{"filename": "docs/second.md"}]])
+        if scenario == "malformed-files":
+            emit([[{"filename": "docs/example.md", "status": "added"}], [{"filename": 3, "status": "modified"}]])
+        elif scenario == "missing-file-status":
+            emit([[{"filename": "docs/example.md", "status": "added"}], [{"filename": "docs/second.md"}]])
+        elif scenario == "files-count-mismatch":
+            emit([[{"filename": "docs/example.md", "status": "added"}]])
+        else:
+            emit([[{"filename": "docs/example.md", "status": "added"}], [{"filename": "docs/second.md", "status": "modified"}]])
     elif "/contents/" in joined:
         if scenario == "surface-fail":
             fail("controlled surface read failure")
@@ -162,11 +184,19 @@ class MergeGateControls(unittest.TestCase):
         self.assertIn("MAY MERGE", result.stdout)
         self.assertIn("--match-head-commit 0123456789abcdef0123456789abcdef01234567", result.stdout)
 
+    def test_optional_skipped_check_does_not_block(self):
+        result = self.run_gate()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("optional check(s) are skipped", result.stdout)
+
+    def test_required_skipped_check_blocks(self):
+        self.assert_blocked("required-skip", "required check 'Required checks' is not passing")
+
     def test_missing_required_context_blocks(self):
         self.assert_blocked("missing-required", "required check 'Rust format' was not reported")
 
     def test_cancelled_check_blocks(self):
-        self.assert_blocked("cancel-check", "cancelled, pending, or skipped")
+        self.assert_blocked("cancel-check", "failing, cancelled, or pending")
 
     def test_surface_transport_failure_is_indeterminate(self):
         self.assert_indeterminate("surface-fail", "could not read compatibility surface")
@@ -179,6 +209,21 @@ class MergeGateControls(unittest.TestCase):
 
     def test_blocked_merge_state_cannot_pass(self):
         self.assert_blocked("blocked-state", "merge state BLOCKED")
+
+    def test_unrecognised_final_merge_state_is_indeterminate(self):
+        self.assert_indeterminate("final-unrecognized", "unrecognised value")
+
+    def test_short_thread_page_is_indeterminate(self):
+        self.assert_indeterminate("threads-short", "returned 1 of 101 nodes")
+
+    def test_unresolved_second_thread_page_blocks(self):
+        self.assert_blocked("threads-unresolved-second", "1 of 101 review threads unresolved")
+
+    def test_malformed_thread_pagination_is_indeterminate(self):
+        self.assert_indeterminate("threads-malformed-pagination", "no advancing cursor")
+
+    def test_thread_total_drift_is_indeterminate(self):
+        self.assert_indeterminate("threads-total-drift", "totalCount changed")
 
     def test_head_change_is_blocked(self):
         self.assert_blocked("head-moves", "PR head moved during preflight")
@@ -195,6 +240,21 @@ class MergeGateControls(unittest.TestCase):
 
     def test_malformed_surface_is_indeterminate(self):
         self.assert_indeterminate("surface-malformed", "compatibility surface could not be decoded")
+
+    def test_malformed_changed_file_is_indeterminate(self):
+        self.assert_indeterminate("malformed-files", "could not read the complete changed-file set")
+
+    def test_missing_changed_file_status_is_indeterminate(self):
+        self.assert_indeterminate("missing-file-status", "could not read the complete changed-file set")
+
+    def test_changed_file_count_mismatch_is_indeterminate(self):
+        self.assert_indeterminate("files-count-mismatch", "changed-file response has")
+
+    def test_foreign_checklist_link_blocks(self):
+        self.assert_blocked("checklist-foreign", "same-repository line-specific")
+
+    def test_unlinked_checklist_text_blocks(self):
+        self.assert_blocked("checklist-unlinked", "same-repository line-specific")
 
 
 if __name__ == "__main__":
