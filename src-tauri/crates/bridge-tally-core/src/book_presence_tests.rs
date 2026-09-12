@@ -1617,14 +1617,38 @@ fn a_window_bounds_aggregate_ledger_key_bytes_before_indexing() {
     );
 }
 
-#[test]
-fn an_ambiguous_narration_bounds_raw_occurrences_before_cloning() {
+fn ambiguous_marker_voucher(
+    voucher_position: usize,
+    marker_count: usize,
+    entries: &[ObservedEntry<'static>],
+) -> BookVoucher {
     let markers = Box::leak(
-        (0..=MAX_AMBIGUOUS_MARKERS_PER_VOUCHER)
-            .map(|_| "marker")
+        (0..marker_count)
+            .map(|marker_position| {
+                Box::leak(
+                    format!("marker-{voucher_position:04}-{marker_position:02}").into_boxed_str(),
+                ) as &'static str
+            })
             .collect::<Vec<_>>()
             .into_boxed_slice(),
     ) as &'static [&'static str];
+    BookVoucher::observed(ObservedVoucher {
+        key: Box::leak(format!("book-{voucher_position:04}").into_boxed_str()),
+        date: "20260812",
+        voucher_type: "Sales",
+        voucher_number: None,
+        remote_id: None,
+        party: None,
+        marker: ObservedMarker::Unidentified(markers),
+        entries,
+        cancelled: false,
+        optional: false,
+    })
+    .expect("voucher below its own ambiguous-marker bound")
+}
+
+#[test]
+fn an_ambiguous_narration_bounds_raw_occurrences_before_cloning() {
     let entries = [
         ObservedEntry {
             ledger: "Alpha Traders",
@@ -1635,15 +1659,43 @@ fn an_ambiguous_narration_bounds_raw_occurrences_before_cloning() {
             amount: "1.00",
         },
     ];
-    assert_eq!(
+    let at_limit = Box::leak(
+        (0..MAX_AMBIGUOUS_MARKERS_PER_VOUCHER)
+            .map(|_| "marker")
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    ) as &'static [&'static str];
+    assert!(
         BookVoucher::observed(ObservedVoucher {
-            key: "book-1",
+            key: "book-at-limit",
             date: "20260812",
             voucher_type: "Sales",
             voucher_number: None,
             remote_id: None,
             party: None,
-            marker: ObservedMarker::Unidentified(markers),
+            marker: ObservedMarker::Unidentified(at_limit),
+            entries: &entries,
+            cancelled: false,
+            optional: false,
+        })
+        .is_ok(),
+        "the declared raw marker limit remains admitted"
+    );
+    let over_limit = Box::leak(
+        (0..=MAX_AMBIGUOUS_MARKERS_PER_VOUCHER)
+            .map(|_| "marker")
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    ) as &'static [&'static str];
+    assert_eq!(
+        BookVoucher::observed(ObservedVoucher {
+            key: "book-over-limit",
+            date: "20260812",
+            voucher_type: "Sales",
+            voucher_number: None,
+            remote_id: None,
+            party: None,
+            marker: ObservedMarker::Unidentified(over_limit),
             entries: &entries,
             cancelled: false,
             optional: false,
@@ -1665,35 +1717,38 @@ fn a_window_bounds_aggregate_ambiguous_marker_memberships_before_indexing() {
             amount: "1.00",
         },
     ];
-    let vouchers =
-        (0..(MAX_WINDOW_AMBIGUOUS_MARKER_MEMBERSHIPS / MAX_AMBIGUOUS_MARKERS_PER_VOUCHER + 1))
-            .map(|voucher_position| {
-                let markers = Box::leak(
-                    (0..MAX_AMBIGUOUS_MARKERS_PER_VOUCHER)
-                        .map(|marker_position| {
-                            Box::leak(
-                                format!("marker-{voucher_position:04}-{marker_position:02}")
-                                    .into_boxed_str(),
-                            ) as &'static str
-                        })
-                        .collect::<Vec<_>>()
-                        .into_boxed_slice(),
-                ) as &'static [&'static str];
-                BookVoucher::observed(ObservedVoucher {
-                    key: Box::leak(format!("book-{voucher_position:04}").into_boxed_str()),
-                    date: "20260812",
-                    voucher_type: "Sales",
-                    voucher_number: None,
-                    remote_id: None,
-                    party: None,
-                    marker: ObservedMarker::Unidentified(markers),
-                    entries: &entries,
-                    cancelled: false,
-                    optional: false,
-                })
-                .expect("voucher below its own ambiguous-marker bound")
-            })
-            .collect();
+    let full_vouchers = MAX_WINDOW_AMBIGUOUS_MARKER_MEMBERSHIPS / MAX_AMBIGUOUS_MARKERS_PER_VOUCHER;
+    let remainder = MAX_WINDOW_AMBIGUOUS_MARKER_MEMBERSHIPS % MAX_AMBIGUOUS_MARKERS_PER_VOUCHER;
+    let mut vouchers = (0..full_vouchers)
+        .map(|voucher_position| {
+            ambiguous_marker_voucher(
+                voucher_position,
+                MAX_AMBIGUOUS_MARKERS_PER_VOUCHER,
+                &entries,
+            )
+        })
+        .collect::<Vec<_>>();
+    if remainder > 0 {
+        vouchers.push(ambiguous_marker_voucher(full_vouchers, remainder, &entries));
+    }
+    assert_eq!(
+        vouchers
+            .iter()
+            .map(|voucher| voucher.ambiguous_markers.len())
+            .sum::<usize>(),
+        MAX_WINDOW_AMBIGUOUS_MARKER_MEMBERSHIPS,
+        "fixture reaches the aggregate membership boundary"
+    );
+    assert!(BookWindow::observed(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::Observed,
+        narration_evidence: ColumnEvidence::Observed,
+        vouchers: vouchers.clone(),
+    })
+    .is_ok());
+    vouchers.push(ambiguous_marker_voucher(full_vouchers + 1, 1, &entries));
     assert_eq!(
         BookWindow::observed(ObservedWindow {
             from: "20260801",
@@ -1720,7 +1775,7 @@ fn a_window_bounds_aggregate_ambiguous_marker_key_bytes_before_indexing() {
             amount: "1.00",
         },
     ];
-    let vouchers = (0..(MAX_WINDOW_AMBIGUOUS_MARKER_KEY_BYTES / MAX_TEXT_CHARS + 1))
+    let vouchers: Vec<_> = (0..(MAX_WINDOW_AMBIGUOUS_MARKER_KEY_BYTES / MAX_TEXT_CHARS + 1))
         .map(|position| {
             let marker = Box::leak(
                 format!("{position:05}{}", "x".repeat(MAX_TEXT_CHARS - 5)).into_boxed_str(),
@@ -1741,6 +1796,20 @@ fn a_window_bounds_aggregate_ambiguous_marker_key_bytes_before_indexing() {
             .expect("voucher below its own marker bounds")
         })
         .collect();
+    let admitted = MAX_WINDOW_AMBIGUOUS_MARKER_KEY_BYTES / MAX_TEXT_CHARS;
+    assert_eq!(
+        admitted * MAX_TEXT_CHARS,
+        MAX_WINDOW_AMBIGUOUS_MARKER_KEY_BYTES
+    );
+    assert!(BookWindow::observed(ObservedWindow {
+        from: "20260801",
+        to: "20260831",
+        read: WindowRead::Complete,
+        remote_id_evidence: ColumnEvidence::Observed,
+        narration_evidence: ColumnEvidence::Observed,
+        vouchers: vouchers[..admitted].to_vec(),
+    })
+    .is_ok());
     assert_eq!(
         BookWindow::observed(ObservedWindow {
             from: "20260801",
@@ -1785,7 +1854,7 @@ fn every_error_carries_a_distinct_stable_reason_code() {
     .iter()
     .map(PresenceError::safe_reason_code)
     .collect::<BTreeSet<_>>();
-    assert_eq!(codes.len(), 20);
+    assert_eq!(codes.len(), 23);
     assert!(codes.iter().all(|code| code.starts_with("presence_")));
 }
 

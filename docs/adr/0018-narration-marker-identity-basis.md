@@ -98,10 +98,18 @@ the fraction of it that happens to look wrong.
 
 Such a voucher is still a Bridge write, and losing that fact silently would be
 its own defect. So the window reports `unidentified_bridge_writes`: a count of
-rows carrying a reserved marker that could not identify one. It is a book
-observation for a person, not a status — a row that also resembles a proposal
-already surfaces as a candidate under ADR 0017's existing resemblance rules,
-and that is the proportionate response. A count does not need a new rule.
+rows carrying a reserved marker that could not identify one. Its well-formed
+occurrences remain **non-decisive** `SharedNarrationMarker` candidates. An
+occurrence on a different voucher conflicts with a manual-number, `REMOTEID`,
+or identifying-marker selection rather than being discarded; an occurrence on
+the selected voucher decides nothing by itself. Neither case can promote the
+ambiguous narration to identity.
+
+The core accepts at most 64 raw occurrences from one ambiguous narration before
+cloning any value, then admits at most 100,000 retained marker memberships and
+4 MiB of marker-key bytes across a window before building the marker index.
+Excess is a typed refusal, never truncation, so the withheld evidence cannot be
+silently lost to an allocation limit.
 
 ### 4. Whether the column was read is a fact about the read
 
