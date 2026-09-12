@@ -260,13 +260,10 @@ test("clears saved status when a proposal changes after saving", async () => {
   root.unmount();
 });
 
-test("groups and lists a catalogue of realistic size without losing the narrowing", async () => {
-  // The captured catalogue is nine ledgers, which is a real shape but not a
-  // real size; the fabricated ones here are three. A live company's ledger
-  // count runs into the thousands, and that is where narrowing earns its place
-  // — and where a defect in it would be invisible at three targets. Size is
-  // the one dimension of this control that a capture cannot supply, because
-  // no lab company has thousands of ledgers.
+test("groups and lists a synthetic stress catalogue without losing the narrowing", async () => {
+  // Synthetic stress bound only: these generated targets exercise narrowing
+  // and rendering at 2,000 entries. They are not a captured catalogue and do
+  // not establish a live company's ledger count or production performance.
   const bulk = Array.from({ length: 2_000 }, (_, index) => `Bulk placeholder ledger ${String(index).padStart(4, "0")}`);
   const large = {
     ...catalog,
