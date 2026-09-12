@@ -49,7 +49,8 @@ STILL NON-NEGOTIABLE (unchanged):
 - Exact decimals only; never floating point for amounts.
 - A failed/partial/cancelled run never advances a verified checkpoint.
 - "Posted" is never claimed from counters alone; only from readback.
-- No automatic retry of writes without an idempotency probe first.
+- No automatic resend after an unknown write outcome. Retain the original batch
+  identity and use read-only outcome reconciliation; an inconclusive result stays held.
 - Deletion tombstones only from complete, verified scans.
 - Only synthetic test data. Never commit/log raw books data, GSTINs, PANs,
   narrations, credentials, usernames, or machine paths.
@@ -698,20 +699,18 @@ Implement — write core (masters):
    separator fold is permitted on top of exact codepoints is decided by
    the SCOPE GATE above and by nothing in this sentence. On an
    unqualified licensed SKU that leaves exact codepoints and nothing else.
-5. OutcomeUnknown recovery: on restart, DISPATCHING rows → probe by key +
-   fingerprint. A probe MATCH is not itself a confirmation: run the SAME
-   full field-level readback diff as the normal dispatch path (step 4) and
-   resolve to `CONFIRMED` or `CONFIRMED_WITH_DIVERGENCE` — never promote to
-   `CONFIRMED` on key+fingerprint alone (Tally can retain both identifiers
-   while normalizing/dropping other fields, which would report a divergent
-   write as clean). Re-dispatch ONLY on an unambiguous ABSENCE PROOF that
-   cannot be confused with an edited prior write: because a crash can be
-   followed by a foreign edit that changes the narration and a fingerprint
-   field (so a real prior write matches neither probe), a mere "not found by
-   probe" is inconclusive → stay `OUTCOME_UNKNOWN` or escalate to `MANUAL`,
-   never re-dispatch. Alter with foreign AlterID bump → `MANUAL`. Bounded
-   retries (3, backoff) only from a proven-absent state, then `MANUAL` with
-   evidence.
+5. OutcomeUnknown recovery: on restart, retain the original batch identity,
+   intent and payload for every DISPATCHING row. Reconciliation is read-only;
+   it must never dispatch the original write again. A probe MATCH is not
+   itself a confirmation: run the SAME full field-level readback diff as
+   the normal path (step 4), and resolve to `CONFIRMED` or
+   `CONFIRMED_WITH_DIVERGENCE` only on that evidence. A missing or ambiguous
+   match stays `OUTCOME_UNKNOWN` or goes to `MANUAL`; an edited prior write
+   can match neither key nor fingerprint. A foreign AlterID change goes
+   to `MANUAL`. Bound the read-only reconciliation attempts, not write
+   retries. DEVIATION 2026-09-12: the former absence-proof re-dispatch and
+   three-write-retry branches are withdrawn. No mutation-time absence
+   authority was qualified for them; a probe must not manufacture one.
 
 Implement — voucher writes (after masters CONFIRMED-path is soak-tested):
 6. Voucher Create for payment/receipt/journal/contra with full lines,
@@ -720,7 +719,7 @@ Implement — voucher writes (after masters CONFIRMED-path is soak-tested):
    fallback — WHICH of the two is authoritative is a per-version
    compatibility claim qualified on the licensed lab. The fingerprint
    check is mandatory secondary dedupe regardless (narration is user-
-   editable; never trust the embedded key alone on re-dispatch).
+   editable; neither signal alone authorizes recovery or a resend).
    DEVIATION 2026-09-11 (IMPROVEMENT_PLAN_2026H2 §8.19): "dedupe" here
    means RAISE A FLAG FOR A HUMAN, never suppress automatically. The
    tuple cannot tell a retry from a legitimate second payment — a
@@ -742,20 +741,23 @@ Implement — voucher writes (after masters CONFIRMED-path is soak-tested):
    education-mode and never Verified.
 
 Tests (the non-negotiable five, plus unit coverage):
-- crash mid-dispatch → restart → recovery resolves to exactly-once (probe
-  finds the voucher → CONFIRMED; or absent → re-dispatch), proven by final
-  Tally state in the simulator AND on the licensed lab. Use an OS-agnostic
+- crash mid-dispatch → restart → read-only reconciliation retains the
+  original batch. A matching full readback resolves the outcome; absent
+  or ambiguous evidence remains held for manual review. Assert that no
+  second write dispatch occurs, and verify the final Tally state in the
+  simulator AND on the licensed lab. Use an OS-agnostic
   crashpoint: a test-only injected panic/abort at the point between "outbox
   row committed" and "response parsed" is the primary mechanism (runs on the
   Windows matrix targets). Where an external process kill is used, it must be
   cross-platform — `taskkill /F /PID` on Windows, `kill -9` on POSIX — and the
   licensed-lab evidence must record the Windows result specifically, since the
   compatibility matrix targets Windows;
-- duplicate re-dispatch with edited narration (key destroyed) is still
-  caught by the fingerprint check — "caught" meaning SURFACED FOR REVIEW,
-  not suppressed (deviation 2026-09-11, IMPROVEMENT_PLAN_2026H2 §8.19); a
-  run that passes this case by suppressing the second dispatch is
-  qualifying the defect;
+- after an unknown outcome, an edited narration cannot trigger a second
+  write: reconciliation stays held if the original cannot be established.
+  Separately, a new legitimate payment with the same fingerprint is
+  SURFACED FOR REVIEW, never automatically suppressed (deviation
+  2026-09-11, IMPROVEMENT_PLAN_2026H2 §8.19); exercise both cases so a
+  blanket dedupe rule cannot masquerade as safe recovery;
 - foreign writer interleaves between import and readback → LASTVCHID
   cross-check catches it (no false CONFIRM);
 - alter with concurrent foreign edit → MANUAL, never blind retry;
@@ -829,8 +831,8 @@ Must still hold:
    cannot reach the import surface (the ReadOnlyProfile boundary in
    bridge-tally-read-transport is intact).
 3. Allowlist default remains OFF; no migration flips existing companies on.
-4. No automatic write retry beyond the bounded OutcomeUnknown probe path;
-   REJECTED (semantic) errors never auto-retry.
+4. OutcomeUnknown probes are read-only and never authorize an automatic
+   resend. REJECTED (semantic) errors likewise never auto-retry.
 5. Checkpoint/proof semantics: a write updates the mirror only through
    readback-confirmed state, never by assuming intent; snapshots and
    incremental scans reconcile Bridge-originated writes without double
