@@ -1,5 +1,69 @@
 use super::*;
 
+#[test]
+fn published_pattern_inventory_preserves_the_admitted_wire_shapes() {
+    let accepted_dates = ["20260901", "2026-09-01", "2026-0901", "202609-01"];
+    for date in accepted_dates {
+        assert!(published_pattern_matches(DATE_WIRE_PATTERN, date), "{date}");
+    }
+    for rejected in ["2-0-2-6-0-9-0-1", "2026/09/01", "2026090", "202609011"] {
+        assert!(
+            !published_pattern_matches(DATE_WIRE_PATTERN, rejected),
+            "{rejected}"
+        );
+    }
+    assert!(published_pattern_matches(
+        NONBLANK_PATTERN,
+        "\u{2003}ledger"
+    ));
+    assert!(!published_pattern_matches(NONBLANK_PATTERN, " \u{2003}\t"));
+    assert!(published_pattern_matches(
+        BRIDGE_TRANSACTION_ID_PATTERN,
+        "batch_20260901-1"
+    ));
+    assert!(!published_pattern_matches(
+        BRIDGE_TRANSACTION_ID_PATTERN,
+        "batch 20260901"
+    ));
+
+    fn patterns(value: &Value, found: &mut Vec<String>) {
+        match value {
+            Value::Object(object) => {
+                if let Some(pattern) = object.get("pattern").and_then(Value::as_str) {
+                    found.push(pattern.to_string());
+                }
+                for child in object.values() {
+                    patterns(child, found);
+                }
+            }
+            Value::Array(values) => {
+                for child in values {
+                    patterns(child, found);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let definitions = registered_tool_definitions(true, true);
+    let schema = definitions
+        .as_array()
+        .and_then(|tools| tools.iter().find(|tool| tool["name"] == "voucher_presence"))
+        .expect("voucher_presence tool");
+    let mut found = Vec::new();
+    patterns(&schema["inputSchema"], &mut found);
+    found.sort();
+    found.dedup();
+    assert_eq!(
+        found,
+        vec![
+            NONBLANK_PATTERN,
+            DATE_WIRE_PATTERN,
+            BRIDGE_TRANSACTION_ID_PATTERN
+        ]
+    );
+}
+
 #[tokio::test]
 async fn voucher_type_selector_is_bounded_before_any_tally_read() {
     let directory = tempfile::tempdir().unwrap();

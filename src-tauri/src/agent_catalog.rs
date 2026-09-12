@@ -1,6 +1,9 @@
 //! Public tool catalog and argument admission before any Tally read.
 use super::*;
-use regex::Regex;
+
+const NONBLANK_PATTERN: &str = r"\S";
+const DATE_WIRE_PATTERN: &str = "^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$";
+const BRIDGE_TRANSACTION_ID_PATTERN: &str = "^[A-Za-z0-9_-]+$";
 
 pub(super) fn validate_tool_arguments(name: &str, args: &Value) -> Result<(), String> {
     let arguments = args
@@ -177,15 +180,52 @@ fn validate_string_bounds(text: &str, schema: &Value, key: &str) -> Result<(), S
         || schema["maxLength"]
             .as_u64()
             .is_some_and(|max| length > max as usize)
-        || schema["pattern"].as_str().is_some_and(|pattern| {
-            Regex::new(pattern)
-                .map(|regex| !regex.is_match(text))
-                .unwrap_or(true)
-        })
+        || schema["pattern"]
+            .as_str()
+            .is_some_and(|pattern| !published_pattern_matches(pattern, text))
     {
         return Err(format!("argument_invalid:{key}"));
     }
     Ok(())
+}
+
+/// Recognize the finite pattern vocabulary in the published local-tool schema.
+///
+/// Pattern text is schema authority, but accepting an arbitrary new expression
+/// would add an unbounded compile/cache decision to the admission path. Unknown
+/// patterns therefore refuse input until their exact wire shape is implemented
+/// and reviewed here. Calendar validity stays with `normalized_date` at the
+/// typed boundary; this only preserves the published lexical shape.
+fn published_pattern_matches(pattern: &str, text: &str) -> bool {
+    match pattern {
+        NONBLANK_PATTERN => text.chars().any(|character| !character.is_whitespace()),
+        DATE_WIRE_PATTERN => {
+            let bytes = text.as_bytes();
+            let Some((year, remainder)) = bytes.split_at_checked(4) else {
+                return false;
+            };
+            if !year.iter().all(u8::is_ascii_digit) {
+                return false;
+            }
+            let remainder = remainder.strip_prefix(b"-").unwrap_or(remainder);
+            let Some((month, remainder)) = remainder.split_at_checked(2) else {
+                return false;
+            };
+            if !month.iter().all(u8::is_ascii_digit) {
+                return false;
+            }
+            let remainder = remainder.strip_prefix(b"-").unwrap_or(remainder);
+            remainder.len() == 2 && remainder.iter().all(u8::is_ascii_digit)
+        }
+        BRIDGE_TRANSACTION_ID_PATTERN => {
+            !text.is_empty()
+                && text
+                    .as_bytes()
+                    .iter()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        }
+        _ => false,
+    }
 }
 
 /// One proposed voucher's admission contract, lifted out of the tool literal.
