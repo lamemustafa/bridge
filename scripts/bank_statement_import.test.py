@@ -2581,6 +2581,8 @@ def test_rollback_keeps_a_foreign_destination_and_private_backup(m):
 
 def test_original_inode_pin_blocks_after_claim_replacement_before_backup(m):
     """A same-name replacement after claim cannot make backup copy foreign bytes."""
+    if os.name == "nt":
+        return  # Existing destinations are deliberately refused on Windows.
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
         destination = root / "output.xml"
