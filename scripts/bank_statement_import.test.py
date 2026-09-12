@@ -2644,6 +2644,73 @@ def test_ledger_key_folds_exactly_what_its_docstring_claims(m):
     assert not same("A\u2013B", "A B"), "en dash is not an ASCII hyphen"
 
 
+def test_write_outputs_refuses_a_hard_link_added_after_backup_copy(m):
+    """The commit check must see a link created by a backup-time hook."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "output.xml"
+        alias = root / "alias.xml"
+        destination.write_text("old bytes")
+        real_copy = m._copy_private_backup
+
+        def add_link_after_backup(*args):
+            result = real_copy(*args)
+            os.link(destination, alias)
+            return result
+
+        m._copy_private_backup = add_link_after_backup
+        try:
+            refuses(
+                m,
+                "output_has_multiple_links",
+                m.write_outputs,
+                [(str(destination), "new bytes")],
+            )
+        finally:
+            m._copy_private_backup = real_copy
+
+        assert os.path.samefile(destination, alias)
+        assert destination.read_text() == alias.read_text() == "old bytes"
+        assert sorted(path.name for path in root.iterdir()) == ["alias.xml", "output.xml"]
+
+
+def test_committed_new_output_close_failure_is_not_a_retained_backup(m):
+    """A failed ownership-pin close does not create a prior-output backup."""
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "output.xml"
+        real_close = m.os.close
+        real_owned = m._owned_path
+        output_handles = set()
+        fired = False
+
+        def observe_owned(path, handle, *, created):
+            record = real_owned(path, handle, created=created)
+            if created and pathlib.Path(path) == destination:
+                output_handles.add(handle)
+            return record
+
+        def close_then_error(handle):
+            nonlocal fired
+            real_close(handle)
+            if handle in output_handles and not fired:
+                fired = True
+                raise OSError("controlled close after effect")
+
+        m._owned_path, m.os.close = observe_owned, close_then_error
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("the controlled close failure must escape")
+            except m.OutputDescriptorCloseFailure as failure:
+                assert failure.output_paths == (str(destination),)
+                assert "prior output retained" not in str(failure)
+        finally:
+            m._owned_path, m.os.close = real_owned, real_close
+
+        assert fired
+        assert destination.read_text() == "new bytes"
+        assert list(pathlib.Path(directory).iterdir()) == [destination]
+
 def main():
     module = load()
     for name, test in sorted(globals().items()):

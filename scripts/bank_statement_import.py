@@ -131,7 +131,7 @@ class OutputCleanupFailure(OSError):
     """Committed output is present, but an old sensitive copy remains.
 
     `retained_paths` gives the operator the exact private backup location to
-    protect or remove.  A normal return would conceal that copy.
+    protect or remove. A normal return would conceal that copy.
     """
 
     def __init__(self, retained_paths):
@@ -139,6 +139,17 @@ class OutputCleanupFailure(OSError):
         super().__init__(
             "output cleanup failed; prior output retained at "
             + ", ".join(self.retained_paths)
+        )
+
+
+class OutputDescriptorCloseFailure(OSError):
+    """New output committed, but an ownership descriptor close was uncertain."""
+
+    def __init__(self, output_paths):
+        self.output_paths = tuple(output_paths)
+        super().__init__(
+            "output committed; ownership descriptor close failed for "
+            + ", ".join(self.output_paths)
         )
 
 
@@ -1693,6 +1704,22 @@ def _restore_metadata(handle, metadata):
             os.setxattr(handle, name, value)
 
 
+def _pinned_original_still_has_one_link(record):
+    """Refuse if the original gained a hard link after its first pin."""
+    stat_result = os.fstat(record["pin"])
+    if (stat_result.st_dev, stat_result.st_ino) != record["identity"]:
+        raise Refusal(
+            "output_path_changed",
+            f"{record['path']} changed while its rollback copy was prepared",
+        )
+    if stat_result.st_nlink != 1:
+        raise Refusal(
+            "output_has_multiple_links",
+            f"{record['path']}: replacement requires a single-link output; rollback "
+            "cannot preserve hard-link topology",
+        )
+
+
 def _copy_private_backup(source_path, original_identity, backup_handle):
     """Copy the original inode into an owner-only backup already opened O_EXCL.
 
@@ -1847,36 +1874,40 @@ def _note_rollback_metadata_scope(error, restored_paths):
     _append_cleanup_detail(error, message)
 
 
-def _cleanup_committed_outputs(replaced, claimed, failures):
+def _cleanup_committed_outputs(replaced, claimed, retained_failures, descriptor_failures):
     """Remove old private copies after every replacement has committed."""
     for swap in replaced:
         backup = swap["backup"]
-        _unlink_for_cleanup(backup["path"], backup["identity"], failures)
-        _close_owned_path(backup, failures)
-        _close_owned_path(swap["original"], failures)
+        _unlink_for_cleanup(backup["path"], backup["identity"], retained_failures)
+        _close_owned_path(backup, retained_failures)
+        _close_owned_path(swap["original"], retained_failures)
     for record in claimed:
-        _close_owned_path(record, failures)
+        # A claimed path did not exist before this run. Its close failure cannot
+        # retain a prior sensitive copy, so keep that diagnostic distinct from
+        # a backup that an operator must protect or remove.
+        _close_owned_path(record, descriptor_failures)
 
 
-def _reconcile_interrupted_committed_cleanup(replaced, claimed, failures):
+def _reconcile_interrupted_committed_cleanup(
+        replaced, claimed, retained_failures, descriptor_failures):
     """Close pins and disclose owned old copies without undoing a commit."""
     for swap in replaced:
         backup = swap["backup"]
         try:
             if _entry_identity(backup["path"]) == backup["identity"]:
-                failures.append(str(backup["path"]))
+                retained_failures.append(str(backup["path"]))
             elif os.path.lexists(backup["path"]):
-                failures.append(str(backup["path"]))
+                retained_failures.append(str(backup["path"]))
         except FileNotFoundError:
             pass
         except OSError:
             if os.path.lexists(backup["path"]):
-                failures.append(str(backup["path"]))
+                retained_failures.append(str(backup["path"]))
         finally:
-            _close_owned_path(backup, failures)
-            _close_owned_path(swap["original"], failures)
+            _close_owned_path(backup, retained_failures)
+            _close_owned_path(swap["original"], retained_failures)
     for record in claimed:
-        _close_owned_path(record, failures)
+        _close_owned_path(record, descriptor_failures)
 
 
 def write_outputs(targets, accept_inherited=False, after_claim=None):
@@ -1936,6 +1967,7 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
     pending_backup = None
     pending_swap = None
     cleanup_failures = []
+    descriptor_close_failures = []
     metadata_scope_warnings = []
     committed = False
     try:
@@ -2014,6 +2046,11 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                     "output_path_changed",
                     f"{supplied_path} rollback copy changed before replacement",
                 )
+            # The first pin checked that the original was single-linked. A
+            # backup hook can still add an alias before the commit boundary;
+            # recheck this pinned inode so replacement never detaches a new
+            # hard link while reporting a successful overwrite.
+            _pinned_original_still_has_one_link(pending_swap["original"])
             pending_swap["swap_started"] = True
             os.replace(temporary["path"], real_path)
             replaced.append(pending_swap)
@@ -2022,9 +2059,12 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
         # cleanup. Keep it in this same handler so an interrupt before cleanup
         # starts cannot skip both recovery paths.
         committed = True
-        _cleanup_committed_outputs(replaced, claimed, cleanup_failures)
+        _cleanup_committed_outputs(
+            replaced, claimed, cleanup_failures, descriptor_close_failures)
         if cleanup_failures:
             raise OutputCleanupFailure(cleanup_failures)
+        if descriptor_close_failures:
+            raise OutputDescriptorCloseFailure(descriptor_close_failures)
     except BaseException as error:
         if committed:
             # This is after the transaction committed. Never call
@@ -2032,8 +2072,14 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             # preserve the new output, close every ownership pin, and identify
             # any old private copy that still needs operator cleanup.
             _reconcile_interrupted_committed_cleanup(
-                replaced, claimed, cleanup_failures)
+                replaced, claimed, cleanup_failures, descriptor_close_failures)
             _note_cleanup_failures(error, cleanup_failures)
+            if descriptor_close_failures and not isinstance(error, OutputDescriptorCloseFailure):
+                _append_cleanup_detail(
+                    error,
+                    "ownership descriptor close failed for committed output(s): "
+                    + ", ".join(sorted(set(descriptor_close_failures))),
+                )
             raise
         # Reconcile a swap which may have completed before raising, then undo
         # earlier committed swaps. Cleanup failures remain attached to the
