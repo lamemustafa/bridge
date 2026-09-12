@@ -840,6 +840,10 @@ impl MasterCatalog {
                 by_token.entry(token.clone()).or_default().push(index);
             }
         }
+        debug_assert!(
+            by_identifier.values().all(|holders| holders.is_sorted()),
+            "identifier holder lists are built in entry order"
+        );
 
         // A token carried by a large share of the catalog says nothing about
         // which master is meant. The threshold is measured from the catalog
@@ -1009,6 +1013,11 @@ struct IdentifierEvidence<'a> {
     withheld_count_is_lower_bound: bool,
 }
 
+struct CountEvidence<'a> {
+    largest_withheld: Option<&'a [usize]>,
+    withheld_count_is_lower_bound: bool,
+}
+
 struct SearchMemo {
     seen: CandidateMemo,
     /// Fingerprints of the full memo keys a later entity will ask for again.
@@ -1071,14 +1080,6 @@ fn bind_one(
                 // materialization. Dropping it made the invariant
                 // size-dependent: a hint pointing entirely elsewhere let the
                 // exact name bind, but only once the family grew past the cap.
-                // `by_identifier` is filled by pushing entry indices from the
-                // ascending `entries.iter().enumerate()` walk in `new`, so
-                // this exact holder vector is sorted by construction. Keep
-                // the assertion beside the lookup that relies on it.
-                debug_assert!(
-                    holders.is_sorted(),
-                    "identifier holder lists are built in entry order"
-                );
                 if exact.is_some_and(|index| holders.binary_search(&index).is_err()) {
                     large_holder_points_elsewhere = true;
                 }
@@ -1239,8 +1240,10 @@ fn bind_one(
                     reason,
                     candidates,
                     masters_found,
-                    largest_withheld,
-                    withheld_count_is_lower_bound,
+                    CountEvidence {
+                        largest_withheld,
+                        withheld_count_is_lower_bound,
+                    },
                     budget,
                 )
             }
@@ -1285,8 +1288,10 @@ fn unresolved_status(
         reason,
         candidates,
         masters_found,
-        largest_withheld,
-        withheld_count_is_lower_bound,
+        CountEvidence {
+            largest_withheld,
+            withheld_count_is_lower_bound,
+        },
         budget,
     )
 }
@@ -1297,8 +1302,7 @@ fn unresolved_from(
     reason: UnboundReason,
     candidates: Vec<(usize, CandidateRule)>,
     masters_found: usize,
-    largest_withheld: Option<&[usize]>,
-    withheld_count_is_lower_bound: bool,
+    count_evidence: CountEvidence<'_>,
     budget: &mut usize,
 ) -> BindingStatus {
     let mut ordered = candidates;
@@ -1306,8 +1310,8 @@ fn unresolved_from(
     let (found, count_is_lower_bound) = candidate_count(
         masters_found,
         &ordered,
-        largest_withheld,
-        withheld_count_is_lower_bound,
+        count_evidence.largest_withheld,
+        count_evidence.withheld_count_is_lower_bound,
     );
     // The variant is derived here, in one place, from the same facts that chose
     // the reason — so "empty" can never mean something the variant does not say.
@@ -1370,7 +1374,6 @@ fn candidate_count(
     let Some(family) = largest_withheld else {
         return (masters_found, false);
     };
-    debug_assert!(family.is_sorted(), "holder lists are built in order");
     let outside_family = candidates
         .iter()
         .filter(|(index, _)| family.binary_search(index).is_err())
