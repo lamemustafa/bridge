@@ -781,11 +781,17 @@ fingerprint is **co-primary** rather than secondary. Withdrawn: promoting it doe
 to do the job. The tuple is identical for a legitimate recurring or same-day repeat payment, so as
 an automatic dedupe it suppresses real vouchers no matter which tier it is placed in — see §3.4a.
 
-What follows instead is narrower and less comfortable: **there is no proven automatic
-write-confirmation mechanism for Phase 4.** `REMOTEID` upsert covers a byte-identical repeat on the
-Journal path (§3.3a) and nothing beyond it; a destroyed narration marker leaves a write
-unattributable, and the honest response to that is to stop and ask a human, not to substitute a
-signal that cannot tell the two cases apart.
+What follows instead is narrower and less comfortable: **there is no proven mechanism that lets an
+automatic dedupe *decision* be made from the fingerprint tuple.** That is not the same claim as "no
+proven duplicate-prevention mechanism outside §3.3a" — it overstates the gap. Two mechanisms are
+proven, each with a narrow scope: `REMOTEID` upsert on a byte-identical repeat on the Journal path
+(§3.3a), and Manual numbering with `PREVENTDUPLICATES=Yes`, which cleanly rejects a duplicate
+voucher number instead of silently creating one — `CREATED=0, ALTERED=0, EXCEPTIONS=1` (§3.3;
+[`TALLY_PROTOCOL_REFERENCE.md` §9.8](TALLY_PROTOCOL_REFERENCE.md#98-voucher-numbering-method-changes-everything--use-manual)).
+Neither reaches a destroyed narration marker or a differently-numbered duplicate under automatic
+numbering; for those cases the honest response is still to stop and ask a human, not to substitute
+the fingerprint as an automatic suppressor — it cannot tell a retry from a legitimate second
+payment no matter which carrier is missing.
 
 ### 3.5 Identity after write
 

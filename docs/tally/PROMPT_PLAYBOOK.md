@@ -298,20 +298,20 @@ Implement:
    fix-it list.
 5. Encoding/normalization hardening: UTF-8/UTF-16LE/BOM fixtures;
    non-English (Devanagari, Gujarati, Tamil) company/ledger/narration
-   fixtures in the simulator corpus; case-insensitive collation for name keys
-   (Tally name uniqueness is effectively case-insensitive).
-
-   **DEVIATION 2026-09-12 — NFC normalization for name keys is withdrawn.**
-   This item previously required it. `TALLY_PROTOCOL_REFERENCE.md` §9.4b records
-   the measurement: a voucher naming a UI-created **NFC** ledger in its
-   canonically equivalent **NFD** spelling was rejected — `EXCEPTIONS=1`,
-   `LINEERROR` saying the ledger does not exist — while the NFC spelling created
-   it, and an NFD create read back with identical NFD codepoints. **Tally matches
-   and stores exact codepoints.** Normalising before comparing therefore resolves
-   a name onto a master Tally itself keeps apart, which is a silent misbinding.
-   Keep the non-Latin fixtures and the case folding; do **not** normalise. It is
-   the only transformation in that table with evidence pointing the wrong way,
-   which is why it needs a deviation here rather than a note.
+   fixtures in the simulator corpus; name-key matching via §9.4b's
+   `accepts(candidate, tally_name)` predicate — directional ASCII case
+   folding only (`candidate == ascii_lower(tally_name)`; the reverse, an
+   uppercase candidate against a lowercase master, was never measured and
+   must not be accepted). Never a symmetric case-insensitive collation:
+   that accepts the unverified direction and can bind a voucher to the
+   wrong master.
+   DEVIATION 2026-09-12 (TALLY_PROTOCOL_REFERENCE.md §9.4b): NFC
+   normalization of name keys is WITHDRAWN. §9.4b is MEASURED, not
+   inferred: an NFD spelling of a UI-created NFC ledger was rejected
+   (`EXCEPTIONS=1`, ledger does not exist) while the NFC spelling created
+   it — Tally matches on exact codepoints. Normalizing before comparing
+   resolves a name onto a master Tally itself keeps apart. Name keys
+   compare on exact codepoints; do not NFC/NFD-normalize either side.
 6. Migration: versioned mirror schema evolution for the new fields
    (voucher lines, bill allocations, inventory lines, tax lines) with
    rollback notes.
@@ -356,9 +356,16 @@ Hunt specifically for:
 3. Amount fidelity: any new tax/inventory line parsed through anything but
    ExactDecimal; sign conventions (IsDeemedPositive) mishandled on new
    line types; Dr/Cr balance invariant not re-checked with lines present.
-4. Identity/normalization traps: NFC normalization applied on read but not
-   on the keys used for diffing (same ledger counted twice); case-collation
-   asymmetry between mirror and reconciliation.
+4. Identity/normalization traps: ANY NFC/NFD normalization of name keys,
+   anywhere in the read or diff path — applied consistently on both reads
+   and diff keys is still a confirmed finding, not only when applied
+   asymmetrically (§9.4b: Tally matches exact codepoints; normalizing
+   resolves a name onto a master Tally itself keeps apart, whether or not
+   both sides agree). A symmetric case-insensitive collation is likewise
+   a finding: §9.4b's `accepts(candidate, tally_name)` folds ASCII case
+   in one direction only (candidate lowered against an uppercase master);
+   a fold that also accepts an uppercase candidate against a lowercase
+   master accepts the unverified direction.
 5. Bounded-resource regressions: new list explosions (AllInventoryEntries
    on huge vouchers) versus the 32 MiB response cap — is there a paging or
    windowing story? Does a capped response get honestly labeled Partial?
@@ -574,7 +581,9 @@ Implement — write core (masters):
 3. Single-writer actor owns the import surface; reads gated during
    dispatch→readback windows; queue depth visible.
 4. Readback verification: after counters accept, re-export the object
-   (masters by normalized name; vouchers by LASTVCHID) and
+   (masters matched by name via §9.4b's `accepts(candidate, tally_name)`
+   predicate only — directional ASCII case folding; vouchers by
+   LASTVCHID) and
    ALWAYS cross-check the fetched object against the idempotency key and
    the (date, amount, ledger-set, voucher-type) fingerprint before
    promoting to CONFIRMED — LASTVCHID can be clobbered by a foreign
@@ -582,6 +591,12 @@ Implement — write core (masters):
    else OUTCOME_UNKNOWN. Persist the BridgeID ↔ GUID/MasterID binding.
    Field-diff readback vs intent; divergence → CONFIRMED_WITH_DIVERGENCE,
    surfaced in the Gap Map, never silent.
+   DEVIATION 2026-09-12 (TALLY_PROTOCOL_REFERENCE.md §9.4b): "matched by
+   name" never means NFC/NFD-normalized. An NFD create read back against
+   a pre-existing NFC master would resolve as a match and promote the
+   wrong object to CONFIRMED — §9.4b measured Tally keeping the two
+   apart. Compare master names on exact codepoints plus only the
+   directional ASCII-case fold; never normalize either side first.
 5. OutcomeUnknown recovery: on restart, DISPATCHING rows → probe by key +
    fingerprint. A probe MATCH is not itself a confirmation: run the SAME
    full field-level readback diff as the normal dispatch path (step 4) and
