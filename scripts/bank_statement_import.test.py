@@ -37,6 +37,7 @@ import importlib.util
 import inspect
 import os
 import pathlib
+import signal
 import stat
 import subprocess
 import sys
@@ -2193,6 +2194,8 @@ def test_claim_refuses_a_foreign_replacement_after_committing_original_identity(
     the actionable interval: a foreign replacement after the old descriptor
     establishes identity but before the path is verified must remain untouched.
     """
+    if os.name == "nt":
+        return  # Existing destinations are deliberately refused on Windows.
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
         destination = root / "previous.xml"
@@ -2221,6 +2224,8 @@ def test_claim_refuses_a_foreign_replacement_after_committing_original_identity(
 
 def test_line_interrupt_during_final_validation_rolls_back_replacements(m):
     """A real line-traced SIGINT at the final validation stays recoverable."""
+    if os.name == "nt":
+        return  # Existing destinations are deliberately refused on Windows.
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
         first = root / "first.xml"
@@ -2233,6 +2238,7 @@ def test_line_interrupt_during_final_validation_rolls_back_replacements(m):
                 inspect.getsource(m.write_outputs).splitlines())
             if line.strip() == "if _claimed_output_changed(")
         old_trace = sys.gettrace()
+        old_signal_handler = signal.getsignal(signal.SIGINT)
         fired = False
 
         def interrupt_final_validation(frame, event, _arg):
@@ -2240,9 +2246,10 @@ def test_line_interrupt_during_final_validation_rolls_back_replacements(m):
             if (not fired and event == "line" and frame.f_code is m.write_outputs.__code__
                     and frame.f_lineno == validation_line):
                 fired = True
-                raise KeyboardInterrupt("controlled final-validation interrupt")
+                signal.raise_signal(signal.SIGINT)
             return interrupt_final_validation
 
+        signal.signal(signal.SIGINT, signal.default_int_handler)
         sys.settrace(interrupt_final_validation)
         try:
             try:
@@ -2253,6 +2260,7 @@ def test_line_interrupt_during_final_validation_rolls_back_replacements(m):
                 pass
         finally:
             sys.settrace(old_trace)
+            signal.signal(signal.SIGINT, old_signal_handler)
 
         assert fired
         assert first.read_text() == "first old"
