@@ -259,7 +259,7 @@ fi
 # Paginate review threads and count unresolved nodes over every page.
 cursor=""
 open_threads=0
-total_threads=0
+total_threads=-1
 fetched_threads=0
 thread_ok=1
 while :; do
@@ -284,13 +284,13 @@ while :; do
         }
       }' 2>"$errfile") || page_status=$?
   fi
-  if [ "$page_status" -ne 0 ] || ! jq -e '.data.repository.pullRequest.reviewThreads | type == "object" and (.totalCount | type == "number") and (.pageInfo.hasNextPage | type == "boolean") and (.nodes | type == "array" and all(.[]; .isResolved | type == "boolean"))' <<<"$page" >/dev/null 2>&1; then
+  if [ "$page_status" -ne 0 ] || ! jq -e '.data.repository.pullRequest.reviewThreads | type == "object" and (.totalCount | type == "number" and floor == . and . >= 0) and (.pageInfo.hasNextPage | type == "boolean") and (.nodes | type == "array" and all(.[]; .isResolved | type == "boolean"))' <<<"$page" >/dev/null 2>&1; then
     unknown "could not read review threads for $REPO#$PR"
     thread_ok=0
     break
   fi
   page_total=$(jq -r '.data.repository.pullRequest.reviewThreads.totalCount' <<<"$page")
-  if [ "$total_threads" -eq 0 ]; then
+  if [ "$total_threads" -eq -1 ]; then
     total_threads="$page_total"
   elif [ "$page_total" -ne "$total_threads" ]; then
     unknown "review-thread totalCount changed during pagination"
@@ -299,10 +299,20 @@ while :; do
   fi
   page_nodes=$(jq '.data.repository.pullRequest.reviewThreads.nodes | length' <<<"$page")
   fetched_threads=$((fetched_threads + page_nodes))
+  if [ "$fetched_threads" -gt "$total_threads" ]; then
+    unknown "review-thread pagination exceeded totalCount"
+    thread_ok=0
+    break
+  fi
   page_open=$(jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length' <<<"$page")
   open_threads=$((open_threads + page_open))
   has_next=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$page")
   [ "$has_next" = "true" ] || break
+  if [ "$page_nodes" -eq 0 ]; then
+    unknown "review-thread pagination returned no nodes while claiming another page"
+    thread_ok=0
+    break
+  fi
   next_cursor=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // empty' <<<"$page")
   if [ -z "$next_cursor" ] || [ "$next_cursor" = "$cursor" ]; then
     unknown "review-thread pagination returned no advancing cursor"
@@ -359,8 +369,8 @@ if [ "$files_status" -ne 0 ] || ! jq -e '
   changed=""
 else
   changed=$(jq -r '(if all(.[]; type == "array") then flatten else . end)[] | .filename // empty' <<<"$files")
-  changed_count=$(wc -l <<<"$changed" | tr -d ' ')
-  unique_changed_count=$(sort -u <<<"$changed" | wc -l | tr -d ' ')
+  changed_count=$(jq '(if all(.[]; type == "array") then flatten else . end) | length' <<<"$files")
+  unique_changed_count=$(jq '(if all(.[]; type == "array") then flatten else . end) | map(.filename) | unique | length' <<<"$files")
   if [ "$changed_count" -eq 0 ]; then
     unknown "changed-file response contained no filenames"
   elif [ "$changed_files_expected" -gt 3000 ]; then

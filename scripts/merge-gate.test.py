@@ -50,7 +50,7 @@ if args[:2] == ["pr", "view"]:
     emit({"headRefOid": selected_head, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
           "isDraft": False, "state": "OPEN",
-          "body": body, "changedFiles": 2})
+          "body": body, "changedFiles": 1 if scenario == "files-empty" else 2})
 elif args[:2] == ["pr", "checks"]:
     if scenario == "checks-silent":
         raise SystemExit(0)
@@ -80,7 +80,9 @@ elif args and args[0] == "api":
     joined = " ".join(args)
     if "graphql" in args:
         has_cursor = "C1" in joined
-        if scenario == "threads-short":
+        if scenario == "threads-empty-more":
+            nodes, page_info = [], {"hasNextPage": True, "endCursor": "C1"}
+        elif scenario == "threads-short":
             nodes, page_info = [{"isResolved": True}], {"hasNextPage": False, "endCursor": None}
         elif scenario == "threads-malformed-pagination":
             nodes, page_info = ([{"isResolved": True}] * 100), {"hasNextPage": True, "endCursor": None}
@@ -89,7 +91,7 @@ elif args and args[0] == "api":
         else:
             nodes, page_info = ([{"isResolved": True}] * 100), {"hasNextPage": True, "endCursor": "C1"}
         emit({"data": {"repository": {"pullRequest": {"reviewThreads": {
-            "totalCount": 102 if scenario == "threads-total-drift" and has_cursor else 101,
+            "totalCount": 101.5 if scenario == "threads-fractional" else (102 if scenario == "threads-total-drift" and has_cursor else 101),
             "pageInfo": page_info, "nodes": nodes
         }}}}})
     elif "branches/master/protection/required_status_checks" in joined:
@@ -112,7 +114,9 @@ elif args and args[0] == "api":
         else:
             emit([[]])
     elif "/pulls/321/files" in joined:
-        if scenario == "malformed-files":
+        if scenario == "files-empty":
+            emit([[]])
+        elif scenario == "malformed-files":
             emit([[{"filename": "docs/example.md", "status": "added"}], [{"filename": 3, "status": "modified"}]])
         elif scenario == "missing-file-status":
             emit([[{"filename": "docs/example.md", "status": "added"}], [{"filename": "docs/second.md"}]])
@@ -249,6 +253,15 @@ class MergeGateControls(unittest.TestCase):
 
     def test_changed_file_count_mismatch_is_indeterminate(self):
         self.assert_indeterminate("files-count-mismatch", "changed-file response has")
+
+    def test_empty_file_array_is_not_one_filename(self):
+        self.assert_indeterminate("files-empty", "contained no filenames")
+
+    def test_fractional_thread_count_is_indeterminate(self):
+        self.assert_indeterminate("threads-fractional", "could not read review threads")
+
+    def test_empty_page_cannot_claim_more_threads(self):
+        self.assert_indeterminate("threads-empty-more", "no nodes while claiming another page")
 
     def test_foreign_checklist_link_blocks(self):
         self.assert_blocked("checklist-foreign", "same-repository line-specific")
