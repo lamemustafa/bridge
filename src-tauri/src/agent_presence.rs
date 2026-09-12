@@ -77,7 +77,7 @@ impl Server {
         // they are settled here rather than after three Tally reads. The crate
         // enforces them again at its own boundary; this only stops a request
         // that was always going to be refused from exercising the endpoint.
-        for proposal in &proposals {
+        for proposal in proposals.iter() {
             // A party's *entity shape* -- how many identifiers its name
             // carries -- is decided entirely by the caller's text, and the
             // crate parses it inside `PresenceRequest::new`, three reads
@@ -338,7 +338,9 @@ fn parse_numbering(args: &Value) -> Result<NumberingDeclaration, String> {
     NumberingDeclaration::new(entries).map_err(|error| error.safe_reason_code().to_string())
 }
 
-fn parse_proposals(args: &Value) -> Result<Vec<ProposedVoucher>, String> {
+fn parse_proposals(
+    args: &Value,
+) -> Result<bridge_tally_core::book_presence::ProposedBatch, String> {
     let proposed = args
         .get("vouchers")
         .and_then(Value::as_array)

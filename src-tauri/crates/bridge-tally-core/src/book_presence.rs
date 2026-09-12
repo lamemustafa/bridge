@@ -498,7 +498,7 @@ pub struct ProposedVoucher {
 }
 
 impl ProposedVoucher {
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn new(input: ProposedVoucherInput<'_>) -> Result<Self, PresenceError> {
         let mut budget = RawProposalBudget::default();
         budget.admit(input)?;
@@ -531,7 +531,7 @@ impl ProposedVoucher {
     /// Convert a raw proposal batch only after one aggregate admission pass.
     pub fn from_inputs<'a>(
         inputs: impl IntoIterator<Item = ProposedVoucherInput<'a>>,
-    ) -> Result<Vec<Self>, PresenceError> {
+    ) -> Result<ProposedBatch, PresenceError> {
         let mut budget = RawProposalBudget::default();
         let mut positions = BTreeSet::new();
         let mut converted = Vec::new();
@@ -542,7 +542,9 @@ impl ProposedVoucher {
             }
             converted.push(Self::new_admitted(input)?);
         }
-        Ok(converted)
+        Ok(ProposedBatch {
+            vouchers: converted,
+        })
     }
 
     pub fn date(&self) -> &str {
@@ -566,6 +568,24 @@ impl ProposedVoucher {
 
     pub fn position(&self) -> usize {
         self.position
+    }
+}
+
+/// An admitted proposal batch. Its only production constructor performs the
+/// aggregate raw admission before conversion, so callers cannot concatenate
+/// independently converted vectors and evade the batch budget.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProposedBatch {
+    vouchers: Vec<ProposedVoucher>,
+}
+
+impl ProposedBatch {
+    pub fn as_slice(&self) -> &[ProposedVoucher] {
+        &self.vouchers
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &ProposedVoucher> {
+        self.vouchers.iter()
     }
 }
 
@@ -1180,7 +1200,27 @@ struct PartyResolution {
 }
 
 impl<'a> PresenceRequest<'a> {
+    #[cfg(not(test))]
     pub fn new(
+        window: &'a BookWindow,
+        catalog: &'a MasterCatalog,
+        numbering: &'a NumberingDeclaration,
+        proposals: &'a ProposedBatch,
+    ) -> Result<Self, PresenceError> {
+        Self::new_inner(window, catalog, numbering, proposals.as_slice())
+    }
+
+    #[cfg(test)]
+    pub fn new(
+        window: &'a BookWindow,
+        catalog: &'a MasterCatalog,
+        numbering: &'a NumberingDeclaration,
+        proposals: &'a [ProposedVoucher],
+    ) -> Result<Self, PresenceError> {
+        Self::new_inner(window, catalog, numbering, proposals)
+    }
+
+    fn new_inner(
         window: &'a BookWindow,
         catalog: &'a MasterCatalog,
         numbering: &'a NumberingDeclaration,
