@@ -3584,6 +3584,132 @@ def test_rollback_keeps_an_aliased_earlier_backup_after_a_later_swap_failure(m):
         assert backup.read_text() == alias.read_text() == "old first"
 
 
+
+def test_rollback_path_distinguishes_an_unlinked_backup_from_an_alias(m):
+    """A zero-link backup prevents restoration but must not claim an alias."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        first.write_text("old first")
+        second.write_text("old second")
+        real_replace = m.os.replace
+
+        def swap_first_unlink_backup_then_fail_second(source, destination):
+            if (str(source).endswith(".part")
+                    and pathlib.Path(destination).resolve() == second.resolve()):
+                raise OSError("controlled later swap failure")
+            result = real_replace(source, destination)
+            if (str(source).endswith(".part")
+                    and pathlib.Path(destination).resolve() == first.resolve()):
+                backup, = root.glob("first.xml.*.bak")
+                backup.unlink()
+            return result
+
+        m.os.replace = swap_first_unlink_backup_then_fail_second
+        try:
+            try:
+                m.write_outputs([(str(first), "new first"), (str(second), "new second")])
+                raise AssertionError("the controlled later failure must escape")
+            except OSError as error:
+                details = "\n".join(getattr(error, "__notes__", []))
+                assert "controlled later swap failure" in str(error)
+                assert "unknown hard-link alias" not in details
+        finally:
+            m.os.replace = real_replace
+
+        assert first.read_text() == "new first"
+        assert second.read_text() == "old second"
+        assert not list(root.glob("*.bak"))
+
+
+def test_rollback_alias_diagnostic_reaches_stderr(m):
+    """The alias warning survives both exception-note and stderr render paths."""
+    if os.name == "nt":
+        return
+    program = f'''\
+import importlib.util
+import os
+import pathlib
+import tempfile
+
+script = {str(SCRIPT)!r}
+spec = importlib.util.spec_from_file_location("bank_statement_import_subprocess", script)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+with tempfile.TemporaryDirectory() as directory:
+    root = pathlib.Path(directory)
+    first, second, alias = root / "first.xml", root / "second.xml", root / "alias.xml"
+    first.write_text("old first")
+    second.write_text("old second")
+    real_replace = module.os.replace
+    def replace_first_alias_then_fail_second(source, destination):
+        if str(source).endswith(".part") and pathlib.Path(destination).resolve() == second.resolve():
+            raise OSError("controlled later swap failure")
+        result = real_replace(source, destination)
+        if str(source).endswith(".part") and pathlib.Path(destination).resolve() == first.resolve():
+            backup, = root.glob("first.xml.*.bak")
+            os.link(backup, alias)
+        return result
+    module.os.replace = replace_first_alias_then_fail_second
+    module.write_outputs([(str(first), "new first"), (str(second), "new second")])
+'''
+    done = subprocess.run([sys.executable, "-c", program], text=True,
+                          capture_output=True, check=False)
+    assert done.returncode != 0
+    assert "controlled later swap failure" in done.stderr, done.stderr
+    assert "unknown hard-link alias may retain rollback bytes" in done.stderr, done.stderr
+
+
+def test_restore_metadata_orders_xattrs_before_final_mode(m):
+    """Portable ordering proof; Linux permission enforcement is tested separately."""
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "output.xml"
+        path.write_text("bytes")
+        handle = os.open(path, os.O_RDWR)
+        current = os.fstat(handle)
+        metadata = {
+            "mode": 0o400,
+            "uid": current.st_uid,
+            "gid": current.st_gid,
+            "atime_ns": current.st_atime_ns,
+            "mtime_ns": current.st_mtime_ns,
+            "xattrs": {"user.bridge_order": b"value"},
+        }
+        missing = object()
+        real_listxattr = getattr(m.os, "listxattr", missing)
+        real_setxattr = getattr(m.os, "setxattr", missing)
+        real_fchmod = m.os.fchmod
+        events = []
+
+        def list_no_xattrs(_):
+            return []
+
+        def record_setxattr(*args):
+            events.append("xattr")
+
+        def record_fchmod(*args):
+            events.append("mode")
+
+        m.os.listxattr, m.os.setxattr, m.os.fchmod = (
+            list_no_xattrs, record_setxattr, record_fchmod)
+        try:
+            m._restore_metadata(handle, metadata)
+        finally:
+            for name, original in (("listxattr", real_listxattr),
+                                   ("setxattr", real_setxattr)):
+                if original is missing:
+                    delattr(m.os, name)
+                else:
+                    setattr(m.os, name, original)
+            m.os.fchmod = real_fchmod
+            os.close(handle)
+
+        assert events == ["xattr", "mode"]
+
+
+
 def test_existing_destination_is_pinned_before_staging_side_effects(m):
     """A mkstemp-time replacement is foreign because the original pin predates it."""
     if os.name == "nt":

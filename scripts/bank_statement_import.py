@@ -1956,12 +1956,19 @@ def _restore_backup(swap, failures, metadata_scope_warnings):
     restored = False
     try:
         _pinned_backup_still_has_one_link(backup_record)
-    except Refusal:
-        # Keep the original failure escaping.  The private backup is still
-        # named here, but its unknown alias may retain prior statement bytes;
-        # moving it back would make that alias a live copy of the destination.
-        failures.append(
-            f"unknown hard-link alias may retain rollback bytes: {backup}")
+    except Refusal as refusal:
+        if refusal.category == "rollback_backup_has_multiple_links":
+            # Keep the original failure escaping.  The private backup is still
+            # named here, but its unknown alias may retain prior statement
+            # bytes; moving it back would make that alias a live copy of the
+            # destination.
+            failures.append(
+                f"unknown hard-link alias may retain rollback bytes: {backup}")
+        else:
+            # A missing or changed pinned backup is not an alias.  Preserve
+            # the original error and disclose only the rollback path whose
+            # identity could no longer support a restore.
+            failures.append(backup)
         return
     except OSError:
         failures.append(backup)
