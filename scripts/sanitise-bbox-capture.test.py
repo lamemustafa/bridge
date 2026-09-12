@@ -213,10 +213,25 @@ for leaky in ("XAVIER", "ABXXCD", "MAX", "X-RAY"):
 # ...while the shape the parsers actually look for is still structure, and
 # survives. `bank_statement_import` calls something a masked account only when
 # the whole token matches `[Xx]{4,}\d*`, so that is the one test applied here.
+# The short forms carry the second parser path. `bank_statement_import` reads
+# `[Xx]+\d+` inside a UPI/IMPS reference, so `XX1234` is the bank's masking even
+# though it has fewer than MASK_MIN_XS characters — requiring four everywhere
+# fabricated it to `ZZ1111` and destroyed a shape the fixture exists to keep.
+# Without these three rows the union predicate has no test at all: reverting it
+# to the four-X rule left the whole suite green.
 for mask, keeps in (("XXXX", True), ("XXXXXX1234", True), ("xxxx5678", True),
+                    ("XX1234", True), ("X99", True), ("xx7", True),
                     ("XX", False), ("X", False), ("XXX", False)):
     out = load()._scrub_plain(mask)
-    held = out.lower().startswith("x" * min(4, len(mask))) if keeps else "X" not in out.upper()
+    # For a mask, every X position must survive verbatim and every digit
+    # position must be fabricated. Checking a fixed-length prefix instead was
+    # wrong for the short forms: `X99` has one X, not four.
+    if keeps:
+        held = (len(out) == len(mask)
+                and all(o == m for o, m in zip(out, mask) if not m.isdigit())
+                and any(c.upper() == "X" for c in out))
+    else:
+        held = "X" not in out.upper()
     check(
         f"{mask!r} is {'preserved as a mask' if keeps else 'fabricated, being too short to be one'}",
         held, f"{mask} -> {out}",
@@ -521,7 +536,13 @@ def identifying_tokens(module, bodies):
         piece
         for body in bodies
         for is_token, piece in module._split_tokens(body)
-        if is_token and len(piece) >= module.IDENTIFYING_LENGTH
+        # Short tokens are excluded because a one-digit token has nine possible
+        # replacements and reserving them all starves the allocator. That
+        # reasoning is about DIGITS. A short token containing an X is a
+        # different case: the unit cases above define a surviving `X`, `XX` or
+        # `XXX` as a leak, so the end-to-end check has to be able to see one.
+        if is_token and (len(piece) >= module.IDENTIFYING_LENGTH
+                         or "X" in piece.upper())
     }
 
 
@@ -555,7 +576,11 @@ for fixture in sorted(pathlib.Path(__file__).with_name("fixtures").glob("*-bbox-
         deliberate = {fresh.SYNTHETIC_YEAR}
         survivors = sorted(
             (produced & consumed) - deliberate - fresh.TEMPLATE
-            - {token for token in produced if set(token) == {"X"}}
+            # Only a token the parsers would call a mask is deliberate.
+            # Subtracting every pure-X token excused `X`, `XX` and `XXX`, which
+            # the unit cases call customer data — the end-to-end check was
+            # contradicting them.
+            - {token for token in produced if fresh._is_mask(token)}
         )
         check(
             f"{fixture.name} page {page}: no identifying source token is fabricated",
