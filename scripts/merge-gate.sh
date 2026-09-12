@@ -339,7 +339,10 @@ else
   # Case-insensitively: a GSTIN or PAN written in lower or mixed case is the
   # same identifier, and prose is exactly where it would be written that way.
   # The placeholder list is applied to the UPPERCASED form for the same reason.
-  # A phone number is written `+91 98765 43210`, `(98765) 43210`, `98765-43210`.
+  # A phone number is normally written with a country prefix and internal
+  # spaces, hyphens, dots or parentheses. (Shapes only — see the rule two
+  # blocks down: a literal illustrating a leak pattern IS the pattern, and
+  # this comment is in the very fix that taught the scan to find phones.)
   # Scanning contiguous digits only, every segment falls under both thresholds
   # and the line reads clean.
   #
