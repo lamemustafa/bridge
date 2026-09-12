@@ -75,12 +75,13 @@ die() { echo "$1" >&2; exit 2; }
 # outer shape before extracting fields so jq errors cannot become empty values.
 : >"$errfile"
 if ! meta=$(gh pr view "$PR" --repo "$REPO" \
-        --json headRefOid,baseRefName,mergeable,mergeStateStatus,isDraft,state,body,changedFiles 2>"$errfile"); then
+        --json headRefOid,baseRefOid,baseRefName,mergeable,mergeStateStatus,isDraft,state,body,changedFiles 2>"$errfile"); then
   die "could not read PR #$PR in $REPO"
 fi
 if ! jq -e '
   type == "object" and
   (.headRefOid | type == "string" and test("^[0-9a-fA-F]{40}$")) and
+  (.baseRefOid | type == "string" and test("^[0-9a-fA-F]{40}$")) and
   (.baseRefName | type == "string" and length > 0) and
   (.mergeable | type == "string") and
   (.mergeStateStatus | type == "string") and
@@ -91,6 +92,7 @@ if ! jq -e '
   die "PR metadata was not a valid complete JSON object"
 fi
 head=$(jq -r '.headRefOid' <<<"$meta")
+base_ref_oid=$(jq -r '.baseRefOid' <<<"$meta")
 base=$(jq -r '.baseRefName' <<<"$meta")
 mergeable=$(jq -r '.mergeable' <<<"$meta")
 mstate=$(jq -r '.mergeStateStatus' <<<"$meta")
@@ -135,6 +137,29 @@ if [ "$base_tip_status" -ne 0 ] || ! [[ "$base_tip" =~ ^[0-9a-fA-F]{40}$ ]]; the
   base_tip=""
 else
   say "ok" "captured base tip ${base_tip:0:7}"
+fi
+if [ -n "$base_tip" ] && [ "$base_ref_oid" != "$base_tip" ]; then
+  unknown "PR base OID $base_ref_oid differs from the current '$base' tip $base_tip"
+fi
+
+# Bind the reviewed head to the actual base lineage returned by GitHub. The
+# compare API is queried with the captured OIDs and must say that base is an
+# ancestor of head; mergeability alone does not establish that relationship.
+if [ -n "$base_tip" ] && [ "$base_ref_oid" = "$base_tip" ]; then
+  : >"$errfile"
+  compare_status=0
+  comparison=$(gh api "repos/$REPO/compare/${base_tip}...${head}" 2>"$errfile") || compare_status=$?
+  if [ "$compare_status" -ne 0 ] || ! jq -e --arg base "$base_tip" '
+    type == "object" and
+    (.status | type == "string" and (. == "ahead" or . == "identical")) and
+    (.behind_by | type == "number" and floor == . and . == 0) and
+    (.merge_base_commit | type == "object") and
+    (.merge_base_commit.sha | type == "string" and test("^[0-9a-fA-F]{40}$") and . == $base)
+  ' <<<"$comparison" >/dev/null 2>&1; then
+    unknown "base/head compare did not prove that the captured base tip is an ancestor"
+  else
+    say "ok" "compare API binds base tip ${base_tip:0:7} as head's merge base"
+  fi
 fi
 
 # Branch protection is the source of required check contexts. A pass list with
@@ -202,6 +227,48 @@ else
     [ "$skipped" -eq 0 ] || say "note" "$skipped optional check(s) are skipped; required skipped contexts remain blocking"
     [ "$check_bad" -eq 0 ] && [ "$all_bad" -eq 0 ] && say "ok" "all reported checks concluded successfully"
   fi
+fi
+
+# The checks rollup is head-bound by its PR endpoint, but it does not expose a
+# check-run SHA in `gh pr checks`. Verify the complete provider check-run pages
+# and commit-status response independently so a malformed or mixed response
+# cannot become positive evidence. The required-context decision above remains
+# authoritative for branch protection, including status-only contexts.
+: >"$errfile"
+check_runs_status=0
+check_runs=$(gh api --paginate --slurp "repos/$REPO/commits/$head/check-runs?per_page=100" 2>"$errfile") || check_runs_status=$?
+if [ "$check_runs_status" -ne 0 ] || ! jq -e --arg head "$head" '
+  type == "array" and length > 0 and
+  all(.[]; type == "object" and
+    (.total_count | type == "number" and floor == . and . >= 0) and
+    (.check_runs | type == "array" and all(.[];
+      type == "object" and
+      (.name | type == "string" and length > 0) and
+      (.head_sha | type == "string" and test("^[0-9a-fA-F]{40}$") and . == $head)
+    ))) and
+  ((map(.total_count) | unique | length) == 1) and
+  ((map(.check_runs | length) | add) == .[0].total_count)
+' <<<"$check_runs" >/dev/null 2>&1; then
+  unknown "could not validate complete head-bound check-run evidence"
+else
+  say "ok" "check-run pages are complete and bound to head $short"
+fi
+: >"$errfile"
+statuses_status=0
+statuses=$(gh api "repos/$REPO/commits/$head/status" 2>"$errfile") || statuses_status=$?
+if [ "$statuses_status" -ne 0 ] || ! jq -e --arg head "$head" '
+  type == "object" and
+  (.total_count | type == "number" and floor == . and . >= 0) and
+  (.statuses | type == "array" and all(.[];
+    type == "object" and
+    (.context | type == "string" and length > 0) and
+    (.state | type == "string" and length > 0) and
+    ((.sha // $head) | type == "string" and test("^[0-9a-fA-F]{40}$") and . == $head)
+  ))
+' <<<"$statuses" >/dev/null 2>&1; then
+  unknown "could not validate head-bound commit-status evidence"
+else
+  say "ok" "commit-status response is bound to head $short"
 fi
 
 # Provider review objects carry an immutable full commit_id even when the
@@ -406,24 +473,24 @@ fi
 
 # Read and validate the v1 surface as a required object. Any transport,
 # decoding, JSON, or schema failure is indeterminate; an unrelated nested
-# `path` must not turn an incomplete manifest into an empty pin set.
+# `path` must not turn an incomplete manifest into an empty pin set. Both the
+# reviewed head and captured base tip are checked: a head surface that silently
+# drops a previously pinned path is a human hold, and changed paths are tested
+# against the union so an unpinned head cannot hide a reseal obligation.
 SURFACE="docs/tally/compatibility/compatibility-surface.json"
-: >"$errfile"
-surface_status=0
-surface=$(gh api "repos/$REPO/contents/$SURFACE?ref=$head" 2>"$errfile") || surface_status=$?
-if [ "$surface_status" -ne 0 ]; then
-  unknown "could not read compatibility surface at $short"
-  pinned=""
-elif ! surface_content=$(jq -er '.content | strings' <<<"$surface"); then
-  unknown "compatibility surface response had no valid base64 content"
-  pinned=""
-else
+read_surface_paths() {
+  local ref="$1"
+  local response content decoded decode_status
+  surface_paths_result=""
+  : >"$errfile"
+  response=$(gh api "repos/$REPO/contents/$SURFACE?ref=$ref" 2>"$errfile") || return 1
+  content=$(jq -er 'select(.encoding == "base64") | .content | strings' <<<"$response") || return 1
   decoded=""
   decode_status=0
-  decoded=$(printf '%s' "${surface_content//$'\n'/}" | base64 --decode 2>"$errfile") || decode_status=$?
+  decoded=$(printf '%s' "${content//$'\n'/}" | base64 --decode 2>"$errfile") || decode_status=$?
   if [ "$decode_status" -ne 0 ]; then
     decode_status=0
-    decoded=$(printf '%s' "${surface_content//$'\n'/}" | base64 -D 2>"$errfile") || decode_status=$?
+    decoded=$(printf '%s' "${content//$'\n'/}" | base64 -D 2>"$errfile") || decode_status=$?
   fi
   if [ "$decode_status" -ne 0 ] || ! jq -e '
     type == "object" and
@@ -435,14 +502,43 @@ else
         ((.sha256 | type) == "string") and (.sha256 | test("^[0-9a-f]{64}$")))) and
     (([.files[].path] | length) == ([.files[].path] | unique | length))
   ' <<<"$decoded" >/dev/null 2>&1; then
-    unknown "compatibility surface could not be decoded and validated"
-    pinned=""
-  else
-    pinned=$(jq -r '.files[].path' <<<"$decoded")
+    return 1
   fi
+  surface_paths_result=$(jq -r '.files[].path' <<<"$decoded")
+}
+
+head_surface_status=0
+read_surface_paths "$head" || head_surface_status=$?
+if [ "$head_surface_status" -ne 0 ]; then
+  unknown "could not read and validate compatibility surface at $short"
+  pinned=""
+else
+  pinned="$surface_paths_result"
+  say "ok" "validated v1 compatibility surface at head $short"
 fi
-if [ -n "$changed" ] && [ -n "$pinned" ]; then
-  touched=$(comm -12 <(sort -u <<<"$pinned") <(sort -u <<<"$changed") | awk -v surface="$SURFACE" '$0 != surface')
+
+base_surface_status=0
+if [ -n "$base_tip" ]; then
+  read_surface_paths "$base_tip" || base_surface_status=$?
+fi
+if [ -n "$base_tip" ] && [ "$base_surface_status" -ne 0 ]; then
+  unknown "could not read and validate compatibility surface at base ${base_tip:0:7}"
+  base_pinned=""
+elif [ -n "$base_tip" ]; then
+  base_pinned="$surface_paths_result"
+  say "ok" "validated v1 compatibility surface at base ${base_tip:0:7}"
+else
+  base_pinned=""
+fi
+
+if [ -n "$changed" ] && [ -n "$pinned" ] && [ -n "$base_pinned" ]; then
+  removed_pins=$(comm -23 <(sort -u <<<"$base_pinned") <(sort -u <<<"$pinned"))
+  if [ -n "$removed_pins" ]; then
+    removed_count=$(wc -l <<<"$removed_pins" | tr -d ' ')
+    unknown "$removed_count base-pinned path(s) are absent from the head surface; human review is required"
+  fi
+  union_pinned=$(printf '%s\n%s\n' "$base_pinned" "$pinned" | sort -u)
+  touched=$(comm -12 <(sort -u <<<"$union_pinned") <(sort -u <<<"$changed") | awk -v surface="$SURFACE" '$0 != surface')
   if [ -z "$touched" ]; then
     say "ok" "changed files contain no pinned path requiring a reseal"
   elif grep -Fxq "$SURFACE" <<<"$changed"; then
@@ -582,11 +678,12 @@ fi
 : >"$errfile"
 final_meta_status=0
 final_meta=$(gh pr view "$PR" --repo "$REPO" \
-  --json headRefOid,baseRefName,mergeable,mergeStateStatus,isDraft,state,body,changedFiles 2>"$errfile") || final_meta_status=$?
-if [ "$final_meta_status" -ne 0 ] || ! jq -e 'type == "object" and (.headRefOid | type == "string") and (.baseRefName | type == "string") and (.mergeable | type == "string") and (.mergeStateStatus | type == "string") and (.isDraft | type == "boolean") and (.state | type == "string") and (.changedFiles | type == "number" and floor == . and . >= 0)' <<<"$final_meta" >/dev/null 2>&1; then
+  --json headRefOid,baseRefOid,baseRefName,mergeable,mergeStateStatus,isDraft,state,body,changedFiles 2>"$errfile") || final_meta_status=$?
+if [ "$final_meta_status" -ne 0 ] || ! jq -e 'type == "object" and (.headRefOid | type == "string" and test("^[0-9a-fA-F]{40}$")) and (.baseRefOid | type == "string" and test("^[0-9a-fA-F]{40}$")) and (.baseRefName | type == "string") and (.mergeable | type == "string") and (.mergeStateStatus | type == "string") and (.isDraft | type == "boolean") and (.state | type == "string") and (.changedFiles | type == "number" and floor == . and . >= 0)' <<<"$final_meta" >/dev/null 2>&1; then
   unknown "could not revalidate PR head and base before merge"
 else
   final_head=$(jq -r '.headRefOid' <<<"$final_meta")
+  final_base_ref_oid=$(jq -r '.baseRefOid' <<<"$final_meta")
   final_base=$(jq -r '.baseRefName' <<<"$final_meta")
   final_mergeable=$(jq -r '.mergeable' <<<"$final_meta")
   final_state=$(jq -r '.mergeStateStatus' <<<"$final_meta")
@@ -594,6 +691,7 @@ else
   final_pstate=$(jq -r '.state' <<<"$final_meta")
   final_changed_files=$(jq -r '.changedFiles' <<<"$final_meta")
   [ "$final_head" = "$head" ] || bad "PR head moved during preflight"
+  [ "$final_base_ref_oid" = "$base_ref_oid" ] || bad "PR base OID moved during preflight"
   [ "$final_base" = "$base" ] || bad "PR base moved during preflight"
   [ "$final_mergeable" = "MERGEABLE" ] || bad "PR mergeability changed to $final_mergeable during preflight"
   [ "$final_draft" = "false" ] || bad "PR became draft during preflight"

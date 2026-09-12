@@ -21,6 +21,7 @@ args = sys.argv[1:]
 scenario = os.environ.get("GATE_SCENARIO", "pass")
 head = "0123456789abcdef0123456789abcdef01234567"
 new_head = "fedcba9876543210fedcba9876543210fedcba98"
+base = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 def emit(value):
     if value is not None:
@@ -53,7 +54,8 @@ if args[:2] == ["pr", "view"]:
             "      linked here: https://github.com/example/repo/blob/HEAD/review-checklist.md#L10"
         )
     one_file = scenario in {"files-empty", "formatted-phone", "path-id", "binary-delete"}
-    emit({"headRefOid": selected_head, "baseRefName": "master",
+    selected_base = new_head if scenario == "base-oid-mismatch" else base
+    emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
           "isDraft": False, "state": "OPEN",
           "body": body, "changedFiles": 1 if one_file else 2})
@@ -86,6 +88,10 @@ elif args[:2] == ["pr", "diff"]:
         emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+safe text\n")
     elif scenario == "diff-truncated-payload":
         emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +2 @@\n+first line\n")
+    elif scenario == "surface-unpins":
+        emit("diff --git a/src/example.rs b/src/example.rs\n--- a/src/example.rs\n+++ b/src/example.rs\n@@ -0,0 +1 @@\n+safe text\n"
+             "diff --git a/docs/tally/compatibility/compatibility-surface.json b/docs/tally/compatibility/compatibility-surface.json\n"
+             "--- a/docs/tally/compatibility/compatibility-surface.json\n+++ b/docs/tally/compatibility/compatibility-surface.json\n@@ -0,0 +1 @@\n+safe manifest\n")
     else:
         emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+safe text\ndiff --git a/docs/second.md b/docs/second.md\n--- a/docs/second.md\n+++ b/docs/second.md\n@@ -0,0 +1 @@\n+other text\n")
 elif args and args[0] == "api":
@@ -106,13 +112,34 @@ elif args and args[0] == "api":
             "totalCount": 101.5 if scenario == "threads-fractional" else (102 if scenario == "threads-total-drift" and has_cursor else 101),
             "pageInfo": page_info, "nodes": nodes
         }}}}})
+    elif "/compare/" in joined:
+        if scenario == "lineage-mismatch":
+            emit({"status": "diverged", "behind_by": 1,
+                  "merge_base_commit": {"sha": new_head}})
+        else:
+            emit({"status": "ahead", "behind_by": 0,
+                  "merge_base_commit": {"sha": base}})
+    elif "/commits/" in joined and "/check-runs" in joined:
+        if scenario == "check-run-wrong-head":
+            run_head = new_head
+        else:
+            run_head = head
+        total_count = 3 if scenario == "check-run-count-mismatch" else 2
+        emit([{"total_count": total_count, "check_runs": [
+            {"name": "Required checks", "head_sha": run_head},
+            {"name": "Rust format", "head_sha": run_head}]}])
+    elif "/commits/" in joined and "/status" in joined:
+        if scenario == "status-malformed":
+            emit({"total_count": "0", "statuses": []})
+        else:
+            emit({"state": "success", "total_count": 0, "statuses": []})
     elif "branches/master/protection/required_status_checks" in joined:
         contexts = ["Required checks", "Rust format"] if scenario == "missing-required" else [
             "Frontend build", "Rust format", "GitGuardian Security Checks",
             "Dependency security", "Required checks"]
         emit({"contexts": contexts, "checks": []})
     elif "branches/master" in joined:
-        emit(head)
+        emit(base)
     elif "/pulls/321/reviews" in joined:
         if scenario == "short-review":
             emit([[]])
@@ -139,6 +166,9 @@ elif args and args[0] == "api":
             emit([[{"filename": "docs/example.md", "status": "added", "additions": 1, "deletions": 0}], [{"filename": 3, "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "missing-file-status":
             emit([[{"filename": "docs/example.md", "status": "added", "additions": 1, "deletions": 0}], [{"filename": "docs/second.md", "additions": 1, "deletions": 0}]])
+        elif scenario == "surface-unpins":
+            emit([[{"filename": "src/example.rs", "status": "modified", "additions": 1, "deletions": 0}],
+                  [{"filename": "docs/tally/compatibility/compatibility-surface.json", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "files-count-mismatch":
             emit([[{"filename": "docs/example.md", "status": "added", "additions": 1, "deletions": 0}]])
         else:
@@ -151,11 +181,18 @@ elif args and args[0] == "api":
             emit({"content": "not-base64"})
         else:
             digest = "a" * 64
+            if scenario == "surface-unpins" and f"ref={head}" not in joined:
+                surface_files = [
+                    {"path": "src/example.rs", "sha256": digest},
+                    {"path": "docs/tally/compatibility/compatibility-surface.json", "sha256": digest},
+                ]
+            else:
+                surface_files = [{"path": "src/example.rs", "sha256": digest}]
             surface = {"schema_version": 1, "manifest_sha256": digest,
-                       "files": [{"path": "src/example.rs", "sha256": digest}]}
+                       "files": surface_files}
             if scenario == "surface-schema-malformed":
                 surface = {"files": [{"path": "src/example.rs"}]}
-            emit({"content": base64.b64encode(json.dumps(surface).encode()).decode()})
+            emit({"encoding": "base64", "content": base64.b64encode(json.dumps(surface).encode()).decode()})
     else:
         fail("unknown API fixture")
 else:
@@ -227,7 +264,7 @@ class MergeGateControls(unittest.TestCase):
         self.assert_blocked("cancel-check", "failing, cancelled, or pending")
 
     def test_surface_transport_failure_is_indeterminate(self):
-        self.assert_indeterminate("surface-fail", "could not read compatibility surface")
+        self.assert_indeterminate("surface-fail", "could not read and validate compatibility surface")
 
     def test_silent_checks_response_is_indeterminate(self):
         self.assert_indeterminate("checks-silent", "checks query returned no JSON")
@@ -267,10 +304,28 @@ class MergeGateControls(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_malformed_surface_is_indeterminate(self):
-        self.assert_indeterminate("surface-malformed", "compatibility surface could not be decoded")
+        self.assert_indeterminate("surface-malformed", "could not read and validate compatibility surface")
 
     def test_surface_with_no_v1_manifest_schema_is_indeterminate(self):
-        self.assert_indeterminate("surface-schema-malformed", "compatibility surface could not be decoded")
+        self.assert_indeterminate("surface-schema-malformed", "could not read and validate compatibility surface")
+
+    def test_removed_base_pin_requires_human_hold(self):
+        self.assert_indeterminate("surface-unpins", "base-pinned path(s) are absent")
+
+    def test_compare_lineage_mismatch_is_indeterminate(self):
+        self.assert_indeterminate("lineage-mismatch", "base/head compare did not prove")
+
+    def test_check_run_wrong_head_is_indeterminate(self):
+        self.assert_indeterminate("check-run-wrong-head", "head-bound check-run evidence")
+
+    def test_check_run_count_mismatch_is_indeterminate(self):
+        self.assert_indeterminate("check-run-count-mismatch", "head-bound check-run evidence")
+
+    def test_base_oid_mismatch_is_indeterminate(self):
+        self.assert_indeterminate("base-oid-mismatch", "PR base OID")
+
+    def test_malformed_commit_status_is_indeterminate(self):
+        self.assert_indeterminate("status-malformed", "head-bound commit-status evidence")
 
     def test_malformed_changed_file_is_indeterminate(self):
         self.assert_indeterminate("malformed-files", "could not read the complete changed-file set")
