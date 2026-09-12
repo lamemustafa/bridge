@@ -439,7 +439,7 @@ class HDFC(Bank):
                 continue
             # the boundary test runs on the field with whitespace removed. The
             # cell wrap that this module exists to undo also lands *inside* a
-            # reference — a real UTR arrives as "HDF CH01206262147" when the
+            # reference — a UTR arrives as "HDF CH12345678901" when the
             # fragment before it stopped short of the cell edge — and a marker
             # that is only recognisable when unbroken is not a marker. Names
             # keep their spaces; only the test strips.

@@ -66,11 +66,17 @@ The constructor refuses, rather than degrades, on:
 - **an identifier hint that yields no identifier** — `IdentifierHintUnusable`. A
   hint that silently does nothing is a trap (P7);
 - bounds violations on entry count, entity count, name length, **total catalog
-  name bytes**, and **hint count**. The byte bound is not redundant with the
-  other two: 20,000 names of 16,384 characters satisfies both and is 327 MB
-  before the constructor builds its keys, tokens and four indexes over them. It
-  is accumulated as the iterator is consumed, so a lazy catalog fails before the
-  next name is retained rather than after all of them are. The last is checked as the hints arrive rather than on the finished
+  name bytes**, **total source name bytes**, and **hint count**. The byte bounds
+  are not redundant with the count and length ones: 20,000 names of 16,384
+  characters satisfies both and is 327 MB before the constructor builds its
+  keys, tokens and four indexes over them. The catalog's is accumulated as the
+  iterator is consumed, so a lazy catalog fails before the next name is retained
+  rather than after all of them are. The source side had no such bound at all
+  until a review asked why only one side of an equally untrusted pair carried
+  one — 40,000 entities of 16,384 characters is two and a half gigabytes of
+  names, each individually valid — and it is now checked at `bind`, the boundary
+  where the collection first becomes this module's problem, as
+  `SourceNamesTooLarge`. The last is checked as the hints arrive rather than on the finished
   set: hints deduplicate, so a million repeated ones fold to a single identifier
   and the finished set never exceeds its bound, while every one of them has
   already been scanned and copied. Each hint yields at least one identifier or

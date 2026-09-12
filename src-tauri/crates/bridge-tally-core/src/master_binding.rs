@@ -28,6 +28,16 @@ const MAX_CATALOG_NAME_BYTES: usize = 8 * 1024 * 1024;
 /// vouchers of 20 entries, and a bound below that turned a valid draft into a
 /// silently empty binding result.
 pub const MAX_SOURCE_ENTITIES: usize = 40_000;
+/// The aggregate a request's source names may occupy, as `MAX_CATALOG_NAME_BYTES`
+/// is for the catalog side. The count and per-name bounds do not bound their
+/// product any better here than there: 40,000 names of 16,384 characters
+/// satisfies both and is 2.6 GB of names alone, before the two folds each
+/// entity retains beside its name and the clones this module makes of them.
+///
+/// Sixteen mebibytes rather than the catalog's eight, because a request may
+/// legitimately name one master many times over — the same ledger on 2,000
+/// vouchers — where a catalog may not.
+const MAX_SOURCE_NAME_BYTES: usize = 16 * 1024 * 1024;
 /// Longest accepted master or source name, in characters. This bounds
 /// pathological input; it is not a claim about what Tally accepts, and a
 /// caller with a stricter contract of its own enforces that at its own
@@ -121,6 +131,9 @@ pub enum MasterBindingError {
     CatalogTooLarge,
     #[error("source entity list exceeded its bound")]
     TooManySourceEntities,
+    /// The entity *count* is within bounds but their names together are not.
+    #[error("source entity names exceeded their aggregate bound")]
+    SourceNamesTooLarge,
     #[error("name was blank")]
     NameBlank,
     #[error("name exceeded its bound")]
@@ -151,6 +164,7 @@ impl MasterBindingError {
             Self::CatalogDuplicateName => "master_catalog_duplicate_name",
             Self::CatalogTooLarge => "master_catalog_too_large",
             Self::TooManySourceEntities => "master_source_entities_too_many",
+            Self::SourceNamesTooLarge => "master_source_names_too_large",
             Self::NameBlank => "master_name_blank",
             Self::NameTooLong => "master_name_too_long",
             Self::NameUnsafe => "master_name_unsafe",
@@ -880,6 +894,28 @@ pub fn bind(
     if entities.len() > MAX_SOURCE_ENTITIES {
         return Err(MasterBindingError::TooManySourceEntities);
     }
+    // The count bound and the per-name bound do not bound their product, which
+    // is why the catalog constructor carries an aggregate budget — and the
+    // source side, which is equally untrusted, carried none. Each entity is
+    // individually valid at 16,384 characters, and 40,000 of them are two and a
+    // half gigabytes of names before this function clones a single one of them
+    // into a report. Refused here, at the boundary where the collection first
+    // becomes this module's problem, rather than part-way through building the
+    // report it would otherwise exhaust memory producing.
+    //
+    // Both folds are counted, not just the name: they are retained per entity
+    // and are the same order of size, so counting the name alone would
+    // under-state what has already been allocated by a factor of three.
+    let mut source_bytes = 0_usize;
+    for entity in entities {
+        source_bytes = source_bytes
+            .saturating_add(entity.name.len())
+            .saturating_add(entity.key.len())
+            .saturating_add(entity.binding_key.len());
+        if source_bytes > MAX_SOURCE_NAME_BYTES {
+            return Err(MasterBindingError::SourceNamesTooLarge);
+        }
+    }
     let mut budget = MAX_REPORT_CANDIDATE_BYTES;
     // Which source keys actually repeat, decided before any of them is bound.
     //
@@ -890,11 +926,28 @@ pub fn bind(
     // first removes the ordering entirely, and caches only what a second row
     // will ask for again.
     //
+    // Counted on the **whole** determinant of a memo entry, not on the name
+    // alone. The memo is keyed by the source key *and* the masters the
+    // identifiers reached, so counting `key` by itself called every hint
+    // variant of one name repeated: 1,024 singleton variants of `Acme Branch`
+    // then filled the memo with entries nothing would ask for twice, and a key
+    // that genuinely repeated behind them could no longer be inserted — the
+    // stall the memo exists to prevent, reached by a different door than the
+    // source-order one.
+    //
+    // The identifiers are the source-side determinant of those masters: the
+    // same key with the same identifiers always produces the same memo key
+    // against a given catalog. The converse does not hold — two different
+    // identifier sets can reach the same masters — so this counts no pair as
+    // repeated that is not, and at worst declines to cache one that is.
+    //
     // This borrows the keys rather than cloning them, so it costs no more than
     // the entity list it is counting.
-    let mut repeats: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut repeats: BTreeMap<(&str, &[Identifier]), usize> = BTreeMap::new();
     for entity in entities {
-        *repeats.entry(entity.key.as_str()).or_insert(0) += 1;
+        *repeats
+            .entry((entity.key.as_str(), entity.identifiers.as_slice()))
+            .or_insert(0) += 1;
     }
     let repeated = repeats
         .into_iter()
@@ -943,14 +996,17 @@ struct IdentifierEvidence<'a> {
     exact: Option<usize>,
     /// Every master the entity's identifiers reached.
     matches: &'a BTreeSet<usize>,
-    /// The largest family skipped rather than expanded, so a withheld listing
-    /// can still say how many masters share the identifier.
+    /// A **lower bound** on how many masters share this entity's identifiers,
+    /// counted without expanding the families that were skipped: the largest
+    /// skipped family, plus the listed masters that are not in it. Present so a
+    /// withheld listing can still say how many masters are involved.
     withheld_holders: usize,
 }
 
 struct SearchMemo<'a> {
     seen: CandidateMemo,
-    repeated: BTreeSet<&'a str>,
+    /// The (source key, identifiers) pairs a second row will ask for again.
+    repeated: BTreeSet<(&'a str, &'a [Identifier])>,
 }
 
 const MAX_CANDIDATE_MEMO_ENTRIES: usize = 1_024;
@@ -979,6 +1035,9 @@ fn bind_one(
     // withheld family reported `found() == 0` and `listing: "none"`, telling
     // the operator nothing shares the identifier when hundreds do.
     let mut withheld_holders = 0_usize;
+    // The holders of the largest skipped family, kept by reference so the count
+    // below can ask which listed masters are *not* in it. Nothing is cloned.
+    let mut largest_withheld: Option<&Vec<usize>> = None;
     for identifier in &entity.identifiers {
         if let Some(holders) = catalog.by_identifier.get(identifier) {
             // An identifier held by more masters than a candidate list may show
@@ -990,7 +1049,10 @@ fn bind_one(
             // before the candidate memo is even consulted.
             if holders.len() > MAX_CANDIDATES_PER_ENTITY {
                 identifier_conflict = true;
-                withheld_holders = withheld_holders.max(holders.len());
+                if holders.len() > withheld_holders {
+                    withheld_holders = holders.len();
+                    largest_withheld = Some(holders);
+                }
                 // Skipping the expansion must not skip the *question* the
                 // expansion was asked. `identifier_points_elsewhere` needs one
                 // fact from this set — whether it contains the byte-exact
@@ -1013,6 +1075,34 @@ fn bind_one(
             per_identifier.push(reached);
         }
     }
+
+    // One family's size is not the size of their union. An entity carrying two
+    // identifiers — one held by thirty masters and skipped, one reaching a
+    // thirty-first — reported thirty, because the larger of the two counts
+    // ignores every master the other identifier listed.
+    //
+    // The listed masters that are *not* in the skipped family are disjoint from
+    // it, so adding them is sound and costs nothing but a lookup: the union is
+    // never built, which is the whole point of skipping. It stays a **lower
+    // bound** — two disjoint skipped families are still counted as the larger
+    // alone — and that is what `Candidates::Withheld` means. Over-counting
+    // would be worse than under-counting here: two identifiers can be held by
+    // overlapping families, so summing their sizes would state a number of
+    // masters that do not exist.
+    let withheld_holders = match largest_withheld {
+        Some(family) => {
+            // `by_identifier` is filled by pushing entry indices in ascending
+            // order, so each holder list is sorted and a membership test is a
+            // bisection rather than a scan of up to a whole catalog.
+            debug_assert!(family.is_sorted(), "holder lists are built in order");
+            withheld_holders
+                + identifier_matches
+                    .iter()
+                    .filter(|index| family.binary_search(index).is_err())
+                    .count()
+        }
+        None => withheld_holders,
+    };
 
     // An identifier shared by two masters, and an entity whose identifiers
     // reach two masters, are the same refusal: the operator has a naming
@@ -1275,7 +1365,9 @@ fn remembered_candidates(
     // recomputing it costs, multiplied by the cap — trading a stall for the
     // memory the aggregate bounds elsewhere exist to prevent. A large result is
     // cheap to recompute relative to what holding it costs, so it is not held.
-    let worth_holding = memo.repeated.contains(entity.key.as_str())
+    let worth_holding = memo
+        .repeated
+        .contains(&(entity.key.as_str(), entity.identifiers.as_slice()))
         && key.1.len() <= MAX_CANDIDATES_PER_ENTITY
         && computed.0.len() <= MAX_CANDIDATES_PER_ENTITY;
     if worth_holding && memo.seen.len() < MAX_CANDIDATE_MEMO_ENTRIES {
@@ -1642,7 +1734,17 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
         let foreign_content = token
             .chars()
             .any(|character| !character.is_ascii() && !DASH_VARIANTS.contains(&character));
-        if canonical.len() >= MIN_CODE_IDENTIFIER_CHARS
+        // The threshold counts the characters that *identify*, not the bytes
+        // that spell them. `len()` is UTF-8 bytes, and an admitted dash variant
+        // is three of them, so `AB\u{2013}123` measured 8 and cleared a bound meant
+        // for eight characters while carrying five alphanumerics — decisive on
+        // the strength of one punctuation mark. Its ASCII twin `AB-123` reduces
+        // to `AB123` and is refused, so the same code bound or did not
+        // depending on which dash the document happened to use. Counting
+        // letters and digits also closes the padding shape the byte count never
+        // saw: `AB\u{2013}\u{2013}\u{2013}123` is still five alphanumerics.
+        let identifying = digits + letters;
+        if identifying >= MIN_CODE_IDENTIFIER_CHARS
             && digits >= MIN_CODE_IDENTIFIER_DIGITS
             && letters >= 2
             && !foreign_content
@@ -1650,6 +1752,10 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
             && !masked
             && !is_period(token)
             && !is_masked(&canonical)
+            // The upper bound stays on the canonical's **bytes**, because it
+            // bounds what this index stores and clones rather than what
+            // identifies. A byte cap admits no more characters than it says,
+            // so it is the conservative half of the pair.
             && canonical.len() <= MAX_IDENTIFIER_CHARS
         {
             identifiers.insert(Identifier {
