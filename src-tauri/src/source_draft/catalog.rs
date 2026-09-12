@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use bridge_tally_core::master_binding::{
-    self, BindingBasis, BindingStatus, MasterCatalog, MasterClass, SourceEntity,
+    self, BindingBasis, BindingStatus, Candidates, MasterCatalog, MasterClass, SourceEntity,
 };
 use bridge_tally_protocol::{StandardLedgerCatalog, StandardLedgerCatalogBinding};
 
@@ -98,7 +98,16 @@ pub(crate) struct SourceDraftCatalogBinding {
     pub(crate) unbound_reason: Option<&'static str>,
     pub(crate) candidates: Vec<String>,
     pub(crate) candidate_count: usize,
-    pub(crate) candidates_truncated: bool,
+    /// `true` when unmaterialized identifier families prevent the core from
+    /// establishing an exact union. A withheld or truncated listing can still
+    /// have an exact count; only this flag requires rendering "at least N".
+    pub(crate) candidate_count_is_lower_bound: bool,
+    /// Which of the four candidate states this is, in the word the core type
+    /// already tags its serialized form with. Carried rather than inferred: an
+    /// empty listing beside a nonzero count is two different results — a family
+    /// deliberately not sliced, and a report that ran out of room — and they
+    /// call for opposite things from the operator.
+    pub(crate) candidate_listing: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -203,7 +212,8 @@ fn source_entry_bindings(
                     unbound_reason: None,
                     candidates: Vec::new(),
                     candidate_count: 0,
-                    candidates_truncated: false,
+                    candidate_count_is_lower_bound: false,
+                    candidate_listing: Candidates::None.listing(),
                 },
                 BindingStatus::Ambiguous(unresolved) | BindingStatus::Unmatched(unresolved) => {
                     SourceDraftCatalogBinding {
@@ -212,11 +222,12 @@ fn source_entry_bindings(
                         bound_target: None,
                         bound_basis: None,
                         unbound_reason: Some(unresolved.reason.safe_reason_code()),
-                        // The screen distinguishes the three cases from
-                        // `candidate_count` against an empty list and is tested
-                        // on each, so the DTO stays flat and this projection is
-                        // the only place the typed shape is flattened.
-                        candidates_truncated: unresolved.candidates.is_incomplete(),
+                        // The state travels; it is not reconstructed on the
+                        // other side. Deriving it from an empty list and a
+                        // count could not tell a withheld family from an
+                        // exhausted budget, and told the operator the report
+                        // had run out of room when it had declined to slice.
+                        candidate_listing: unresolved.candidates.listing(),
                         candidates: unresolved
                             .candidates
                             .listed()
@@ -224,6 +235,9 @@ fn source_entry_bindings(
                             .map(|candidate| candidate.catalog_name.clone())
                             .collect(),
                         candidate_count: unresolved.candidates.found(),
+                        candidate_count_is_lower_bound: unresolved
+                            .candidates
+                            .count_is_lower_bound(),
                     }
                 }
             },
@@ -679,6 +693,21 @@ mod tests {
         .expect("fabricated source parses")
     }
 
+    /// The names a **captured** `StandardLedgerCatalogV1` response carries,
+    /// parsed by the production path rather than typed into the test.
+    ///
+    /// The other binding tests here hand `source_entry_bindings` a target list
+    /// written by hand, so they show the rules behave — not that they behave
+    /// against what a real book returns. These are the bytes captured from
+    /// licensed TallyPrime 7.1 Silver that the protocol reference already
+    /// retains, decoded and parsed through the same functions production uses,
+    /// so the catalogue reaches the binder exactly as it does there — including
+    /// the parts a hand-written list would never think to include.
+    fn captured_catalogue_names() -> Vec<String> {
+        let (catalog, _) = captured_catalog_and_xml();
+        catalog.names().map(str::to_owned).collect()
+    }
+
     #[test]
     fn a_capture_narrows_each_source_entry_without_deciding_a_near_miss() {
         let targets = [
@@ -753,6 +782,143 @@ mod tests {
             parse_standard_ledger_catalog_with_identities(&xml, CAPTURED_COMPANY, CAPTURED_GUID)
                 .expect("captured catalogue remains parser-admitted");
         (catalog, xml)
+    }
+
+    #[test]
+    fn the_binder_meets_a_real_catalogue_through_the_production_parse() {
+        let targets = captured_catalogue_names();
+        assert!(
+            targets.iter().any(|name| name.starts_with('\u{928}')),
+            "the capture should still carry its Devanagari ledger: {targets:?}"
+        );
+
+        let source = parse_source_xml(
+            concat!(
+                "<ENVELOPE><BODY><IMPORTDATA><REQUESTDATA><TALLYMESSAGE>",
+                "<VOUCHER REMOTEID=\"ph-1\" VCHTYPE=\"Receipt\"><DATE>20260901</DATE>",
+                // Byte-exact against a captured name.
+                "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Cash</LEDGERNAME><AMOUNT>1</AMOUNT></ALLLEDGERENTRIES.LIST>",
+                // Case and separator folding, against a captured name.
+                "<ALLLEDGERENTRIES.LIST><LEDGERNAME>wr2-sales</LEDGERNAME><AMOUNT>-1</AMOUNT></ALLLEDGERENTRIES.LIST>",
+                // `AND` for `&` is rejected by the gateway, so it must not bind.
+                "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Profit AND Loss A/c</LEDGERNAME><AMOUNT>0</AMOUNT></ALLLEDGERENTRIES.LIST>",
+                "</VOUCHER></TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>"
+            )
+            .as_bytes(),
+            "source.xml".into(),
+        )
+        .expect("fabricated source parses");
+
+        let (bindings, state) = source_entry_bindings(&source, &targets);
+        assert_eq!(state, "complete");
+        assert_eq!(bindings.len(), 3);
+
+        assert_eq!(bindings[0].bound_target.as_deref(), Some("Cash"));
+        assert_eq!(bindings[0].bound_basis, Some(BindingBasis::ExactName));
+
+        assert_eq!(bindings[1].bound_target.as_deref(), Some("WR2 Sales"));
+        assert_eq!(bindings[1].bound_basis, Some(BindingBasis::NormalizedName));
+
+        // `&` is not folded — §9.4d sent `AND` for `&` and Tally rejected it —
+        // so this refuses against a real catalogue rather than in theory, and
+        // offers the ledger it could not reach.
+        assert_eq!(bindings[2].bound_target, None);
+        assert_eq!(bindings[2].unbound_reason, Some("master_binding_near_miss"));
+        assert_eq!(bindings[2].candidates, ["Profit & Loss A/c"]);
+
+        // The same values are committed as a fixture the **screen** test reads,
+        // so the two halves of this DTO cannot drift apart: if the producer
+        // changes what it emits, this assertion fails here rather than leaving
+        // the frontend asserting a shape nothing produces any more.
+        let committed: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../scripts/fixtures/source-draft-capture-bindings.json"
+        ))
+        .expect("the committed capture fixture parses");
+        assert_eq!(
+            committed["targets"],
+            serde_json::to_value(&targets).expect("targets serialize"),
+            "the committed fixture no longer matches the captured catalogue"
+        );
+        assert_eq!(
+            committed["bindings"],
+            serde_json::to_value(&bindings).expect("bindings serialize"),
+            "the committed fixture no longer matches what the binder emits"
+        );
+
+        // The evidence fields are the capture's own, not placeholders. They
+        // come from the retained capture's metadata sidecar and from this
+        // source document's digest, and are asserted here so the fixture
+        // cannot quietly go back to zeros while still calling itself a
+        // capture. `capture_id` has no captured counterpart — it is minted
+        // locally per read — so it stays a fixed synthetic UUID.
+        let provenance: serde_json::Value = serde_json::from_str(include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ledger-catalogue.json"
+        ))
+        .expect("the capture's provenance sidecar parses");
+        assert_eq!(
+            committed["evidence"]["response_sha256"], provenance["source_response_sha256"],
+            "the fixture no longer carries the captured response digest"
+        );
+        assert_eq!(
+            committed["evidence"]["request_sha256"], provenance["source_request_sha256"],
+            "the fixture no longer carries the captured request digest"
+        );
+        assert_eq!(
+            committed["evidence"]["bytes"], provenance["source_response_bytes"],
+            "the fixture no longer carries the captured response size"
+        );
+        assert_eq!(
+            committed["source_sha256"],
+            serde_json::Value::String(source.sha256.clone()),
+            "the fixture no longer carries this source document's digest"
+        );
+    }
+
+    #[test]
+    fn a_captured_nfd_ledger_is_not_reachable_from_its_nfc_spelling() {
+        // The capture carries a genuinely NFD ledger beside NFC ones, which is
+        // the pair the resolving fold must keep apart: Tally stores the bytes
+        // it was given and matches on exact codepoints, so normalizing before
+        // comparing would resolve one onto a master the gateway keeps apart.
+        // The premise is measured, not assumed: `TALLY_PROTOCOL_REFERENCE.md`
+        // §9.4d sent an NFD spelling at an NFC master on licensed 7.1 and
+        // Tally rejected it, which is the licensed re-run of §9.4b's
+        // Educational-scoped "otherwise exact" finding.
+        let targets = captured_catalogue_names();
+        let nfd = targets
+            .iter()
+            .find(|name| name.contains("NFD2"))
+            .expect("the capture carries the NFD probe ledger")
+            .clone();
+        assert!(
+            nfd.contains('\u{301}'),
+            "the fixture stopped being NFD, so this would assert nothing: {nfd:?}"
+        );
+
+        let nfc = nfd.replace("e\u{301}", "\u{e9}");
+        assert_ne!(nfc, nfd, "the two spellings must differ byte for byte");
+        let source = parse_source_xml(
+            format!(
+                concat!(
+                    "<ENVELOPE><BODY><IMPORTDATA><REQUESTDATA><TALLYMESSAGE>",
+                    "<VOUCHER REMOTEID=\"ph-1\" VCHTYPE=\"Receipt\"><DATE>20260901</DATE>",
+                    "<ALLLEDGERENTRIES.LIST><LEDGERNAME>{nfc}</LEDGERNAME><AMOUNT>1</AMOUNT>",
+                    "</ALLLEDGERENTRIES.LIST>",
+                    "</VOUCHER></TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>"
+                ),
+                nfc = nfc
+            )
+            .as_bytes(),
+            "source.xml".into(),
+        )
+        .expect("fabricated source parses");
+
+        let (bindings, state) = source_entry_bindings(&source, &targets);
+        assert_eq!(state, "complete");
+        assert_eq!(
+            bindings[0].bound_target, None,
+            "an NFC spelling resolved onto an NFD master the gateway keeps apart"
+        );
     }
 
     /// The ledger renamed between the two captured responses below.

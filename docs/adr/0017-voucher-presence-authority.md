@@ -162,7 +162,9 @@ Every verdict is therefore explicitly scoped to the window the report carries.
 book". A voucher keyed in September against an August window is not visible,
 and widening the window is the caller's decision, made in the open.
 
-Admission is also bounded before comparison: a request above **1,000,000**
+Raw book observations are admitted before decimal parsing, cloning, or folding:
+**100,000** total entries and **4 MiB** of entry ledger-and-amount bytes are
+the aggregate limits. Admission is also bounded before comparison: a request above **1,000,000**
 proposal/window pairs, or above **5,000,000** aggregate indexed resemblance
 work units, is refused as `ComparisonWorkTooLarge`. The second limit counts
 posting-list walks and party-key checks, so it still applies when the pair count
@@ -246,7 +248,8 @@ leaves open:
 - **Two identity signals that disagree are reported, not ranked.** Both
   lookups are resolved *before* either settles, so a `REMOTEID` selecting one
   voucher while the number selects another is `IdentityConflict` — as is a
-  number matching uniquely while the two sides carry different `REMOTEID`s.
+  number matching uniquely while the two sides carry different `REMOTEID`s, or
+  while the proposal supplies one and the book voucher has none.
   Settling on whichever basis happened to be evaluated first would rank them,
   which is the move ADR 0016 refuses when an identifier contradicts an exact
   name.
@@ -272,7 +275,8 @@ a `Present`, and a `Present` tells a caller the invoice is already filed. Two
 distinct invoices numbered `aa-0118` and `AA-0118` would each have suppressed
 the other.
 
-So a number is compared on NFC and **outer whitespace trimming only**. Outer
+So a number is compared with **outer whitespace trimming only**; its Unicode
+form is preserved. Outer
 padding is a transport artefact; internal whitespace, case and punctuation are
 **content** until voucher-number evidence measures an equivalence. Treating
 them so fails toward the noisy direction — a non-match withholds a decisive

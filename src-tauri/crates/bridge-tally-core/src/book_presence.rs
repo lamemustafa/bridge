@@ -45,6 +45,10 @@ pub const MAX_NUMBERING_DECLARATIONS: usize = MAX_PROPOSED_VOUCHERS;
 pub const MAX_NUMBERING_DECLARATION_BYTES: usize = 1_048_576;
 /// Most ledger entries one voucher may carry.
 pub const MAX_ENTRIES_PER_VOUCHER: usize = 2_000;
+/// Aggregate raw entries admitted before parsing, cloning, or folding them.
+pub const MAX_WINDOW_RAW_ENTRY_WORK: usize = 100_000;
+/// Aggregate raw entry bytes admitted before parsing, cloning, or folding them.
+pub const MAX_WINDOW_RAW_ENTRY_BYTES: usize = 4 * 1024 * 1024;
 /// Most distinct voucher-to-ledger memberships retained across one window.
 ///
 /// The party-resemblance index retains every membership once more. The
@@ -110,6 +114,10 @@ pub enum PresenceError {
     WindowTooLarge,
     #[error("book window ledger memberships exceeded their aggregate bound")]
     WindowLedgerMembershipsTooMany,
+    #[error("book window raw entries exceeded their aggregate bound")]
+    WindowRawEntryWorkTooLarge,
+    #[error("book window raw entry bytes exceeded their aggregate bound")]
+    WindowRawEntryBytesTooLarge,
     #[error("book window ledger keys exceeded their aggregate byte bound")]
     WindowLedgerKeyBytesTooLarge,
     #[error("book window ambiguous marker memberships exceeded their aggregate bound")]
@@ -183,6 +191,8 @@ impl PresenceError {
             Self::WindowRangeInvalid => "presence_window_range_invalid",
             Self::WindowTooLarge => "presence_window_too_large",
             Self::WindowLedgerMembershipsTooMany => "presence_window_ledger_memberships_too_many",
+            Self::WindowRawEntryWorkTooLarge => "presence_window_raw_entry_work_too_large",
+            Self::WindowRawEntryBytesTooLarge => "presence_window_raw_entry_bytes_too_large",
             Self::WindowLedgerKeyBytesTooLarge => "presence_window_ledger_key_bytes_too_large",
             Self::WindowAmbiguousMarkerMembershipsTooMany => {
                 "presence_window_ambiguous_marker_memberships_too_many"
@@ -370,7 +380,7 @@ pub struct BookVoucher {
 }
 
 impl BookVoucher {
-    pub fn observed(input: ObservedVoucher<'_>) -> Result<Self, PresenceError> {
+    pub(crate) fn observed(input: ObservedVoucher<'_>) -> Result<Self, PresenceError> {
         let key = validated_text(input.key)?;
         if key.chars().count() > MAX_BOOK_KEY_CHARS {
             return Err(PresenceError::VoucherKeyTooLong);
@@ -535,7 +545,7 @@ pub struct BookWindow {
 /// than five positional arguments, because two of them are the same type and
 /// transposing them would silently invert an evidence claim.
 #[derive(Debug)]
-pub struct ObservedWindow<'a> {
+pub struct ObservedWindow<'a, V = Vec<BookVoucher>> {
     pub from: &'a str,
     pub to: &'a str,
     pub read: WindowRead,
@@ -543,11 +553,78 @@ pub struct ObservedWindow<'a> {
     pub remote_id_evidence: ColumnEvidence,
     /// Whether the read fetched `NARRATION`.
     pub narration_evidence: ColumnEvidence,
-    pub vouchers: Vec<BookVoucher>,
+    pub vouchers: V,
+}
+
+/// Incremental admission for raw voucher rows. Both adapters and the core
+/// window boundary use this before retaining entry descriptors.
+#[derive(Debug, Default)]
+pub struct RawObservationBudget {
+    vouchers: usize,
+    entries: usize,
+    bytes: usize,
+}
+
+impl RawObservationBudget {
+    pub fn admit<'a>(
+        &mut self,
+        entries: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> Result<(), PresenceError> {
+        self.vouchers = self
+            .vouchers
+            .checked_add(1)
+            .ok_or(PresenceError::WindowTooLarge)?;
+        if self.vouchers > MAX_WINDOW_VOUCHERS {
+            return Err(PresenceError::WindowTooLarge);
+        }
+        for (ledger, amount) in entries {
+            self.entries = self
+                .entries
+                .checked_add(1)
+                .ok_or(PresenceError::WindowRawEntryWorkTooLarge)?;
+            if self.entries > MAX_WINDOW_RAW_ENTRY_WORK {
+                return Err(PresenceError::WindowRawEntryWorkTooLarge);
+            }
+            self.bytes = self
+                .bytes
+                .checked_add(ledger.len())
+                .and_then(|n| n.checked_add(amount.len()))
+                .ok_or(PresenceError::WindowRawEntryBytesTooLarge)?;
+            if self.bytes > MAX_WINDOW_RAW_ENTRY_BYTES {
+                return Err(PresenceError::WindowRawEntryBytesTooLarge);
+            }
+        }
+        Ok(())
+    }
 }
 
 impl BookWindow {
-    pub fn observed(input: ObservedWindow<'_>) -> Result<Self, PresenceError> {
+    /// Admit raw rows before per-voucher parsing, cloning or folding.
+    pub fn from_observations<'a>(
+        input: ObservedWindow<'_, impl IntoIterator<Item = ObservedVoucher<'a>>>,
+    ) -> Result<Self, PresenceError> {
+        let mut budget = RawObservationBudget::default();
+        let mut vouchers = Vec::new();
+        for observation in input.vouchers {
+            budget.admit(
+                observation
+                    .entries
+                    .iter()
+                    .map(|entry| (entry.ledger, entry.amount)),
+            )?;
+            vouchers.push(BookVoucher::observed(observation)?);
+        }
+        Self::observed(ObservedWindow {
+            from: input.from,
+            to: input.to,
+            read: input.read,
+            remote_id_evidence: input.remote_id_evidence,
+            narration_evidence: input.narration_evidence,
+            vouchers,
+        })
+    }
+
+    pub(crate) fn observed(input: ObservedWindow<'_>) -> Result<Self, PresenceError> {
         let ObservedWindow {
             from,
             to,

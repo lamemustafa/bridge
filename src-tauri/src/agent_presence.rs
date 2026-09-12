@@ -9,9 +9,9 @@ use super::*;
 use std::collections::BTreeSet;
 
 use bridge_tally_core::book_presence::{
-    self, BookVoucher, BookWindow, NumberingDeclaration, NumberingMethod, ObservedEntry,
-    ObservedVoucher, ObservedWindow, PresenceError, PresenceReport, PresenceRequest,
-    ProposedVoucher, ProposedVoucherInput, WindowRead,
+    self, BookWindow, NumberingDeclaration, NumberingMethod, ObservedEntry, ObservedVoucher,
+    ObservedWindow, PresenceError, PresenceReport, PresenceRequest, ProposedVoucher,
+    ProposedVoucherInput, RawObservationBudget, WindowRead,
 };
 use bridge_tally_core::book_presence::{ColumnEvidence, ObservedMarker};
 use bridge_tally_core::master_binding::{MasterCatalog, MasterClass, SourceEntity};
@@ -203,27 +203,11 @@ impl Server {
                 return Err("ledger_snapshot_drifted".to_string().into());
             }
 
-            let observed = rows
-                .iter()
-                .map(book_voucher)
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(presence_code)?;
             // The qualified `vouchers` profile does not FETCH REMOTEID, so an
             // absent value here means "never read", not "the voucher has
             // none". Declaring that keeps a proposal whose own REMOTEID was
             // never compared out of `absent`.
-            let window = BookWindow::observed(ObservedWindow {
-                from: &from,
-                to: &to,
-                read,
-                // The qualified `vouchers` profile does not FETCH REMOTEID.
-                remote_id_evidence: ColumnEvidence::NotRead,
-                // It does FETCH NARRATION, which is what makes the marker
-                // basis reachable with no change to a qualified read.
-                narration_evidence: ColumnEvidence::Observed,
-                vouchers: observed,
-            })
-            .map_err(presence_code)?;
+            let window = book_window(&from, &to, read, &rows).map_err(presence_code)?;
             let request = PresenceRequest::new(&window, &catalog, &numbering, &proposals)
                 .map_err(presence_code)?;
             let report = book_presence::assess(&request);
@@ -271,35 +255,70 @@ fn presence_code(error: PresenceError) -> ToolFailure {
 /// observed book voucher. `REMOTEID` is deliberately not read here: the
 /// `vouchers` profile does not fetch it, and inventing an absent column would
 /// be worse than reporting that it was never observed.
-fn book_voucher(row: &Value) -> Result<BookVoucher, PresenceError> {
-    let narration = row["narration"].as_str();
-    let ambiguous = ambiguous_markers(narration);
-    let entries = row["amounts"]
-        .as_array()
-        .map(Vec::as_slice)
-        .unwrap_or_default()
+fn book_window(
+    from: &str,
+    to: &str,
+    read: WindowRead,
+    rows: &[Value],
+) -> Result<BookWindow, PresenceError> {
+    let mut budget = RawObservationBudget::default();
+    let mut entries = Vec::with_capacity(rows.len().min(book_presence::MAX_WINDOW_VOUCHERS));
+    for row in rows {
+        let raw = row["amounts"]
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        budget.admit(raw.iter().map(|entry| {
+            (
+                entry["ledger"].as_str().unwrap_or_default(),
+                entry["amount"].as_str().unwrap_or_default(),
+            )
+        }))?;
+        entries.push(
+            row["amounts"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+                .iter()
+                .map(|entry| ObservedEntry {
+                    ledger: entry["ledger"].as_str().unwrap_or_default(),
+                    amount: entry["amount"].as_str().unwrap_or_default(),
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
+    let ambiguous = rows
         .iter()
-        .map(|entry| ObservedEntry {
-            ledger: entry["ledger"].as_str().unwrap_or_default(),
-            amount: entry["amount"].as_str().unwrap_or_default(),
-        })
+        .map(|row| ambiguous_markers(row["narration"].as_str()))
         .collect::<Vec<_>>();
-    BookVoucher::observed(ObservedVoucher {
-        // The GUID is the identity the window read already proved belongs to
-        // this company, and the same field this tool's sibling already emits.
-        key: row["guid"].as_str().unwrap_or_default(),
-        date: row["date"].as_str().unwrap_or_default(),
-        voucher_type: row["voucher_type"].as_str().unwrap_or_default(),
-        voucher_number: row["voucher_number"].as_str(),
-        remote_id: None,
-        party: row["party"].as_str(),
-        marker: match observed_marker(narration) {
-            ObservedMarker::Unidentified(_) => ObservedMarker::Unidentified(&ambiguous),
-            settled => settled,
-        },
-        entries: &entries,
-        cancelled: row["cancelled"].as_bool().unwrap_or_default(),
-        optional: row["optional"].as_bool().unwrap_or_default(),
+    let observations =
+        rows.iter()
+            .zip(&entries)
+            .zip(&ambiguous)
+            .map(|((row, entries), ambiguous)| ObservedVoucher {
+                // The GUID is the identity the window read already proved belongs to
+                // this company, and the same field this tool's sibling already emits.
+                key: row["guid"].as_str().unwrap_or_default(),
+                date: row["date"].as_str().unwrap_or_default(),
+                voucher_type: row["voucher_type"].as_str().unwrap_or_default(),
+                voucher_number: row["voucher_number"].as_str(),
+                remote_id: None,
+                party: row["party"].as_str(),
+                marker: match observed_marker(row["narration"].as_str()) {
+                    ObservedMarker::Unidentified(_) => ObservedMarker::Unidentified(ambiguous),
+                    settled => settled,
+                },
+                entries,
+                cancelled: row["cancelled"].as_bool().unwrap_or_default(),
+                optional: row["optional"].as_bool().unwrap_or_default(),
+            });
+    BookWindow::from_observations(ObservedWindow {
+        from,
+        to,
+        read,
+        remote_id_evidence: ColumnEvidence::NotRead,
+        narration_evidence: ColumnEvidence::Observed,
+        vouchers: observations,
     })
 }
 

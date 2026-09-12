@@ -244,13 +244,13 @@ fn a_caller_limited_presence_page_includes_its_resume_cursor() {
         })
         .expect("proposal")
     });
-    let window = BookWindow::observed(ObservedWindow {
+    let window = BookWindow::from_observations(ObservedWindow {
         from: "20260901",
         to: "20260930",
         read: WindowRead::Complete,
         remote_id_evidence: ColumnEvidence::NotRead,
         narration_evidence: ColumnEvidence::NotRead,
-        vouchers: vec![],
+        vouchers: std::iter::empty(),
     })
     .expect("complete empty window");
     let catalogue = vec!["Cash".to_string(), "Sales".to_string()];
@@ -446,7 +446,9 @@ fn a_window_row_becomes_a_book_voucher_without_inventing_a_remote_id() {
             {"ledger": "WR2 Sales", "amount": "12.50"},
         ],
     });
-    let voucher = book_voucher(&row).expect("book voucher");
+    let window =
+        book_window("20260901", "20260901", WindowRead::Complete, &[row]).expect("book window");
+    let voucher = &window.vouchers()[0];
     assert_eq!(voucher.key(), format!("{CAPTURED_GUID}-00000001"));
     assert_eq!(voucher.magnitude().as_str(), "12.5");
     assert!(voucher.balanced());
