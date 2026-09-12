@@ -907,8 +907,8 @@ fn a_catalog_is_bounded_by_total_bytes_and_not_only_by_count() {
 fn repeating_one_source_name_does_not_repeat_the_search_or_change_the_answer() {
     // A draft may name one ledger on every row, and the candidate search is not
     // cheap when the name reaches a family. Remembering it must not change what
-    // the report says — the memo is keyed on the source key and the masters its
-    // identifiers reached, which is all `collect_candidates` reads.
+    // the report says — the memo is keyed on both source folds and the masters
+    // its identifiers reached, which are all `collect_candidates` reads.
     let names = (0..60)
         .map(|index| format!("Acme Branch {index:05}"))
         .collect::<Vec<_>>();
@@ -977,6 +977,37 @@ fn repeating_one_source_name_does_not_repeat_the_search_or_change_the_answer() {
         candidate_names(&report.entities()[1]),
         ["Party Delta (5550001007)", "Party Gamma (5550001007)"],
         "the memo handed one entity another's candidates"
+    );
+}
+
+#[test]
+fn distinct_resolving_folds_never_share_a_candidate_memo_entry() {
+    // `comparison_key` normalizes the en dash to a hyphen, so both source
+    // spellings have one wide key. The resolving fold keeps the en dash as
+    // content, though: only the ASCII-hyphen spelling collides with both
+    // observed catalog names. Different unmatched hints still derive an empty
+    // identifier match set, which made the old `(wide_key, matches)` memo key
+    // hand the first candidate list to the second source.
+    let catalog = ledgers(&["AB/CD", "AB CD", "Beta Supply"]);
+    let entities = vec![
+        SourceEntity::with_identifier_hints(0, "AB-CD", ["5550001001"]).expect("valid"),
+        SourceEntity::with_identifier_hints(1, "AB–CD", ["5550001002"]).expect("valid"),
+    ];
+
+    super::CANDIDATE_SEARCHES.with(|count| count.set(0));
+    let report = bound(&catalog, &entities);
+    assert_eq!(
+        super::CANDIDATE_SEARCHES.with(std::cell::Cell::get),
+        2,
+        "spellings with different resolving folds must each run their own search"
+    );
+    assert_eq!(reason(&report.entities()[0]), UnboundReason::NameAmbiguous);
+    assert_eq!(candidate_names(&report.entities()[0]), ["AB CD", "AB/CD"]);
+    assert_eq!(reason(&report.entities()[1]), UnboundReason::NearMiss);
+    assert_eq!(
+        candidate_names(&report.entities()[1]),
+        ["AB CD"],
+        "the en-dash spelling must not inherit the ASCII-hyphen collision"
     );
 }
 
@@ -1248,6 +1279,82 @@ fn a_withheld_family_still_reports_how_many_share_the_identifier() {
         unresolved.candidates.is_incomplete(),
         "a count without a listing must say the listing is incomplete"
     );
+}
+
+#[test]
+fn only_withheld_identifier_holder_sets_receive_family_ids() {
+    let names = (0..MAX_CANDIDATES_PER_ENTITY + 1)
+        .map(|index| format!("Party {index:03} (5550007777) (4455{index:06})"))
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let shared_identifier = entity("Source (5550007777)")
+        .identifiers()
+        .first()
+        .cloned()
+        .expect("valid identifier");
+
+    assert!(catalog
+        .by_identifier
+        .values()
+        .any(|holders| holders.len() == 1));
+    assert_eq!(catalog.identifier_family_ids.len(), 1);
+    assert!(catalog
+        .identifier_family_ids
+        .contains_key(&shared_identifier));
+    assert!(catalog.identifier_family_ids.iter().all(|(identifier, _)| {
+        catalog.by_identifier[identifier].len() > MAX_CANDIDATES_PER_ENTITY
+    }));
+}
+
+#[test]
+fn nested_withheld_identifier_families_have_an_exact_union_count() {
+    let names = (0..MAX_CANDIDATES_PER_ENTITY + 1)
+        .map(|index| {
+            if index < MAX_CANDIDATES_PER_ENTITY {
+                format!("Party {index:03} (5550007777) (5550008888)")
+            } else {
+                format!("Party {index:03} (5550007777)")
+            }
+        })
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let source =
+        SourceEntity::with_identifier_hints(0, "Zeta Holdings", ["5550007777", "5550008888"])
+            .expect("valid");
+    let report = bound(&catalog, &[source]);
+    let candidates = &report.entities()[0]
+        .unresolved()
+        .expect("unbound")
+        .candidates;
+    assert_eq!(candidates.found(), MAX_CANDIDATES_PER_ENTITY + 1);
+    assert!(!candidates.count_is_lower_bound());
+}
+
+#[test]
+fn an_unprovable_large_nested_family_remains_a_lower_bound() {
+    let names = (0..300)
+        .map(|index| {
+            if index < 299 {
+                format!("Party {index:03} (5550007777) (5550008888)")
+            } else {
+                format!("Party {index:03} (5550007777)")
+            }
+        })
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let source =
+        SourceEntity::with_identifier_hints(0, "Zeta Holdings", ["5550007777", "5550008888"])
+            .expect("valid");
+    super::WITHHELD_FAMILY_PROBES.with(|count| count.set(0));
+    let report = bound(&catalog, &[source]);
+    let probes = super::WITHHELD_FAMILY_PROBES.with(std::cell::Cell::get);
+    let candidates = &report.entities()[0]
+        .unresolved()
+        .expect("unbound")
+        .candidates;
+    assert_eq!(candidates.found(), 300);
+    assert!(candidates.count_is_lower_bound());
+    assert_eq!(probes, 256, "nested-family proof exceeded its hard budget");
 }
 
 #[test]
@@ -1580,15 +1687,20 @@ fn the_listing_variant_says_what_an_absent_candidate_means() {
         .map(|index| format!("ALPHAGROUP UNIT {index:02}"))
         .collect::<Vec<_>>();
     let family = MasterCatalog::new(MasterClass::Ledger, &family).expect("valid");
+    let binding = bind_one_name(&family, "ALPHAGROUP");
+    let withheld = &binding.unresolved().expect("unbound").candidates;
     assert_eq!(
-        bind_one_name(&family, "ALPHAGROUP")
-            .unresolved()
-            .expect("unbound")
-            .candidates,
-        Candidates::Withheld {
-            found: MAX_PREFIX_FAMILY + 5
+        withheld,
+        &Candidates::Withheld {
+            found: MAX_PREFIX_FAMILY + 5,
+            count_is_lower_bound: false,
         },
         "many exist and none separates them"
+    );
+    assert!(withheld.is_incomplete());
+    assert!(
+        !withheld.count_is_lower_bound(),
+        "the prefix family was materialized, so its union is exact"
     );
 
     let listed = ledgers(&["ALPHA SALE", "ALPHA SALES", "SALES - ALPHA", "Beta Supply"]);
@@ -1604,15 +1716,50 @@ fn only_an_incomplete_listing_may_withhold_an_absence() {
     // present". `None` permits that conclusion; the other two forbid it.
     assert!(!Candidates::None.is_incomplete());
     assert!(!Candidates::Listed { listed: Vec::new() }.is_incomplete());
-    assert!(Candidates::Withheld { found: 30 }.is_incomplete());
-    assert!(Candidates::Truncated {
-        listed: Vec::new(),
-        found: 9
+    assert!(Candidates::Withheld {
+        found: 30,
+        count_is_lower_bound: false,
     }
     .is_incomplete());
+    assert!(Candidates::Truncated {
+        listed: Vec::new(),
+        found: 9,
+        count_is_lower_bound: false,
+    }
+    .is_incomplete());
+    assert!(!Candidates::None.count_is_lower_bound());
+    assert!(!Candidates::Listed { listed: Vec::new() }.count_is_lower_bound());
+    assert!(!Candidates::Withheld {
+        found: 30,
+        count_is_lower_bound: false,
+    }
+    .count_is_lower_bound());
+    assert!(!Candidates::Truncated {
+        listed: Vec::new(),
+        found: 9,
+        count_is_lower_bound: false,
+    }
+    .count_is_lower_bound());
+    assert!(Candidates::Withheld {
+        found: 30,
+        count_is_lower_bound: true,
+    }
+    .count_is_lower_bound());
     // `found` is the total, never the listed length, wherever it is known.
-    assert_eq!(Candidates::Withheld { found: 30 }.found(), 30);
-    assert!(Candidates::Withheld { found: 30 }.listed().is_empty());
+    assert_eq!(
+        Candidates::Withheld {
+            found: 30,
+            count_is_lower_bound: false,
+        }
+        .found(),
+        30
+    );
+    assert!(Candidates::Withheld {
+        found: 30,
+        count_is_lower_bound: false,
+    }
+    .listed()
+    .is_empty());
 }
 
 // --- candidate discipline --------------------------------------------------
@@ -2427,6 +2574,176 @@ fn a_withheld_family_counts_the_masters_the_other_identifier_listed_too() {
         family + 1 > MAX_CANDIDATES_PER_ENTITY,
         "this fixture no longer exercises the skip"
     );
+    assert!(
+        !unresolved.candidates.count_is_lower_bound(),
+        "one skipped family plus fully materialized matches has an exact union"
+    );
+}
+
+#[test]
+fn a_single_withheld_identifier_family_has_an_exact_count() {
+    let names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Shared Party {index:03} (5550007777)"))
+        .collect::<Vec<_>>();
+    let family = names.len();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let entity =
+        SourceEntity::with_identifier_hints(0, "Unrelated Source", ["5550007777"]).expect("valid");
+
+    let binding = bound(&catalog, &[entity])
+        .entities()
+        .first()
+        .cloned()
+        .expect("one entity in, one binding out");
+    let unresolved = binding.unresolved().expect("identifier conflict");
+    assert_eq!(reason(&binding), UnboundReason::IdentifierConflict);
+    assert_eq!(unresolved.candidates.listing(), "withheld");
+    assert_eq!(unresolved.candidates.found(), family);
+    assert!(!unresolved.candidates.count_is_lower_bound());
+}
+
+#[test]
+fn a_single_withheld_family_counts_an_outside_name_candidate_exactly() {
+    let mut names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Shared Party {index:03} (5550007777)"))
+        .collect::<Vec<_>>();
+    names.push("Zeta Supplier".to_string());
+    let family = MAX_CANDIDATES_PER_ENTITY + 5;
+    let catalog = MasterCatalog::new(MasterClass::StockItem, &names).expect("valid");
+    let entity = SourceEntity::with_identifier_hints(0, "Zeta", ["5550007777"]).expect("valid");
+
+    let binding = bound(&catalog, &[entity])
+        .entities()
+        .first()
+        .cloned()
+        .expect("one entity in, one binding out");
+    let unresolved = binding.unresolved().expect("identifier conflict");
+    assert_eq!(unresolved.candidates.found(), family + 1);
+    assert!(!unresolved.candidates.count_is_lower_bound());
+}
+
+#[test]
+fn a_name_candidate_inside_one_withheld_family_is_not_double_counted() {
+    let names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Shared Party {index:03} (5550007777)"))
+        .collect::<Vec<_>>();
+    let family = names.len();
+    let catalog = MasterCatalog::new(MasterClass::StockItem, &names).expect("valid");
+    let entity =
+        SourceEntity::with_identifier_hints(0, "shared party 00 (5550007777)", []).expect("valid");
+
+    let binding = bound(&catalog, &[entity])
+        .entities()
+        .first()
+        .cloned()
+        .expect("one entity in, one binding out");
+    let unresolved = binding.unresolved().expect("near miss");
+    assert_eq!(unresolved.candidates.found(), family);
+    assert!(!unresolved.candidates.count_is_lower_bound());
+}
+
+#[test]
+fn an_unlisted_name_family_keeps_a_withheld_count_as_a_lower_bound() {
+    let mut names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Shared Party {index:03} (5550007777)"))
+        .collect::<Vec<_>>();
+    names.extend(
+        (0..MAX_CANDIDATES_PER_ENTITY + 5).map(|index| format!("Zeta Supplier {index:02}")),
+    );
+    let catalog = MasterCatalog::new(MasterClass::StockItem, &names).expect("valid");
+    let entity =
+        SourceEntity::with_identifier_hints(0, "Zeta Supplier", ["5550007777"]).expect("valid");
+
+    let binding = bound(&catalog, &[entity])
+        .entities()
+        .first()
+        .cloned()
+        .expect("one entity in, one binding out");
+    let unresolved = binding.unresolved().expect("identifier conflict");
+    assert_eq!(unresolved.candidates.listing(), "withheld");
+    assert!(unresolved.candidates.count_is_lower_bound());
+}
+
+#[test]
+fn disjoint_withheld_identifier_families_are_marked_as_a_lower_bound() {
+    let mut names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Alpha Party {index:03} (5550007777)"))
+        .collect::<Vec<_>>();
+    names.extend(
+        (0..MAX_CANDIDATES_PER_ENTITY + 5)
+            .map(|index| format!("Beta Party {index:03} (5550008888)")),
+    );
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let entity =
+        SourceEntity::with_identifier_hints(0, "Unrelated Source", ["5550007777", "5550008888"])
+            .expect("valid");
+
+    let binding = bound(&catalog, &[entity])
+        .entities()
+        .first()
+        .cloned()
+        .expect("one entity in, one binding out");
+    let unresolved = binding.unresolved().expect("identifier conflict");
+    assert_eq!(unresolved.candidates.listing(), "withheld");
+    assert_eq!(
+        unresolved.candidates.found(),
+        MAX_CANDIDATES_PER_ENTITY + 5,
+        "the conservative count remains the larger known family"
+    );
+    assert!(unresolved.candidates.count_is_lower_bound());
+}
+
+#[test]
+fn identical_withheld_identifier_families_are_counted_once() {
+    let names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Twinned Party {index:03} (5550007777) (5550008888)"))
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let entity =
+        SourceEntity::with_identifier_hints(0, "Zeta Holdings", ["5550007777", "5550008888"])
+            .expect("valid");
+
+    let binding = bound(&catalog, &[entity])
+        .entities()
+        .first()
+        .cloned()
+        .expect("one entity in, one binding out");
+    let unresolved = binding.unresolved().expect("identifier conflict");
+    assert_eq!(
+        unresolved.candidates.found(),
+        MAX_CANDIDATES_PER_ENTITY + 5,
+        "identical holder sets are one family"
+    );
+    assert!(!unresolved.candidates.count_is_lower_bound());
+}
+
+#[test]
+fn unmatched_hint_variants_share_one_memo_key_and_compute_once() {
+    let names = (0..60)
+        .map(|index| format!("Acme Branch {index:05}"))
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    // Every raw hint differs, but none reaches a catalog identifier. The memo
+    // key is therefore the same `(acme branch, {})` for every entity.
+    let entities = (0..MAX_CANDIDATE_MEMO_ENTRIES + 4)
+        .map(|index| {
+            SourceEntity::with_identifier_hints(
+                index,
+                "Acme Branch",
+                [format!("5550{index:06}").as_str()],
+            )
+            .expect("valid")
+        })
+        .collect::<Vec<_>>();
+
+    super::CANDIDATE_SEARCHES.with(|count| count.set(0));
+    let report = bound(&catalog, &entities);
+    assert_eq!(report.totals().requested, MAX_CANDIDATE_MEMO_ENTRIES + 4);
+    assert_eq!(
+        super::CANDIDATE_SEARCHES.with(std::cell::Cell::get),
+        1,
+        "different unmatched hints must share their one derived memo key"
+    );
 }
 
 #[test]
@@ -2437,12 +2754,17 @@ fn hint_variants_of_one_name_do_not_crowd_out_a_key_that_repeats() {
     // nothing asks for twice, and the pair that genuinely repeated behind them
     // could no longer be inserted — the same stall as the source-order defect,
     // through a different door.
-    let names = (0..60)
-        .map(|index| format!("Acme Branch {index:05}"))
-        .collect::<Vec<_>>();
+    let mut names = vec!["Acme Branch".to_string()];
+    names.extend(
+        (0..MAX_CANDIDATE_MEMO_ENTRIES)
+            .map(|index| format!("Hint Target {index:05} (5550{index:06})")),
+    );
+    names.push("Repeated Hint Target (5559999999)".to_string());
     let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
 
-    // Distinct hints, one name: same key, different memo key, each asked once.
+    // Distinct hints, one name: each reaches a different master, so each has a
+    // different memo key and is asked only once. The exact source name keeps
+    // all of them on the unresolved candidate path.
     let mut entities = (0..MAX_CANDIDATE_MEMO_ENTRIES)
         .map(|index| {
             SourceEntity::with_identifier_hints(
@@ -2602,5 +2924,58 @@ fn an_ambiguity_lists_every_master_that_caused_it() {
         binding.unresolved().expect("unbound").candidates.found(),
         2,
         "the count agreed with the short list rather than with the collision"
+    );
+}
+
+#[test]
+fn the_listing_word_is_the_one_the_wire_carries() {
+    // `listing()` exists so a projection need not reconstruct the state from
+    // an empty list and a count. If it drifted from the serde tag, a consumer
+    // reading the DTO and a consumer reading the JSON would disagree about the
+    // same binding — so they are asserted against each other, not assumed.
+    let candidate = Candidate {
+        catalog_name: "Alpha Supply".to_string(),
+        rule: CandidateRule::ExactName,
+    };
+    for candidates in [
+        Candidates::None,
+        Candidates::Listed {
+            listed: vec![candidate.clone()],
+        },
+        Candidates::Truncated {
+            listed: vec![candidate],
+            found: 9,
+            count_is_lower_bound: false,
+        },
+        Candidates::Withheld {
+            found: 9,
+            count_is_lower_bound: true,
+        },
+    ] {
+        let json = serde_json::to_value(&candidates).expect("candidates serialize");
+        assert_eq!(
+            json.get("listing").and_then(serde_json::Value::as_str),
+            Some(candidates.listing()),
+            "the accessor and the wire tag disagree about {candidates:?}"
+        );
+    }
+}
+
+#[test]
+fn a_long_repeated_name_is_still_cached() {
+    let name = "Zeta Placeholder Holdings Alpha Branch";
+    assert!(name.len() > MAX_CANDIDATES_PER_ENTITY);
+    let catalog = ledgers(&["Omega Supply", "Beta Supply"]);
+    let entities = (0..6)
+        .map(|position| SourceEntity::new(position, name).expect("valid"))
+        .collect::<Vec<_>>();
+
+    super::CANDIDATE_SEARCHES.with(|count| count.set(0));
+    let report = bound(&catalog, &entities);
+    let searches = super::CANDIDATE_SEARCHES.with(std::cell::Cell::get);
+    assert_eq!(report.totals().requested, 6);
+    assert_eq!(
+        searches, 1,
+        "a long repeated name was searched {searches} times"
     );
 }
