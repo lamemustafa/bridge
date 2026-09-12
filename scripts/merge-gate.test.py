@@ -20,6 +20,8 @@ FAKE_GH = r'''#!/usr/bin/env python3
 import base64, json, os, sys
 args = sys.argv[1:]
 scenario = os.environ.get("GATE_SCENARIO", "pass")
+security_case = scenario.startswith("security-review-")
+sync_case = scenario.startswith("sync-")
 head = "0123456789abcdef0123456789abcdef01234567"
 new_head = "fedcba9876543210fedcba9876543210fedcba98"
 base = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -92,6 +94,12 @@ if args[:2] == ["pr", "view"]:
             "- Commands and results (`corepack pnpm ...`, `cargo ...`, or reproduction):\n\n"
             "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10)"
         )
+    elif scenario == "template-validation-empty":
+        body = (
+            "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
+            "## Validation and evidence\n\nCommands and results are recorded elsewhere.\n\n"
+            "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10)"
+        )
     elif scenario in {"workflow-notes-present", "workflow-delete-notes", "workflow-rename-out-notes"}:
         body = (
             "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
@@ -105,6 +113,7 @@ if args[:2] == ["pr", "view"]:
             "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
             "## Validation and evidence\n\n`python3 scripts/merge-gate.test.py`\n\n"
             "## Security impact\n\nNo credential material is added; the Tally path change is reviewed.\n\n"
+            "## Migration compatibility\n\nExisting callers retain their paths and formats.\n\n"
             "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10)"
         )
     elif scenario == "checklist-missing-anchor":
@@ -118,10 +127,22 @@ if args[:2] == ["pr", "view"]:
             "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
             "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10)"
         )
+    if security_case or sync_case:
+        body += "\n## Security impact\n\nCredential admission remains enforced.\n"
+        if not scenario.endswith("migration-missing"):
+            body += "\n## Migration compatibility\n\nNo persisted format change.\n"
+    if scenario == "validation-command-outside":
+        body = body.replace("`python3 scripts/merge-gate.test.py`", "Tests not run") + "\n## Rollback\n`cargo test`\n"
+    if scenario == "validation-tool-prose":
+        body = body.replace("`python3 scripts/merge-gate.test.py`", "Tests not run; cargo is available")
+    if scenario == "validation-placeholder-command":
+        body = body.replace("`python3 scripts/merge-gate.test.py`", "`cargo ...`")
+    if scenario == "checklist-heading":
+        body = body.replace("#L10", "#L1")
     body = body.replace("blob/HEAD", f"blob/{head}")
     if scenario == "checklist-stale-ref":
         body = body.replace(f"blob/{head}", "blob/" + "f" * 40)
-    one_file = scenario in {"files-empty", "formatted-phone", "formatted-phone-grouped", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "home-macos", "home-unix", "home-windows"} or scenario.startswith("home-")
+    one_file = scenario in {"files-empty", "formatted-phone", "formatted-phone-grouped", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "home-macos", "home-unix", "home-windows"} or scenario.startswith("home-") or security_case or sync_case
     selected_base = new_head if scenario == "base-oid-mismatch" else base
     emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
@@ -144,7 +165,11 @@ elif args[:2] == ["pr", "checks"]:
               {"bucket": "pass", "name": "Required checks"},
               {"bucket": "skipping", "name": "Optional documentation"}])
 elif args[:2] == ["pr", "diff"]:
-    if scenario == "formatted-phone":
+    if security_case:
+        emit("diff --git a/src-tauri/src/dsc.rs b/src-tauri/src/dsc.rs\n--- a/src-tauri/src/dsc.rs\n+++ b/src-tauri/src/dsc.rs\n@@ -0,0 +1 @@\n+safe check\n")
+    elif sync_case:
+        emit("diff --git a/src-tauri/src/sync.rs b/docs/retired.rs\nsimilarity index 100%\nrename from src-tauri/src/sync.rs\nrename to docs/retired.rs\n")
+    elif scenario == "formatted-phone":
         phone = "+91 " + "98765" + "-43210"
         emit(f"diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+Call {phone}\n")
     elif scenario == "path-id":
@@ -168,6 +193,9 @@ elif args[:2] == ["pr", "diff"]:
         emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +2 @@\n+first line\n")
     elif scenario == "formatted-phone-grouped":
         phone = "6" + "98 765-4321"
+        emit(f"diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic {phone}\n")
+    elif scenario == "repeated-phone":
+        phone = "6" + "6" * 9
         emit(f"diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic {phone}\n")
     elif scenario in {"grouped-identifier-12", "grouped-identifier-16"}:
         identifier = "8421 " + "7654 9012" if scenario.endswith("12") else "8421-" + "7654-9012-3456"
@@ -259,9 +287,12 @@ elif args and args[0] == "api":
             run_head = head
         total_count = 3 if scenario == "check-run-count-mismatch" else 2
         second_id = 1 if scenario == "check-run-duplicate-id" else 2
+        run_status = "queued" if scenario == "check-run-incomplete" else "completed"
+        conclusion = "failure" if scenario == "check-run-failed" else ("skipped" if scenario in {"check-run-required-skip", "check-run-optional-skip"} else "success")
+        run_name = "Optional changed after rollup" if scenario in {"check-run-failed", "check-run-optional-skip"} else "Required checks"
         emit([{"total_count": total_count, "check_runs": [
-            {"id": 1, "name": "Required checks", "head_sha": run_head},
-            {"id": second_id, "name": "Rust format", "head_sha": run_head}]}])
+            {"id": 1, "name": run_name, "head_sha": run_head, "status": run_status, "conclusion": conclusion},
+            {"id": second_id, "name": "Rust format", "head_sha": run_head, "status": "completed", "conclusion": "success"}]}])
     elif "/commits/" in joined and "/status" in joined:
         if scenario == "status-malformed":
             emit({"total_count": "0", "statuses": []})
@@ -270,6 +301,10 @@ elif args and args[0] == "api":
         elif scenario == "status-failed-context":
             emit({"state": "failure", "total_count": 1,
                   "statuses": [{"context": "legacy optional", "state": "failure", "sha": head}]})
+        elif scenario == "status-nonempty-pending":
+            emit({"state": "pending", "total_count": 1, "statuses": [{"context": "queued", "state": "pending", "sha": head}]})
+        elif scenario == "status-empty-pending":
+            emit({"state": "pending", "total_count": 0, "statuses": []})
         else:
             emit({"state": "success", "total_count": 0, "statuses": []})
     elif "/pulls/321/commits" in joined:
@@ -289,13 +324,15 @@ elif args and args[0] == "api":
             commits = 2
         elif scenario == "metadata-head-mismatch":
             metadata_head = new_head
-        emit({"commits": commits, "head": {"sha": metadata_head}})
+        emit({"commits": commits, "head": {"sha": metadata_head}, "user": {"login": "author"}})
     elif "branches/master/protection/required_status_checks" in joined:
         contexts = [
             "Frontend build", "Rust format", "GitGuardian Security Checks",
             "Dependency security", "Required checks"]
         if scenario == "protection-missing-gitguardian":
             contexts = [context for context in contexts if context != "GitGuardian Security Checks"]
+        if scenario == "required-context-output-bound":
+            contexts += ["control-" + str(i) + "-" + "z" * 10000 for i in range(50)]
         emit({"strict": scenario != "protection-nonstrict", "contexts": contexts, "checks": []})
     elif "branches/master" in joined:
         emit(base)
@@ -303,8 +340,16 @@ elif args and args[0] == "api":
         if scenario in {"short-review", "summary-only", "manual-summary"}:
             emit([[]])
         else:
-            emit([[{"user": {"login": "chatgpt-codex-connector[bot]", "type": "Bot"},
-                     "state": "COMMENTED", "commit_id": head}]])
+            records = [{"user": {"login": "chatgpt-codex-connector[bot]", "type": "Bot"}, "state": "COMMENTED", "commit_id": head}]
+            if security_case and scenario != "security-review-missing":
+                record = {"user": {"login": "reviewer", "type": "User"}, "author_association": "COLLABORATOR", "state": "COMMENTED", "commit_id": head, "body": f"Security review: {head}\nResult: accepted\nReviewed credential handling and error redaction."}
+                if scenario == "security-review-stale": record["commit_id"] = new_head
+                if scenario == "security-review-author": record["user"]["login"] = "author"
+                if scenario == "security-review-unrelated": record["body"] = "Looks good"
+                if scenario == "security-review-outsider": record["author_association"] = "NONE"
+                if scenario == "security-review-dismissed": record["state"] = "DISMISSED"
+                records.append(record)
+            emit([records])
     elif "/issues/321/comments" in joined:
         if scenario == "short-review":
             summary = f"codex-pull-request-review-summary\n| 📝 | ✅ **Completed** | `{head[:7]}` |"
@@ -319,7 +364,11 @@ elif args and args[0] == "api":
             summary = f"codex-pull-request-review-summary\n| 📝 | ✅ **Completed** | `{head[:7]}` |"
             emit([[{"user": {"login": "chatgpt-codex-connector[bot]", "type": "Bot"}, "body": summary}]])
     elif "/pulls/321/files" in joined:
-        if scenario == "files-empty":
+        if security_case:
+            emit([[{"filename": "src-tauri/src/dsc.rs", "status": "modified", "additions": 1, "deletions": 0}]])
+        elif sync_case:
+            emit([[{"filename": "docs/retired.rs", "previous_filename": "src-tauri/src/sync.rs", "status": "renamed", "additions": 0, "deletions": 0}]])
+        elif scenario == "files-empty":
             emit([[]])
         elif scenario in {"formatted-phone", "formatted-phone-grouped", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized"}:
             emit([[{"filename": "docs/contact.md", "status": "added", "additions": 1, "deletions": 0}]])
@@ -379,7 +428,7 @@ elif args and args[0] == "api":
             emit([[{"filename": "docs/example.md", "status": "added", "additions": additions, "deletions": 0}], [{"filename": "docs/second.md", "status": "modified", "additions": 1, "deletions": 0}]])
     elif "/contents/" in joined:
         if "review-checklist.md" in joined:
-            checklist = "\n" * 9 + "- [ ] Errors are actionable without exposing sensitive values.\n"
+            checklist = "# Review checklist\n" + "\n" * 8 + "- [ ] Errors are actionable without exposing sensitive values.\n"
             emit({"encoding": "base64", "content": base64.b64encode(checklist.encode()).decode()})
         elif scenario in {"surface-fail", "draft-surface-fail"}:
             fail("controlled surface read failure")
@@ -463,6 +512,13 @@ class MergeGateControls(unittest.TestCase):
     def test_required_skipped_check_blocks(self):
         self.assert_blocked("required-skip", "required check 'Required checks' is not passing")
 
+    def test_incomplete_check_run_is_indeterminate(self):
+        self.assert_indeterminate("check-run-incomplete", "head-bound check-run evidence")
+
+    def test_empty_pending_legacy_status_does_not_block(self):
+        result = self.run_gate("status-empty-pending")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_missing_required_context_blocks(self):
         self.assert_blocked("missing-required", "required check 'Rust format' was not reported")
 
@@ -509,6 +565,9 @@ class MergeGateControls(unittest.TestCase):
 
     def test_formatted_phone_is_scanned(self):
         self.assert_blocked("formatted-phone", "privacy scan found")
+
+    def test_repeated_digit_phone_is_scanned(self):
+        self.assert_blocked("repeated-phone", "privacy scan found")
 
     def test_grouped_formatted_phone_is_scanned(self):
         self.assert_blocked("formatted-phone-grouped", "privacy scan found")
@@ -726,6 +785,9 @@ class MergeGateControls(unittest.TestCase):
     def test_populated_sha_without_command_is_not_validation_evidence(self):
         self.assert_blocked("template-validation-sha-only", "test or reproduction command")
 
+    def test_validation_heading_without_command_is_not_evidence(self):
+        self.assert_blocked("template-validation-empty", "actual test or reproduction command")
+
     def test_protection_requires_strict_status_checks(self):
         self.assert_indeterminate("protection-nonstrict", "required status-check response was malformed")
 
@@ -765,6 +827,46 @@ class MergeGateControls(unittest.TestCase):
             with self.subTest(scenario=scenario):
                 self.assert_blocked(scenario, "security-impact notes")
         result = self.run_gate("security-notes-present")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_sensitive_paths_without_security_attestation_are_indeterminate(self):
+        self.assert_indeterminate("security-review-missing", "security-focused reviewer comment")
+
+    def test_refreshed_failed_or_required_skipped_runs_block(self):
+        for scenario in ("check-run-failed", "check-run-required-skip"):
+            with self.subTest(scenario=scenario):
+                self.assert_blocked(scenario, "refreshed check run(s)")
+        result = self.run_gate("check-run-optional-skip")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_nonempty_pending_legacy_status_is_indeterminate(self):
+        self.assert_indeterminate("status-nonempty-pending", "commit-status evidence")
+
+    def test_validation_commands_must_be_concrete_and_in_validation(self):
+        for scenario in ("validation-command-outside", "validation-tool-prose", "validation-placeholder-command"):
+            with self.subTest(scenario=scenario):
+                self.assert_blocked(scenario, "actual test or reproduction command")
+
+    def test_checklist_heading_is_not_a_completed_item(self):
+        self.assert_blocked("checklist-heading", "review-checklist link")
+
+    def test_required_context_diagnostics_are_bounded_for_failures(self):
+        result = self.run_gate("required-context-output-bound")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("50 of 55 required check contexts", result.stdout)
+        self.assertLess(len(result.stdout.encode()), 6000)
+        self.assertNotIn("z" * 100, result.stdout)
+
+    def test_security_review_is_focused_independent_and_current(self):
+        for scenario in ("security-review-stale", "security-review-author", "security-review-unrelated", "security-review-outsider", "security-review-dismissed"):
+            with self.subTest(scenario=scenario):
+                self.assert_indeterminate(scenario, "security-focused reviewer comment")
+        result = self.run_gate("security-review-valid")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_sync_rename_out_requires_migration_notes(self):
+        self.assert_blocked("sync-migration-missing", "migration compatibility")
+        result = self.run_gate("sync-migration-present")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_developer_home_path_shapes_are_scanned_without_echoing_values(self):

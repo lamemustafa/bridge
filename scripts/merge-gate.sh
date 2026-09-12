@@ -3,6 +3,10 @@
 #
 # Usage: scripts/merge-gate.sh <pr-number> [--repo OWNER/NAME]
 #        [--independent-review-sha FULL_SHA] (explicit manual review attestation)
+# DSC/credential review record format (review or PR comment by another reviewer):
+#   Security review: FULL_SHA
+#   Result: accepted
+# Include the reviewed scope and reasoning in that record.
 # Exit:  0 may merge, 1 must not, 2 could not determine.
 #
 # Every positive result is bound to one server-observed head, base tip, complete
@@ -38,7 +42,7 @@ while [ $# -gt 0 ]; do
       shift
       ;;
     -h|--help)
-      sed -n '2,13p' "$0"
+      sed -n '2,17p' "$0"
       exit 0
       ;;
     -*)
@@ -240,22 +244,24 @@ else
   elif [ "$(jq 'length' <<<"$buckets")" -eq 0 ]; then
     bad "no checks reported for this PR"
   else
-    check_bad=0
-    while IFS= read -r context; do
-      [ -n "$context" ] || continue
-      context_state=$(jq -r --arg context "$context" '
-        map(select(.name == $context)) |
-        if length == 0 then "missing"
-        elif all(.[]; .bucket == "pass") then "pass"
-        else map(.bucket) | unique | join(",")
-        end
-      ' <<<"$buckets")
-      case "$context_state" in
-        pass) say "ok" "required check '$context' passed" ;;
-        missing) bad "required check '$context' was not reported"; check_bad=1 ;;
-        *) bad "required check '$context' is not passing ($context_state)"; check_bad=1 ;;
-      esac
-    done <<<"$required_contexts"
+    context_report=$(jq --arg contexts "$required_contexts" '
+      . as $buckets | ($contexts | split("\n") | map(select(length > 0))) |
+      map(. as $context | [$buckets[] | select(.name == $context)] |
+        {name: $context, state: (if length == 0 then "missing"
+          elif all(.[]; .bucket == "pass") then "pass"
+          else map(.bucket) | unique | join(",") end)}) |
+      {total: length, failed: ([.[] | select(.state != "pass")] | length),
+       examples: ([.[] | select(.state != "pass")][0:8] | map(
+         "required check \u0027" + (.name | gsub("[[:cntrl:]]"; "?") | .[0:80]) + "\u0027 " +
+         (if .state == "missing" then "was not reported" else "is not passing (" + .state + ")" end)))}
+    ' <<<"$buckets")
+    check_bad=$(jq -r '.failed' <<<"$context_report")
+    context_count=$(jq -r '.total' <<<"$context_report")
+    if [ "$check_bad" -gt 0 ]; then
+      bad "$check_bad of $context_count required check contexts are not passing; up to 8 bounded examples: $(jq -r '.examples | join("; ")' <<<"$context_report")"
+    else
+      say "ok" "all $context_count required check contexts passed"
+    fi
     all_bad=$(jq '[.[] | select(.bucket == "fail" or .bucket == "cancel" or .bucket == "pending")] | length' <<<"$buckets")
     skipped=$(jq '[.[] | select(.bucket == "skipping")] | length' <<<"$buckets")
     [ "$all_bad" -eq 0 ] || bad "$all_bad reported check(s) are failing, cancelled, or pending"
@@ -280,6 +286,8 @@ if [ "$check_runs_status" -ne 0 ] || ! jq -e --arg head "$head" '
       type == "object" and
       (.id | type == "number" and floor == . and . >= 0) and
       (.name | type == "string" and length > 0) and
+      (.status == "completed") and
+      (.conclusion | type == "string" and (. == "success" or . == "skipped" or . == "neutral" or . == "failure" or . == "cancelled" or . == "timed_out" or . == "action_required" or . == "stale")) and
       (.head_sha | type == "string" and test("^[0-9a-fA-F]{40}$") and . == $head)
     ))) and
   ((map(.total_count) | unique | length) == 1) and
@@ -288,14 +296,24 @@ if [ "$check_runs_status" -ne 0 ] || ! jq -e --arg head "$head" '
 ' <<<"$check_runs" >/dev/null 2>&1; then
   unknown "could not validate complete head-bound check-run evidence"
 else
-  say "ok" "check-run pages are complete and bound to head $short"
+  failed_runs=$(jq --arg contexts "$required_contexts" '
+    ($contexts | split("\n")) as $required |
+    [.[] | .check_runs[] | . as $run |
+      select((.conclusion != "success" and .conclusion != "neutral" and .conclusion != "skipped") or
+             (.conclusion != "success" and ($required | index($run.name)) != null))] | length
+  ' <<<"$check_runs")
+  if [ "$failed_runs" -gt 0 ]; then
+    bad "$failed_runs refreshed check run(s) are failed or required-but-not-successful"
+  else
+    say "ok" "completed check-run pages are successful and bound to head $short"
+  fi
 fi
 : >"$errfile"
 statuses_status=0
 statuses=$(gh api "repos/$REPO/commits/$head/status" 2>"$errfile") || statuses_status=$?
 if [ "$statuses_status" -ne 0 ] || ! jq -e --arg head "$head" '
   type == "object" and
-  (.state == "success") and
+  ((.state == "success") or (.state == "pending" and .total_count == 0 and (.statuses | type == "array" and length == 0))) and
   (.total_count | type == "number" and floor == . and . >= 0) and
   (.statuses | type == "array" and all(.[];
     type == "object" and
@@ -534,7 +552,7 @@ checklist_link_ok() {
     if [ "$awaiting_permalink" -eq 2 ]; then
       while IFS= read -r link; do
         anchor=${link##*#L}
-        if sed -n "${anchor}p" <<<"$checklist" | grep -q '[^[:space:]]'; then
+        if sed -n "${anchor}p" <<<"$checklist" | grep -Eq '^[[:space:]]*-[[:space:]]*\[[ xX]\][[:space:]]+[^[:space:]]'; then
           return 0
         fi
       done < <(printf '%s\n' "$line" | grep -Eio "$permalink")
@@ -604,6 +622,41 @@ if ! body_section_has_content "$prbody" 'test or reproduction command|commands a
 else
   say "ok" "description includes test or reproduction evidence"
 fi
+body_has_validation_command() {
+  # Require a concrete inline/fenced command inside the named validation section.
+  # A tool name mentioned in prose or an unrelated section is not a command.
+  python3 -c '
+import re, shlex, sys
+active = fenced = False
+for line in sys.stdin.read().splitlines():
+    heading = re.match(r"^\s*#{1,6}\s+(.+?)\s*$", line)
+    if heading:
+        active = bool(re.fullmatch(r"(?:test or reproduction command|commands and results|validation and evidence):?", heading[1], re.I))
+        fenced = False
+        continue
+    if not active:
+        continue
+    if re.match(r"^\s*```", line):
+        fenced = not fenced
+        continue
+    candidates = [(line.strip()[2:] if line.strip().startswith("$ ") else line.strip())] if fenced else re.findall(r"`([^`]+)`", line)
+    for command in candidates:
+        if re.search(r"\.\.\.|…|<[^>]+>", command):
+            continue
+        try:
+            words = shlex.split(command)
+        except ValueError:
+            continue
+        if words and words[0] == "corepack":
+            words = words[1:]
+        if len(words) >= 2 and (words[0] in {"python", "python3", "pytest", "pnpm", "npm", "cargo", "make", "bash", "sh", "gh"} or words[0].startswith("scripts/")):
+            sys.exit(0)
+sys.exit(1)
+' <<<"$1"
+}
+if ! body_has_validation_command "$prbody"; then
+  bad "description lacks an actual test or reproduction command"
+fi
 
 # Paginate changed files through the REST endpoint; gh pr view hard-codes a
 # first:100 GraphQL fragment in some versions. Retain the line counts as well:
@@ -656,6 +709,14 @@ if [ -n "$files_status" ] && [ "$files_status" -eq 0 ]; then
               ((.previous_filename? // "") | startswith(".github/workflows/")))
   ' <<<"$files")
 fi
+native_frontend_change=0
+if [ "$files_status" -eq 0 ]; then
+  native_frontend_change=$(jq -r '
+    (if all(.[]; type == "array") then flatten else . end) |
+    any(.[]; [ .filename, (.previous_filename? // "") ][] |
+      test("^(src-tauri/|src/|scripts/.*\\.(ts|tsx|js|mjs)$)"))
+  ' <<<"$files")
+fi
 
 # The review contract requires an explicit security-impact statement whenever
 # either spelling of a renamed path touches a DSC, credential, or Tally surface.
@@ -676,6 +737,41 @@ if [ "$security_sensitive_change" = "true" ]; then
   else
     say "ok" "DSC, Tally, or credential path change includes security-impact notes"
   fi
+
+fi
+# DSC/credential changes require a separate security-focused reviewer comment.
+# A general approval or the PR author’s impact notes are not that record.
+security_reviewer_change=false
+if [ "$files_status" -eq 0 ]; then
+  security_reviewer_change=$(jq '
+    (if all(.[]; type == "array") then flatten else . end) |
+    any(.[]; [.filename, (.previous_filename? // "")][] |
+      test("(^|[/_.-])(dsc|credential[s]?|certificate[s]?|keystore|secret[s]?)([/_.-]|$)"; "i"))
+  ' <<<"$files")
+fi
+if [ "$security_reviewer_change" = "true" ]; then
+  pr_author=$(jq -er '.user.login | strings | select(length > 0)' <<<"$metadata_pr" 2>/dev/null) || pr_author=""
+  security_review=false
+  if [ -n "$pr_author" ] && [ "$review_status" -eq 0 ] && [ "$comment_status" -eq 0 ]; then
+    security_review=$(jq -n --arg head "$head" --arg author "$pr_author" --argjson reviews "$reviews" --argjson comments "$comments" '
+      def records: if all(.[]; type == "array") then flatten else . end;
+      def reviewer: (.user.login | type == "string" and length > 0) and
+        .user.login != $author and (.user.type == "User" or .user.type == "Bot") and
+        ((.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") or
+         (.user.login == "chatgpt-codex-connector[bot]" and .user.type == "Bot"));
+      def focused: (.body | type == "string") and
+        (.body | test("(?im)^#{0,6} *security review: *" + $head + " *$")) and
+        (.body | test("(?im)^result: *accepted *$"));
+      ([($reviews | records)[] | select(reviewer and focused and .commit_id == $head and
+         (.state == "APPROVED" or .state == "COMMENTED"))] +
+       [($comments | records)[] | select(reviewer and focused)]) | length > 0
+    ' 2>/dev/null) || security_review=false
+  fi
+  if [ "$security_review" != "true" ]; then
+    unknown "DSC or credential change lacks a separate current-head security-focused reviewer comment"
+  else
+    say "ok" "separate security-focused reviewer comment names full current head $short"
+  fi
 fi
 if [ "$workflow_change" = "true" ]; then
   if ! body_section_has_content "$prbody" 'rollback notes|rollback'; then
@@ -684,6 +780,9 @@ if [ "$workflow_change" = "true" ]; then
   if ! body_section_has_content "$prbody" 'migration compatibility|migration impact'; then
     bad "workflow change lacks non-empty migration compatibility notes"
   fi
+fi
+if [ "$native_frontend_change" = "true" ] && ! body_section_has_content "$prbody" 'migration compatibility|migration impact'; then
+  bad "native or frontend change lacks non-empty migration compatibility notes"
 fi
 
 # Read and validate the v1 surface as a required object. Any transport,
@@ -874,7 +973,7 @@ $added"
   redacted=$(sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/<uuid>/g; s/[0-9a-fA-F]{32,}/<digest>/g' <<<"$scan_input")
   exempt=$(grep -Ec '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{32,}' <<<"$scan_input")
   [ "$exempt" -eq 0 ] || say "note" "$exempt added/path line(s) carried generated UUID/digest shapes; inspect those lines"
-  placeholder='^(X+|Z+)[0-9]+(X|Z)?$|^[0-9]{2}(X+|Z+)[0-9]+[0-9A-Z]*$|^(0+|1+|2+|3+|4+|5+|6+|7+|8+|9+)$|^(0?1234567890|1234567890[0-9]*)$|^0{6,}[0-9]{1,5}$'
+  placeholder='^(X+|Z+)[0-9]+(X|Z)?$|^[0-9]{2}(X+|Z+)[0-9]+[0-9A-Z]*$'
   if printf '%s\n' 'XXXXX1234X' | grep -qE "$placeholder"; then :; else
     probe_status=$?
     if [ "$probe_status" -eq 1 ]; then
@@ -974,6 +1073,9 @@ else
     fi
     if ! body_section_has_content "$final_body" 'test or reproduction command|commands and results|validation and evidence'; then
       bad "PR description changed and no longer carries test or reproduction evidence"
+    fi
+    if ! body_has_validation_command "$final_body"; then
+      bad "PR description changed and no longer carries an actual test or reproduction command"
     fi
   fi
 fi
