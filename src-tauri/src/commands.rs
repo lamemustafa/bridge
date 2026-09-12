@@ -3052,6 +3052,43 @@ pub async fn select_document_folder() -> Result<Vec<crate::documents::SelectedDo
 
 #[cfg(test)]
 mod tests {
+    /// `tally_runtime_command_error` classifies by substring-matching the
+    /// *top-level* message, so any error wrapper added anywhere upstream can
+    /// silently rewrite how unrelated readers classify. This pins the one
+    /// property that makes `PairedNativeReportResponseFailure` safe to add: it
+    /// is transparent, so the code is identical with and without it.
+    ///
+    /// Without transparency a stage-naming message would contain "report",
+    /// whose "port" substring routes to `endpoint_configuration_invalid` --
+    /// blaming the endpoint configuration for a dropped connection.
+    #[test]
+    fn a_paired_report_response_marker_does_not_change_the_command_code() {
+        use crate::tally::connection::PairedNativeReportResponseFailure;
+        use bridge_tally_transport::TallyTransportError;
+
+        for variant in [
+            TallyTransportError::ConnectionFailed,
+            TallyTransportError::RequestTimedOut,
+            TallyTransportError::ResponseTooLarge {
+                limit: 1,
+                declared_by_peer: true,
+            },
+        ] {
+            let bare = super::tally_runtime_command_error(anyhow::Error::new(variant.clone()));
+            let tagged = super::tally_runtime_command_error(anyhow::Error::new(
+                PairedNativeReportResponseFailure::new(anyhow::Error::new(variant.clone())),
+            ));
+            assert_eq!(
+                tagged.code, bare.code,
+                "the marker must not change how {variant:?} classifies"
+            );
+            assert_ne!(
+                tagged.code, "endpoint_configuration_invalid",
+                "a transport fault must not be blamed on the endpoint configuration"
+            );
+        }
+    }
+
     use super::{
         company_sweep_currency_preflight_failure, company_sweep_result, establish_inr_currency,
         first_calendar_day_canary_window, load_client_group_labels_for_migration,
