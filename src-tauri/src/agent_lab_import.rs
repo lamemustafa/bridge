@@ -1,0 +1,1429 @@
+//! LAB-ONLY write surface (audit-sprint 2026-09-14, Phase 3.4/3.5).
+//!
+//! Compiled only behind `lab-writes` (via `agent_lab.rs`'s `mod import`
+//! declaration); every tool here additionally refuses at runtime unless
+//! `BRIDGE_LAB_WRITES=1` -- checked by the caller in `agent.rs`, the same
+//! gate `lab_read_inventory` uses. Every batch calls [`admit_lab_target`]
+//! immediately before it is sent, so the loaded-company / deny-list /
+//! target-identity guard is re-verified on every single write, not once per
+//! tool call, matching the plan's "admits target before every batch"
+//! requirement.
+//!
+//! Input is the book model documented in
+//! `brain/50-projects/audit-sprint-2026-09-14/specs/book_schema.md`, built by
+//! `SP/code/book/build_book.py`. This module never reads a snapshot itself.
+//!
+//! **What is reused, and what is not, and why:**
+//! - [`bridge_tally_protocol::parse_import_outcome`] parses every
+//!   `<RESPONSE>` (§9.1/§9.2) -- genuinely shared code, not duplicated.
+//! - The master-name matching predicate ([`canonical_master_key`]) is the
+//!   composed fold measured on **licensed TallyPrime 7.1** in §9.4d (space,
+//!   `-` and `/` interchangeable, internal runs collapsed, surrounding
+//!   whitespace ignored, ASCII case folded, otherwise exact codepoints; NFC/
+//!   NFD is deliberately NOT folded -- §9.4d's own "canonical equivalence is
+//!   still refused" finding). §9.4d's measurement scope is *ledgers, one
+//!   company*; applying the same fold to every other master kind here is a
+//!   deliberate conservative choice for a pre-*write* collision check (a
+//!   false positive only makes this tool over-refuse, which is the safe
+//!   failure direction for the Create-overwrite trap, §9.4) -- it is not a
+//!   claim that Tally folds group/unit/godown/stock-item names the same way.
+//! - The XML **shapes** for Payment/Receipt/Contra (§9.13: `EFFECTIVEDATE`,
+//!   `PARTYLEDGERNAME` on the counterparty side, Dr-first ordering) and for
+//!   invoice-mode Sales (§9.12a: `LEDGERENTRIES.LIST` + `ISINVOICE=Yes` +
+//!   `ALLINVENTORYENTRIES.LIST`) are reused byte-for-byte against the
+//!   documented captures. What is **not** reused is `agent_import.rs`'s
+//!   `render_voucher_xml` function itself: its `ImportEntry` carries no
+//!   `BILLALLOCATIONS.LIST`, and every voucher type this book model writes --
+//!   Payment/Receipt/Contra included, per the rehearsal book -- can carry
+//!   bill allocations against a bill-wise party. Reusing that function
+//!   unmodified would silently drop them, which is exactly the class of
+//!   defect §9.2/§12a.4 exist to catch. So this module renders its own
+//!   entries from the proven wire shape rather than the Rust function.
+//! - Group/Unit/Godown/StockGroup/StockItem **master** XML and
+//!   Purchase/Credit-Note/Debit-Note **invoice** XML have no live capture
+//!   anywhere in this repository's protocol reference. They are built from
+//!   Tally's well-documented standard master schema and from §9.12a's
+//!   invoice shape generalised across voucher types (a hypothesis §9.12
+//!   explicitly says is untested for anything but Sales). **Both are
+//!   UNVERIFIED for the gateway import path and need the one-voucher /
+//!   one-master live probe §9.4/§9.12 themselves prescribe before a real
+//!   batch** -- see this worker's final report.
+
+use super::*;
+use bridge_tally_core::ExactDecimal;
+use serde::Deserialize;
+use std::collections::BTreeMap;
+use uuid::Uuid;
+
+const MAX_MASTER_BATCH: usize = 200;
+const MAX_VOUCHER_BATCH: usize = 100;
+
+// ---------------------------------------------------------------------------
+// Master-name matching (§9.4d, licensed TallyPrime 7.1) -- see module doc.
+// ---------------------------------------------------------------------------
+
+/// The composed fold §9.4d measured on licensed TallyPrime 7.1: ASCII case
+/// folded, `-`/`/` treated as a space, internal whitespace runs collapsed to
+/// one, surrounding whitespace trimmed. Deliberately does **not** apply
+/// Unicode normalisation (NFC/NFD) -- §9.4d's own finding is that Tally
+/// refuses that fold.
+fn canonical_master_key(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut last_was_space = true; // trims leading whitespace for free
+    for ch in name.chars() {
+        let mapped = match ch {
+            '-' | '/' => ' ',
+            other => other,
+        };
+        if mapped.is_whitespace() {
+            if !last_was_space {
+                out.push(' ');
+            }
+            last_was_space = true;
+        } else {
+            out.extend(mapped.to_lowercase());
+            last_was_space = false;
+        }
+    }
+    while out.ends_with(' ') {
+        out.pop();
+    }
+    out
+}
+
+/// The `company_guid` the caller supplied must be the admitted lab target's
+/// own GUID -- `admit_lab_target` already proved *a* target is loaded and
+/// unique; this closes the separate hole of a caller passing a different
+/// (e.g. stale) GUID than the one that was just admitted.
+fn identity_matches_requested_guid(identity: &VerifiedCompanyIdentity, guid: &str) -> bool {
+    identity.company_guid().eq_ignore_ascii_case(guid)
+}
+
+fn amounts_equal(a: &str, b: &str) -> bool {
+    match (ExactDecimal::parse(a), ExactDecimal::parse(b)) {
+        // `numeric_eq`, not `==`: ExactDecimal's derived equality is on its
+        // stored lexeme, so "0" and "0.00" would otherwise compare unequal.
+        (Ok(a), Ok(b)) => a.numeric_eq(&b),
+        _ => a.trim() == b.trim(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Book model (input) -- see SP/specs/book_schema.md for the full schema.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct BookMasters {
+    #[serde(default)]
+    units: Vec<BookUnit>,
+    #[serde(default)]
+    godowns: Vec<BookNamedParent>,
+    #[serde(default)]
+    stock_groups: Vec<BookNamedParent>,
+    #[serde(default)]
+    groups: Vec<BookNamedParent>,
+    #[serde(default)]
+    ledgers: Vec<BookLedger>,
+    #[serde(default)]
+    stock_items: Vec<BookStockItem>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct BookUnit {
+    name: String,
+    #[serde(default)]
+    is_simple_unit: Option<String>,
+    #[serde(default)]
+    decimal_places: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct BookNamedParent {
+    name: String,
+    #[serde(default)]
+    parent: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct BookLedger {
+    name: String,
+    #[serde(default)]
+    parent: Option<String>,
+    #[serde(default)]
+    opening_balance: Option<String>,
+    #[serde(default)]
+    is_billwise_on: Option<bool>,
+    #[serde(default)]
+    party_gstin: Option<String>,
+    #[serde(default)]
+    tax_type: Option<String>,
+    #[serde(default)]
+    gst_duty_head: Option<String>,
+    #[serde(default)]
+    opening_bill_allocations: Vec<BookBillAllocation>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct BookBillAllocation {
+    #[serde(default)]
+    name: Option<String>,
+    bill_type: String,
+    amount: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct BookStockItem {
+    name: String,
+    #[serde(default)]
+    parent: Option<String>,
+    #[serde(default)]
+    base_unit: Option<String>,
+    #[serde(default)]
+    opening_qty: Option<String>,
+    #[serde(default)]
+    opening_rate: Option<String>,
+    #[serde(default)]
+    opening_value: Option<String>,
+    #[serde(default)]
+    gst_applicable: Option<String>,
+    #[serde(default)]
+    hsn_code: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct BookVoucher {
+    source_guid: String,
+    #[serde(rename = "type")]
+    voucher_type: String,
+    date: String,
+    #[serde(default)]
+    voucher_number: Option<String>,
+    #[serde(default)]
+    narration: Option<String>,
+    #[serde(default)]
+    party: Option<String>,
+    #[serde(default)]
+    is_invoice_mode: bool,
+    ledger_lines: Vec<BookLedgerLine>,
+    #[serde(default)]
+    inventory_lines: Vec<BookInventoryLine>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct BookLedgerLine {
+    ledger: String,
+    side: String,
+    amount: String,
+    #[serde(default)]
+    bill_allocations: Vec<BookBillAllocation>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct BookInventoryLine {
+    #[serde(default)]
+    stock_item: Option<String>,
+    #[serde(default)]
+    rate: Option<String>,
+    #[serde(default)]
+    qty: Option<String>,
+    #[serde(default)]
+    billed_qty: Option<String>,
+    #[serde(default)]
+    amount: Option<String>,
+    #[serde(default)]
+    godown: Option<String>,
+    #[serde(default)]
+    accounting_allocations: Vec<BookAccountingAllocation>,
+    #[serde(default)]
+    batch_allocations: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct BookAccountingAllocation {
+    ledger: String,
+    amount: String,
+}
+
+fn parse_book_value<T: for<'de> Deserialize<'de>>(
+    args: &Value,
+    inline_key: &str,
+    section_key: &str,
+) -> Result<T, ToolFailure> {
+    if let Some(inline) = args.get(inline_key) {
+        return serde_json::from_value(inline.clone())
+            .map_err(|_| ToolFailure::from(format!("{inline_key}_invalid")));
+    }
+    let path = args
+        .get("book_path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ToolFailure::from(format!("{inline_key}_or_book_path_required")))?;
+    let text = fs::read_to_string(path)
+        .map_err(|_| ToolFailure::from("book_path_unreadable".to_string()))?;
+    let whole: Value = serde_json::from_str(&text)
+        .map_err(|_| ToolFailure::from("book_path_invalid_json".to_string()))?;
+    let section = whole.get(section_key).cloned().unwrap_or(whole);
+    serde_json::from_value(section).map_err(|_| ToolFailure::from(format!("{inline_key}_invalid")))
+}
+
+// ---------------------------------------------------------------------------
+// Master kinds, in the plan's required import order.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum MasterKind {
+    Unit,
+    Godown,
+    StockGroup,
+    Group,
+    Ledger,
+    StockItem,
+}
+
+impl MasterKind {
+    const IMPORT_ORDER: [Self; 6] = [
+        Self::Unit,
+        Self::Godown,
+        Self::StockGroup,
+        Self::Group,
+        Self::Ledger,
+        Self::StockItem,
+    ];
+
+    fn tally_type(self) -> &'static str {
+        match self {
+            Self::Unit => "Unit",
+            Self::Godown => "Godown",
+            Self::StockGroup => "StockGroup",
+            Self::Group => "Group",
+            Self::Ledger => "Ledger",
+            Self::StockItem => "StockItem",
+        }
+    }
+
+    fn readback_fetch_fields(self) -> &'static str {
+        match self {
+            Self::Unit => "NAME,ISSIMPLEUNIT,DECIMALPLACES,GUID,MASTERID,ALTERID",
+            Self::Godown | Self::StockGroup | Self::Group => {
+                "NAME,PARENT,RESERVEDNAME,GUID,MASTERID,ALTERID"
+            }
+            Self::Ledger => {
+                "NAME,PARENT,OPENINGBALANCE,ISBILLWISEON,PARTYGSTIN,TAXTYPE,GSTDUTYHEAD,\
+                GUID,MASTERID,ALTERID"
+            }
+            Self::StockItem => {
+                "NAME,PARENT,BASEUNITS,OPENINGBALANCE,OPENINGRATE,OPENINGVALUE,\
+                GSTAPPLICABLE,HSNCODE,GUID,MASTERID,ALTERID"
+            }
+        }
+    }
+
+    fn names(self, masters: &BookMasters) -> Vec<String> {
+        match self {
+            Self::Unit => masters.units.iter().map(|u| u.name.clone()).collect(),
+            Self::Godown => masters.godowns.iter().map(|g| g.name.clone()).collect(),
+            Self::StockGroup => masters
+                .stock_groups
+                .iter()
+                .map(|g| g.name.clone())
+                .collect(),
+            Self::Group => masters.groups.iter().map(|g| g.name.clone()).collect(),
+            Self::Ledger => masters.ledgers.iter().map(|l| l.name.clone()).collect(),
+            Self::StockItem => masters.stock_items.iter().map(|s| s.name.clone()).collect(),
+        }
+    }
+
+    fn count(self, masters: &BookMasters) -> usize {
+        self.names(masters).len()
+    }
+}
+
+fn render_master_collection_request(company: &str, kind: MasterKind) -> Result<String, String> {
+    let company = ValidatedCompanyName::new(company.to_string())
+        .map_err(|_| "company_name_invalid".to_string())?;
+    let object_type = kind.tally_type();
+    let name = format!("Bridge Lab Write {object_type}s");
+    Ok(format!(
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>{name}</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="{name}" ISMODIFY="No"><TYPE>{object_type}</TYPE><FETCH>{}</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        xml_escape(company.as_str()),
+        kind.readback_fetch_fields()
+    ))
+}
+
+fn find_readback_row<'a>(
+    rows: &'a [BTreeMap<String, String>],
+    name: &str,
+) -> Option<&'a BTreeMap<String, String>> {
+    let key = canonical_master_key(name);
+    rows.iter()
+        .find(|row| canonical_master_key(row.get("NAME").map(String::as_str).unwrap_or("")) == key)
+}
+
+// ---------------------------------------------------------------------------
+// Master XML renderers (Create). See module doc: UNVERIFIED for the gateway
+// on every kind except the fields §8.3/§9.4a already qualify for Ledger.
+// ---------------------------------------------------------------------------
+
+fn render_import_envelope(company: &str, report_name: &str, messages: &str) -> String {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>{report_name}</REPORTNAME><STATICVARIABLES><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY></STATICVARIABLES></REQUESTDESC><REQUESTDATA>{messages}</REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>",
+        xml_escape(company)
+    )
+}
+
+fn render_unit_xml(u: &BookUnit) -> String {
+    let simple = u.is_simple_unit.as_deref().unwrap_or("Yes");
+    let decimals = u.decimal_places.as_deref().unwrap_or("2");
+    format!(
+        "<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><UNIT NAME=\"{name}\" ACTION=\"Create\"><ISSIMPLEUNIT>{simple}</ISSIMPLEUNIT><DECIMALPLACES>{decimals}</DECIMALPLACES></UNIT></TALLYMESSAGE>",
+        name = xml_escape(&u.name),
+        simple = xml_escape(simple),
+        decimals = xml_escape(decimals)
+    )
+}
+
+fn render_parented_xml(tag: &str, item: &BookNamedParent) -> String {
+    let parent = item.parent.as_deref().unwrap_or("Primary");
+    format!(
+        "<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><{tag} NAME=\"{name}\" ACTION=\"Create\"><PARENT>{parent}</PARENT></{tag}></TALLYMESSAGE>",
+        tag = tag,
+        name = xml_escape(&item.name),
+        parent = xml_escape(parent)
+    )
+}
+
+fn render_ledger_xml(l: &BookLedger) -> String {
+    let parent = l.parent.as_deref().unwrap_or("Primary");
+    let opening = l.opening_balance.as_deref().unwrap_or("0.00");
+    let billwise = l
+        .is_billwise_on
+        .map(|b| {
+            format!(
+                "<ISBILLWISEON>{}</ISBILLWISEON>",
+                if b { "Yes" } else { "No" }
+            )
+        })
+        .unwrap_or_default();
+    // GST fields are passed through exactly as observed on the source ledger
+    // (§8.3: `GSTDUTYHEAD` vocabulary is irregular, `State Tax` not `SGST`);
+    // never synthesised. §8.3: settable at Create, silently not at Alter --
+    // this renderer only ever builds a Create.
+    let gstin = l
+        .party_gstin
+        .as_deref()
+        .map(|g| format!("<PARTYGSTIN>{}</PARTYGSTIN>", xml_escape(g)))
+        .unwrap_or_default();
+    let tax_type = l
+        .tax_type
+        .as_deref()
+        .map(|t| format!("<TAXTYPE>{}</TAXTYPE>", xml_escape(t)))
+        .unwrap_or_default();
+    let duty_head = l
+        .gst_duty_head
+        .as_deref()
+        .map(|d| format!("<GSTDUTYHEAD>{}</GSTDUTYHEAD>", xml_escape(d)))
+        .unwrap_or_default();
+    // Opening bill-wise allocations, when the source captured them, nested
+    // under the ledger master the same way an accounting voucher's
+    // BILLALLOCATIONS.LIST nests under its ledger entry (§9.4a family) --
+    // this specific master-level placement has no live capture in this
+    // repository and is UNVERIFIED for the gateway; see module doc.
+    let opening_bills = l
+        .opening_bill_allocations
+        .iter()
+        .map(|b| {
+            let name = b.name.clone().unwrap_or_default();
+            format!(
+                "<BILLALLOCATIONS.LIST><NAME>{}</NAME><BILLTYPE>{}</BILLTYPE><AMOUNT>{}</AMOUNT></BILLALLOCATIONS.LIST>",
+                xml_escape(&name), xml_escape(&b.bill_type), xml_escape(&b.amount)
+            )
+        })
+        .collect::<String>();
+    format!(
+        "<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><LEDGER NAME=\"{name}\" ACTION=\"Create\"><PARENT>{parent}</PARENT><OPENINGBALANCE>{opening}</OPENINGBALANCE>{billwise}{gstin}{tax_type}{duty_head}{opening_bills}</LEDGER></TALLYMESSAGE>",
+        name = xml_escape(&l.name),
+        parent = xml_escape(parent),
+        opening = xml_escape(opening)
+    )
+}
+
+fn render_stock_item_xml(s: &BookStockItem) -> String {
+    let parent = s.parent.as_deref().unwrap_or("Primary");
+    let base_units = s
+        .base_unit
+        .as_deref()
+        .map(|u| format!("<BASEUNITS>{}</BASEUNITS>", xml_escape(u)))
+        .unwrap_or_default();
+    let opening = match (
+        s.opening_qty.as_deref(),
+        s.opening_rate.as_deref(),
+        s.opening_value.as_deref(),
+    ) {
+        (Some(qty), Some(rate), Some(value)) => format!(
+            "<OPENINGBALANCE>{}</OPENINGBALANCE><OPENINGRATE>{}</OPENINGRATE><OPENINGVALUE>{}</OPENINGVALUE>",
+            xml_escape(qty), xml_escape(rate), xml_escape(value)
+        ),
+        _ => String::new(),
+    };
+    let gst = s
+        .gst_applicable
+        .as_deref()
+        .map(|g| format!("<GSTAPPLICABLE>{}</GSTAPPLICABLE>", xml_escape(g)))
+        .unwrap_or_default();
+    let hsn = s
+        .hsn_code
+        .as_deref()
+        .map(|h| format!("<HSNCODE>{}</HSNCODE>", xml_escape(h)))
+        .unwrap_or_default();
+    format!(
+        "<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><STOCKITEM NAME=\"{name}\" ACTION=\"Create\"><PARENT>{parent}</PARENT>{base_units}{opening}{gst}{hsn}</STOCKITEM></TALLYMESSAGE>",
+        name = xml_escape(&s.name),
+        parent = xml_escape(parent)
+    )
+}
+
+fn render_master_batch_xml(company: &str, kind: MasterKind, masters: &BookMasters) -> String {
+    let messages = match kind {
+        MasterKind::Unit => masters
+            .units
+            .iter()
+            .map(render_unit_xml)
+            .collect::<String>(),
+        MasterKind::Godown => masters
+            .godowns
+            .iter()
+            .map(|g| render_parented_xml("GODOWN", g))
+            .collect::<String>(),
+        MasterKind::StockGroup => masters
+            .stock_groups
+            .iter()
+            .map(|g| render_parented_xml("STOCKGROUP", g))
+            .collect::<String>(),
+        MasterKind::Group => masters
+            .groups
+            .iter()
+            .map(|g| render_parented_xml("GROUP", g))
+            .collect::<String>(),
+        MasterKind::Ledger => masters
+            .ledgers
+            .iter()
+            .map(render_ledger_xml)
+            .collect::<String>(),
+        MasterKind::StockItem => masters
+            .stock_items
+            .iter()
+            .map(render_stock_item_xml)
+            .collect::<String>(),
+    };
+    render_import_envelope(company, "All Masters", &messages)
+}
+
+// ---------------------------------------------------------------------------
+// Master read-back diff
+// ---------------------------------------------------------------------------
+
+fn diff_unit(u: &BookUnit, row: &BTreeMap<String, String>) -> Vec<String> {
+    let mut mismatches = Vec::new();
+    if let Some(expected) = u.decimal_places.as_deref() {
+        let observed = row.get("DECIMALPLACES").map(String::as_str).unwrap_or("");
+        if expected != observed {
+            mismatches.push(format!(
+                "unit {}: decimal_places expected {expected}, observed {observed}",
+                u.name
+            ));
+        }
+    }
+    mismatches
+}
+
+fn diff_parented(tag: &str, item: &BookNamedParent, row: &BTreeMap<String, String>) -> Vec<String> {
+    let mut mismatches = Vec::new();
+    if let Some(expected) = item.parent.as_deref() {
+        let observed = row.get("PARENT").map(String::as_str).unwrap_or("");
+        if canonical_master_key(expected) != canonical_master_key(observed) {
+            mismatches.push(format!(
+                "{tag} {}: parent expected {expected:?}, observed {observed:?}",
+                item.name
+            ));
+        }
+    }
+    mismatches
+}
+
+fn diff_ledger(l: &BookLedger, row: &BTreeMap<String, String>) -> Vec<String> {
+    let mut mismatches = Vec::new();
+    if let Some(expected) = l.parent.as_deref() {
+        let observed = row.get("PARENT").map(String::as_str).unwrap_or("");
+        if canonical_master_key(expected) != canonical_master_key(observed) {
+            mismatches.push(format!(
+                "ledger {}: parent expected {expected:?}, observed {observed:?}",
+                l.name
+            ));
+        }
+    }
+    let expected_opening = l.opening_balance.as_deref().unwrap_or("0.00");
+    let observed_opening = row.get("OPENINGBALANCE").map(String::as_str).unwrap_or("");
+    if !amounts_equal(expected_opening, observed_opening) {
+        mismatches.push(format!(
+            "ledger {}: opening_balance expected {expected_opening}, observed {observed_opening:?}",
+            l.name
+        ));
+    }
+    if let Some(expected) = l.party_gstin.as_deref() {
+        let observed = row.get("PARTYGSTIN").map(String::as_str).unwrap_or("");
+        if expected != observed {
+            mismatches.push(format!(
+                "ledger {}: party_gstin expected {expected:?}, observed {observed:?}",
+                l.name
+            ));
+        }
+    }
+    mismatches
+}
+
+fn diff_stock_item(s: &BookStockItem, row: &BTreeMap<String, String>) -> Vec<String> {
+    let mut mismatches = Vec::new();
+    if let Some(expected) = s.parent.as_deref() {
+        let observed = row.get("PARENT").map(String::as_str).unwrap_or("");
+        if canonical_master_key(expected) != canonical_master_key(observed) {
+            mismatches.push(format!(
+                "stock item {}: parent expected {expected:?}, observed {observed:?}",
+                s.name
+            ));
+        }
+    }
+    if let (Some(qty), Some(observed)) = (s.opening_qty.as_deref(), row.get("OPENINGBALANCE")) {
+        if !amounts_equal(qty, observed) {
+            mismatches.push(format!(
+                "stock item {}: opening_qty expected {qty}, observed {observed}",
+                s.name
+            ));
+        }
+    }
+    mismatches
+}
+
+// ---------------------------------------------------------------------------
+// lab_import_masters
+// ---------------------------------------------------------------------------
+
+pub(in crate::agent) async fn lab_import_masters(
+    server: &Server,
+    args: &Value,
+) -> Result<ToolOutcome, ToolFailure> {
+    let masters: BookMasters = parse_book_value(args, "masters", "masters")?;
+    let guid = required_string(args, "company_guid")?;
+
+    let (_company, identity, mut evidence) = admit_lab_target(server).await?;
+    if !identity_matches_requested_guid(&identity, guid) {
+        return Err(ToolFailure::from("lab_target_company_mismatch".to_string())
+            .with_prior_evidence(evidence));
+    }
+
+    // ---- Create-overwrite pre-check (§9.4): refuse before any write if the
+    // target already carries a same-name master under ANY kind requested. ----
+    let mut collisions: Vec<String> = Vec::new();
+    for kind in MasterKind::IMPORT_ORDER {
+        let requested = kind.names(&masters);
+        if requested.is_empty() {
+            continue;
+        }
+        let request = render_master_collection_request(identity.display_name(), kind)
+            .map_err(ToolFailure::from)?;
+        let (xml, read_evidence) =
+            lab_post_read(server, &identity, "lab_import_masters.precheck", request).await?;
+        evidence = combine_evidence(evidence.clone(), read_evidence);
+        let rows = parse_lab_master_rows(&xml, kind.tally_type())
+            .map_err(|code| ToolFailure::from(code).with_prior_evidence(evidence.clone()))?;
+        for name in &requested {
+            if find_readback_row(&rows, name).is_some() {
+                collisions.push(format!("{}:{name}", kind.tally_type()));
+            }
+        }
+    }
+    if !collisions.is_empty() {
+        persist_lab_precheck_collisions(server, &collisions);
+        return Err(ToolFailure::from("lab_master_already_exists".to_string())
+            .with_prior_evidence(evidence));
+    }
+
+    let mut batches = Vec::new();
+    let mut mismatches: Vec<String> = Vec::new();
+    let mut counts = serde_json::Map::new();
+
+    'kinds: for kind in MasterKind::IMPORT_ORDER {
+        let total = kind.count(&masters);
+        if total == 0 {
+            continue;
+        }
+        let mut created = 0usize;
+        let mut chunk_start = 0usize;
+        while chunk_start < total {
+            // Re-admit before every batch, not just once per tool call.
+            let (_company, identity, admit_evidence) = admit_lab_target(server).await?;
+            evidence = combine_evidence(evidence.clone(), admit_evidence);
+
+            let chunk_masters = chunked_masters(&masters, kind, chunk_start, MAX_MASTER_BATCH);
+            let chunk_len = kind.count(&chunk_masters);
+            let xml = render_master_batch_xml(identity.display_name(), kind, &chunk_masters);
+            let (response, post_evidence) =
+                post_lab_batch(server, &identity, "lab_import_masters.write", xml).await?;
+            evidence = combine_evidence(evidence.clone(), post_evidence);
+            let outcome = bridge_tally_protocol::parse_import_outcome(&response)
+                .map_err(|_| ToolFailure::from("lab_import_response_invalid".to_string()))?;
+            let clean = outcome
+                .counters()
+                .is_clean_success_for(chunk_len as u64, 0, 0);
+
+            // Mandatory read-back, regardless of the counters (§9.2: never
+            // trust CREATED/ERRORS alone).
+            let read_request = render_master_collection_request(identity.display_name(), kind)
+                .map_err(ToolFailure::from)?;
+            let (read_xml, read_evidence) = lab_post_read(
+                server,
+                &identity,
+                "lab_import_masters.readback",
+                read_request,
+            )
+            .await?;
+            evidence = combine_evidence(evidence.clone(), read_evidence);
+            let rows = parse_lab_master_rows(&read_xml, kind.tally_type())
+                .map_err(|code| ToolFailure::from(code).with_prior_evidence(evidence.clone()))?;
+
+            let batch_mismatches = readback_mismatches(kind, &chunk_masters, &rows);
+            let batch_ok = clean && batch_mismatches.is_empty();
+            batches.push(json!({
+                "kind": kind.tally_type(),
+                "requested": chunk_len,
+                "counters_clean": clean,
+                "mismatches": batch_mismatches,
+                "ok": batch_ok,
+            }));
+            if !batch_ok {
+                mismatches.extend(batch_mismatches);
+                break 'kinds; // stop on first mismatch, per the plan
+            }
+            created += chunk_len;
+            chunk_start += MAX_MASTER_BATCH;
+        }
+        counts.insert(kind.tally_type().to_string(), json!(created));
+    }
+
+    let ok = mismatches.is_empty();
+    Ok(ToolOutcome {
+        payload: json!({"result": {
+            "ok": ok,
+            "counts": counts,
+            "batches": batches,
+            "mismatches": mismatches,
+        }}),
+        evidence,
+        company_guid: Some(guid.to_string()),
+        truncated: false,
+    })
+}
+
+fn readback_mismatches(
+    kind: MasterKind,
+    chunk: &BookMasters,
+    rows: &[BTreeMap<String, String>],
+) -> Vec<String> {
+    let mut mismatches = Vec::new();
+    match kind {
+        MasterKind::Unit => {
+            for item in &chunk.units {
+                match find_readback_row(rows, &item.name) {
+                    None => mismatches.push(format!("unit {} not found on readback", item.name)),
+                    Some(row) => mismatches.extend(diff_unit(item, row)),
+                }
+            }
+        }
+        MasterKind::Godown => {
+            for item in &chunk.godowns {
+                match find_readback_row(rows, &item.name) {
+                    None => mismatches.push(format!("godown {} not found on readback", item.name)),
+                    Some(row) => mismatches.extend(diff_parented("godown", item, row)),
+                }
+            }
+        }
+        MasterKind::StockGroup => {
+            for item in &chunk.stock_groups {
+                match find_readback_row(rows, &item.name) {
+                    None => {
+                        mismatches.push(format!("stock group {} not found on readback", item.name))
+                    }
+                    Some(row) => mismatches.extend(diff_parented("stock group", item, row)),
+                }
+            }
+        }
+        MasterKind::Group => {
+            for item in &chunk.groups {
+                match find_readback_row(rows, &item.name) {
+                    None => mismatches.push(format!("group {} not found on readback", item.name)),
+                    Some(row) => mismatches.extend(diff_parented("group", item, row)),
+                }
+            }
+        }
+        MasterKind::Ledger => {
+            for item in &chunk.ledgers {
+                match find_readback_row(rows, &item.name) {
+                    None => mismatches.push(format!("ledger {} not found on readback", item.name)),
+                    Some(row) => mismatches.extend(diff_ledger(item, row)),
+                }
+            }
+        }
+        MasterKind::StockItem => {
+            for item in &chunk.stock_items {
+                match find_readback_row(rows, &item.name) {
+                    None => {
+                        mismatches.push(format!("stock item {} not found on readback", item.name))
+                    }
+                    Some(row) => mismatches.extend(diff_stock_item(item, row)),
+                }
+            }
+        }
+    }
+    mismatches
+}
+
+fn chunked_masters(
+    masters: &BookMasters,
+    kind: MasterKind,
+    start: usize,
+    len: usize,
+) -> BookMasters {
+    let end_of = |n: usize| (start + len).min(n);
+    match kind {
+        MasterKind::Unit => BookMasters {
+            units: masters.units[start.min(masters.units.len())..end_of(masters.units.len())]
+                .to_vec(),
+            ..Default::default()
+        },
+        MasterKind::Godown => BookMasters {
+            godowns: masters.godowns
+                [start.min(masters.godowns.len())..end_of(masters.godowns.len())]
+                .to_vec(),
+            ..Default::default()
+        },
+        MasterKind::StockGroup => BookMasters {
+            stock_groups: masters.stock_groups
+                [start.min(masters.stock_groups.len())..end_of(masters.stock_groups.len())]
+                .to_vec(),
+            ..Default::default()
+        },
+        MasterKind::Group => BookMasters {
+            groups: masters.groups[start.min(masters.groups.len())..end_of(masters.groups.len())]
+                .to_vec(),
+            ..Default::default()
+        },
+        MasterKind::Ledger => BookMasters {
+            ledgers: masters.ledgers
+                [start.min(masters.ledgers.len())..end_of(masters.ledgers.len())]
+                .to_vec(),
+            ..Default::default()
+        },
+        MasterKind::StockItem => BookMasters {
+            stock_items: masters.stock_items
+                [start.min(masters.stock_items.len())..end_of(masters.stock_items.len())]
+                .to_vec(),
+            ..Default::default()
+        },
+    }
+}
+
+fn persist_lab_precheck_collisions(server: &Server, collisions: &[String]) {
+    if let Ok(dir) = lab_evidence_dir(server) {
+        let record = json!({
+            "tool": "lab_import_masters.precheck",
+            "at": Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+            "collisions": collisions,
+        });
+        let _ = append_egress_line(
+            &dir.join("lab-precheck-collisions.jsonl"),
+            &record.to_string(),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Voucher rendering
+// ---------------------------------------------------------------------------
+
+const BANK_SHAPE_TYPES: &[&str] = &["Payment", "Receipt", "Contra"];
+
+fn is_bank_shape(voucher_type: &str) -> bool {
+    BANK_SHAPE_TYPES.contains(&voucher_type)
+}
+
+/// `None` for Contra (moves between two of the company's own accounts, so it
+/// has no counterparty leg -- §9.13).
+fn bank_party_side(voucher_type: &str) -> Option<&'static str> {
+    match voucher_type {
+        "Payment" => Some("Dr"),
+        "Receipt" => Some("Cr"),
+        _ => None,
+    }
+}
+
+fn signed_wire_amount(side: &str, amount: &str) -> String {
+    if side == "Dr" {
+        format!("-{amount}")
+    } else {
+        amount.to_string()
+    }
+}
+
+fn render_bill_allocations_xml(side: &str, allocations: &[BookBillAllocation]) -> String {
+    allocations
+        .iter()
+        .map(|a| {
+            let name = a.name.clone().unwrap_or_default();
+            format!(
+                "<BILLALLOCATIONS.LIST><NAME>{}</NAME><BILLTYPE>{}</BILLTYPE><AMOUNT>{}</AMOUNT></BILLALLOCATIONS.LIST>",
+                xml_escape(&name),
+                xml_escape(&a.bill_type),
+                signed_wire_amount(side, &a.amount)
+            )
+        })
+        .collect()
+}
+
+fn render_ledger_entry_xml(tag: &str, line: &BookLedgerLine) -> String {
+    format!(
+        "<{tag}><LEDGERNAME>{}</LEDGERNAME><ISDEEMEDPOSITIVE>{}</ISDEEMEDPOSITIVE><AMOUNT>{}</AMOUNT>{}</{tag}>",
+        xml_escape(&line.ledger),
+        if line.side == "Dr" { "Yes" } else { "No" },
+        signed_wire_amount(&line.side, &line.amount),
+        render_bill_allocations_xml(&line.side, &line.bill_allocations),
+    )
+}
+
+fn narration_with_marker(narration: Option<&str>, attribution_id: Uuid) -> String {
+    format!(
+        "<NARRATION>{}</NARRATION>",
+        xml_escape(
+            format!(
+                "{} [BRIDGE-LAB:{attribution_id}]",
+                narration.unwrap_or("").trim()
+            )
+            .trim()
+        )
+    )
+}
+
+/// Journal, Payment/Receipt/Contra, and any accounting-mode (non-invoice)
+/// Sales/Purchase/Credit-Note/Debit-Note -- every one of them renders with
+/// `ALLLEDGERENTRIES.LIST` (the element every non-invoice write in
+/// `TALLY_PROTOCOL_REFERENCE.md` uses). Bank-shape types additionally carry
+/// `EFFECTIVEDATE` and `PARTYLEDGERNAME` and are sorted debit-first, per
+/// §9.13; a Journal and an accounting-mode Sales keep the book's own line
+/// order and carry neither, matching the observed accounting-mode Sales wire
+/// shape (no `PARTYLEDGERNAME` element).
+fn render_accounting_voucher_xml(
+    voucher: &BookVoucher,
+    remote_id: Uuid,
+    attribution_id: Uuid,
+) -> Result<String, String> {
+    let date = normalized_date(&voucher.date)?;
+    let bank = is_bank_shape(&voucher.voucher_type);
+    let mut lines: Vec<&BookLedgerLine> = voucher.ledger_lines.iter().collect();
+    if bank {
+        lines.sort_by_key(|line| if line.side == "Dr" { 0 } else { 1 });
+    }
+    let entries = lines
+        .iter()
+        .map(|line| render_ledger_entry_xml("ALLLEDGERENTRIES.LIST", line))
+        .collect::<String>();
+    let effective_date = if bank {
+        format!("<EFFECTIVEDATE>{date}</EFFECTIVEDATE>")
+    } else {
+        String::new()
+    };
+    let party = bank_party_side(&voucher.voucher_type)
+        .and_then(|side| lines.iter().find(|line| line.side == side))
+        .map(|line| {
+            format!(
+                "<PARTYLEDGERNAME>{}</PARTYLEDGERNAME>",
+                xml_escape(&line.ledger)
+            )
+        })
+        .unwrap_or_default();
+    let voucher_number = voucher
+        .voucher_number
+        .as_deref()
+        .map(|v| format!("<VOUCHERNUMBER>{}</VOUCHERNUMBER>", xml_escape(v)))
+        .unwrap_or_default();
+    let narration = narration_with_marker(voucher.narration.as_deref(), attribution_id);
+    let vt = xml_escape(&voucher.voucher_type);
+    Ok(format!(
+        "<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><VOUCHER REMOTEID=\"{remote_id}\" VCHTYPE=\"{vt}\" ACTION=\"Create\" OBJVIEW=\"Accounting Voucher View\"><DATE>{date}</DATE>{effective_date}<VOUCHERTYPENAME>{vt}</VOUCHERTYPENAME>{party}{voucher_number}{narration}{entries}</VOUCHER></TALLYMESSAGE>"
+    ))
+}
+
+fn render_inventory_entry_xml(line: &BookInventoryLine) -> Result<String, String> {
+    let stock_item = line
+        .stock_item
+        .as_deref()
+        .ok_or_else(|| "lab_inventory_stock_item_required".to_string())?;
+    let amount = line
+        .amount
+        .as_deref()
+        .ok_or_else(|| "lab_inventory_amount_required".to_string())?;
+    // §9.12a note 2: a service line carries an amount and no quantity --
+    // omit RATE/ACTUALQTY/BILLEDQTY entirely rather than send empties.
+    let rate = line
+        .rate
+        .as_deref()
+        .map(|r| format!("<RATE>{}</RATE>", xml_escape(r)))
+        .unwrap_or_default();
+    let qty = line
+        .qty
+        .as_deref()
+        .map(|qty| {
+            let billed = line.billed_qty.as_deref().unwrap_or(qty);
+            format!(
+                "<ACTUALQTY>{}</ACTUALQTY><BILLEDQTY>{}</BILLEDQTY>",
+                xml_escape(qty),
+                xml_escape(billed)
+            )
+        })
+        .unwrap_or_default();
+    let godown = line
+        .godown
+        .as_deref()
+        .map(|g| format!("<GODOWNNAME>{}</GODOWNNAME>", xml_escape(g)))
+        .unwrap_or_default();
+    // §9.12a note 1: each inventory line carried its own
+    // ACCOUNTINGALLOCATIONS.LIST naming the sales/purchase ledger -- the
+    // *observed* working shape, not a proven requirement for every line.
+    let allocations = line
+        .accounting_allocations
+        .iter()
+        .map(|a| {
+            format!(
+                "<ACCOUNTINGALLOCATIONS.LIST><LEDGERNAME>{}</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>{}</AMOUNT></ACCOUNTINGALLOCATIONS.LIST>",
+                xml_escape(&a.ledger), xml_escape(&a.amount)
+            )
+        })
+        .collect::<String>();
+    // Batch/godown allocations, in the shape `lab_read_inventory` (Phase 3.2,
+    // agent_lab.rs) already reads back: BATCHNAME/GODOWNNAME/ACTUALQTY/
+    // BILLEDQTY/AMOUNT. UNVERIFIED for import -- see module doc.
+    let batches = line
+        .batch_allocations
+        .iter()
+        .map(|b| {
+            let field = |key: &str| b.get(key).and_then(Value::as_str).unwrap_or("");
+            format!(
+                "<BATCHALLOCATIONS.LIST><BATCHNAME>{}</BATCHNAME><GODOWNNAME>{}</GODOWNNAME><ACTUALQTY>{}</ACTUALQTY><BILLEDQTY>{}</BILLEDQTY><AMOUNT>{}</AMOUNT></BATCHALLOCATIONS.LIST>",
+                xml_escape(field("batch")),
+                xml_escape(field("godown")),
+                xml_escape(field("actual_qty")),
+                xml_escape(field("billed_qty")),
+                xml_escape(field("amount")),
+            )
+        })
+        .collect::<String>();
+    Ok(format!(
+        "<ALLINVENTORYENTRIES.LIST><STOCKITEMNAME>{}</STOCKITEMNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>{rate}{qty}<AMOUNT>{}</AMOUNT>{godown}{allocations}{batches}</ALLINVENTORYENTRIES.LIST>",
+        xml_escape(stock_item),
+        xml_escape(amount)
+    ))
+}
+
+/// Sales/Purchase/Credit-Note/Debit-Note carrying `inventory_lines`. Follows
+/// §9.12a's "the shape that works" byte-for-byte: `LEDGERENTRIES.LIST` (never
+/// `ALLLEDGERENTRIES.LIST` -- §9.12's TRAP), `ISINVOICE=Yes`,
+/// `OBJVIEW="Invoice Voucher View"`. **UNVERIFIED for the gateway** -- see
+/// module doc; §9.12a itself is a UI-import capture, not a gateway one, and
+/// only for Sales.
+fn render_invoice_voucher_xml(
+    voucher: &BookVoucher,
+    remote_id: Uuid,
+    attribution_id: Uuid,
+) -> Result<String, String> {
+    let date = normalized_date(&voucher.date)?;
+    let party = voucher
+        .party
+        .as_deref()
+        .ok_or_else(|| "lab_invoice_party_required".to_string())?;
+    let voucher_number = voucher
+        .voucher_number
+        .as_deref()
+        .map(|v| format!("<VOUCHERNUMBER>{}</VOUCHERNUMBER>", xml_escape(v)))
+        .unwrap_or_default();
+    let narration = narration_with_marker(voucher.narration.as_deref(), attribution_id);
+    let ledger_entries = voucher
+        .ledger_lines
+        .iter()
+        .map(|line| render_ledger_entry_xml("LEDGERENTRIES.LIST", line))
+        .collect::<String>();
+    let inventory_entries = voucher
+        .inventory_lines
+        .iter()
+        .map(render_inventory_entry_xml)
+        .collect::<Result<Vec<_>, _>>()?
+        .concat();
+    let vt = xml_escape(&voucher.voucher_type);
+    let party_escaped = xml_escape(party);
+    Ok(format!(
+        "<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><VOUCHER REMOTEID=\"{remote_id}\" VCHTYPE=\"{vt}\" ACTION=\"Create\" OBJVIEW=\"Invoice Voucher View\"><DATE>{date}</DATE><EFFECTIVEDATE>{date}</EFFECTIVEDATE><VOUCHERTYPENAME>{vt}</VOUCHERTYPENAME>{voucher_number}<PARTYLEDGERNAME>{party_escaped}</PARTYLEDGERNAME><BASICBASEPARTYNAME>{party_escaped}</BASICBASEPARTYNAME><PERSISTEDVIEW>Invoice Voucher View</PERSISTEDVIEW><ISINVOICE>Yes</ISINVOICE>{narration}{ledger_entries}{inventory_entries}</VOUCHER></TALLYMESSAGE>"
+    ))
+}
+
+fn render_voucher_message(
+    voucher: &BookVoucher,
+    remote_id: Uuid,
+    attribution_id: Uuid,
+) -> Result<String, String> {
+    if voucher.is_invoice_mode {
+        render_invoice_voucher_xml(voucher, remote_id, attribution_id)
+    } else {
+        render_accounting_voucher_xml(voucher, remote_id, attribution_id)
+    }
+}
+
+fn render_voucher_batch_xml(
+    company: &str,
+    vouchers: &[BookVoucher],
+    attribution_ids: &[Uuid],
+) -> Result<String, String> {
+    let messages = vouchers
+        .iter()
+        .zip(attribution_ids)
+        .map(|(voucher, id)| render_voucher_message(voucher, Uuid::new_v4(), *id))
+        .collect::<Result<Vec<_>, _>>()?
+        .concat();
+    Ok(render_import_envelope(company, "Vouchers", &messages))
+}
+
+// ---------------------------------------------------------------------------
+// Voucher read-back / resume pre-check
+// ---------------------------------------------------------------------------
+
+const ACCOUNTING_VOUCHER_FETCH: &str =
+    "DATE,VOUCHERNUMBER,VOUCHERTYPENAME,NARRATION,PARTYLEDGERNAME,\
+GUID,ISCANCELLED,ALLLEDGERENTRIES.LEDGERNAME,ALLLEDGERENTRIES.AMOUNT,\
+ALLLEDGERENTRIES.ISDEEMEDPOSITIVE,ALLLEDGERENTRIES.BILLALLOCATIONS.NAME,\
+ALLLEDGERENTRIES.BILLALLOCATIONS.BILLTYPE,ALLLEDGERENTRIES.BILLALLOCATIONS.AMOUNT";
+
+fn render_voucher_window_request(company: &str, from: &str, to: &str) -> Result<String, String> {
+    let company = ValidatedCompanyName::new(company.to_string())
+        .map_err(|_| "company_name_invalid".to_string())?;
+    Ok(format!(
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Lab Voucher Readback</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeLabWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"</SYSTEM><COLLECTION NAME=\"Bridge Lab Voucher Readback\" ISMODIFY=\"No\"><TYPE>Voucher</TYPE><FETCH>{}</FETCH><FILTERS>BridgeLabWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>",
+        xml_escape(company.as_str()), ACCOUNTING_VOUCHER_FETCH
+    ))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ObservedVoucher {
+    date: String,
+    voucher_number: Option<String>,
+    voucher_type: Option<String>,
+    narration: Option<String>,
+    is_cancelled: bool,
+    ledger_entries: Vec<(String, String, String)>, // (ledger, is_deemed_positive, amount)
+}
+
+/// Parses `ALLLEDGERENTRIES.LIST` per voucher, mirroring the nested-list
+/// approach `parse_lab_inventory_vouchers` (agent_lab.rs) already established
+/// for `ALLINVENTORYENTRIES.LIST` -- generalised here to the ledger-entry
+/// list every non-invoice write in this document uses.
+fn parse_voucher_readback_nested(xml: &str) -> Result<Vec<ObservedVoucher>, String> {
+    validate_agent_envelope(xml)?;
+    let mut reader = quick_xml::Reader::from_str(xml);
+    reader.config_mut().trim_text(false);
+    let mut path: Vec<String> = Vec::new();
+    let mut rows = Vec::new();
+    let mut voucher: Option<BTreeMap<String, String>> = None;
+    let mut entry: Option<BTreeMap<String, String>> = None;
+    let mut entries: Vec<(String, String, String)> = Vec::new();
+    let mut current_tag = String::new();
+    const VOUCHER_PREFIX: [&str; 5] = ["ENVELOPE", "BODY", "DATA", "COLLECTION", "VOUCHER"];
+    const ENTRY_PREFIX: [&str; 6] = [
+        "ENVELOPE",
+        "BODY",
+        "DATA",
+        "COLLECTION",
+        "VOUCHER",
+        "ALLLEDGERENTRIES.LIST",
+    ];
+    loop {
+        match reader.read_event() {
+            Ok(quick_xml::events::Event::Start(event)) => {
+                let tag = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
+                if path.len() == 4 && path == ["ENVELOPE", "BODY", "DATA", "COLLECTION"] {
+                    if tag != "VOUCHER" {
+                        return Err("agent_read_protocol_invalid".to_string());
+                    }
+                    voucher = Some(BTreeMap::new());
+                    entries.clear();
+                } else if path.as_slice() == VOUCHER_PREFIX && tag == "ALLLEDGERENTRIES.LIST" {
+                    entry = Some(BTreeMap::new());
+                }
+                path.push(tag.clone());
+                current_tag = tag;
+            }
+            Ok(quick_xml::events::Event::Text(text)) => {
+                let value = decoded_agent_text(text)?;
+                let parent = &path[..path.len().saturating_sub(1)];
+                if parent == ENTRY_PREFIX {
+                    if let Some(row) = entry.as_mut() {
+                        append_agent_text(row, &current_tag, value);
+                    }
+                } else if parent == VOUCHER_PREFIX {
+                    if let Some(row) = voucher.as_mut() {
+                        append_agent_text(row, &current_tag, value);
+                    }
+                }
+            }
+            Ok(quick_xml::events::Event::End(event)) => {
+                let end = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
+                if end == "ALLLEDGERENTRIES.LIST" && path.as_slice() == ENTRY_PREFIX {
+                    if let Some(row) = entry.take() {
+                        entries.push((
+                            row.get("LEDGERNAME").cloned().unwrap_or_default(),
+                            row.get("ISDEEMEDPOSITIVE").cloned().unwrap_or_default(),
+                            row.get("AMOUNT").cloned().unwrap_or_default(),
+                        ));
+                    }
+                }
+                if end == "VOUCHER" && path.as_slice() == VOUCHER_PREFIX {
+                    if let Some(row) = voucher.take() {
+                        rows.push(ObservedVoucher {
+                            date: row.get("DATE").cloned().unwrap_or_default(),
+                            voucher_number: row.get("VOUCHERNUMBER").cloned(),
+                            voucher_type: row.get("VOUCHERTYPENAME").cloned(),
+                            narration: row.get("NARRATION").cloned(),
+                            is_cancelled: row.get("ISCANCELLED").map(String::as_str) == Some("Yes"),
+                            ledger_entries: entries.clone(),
+                        });
+                        entries.clear();
+                    }
+                }
+                if path.pop().as_deref() != Some(end.as_str()) {
+                    return Err("agent_read_protocol_invalid".to_string());
+                }
+            }
+            Ok(quick_xml::events::Event::Eof) => break,
+            Ok(_) => {}
+            Err(_) => return Err("agent_read_protocol_invalid".to_string()),
+        }
+    }
+    Ok(rows)
+}
+
+fn narration_marker(narration: Option<&str>) -> Option<String> {
+    let text = narration?;
+    let start = text.rfind("[BRIDGE-LAB:")?;
+    let rest = &text[start + "[BRIDGE-LAB:".len()..];
+    let end = rest.find(']')?;
+    Some(rest[..end].to_string())
+}
+
+/// A voucher counts as already-posted-and-verified for a resume pre-check
+/// only on (type, date, total-debit-amount, narration marker OR voucher
+/// number) -- content alone (date/ledger/amount) is not an attribution key,
+/// per §9.3: a book with a recurring same-day payment can already contain a
+/// voucher with that tuple. Matching on the marker this module stamps into
+/// every write closes that hole the same way the production path's
+/// narration tag does.
+fn voucher_already_verified(expected: &BookVoucher, observed: &[ObservedVoucher]) -> bool {
+    // Compare in Tally's own wire form: `normalized_date` accepts the book
+    // model's date (which may or may not already be YYYYMMDD) and the
+    // observed row is always already in that form; the ledger amount must be
+    // the *signed* wire amount (§9.13's Dr-negative convention), since
+    // book.json stores an unsigned magnitude plus a side.
+    let expected_date = normalized_date(&expected.date).unwrap_or_else(|_| expected.date.clone());
+    observed.iter().any(|row| {
+        if row.is_cancelled {
+            return false;
+        }
+        if row.voucher_type.as_deref() != Some(expected.voucher_type.as_str()) {
+            return false;
+        }
+        if row.date != expected_date {
+            return false;
+        }
+        let number_matches =
+            expected.voucher_number.is_some() && row.voucher_number == expected.voucher_number;
+        let marker_matches = narration_marker(row.narration.as_deref()).is_some()
+            && narration_marker(row.narration.as_deref())
+                == narration_marker(expected.narration.as_deref());
+        if !number_matches && !marker_matches {
+            return false;
+        }
+        expected.ledger_lines.iter().all(|line| {
+            let expected_signed = signed_wire_amount(&line.side, &line.amount);
+            row.ledger_entries.iter().any(|(ledger, is_dr, amount)| {
+                ledger == &line.ledger
+                    && ((line.side == "Dr") == (is_dr == "Yes"))
+                    && amounts_equal(amount, &expected_signed)
+            })
+        })
+    })
+}
+
+// ---------------------------------------------------------------------------
+// lab_import_vouchers
+// ---------------------------------------------------------------------------
+
+pub(in crate::agent) async fn lab_import_vouchers(
+    server: &Server,
+    args: &Value,
+) -> Result<ToolOutcome, ToolFailure> {
+    let mut vouchers: Vec<BookVoucher> = parse_book_value(args, "vouchers", "vouchers")?;
+    vouchers.sort_by(|a, b| {
+        (a.date.as_str(), a.voucher_number.as_deref().unwrap_or(""))
+            .cmp(&(b.date.as_str(), b.voucher_number.as_deref().unwrap_or("")))
+    });
+    let guid = required_string(args, "company_guid")?;
+    let start_batch = arg_usize(args, "start_batch", 0)?;
+
+    let (_company, identity, mut evidence) = admit_lab_target(server).await?;
+    if !identity_matches_requested_guid(&identity, guid) {
+        return Err(ToolFailure::from("lab_target_company_mismatch".to_string())
+            .with_prior_evidence(evidence));
+    }
+
+    let mut batch_reports = Vec::new();
+    let batch_count = vouchers.len().div_ceil(MAX_VOUCHER_BATCH);
+    let mut stopped_at: Option<usize> = None;
+
+    for batch_index in start_batch..batch_count {
+        let (_company, identity, admit_evidence) = admit_lab_target(server).await?;
+        evidence = combine_evidence(evidence.clone(), admit_evidence);
+
+        let start = batch_index * MAX_VOUCHER_BATCH;
+        let end = (start + MAX_VOUCHER_BATCH).min(vouchers.len());
+        let batch = &vouchers[start..end];
+        let from = batch.first().map(|v| v.date.clone()).unwrap_or_default();
+        let to = batch.last().map(|v| v.date.clone()).unwrap_or_default();
+
+        // Resume pre-check (§9.3/§12a's discipline): never blind-retry. Read
+        // the window this batch would occupy and check every voucher against
+        // it before sending anything.
+        let probe_request = render_voucher_window_request(identity.display_name(), &from, &to)
+            .map_err(ToolFailure::from)?;
+        let (probe_xml, probe_evidence) = lab_post_read(
+            server,
+            &identity,
+            "lab_import_vouchers.precheck",
+            probe_request,
+        )
+        .await?;
+        evidence = combine_evidence(evidence.clone(), probe_evidence);
+        let observed = parse_voucher_readback_nested(&probe_xml)
+            .map_err(|code| ToolFailure::from(code).with_prior_evidence(evidence.clone()))?;
+
+        let source_guids: Vec<&str> = batch.iter().map(|v| v.source_guid.as_str()).collect();
+        let verified_count = batch
+            .iter()
+            .filter(|v| voucher_already_verified(v, &observed))
+            .count();
+        if verified_count == batch.len() {
+            batch_reports.push(json!({
+                "batch": batch_index, "count": batch.len(), "state": "already_verified", "posted": false,
+                "source_guids": source_guids,
+            }));
+            continue;
+        }
+        if verified_count > 0 {
+            // Partial match on an uncertain prior attempt: stop rather than
+            // guess which subset is safe to resend. Returned immediately
+            // below, so this batch never reaches `stopped_at`'s summary use.
+            batch_reports.push(json!({
+                "batch": batch_index, "count": batch.len(), "state": "partially_verified_uncertain",
+                "verified": verified_count, "posted": false,
+            }));
+            return Err(
+                ToolFailure::from("lab_batch_partially_verified_uncertain".to_string())
+                    .with_prior_evidence(evidence),
+            );
+        }
+
+        let attribution_ids: Vec<Uuid> = batch.iter().map(|_| Uuid::new_v4()).collect();
+        let xml = render_voucher_batch_xml(identity.display_name(), batch, &attribution_ids)
+            .map_err(ToolFailure::from)?;
+        let (response, post_evidence) =
+            post_lab_batch(server, &identity, "lab_import_vouchers.write", xml).await?;
+        evidence = combine_evidence(evidence.clone(), post_evidence);
+        let outcome = bridge_tally_protocol::parse_import_outcome(&response)
+            .map_err(|_| ToolFailure::from("lab_import_response_invalid".to_string()))?;
+        let clean = outcome
+            .counters()
+            .is_clean_success_for(batch.len() as u64, 0, 0);
+
+        // Mandatory read-back.
+        let (readback_xml, readback_evidence) = lab_post_read(
+            server,
+            &identity,
+            "lab_import_vouchers.readback",
+            render_voucher_window_request(identity.display_name(), &from, &to)
+                .map_err(ToolFailure::from)?,
+        )
+        .await?;
+        evidence = combine_evidence(evidence.clone(), readback_evidence);
+        let readback = parse_voucher_readback_nested(&readback_xml)
+            .map_err(|code| ToolFailure::from(code).with_prior_evidence(evidence.clone()))?;
+        let posted_count = batch
+            .iter()
+            .filter(|v| voucher_already_verified(v, &readback))
+            .count();
+        let batch_ok = clean && posted_count == batch.len();
+
+        batch_reports.push(json!({
+            "batch": batch_index,
+            "count": batch.len(),
+            "counters_clean": clean,
+            "verified_on_readback": posted_count,
+            "state": if batch_ok { "posted_verified" } else { "readback_mismatch" },
+            "posted": true,
+            "source_guids": source_guids,
+        }));
+        if !batch_ok {
+            stopped_at = Some(batch_index);
+            break;
+        }
+    }
+
+    let ok = stopped_at.is_none();
+    Ok(ToolOutcome {
+        payload: json!({"result": {
+            "ok": ok,
+            "total_vouchers": vouchers.len(),
+            "batch_count": batch_count,
+            "batches": batch_reports,
+            "stopped_at_batch": stopped_at,
+        }}),
+        evidence,
+        company_guid: Some(guid.to_string()),
+        truncated: false,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Shared write-path helper
+// ---------------------------------------------------------------------------
+
+async fn post_lab_batch(
+    server: &Server,
+    identity: &VerifiedCompanyIdentity,
+    tool: &str,
+    xml: String,
+) -> Result<(String, Evidence), ToolFailure> {
+    let _ = identity;
+    let (body, runtime_evidence) = server
+        .runtime
+        .post_lab_import(server.tally_config(), xml.clone())
+        .await
+        .map_err(|error| ToolFailure::from_runtime("lab_import_post_failed", error))?;
+    let evidence = evidence_from_runtime_read(runtime_evidence);
+    persist_lab_exchange(server, tool, &xml, &body)
+        .map_err(|code| ToolFailure::from(code).with_prior_evidence(evidence.clone()))?;
+    Ok((body, evidence))
+}
+
+#[cfg(test)]
+#[path = "agent_lab_import_tests.rs"]
+mod tests;

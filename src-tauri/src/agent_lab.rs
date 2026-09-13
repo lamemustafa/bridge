@@ -20,6 +20,16 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
+// Phase 3.4/3.5: the lab writer tools (`lab_import_masters`,
+// `lab_import_vouchers`). Kept in its own file for size; reuses this
+// module's guard/evidence machinery (`admit_lab_target`, `lab_post_read`,
+// `persist_lab_exchange`, `lab_evidence_dir`, `parse_lab_master_rows`) via
+// the same private-item-visible-to-descendant-module path this file itself
+// uses for `agent.rs`'s items.
+#[path = "agent_lab_import.rs"]
+mod import;
+pub(super) use import::{lab_import_masters, lab_import_vouchers};
+
 // ---------------------------------------------------------------------------
 // Env gates
 // ---------------------------------------------------------------------------
