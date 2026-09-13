@@ -1818,29 +1818,30 @@ def _close_owned_path(record, failures, diagnostic_path=None, descriptor_failure
             os.close(handle)
         except OSError:
             close_failed = True
-    if not close_failed:
-        return
-
-    diagnostic = str(diagnostic_path or record.get(
-        "cleanup_path", record["path"]))
-    destination = descriptor_failures if descriptor_failures is not None else failures
-    try:
-        stat_result = os.fstat(handle)
-    except OSError as error:
-        if error.errno == errno.EBADF:
-            # The close took effect (or the descriptor was independently made
-            # invalid).  Do not retry it: a later fd could be foreign.
+        if not close_failed:
             return
+
+        diagnostic = str(diagnostic_path or record.get(
+            "cleanup_path", record["path"]))
+        destination = (descriptor_failures if descriptor_failures is not None
+                       else failures)
+        try:
+            stat_result = os.fstat(handle)
+        except OSError as error:
+            if error.errno == errno.EBADF:
+                # The close took effect (or the descriptor was independently
+                # made invalid).  Do not retry it: a later fd could be foreign.
+                return
+            destination.append(diagnostic)
+            return
+        if (stat_result.st_dev, stat_result.st_ino) == record["identity"]:
+            # The original descriptor is still open.  Its pathname may already
+            # name a staged replacement, so this is never a retained-path claim.
+            destination.append(diagnostic)
+            return
+        # A mocked or platform-specific close could leave a live but different fd.
+        # It is neither safe to close again nor evidence about a pathname.
         destination.append(diagnostic)
-        return
-    if (stat_result.st_dev, stat_result.st_ino) == record["identity"]:
-        # The original descriptor is still open.  Its pathname may already
-        # name a staged replacement, so this is never a retained-path claim.
-        destination.append(diagnostic)
-        return
-    # A mocked or platform-specific close could leave a live but different fd.
-    # It is neither safe to close again nor evidence about a pathname.
-    destination.append(diagnostic)
 
 
 def _reconcile_owned_pin_after_cleanup(record, outcome, failures):
@@ -2291,6 +2292,10 @@ def _restore_backup(swap, failures, metadata_scope_warnings, descriptor_failures
                     return _mark_rollback_unavailable(swap, failures)
                 if not restored_still_current:
                     return _mark_rollback_unavailable(swap, failures)
+                try:
+                    _pinned_backup_still_has_one_link(swap["backup"])
+                except (OSError, Refusal):
+                    return _mark_rollback_unavailable(swap, failures)
             finally:
                 _close_owned_path(
                     {"path": destination, "identity": backup_identity,
@@ -2299,7 +2304,7 @@ def _restore_backup(swap, failures, metadata_scope_warnings, descriptor_failures
                     descriptor_failures=descriptor_failures)
             metadata_scope_warnings.append(destination)
         except (OSError, Refusal):
-            failures.append(destination)
+            return _mark_rollback_unavailable(swap, failures)
 
 
 def _append_cleanup_detail(error, message):
@@ -2746,7 +2751,15 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                     f"{supplied_path} output contents changed before commit; "
                     "no output was committed",
                 )
-            _require_single_owned_link(record, "output", "output_has_multiple_links")
+            try:
+                _require_single_owned_link(
+                    record, "output", "output_has_multiple_links")
+            except OSError:
+                raise Refusal(
+                    "output_path_changed",
+                    f"{supplied_path} output ownership could not be verified before "
+                    "commit; no output was committed",
+                ) from None
         # Earlier rollback copies can also be changed during later swaps.
         # A commit may retire them only while their ownership remains proved.
         for swap in replaced:

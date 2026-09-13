@@ -5905,5 +5905,160 @@ def test_restore_reconciles_backup_when_post_metadata_destination_is_uninspectab
         assert destination.read_text() == "old bytes"
 
 
+def test_restore_open_refusal_reconciles_the_pinned_backup_once(m):
+    """A restored-open refusal reports the pinned backup, without a second path claim."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        original, destination, backup = (
+            root / "original.xml", root / "destination.xml", root / "rollback.bak")
+        original.write_text("old bytes")
+        destination.write_text("new bytes")
+        backup.write_text("old bytes")
+        backup_fd = os.open(backup, os.O_RDONLY)
+        swap = {
+            "backup": {"path": backup, "identity": m._fd_identity(backup_fd),
+                       "pin": backup_fd, "digest": m._digest_pinned_bytes(backup_fd)},
+            "destination": destination,
+            "original_identity": m._entry_identity(original),
+            "staged_identity": m._entry_identity(destination),
+            "metadata": {}, "swap_started": True, "original": None,
+        }
+        real_open = m._open_regular_output
+
+        def refuse_restored_open(path, expected_identity=None):
+            if (pathlib.Path(path) == destination
+                    and expected_identity == swap["backup"]["identity"]):
+                raise m.Refusal("output_path_changed", "controlled restored-open refusal")
+            return real_open(path, expected_identity)
+
+        m._open_regular_output = refuse_restored_open
+        try:
+            failures = []
+            assert m._restore_backup(swap, failures, []) == "unrollbackable"
+        finally:
+            m._open_regular_output = real_open
+            os.close(backup_fd)
+
+        assert failures == [
+            f"owned rollback copy could not be located after cleanup: {backup}"]
+        assert destination.read_text() == "old bytes"
+
+
+def test_restore_reports_alias_added_during_metadata(m):
+    """Metadata cannot add a restored-output alias without recovery disclosure."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        original, destination, backup, alias = (
+            root / "original.xml", root / "destination.xml", root / "rollback.bak",
+            root / "alias.xml")
+        original.write_text("old bytes")
+        destination.write_text("new bytes")
+        backup.write_text("old bytes")
+        backup_fd = os.open(backup, os.O_RDONLY)
+        swap = {
+            "backup": {"path": backup, "identity": m._fd_identity(backup_fd),
+                       "pin": backup_fd, "digest": m._digest_pinned_bytes(backup_fd)},
+            "destination": destination,
+            "original_identity": m._entry_identity(original),
+            "staged_identity": m._entry_identity(destination),
+            "metadata": {}, "swap_started": True, "original": None,
+        }
+        real_restore = m._restore_metadata
+
+        def add_alias(*_):
+            os.link(destination, alias)
+
+        m._restore_metadata = add_alias
+        try:
+            failures = []
+            assert m._restore_backup(swap, failures, []) == "unrollbackable"
+        finally:
+            m._restore_metadata = real_restore
+            os.close(backup_fd)
+
+        assert failures == [
+            f"unknown hard-link alias may retain rollback bytes: {backup}"]
+        assert destination.read_text() == alias.read_text() == "old bytes"
+
+
+def test_close_owned_path_reconciles_failed_close_before_deferred_sigint(m):
+    """A deferred interrupt cannot preempt failed-close descriptor disclosure."""
+    if not hasattr(signal, "pthread_sigmask"):
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "output.xml"
+        path.write_text("bytes")
+        handle = os.open(path, os.O_RDONLY)
+
+        class InterruptOnClear(dict):
+            def __setitem__(self, key, value):
+                result = super().__setitem__(key, value)
+                if key == "pin" and value is None:
+                    signal.raise_signal(signal.SIGINT)
+                return result
+
+        record = InterruptOnClear(path=path, identity=m._fd_identity(handle), pin=handle)
+        real_close = m.os.close
+
+        def fail_close(candidate):
+            if candidate == handle:
+                raise OSError("controlled close failure")
+            return real_close(candidate)
+
+        old_handler = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        m.os.close = fail_close
+        try:
+            descriptor_failures = []
+            try:
+                m._close_owned_path(record, [], descriptor_failures=descriptor_failures)
+                raise AssertionError("the deferred SIGINT must escape after reconciliation")
+            except KeyboardInterrupt:
+                pass
+        finally:
+            m.os.close = real_close
+            signal.signal(signal.SIGINT, old_handler)
+            os.close(handle)
+
+        assert record["pin"] is None
+        assert descriptor_failures == [str(path)]
+
+
+def test_final_output_pin_fstat_failure_is_a_typed_path_change(m):
+    """The final output ownership check cannot leak a raw descriptor error."""
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "output.xml"
+        real_owned_path, real_fstat = m._owned_path, m.os.fstat
+        owned_pins = set()
+
+        def arm_final_pin_failure(*args, **kwargs):
+            record = real_owned_path(*args, **kwargs)
+            owned_pins.add(record["pin"])
+            m.os.fstat = fail_final_pin_fstat
+            return record
+
+        def fail_final_pin_fstat(handle):
+            if handle in owned_pins:
+                m.os.fstat = real_fstat
+                raise OSError("controlled final ownership fstat failure")
+            return real_fstat(handle)
+
+        m._owned_path = arm_final_pin_failure
+        try:
+            refusal = refuses(
+                m, "output_path_changed", m.write_outputs,
+                [(str(destination), "new bytes")])
+        finally:
+            m._owned_path = real_owned_path
+            m.os.fstat = real_fstat
+
+        assert "ownership could not be verified" in str(refusal.code)
+        assert not destination.exists()
+
+
 if __name__ == "__main__":
     raise SystemExit(main())
