@@ -21,8 +21,8 @@ FAKE_GH = r'''#!/usr/bin/env python3
 import base64, json, os, sys
 args = sys.argv[1:]
 scenario = os.environ.get("GATE_SCENARIO", "pass")
-security_case = scenario.startswith("security-review-") or scenario in {"security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out", "security-ci-workflow", "security-ci-workflow-rename-out", "security-ci-workflow-valid", "security-release-preview", "security-release-preview-rename-out", "workflow-notes-present", "workflow-delete-notes", "workflow-rename-out-notes"}
-security_workflow_case = scenario in {"security-ci-workflow", "security-ci-workflow-rename-out", "security-ci-workflow-valid", "security-release-preview", "security-release-preview-rename-out"}
+security_case = scenario.startswith("security-review-") or scenario in {"security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-documents-screen", "security-documents-screen-rename-out", "security-documents-screen-valid", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out", "security-ci-workflow", "security-ci-workflow-rename-out", "security-ci-workflow-valid", "security-release-preview", "security-release-preview-rename-out", "security-deploy-install-page", "security-deploy-install-page-rename-out", "security-deploy-install-page-valid", "workflow-notes-present", "workflow-delete-notes", "workflow-rename-out-notes"}
+security_workflow_case = scenario in {"security-ci-workflow", "security-ci-workflow-rename-out", "security-ci-workflow-valid", "security-release-preview", "security-release-preview-rename-out", "security-deploy-install-page", "security-deploy-install-page-rename-out", "security-deploy-install-page-valid"}
 sync_case = scenario.startswith("sync-")
 head = "0123456789abcdef0123456789abcdef01234567"
 new_head = "fedcba9876543210fedcba9876543210fedcba98"
@@ -337,8 +337,12 @@ elif args[:2] == ["pr", "diff"]:
         emit("diff --git a/.github/workflows/ci.yml b/docs/retired-ci.yml\nsimilarity index 100%\nrename from .github/workflows/ci.yml\nrename to docs/retired-ci.yml\n")
     elif scenario == "security-release-preview-rename-out":
         emit("diff --git a/.github/workflows/release-mcpb-preview.yml b/docs/retired-preview.yml\nsimilarity index 100%\nrename from .github/workflows/release-mcpb-preview.yml\nrename to docs/retired-preview.yml\n")
+    elif scenario == "security-deploy-install-page-rename-out":
+        emit("diff --git a/.github/workflows/deploy-install-page.yml b/docs/retired-install-page.yml\nsimilarity index 100%\nrename from .github/workflows/deploy-install-page.yml\nrename to docs/retired-install-page.yml\n")
+    elif scenario == "security-documents-screen-rename-out":
+        emit("diff --git a/src/DocumentsScreen.tsx b/docs/retired-documents-screen.tsx\nsimilarity index 100%\nrename from src/DocumentsScreen.tsx\nrename to docs/retired-documents-screen.tsx\n")
     elif security_case:
-        paths = {"security-axal-frontend": "src/AxalScreen.tsx", "security-axal-native": "src-tauri/src/axal.rs", "security-encrypted-keystore": "src-tauri/src/db/encrypted.rs", "security-documents-consumer": "src-tauri/src/documents.rs", "security-commands-facade": "src-tauri/src/commands.rs", "security-bank-statement-import": "scripts/bank_statement_import.py", "security-prune-package-compiler-cache": "scripts/prune-package-compiler-cache.mjs", "security-ci-workflow": ".github/workflows/ci.yml", "security-ci-workflow-valid": ".github/workflows/ci.yml", "security-release-preview": ".github/workflows/release-mcpb-preview.yml"}
+        paths = {"security-axal-frontend": "src/AxalScreen.tsx", "security-axal-native": "src-tauri/src/axal.rs", "security-encrypted-keystore": "src-tauri/src/db/encrypted.rs", "security-documents-consumer": "src-tauri/src/documents.rs", "security-documents-screen": "src/DocumentsScreen.tsx", "security-documents-screen-valid": "src/DocumentsScreen.tsx", "security-commands-facade": "src-tauri/src/commands.rs", "security-bank-statement-import": "scripts/bank_statement_import.py", "security-prune-package-compiler-cache": "scripts/prune-package-compiler-cache.mjs", "security-ci-workflow": ".github/workflows/ci.yml", "security-ci-workflow-valid": ".github/workflows/ci.yml", "security-release-preview": ".github/workflows/release-mcpb-preview.yml", "security-deploy-install-page": ".github/workflows/deploy-install-page.yml", "security-deploy-install-page-valid": ".github/workflows/deploy-install-page.yml"}
         path = paths.get(scenario, "src-tauri/src/dsc.rs")
         emit(f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -0,0 +1 @@\n+safe check\n")
     elif sync_case:
@@ -358,7 +362,8 @@ elif args[:2] == ["pr", "diff"]:
         emit("diff --git a/src-tauri/src/tally/runtime.rs b/src/runtime.rs\nsimilarity index 100%\nrename from src-tauri/src/tally/runtime.rs\nrename to src/runtime.rs\n")
     elif scenario.startswith("home-"):
         root_home = bytes((47, 114, 111, 111, 116)).decode("ascii")
-        homes = {"home-macos": "/" + "Users" + "/" + "tester" + "/work", "home-unix": "/" + "home" + "/" + "tester" + "/work", "home-root": root_home + "/work/customer.pem", "home-root-home": root_home, "home-windows": "C:" + "\\" + "Users" + "\\" + "tester" + "\\work", "home-macos-root": "/" + "Users" + "/" + "tester", "home-unix-root": "/" + "home" + "/" + "tester", "home-windows-forward": "C:" + "/" + "Users" + "/" + "tester" + "/work", "home-windows-escaped": "C:" + "\\\\" + "Users" + "\\\\" + "tester" + "\\\\work", "home-regex-source": "mac_home=" + "'/'" + '"Users"' + "'/[A-Za-z0-9._-]+'"}
+        unicode_user = chr(0x03BB) + chr(0x00E9)
+        homes = {"home-macos": "/" + "Users" + "/" + "tester" + "/work", "home-unix": "/" + "home" + "/" + "tester" + "/work", "home-root": root_home + "/work/customer.pem", "home-root-home": root_home, "home-windows": "C:" + "\\" + "Users" + "\\" + "tester" + "\\work", "home-macos-root": "/" + "Users" + "/" + "tester", "home-unix-root": "/" + "home" + "/" + "tester", "home-windows-forward": "C:" + "/" + "Users" + "/" + "tester" + "/work", "home-windows-escaped": "C:" + "\\\\" + "Users" + "\\\\" + "tester" + "\\\\work", "home-macos-unicode": "/" + "Users" + "/" + unicode_user + "/work", "home-unix-unicode": "/" + "home" + "/" + unicode_user + "/work", "home-windows-unicode": "C:" + "\\" + "Users" + "\\" + unicode_user + "\\work", "home-regex-source": "mac_home=" + "'/'" + '"Users"' + "'/[A-Za-z0-9._-]+'"}
         emit(f"diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+{homes[scenario]}\n")
     elif scenario == "binary-delete":
         emit("diff --git a/docs/old.png b/docs/old.png\nBinary files a/docs/old.png and /dev/null differ\n")
@@ -594,7 +599,7 @@ elif args and args[0] == "api":
             emit([[]])
         else:
             records = [{"user": {"login": "chatgpt-codex-connector[bot]", "type": "Bot"}, "state": "COMMENTED", "commit_id": head}]
-            if security_case and scenario not in {"security-review-missing", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out", "security-ci-workflow", "security-ci-workflow-rename-out", "security-release-preview", "security-release-preview-rename-out"}:
+            if security_case and scenario not in {"security-review-missing", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-documents-screen", "security-documents-screen-rename-out", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out", "security-ci-workflow", "security-ci-workflow-rename-out", "security-release-preview", "security-release-preview-rename-out", "security-deploy-install-page", "security-deploy-install-page-rename-out"}:
                 record = {"user": {"login": "reviewer", "type": "User"}, "author_association": "COLLABORATOR", "state": "COMMENTED", "commit_id": head, "body": f"Security review: {head}\nResult: accepted\nReviewed credential handling: token diagnostics remain redacted.\nSecurity rationale: the current access boundary prevents a cache token from reaching logs."}
                 if scenario == "security-review-stale": record["commit_id"] = new_head
                 if scenario == "security-review-author": record["user"]["login"] = "author"
@@ -642,6 +647,14 @@ elif args and args[0] == "api":
             emit([[{"filename": ".github/workflows/release-mcpb-preview.yml", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "security-release-preview-rename-out":
             emit([[{"filename": "docs/retired-preview.yml", "previous_filename": ".github/workflows/release-mcpb-preview.yml", "status": "renamed", "additions": 0, "deletions": 0}]])
+        elif scenario in {"security-deploy-install-page", "security-deploy-install-page-valid"}:
+            emit([[{"filename": ".github/workflows/deploy-install-page.yml", "status": "modified", "additions": 1, "deletions": 0}]])
+        elif scenario == "security-deploy-install-page-rename-out":
+            emit([[{"filename": "docs/retired-install-page.yml", "previous_filename": ".github/workflows/deploy-install-page.yml", "status": "renamed", "additions": 0, "deletions": 0}]])
+        elif scenario in {"security-documents-screen", "security-documents-screen-valid"}:
+            emit([[{"filename": "src/DocumentsScreen.tsx", "status": "modified", "additions": 1, "deletions": 0}]])
+        elif scenario == "security-documents-screen-rename-out":
+            emit([[{"filename": "docs/retired-documents-screen.tsx", "previous_filename": "src/DocumentsScreen.tsx", "status": "renamed", "additions": 0, "deletions": 0}]])
         elif scenario == "security-documents-consumer-rename-out":
             emit([[{"filename": "docs/retired-documents.rs", "previous_filename": "src-tauri/src/documents.rs", "status": "renamed", "additions": 0, "deletions": 0}]])
         elif scenario in {"security-camel-dsc", "security-camel-credential"}:
@@ -1328,12 +1341,16 @@ os.execv(os.environ["GATE_REAL_SED"], [os.environ["GATE_REAL_SED"], *sys.argv[1:
         self.assertNotIn("z" * 100, result.stdout)
 
     def test_security_review_is_focused_independent_and_current(self):
-        for scenario in ("security-review-stale", "security-review-author", "security-review-unrelated", "security-review-no-scope", "security-review-bare-scope", "security-review-placeholder-rationale", "security-review-hidden", "security-review-hidden-unterminated", "security-review-outsider", "security-review-dismissed", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out", "security-ci-workflow", "security-ci-workflow-rename-out", "security-release-preview", "security-release-preview-rename-out"):
+        for scenario in ("security-review-stale", "security-review-author", "security-review-unrelated", "security-review-no-scope", "security-review-bare-scope", "security-review-placeholder-rationale", "security-review-hidden", "security-review-hidden-unterminated", "security-review-outsider", "security-review-dismissed", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-documents-screen", "security-documents-screen-rename-out", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out", "security-ci-workflow", "security-ci-workflow-rename-out", "security-release-preview", "security-release-preview-rename-out", "security-deploy-install-page", "security-deploy-install-page-rename-out"):
             with self.subTest(scenario=scenario):
                 self.assert_indeterminate(scenario, "security-focused reviewer comment")
         result = self.run_gate("security-review-valid")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         result = self.run_gate("security-ci-workflow-valid")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.run_gate("security-deploy-install-page-valid")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.run_gate("security-documents-screen-valid")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_sync_rename_out_requires_migration_notes(self):
@@ -1414,12 +1431,14 @@ os.execv(os.environ["GATE_REAL_SED"], [os.environ["GATE_REAL_SED"], *sys.argv[1:
         self.assert_blocked("migration-template-other-field", "database migration path lacks non-empty rollback notes")
 
     def test_developer_home_path_shapes_are_scanned_without_echoing_values(self):
-        for scenario in ("home-macos", "home-unix", "home-root", "home-root-home", "home-windows", "home-macos-root", "home-unix-root", "home-windows-forward", "home-windows-escaped"):
+        unicode_user = chr(0x03BB) + chr(0x00E9)
+        for scenario in ("home-macos", "home-unix", "home-root", "home-root-home", "home-windows", "home-macos-root", "home-unix-root", "home-windows-forward", "home-windows-escaped", "home-macos-unicode", "home-unix-unicode", "home-windows-unicode"):
             with self.subTest(scenario=scenario):
                 result = self.run_gate(scenario)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIn("developer-home path shape", result.stdout)
                 self.assertNotIn("tester", result.stdout)
+                self.assertNotIn(unicode_user, result.stdout)
         result = self.run_gate("home-regex-source")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 

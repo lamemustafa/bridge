@@ -825,7 +825,7 @@ if [ "$files_status" -eq 0 ]; then
   security_sensitive_change=$(jq -r '
     (if all(.[]; type == "array") then flatten else . end) |
     any(.[]; [ .filename, (.previous_filename? // "") ][] |
-      ascii_downcase | test("^src-tauri/(crates|src)/|^src/|^docs/(tally|agent)/|^scripts/(bank_statement_import|sanitise-bbox-capture|prune-package-compiler-cache)|^\\.github/workflows/(ci\\.yml|release-mcpb-preview\\.yml)$|(^|/)[^/]*(dsc|credential|tally)[^/]*(/|$)"))
+      ascii_downcase | test("^src-tauri/(crates|src)/|^src/|^docs/(tally|agent)/|^scripts/(bank_statement_import|sanitise-bbox-capture|prune-package-compiler-cache)|^\\.github/workflows/(ci\\.yml|release-mcpb-preview\\.yml|deploy-install-page\\.yml)$|(^|/)[^/]*(dsc|credential|tally)[^/]*(/|$)"))
   ' <<<"$files")
 fi
 if [ "$security_sensitive_change" = "true" ]; then
@@ -846,8 +846,8 @@ if [ "$files_status" -eq 0 ]; then
       (test("(^|[/_.-])(dsc|credential[s]?|certificate[s]?|keystore|secret[s]?)(?=[/_.-]|$|[A-Z])"; "i") or
        test("^scripts/bank_statement_import\\.py$"; "i") or
        test("^scripts/prune-package-compiler-cache\\.mjs$"; "i") or
-       test("^\\.github/workflows/(ci\\.yml|release-mcpb-preview\\.yml)$"; "i") or
-       test("^src/AxalScreen\\.tsx$|^src-tauri/src/axal\\.rs$|^src-tauri/src/db/encrypted\\.rs$|^src-tauri/src/documents\\.rs$|^src-tauri/src/commands\\.rs$"; "i")))
+       test("^\\.github/workflows/(ci\\.yml|release-mcpb-preview\\.yml|deploy-install-page\\.yml)$"; "i") or
+       test("^src/(AxalScreen|DocumentsScreen)\\.tsx$|^src-tauri/src/axal\\.rs$|^src-tauri/src/db/encrypted\\.rs$|^src-tauri/src/documents\\.rs$|^src-tauri/src/commands\\.rs$"; "i")))
   ' <<<"$files")
 fi
 validate_security_reviewer() {
@@ -1113,10 +1113,10 @@ $added"
   # Diagnostic counts only: never echo matched home paths, which could repeat
   # the private value in a merge-gate result.
   home_path_status=0
-  mac_home='/'"Users"'/[A-Za-z0-9._-]+'
-  unix_home='/'"home"'/[A-Za-z0-9._-]+'
+  mac_home='/'"Users"'/[^/[:space:]]+'
+  unix_home='/'"home"'/[^/[:space:]]+'
   root_home=$'\x2f\x72\x6f\x6f\x74'
-  windows_home='[A-Za-z]:[\\/]{1,2}'"Users"'[\\/]{1,2}[A-Za-z0-9._-]+'
+  windows_home='[A-Za-z]:[\\/]{1,2}'"Users"'[\\/]{1,2}[^\\/[:space:]]+'
   home_path_matches=$(grep -Eio "(^|[^[:alnum:]_])(${mac_home}|${unix_home}|${root_home}|${windows_home})(\$|/|\\\\|[^[:alnum:]_.-])" <<<"$scan_input") || home_path_status=$?
   if [ "$home_path_status" -gt 1 ]; then
     unknown "developer-home path scan expression failed"
