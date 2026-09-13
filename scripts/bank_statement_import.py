@@ -2094,7 +2094,22 @@ def _copy_private_backup(source_path, original_identity, backup_handle):
     the same inode while it is being read remains outside this command's
     authority, so this does not promise a crash transaction.
     """
-    source_handle = _open_regular_output(source_path, original_identity)
+    try:
+        source_handle = _open_regular_output(source_path, original_identity)
+    except FileNotFoundError:
+        # The caller retains the established missing-source diagnostic and
+        # reconciliation path for this specific authority outcome.
+        raise
+    except OSError as error:
+        # This is the only I/O boundary translated here.  Later read, write,
+        # sync, and verification errors describe a partially prepared private
+        # copy and must keep their original exception for recovery to handle.
+        refusal = Refusal(
+            "output_path_changed",
+            f"{source_path} could not be opened as its rollback source",
+        )
+        refusal.backup_source_open_failed = True
+        raise refusal from error
     try:
         if _fd_identity(source_handle) != original_identity:
             raise Refusal(
@@ -2253,30 +2268,36 @@ def _restore_backup(swap, failures, metadata_scope_warnings, descriptor_failures
         os.replace(backup, destination)
         restored = True
     except OSError:
+        # A failed rename can still take effect.  Re-inspect the destination
+        # before reporting a partial result; `current_identity` predates the
+        # restore attempt and cannot classify its outcome.
         try:
-            restored = _entry_identity(destination) == backup_identity
+            destination_after_restore = _entry_identity(destination)
         except OSError:
-            restored = False
+            destination_after_restore = None
+        restored = destination_after_restore == backup_identity
         if not restored:
             try:
                 backup_retained = _entry_identity(backup) == backup_identity
             except OSError:
                 backup_retained = False
             if backup_retained:
-                failures.append(backup)
-                try:
-                    destination_still_staged = (
-                        _entry_identity(destination) == staged_identity)
-                except OSError:
+                if destination_after_restore is None:
                     # The failed replace may have taken effect.  An unknown
                     # destination cannot be classified as a safe foreign
                     # inode, so disclose this actual partial result while the
                     # named backup remains inspectable.
                     return _mark_rollback_unavailable(
                         swap, failures, retain_named=True)
-                if destination_still_staged:
-                    return _mark_rollback_unavailable(swap, failures)
-            elif current_identity == staged_identity:
+                # Whether the failed restore left the staged inode in place
+                # or a foreign inode at the destination, the still-named
+                # private backup is the only recoverable old copy.  Report it
+                # through the rollback path and let the caller disclose the
+                # destination as partial; never clean it as a successful
+                # rollback based on the pre-restore identity.
+                return _mark_rollback_unavailable(
+                    swap, failures, retain_named=True)
+            elif destination_after_restore == staged_identity:
                 return _mark_rollback_unavailable(swap, failures)
             else:
                 failures.append(destination)
@@ -2377,9 +2398,13 @@ def _reconcile_staged_output_pin(record, failures):
     except OSError:
         _record_uninspectable_cleanup(record["canonical_path"], failures)
         return
-    if ((stat_result.st_dev, stat_result.st_ino) != record["identity"]
-            or stat_result.st_nlink == 0):
+    if (stat_result.st_dev, stat_result.st_ino) != record["identity"]:
         _record_uninspectable_cleanup(record["canonical_path"], failures)
+        return
+    # An unlinked inode cannot be a retained foreign destination.  Its pin is
+    # still useful to prove that cleanup removed the staged output, but there
+    # is no pathname for an operator to recover.
+    if stat_result.st_nlink == 0:
         return
     try:
         committed_here = (
@@ -2649,6 +2674,15 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                     "output_path_changed",
                     f"{supplied_path} disappeared before its rollback source could be opened",
                 ) from None
+            except Refusal as refusal:
+                if getattr(refusal, "backup_source_open_failed", False):
+                    # The original descriptor is still the only trustworthy
+                    # evidence after a source-open denial or I/O failure.
+                    # Reconcile it before recovery closes the pin, while
+                    # leaving later copy I/O errors untyped and untouched.
+                    _reconcile_owned_pin_after_cleanup(
+                        pending_swap["original"], "missing", cleanup_failures)
+                raise
             # The destination stays present until this one atomic replacement.
             # `pending_swap` is set first because an interrupt may arrive after
             # the filesystem call has taken effect but before it returns.

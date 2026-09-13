@@ -6092,6 +6092,73 @@ def test_backup_source_disappearance_is_typed_and_reconciles_the_original_pin(m)
         assert not list(root.glob("*.bak"))
 
 
+def test_backup_source_open_permission_is_typed_and_reconciles_the_original_pin(m):
+    """A denied rollback-source open remains typed and retains a moved old file."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination, moved = root / "previous.xml", root / "moved.xml"
+        destination.write_text("old bytes")
+        real_open = m._open_regular_output
+
+        def deny_after_moving_source(path, expected_identity=None):
+            if (expected_identity is not None
+                    and pathlib.Path(path).resolve() == destination.resolve()):
+                destination.rename(moved)
+                raise PermissionError("controlled rollback-source open denial")
+            return real_open(path, expected_identity)
+
+        m._open_regular_output = deny_after_moving_source
+        try:
+            refusal = refuses(m, "output_path_changed", m.write_outputs,
+                              [(str(destination), "new bytes")])
+        finally:
+            m._open_regular_output = real_open
+
+        detail = str(refusal.code)
+        assert "could not be opened as its rollback source" in detail
+        assert "owned output could not be located after cleanup" in detail
+        assert moved.read_text() == "old bytes"
+        assert not destination.exists()
+        assert not list(root.glob("*.part"))
+        assert not list(root.glob("*.bak"))
+
+
+def test_backup_source_read_error_is_not_retyped_as_an_open_failure(m):
+    """Only source open errors are typed; later copy I/O retains its OSError."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "previous.xml"
+        destination.write_text("old bytes")
+        real_open, real_read = m._open_regular_output, m.os.read
+        source_pins = set()
+
+        def remember_source_pin(path, expected_identity=None):
+            handle = real_open(path, expected_identity)
+            if expected_identity is not None:
+                source_pins.add(handle)
+            return handle
+
+        def fail_copy_read(handle, size):
+            if handle in source_pins:
+                raise OSError("controlled rollback-source read failure")
+            return real_read(handle, size)
+
+        m._open_regular_output, m.os.read = remember_source_pin, fail_copy_read
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("the controlled copy read failure must escape")
+            except OSError as error:
+                assert str(error) == "controlled rollback-source read failure"
+        finally:
+            m._open_regular_output, m.os.read = real_open, real_read
+
+        assert destination.read_text() == "old bytes"
+
+
 def test_pre_replacement_backup_pin_fstat_failure_is_a_typed_path_change(m):
     """A backup descriptor inspection error cannot escape as an OSError."""
     if os.name == "nt":
@@ -6171,6 +6238,141 @@ def test_pre_replacement_original_pin_fstat_failure_is_a_typed_path_change(m):
         assert destination.read_text() == "old bytes"
         assert not list(pathlib.Path(directory).glob("*.part"))
         assert not list(pathlib.Path(directory).glob("*.bak"))
+
+
+def test_failed_restore_rechecks_destination_before_partial_report(m):
+    """A foreign destination installed during failed restore is never overwritten."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        original, destination, backup, foreign = (
+            root / "original.xml", root / "destination.xml", root / "rollback.bak",
+            root / "foreign.xml")
+        original.write_text("old bytes")
+        destination.write_text("staged bytes")
+        backup.write_text("old bytes")
+        backup_fd = os.open(backup, os.O_RDONLY)
+        swap = {
+            "backup": {"path": backup, "identity": m._fd_identity(backup_fd),
+                       "pin": backup_fd, "digest": m._digest_pinned_bytes(backup_fd)},
+            "destination": destination,
+            "original_identity": m._entry_identity(original),
+            "staged_identity": m._entry_identity(destination),
+            "metadata": None, "swap_started": True, "original": None,
+        }
+        real_replace = m.os.replace
+
+        def replace_destination_then_fail(source, target):
+            if pathlib.Path(source) == backup and pathlib.Path(target) == destination:
+                foreign.write_text("foreign bytes")
+                real_replace(foreign, destination)
+                raise OSError("controlled restore failure after foreign replacement")
+            return real_replace(source, target)
+
+        m.os.replace = replace_destination_then_fail
+        try:
+            failures = []
+            assert m._restore_backup(swap, failures, []) == "unrollbackable"
+        finally:
+            m.os.replace = real_replace
+            os.close(backup_fd)
+
+        assert failures == [backup]
+        assert destination.read_text() == "foreign bytes"
+        assert backup.read_text() == "old bytes"
+
+
+def test_final_rollback_backup_pin_fstat_failure_is_typed_and_conservative(m):
+    """The post-swap rollback pin check cannot replace the original failure."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_copy, real_check, real_fstat, real_replace = (
+            m._copy_private_backup, m._pinned_backup_still_has_one_link,
+            m.os.fstat, m.os.replace)
+        first_backup_pins, armed, failed = set(), False, []
+
+        def remember_first_backup(source_path, identity, backup_handle):
+            result = real_copy(source_path, identity, backup_handle)
+            if pathlib.Path(source_path).resolve() == first.resolve():
+                first_backup_pins.add(backup_handle)
+            return result
+
+        def fail_final_backup_fstat(handle):
+            if handle in first_backup_pins:
+                failed.append(handle)
+                m.os.fstat = real_fstat
+                raise OSError("controlled final rollback backup-pin fstat failure")
+            return real_fstat(handle)
+
+        def arm_after_pre_replacement_check(record):
+            nonlocal armed
+            result = real_check(record)
+            if record.get("pin") in first_backup_pins and not armed:
+                armed = True
+                m.os.fstat = fail_final_backup_fstat
+            return result
+
+        def fail_second_swap(source, destination):
+            if (pathlib.Path(source).suffix == ".part"
+                    and pathlib.Path(destination).resolve() == second.resolve()):
+                raise OSError("controlled later swap failure")
+            return real_replace(source, destination)
+
+        m._copy_private_backup = remember_first_backup
+        m._pinned_backup_still_has_one_link = arm_after_pre_replacement_check
+        m.os.replace = fail_second_swap
+        try:
+            try:
+                m.write_outputs([(str(first), "first new"), (str(second), "second new")])
+                raise AssertionError("the controlled later swap failure must escape")
+            except OSError as error:
+                detail = str(error) + "\n" + "\n".join(getattr(error, "__notes__", []))
+        finally:
+            m._copy_private_backup = real_copy
+            m._pinned_backup_still_has_one_link = real_check
+            m.os.fstat = real_fstat
+            m.os.replace = real_replace
+
+        backup, = root.glob("first.xml.*.bak")
+        assert armed and failed
+        assert "controlled later swap failure" in detail
+        assert "partially committed output could not be rolled back" in detail
+        assert str(first.resolve()) in detail
+        assert str(backup) in detail
+        assert first.read_text() == "first new"
+        assert second.read_text() == "second old"
+        assert backup.read_text() == "first old"
+        assert not list(root.glob("*.part"))
+
+
+def test_zero_link_unrollbackable_staged_pin_is_removed_not_retained(m):
+    """An unlinked staged inode has no foreign destination to disclose."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        staged, destination = root / "staged.part", root / "output.xml"
+        staged.write_text("staged bytes")
+        pin = os.open(staged, os.O_RDONLY)
+        record = {
+            "path": staged, "cleanup_path": root / "other.part",
+            "canonical_path": destination, "identity": m._fd_identity(pin), "pin": pin,
+        }
+        staged.unlink()
+        try:
+            failures = []
+            m._reconcile_staged_output_pin(record, failures)
+        finally:
+            os.close(pin)
+
+        assert failures == []
+        assert not destination.exists()
 
 
 if __name__ == "__main__":
