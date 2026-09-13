@@ -21,7 +21,7 @@ FAKE_GH = r'''#!/usr/bin/env python3
 import base64, json, os, sys
 args = sys.argv[1:]
 scenario = os.environ.get("GATE_SCENARIO", "pass")
-security_case = scenario.startswith("security-review-") or scenario in {"security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out"}
+security_case = scenario.startswith("security-review-") or scenario in {"security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-commands-facade"}
 sync_case = scenario.startswith("sync-")
 head = "0123456789abcdef0123456789abcdef01234567"
 new_head = "fedcba9876543210fedcba9876543210fedcba98"
@@ -113,7 +113,7 @@ if args[:2] == ["pr", "view"]:
             "## Validation and evidence\n\nCommands and results are recorded elsewhere.\n\n"
             "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10)"
         )
-    elif scenario in {"workflow-notes-present", "workflow-delete-notes", "workflow-rename-out-notes", "platform-ci-workflow", "platform-ci-workflow-rename-out"}:
+    elif scenario in {"workflow-notes-present", "workflow-delete-notes", "workflow-rename-out-notes", "platform-ci-workflow", "platform-ci-workflow-rename-out", "platform-release-mcpb-preview"}:
         body = (
             "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
             "## Validation and evidence\n\n`python3 scripts/merge-gate.test.py`\n\n"
@@ -123,8 +123,8 @@ if args[:2] == ["pr", "view"]:
         )
     if scenario in {"workflow-notes-present", "workflow-delete-notes", "workflow-rename-out-notes"}:
         body += (
-            "\n- Windows validation evidence: Windows CI ran `python3 scripts/merge-gate.test.py`.\n"
-            "- macOS validation evidence: macOS CI ran `python3 scripts/merge-gate.test.py`.\n"
+            "\n- Windows validation evidence: Windows CI passed `python3 scripts/merge-gate.test.py`.\n"
+            "- macOS validation evidence: macOS CI passed `python3 scripts/merge-gate.test.py`.\n"
         )
     elif scenario == "workflow-sibling-migration":
         body = (
@@ -197,7 +197,7 @@ if args[:2] == ["pr", "view"]:
         body = body.replace("#L10", "#L1")
     if scenario == "checklist-anchor-suffix":
         body = body.replace("#L10", "#L10junk")
-    if scenario in {"implementation-p4-present", "implementation-p4-continuation", "platform-evidence-present", "platform-evidence-heading", "platform-powershell-missing", "platform-powershell-evidence", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-inline-prose", "platform-unaffected-bare", "platform-unaffected-rationale", "platform-evidence-sibling-list", "platform-evidence-empty-fence", "platform-evidence-punctuated-placeholder", "platform-evidence-fenced-continuation", "migration-rollback-present", "migration-template-wrapped", "security-notes-present", "security-none", "security-pending", "security-review-valid"}:
+    if scenario in {"implementation-p4-present", "implementation-p4-continuation", "platform-evidence-present", "platform-evidence-heading", "platform-powershell-missing", "platform-powershell-evidence", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-inline-prose", "platform-negative-outcome", "platform-unaffected-bare", "platform-unaffected-rationale", "platform-evidence-sibling-list", "platform-evidence-empty-fence", "platform-evidence-punctuated-placeholder", "platform-evidence-fenced-continuation", "migration-rollback-present", "migration-template-wrapped", "security-notes-present", "security-none", "security-pending", "security-review-valid"}:
         body += (
             "\n## Scope, reuse, and impact\n\n"
             "- Existing component reused: the existing gate parser and file inventory.\n"
@@ -221,15 +221,15 @@ if args[:2] == ["pr", "view"]:
             "- What breaks if this is not built: unsafe evidence could reach a merge.\n"
             "\n## Security impact\n\nNo credential material is added.\n"
             "\n## Migration compatibility\n\nExisting callers retain their paths and formats.\n"
-            "\n- Windows validation evidence: Windows CI ran `python3 scripts/merge-gate.test.py`.\n"
-            "- macOS validation evidence: macOS CI ran `python3 scripts/merge-gate.test.py`.\n"
+            "\n- Windows validation evidence: Windows CI passed `python3 scripts/merge-gate.test.py`.\n"
+            "- macOS validation evidence: macOS CI passed `python3 scripts/merge-gate.test.py`.\n"
         )
     if scenario == "security-encrypted-keystore":
         body += "\n## Rollback notes\n\nRevert the encrypted-store change before deployment.\n"
     if scenario in {"platform-evidence-present", "platform-powershell-evidence", "migration-template-wrapped", "security-notes-present", "security-none", "security-pending", "security-review-valid", "sync-migration-present"}:
         body += (
-            "\n- Windows validation evidence: Windows CI ran `python3 scripts/merge-gate.test.py`.\n"
-            "- macOS validation evidence: macOS CI ran `python3 scripts/merge-gate.test.py`.\n"
+            "\n- Windows validation evidence: Windows CI passed `python3 scripts/merge-gate.test.py`.\n"
+            "- macOS validation evidence: macOS CI passed `python3 scripts/merge-gate.test.py`.\n"
         )
     if scenario == "platform-evidence-heading":
         body += (
@@ -253,6 +253,8 @@ if args[:2] == ["pr", "view"]:
             "\n- Windows validation evidence: reviewed by the release team.\n"
             "- macOS validation evidence: reviewed by the release team.\n"
         )
+    if scenario == "platform-negative-outcome":
+        body += "\n- Windows validation evidence: Windows CI did not pass.\n- macOS validation evidence: macOS CI did not pass.\n"
     if scenario == "platform-unaffected-bare":
         body += "\n- Windows validation evidence: unaffected\n- macOS validation evidence: unaffected\n"
     if scenario == "platform-unaffected-rationale":
@@ -297,11 +299,11 @@ if args[:2] == ["pr", "view"]:
     if scenario == "platform-evidence-punctuated-placeholder":
         body += "\n- Windows validation evidence: N/A.\n- macOS validation evidence: TBD.\n"
     if scenario == "platform-evidence-fenced-continuation":
-        body += "\n### Windows validation evidence\n~~~bash\npython3 scripts/merge-gate.test.py\n~~~\n### macOS validation evidence\n~~~bash\npython3 scripts/merge-gate.test.py\n~~~\n"
+        body += "\n### Windows validation evidence\n~~~text\nWindows CI passed `python3 scripts/merge-gate.test.py`.\n~~~\n### macOS validation evidence\n~~~text\nmacOS CI passed `python3 scripts/merge-gate.test.py`.\n~~~\n"
     body = body.replace("blob/HEAD", f"blob/{head}")
     if scenario == "checklist-stale-ref":
         body = body.replace(f"blob/{head}", "blob/" + "f" * 40)
-    one_file = scenario in {"metadata-private", "files-empty", "formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-tab", "unicode-phone-two-lines", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "grouped-identifier-mixed", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "binary-review", "binary-review-private", "binary-review-head-moves", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-sibling-migration", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "workflow-placeholders", "workflow-punctuated-placeholders", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-none", "security-pending", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "dependency-manifest-missing", "dependency-manifest-present", "home-macos", "home-unix", "home-windows", "crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path", "gitlink", "gitlink-existing", "implementation-p4-missing", "implementation-p4-present", "implementation-p4-continuation", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders", "platform-evidence-missing", "platform-evidence-present", "platform-evidence-heading", "platform-powershell-missing", "platform-powershell-evidence", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-inline-prose", "platform-unaffected-bare", "platform-unaffected-rationale", "platform-evidence-bare-label", "platform-evidence-sibling-list", "platform-evidence-empty-fence", "platform-evidence-punctuated-placeholder", "platform-evidence-fenced-continuation", "platform-evidence-package-manager", "platform-windows-native-action", "platform-windows-native-action-rename-out", "platform-ci-workflow", "platform-ci-workflow-rename-out", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"} or scenario.startswith("home-") or security_case or sync_case
+    one_file = scenario in {"metadata-private", "files-empty", "formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-tab", "unicode-phone-two-lines", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "grouped-identifier-mixed", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "binary-review", "binary-review-private", "binary-review-head-moves", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "grouped-pan-space", "grouped-pan-hyphen", "grouped-masked-pan-space", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-sibling-migration", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "workflow-placeholders", "workflow-punctuated-placeholders", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-none", "security-pending", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "dependency-manifest-missing", "dependency-manifest-present", "home-macos", "home-unix", "home-windows", "crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path", "gitlink", "gitlink-existing", "implementation-p4-missing", "implementation-p4-present", "implementation-p4-continuation", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders", "platform-evidence-missing", "platform-evidence-present", "platform-evidence-heading", "platform-powershell-missing", "platform-powershell-evidence", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-inline-prose", "platform-negative-outcome", "platform-unaffected-bare", "platform-unaffected-rationale", "platform-evidence-bare-label", "platform-evidence-sibling-list", "platform-evidence-empty-fence", "platform-evidence-punctuated-placeholder", "platform-evidence-fenced-continuation", "platform-evidence-package-manager", "platform-windows-native-action", "platform-windows-native-action-rename-out", "platform-ci-workflow", "platform-ci-workflow-rename-out", "platform-release-mcpb-preview", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"} or scenario.startswith("home-") or security_case or sync_case
     selected_base = new_head if scenario == "base-oid-mismatch" else base
     emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
@@ -327,7 +329,7 @@ elif args[:2] == ["pr", "diff"]:
     if scenario == "security-documents-consumer-rename-out":
         emit("diff --git a/src-tauri/src/documents.rs b/docs/retired-documents.rs\nsimilarity index 100%\nrename from src-tauri/src/documents.rs\nrename to docs/retired-documents.rs\n")
     elif security_case:
-        paths = {"security-axal-frontend": "src/AxalScreen.tsx", "security-axal-native": "src-tauri/src/axal.rs", "security-encrypted-keystore": "src-tauri/src/db/encrypted.rs", "security-documents-consumer": "src-tauri/src/documents.rs"}
+        paths = {"security-axal-frontend": "src/AxalScreen.tsx", "security-axal-native": "src-tauri/src/axal.rs", "security-encrypted-keystore": "src-tauri/src/db/encrypted.rs", "security-documents-consumer": "src-tauri/src/documents.rs", "security-commands-facade": "src-tauri/src/commands.rs"}
         path = paths.get(scenario, "src-tauri/src/dsc.rs")
         emit(f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -0,0 +1 @@\n+safe check\n")
     elif sync_case:
@@ -370,6 +372,8 @@ elif args[:2] == ["pr", "diff"]:
         emit(f"diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic {identifier}\n")
     elif scenario == "platform-ci-workflow-rename-out":
         emit("diff --git a/.github/workflows/ci.yml b/docs/retired-ci.yml\nsimilarity index 100%\nrename from .github/workflows/ci.yml\nrename to docs/retired-ci.yml\n")
+    elif scenario == "platform-release-mcpb-preview":
+        emit("diff --git a/.github/workflows/release-mcpb-preview.yml b/.github/workflows/release-mcpb-preview.yml\n--- a/.github/workflows/release-mcpb-preview.yml\n+++ b/.github/workflows/release-mcpb-preview.yml\n@@ -0,0 +1 @@\n+safe workflow text\n")
     elif scenario in {"workflow-notes-missing", "workflow-notes-present", "workflow-sibling-migration", "platform-ci-workflow"}:
         emit("diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ -0,0 +1 @@\n+safe workflow text\n")
     elif scenario in {"dependency-manifest-missing", "dependency-manifest-present"}:
@@ -413,6 +417,11 @@ elif args[:2] == ["pr", "diff"]:
     elif scenario == "masked-pan":
         identifier = "XXXXX" + "1234" + "X"
         emit(f"diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+{identifier}\n")
+    elif scenario in {"grouped-pan-space", "grouped-pan-hyphen", "grouped-masked-pan-space"}:
+        separator = "-" if scenario == "grouped-pan-hyphen" else " "
+        prefix = "XXXXX" if scenario == "grouped-masked-pan-space" else "ABCDE"
+        suffix = "X" if scenario == "grouped-masked-pan-space" else "A"
+        emit(f"diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+{prefix}{separator}1234{separator}{suffix}\n")
     elif scenario == "quoted-path":
         emit('diff --git "a/docs/caf\\303\\251.md" "b/docs/caf\\303\\251.md"\n--- "a/docs/caf\\303\\251.md"\n+++ "b/docs/caf\\303\\251.md"\n@@ -0,0 +1 @@\n+safe text\n')
     elif scenario == "crlf-diff":
@@ -428,7 +437,7 @@ elif args[:2] == ["pr", "diff"]:
     elif scenario in {"implementation-p4-missing", "implementation-p4-present", "implementation-p4-continuation", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders"}:
         suffix = {"implementation-p4-shell": "sh", "implementation-p4-powershell": "ps1", "implementation-p4-sql": "sql"}.get(scenario, "py")
         emit(f"diff --git a/scripts/example.{suffix} b/scripts/example.{suffix}\n--- a/scripts/example.{suffix}\n+++ b/scripts/example.{suffix}\n@@ -0,0 +1 @@\n+safe text\n")
-    elif scenario in {"platform-evidence-missing", "platform-evidence-present", "platform-evidence-heading", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-inline-prose", "platform-unaffected-bare", "platform-unaffected-rationale", "platform-evidence-bare-label", "platform-evidence-sibling-list", "platform-evidence-empty-fence", "platform-evidence-punctuated-placeholder", "platform-evidence-fenced-continuation", "platform-evidence-package-manager"}:
+    elif scenario in {"platform-evidence-missing", "platform-evidence-present", "platform-evidence-heading", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-inline-prose", "platform-negative-outcome", "platform-unaffected-bare", "platform-unaffected-rationale", "platform-evidence-bare-label", "platform-evidence-sibling-list", "platform-evidence-empty-fence", "platform-evidence-punctuated-placeholder", "platform-evidence-fenced-continuation", "platform-evidence-package-manager"}:
         emit("diff --git a/src-tauri/src/local_files/paths.rs b/src-tauri/src/local_files/paths.rs\n--- a/src-tauri/src/local_files/paths.rs\n+++ b/src-tauri/src/local_files/paths.rs\n@@ -0,0 +1 @@\n+safe text\n")
     elif scenario == "platform-windows-native-action":
         emit("diff --git a/.github/actions/setup-windows-native/action.yml b/.github/actions/setup-windows-native/action.yml\n--- a/.github/actions/setup-windows-native/action.yml\n+++ b/.github/actions/setup-windows-native/action.yml\n@@ -0,0 +1 @@\n+safe action text\n")
@@ -570,7 +579,7 @@ elif args and args[0] == "api":
             emit([[]])
         else:
             records = [{"user": {"login": "chatgpt-codex-connector[bot]", "type": "Bot"}, "state": "COMMENTED", "commit_id": head}]
-            if security_case and scenario not in {"security-review-missing", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out"}:
+            if security_case and scenario not in {"security-review-missing", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-commands-facade"}:
                 record = {"user": {"login": "reviewer", "type": "User"}, "author_association": "COLLABORATOR", "state": "COMMENTED", "commit_id": head, "body": f"Security review: {head}\nResult: accepted\nReviewed credential handling and error redaction."}
                 if scenario == "security-review-stale": record["commit_id"] = new_head
                 if scenario == "security-review-author": record["user"]["login"] = "author"
@@ -600,6 +609,8 @@ elif args and args[0] == "api":
             emit([[{"filename": "src-tauri/src/db/encrypted.rs", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "security-documents-consumer":
             emit([[{"filename": "src-tauri/src/documents.rs", "status": "modified", "additions": 1, "deletions": 0}]])
+        elif scenario == "security-commands-facade":
+            emit([[{"filename": "src-tauri/src/commands.rs", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "security-documents-consumer-rename-out":
             emit([[{"filename": "docs/retired-documents.rs", "previous_filename": "src-tauri/src/documents.rs", "status": "renamed", "additions": 0, "deletions": 0}]])
         elif scenario in {"security-camel-dsc", "security-camel-credential"}:
@@ -616,6 +627,8 @@ elif args and args[0] == "api":
             emit([[]])
         elif scenario in {"formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-tab", "unicode-phone-two-lines", "grouped-identifier-12", "grouped-identifier-16", "grouped-identifier-mixed", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized"}:
             emit([[{"filename": "docs/contact.md", "status": "added", "additions": 2 if scenario == "unicode-phone-two-lines" else 1, "deletions": 0}]])
+        elif scenario == "platform-release-mcpb-preview":
+            emit([[{"filename": ".github/workflows/release-mcpb-preview.yml", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario in {"workflow-notes-missing", "workflow-notes-present", "workflow-sibling-migration", "workflow-placeholders", "workflow-punctuated-placeholders", "platform-ci-workflow"}:
             emit([[{"filename": ".github/workflows/ci.yml", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario in {"dependency-manifest-missing", "dependency-manifest-present"}:
@@ -660,7 +673,7 @@ elif args and args[0] == "api":
             emit([[{"filename": "docs/example.md", "status": "modified", "additions": 2, "deletions": 0}]])
         elif scenario == "hunk-binary-literal":
             emit([[{"filename": "docs/example.md", "status": "modified", "additions": 1, "deletions": 0}]])
-        elif scenario in {"all-a-pan", "masked-pan", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier"}:
+        elif scenario in {"all-a-pan", "masked-pan", "grouped-pan-space", "grouped-pan-hyphen", "grouped-masked-pan-space", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier"}:
             emit([[{"filename": "docs/example.md", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "quoted-path":
             emit([[{"filename": "docs/café.md", "status": "added", "additions": 1, "deletions": 0}]])
@@ -674,7 +687,7 @@ elif args and args[0] == "api":
         elif scenario in {"implementation-p4-missing", "implementation-p4-present", "implementation-p4-continuation", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders"}:
             suffix = {"implementation-p4-shell": "sh", "implementation-p4-powershell": "ps1", "implementation-p4-sql": "sql"}.get(scenario, "py")
             emit([[{"filename": f"scripts/example.{suffix}", "status": "modified", "additions": 1, "deletions": 0}]])
-        elif scenario in {"platform-evidence-missing", "platform-evidence-present", "platform-evidence-heading", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-inline-prose", "platform-unaffected-bare", "platform-unaffected-rationale", "platform-evidence-bare-label", "platform-evidence-sibling-list", "platform-evidence-empty-fence", "platform-evidence-punctuated-placeholder", "platform-evidence-fenced-continuation", "platform-evidence-package-manager"}:
+        elif scenario in {"platform-evidence-missing", "platform-evidence-present", "platform-evidence-heading", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-inline-prose", "platform-negative-outcome", "platform-unaffected-bare", "platform-unaffected-rationale", "platform-evidence-bare-label", "platform-evidence-sibling-list", "platform-evidence-empty-fence", "platform-evidence-punctuated-placeholder", "platform-evidence-fenced-continuation", "platform-evidence-package-manager"}:
             emit([[{"filename": "src-tauri/src/local_files/paths.rs", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "platform-windows-native-action":
             emit([[{"filename": ".github/actions/setup-windows-native/action.yml", "status": "modified", "additions": 1, "deletions": 0}]])
@@ -1141,6 +1154,11 @@ os.execv(os.environ["GATE_REAL_SED"], [os.environ["GATE_REAL_SED"], *sys.argv[1:
 
     def test_all_a_pan_is_not_exempted_as_a_placeholder(self):
         self.assert_blocked("all-a-pan", "privacy scan found")
+        for scenario in ("grouped-pan-space", "grouped-pan-hyphen"):
+            with self.subTest(scenario=scenario):
+                self.assert_blocked(scenario, "privacy scan found")
+        result = self.run_gate("grouped-masked-pan-space")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_explicit_masked_pan_remains_a_placeholder(self):
         result = self.run_gate("masked-pan")
@@ -1276,7 +1294,7 @@ os.execv(os.environ["GATE_REAL_SED"], [os.environ["GATE_REAL_SED"], *sys.argv[1:
         self.assertNotIn("z" * 100, result.stdout)
 
     def test_security_review_is_focused_independent_and_current(self):
-        for scenario in ("security-review-stale", "security-review-author", "security-review-unrelated", "security-review-no-scope", "security-review-hidden", "security-review-hidden-unterminated", "security-review-outsider", "security-review-dismissed", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out"):
+        for scenario in ("security-review-stale", "security-review-author", "security-review-unrelated", "security-review-no-scope", "security-review-hidden", "security-review-hidden-unterminated", "security-review-outsider", "security-review-dismissed", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-commands-facade"):
             with self.subTest(scenario=scenario):
                 self.assert_indeterminate(scenario, "security-focused reviewer comment")
         result = self.run_gate("security-review-valid")
@@ -1313,6 +1331,7 @@ os.execv(os.environ["GATE_REAL_SED"], [os.environ["GATE_REAL_SED"], *sys.argv[1:
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assert_blocked("platform-checkbox-comment", "substantive Windows validation")
         self.assert_blocked("platform-inline-prose", "substantive Windows validation")
+        self.assert_blocked("platform-negative-outcome", "substantive Windows validation")
         self.assert_blocked("platform-unaffected-bare", "substantive Windows validation")
         self.assert_blocked("platform-evidence-bare-label", "substantive Windows validation")
         self.assert_blocked("platform-evidence-sibling-list", "substantive Windows validation")
@@ -1330,6 +1349,9 @@ os.execv(os.environ["GATE_REAL_SED"], [os.environ["GATE_REAL_SED"], *sys.argv[1:
 
     def test_ci_workflow_needs_both_host_evidence(self):
         self.assert_blocked("platform-ci-workflow", "substantive Windows validation")
+
+    def test_release_mcpb_preview_needs_both_host_evidence(self):
+        self.assert_blocked("platform-release-mcpb-preview", "substantive Windows validation")
 
     def test_ci_workflow_rename_out_needs_both_host_evidence(self):
         self.assert_blocked("platform-ci-workflow-rename-out", "substantive Windows validation")

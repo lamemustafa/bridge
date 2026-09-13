@@ -676,9 +676,11 @@ def continuation_evidence(value):
     if not value or value in placeholders or re.match(r"^(?:[-*]\s+)?(?:note|notes|status|tracking|todo)\b", value):
         return False
     command = re.search(r"(?:^|[`$\s])(?:python(?:3)?|pytest|pnpm|npm|node|cargo|make|bash|sh|gh)(?:[\s`]|$)", value)
-    outcome = re.search(r"\b(?:passed|succeeded|validated|completed)\b", value) and re.search(r"\b(?:ci|test|check|validation|windows|macos)\b", value)
+    affirmative = re.search(r"\b(?:passed|succeeded|validated|completed)\b", value)
+    negated = re.search(r"\b(?:not|never|failed|failure|without|no)\b(?:\W+\w+){0,4}\W+\b(?:pass(?:ed)?|succeed(?:ed)?|validat(?:ed|ion)|complet(?:ed|ion))\b", value)
+    outcome = affirmative and not negated and re.search(r"\b(?:ci|test|check|validation|windows|macos)\b", value)
     unaffected = re.search(r"\b(?:unaffected|not affected|not impacted)\b", value) and re.search(r"\b(?:because|as|this)\b", value)
-    return bool(command or outcome or unaffected)
+    return bool(outcome or unaffected)
 waiting = False
 waiting_list_indent = None
 for raw in sys.stdin.read().splitlines():
@@ -804,7 +806,7 @@ if [ "$files_status" -eq 0 ]; then
   platform_sensitive_change=$(jq -r '
     (if all(.[]; type == "array") then flatten else . end) |
     any(.[]; [.filename, (.previous_filename? // "")][] |
-      test("^(src-tauri/|src/.*\\.(rs|ts|tsx|js|mjs)$)|\\.(ps1|psm1)$|^\\.github/workflows/ci\\.yml$|^\\.github/actions/setup-windows-native/|(^|/)(windows|macos|darwin|win32|local_files|paths)(/|[._-])"; "i"))
+      test("^(src-tauri/|src/.*\\.(rs|ts|tsx|js|mjs)$)|\\.(ps1|psm1)$|^\\.github/workflows/(ci\\.yml|release-mcpb-preview\\.yml)$|^\\.github/actions/setup-windows-native/|(^|/)(windows|macos|darwin|win32|local_files|paths)(/|[._-])"; "i"))
   ' <<<"$files")
   migration_change=$(jq -r '
     (if all(.[]; type == "array") then flatten else . end) |
@@ -842,7 +844,7 @@ if [ "$files_status" -eq 0 ]; then
     (if all(.[]; type == "array") then flatten else . end) |
     any(.[]; [.filename, (.previous_filename? // "")][] |
       (test("(^|[/_.-])(dsc|credential[s]?|certificate[s]?|keystore|secret[s]?)(?=[/_.-]|$|[A-Z])"; "i") or
-       test("^src/AxalScreen\\.tsx$|^src-tauri/src/axal\\.rs$|^src-tauri/src/db/encrypted\\.rs$|^src-tauri/src/documents\\.rs$"; "i")))
+       test("^src/AxalScreen\\.tsx$|^src-tauri/src/axal\\.rs$|^src-tauri/src/db/encrypted\\.rs$|^src-tauri/src/documents\\.rs$|^src-tauri/src/commands\\.rs$"; "i")))
   ' <<<"$files")
 fi
 validate_security_reviewer() {
@@ -1141,7 +1143,8 @@ $added"
     while IFS= read -r item; do
       [ -n "$item" ] || continue
       item=$(tr '[:lower:]' '[:upper:]' <<<"$item")
-      if printf '%s\n' "$item" | grep -qE "$placeholder"; then
+      item_compact=$(tr -d ' -' <<<"$item")
+      if printf '%s\n' "$item_compact" | grep -qE "$placeholder"; then
         :
       else
         status=$?
@@ -1186,7 +1189,7 @@ $added"
 $normalized_phone
 $normalized_grouped_numbers"
   hits_status=0
-  hits=$(count_nonplaceholder '[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]{3}|[A-Z]{5}[0-9]{4}[A-Z]|[6-9][0-9]{9}' "$scan_shapes") || hits_status=$?
+  hits=$(count_nonplaceholder '[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]{3}|[A-Z]{5}[ -][0-9]{4}[ -][A-Z]|[A-Z]{5}[0-9]{4}[A-Z]|[6-9][0-9]{9}' "$scan_shapes") || hits_status=$?
   runs_status=0
   runs=$(count_nonplaceholder '[0-9]{11,18}' "$scan_shapes") || runs_status=$?
   if [ "$hits_status" -ne 0 ] || [ "$runs_status" -ne 0 ]; then
