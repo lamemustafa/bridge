@@ -175,6 +175,9 @@ def parse(lines: list[str]) -> dict[str, object]:
         }:
             record["gitlink"] = True
             continue
+        if not record["in_hunk"] and line.startswith("index ") and line.endswith(" 160000"):
+            record["gitlink"] = True
+            continue
         if line.startswith("@@ "):
             record["in_hunk"] = True
             continue

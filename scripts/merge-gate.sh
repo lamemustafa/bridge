@@ -360,85 +360,27 @@ if [ "$statuses_status" -ne 0 ] || ! jq -e --arg head "$head" '
   all(.[]; type == "object" and
     (.sha | type == "string" and test("^[0-9a-fA-F]{40}$") and . == $head) and
     (.total_count | type == "number" and floor == . and . >= 0) and
-    (.state | type == "string" and (. == "success" or . == "pending")) and
+    (.state | type == "string" and (. == "success" or . == "pending" or . == "failure" or . == "error")) and
     (.statuses | type == "array" and all(.[];
       type == "object" and
       (.id | type == "number" and floor == . and . >= 0) and
       (.context | type == "string" and length > 0) and
-      (.state == "success")
+      (.state == "success" or .state == "failure" or .state == "error")
     ))
   ) and
   ((map(.total_count) | unique | length) == 1) and
   ((map(.statuses | length) | add) == .[0].total_count) and
   ((map(.statuses) | add | map(.id) | unique | length) == .[0].total_count) and
   ((map(.statuses) | add | map(.context) | unique | length) == .[0].total_count) and
-  (if .[0].state == "pending" then .[0].total_count == 0 and (map(.statuses | length) | add) == 0 else all(.[]; .state == "success") end)
+  (if .[0].state == "pending" then .[0].total_count == 0 and (map(.statuses | length) | add) == 0
+   elif .[0].state == "failure" or .[0].state == "error" then .[0].state as $aggregate | all(.[]; .state == $aggregate)
+   else all(.[]; .state == "success") end)
 ' <"$tmpdir/combined-status-pages.json" >/dev/null 2>&1; then
   unknown "could not validate complete head-bound commit-status evidence"
+elif jq -e 'any(.[]; (.state == "failure" or .state == "error") or any(.statuses[]; .state == "failure" or .state == "error"))' <"$tmpdir/combined-status-pages.json" >/dev/null; then
+  bad "combined commit-status evidence reports a failure"
 else
   say "ok" "complete commit-status pages are bound to head $short"
-fi
-
-# Provider review objects carry an immutable full commit_id even when the
-# human-readable summary is abbreviated. The summary is required as a separate
-# completed-run receipt: an exact-head COMMENTED object can remain after a run
-# later fails. A clean summary without a full provider OID has an explicit
-# operator-attestation path, but a seven-character row never becomes a full-SHA
-# claim by inference.
-: >"$errfile"
-review_status=0
-provider_review=""
-reviews=$(gh api --paginate --slurp "repos/$REPO/pulls/$PR/reviews" 2>"$errfile") || review_status=$?
-if [ "$review_status" -ne 0 ]; then
-  unknown "could not read provider review records"
-elif ! jq -e 'type == "array" and (all(.[]; type == "array") or all(.[]; type == "object"))' <<<"$reviews" >/dev/null 2>&1; then
-  unknown "provider review response was malformed"
-else
-  provider_review=$(jq -r --arg head "$head" '
-    (if all(.[]; type == "array") then flatten else . end) |
-    map(select(.user.login == "chatgpt-codex-connector[bot]" and .user.type == "Bot" and
-               .state == "COMMENTED" and .commit_id == $head)) |
-    if length > 0 then "matched" else "" end
-  ' <<<"$reviews")
-fi
-
-: >"$errfile"
-comment_status=0
-comments=$(gh api --paginate --slurp "repos/$REPO/issues/$PR/comments" 2>"$errfile") || comment_status=$?
-summary_good=0
-if [ "$comment_status" -ne 0 ]; then
-  unknown "could not read provider review summaries"
-elif ! jq -e 'type == "array" and (all(.[]; type == "array") or all(.[]; type == "object"))' <<<"$comments" >/dev/null 2>&1; then
-  unknown "provider review-summary response was malformed"
-else
-  summary_rows=$(jq -r '
-    (if all(.[]; type == "array") then flatten else . end)[] |
-    select(.user.login == "chatgpt-codex-connector[bot]" and .user.type == "Bot") |
-    select((.body // "") | contains("codex-pull-request-review-summary")) |
-    .body
-  ' <<<"$comments" | grep -E '^\| (📝|🔍)' | tail -1)
-  if [ -z "$summary_rows" ]; then
-    bad "no provider review summary row"
-  elif ! grep -Fq "\`$short\`" <<<"$summary_rows"; then
-    bad "latest provider summary names a different head than $short"
-  elif ! grep -Fq 'Completed' <<<"$summary_rows"; then
-    bad "provider review run for $short is not completed"
-  else
-    summary_good=1
-    say "ok" "provider review summary is completed on $short"
-  fi
-fi
-
-if [ "$provider_review" = "matched" ] && [ "$summary_good" -eq 1 ]; then
-  say "ok" "provider review records the full current head $short"
-elif [ "$provider_review" != "matched" ] && [ "$summary_good" -eq 1 ]; then
-  if [ -n "$INDEPENDENT_REVIEW_SHA" ] && [ "$INDEPENDENT_REVIEW_SHA" = "$head" ]; then
-    say "ok" "manual independent review attestation names full current head $short"
-  elif [ -n "$INDEPENDENT_REVIEW_SHA" ]; then
-    bad "manual independent review attestation does not match the current head"
-  else
-    unknown "provider summary exposes only an abbreviated head; pass --independent-review-sha with an exact manual review attestation"
-  fi
 fi
 
 # Scan all published PR metadata. Commit messages are paginated because they
@@ -492,87 +434,6 @@ else
   privacy_metadata="$title
 $raw_prbody
 $commit_messages"
-fi
-
-# Paginate review threads and count unresolved nodes over every page.
-cursor=""
-open_threads=0
-total_threads=-1
-fetched_threads=0
-thread_ids="$tmpdir/review-thread-ids"
-: >"$thread_ids"
-thread_ok=1
-while :; do
-  : >"$errfile"
-  page_status=0
-  if [ -z "$cursor" ]; then
-    page=$(gh api graphql -f owner="$OWNER" -f name="$NAME" -F pr="$PR" -f cursor="" -f query='
-      query($owner:String!,$name:String!,$pr:Int!,$cursor:String){
-        repository(owner:$owner,name:$name){
-          pullRequest(number:$pr){ reviewThreads(first:100,after:$cursor){
-            totalCount pageInfo{hasNextPage endCursor} nodes{id isResolved}
-          }}
-        }
-      }' 2>"$errfile") || page_status=$?
-  else
-    page=$(gh api graphql -f owner="$OWNER" -f name="$NAME" -F pr="$PR" -f cursor="$cursor" -f query='
-      query($owner:String!,$name:String!,$pr:Int!,$cursor:String){
-        repository(owner:$owner,name:$name){
-          pullRequest(number:$pr){ reviewThreads(first:100,after:$cursor){
-            totalCount pageInfo{hasNextPage endCursor} nodes{id isResolved}
-          }}
-        }
-      }' 2>"$errfile") || page_status=$?
-  fi
-  if [ "$page_status" -ne 0 ] || ! jq -e '.data.repository.pullRequest.reviewThreads | type == "object" and (.totalCount | type == "number" and floor == . and . >= 0) and (.pageInfo.hasNextPage | type == "boolean") and (.nodes | type == "array" and all(.[]; (.id | type == "string" and length > 0) and (.isResolved | type == "boolean")))' <<<"$page" >/dev/null 2>&1; then
-    unknown "could not read review threads for $REPO#$PR"
-    thread_ok=0
-    break
-  fi
-  page_total=$(jq -r '.data.repository.pullRequest.reviewThreads.totalCount' <<<"$page")
-  if [ "$total_threads" -eq -1 ]; then
-    total_threads="$page_total"
-  elif [ "$page_total" -ne "$total_threads" ]; then
-    unknown "review-thread totalCount changed during pagination"
-    thread_ok=0
-    break
-  fi
-  page_nodes=$(jq '.data.repository.pullRequest.reviewThreads.nodes | length' <<<"$page")
-  jq -r '.data.repository.pullRequest.reviewThreads.nodes[].id' <<<"$page" >>"$thread_ids"
-  fetched_threads=$((fetched_threads + page_nodes))
-  if [ "$fetched_threads" -gt "$total_threads" ]; then
-    unknown "review-thread pagination exceeded totalCount"
-    thread_ok=0
-    break
-  fi
-  page_open=$(jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length' <<<"$page")
-  open_threads=$((open_threads + page_open))
-  has_next=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$page")
-  [ "$has_next" = "true" ] || break
-  if [ "$page_nodes" -eq 0 ]; then
-    unknown "review-thread pagination returned no nodes while claiming another page"
-    thread_ok=0
-    break
-  fi
-  next_cursor=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // empty' <<<"$page")
-  if [ -z "$next_cursor" ] || [ "$next_cursor" = "$cursor" ]; then
-    unknown "review-thread pagination returned no advancing cursor"
-    thread_ok=0
-    break
-  fi
-  cursor="$next_cursor"
-done
-if [ "$thread_ok" -eq 1 ]; then
-  unique_thread_count=$(sort -u "$thread_ids" | wc -l | tr -d ' ')
-  if [ "$unique_thread_count" -ne "$fetched_threads" ]; then
-    unknown "review-thread pagination repeated thread IDs"
-  elif [ "$fetched_threads" -ne "$total_threads" ]; then
-    unknown "review-thread pagination returned $fetched_threads of $total_threads nodes"
-  elif [ "$open_threads" -eq 0 ]; then
-    say "ok" "0 of $total_threads review threads unresolved"
-  else
-    bad "$open_threads of $total_threads review threads unresolved"
-  fi
 fi
 
 # Require a completed checklist item and a same-repository line permalink.
@@ -691,7 +552,7 @@ body_section_has_content() {
           exit
         } else if (lower ~ /:[[:space:]]*$/) {
           pending_list = 2
-        } else if (pending_list == 2 && lower ~ /[^[:space:]]/) {
+        } else if (pending_list && lower ~ /[^[:space:]]/) {
           if (!template_prompt($0) && lower !~ /^[[:space:]]*<!--/ && meaningful(lower)) {
             found = 1
             exit
@@ -704,7 +565,7 @@ body_section_has_content() {
         found = 1
         exit
       }
-      if (lower ~ "^[[:space:]]*-[[:space:]]*(" labels ")[^:]*$") {
+      if (lower ~ "^[[:space:]]*-[[:space:]]*(" labels ")[^:]*:?[[:space:]]*$") {
         pending_list = 1
         next
       }
@@ -793,19 +654,36 @@ body_has_platform_evidence() {
   python3 -c '
 import re, sys
 host = sys.argv[1].lower()
-for line in sys.stdin.read().splitlines():
-    lower = line.strip().lower()
-    lower = re.sub(r"<!--.*?-->", "", lower).strip()
-    if host not in lower:
+placeholders = {
+    "", "none", "n/a", "not applicable", "unaffected", "not affected",
+    "not impacted", "no impact", "pending", "todo", "tbd",
+}
+waiting = False
+for raw in sys.stdin.read().splitlines():
+    lower = re.sub(r"<!--.*?-->", "", raw).strip().lower()
+    if not lower:
         continue
-    if re.search(r"(validation|evidence|test|check|unaffected|not applicable|not affected|not impact)", lower):
-        value = lower.split(":", 1)[1].strip() if ":" in lower else ""
-        placeholders = {
-            "none", "n/a", "not applicable", "unaffected", "not affected",
-            "not impacted", "no impact", "pending", "todo", "tbd",
-        }
-        if value and value not in placeholders:
+    if re.match(r"^#{1,6}\s+", lower) and host not in lower:
+        waiting = False
+        continue
+    if host in lower and re.search(r"(validation|evidence|test|check|unaffected|not applicable|not affected|not impact)", lower):
+        if ":" not in lower:
+            if not re.match(r"^#{1,6}\s+", lower) and not re.match(r"^[-*]\s*\[[ xX]\]", lower):
+                raise SystemExit(0)
+        else:
+            value = re.sub(r"^#{1,6}\s+", "", lower.split(":", 1)[1].strip())
+            if value not in placeholders:
+                raise SystemExit(0)
+        waiting = True
+        continue
+    if waiting:
+        if re.match(r"^[-*]\s+", lower) and re.search(r"(validation|evidence|test|check|unaffected|not applicable|not affected|not impact)", lower):
+            waiting = False
+            continue
+        if (not re.match(r"^[-*]\s*\[[ xX]\]", lower) and
+                not lower.startswith("<!--") and lower not in placeholders):
             raise SystemExit(0)
+        waiting = False
 raise SystemExit(1)
 ' "$host" <<<"$body"
 }
@@ -885,7 +763,7 @@ if [ "$files_status" -eq 0 ]; then
   platform_sensitive_change=$(jq -r '
     (if all(.[]; type == "array") then flatten else . end) |
     any(.[]; [.filename, (.previous_filename? // "")][] |
-      test("^(src-tauri/|src/.*\\.(rs|ts|tsx|js|mjs)$)|(^|/)(windows|macos|darwin|win32|local_files|paths)(/|[._-])"; "i"))
+      test("^(src-tauri/|src/.*\\.(rs|ts|tsx|js|mjs)$)|\\.(ps1|psm1)$|(^|/)(windows|macos|darwin|win32|local_files|paths)(/|[._-])"; "i"))
   ' <<<"$files")
   migration_change=$(jq -r '
     (if all(.[]; type == "array") then flatten else . end) |
@@ -925,6 +803,7 @@ if [ "$files_status" -eq 0 ]; then
       test("(^|[/_.-])(dsc|credential[s]?|certificate[s]?|keystore|secret[s]?)([/_.-]|$)"; "i"))
   ' <<<"$files")
 fi
+validate_security_reviewer() {
 if [ "$security_reviewer_change" = "true" ]; then
   pr_author=$(jq -er '.user.login | strings | select(length > 0)' <<<"$metadata_pr" 2>/dev/null) || pr_author=""
   security_review=false
@@ -952,6 +831,7 @@ if [ "$security_reviewer_change" = "true" ]; then
     say "ok" "separate security-focused reviewer comment names full current head $short"
   fi
 fi
+}
 if [ "$workflow_change" = "true" ]; then
   if ! body_section_has_content "$prbody" 'rollback notes|rollback procedure|migration/sync compatibility and rollback procedure'; then
     bad "workflow change lacks non-empty rollback notes"
@@ -1252,7 +1132,138 @@ $normalized_grouped_numbers"
   fi
 fi
 
-# Re-read all moving identities immediately before emitting a merge command.
+# Fetch mutable review evidence only in this late phase, immediately before the
+# final PR/base identity fence. A prior snapshot can be invalidated by a later
+# provider summary, security comment, or review thread without moving the head.
+: >"$errfile"
+review_status=0
+provider_review=""
+reviews=$(gh api --paginate --slurp "repos/$REPO/pulls/$PR/reviews" 2>"$errfile") || review_status=$?
+if [ "$review_status" -ne 0 ]; then
+  unknown "could not read provider review records"
+elif ! jq -e 'type == "array" and (all(.[]; type == "array") or all(.[]; type == "object"))' <<<"$reviews" >/dev/null 2>&1; then
+  unknown "provider review response was malformed"
+else
+  provider_review=$(jq -r --arg head "$head" '
+    (if all(.[]; type == "array") then flatten else . end) |
+    map(select(.user.login == "chatgpt-codex-connector[bot]" and .user.type == "Bot" and
+               .state == "COMMENTED" and .commit_id == $head)) |
+    if length > 0 then "matched" else "" end
+  ' <<<"$reviews")
+fi
+
+: >"$errfile"
+comment_status=0
+comments=$(gh api --paginate --slurp "repos/$REPO/issues/$PR/comments" 2>"$errfile") || comment_status=$?
+summary_good=0
+if [ "$comment_status" -ne 0 ]; then
+  unknown "could not read provider review summaries"
+elif ! jq -e 'type == "array" and (all(.[]; type == "array") or all(.[]; type == "object"))' <<<"$comments" >/dev/null 2>&1; then
+  unknown "provider review-summary response was malformed"
+else
+  summary_rows=$(jq -r '
+    (if all(.[]; type == "array") then flatten else . end)[] |
+    select(.user.login == "chatgpt-codex-connector[bot]" and .user.type == "Bot") |
+    select((.body // "") | contains("codex-pull-request-review-summary")) |
+    .body
+  ' <<<"$comments" | grep -E '^\| (📝|🔍)' | tail -1)
+  if [ -z "$summary_rows" ]; then
+    bad "no provider review summary row"
+  elif ! grep -Fq "\`$short\`" <<<"$summary_rows"; then
+    bad "latest provider summary names a different head than $short"
+  elif ! grep -Fq 'Completed' <<<"$summary_rows"; then
+    bad "provider review run for $short is not completed"
+  else
+    summary_good=1
+    say "ok" "provider review summary is completed on $short"
+  fi
+fi
+
+if [ "$provider_review" = "matched" ] && [ "$summary_good" -eq 1 ]; then
+  say "ok" "provider review records the full current head $short"
+elif [ "$provider_review" != "matched" ] && [ "$summary_good" -eq 1 ]; then
+  if [ -n "$INDEPENDENT_REVIEW_SHA" ] && [ "$INDEPENDENT_REVIEW_SHA" = "$head" ]; then
+    say "ok" "manual independent review attestation names full current head $short"
+  elif [ -n "$INDEPENDENT_REVIEW_SHA" ]; then
+    bad "manual independent review attestation does not match the current head"
+  else
+    unknown "provider summary exposes only an abbreviated head; pass --independent-review-sha with an exact manual review attestation"
+  fi
+fi
+
+# Paginate the final thread set; partial, changed, duplicate, or unresolved
+# results remain indeterminate/blocking rather than inheriting an earlier read.
+cursor=""
+open_threads=0
+total_threads=-1
+fetched_threads=0
+thread_ids="$tmpdir/final-review-thread-ids"
+: >"$thread_ids"
+thread_ok=1
+while :; do
+  : >"$errfile"
+  page_status=0
+  page=$(gh api graphql -f owner="$OWNER" -f name="$NAME" -F pr="$PR" -f cursor="$cursor" -f query='
+    query($owner:String!,$name:String!,$pr:Int!,$cursor:String){
+      repository(owner:$owner,name:$name){
+        pullRequest(number:$pr){ reviewThreads(first:100,after:$cursor){
+          totalCount pageInfo{hasNextPage endCursor} nodes{id isResolved}
+        }}
+      }
+    }' 2>"$errfile") || page_status=$?
+  if [ "$page_status" -ne 0 ] || ! jq -e '.data.repository.pullRequest.reviewThreads | type == "object" and (.totalCount | type == "number" and floor == . and . >= 0) and (.pageInfo.hasNextPage | type == "boolean") and (.nodes | type == "array" and all(.[]; (.id | type == "string" and length > 0) and (.isResolved | type == "boolean")))' <<<"$page" >/dev/null 2>&1; then
+    unknown "could not read review threads for $REPO#$PR"
+    thread_ok=0
+    break
+  fi
+  page_total=$(jq -r '.data.repository.pullRequest.reviewThreads.totalCount' <<<"$page")
+  if [ "$total_threads" -eq -1 ]; then
+    total_threads="$page_total"
+  elif [ "$page_total" -ne "$total_threads" ]; then
+    unknown "review-thread totalCount changed during pagination"
+    thread_ok=0
+    break
+  fi
+  page_nodes=$(jq '.data.repository.pullRequest.reviewThreads.nodes | length' <<<"$page")
+  jq -r '.data.repository.pullRequest.reviewThreads.nodes[].id' <<<"$page" >>"$thread_ids"
+  fetched_threads=$((fetched_threads + page_nodes))
+  if [ "$fetched_threads" -gt "$total_threads" ]; then
+    unknown "review-thread pagination exceeded totalCount"
+    thread_ok=0
+    break
+  fi
+  page_open=$(jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length' <<<"$page")
+  open_threads=$((open_threads + page_open))
+  has_next=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$page")
+  [ "$has_next" = "true" ] || break
+  if [ "$page_nodes" -eq 0 ]; then
+    unknown "review-thread pagination returned no nodes while claiming another page"
+    thread_ok=0
+    break
+  fi
+  next_cursor=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // empty' <<<"$page")
+  if [ -z "$next_cursor" ] || [ "$next_cursor" = "$cursor" ]; then
+    unknown "review-thread pagination returned no advancing cursor"
+    thread_ok=0
+    break
+  fi
+  cursor="$next_cursor"
+done
+if [ "$thread_ok" -eq 1 ]; then
+  unique_thread_count=$(sort -u "$thread_ids" | wc -l | tr -d ' ')
+  if [ "$unique_thread_count" -ne "$fetched_threads" ]; then
+    unknown "review-thread pagination repeated thread IDs"
+  elif [ "$fetched_threads" -ne "$total_threads" ]; then
+    unknown "review-thread pagination returned $fetched_threads of $total_threads nodes"
+  elif [ "$open_threads" -eq 0 ]; then
+    say "ok" "0 of $total_threads review threads unresolved"
+  else
+    bad "$open_threads of $total_threads review threads unresolved"
+  fi
+fi
+validate_security_reviewer
+
+# Re-read all moving PR and base identities immediately before emitting a merge command.
 : >"$errfile"
 final_meta_status=0
 final_meta=$(gh pr view "$PR" --repo "$REPO" \
@@ -1289,7 +1300,7 @@ text = sys.stdin.read()
 print(re.sub(r"<!--.*?(?:-->|\Z)", "", text, flags=re.S), end="")' <<<"$final_body") || final_visible_status=$?
   [ "$final_visible_status" -eq 0 ] || unknown "could not extract final visible PR description content"
   [ "$final_title" = "$title" ] || bad "PR title changed during preflight"
-  if ! checklist_link_ok "$final_body" "$review_checklist"; then
+  if [ "$checklist_status" -eq 0 ] && ! checklist_link_ok "$final_body" "$review_checklist"; then
     bad "PR description changed and no longer carries a completed same-repository line-specific checklist link"
   fi
   if [ "$raw_final_body" != "$raw_prbody" ]; then

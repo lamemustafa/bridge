@@ -169,12 +169,21 @@ if args[:2] == ["pr", "view"]:
         body = body.replace("#L10", "#L1")
     if scenario == "checklist-anchor-suffix":
         body = body.replace("#L10", "#L10junk")
-    if scenario in {"implementation-p4-present", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale", "migration-rollback-present", "migration-template-wrapped", "security-notes-present", "security-none", "security-pending", "security-review-valid"}:
+    if scenario in {"implementation-p4-present", "implementation-p4-continuation", "platform-evidence-present", "platform-evidence-heading", "platform-powershell-missing", "platform-powershell-evidence", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale", "migration-rollback-present", "migration-template-wrapped", "security-notes-present", "security-none", "security-pending", "security-review-valid"}:
         body += (
             "\n## Scope, reuse, and impact\n\n"
             "- Existing component reused: the existing gate parser and file inventory.\n"
             "- What is deleted (or why no deletion is justified): no duplicate path remains.\n"
             "- What breaks if this is not built: unsafe evidence could reach a merge.\n"
+        )
+    if scenario == "implementation-p4-continuation":
+        body = body.replace(
+            "- Existing component reused: the existing gate parser and file inventory.\n"
+            "- What is deleted (or why no deletion is justified): no duplicate path remains.\n"
+            "- What breaks if this is not built: unsafe evidence could reach a merge.\n",
+            "- Existing component reused:\n  the existing gate parser and file inventory.\n"
+            "- What is deleted (or why no deletion is justified):\n  no duplicate path remains.\n"
+            "- What breaks if this is not built:\n  unsafe evidence could reach a merge.\n",
         )
     if security_case or scenario in {"surface-unpins", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"}:
         body += (
@@ -187,10 +196,17 @@ if args[:2] == ["pr", "view"]:
             "\n- Windows validation evidence: Windows CI ran `python3 scripts/merge-gate.test.py`.\n"
             "- macOS validation evidence: macOS CI ran `python3 scripts/merge-gate.test.py`.\n"
         )
-    if scenario in {"platform-evidence-present", "migration-template-wrapped", "security-notes-present", "security-none", "security-pending", "security-review-valid", "sync-migration-present"}:
+    if scenario in {"platform-evidence-present", "platform-powershell-evidence", "migration-template-wrapped", "security-notes-present", "security-none", "security-pending", "security-review-valid", "sync-migration-present"}:
         body += (
             "\n- Windows validation evidence: Windows CI ran `python3 scripts/merge-gate.test.py`.\n"
             "- macOS validation evidence: macOS CI ran `python3 scripts/merge-gate.test.py`.\n"
+        )
+    if scenario == "platform-evidence-heading":
+        body += (
+            "\n### Windows validation evidence\n\n"
+            "`python3 scripts/merge-gate.test.py` passed on Windows CI.\n"
+            "\n### macOS validation evidence\n\n"
+            "`python3 scripts/merge-gate.test.py` passed on macOS CI.\n"
         )
     if scenario == "platform-checkbox-evidence":
         body += (
@@ -206,7 +222,7 @@ if args[:2] == ["pr", "view"]:
         body += "\n- Windows validation evidence: unaffected\n- macOS validation evidence: unaffected\n"
     if scenario == "platform-unaffected-rationale":
         body += "\n- Windows validation evidence: unaffected because this changes shared documentation only.\n- macOS validation evidence: unaffected because this changes shared documentation only.\n"
-    if scenario in {"platform-evidence-present", "platform-checkbox-evidence", "platform-unaffected-bare", "platform-unaffected-rationale"}:
+    if scenario in {"platform-evidence-present", "platform-evidence-heading", "platform-powershell-missing", "platform-powershell-evidence", "platform-checkbox-evidence", "platform-unaffected-bare", "platform-unaffected-rationale"}:
         body += (
             "\n## Security impact\n\nNo credential material is added.\n"
             "\n## Migration compatibility\n\nExisting callers retain their paths and formats.\n"
@@ -236,7 +252,7 @@ if args[:2] == ["pr", "view"]:
     body = body.replace("blob/HEAD", f"blob/{head}")
     if scenario == "checklist-stale-ref":
         body = body.replace(f"blob/{head}", "blob/" + "f" * 40)
-    one_file = scenario in {"metadata-private", "files-empty", "formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-tab", "unicode-phone-two-lines", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "binary-review", "binary-review-private", "binary-review-head-moves", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "workflow-placeholders", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-none", "security-pending", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "home-macos", "home-unix", "home-windows", "crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path", "gitlink", "implementation-p4-missing", "implementation-p4-present", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders", "platform-evidence-missing", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"} or scenario.startswith("home-") or security_case or sync_case
+    one_file = scenario in {"metadata-private", "files-empty", "formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-tab", "unicode-phone-two-lines", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "binary-review", "binary-review-private", "binary-review-head-moves", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "workflow-placeholders", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-none", "security-pending", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "home-macos", "home-unix", "home-windows", "crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path", "gitlink", "gitlink-existing", "implementation-p4-missing", "implementation-p4-present", "implementation-p4-continuation", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders", "platform-evidence-missing", "platform-evidence-present", "platform-evidence-heading", "platform-powershell-missing", "platform-powershell-evidence", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"} or scenario.startswith("home-") or security_case or sync_case
     selected_base = new_head if scenario == "base-oid-mismatch" else base
     emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
@@ -348,11 +364,15 @@ elif args[:2] == ["pr", "diff"]:
         emit("diff --git a/docs/a b/example.md b/docs/a b/example.md\nsimilarity index 100%\nrename from docs/a b/example.md\nrename to docs/a b/example.md\n")
     elif scenario == "gitlink":
         emit("diff --git a/vendor/module b/vendor/module\nnew file mode 160000\nindex 0000000..2222222\n--- /dev/null\n+++ b/vendor/module\n@@ -0,0 +1 @@\n+Subproject commit 2222222\n")
-    elif scenario in {"implementation-p4-missing", "implementation-p4-present", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders"}:
+    elif scenario == "gitlink-existing":
+        emit("diff --git a/vendor/module b/vendor/module\nindex 1111111..2222222 160000\n--- a/vendor/module\n+++ b/vendor/module\n@@ -1 +1 @@\n-Subproject commit 1111111\n+Subproject commit 2222222\n")
+    elif scenario in {"implementation-p4-missing", "implementation-p4-present", "implementation-p4-continuation", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders"}:
         suffix = {"implementation-p4-shell": "sh", "implementation-p4-powershell": "ps1", "implementation-p4-sql": "sql"}.get(scenario, "py")
         emit(f"diff --git a/scripts/example.{suffix} b/scripts/example.{suffix}\n--- a/scripts/example.{suffix}\n+++ b/scripts/example.{suffix}\n@@ -0,0 +1 @@\n+safe text\n")
-    elif scenario in {"platform-evidence-missing", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale"}:
+    elif scenario in {"platform-evidence-missing", "platform-evidence-present", "platform-evidence-heading", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale"}:
         emit("diff --git a/src-tauri/src/local_files/paths.rs b/src-tauri/src/local_files/paths.rs\n--- a/src-tauri/src/local_files/paths.rs\n+++ b/src-tauri/src/local_files/paths.rs\n@@ -0,0 +1 @@\n+safe text\n")
+    elif scenario in {"platform-powershell-missing", "platform-powershell-evidence"}:
+        emit("diff --git a/scripts/signing.ps1 b/scripts/signing.ps1\n--- a/scripts/signing.ps1\n+++ b/scripts/signing.ps1\n@@ -0,0 +1 @@\n+safe text\n")
     elif scenario in {"migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"}:
         emit("diff --git a/src-tauri/migrations/001.sql b/src-tauri/migrations/001.sql\n--- a/src-tauri/migrations/001.sql\n+++ b/src-tauri/migrations/001.sql\n@@ -0,0 +1 @@\n+safe text\n")
     elif scenario == "separated-dates":
@@ -438,7 +458,7 @@ elif args and args[0] == "api":
         elif scenario == "status-malformed":
             emit([{"sha": head, "state": "success", "total_count": "0", "statuses": []}])
         elif scenario == "status-failed-combined":
-            emit([{"sha": head, "state": "failure", "total_count": 0, "statuses": []}])
+            emit([{"sha": head, "state": "failure", "total_count": 1, "statuses": [{"id": 1, "context": "legacy failed", "state": "failure"}]}])
         else:
             emit([{"sha": head, "state": "success", "total_count": 0, "statuses": []}])
     elif "/pulls/321/commits" in joined:
@@ -563,13 +583,15 @@ elif args and args[0] == "api":
             record = {"filename": "docs/a b/example.md" if scenario != "crlf-diff" else "docs/example.md", "status": status, "additions": 0 if status == "renamed" else 1, "deletions": 0}
             if status == "renamed": record["previous_filename"] = "docs/a b/example.md"
             emit([[record]])
-        elif scenario == "gitlink":
+        elif scenario in {"gitlink", "gitlink-existing"}:
             emit([[{"filename": "vendor/module", "status": "modified", "additions": 1, "deletions": 1}]])
-        elif scenario in {"implementation-p4-missing", "implementation-p4-present", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders"}:
+        elif scenario in {"implementation-p4-missing", "implementation-p4-present", "implementation-p4-continuation", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders"}:
             suffix = {"implementation-p4-shell": "sh", "implementation-p4-powershell": "ps1", "implementation-p4-sql": "sql"}.get(scenario, "py")
             emit([[{"filename": f"scripts/example.{suffix}", "status": "modified", "additions": 1, "deletions": 0}]])
-        elif scenario in {"platform-evidence-missing", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale"}:
+        elif scenario in {"platform-evidence-missing", "platform-evidence-present", "platform-evidence-heading", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale"}:
             emit([[{"filename": "src-tauri/src/local_files/paths.rs", "status": "modified", "additions": 1, "deletions": 0}]])
+        elif scenario in {"platform-powershell-missing", "platform-powershell-evidence"}:
+            emit([[{"filename": "scripts/signing.ps1", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario in {"migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"}:
             emit([[{"filename": "src-tauri/migrations/001.sql", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "control-path":
@@ -588,6 +610,8 @@ elif args and args[0] == "api":
             emit([[{"filename": "docs/example.md", "status": "added", "additions": additions, "deletions": 0}], [{"filename": "docs/second.md", "status": "modified", "additions": 1, "deletions": 0}]])
     elif "/contents/" in joined:
         if "review-checklist.md" in joined:
+            if scenario == "checklist-fetch-fail":
+                fail("controlled checklist read failure")
             checklist = "# Review checklist\n" + "\n" * 8 + "- [ ] Errors are actionable without exposing sensitive values.\n"
             emit({"encoding": "base64", "content": base64.b64encode(checklist.encode()).decode()})
         elif scenario in {"surface-fail", "draft-surface-fail"}:
@@ -956,10 +980,10 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
         self.assert_blocked("protection-missing-gitguardian", "branch protection omits 1 documented")
 
     def test_failing_combined_commit_status_blocks(self):
-        self.assert_indeterminate("status-failed-combined", "head-bound commit-status evidence")
+        self.assert_blocked("status-failed-combined", "combined commit-status evidence reports a failure")
 
     def test_failing_individual_commit_status_blocks(self):
-        self.assert_indeterminate("status-failed-context", "head-bound commit-status evidence")
+        self.assert_blocked("status-failed-context", "combined commit-status evidence reports a failure")
 
     def test_duplicate_thread_ids_are_indeterminate(self):
         self.assert_indeterminate("threads-duplicate-id", "pagination repeated thread IDs")
@@ -1014,7 +1038,9 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_gitlink_requires_explicit_provenance_license_notice_review(self):
-        self.assert_indeterminate("gitlink", "gitlink change(s) require explicit provenance, license, and NOTICE review")
+        for scenario in ("gitlink", "gitlink-existing"):
+            with self.subTest(scenario=scenario):
+                self.assert_indeterminate(scenario, "gitlink change(s) require explicit provenance, license, and NOTICE review")
 
     def test_control_character_in_destination_path_is_indeterminate(self):
         self.assert_indeterminate("control-path", "could not read the complete changed-file set")
@@ -1146,10 +1172,14 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
         self.assert_blocked("p4-placeholders", "all three substantive P4")
         result = self.run_gate("implementation-p4-present")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.run_gate("implementation-p4-continuation")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_platform_sensitive_paths_need_substantive_both_host_evidence(self):
         self.assert_blocked("platform-evidence-missing", "substantive Windows validation")
         result = self.run_gate("platform-evidence-present")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.run_gate("platform-evidence-heading")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         result = self.run_gate("platform-checkbox-evidence")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -1157,6 +1187,17 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
         self.assert_blocked("platform-unaffected-bare", "substantive Windows validation")
         result = self.run_gate("platform-unaffected-rationale")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_powershell_paths_need_both_host_evidence(self):
+        self.assert_blocked("platform-powershell-missing", "substantive Windows validation")
+        result = self.run_gate("platform-powershell-evidence")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_checklist_fetch_failure_stays_indeterminate(self):
+        result = self.run_gate("checklist-fetch-fail")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("could not read review-checklist content", result.stdout)
+        self.assertNotIn("description changed and no longer carries a completed", result.stdout)
 
     def test_database_migration_paths_need_rollback_notes(self):
         self.assert_blocked("migration-rollback-missing", "database migration path lacks non-empty rollback notes")
