@@ -5421,5 +5421,93 @@ def test_transient_final_backup_inspection_reports_named_backup(m):
         assert not list(root.glob("*.part"))
 
 
+def test_rollback_rechecks_backup_path_before_restoring(m):
+    """A retargeted backup source never overwrites the staged destination."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second, foreign, moved = (
+            root / "first.xml", root / "second.xml", root / "foreign.bak", root / "moved.bak")
+        first.write_text("first old")
+        second.write_text("second old")
+        real_replace, real_entry = m.os.replace, m._entry_identity
+        first_destination_checks, retargeted = 0, []
+
+        def fail_second_swap(source, destination):
+            if (pathlib.Path(source).suffix == ".part"
+                    and pathlib.Path(destination).resolve() == second.resolve()):
+                raise OSError("controlled later swap failure")
+            return real_replace(source, destination)
+
+        def retarget_backup_after_rollback_destination_check(path):
+            nonlocal first_destination_checks
+            if pathlib.Path(path).resolve() == first.resolve():
+                first_destination_checks += 1
+                if first_destination_checks == 3:
+                    backup, = root.glob("first.xml.*.bak")
+                    backup.rename(moved)
+                    foreign.write_text("foreign backup bytes")
+                    real_replace(foreign, backup)
+                    retargeted.append(backup)
+            return real_entry(path)
+
+        m.os.replace, m._entry_identity = fail_second_swap, retarget_backup_after_rollback_destination_check
+        try:
+            try:
+                m.write_outputs([(str(first), "first new"), (str(second), "second new")])
+                raise AssertionError("the controlled later swap failure must escape")
+            except OSError as error:
+                detail = str(error) + "\n" + "\n".join(getattr(error, "__notes__", []))
+        finally:
+            m.os.replace, m._entry_identity = real_replace, real_entry
+
+        assert first_destination_checks == 3 and retargeted
+        assert "controlled later swap failure" in detail
+        assert "partially committed output could not be rolled back" in detail
+        assert str(first.resolve()) in detail
+        assert first.read_text() == "first new"
+        assert second.read_text() == "second old"
+        assert moved.read_text() == "first old"
+        assert retargeted[0].read_text() == "foreign backup bytes"
+        assert not list(root.glob("*.part"))
+
+
+def test_commit_rechecks_staged_path_before_replacement(m):
+    """A retargeted .part is refused instead of being installed as output."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination, moved, foreign = (
+            root / "previous.xml", root / "moved.part", root / "foreign.part")
+        destination.write_text("old bytes")
+        real_pin_check, real_replace = m._pinned_original_still_has_one_link, m.os.replace
+        retargeted = []
+
+        def retarget_staged_after_original_check(record):
+            result = real_pin_check(record)
+            staged, = root.glob("previous.xml.*.part")
+            staged.rename(moved)
+            foreign.write_text("foreign staged bytes")
+            real_replace(foreign, staged)
+            retargeted.append(staged)
+            return result
+
+        m._pinned_original_still_has_one_link = retarget_staged_after_original_check
+        try:
+            refusal = refuses(m, "output_path_changed", m.write_outputs,
+                              [(str(destination), "new bytes")])
+        finally:
+            m._pinned_original_still_has_one_link = real_pin_check
+
+        assert retargeted
+        assert "staged output changed before replacement" in str(refusal.code)
+        assert destination.read_text() == "old bytes"
+        assert moved.read_text() == "new bytes"
+        assert retargeted[0].read_text() == "foreign staged bytes"
+        assert not list(root.glob("*.bak"))
+
+
 if __name__ == "__main__":
     raise SystemExit(main())

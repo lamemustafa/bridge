@@ -2225,6 +2225,14 @@ def _restore_backup(swap, failures, metadata_scope_warnings, descriptor_failures
             # intact and reconcile this run's private rollback copy instead
             # of restoring over the foreign inode.
             return _mark_rollback_unavailable(swap, failures, retain_named=True)
+        try:
+            backup_still_current = _entry_identity(backup) == backup_identity
+        except OSError:
+            backup_still_current = False
+        if not backup_still_current:
+            # The named source of the restore can be retargeted after its
+            # digest check.  Do not move a foreign inode over the destination.
+            return _mark_rollback_unavailable(swap, failures, retain_named=True)
         # This observes ownership immediately before the replace. POSIX has no
         # compare-and-swap rename, so a hostile concurrent rename after this
         # check is still outside the CLI's locking authority.
@@ -2648,6 +2656,16 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 raise Refusal(
                     "output_path_changed",
                     f"{supplied_path} changed before replacement; no output was replaced",
+                )
+            try:
+                staged_still_current = (
+                    _entry_identity(temporary["path"]) == temporary["identity"])
+            except OSError:
+                staged_still_current = False
+            if not staged_still_current:
+                raise Refusal(
+                    "output_path_changed",
+                    f"{supplied_path} staged output changed before replacement",
                 )
             pending_swap["swap_started"] = True
             os.replace(temporary["path"], real_path)
