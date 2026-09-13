@@ -1495,10 +1495,6 @@ def windows_destination_refusal(path, accept_inherited):
 def _open_private(path, accept_inherited=False):
     """Create one output file readable only by its owner, and return the handle.
 
-    The XML and the manifest carry counterparty names, amounts, an account
-    label and every narration in the statement. On a shared host the default
-    022 umask would publish all of it as mode 0644.
-
     Always `O_EXCL`: this only ever creates a file that did not exist. On
     Windows that is the rule itself — an overwrite would keep the existing
     file's ACL — and deciding it at create time rather than after an
@@ -1510,36 +1506,9 @@ def _open_private(path, accept_inherited=False):
     if refusal:
         raise refusal
     try:
-        handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
         raise _existing_target_on_windows(path) from None
-    try:
-        # Creation modes are filtered through the process umask.  Reapply the
-        # owner-only contract to the descriptor before any caller writes.
-        os.fchmod(handle, 0o600)
-        return handle
-    except BaseException:
-        os.close(handle)
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
-        raise
-
-
-def _private_mkstemp(**kwargs):
-    """Create an owner-only sibling output despite a restrictive umask."""
-    handle, path = tempfile.mkstemp(**kwargs)
-    try:
-        os.fchmod(handle, 0o600)
-        return handle, path
-    except BaseException:
-        os.close(handle)
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
-        raise
 
 
 def _file_identity(path):
@@ -1719,6 +1688,46 @@ def _owned_path(path, handle, *, created, owned_records=None):
     return record
 
 
+def _claim_owned_output(create, *, created, owned_records):
+    """Register a created or opened descriptor before a caller can own it.
+
+    The factory returns ``(handle, path)``.  If an interrupt lands after a
+    filesystem effect but before collection insertion, the still-pinned inode
+    is reconciled by identity; a replacement at that pathname is never
+    unlinked.  On POSIX, apply the private mode through the descriptor because
+    creation modes are filtered by the process umask.  Windows retains the
+    platform's existing ACL-based creation behavior.
+    """
+    handle = None
+    record = None
+    try:
+        handle, path = create()
+        record = _owned_path(path, handle, created=created)
+        if created and os.name != "nt":
+            os.fchmod(handle, 0o600)
+        owned_records.append(record)
+        return record
+    except BaseException as error:
+        # If registration already reached its collection, the outer handler is
+        # its sole cleanup authority.  Otherwise recover through the pin.
+        if handle is not None and not any(item.get("pin") == handle
+                                          for item in owned_records):
+            failures = []
+            try:
+                identity = _fd_identity(handle)
+            except OSError:
+                # `_owned_path` may already have reconciled and closed it.
+                pass
+            else:
+                fallback = {"path": path, "identity": identity, "pin": handle}
+                if created:
+                    _cleanup_owned_path(fallback, failures)
+                else:
+                    _close_owned_path(fallback, failures)
+            _note_cleanup_failures(error, failures)
+        raise
+
+
 def _claimed_output_changed(supplied_path, canonical_path, identity):
     """Whether the pathname still names the descriptor-backed claimed inode.
 
@@ -1735,7 +1744,7 @@ def _claimed_output_changed(supplied_path, canonical_path, identity):
         return True
 
 
-def _close_owned_path(record, failures):
+def _close_owned_path(record, failures, diagnostic_path=None):
     """Release an ownership pin only after its cleanup decision is complete."""
     handle = record.get("pin")
     if handle is None:
@@ -1747,7 +1756,7 @@ def _close_owned_path(record, failures):
         # close can fail after taking effect. Only an extant owned entry is a
         # retained-path failure; an already-unlinked backup has no such path.
         try:
-            cleanup_path = record.get("cleanup_path", record["path"])
+            cleanup_path = diagnostic_path or record.get("cleanup_path", record["path"])
             if _entry_identity(cleanup_path) == record["identity"]:
                 failures.append(cleanup_path)
         except FileNotFoundError:
@@ -2086,7 +2095,8 @@ def _cleanup_committed_outputs(replaced, claimed, retained_failures, descriptor_
         # A claimed path did not exist before this run. Its close failure cannot
         # retain a prior sensitive copy, so keep that diagnostic distinct from
         # a backup that an operator must protect or remove.
-        _close_owned_path(record, descriptor_failures)
+        _close_owned_path(
+            record, descriptor_failures, diagnostic_path=record.get("canonical_path"))
 
 
 def _reconcile_interrupted_committed_cleanup(
@@ -2123,7 +2133,8 @@ def _reconcile_interrupted_committed_cleanup(
             _close_owned_path(backup, retained_failures)
             _close_owned_path(swap["original"], retained_failures)
     for record in claimed:
-        _close_owned_path(record, descriptor_failures)
+        _close_owned_path(
+            record, descriptor_failures, diagnostic_path=record.get("canonical_path"))
 
 
 def write_outputs(targets, accept_inherited=False, after_claim=None):
@@ -2202,10 +2213,9 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 # a visible sibling.  A replacement before this open is the
                 # requested current path; a replacement after it is detected
                 # before this run has authority to create or swap output.
-                original_handle = _open_regular_output(real_path, None)
-                original = _owned_path(
-                    real_path, original_handle, created=False,
-                    owned_records=unpaired_originals)
+                original = _claim_owned_output(
+                    lambda: (_open_regular_output(real_path, None), real_path),
+                    created=False, owned_records=unpaired_originals)
                 original_identity = original["identity"]
                 state = {"temporary": None, "supplied_path": path,
                          "real_path": real_path,
@@ -2217,11 +2227,12 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                         "output_path_changed",
                         f"{path} changed while it was being claimed",
                     )
-                handle, temporary = _private_mkstemp(
-                    dir=os.path.dirname(real_path),
-                    prefix=os.path.basename(real_path) + ".", suffix=".part")
-                record = _owned_path(temporary, handle, created=True,
-                                     owned_records=claimed)
+                record = _claim_owned_output(
+                    lambda: tempfile.mkstemp(
+                        dir=os.path.dirname(real_path),
+                        prefix=os.path.basename(real_path) + ".", suffix=".part"),
+                    created=True, owned_records=claimed)
+                temporary = record["path"]
                 record["supplied_path"] = path
                 record["canonical_path"] = real_path
                 record["cleanup_path"] = temporary
@@ -2232,8 +2243,8 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 # Register this newly created inode before returning to an
                 # interruptible caller line.  The record is the cleanup owner
                 # even if a signal arrives before its path metadata is filled.
-                record = _owned_path(
-                    canonical_path, _open_private(canonical_path, accept_inherited),
+                record = _claim_owned_output(
+                    lambda: (_open_private(canonical_path, accept_inherited), canonical_path),
                     created=True, owned_records=claimed)
                 # Keep cleanup on the canonical inode path captured before the
                 # open. The supplied spelling remains an authority that must
@@ -2268,11 +2279,12 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             temporary = state["temporary"]
             supplied_path, real_path = state["supplied_path"], state["real_path"]
             original_identity = state["original_identity"]
-            backup_handle, backup = _private_mkstemp(
-                dir=os.path.dirname(real_path),
-                prefix=os.path.basename(real_path) + ".", suffix=".bak")
-            pending_backup = _owned_path(
-                backup, backup_handle, created=True, owned_records=unpaired_backups)
+            pending_backup = _claim_owned_output(
+                lambda: tempfile.mkstemp(
+                    dir=os.path.dirname(real_path),
+                    prefix=os.path.basename(real_path) + ".", suffix=".bak"),
+                created=True, owned_records=unpaired_backups)
+            backup_handle, backup = pending_backup["pin"], pending_backup["path"]
             pending_swap = {"backup": pending_backup, "destination": real_path,
                             "original_identity": original_identity,
                             "staged_identity": temporary["identity"],
@@ -2358,11 +2370,6 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
         # cleanup. Keep it in this same handler so an interrupt before cleanup
         # starts cannot skip both recovery paths.
         committed = True
-        # The rollback handler still needs the old .part spelling until this
-        # boundary.  Once committed, bind close diagnostics to the live output.
-        for state in staged:
-            state["temporary"]["path"] = state["real_path"]
-            state["temporary"]["cleanup_path"] = state["real_path"]
         _cleanup_committed_outputs(
             replaced, claimed, cleanup_failures, descriptor_close_failures)
         if cleanup_failures:
