@@ -5497,7 +5497,7 @@ def test_rollback_rechecks_backup_path_before_restoring(m):
         finally:
             m.os.replace, m._entry_identity = real_replace, real_entry
 
-        assert first_destination_checks == 3 and retargeted
+        assert first_destination_checks == 4 and retargeted
         assert "controlled later swap failure" in detail
         assert "partially committed output could not be rolled back" in detail
         assert str(first.resolve()) in detail
