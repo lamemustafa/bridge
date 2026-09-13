@@ -145,6 +145,10 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
     ];
     #[cfg(feature = "lab-writes")]
     names.push("lab_read_inventory");
+    #[cfg(feature = "lab-writes")]
+    names.push("lab_import_masters");
+    #[cfg(feature = "lab-writes")]
+    names.push("lab_import_vouchers");
     Value::Array(
         names
             .into_iter()
@@ -156,7 +160,12 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
             // LAB-ONLY: registered only when the `lab-writes` feature is
             // compiled in AND `BRIDGE_LAB_WRITES=1` is set (checked fresh on
             // every catalog build, not cached at startup).
-            .filter(|name| *name != "lab_read_inventory" || lab_tools_env_enabled())
+            .filter(|name| {
+                !matches!(
+                    name,
+                    &"lab_read_inventory" | &"lab_import_masters" | &"lab_import_vouchers"
+                ) || lab_tools_env_enabled()
+            })
             .map(|name| {
                 let (description, input_schema) = match name {
                     "voucher_schema" => (
@@ -219,6 +228,14 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
                         "LAB-ONLY. Compiled only behind the `lab-writes` feature and refuses unless BRIDGE_LAB_WRITES=1, BRIDGE_TALLY_PORT=9001, and BRIDGE_LAB_TARGET_GUID/BRIDGE_LAB_DENY_GUIDS are both set to well-formed GUIDs. This is a read: company_guid selects the company like any other read tool and is verified the same way (`company_identity_not_found`/`company_identity_ambiguous`), independent of the configured lab target -- the stronger loaded-company/deny-list guard applies only to a lab write batch, not a read. Read-only: units, godowns, stock groups and stock items (parent, base unit, opening qty/rate/value, GST/HSN fields as returned, unclassified), plus inventory entries per voucher for a date window. Reuses the same windowing and window_honoured corroboration as `vouchers`. No signed compatibility evidence exists yet for any inventory field on this Tally release/mode -- treat every value as exploratory.",
                         json!({"type":"object","additionalProperties":false,"required":["company_guid","from","to"],"properties":{"company_guid":{"type":"string","minLength":1},"from":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"to":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"offset":{"type":"integer","minimum":0,"default":0},"limit":{"type":"integer","minimum":1,"default":500}}}),
                     ),
+                    "lab_import_masters" => (
+                        "LAB-ONLY (Phase 3.4). Compiled only behind `lab-writes`; refuses unless BRIDGE_LAB_WRITES=1, BRIDGE_TALLY_PORT=9001, and BRIDGE_LAB_TARGET_GUID/BRIDGE_LAB_DENY_GUIDS are set. Creates masters (units, godowns, stock groups, groups, ledgers, stock items, in that order) from the book model's `masters` section (inline `masters` or a `book_path` local JSON file). Re-verifies the loaded-company/deny-list/target-identity guard before every batch (<=200 masters). Refuses before any write if the target already carries a same-name master under any requested kind (the Create-overwrite trap, §9.4) -- `lab_master_already_exists`. Every batch is read back field-by-field (name, parent, opening balance/qty, GST fields) and the whole call stops on the first mismatch; never trusts CREATED/ERRORS alone. Group/Unit/Godown/StockGroup/StockItem XML shapes have no live capture in this repository and are UNVERIFIED for the gateway -- see the tool's module documentation.",
+                        json!({"type":"object","additionalProperties":false,"required":["company_guid"],"properties":{"company_guid":{"type":"string","minLength":1},"masters":{"type":"object"},"book_path":{"type":"string","minLength":1}}}),
+                    ),
+                    "lab_import_vouchers" => (
+                        "LAB-ONLY (Phase 3.5). Compiled only behind `lab-writes`; refuses unless BRIDGE_LAB_WRITES=1, BRIDGE_TALLY_PORT=9001, and BRIDGE_LAB_TARGET_GUID/BRIDGE_LAB_DENY_GUIDS are set. Creates vouchers (Journal/Payment/Receipt/Contra plus accounting- and invoice-mode Sales/Purchase/Credit Note/Debit Note) from the book model's `vouchers` section (inline `vouchers` or a `book_path` local JSON file), sorted by date and posted in batches of at most 100. Re-verifies the loaded-company/deny-list/target-identity guard before every batch. Before sending a batch, reads its date window back and checks every voucher against a narration-marker/voucher-number plus type/date/ledger-amount fingerprint: a fully-matched batch is skipped (resume), a partially-matched batch stops with `lab_batch_partially_verified_uncertain` rather than guessing, and only an unmatched batch is sent. Every sent batch is read back the same way and the whole call stops on the first mismatch. Invoice-mode XML (`LEDGERENTRIES.LIST`/`ALLINVENTORYENTRIES.LIST`) and every type but Sales/Journal/Payment/Receipt/Contra are UNVERIFIED for the gateway -- see the tool's module documentation. `start_batch` resumes a prior call.",
+                        json!({"type":"object","additionalProperties":false,"required":["company_guid"],"properties":{"company_guid":{"type":"string","minLength":1},"vouchers":{"type":"array"},"book_path":{"type":"string","minLength":1},"start_batch":{"type":"integer","minimum":0,"default":0}}}),
+                    ),
                     _ => (
                         "Bridge read-only Tally tool",
                         json!({"type":"object", "additionalProperties": false}),
@@ -230,6 +247,9 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
                 }
                 if name == "lab_read_inventory" {
                     tool["annotations"] = json!({"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":true});
+                }
+                if matches!(name, "lab_import_masters" | "lab_import_vouchers") {
+                    tool["annotations"] = json!({"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true});
                 }
                 tool
             })

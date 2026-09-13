@@ -648,7 +648,10 @@ impl Server {
             return Err("import_posting_disabled".to_string().into());
         }
         #[cfg(feature = "lab-writes")]
-        if name == "lab_read_inventory" {
+        if matches!(
+            name,
+            "lab_read_inventory" | "lab_import_masters" | "lab_import_vouchers"
+        ) {
             lab::require_lab_writes_env()?;
         }
         validate_tool_arguments(name, args)?;
@@ -693,6 +696,10 @@ impl Server {
             "egress_log" => self.egress_log(args).map_err(Into::into),
             #[cfg(feature = "lab-writes")]
             "lab_read_inventory" => lab::lab_read_inventory(self, args).await,
+            #[cfg(feature = "lab-writes")]
+            "lab_import_masters" => lab::lab_import_masters(self, args).await,
+            #[cfg(feature = "lab-writes")]
+            "lab_import_vouchers" => lab::lab_import_vouchers(self, args).await,
             _ => Err("tool_not_found".to_string().into()),
         }
     }
