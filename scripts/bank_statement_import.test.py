@@ -4834,5 +4834,112 @@ def test_interrupted_cleanup_skips_closed_missing_backup_and_closes_later_pins(m
         assert records[1]["pin"] is None and records[2]["pin"] is None and records[3]["pin"] is None
 
 
+def test_initial_existing_claim_disappearance_is_a_typed_refusal(m):
+    """A vanished existing leaf must not escape as an untyped open failure."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "previous.xml"
+        destination.write_text("old bytes")
+        real_open = m._open_regular_output
+
+        def remove_before_open(path, *args):
+            if pathlib.Path(path).resolve() == destination.resolve():
+                destination.unlink()
+            return real_open(path, *args)
+
+        m._open_regular_output = remove_before_open
+        try:
+            refusal = refuses(m, "output_path_changed", m.write_outputs,
+                              [(str(destination), "new bytes")])
+        finally:
+            m._open_regular_output = real_open
+
+        assert "changed while it was being claimed" in str(refusal.code)
+        assert not destination.exists()
+        assert not list(pathlib.Path(directory).glob("*.part"))
+        assert not list(pathlib.Path(directory).glob("*.bak"))
+
+
+def test_uninspectable_backup_pin_reports_partial_destination(m):
+    """Rollback pin errors retain the original failure and name the new destination."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_replace = m.os.replace
+        real_pin_check = m._pinned_backup_still_has_one_link
+        first_backup_checks = 0
+
+        def fail_second_swap(source, destination):
+            if (pathlib.Path(source).suffix == ".part"
+                    and pathlib.Path(destination).resolve() == second.resolve()):
+                raise OSError("controlled later swap failure")
+            return real_replace(source, destination)
+
+        def fail_first_backup_pin_during_rollback(record):
+            nonlocal first_backup_checks
+            if pathlib.Path(record["path"]).name.startswith("first.xml."):
+                first_backup_checks += 1
+                if first_backup_checks == 2:
+                    raise OSError("controlled backup pin inspection failure")
+            return real_pin_check(record)
+
+        m.os.replace = fail_second_swap
+        m._pinned_backup_still_has_one_link = fail_first_backup_pin_during_rollback
+        try:
+            try:
+                m.write_outputs([(str(first), "first new"), (str(second), "second new")])
+                raise AssertionError("the controlled later swap failure must escape")
+            except OSError as error:
+                detail = str(error) + "\n" + "\n".join(getattr(error, "__notes__", []))
+        finally:
+            m.os.replace = real_replace
+            m._pinned_backup_still_has_one_link = real_pin_check
+
+        assert first_backup_checks == 2
+        assert "controlled later swap failure" in detail
+        assert "partially committed output could not be rolled back" in detail
+        assert str(first.resolve()) in detail
+        assert first.read_text() == "first new"
+        assert second.read_text() == "second old"
+        backup, = root.glob("first.xml.*.bak")
+        assert backup.read_text() == "first old"
+        assert not list(root.glob("*.part"))
+
+
+def test_staged_output_in_place_mutation_refuses_before_replacement(m):
+    """A stable staged inode still needs byte-for-byte ownership at commit."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "previous.xml"
+        destination.write_text("old bytes")
+        real_copy = m._copy_private_backup
+
+        def mutate_staged_after_backup(source_path, *args):
+            result = real_copy(source_path, *args)
+            if pathlib.Path(source_path).resolve() == destination.resolve():
+                staged, = root.glob("previous.xml.*.part")
+                staged.write_text("foreign staged bytes")
+            return result
+
+        m._copy_private_backup = mutate_staged_after_backup
+        try:
+            refusal = refuses(m, "output_path_changed", m.write_outputs,
+                              [(str(destination), "new bytes")])
+        finally:
+            m._copy_private_backup = real_copy
+
+        assert "staged output changed before replacement" in str(refusal.code)
+        assert destination.read_text() == "old bytes"
+        assert not list(root.glob("*.part"))
+        assert not list(root.glob("*.bak"))
+
+
 if __name__ == "__main__":
     raise SystemExit(main())

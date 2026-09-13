@@ -2160,8 +2160,11 @@ def _restore_backup(swap, failures, metadata_scope_warnings, descriptor_failures
         # actual destination, never by the vanished private spelling.
         return _mark_rollback_unavailable(swap, failures)
     except OSError:
+        # An uninspectable pin leaves the named backup insufficient evidence
+        # that rollback remains safe.  Preserve its known name, but report the
+        # actual staged destination as a partial commit for the caller.
         failures.append(backup)
-        return None
+        return _mark_rollback_unavailable(swap, failures)
     try:
         if _entry_identity(backup) != backup_identity:
             return _mark_rollback_unavailable(swap, failures)
@@ -2405,9 +2408,19 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 # a visible sibling.  A replacement before this open is the
                 # requested current path; a replacement after it is detected
                 # before this run has authority to create or swap output.
-                original = _claim_owned_output(
-                    lambda: (_open_regular_output(real_path, None), real_path),
-                    created=False, owned_records=unpaired_originals)
+                try:
+                    original = _claim_owned_output(
+                        lambda: (_open_regular_output(real_path, None), real_path),
+                        created=False, owned_records=unpaired_originals)
+                except OSError:
+                    # A path which disappears between exists() and the pinned
+                    # open is a claim-time retarget, not an untyped filesystem
+                    # failure.  Nothing has been staged yet, so refuse it in
+                    # the same typed channel as the later revalidation.
+                    raise Refusal(
+                        "output_path_changed",
+                        f"{path} changed while it was being claimed",
+                    ) from None
                 original_identity = original["identity"]
                 state = {"temporary": None, "supplied_path": path,
                          "real_path": real_path,
@@ -2470,6 +2483,12 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             handle = os.dup(record["pin"])
             with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
                 stream.write(text)
+            # ``_open_private`` retains a write-only ownership pin, so retain
+            # the exact UTF-8/no-translation payload digest here.  A later
+            # in-place edit of a staged .part preserves its entry identity and
+            # link count, so those checks alone cannot prove it is still this
+            # run's output.
+            record["digest"] = hashlib.sha256(text.encode("utf-8")).digest()
         # Every payload is on disk. A private copy preserves the old bytes while
         # the requested destination stays present until the atomic replacement.
         for state in staged:
@@ -2523,6 +2542,16 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                     f"{supplied_path} changed after it was claimed; no output was replaced",
                 )
             if _entry_identity(temporary["path"]) != temporary["identity"]:
+                raise Refusal(
+                    "output_path_changed",
+                    f"{supplied_path} staged output changed before replacement",
+                )
+            try:
+                staged_digest_matches = (
+                    _digest_pinned_bytes(temporary["pin"]) == temporary["digest"])
+            except OSError:
+                staged_digest_matches = False
+            if not staged_digest_matches:
                 raise Refusal(
                     "output_path_changed",
                     f"{supplied_path} staged output changed before replacement",
