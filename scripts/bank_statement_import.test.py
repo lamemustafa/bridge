@@ -6060,5 +6060,118 @@ def test_final_output_pin_fstat_failure_is_a_typed_path_change(m):
         assert not destination.exists()
 
 
+def test_backup_source_disappearance_is_typed_and_reconciles_the_original_pin(m):
+    """A source lost before backup open keeps its moved original visible."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination, moved = root / "previous.xml", root / "moved.xml"
+        destination.write_text("old bytes")
+        real_open = m._open_regular_output
+
+        def remove_before_backup_source_open(path, expected_identity=None):
+            if (expected_identity is not None
+                    and pathlib.Path(path).resolve() == destination.resolve()):
+                destination.rename(moved)
+            return real_open(path, expected_identity)
+
+        m._open_regular_output = remove_before_backup_source_open
+        try:
+            refusal = refuses(m, "output_path_changed", m.write_outputs,
+                              [(str(destination), "new bytes")])
+        finally:
+            m._open_regular_output = real_open
+
+        detail = str(refusal.code)
+        assert "disappeared before its rollback source could be opened" in detail
+        assert "owned output could not be located after cleanup" in detail
+        assert not destination.exists()
+        assert moved.read_text() == "old bytes"
+        assert not list(root.glob("*.part"))
+        assert not list(root.glob("*.bak"))
+
+
+def test_pre_replacement_backup_pin_fstat_failure_is_a_typed_path_change(m):
+    """A backup descriptor inspection error cannot escape as an OSError."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "previous.xml"
+        destination.write_text("old bytes")
+        real_copy, real_fstat = m._copy_private_backup, m.os.fstat
+        backup_pins = set()
+
+        def arm_backup_pin_failure(source_path, identity, backup_handle):
+            result = real_copy(source_path, identity, backup_handle)
+            backup_pins.add(backup_handle)
+            m.os.fstat = fail_backup_pin_fstat
+            return result
+
+        def fail_backup_pin_fstat(handle):
+            if handle in backup_pins:
+                m.os.fstat = real_fstat
+                raise OSError("controlled backup pin fstat failure")
+            return real_fstat(handle)
+
+        m._copy_private_backup = arm_backup_pin_failure
+        try:
+            refusal = refuses(m, "output_path_changed", m.write_outputs,
+                              [(str(destination), "new bytes")])
+        finally:
+            m._copy_private_backup = real_copy
+            m.os.fstat = real_fstat
+
+        assert "rollback copy ownership could not be verified" in str(refusal.code)
+        assert destination.read_text() == "old bytes"
+        assert not list(pathlib.Path(directory).glob("*.part"))
+        assert not list(pathlib.Path(directory).glob("*.bak"))
+
+
+def test_pre_replacement_original_pin_fstat_failure_is_a_typed_path_change(m):
+    """An original descriptor inspection error cannot escape as an OSError."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "previous.xml"
+        destination.write_text("old bytes")
+        real_open, real_copy, real_fstat = (
+            m._open_regular_output, m._copy_private_backup, m.os.fstat)
+        original_pins = set()
+
+        def remember_original_pin(path, expected_identity=None):
+            handle = real_open(path, expected_identity)
+            if (expected_identity is None
+                    and pathlib.Path(path).resolve() == destination.resolve()):
+                original_pins.add(handle)
+            return handle
+
+        def arm_original_pin_failure(*args):
+            result = real_copy(*args)
+            m.os.fstat = fail_original_pin_fstat
+            return result
+
+        def fail_original_pin_fstat(handle):
+            if handle in original_pins:
+                m.os.fstat = real_fstat
+                raise OSError("controlled original pin fstat failure")
+            return real_fstat(handle)
+
+        m._open_regular_output = remember_original_pin
+        m._copy_private_backup = arm_original_pin_failure
+        try:
+            refusal = refuses(m, "output_path_changed", m.write_outputs,
+                              [(str(destination), "new bytes")])
+        finally:
+            m._open_regular_output = real_open
+            m._copy_private_backup = real_copy
+            m.os.fstat = real_fstat
+
+        assert "original ownership could not be verified" in str(refusal.code)
+        assert destination.read_text() == "old bytes"
+        assert not list(pathlib.Path(directory).glob("*.part"))
+        assert not list(pathlib.Path(directory).glob("*.bak"))
+
+
 if __name__ == "__main__":
     raise SystemExit(main())

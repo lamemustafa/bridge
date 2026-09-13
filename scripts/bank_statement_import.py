@@ -2635,8 +2635,20 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             pending_swap["original"] = state["original"]
             pending_swap["metadata"] = _metadata_from_handle(
                 real_path, pending_swap["original"]["pin"])
-            pending_swap["backup"]["digest"] = _copy_private_backup(
-                real_path, original_identity, backup_handle)
+            try:
+                pending_swap["backup"]["digest"] = _copy_private_backup(
+                    real_path, original_identity, backup_handle)
+            except FileNotFoundError:
+                # The existing destination remains pinned even when its path
+                # disappears before the backup source can open.  Reconcile
+                # that inode before recovery releases it, then expose this as
+                # the same typed authority failure as later path races.
+                _reconcile_owned_pin_after_cleanup(
+                    pending_swap["original"], "missing", cleanup_failures)
+                raise Refusal(
+                    "output_path_changed",
+                    f"{supplied_path} disappeared before its rollback source could be opened",
+                ) from None
             # The destination stays present until this one atomic replacement.
             # `pending_swap` is set first because an interrupt may arrive after
             # the filesystem call has taken effect but before it returns.
@@ -2692,12 +2704,26 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                     "output_path_changed",
                     f"{supplied_path} rollback copy changed before replacement",
                 )
-            _pinned_backup_still_has_one_link(pending_swap["backup"])
+            try:
+                _pinned_backup_still_has_one_link(pending_swap["backup"])
+            except OSError:
+                raise Refusal(
+                    "output_path_changed",
+                    f"{supplied_path} rollback copy ownership could not be verified "
+                    "before replacement",
+                ) from None
             # The first pin checked that the original was single-linked. A
             # backup hook can still add an alias before the commit boundary;
             # recheck this pinned inode so replacement never detaches a new
             # hard link while reporting a successful overwrite.
-            _pinned_original_still_has_one_link(pending_swap["original"])
+            try:
+                _pinned_original_still_has_one_link(pending_swap["original"])
+            except OSError:
+                raise Refusal(
+                    "output_path_changed",
+                    f"{supplied_path} original ownership could not be verified "
+                    "before replacement",
+                ) from None
             try:
                 original_still_current = (
                     _entry_identity(real_path) == original_identity)
