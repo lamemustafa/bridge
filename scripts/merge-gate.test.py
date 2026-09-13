@@ -21,7 +21,7 @@ FAKE_GH = r'''#!/usr/bin/env python3
 import base64, json, os, sys
 args = sys.argv[1:]
 scenario = os.environ.get("GATE_SCENARIO", "pass")
-security_case = scenario.startswith("security-review-") or scenario in {"security-camel-dsc", "security-camel-credential"}
+security_case = scenario.startswith("security-review-") or scenario in {"security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native"}
 sync_case = scenario.startswith("sync-")
 head = "0123456789abcdef0123456789abcdef01234567"
 new_head = "fedcba9876543210fedcba9876543210fedcba98"
@@ -34,6 +34,18 @@ def emit(value):
 def fail(message="controlled API failure"):
     print(message, file=sys.stderr)
     raise SystemExit(1)
+
+def next_counter(name):
+    path = os.environ.get(name)
+    if not path:
+        return 0
+    try:
+        count = int(open(path).read())
+    except (FileNotFoundError, ValueError):
+        count = 0
+    with open(path, "w") as counter:
+        counter.write(str(count + 1))
+    return count
 
 if args[:2] == ["pr", "view"]:
     counter_path = os.environ.get("GATE_COUNTER")
@@ -109,6 +121,13 @@ if args[:2] == ["pr", "view"]:
             "## Migration compatibility\n\nNo persisted data changes.\n\n"
             "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10)"
         )
+    elif scenario == "workflow-sibling-migration":
+        body = (
+            "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
+            "## Validation and evidence\n\n`python3 scripts/merge-gate.test.py`\n\n"
+            "## Rollback notes\n\n- Migration compatibility: No persisted data changes.\n\n"
+            "- [x] [Errors](https://github.com/lamemustafa/bridge/blob/HEAD/review-checklist.md#L10)"
+        )
     elif scenario in {"security-notes-present", "security-none", "security-pending", "surface-unpins"}:
         security_impact = "None" if scenario == "security-none" else ("pending" if scenario == "security-pending" else "No credential material is added; the Tally path change is reviewed.")
         body = (
@@ -167,6 +186,8 @@ if args[:2] == ["pr", "view"]:
         body = body.replace("`python3 scripts/merge-gate.test.py`", "Tests not run; cargo is available")
     if scenario == "validation-placeholder-command":
         body = body.replace("`python3 scripts/merge-gate.test.py`", "`cargo ...`")
+    if scenario == "dependency-manifest-present":
+        body += "\n## Dependency justification\n\nThe parser library is required for the sealed response format.\n"
     if scenario == "checklist-heading":
         body = body.replace("#L10", "#L1")
     if scenario == "checklist-anchor-suffix":
@@ -268,7 +289,7 @@ if args[:2] == ["pr", "view"]:
     body = body.replace("blob/HEAD", f"blob/{head}")
     if scenario == "checklist-stale-ref":
         body = body.replace(f"blob/{head}", "blob/" + "f" * 40)
-    one_file = scenario in {"metadata-private", "files-empty", "formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-tab", "unicode-phone-two-lines", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "binary-review", "binary-review-private", "binary-review-head-moves", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "workflow-placeholders", "workflow-punctuated-placeholders", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-none", "security-pending", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "home-macos", "home-unix", "home-windows", "crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path", "gitlink", "gitlink-existing", "implementation-p4-missing", "implementation-p4-present", "implementation-p4-continuation", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders", "platform-evidence-missing", "platform-evidence-present", "platform-evidence-heading", "platform-powershell-missing", "platform-powershell-evidence", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale", "platform-evidence-bare-label", "platform-evidence-sibling-list", "platform-evidence-empty-fence", "platform-evidence-punctuated-placeholder", "platform-evidence-fenced-continuation", "platform-evidence-package-manager", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"} or scenario.startswith("home-") or security_case or sync_case
+    one_file = scenario in {"metadata-private", "files-empty", "formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-tab", "unicode-phone-two-lines", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "grouped-identifier-mixed", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "binary-review", "binary-review-private", "binary-review-head-moves", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-sibling-migration", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "workflow-placeholders", "workflow-punctuated-placeholders", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-none", "security-pending", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "dependency-manifest-missing", "dependency-manifest-present", "home-macos", "home-unix", "home-windows", "crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path", "gitlink", "gitlink-existing", "implementation-p4-missing", "implementation-p4-present", "implementation-p4-continuation", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders", "platform-evidence-missing", "platform-evidence-present", "platform-evidence-heading", "platform-powershell-missing", "platform-powershell-evidence", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale", "platform-evidence-bare-label", "platform-evidence-sibling-list", "platform-evidence-empty-fence", "platform-evidence-punctuated-placeholder", "platform-evidence-fenced-continuation", "platform-evidence-package-manager", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"} or scenario.startswith("home-") or security_case or sync_case
     selected_base = new_head if scenario == "base-oid-mismatch" else base
     emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
@@ -292,7 +313,9 @@ elif args[:2] == ["pr", "checks"]:
               {"bucket": "skipping", "name": "Optional documentation"}])
 elif args[:2] == ["pr", "diff"]:
     if security_case:
-        emit("diff --git a/src-tauri/src/dsc.rs b/src-tauri/src/dsc.rs\n--- a/src-tauri/src/dsc.rs\n+++ b/src-tauri/src/dsc.rs\n@@ -0,0 +1 @@\n+safe check\n")
+        paths = {"security-axal-frontend": "src/AxalScreen.tsx", "security-axal-native": "src-tauri/src/axal.rs"}
+        path = paths.get(scenario, "src-tauri/src/dsc.rs")
+        emit(f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -0,0 +1 @@\n+safe check\n")
     elif sync_case:
         emit("diff --git a/src-tauri/src/sync.rs b/docs/retired.rs\nsimilarity index 100%\nrename from src-tauri/src/sync.rs\nrename to docs/retired.rs\n")
     elif scenario == "formatted-phone":
@@ -326,12 +349,15 @@ elif args[:2] == ["pr", "diff"]:
     elif scenario == "repeated-phone":
         phone = "6" + "6" * 9
         emit(f"diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic {phone}\n")
-    elif scenario in {"grouped-identifier-12", "grouped-identifier-16"}:
+    elif scenario in {"grouped-identifier-12", "grouped-identifier-16", "grouped-identifier-mixed"}:
         identifier = (" ".join(("8421", "7654", "9012")) if scenario.endswith("12")
-                      else "-".join(("8421", "7654", "9012", "3456")))
+                      else ("8421 7654-9012 3456" if scenario == "grouped-identifier-mixed"
+                            else "-".join(("8421", "7654", "9012", "3456"))))
         emit(f"diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic {identifier}\n")
-    elif scenario in {"workflow-notes-missing", "workflow-notes-present"}:
+    elif scenario in {"workflow-notes-missing", "workflow-notes-present", "workflow-sibling-migration"}:
         emit("diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ -0,0 +1 @@\n+safe workflow text\n")
+    elif scenario in {"dependency-manifest-missing", "dependency-manifest-present"}:
+        emit("diff --git a/package.json b/package.json\n--- a/package.json\n+++ b/package.json\n@@ -0,0 +1 @@\n+safe dependency metadata\n")
     elif scenario in {"workflow-delete", "workflow-delete-notes"}:
         emit("diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n--- a/.github/workflows/ci.yml\n+++ /dev/null\n@@ -1 +0,0 @@\n-safe workflow text\n")
     elif scenario in {"workflow-rename-out", "workflow-rename-out-notes"}:
@@ -409,6 +435,8 @@ elif args[:2] == ["pr", "diff"]:
 elif args and args[0] == "api":
     joined = " ".join(args)
     if "graphql" in args:
+        if scenario == "threads-first-empty-cursor-rejected" and "cursor=" in args:
+            fail("the first review-thread request must omit cursor")
         def thread_nodes(start, count, unresolved=False):
             return [{"id": f"thread-{index}", "isResolved": not (unresolved and index == start)}
                     for index in range(start, start + count)]
@@ -439,6 +467,7 @@ elif args and args[0] == "api":
             emit({"status": "ahead", "behind_by": 0,
                   "merge_base_commit": {"sha": base}})
     elif "/commits/" in joined and "/check-runs" in joined:
+        check_call = next_counter("GATE_CHECK_COUNTER")
         if scenario == "check-run-wrong-head":
             run_head = new_head
         else:
@@ -446,12 +475,13 @@ elif args and args[0] == "api":
         total_count = 3 if scenario == "check-run-count-mismatch" else 2
         second_id = 1 if scenario == "check-run-duplicate-id" else 2
         run_status = "queued" if scenario == "check-run-incomplete" else "completed"
-        conclusion = "failure" if scenario == "check-run-failed" else ("skipped" if scenario in {"check-run-required-skip", "check-run-optional-skip"} else "success")
+        conclusion = "failure" if scenario in {"check-run-failed", "late-check-run-failure"} and (scenario != "late-check-run-failure" or check_call > 0) else ("skipped" if scenario in {"check-run-required-skip", "check-run-optional-skip"} else "success")
         run_name = "Optional changed after rollup" if scenario in {"check-run-failed", "check-run-optional-skip"} else "Required checks"
         emit([{"total_count": total_count, "check_runs": [
             {"id": 1, "name": run_name, "head_sha": run_head, "status": run_status, "conclusion": conclusion},
             {"id": second_id, "name": "Rust format", "head_sha": run_head, "status": "completed", "conclusion": "success"}]}])
     elif "/commits/" in joined and "/status?" in joined:
+        status_call = next_counter("GATE_STATUS_COUNTER")
         def status_page(rows, total_count, state="success", page_head=head):
             return {"sha": page_head, "state": state, "total_count": total_count, "statuses": rows}
         if scenario == "status-two-page":
@@ -466,7 +496,7 @@ elif args and args[0] == "api":
         elif scenario == "status-mixed-head":
             emit([{"sha": head, "state": "success", "total_count": 2, "statuses": [{"id": 1, "context": "legacy one", "state": "success"}]},
                   {"sha": new_head, "state": "success", "total_count": 2, "statuses": [{"id": 2, "context": "legacy two", "state": "success"}]}])
-        elif scenario == "status-failed-context":
+        elif scenario == "status-failed-context" or (scenario == "late-status-failure" and status_call > 0):
             emit([{"sha": head, "state": "failure", "total_count": 1, "statuses": [{"id": 1, "context": "legacy optional", "state": "failure"}]}])
         elif scenario == "status-nonempty-pending":
             emit([{"sha": head, "state": "pending", "total_count": 1, "statuses": [{"id": 1, "context": "queued", "state": "pending"}]}])
@@ -520,7 +550,7 @@ elif args and args[0] == "api":
             emit([[]])
         else:
             records = [{"user": {"login": "chatgpt-codex-connector[bot]", "type": "Bot"}, "state": "COMMENTED", "commit_id": head}]
-            if security_case and scenario not in {"security-review-missing", "security-camel-dsc", "security-camel-credential"}:
+            if security_case and scenario not in {"security-review-missing", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native"}:
                 record = {"user": {"login": "reviewer", "type": "User"}, "author_association": "COLLABORATOR", "state": "COMMENTED", "commit_id": head, "body": f"Security review: {head}\nResult: accepted\nReviewed credential handling and error redaction."}
                 if scenario == "security-review-stale": record["commit_id"] = new_head
                 if scenario == "security-review-author": record["user"]["login"] = "author"
@@ -549,16 +579,21 @@ elif args and args[0] == "api":
         if scenario in {"security-camel-dsc", "security-camel-credential"}:
             path = "src/DscScreen.tsx" if scenario == "security-camel-dsc" else "src/CredentialScreen.tsx"
             emit([[{"filename": path, "status": "modified", "additions": 1, "deletions": 0}]])
+        elif scenario in {"security-axal-frontend", "security-axal-native"}:
+            path = "src/AxalScreen.tsx" if scenario == "security-axal-frontend" else "src-tauri/src/axal.rs"
+            emit([[{"filename": path, "status": "modified", "additions": 1, "deletions": 0}]])
         elif security_case:
             emit([[{"filename": "src-tauri/src/dsc.rs", "status": "modified", "additions": 1, "deletions": 0}]])
         elif sync_case:
             emit([[{"filename": "docs/retired.rs", "previous_filename": "src-tauri/src/sync.rs", "status": "renamed", "additions": 0, "deletions": 0}]])
         elif scenario == "files-empty":
             emit([[]])
-        elif scenario in {"formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-tab", "unicode-phone-two-lines", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized"}:
+        elif scenario in {"formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-tab", "unicode-phone-two-lines", "grouped-identifier-12", "grouped-identifier-16", "grouped-identifier-mixed", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized"}:
             emit([[{"filename": "docs/contact.md", "status": "added", "additions": 2 if scenario == "unicode-phone-two-lines" else 1, "deletions": 0}]])
-        elif scenario in {"workflow-notes-missing", "workflow-notes-present", "workflow-placeholders", "workflow-punctuated-placeholders"}:
+        elif scenario in {"workflow-notes-missing", "workflow-notes-present", "workflow-sibling-migration", "workflow-placeholders", "workflow-punctuated-placeholders"}:
             emit([[{"filename": ".github/workflows/ci.yml", "status": "modified", "additions": 1, "deletions": 0}]])
+        elif scenario in {"dependency-manifest-missing", "dependency-manifest-present"}:
+            emit([[{"filename": "package.json", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario in {"workflow-delete", "workflow-delete-notes"}:
             emit([[{"filename": ".github/workflows/ci.yml", "status": "removed", "additions": 0, "deletions": 1}]])
         elif scenario in {"workflow-rename-out", "workflow-rename-out-notes"}:
@@ -681,6 +716,17 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
         cls.real_jq = shutil.which("jq")
         if not cls.real_jq:
             raise RuntimeError("jq is required for merge-gate controls")
+        sed = cls.bin / "sed"
+        sed.write_text("""#!/usr/bin/env python3
+import os, sys
+if os.environ.get("GATE_SCENARIO") == "redaction-failure" and any("[0-9a-fA-F]{8}" in arg for arg in sys.argv[1:]):
+    raise SystemExit(1)
+os.execv(os.environ["GATE_REAL_SED"], [os.environ["GATE_REAL_SED"], *sys.argv[1:]])
+""")
+        sed.chmod(0o755)
+        cls.real_sed = shutil.which("sed")
+        if not cls.real_sed:
+            raise RuntimeError("sed is required for merge-gate controls")
 
     @classmethod
     def tearDownClass(cls):
@@ -691,9 +737,16 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
         env["PATH"] = f"{self.bin}:{env['PATH']}"
         env["GATE_SCENARIO"] = scenario
         env["GATE_REAL_JQ"] = self.real_jq
+        env["GATE_REAL_SED"] = self.real_sed
         counter = self.bin / f"{scenario}-counter-{os.getpid()}"
         counter.write_text("0")
         env["GATE_COUNTER"] = str(counter)
+        check_counter = self.bin / f"{scenario}-checks-{os.getpid()}"
+        check_counter.write_text("0")
+        env["GATE_CHECK_COUNTER"] = str(check_counter)
+        status_counter = self.bin / f"{scenario}-statuses-{os.getpid()}"
+        status_counter.write_text("0")
+        env["GATE_STATUS_COUNTER"] = str(status_counter)
         return subprocess.run(
             [str(SCRIPT), "321", "--repo", "lamemustafa/bridge", *extra_args],
             cwd=ROOT,
@@ -778,6 +831,10 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
 
     def test_malformed_thread_pagination_is_indeterminate(self):
         self.assert_indeterminate("threads-malformed-pagination", "no advancing cursor")
+
+    def test_first_thread_page_omits_the_empty_cursor(self):
+        result = self.run_gate("threads-first-empty-cursor-rejected")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_thread_total_drift_is_indeterminate(self):
         self.assert_indeterminate("threads-total-drift", "totalCount changed")
@@ -887,6 +944,10 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
 
     def test_check_run_count_mismatch_is_indeterminate(self):
         self.assert_indeterminate("check-run-count-mismatch", "head-bound check-run evidence")
+
+    def test_final_check_and_status_snapshots_do_not_inherit_earlier_success(self):
+        self.assert_blocked("late-check-run-failure", "final check run(s) are failed")
+        self.assert_blocked("late-status-failure", "final combined commit-status evidence reports a failure")
 
     def test_base_oid_mismatch_is_indeterminate(self):
         self.assert_indeterminate("base-oid-mismatch", "PR base OID")
@@ -1008,6 +1069,9 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
     def test_failing_individual_commit_status_blocks(self):
         self.assert_blocked("status-failed-context", "combined commit-status evidence reports a failure")
 
+    def test_redaction_failure_is_indeterminate(self):
+        self.assert_indeterminate("redaction-failure", "privacy redaction failed")
+
     def test_duplicate_thread_ids_are_indeterminate(self):
         self.assert_indeterminate("threads-duplicate-id", "pagination repeated thread IDs")
 
@@ -1081,12 +1145,13 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
         self.assert_indeterminate("check-run-duplicate-id", "head-bound check-run evidence")
 
     def test_grouped_12_and_16_digit_identifiers_are_scanned(self):
-        for scenario in ("grouped-identifier-12", "grouped-identifier-16"):
+        for scenario in ("grouped-identifier-12", "grouped-identifier-16", "grouped-identifier-mixed"):
             with self.subTest(scenario=scenario):
                 self.assert_blocked(scenario, "privacy scan found")
 
     def test_workflow_change_requires_rollback_and_migration_notes(self):
         self.assert_blocked("workflow-notes-missing", "workflow change lacks non-empty rollback notes")
+        self.assert_blocked("workflow-sibling-migration", "workflow change lacks non-empty rollback notes")
         self.assert_blocked("workflow-placeholders", "workflow change lacks non-empty rollback notes")
         self.assert_blocked("workflow-punctuated-placeholders", "workflow change lacks non-empty rollback notes")
 
@@ -1179,7 +1244,7 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
         self.assertNotIn("z" * 100, result.stdout)
 
     def test_security_review_is_focused_independent_and_current(self):
-        for scenario in ("security-review-stale", "security-review-author", "security-review-unrelated", "security-review-no-scope", "security-review-hidden", "security-review-hidden-unterminated", "security-review-outsider", "security-review-dismissed", "security-camel-dsc", "security-camel-credential"):
+        for scenario in ("security-review-stale", "security-review-author", "security-review-unrelated", "security-review-no-scope", "security-review-hidden", "security-review-hidden-unterminated", "security-review-outsider", "security-review-dismissed", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native"):
             with self.subTest(scenario=scenario):
                 self.assert_indeterminate(scenario, "security-focused reviewer comment")
         result = self.run_gate("security-review-valid")
@@ -1199,6 +1264,11 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
         result = self.run_gate("implementation-p4-present")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         result = self.run_gate("implementation-p4-continuation")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_dependency_manifest_additions_need_a_substantive_rationale(self):
+        self.assert_blocked("dependency-manifest-missing", "dependency manifest addition lacks a substantive dependency justification")
+        result = self.run_gate("dependency-manifest-present")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_platform_sensitive_paths_need_substantive_both_host_evidence(self):

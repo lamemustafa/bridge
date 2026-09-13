@@ -585,6 +585,13 @@ body_section_has_content() {
         next
       }
       if (waiting && $0 ~ /[^[:space:]]/) {
+        # A labelled sibling list field belongs to the surrounding template,
+        # not to this heading.  In particular, Migration compatibility must
+        # not double as Rollback notes merely because it follows that heading.
+        if (lower ~ /^[[:space:]]*[-*][[:space:]]*[^:[:space:]][^:]*:[[:space:]]*/) {
+          waiting = 0
+          next
+        }
         if ($0 ~ /^[[:space:]]*<!--/) next
         if (template_prompt($0)) next
         if (meaningful(lower)) { found = 1; exit }
@@ -779,12 +786,17 @@ fi
 # policy below, so moving platform, migration, or sensitive code cannot evade
 # the relevant review record.
 implementation_code_added=false
+dependency_manifest_added=false
 platform_sensitive_change=false
 migration_change=false
 if [ "$files_status" -eq 0 ]; then
   implementation_code_added=$(jq -r '
     (if all(.[]; type == "array") then flatten else . end) |
     any(.[]; (.additions > 0) and (.filename | test("\\.(rs|ts|tsx|js|mjs|py|go|java|kt|swift|c|cc|cpp|h|hpp|sh|bash|ps1|psm1|sql)$")))
+  ' <<<"$files")
+  dependency_manifest_added=$(jq -r '
+    (if all(.[]; type == "array") then flatten else . end) |
+    any(.[]; (.additions > 0) and (.filename | test("(^|/)(package\\.json|Cargo\\.toml)$")))
   ' <<<"$files")
   platform_sensitive_change=$(jq -r '
     (if all(.[]; type == "array") then flatten else . end) |
@@ -826,7 +838,8 @@ if [ "$files_status" -eq 0 ]; then
   security_reviewer_change=$(jq '
     (if all(.[]; type == "array") then flatten else . end) |
     any(.[]; [.filename, (.previous_filename? // "")][] |
-      test("(^|[/_.-])(dsc|credential[s]?|certificate[s]?|keystore|secret[s]?)(?=[/_.-]|$|[A-Z])"; "i"))
+      (test("(^|[/_.-])(dsc|credential[s]?|certificate[s]?|keystore|secret[s]?)(?=[/_.-]|$|[A-Z])"; "i") or
+       test("^src/AxalScreen\\.tsx$|^src-tauri/src/axal\\.rs$"; "i")))
   ' <<<"$files")
 fi
 validate_security_reviewer() {
@@ -876,6 +889,9 @@ if [ "$migration_change" = "true" ] && ! body_section_has_content "$prbody" 'rol
 fi
 if [ "$implementation_code_added" = "true" ] && ! body_has_p4_answers "$prbody"; then
   bad "implementation code addition lacks all three substantive P4 reuse, deletion, and omission answers"
+fi
+if [ "$dependency_manifest_added" = "true" ] && ! body_section_has_content "$prbody" 'dependency justification|dependency rationale|new dependency justification'; then
+  bad "dependency manifest addition lacks a substantive dependency justification"
 fi
 if [ "$platform_sensitive_change" = "true" ]; then
   if ! body_has_platform_evidence "$prbody" windows; then
@@ -1093,9 +1109,15 @@ $added"
     home_path_count=$(grep -Ec '.' <<<"$home_path_matches")
     bad "privacy scan found $home_path_count developer-home path shape(s)"
   fi
-  redacted=$(sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/<uuid>/g; s/[0-9a-fA-F]{32,}/<digest>/g' <<<"$scan_input")
-  exempt=$(grep -Ec '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{32,}' <<<"$scan_input")
-  [ "$exempt" -eq 0 ] || say "note" "$exempt added/path line(s) carried generated UUID/digest shapes; inspect those lines"
+  redaction_status=0
+  redacted=$(sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/<uuid>/g; s/[0-9a-fA-F]{32,}/<digest>/g' <<<"$scan_input") || redaction_status=$?
+  if [ "$redaction_status" -ne 0 ]; then
+    unknown "privacy redaction failed"
+    redacted=""
+  else
+    exempt=$(grep -Ec '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{32,}' <<<"$scan_input")
+    [ "$exempt" -eq 0 ] || say "note" "$exempt added/path line(s) carried generated UUID/digest shapes; inspect those lines"
+  fi
   placeholder='^(X+|Z+)[0-9]+(X|Z)?$|^[0-9]{2}(X+|Z+)[0-9]+[0-9A-Z]*$'
   if printf '%s\n' 'XXXXX1234X' | grep -qE "$placeholder"; then :; else
     probe_status=$?
@@ -1138,8 +1160,21 @@ $added"
   fi
   phone_matches=$(grep -Eo '(^|[^[:alnum:]])[6-9]([ ()+._-]{0,3}[0-9]){9}([^[:alnum:]]|$)' <<<"$normalized_whitespace") || phone_status=$?
   grouped_number_status=0
-  grouped_number_matches=$(grep -Eo '(^|[^[:alnum:]])[0-9]{4}([ ._-])[0-9]{4}\2[0-9]{4}(\2[0-9]{4})?([^[:alnum:]]|$)' <<<"$redacted") || grouped_number_status=$?
-  if [ "$normalized_status" -ne 0 ] || [ "$phone_status" -gt 1 ] || [ "$grouped_number_status" -gt 1 ]; then
+  grouped_number_matches=$(grep -Eo '(^|[^[:alnum:]])[0-9]{4}[ ._-][0-9]{4}[ ._-][0-9]{4}([ ._-][0-9]{4})?([^[:alnum:]]|$)' <<<"$redacted") || grouped_number_status=$?
+  # A pair of compact dates, such as 0101-2026 0201-2026, has the same four
+  # 4-digit groups as a mixed-separator identifier. Retain the pre-existing
+  # date-range exclusion without weakening actual mixed group detection.
+  grouped_number_non_dates=""
+  while IFS= read -r candidate; do
+    candidate="${candidate#"${candidate%%[![:space:]]*}"}"
+    candidate="${candidate%"${candidate##*[![:space:]]}"}"
+    if [[ "$candidate" =~ ^(0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01])-20[0-9]{2}[[:space:]]+(0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01])-20[0-9]{2}$ ]]; then
+      continue
+    fi
+    grouped_number_non_dates+="${candidate}"$'\n'
+  done <<<"$grouped_number_matches"
+  grouped_number_matches="$grouped_number_non_dates"
+  if [ "$redaction_status" -ne 0 ] || [ "$normalized_status" -ne 0 ] || [ "$phone_status" -gt 1 ] || [ "$grouped_number_status" -gt 1 ]; then
     unknown "formatted identifier scan expression failed"
   fi
   normalized_phone=$(sed -E 's/[^0-9]//g' <<<"$phone_matches")
@@ -1232,7 +1267,8 @@ thread_ok=1
 while :; do
   : >"$errfile"
   page_status=0
-  page=$(gh api graphql -f owner="$OWNER" -f name="$NAME" -F pr="$PR" -f cursor="$cursor" -f query='
+  if [ -n "$cursor" ]; then
+    page=$(gh api graphql -f owner="$OWNER" -f name="$NAME" -F pr="$PR" -f cursor="$cursor" -f query='
     query($owner:String!,$name:String!,$pr:Int!,$cursor:String){
       repository(owner:$owner,name:$name){
         pullRequest(number:$pr){ reviewThreads(first:100,after:$cursor){
@@ -1240,6 +1276,18 @@ while :; do
         }}
       }
     }' 2>"$errfile") || page_status=$?
+  else
+    # GraphQL treats an omitted nullable variable as null. Sending an empty
+    # string is not the first page and is rejected by the connection API.
+    page=$(gh api graphql -f owner="$OWNER" -f name="$NAME" -F pr="$PR" -f query='
+    query($owner:String!,$name:String!,$pr:Int!,$cursor:String){
+      repository(owner:$owner,name:$name){
+        pullRequest(number:$pr){ reviewThreads(first:100,after:$cursor){
+          totalCount pageInfo{hasNextPage endCursor} nodes{id isResolved}
+        }}
+      }
+    }' 2>"$errfile") || page_status=$?
+  fi
   if [ "$page_status" -ne 0 ] || ! jq -e '.data.repository.pullRequest.reviewThreads | type == "object" and (.totalCount | type == "number" and floor == . and . >= 0) and (.pageInfo.hasNextPage | type == "boolean") and (.nodes | type == "array" and all(.[]; (.id | type == "string" and length > 0) and (.isResolved | type == "boolean")))' <<<"$page" >/dev/null 2>&1; then
     unknown "could not read review threads for $REPO#$PR"
     thread_ok=0
@@ -1354,6 +1402,91 @@ if [ -n "$base_tip" ]; then
   elif [ "$final_base_tip" != "$base_tip" ]; then
     bad "base tip moved during preflight"
   fi
+fi
+
+# Check runs and legacy statuses can change while the late review/thread phase
+# is in progress without moving the PR head. Re-read both complete, head-bound
+# feeds immediately before the final identity fence; a rerun that is pending or
+# failed must not inherit the earlier successful snapshot.
+: >"$errfile"
+final_check_runs_status=0
+final_check_runs=$(gh api --paginate --slurp "repos/$REPO/commits/$head/check-runs?per_page=100" 2>"$errfile") || final_check_runs_status=$?
+if [ "$final_check_runs_status" -ne 0 ] || ! jq -e --arg head "$head" '
+  type == "array" and length > 0 and
+  all(.[]; type == "object" and
+    (.total_count | type == "number" and floor == . and . >= 0) and
+    (.check_runs | type == "array" and all(.[];
+      type == "object" and
+      (.id | type == "number" and floor == . and . >= 0) and
+      (.name | type == "string" and length > 0) and
+      (.status == "completed") and
+      (.conclusion | type == "string" and (. == "success" or . == "skipped" or . == "neutral" or . == "failure" or . == "cancelled" or . == "timed_out" or . == "action_required" or . == "stale")) and
+      (.head_sha | type == "string" and test("^[0-9a-fA-F]{40}$") and . == $head)
+    ))) and
+  ((map(.total_count) | unique | length) == 1) and
+  ((map(.check_runs | length) | add) == .[0].total_count) and
+  ((map(.check_runs) | add | map(.id) | unique | length) == .[0].total_count)
+' <<<"$final_check_runs" >/dev/null 2>&1; then
+  unknown "could not revalidate final head-bound check-run evidence"
+else
+  final_failed_runs_status=0
+  final_failed_runs=$(jq --rawfile contexts "$tmpdir/required-contexts" '
+    ($contexts | split("\n")) as $required |
+    [.[] | .check_runs[] | . as $run |
+      select((.conclusion != "success" and .conclusion != "neutral" and .conclusion != "skipped") or
+             (.conclusion != "success" and ($required | index($run.name)) != null))] | length
+  ' <(printf '%s' "$final_check_runs")) || final_failed_runs_status=$?
+  if [ "$final_failed_runs_status" -ne 0 ] || ! [[ "$final_failed_runs" =~ ^[0-9]+$ ]]; then
+    unknown "could not evaluate final check-run conclusions"
+  elif [ "$final_failed_runs" -gt 0 ]; then
+    bad "$final_failed_runs final check run(s) are failed or required-but-not-successful"
+  else
+    say "ok" "final check-run pages are successful and bound to head $short"
+  fi
+fi
+
+: >"$errfile"
+final_statuses_status=0
+final_statuses=$(gh api --paginate --slurp "repos/$REPO/commits/$head/status?per_page=100" 2>"$errfile") || final_statuses_status=$?
+if [ "$final_statuses_status" -ne 0 ] || ! jq -e --arg head "$head" '
+  type == "array" and length > 0 and
+  all(.[]; type == "object" and
+    (.sha | type == "string" and test("^[0-9a-fA-F]{40}$") and . == $head) and
+    (.total_count | type == "number" and floor == . and . >= 0) and
+    (.state | type == "string" and (. == "success" or . == "pending" or . == "failure" or . == "error")) and
+    (.statuses | type == "array" and all(.[];
+      type == "object" and
+      (.id | type == "number" and floor == . and . >= 0) and
+      (.context | type == "string" and length > 0) and
+      (.state == "success" or .state == "failure" or .state == "error")
+    ))
+  ) and
+  ((map(.total_count) | unique | length) == 1) and
+  ((map(.statuses | length) | add) == .[0].total_count) and
+  ((map(.statuses) | add | map(.id) | unique | length) == .[0].total_count) and
+  ((map(.statuses) | add | map(.context) | unique | length) == .[0].total_count) and
+  (if .[0].state == "pending" then .[0].total_count == 0 and (map(.statuses | length) | add) == 0
+   elif .[0].state == "failure" or .[0].state == "error" then .[0].state as $aggregate | all(.[]; .state == $aggregate)
+   else all(.[]; .state == "success") end)
+' <<<"$final_statuses" >/dev/null 2>&1; then
+  unknown "could not revalidate final head-bound commit-status evidence"
+elif jq -e 'any(.[]; (.state == "failure" or .state == "error") or any(.statuses[]; .state == "failure" or .state == "error"))' <<<"$final_statuses" >/dev/null; then
+  bad "final combined commit-status evidence reports a failure"
+else
+  say "ok" "final commit-status pages are bound to head $short"
+fi
+
+# The last check/status snapshot is useful only while it still names this PR
+# and base. A head/base move after it invalidates the entire preflight.
+: >"$errfile"
+late_meta_status=0
+late_meta=$(gh pr view "$PR" --repo "$REPO" --json headRefOid,baseRefOid,baseRefName 2>"$errfile") || late_meta_status=$?
+if [ "$late_meta_status" -ne 0 ] || ! jq -e 'type == "object" and (.headRefOid | type == "string" and test("^[0-9a-fA-F]{40}$")) and (.baseRefOid | type == "string" and test("^[0-9a-fA-F]{40}$")) and (.baseRefName | type == "string")' <<<"$late_meta" >/dev/null 2>&1; then
+  unknown "could not revalidate PR identity after final CI evidence"
+else
+  [ "$(jq -r '.headRefOid' <<<"$late_meta")" = "$head" ] || bad "PR head moved after final CI evidence"
+  [ "$(jq -r '.baseRefOid' <<<"$late_meta")" = "$base_ref_oid" ] || bad "PR base OID moved after final CI evidence"
+  [ "$(jq -r '.baseRefName' <<<"$late_meta")" = "$base" ] || bad "PR base moved after final CI evidence"
 fi
 
 echo
