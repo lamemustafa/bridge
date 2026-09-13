@@ -804,7 +804,7 @@ if [ "$files_status" -eq 0 ]; then
   platform_sensitive_change=$(jq -r '
     (if all(.[]; type == "array") then flatten else . end) |
     any(.[]; [.filename, (.previous_filename? // "")][] |
-      test("^(src-tauri/|src/.*\\.(rs|ts|tsx|js|mjs)$)|\\.(ps1|psm1)$|^\\.github/actions/setup-windows-native/|(^|/)(windows|macos|darwin|win32|local_files|paths)(/|[._-])"; "i"))
+      test("^(src-tauri/|src/.*\\.(rs|ts|tsx|js|mjs)$)|\\.(ps1|psm1)$|^\\.github/workflows/ci\\.yml$|^\\.github/actions/setup-windows-native/|(^|/)(windows|macos|darwin|win32|local_files|paths)(/|[._-])"; "i"))
   ' <<<"$files")
   migration_change=$(jq -r '
     (if all(.[]; type == "array") then flatten else . end) |
@@ -842,7 +842,7 @@ if [ "$files_status" -eq 0 ]; then
     (if all(.[]; type == "array") then flatten else . end) |
     any(.[]; [.filename, (.previous_filename? // "")][] |
       (test("(^|[/_.-])(dsc|credential[s]?|certificate[s]?|keystore|secret[s]?)(?=[/_.-]|$|[A-Z])"; "i") or
-       test("^src/AxalScreen\\.tsx$|^src-tauri/src/axal\\.rs$|^src-tauri/src/db/encrypted\\.rs$"; "i")))
+       test("^src/AxalScreen\\.tsx$|^src-tauri/src/axal\\.rs$|^src-tauri/src/db/encrypted\\.rs$|^src-tauri/src/documents\\.rs$"; "i")))
   ' <<<"$files")
 fi
 validate_security_reviewer() {
