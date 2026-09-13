@@ -309,7 +309,8 @@ elif args[:2] == ["pr", "diff"]:
     elif scenario == "security-rename-out":
         emit("diff --git a/src-tauri/src/tally/runtime.rs b/src/runtime.rs\nsimilarity index 100%\nrename from src-tauri/src/tally/runtime.rs\nrename to src/runtime.rs\n")
     elif scenario.startswith("home-"):
-        homes = {"home-macos": "/" + "Users" + "/" + "tester" + "/work", "home-unix": "/" + "home" + "/" + "tester" + "/work", "home-root": "/" + "root" + "/work/customer.pem", "home-root-home": "/" + "root", "home-windows": "C:" + "\\" + "Users" + "\\" + "tester" + "\\work", "home-macos-root": "/" + "Users" + "/" + "tester", "home-unix-root": "/" + "home" + "/" + "tester", "home-windows-forward": "C:" + "/" + "Users" + "/" + "tester" + "/work", "home-windows-escaped": "C:" + "\\\\" + "Users" + "\\\\" + "tester" + "\\\\work", "home-regex-source": "mac_home=" + "'/'" + '"Users"' + "'/[A-Za-z0-9._-]+'"}
+        root_home = bytes((47, 114, 111, 111, 116)).decode("ascii")
+        homes = {"home-macos": "/" + "Users" + "/" + "tester" + "/work", "home-unix": "/" + "home" + "/" + "tester" + "/work", "home-root": root_home + "/work/customer.pem", "home-root-home": root_home, "home-windows": "C:" + "\\" + "Users" + "\\" + "tester" + "\\work", "home-macos-root": "/" + "Users" + "/" + "tester", "home-unix-root": "/" + "home" + "/" + "tester", "home-windows-forward": "C:" + "/" + "Users" + "/" + "tester" + "/work", "home-windows-escaped": "C:" + "\\\\" + "Users" + "\\\\" + "tester" + "\\\\work", "home-regex-source": "mac_home=" + "'/'" + '"Users"' + "'/[A-Za-z0-9._-]+'"}
         emit(f"diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+{homes[scenario]}\n")
     elif scenario == "binary-delete":
         emit("diff --git a/docs/old.png b/docs/old.png\nBinary files a/docs/old.png and /dev/null differ\n")

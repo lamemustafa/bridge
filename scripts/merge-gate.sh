@@ -1084,7 +1084,7 @@ $added"
   home_path_status=0
   mac_home='/'"Users"'/[A-Za-z0-9._-]+'
   unix_home='/'"home"'/[A-Za-z0-9._-]+'
-  root_home='/'"root"
+  root_home=$'\x2f\x72\x6f\x6f\x74'
   windows_home='[A-Za-z]:[\\/]{1,2}'"Users"'[\\/]{1,2}[A-Za-z0-9._-]+'
   home_path_matches=$(grep -Eio "(^|[^[:alnum:]_])(${mac_home}|${unix_home}|${root_home}|${windows_home})(\$|/|\\\\|[^[:alnum:]_.-])" <<<"$scan_input") || home_path_status=$?
   if [ "$home_path_status" -gt 1 ]; then
