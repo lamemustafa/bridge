@@ -31,12 +31,16 @@ error starts firing first, which is exactly how a regression hides.
 import contextlib
 import datetime
 import decimal
+import errno
 import hashlib
 import io
 import importlib.util
+import inspect
 import os
 import pathlib
+import signal
 import stat
+import subprocess
 import sys
 import tempfile
 import types
@@ -287,12 +291,58 @@ def test_parse_real_hdfc_capture(m):
 
     # the account number is bound from the header block, not from the table
     m.require_account_match(pages, bank, "HDFC CA xx1111")
-    # every one of these is a real number printed in this capture's header —
-    # phone, customer id, IFSC digits, MICR, postcode — and every one passed
-    # before the binding was narrowed to the account-number line
+    # 1112 is the captured MICR tail, not an account-number value. 1113-1115
+    # occur in captured transaction-table references, a separate negative
+    # case: a table reference must not stand in for the account. 9876 is not
+    # printed in the capture.
     for wrong in ("xx1112", "xx1113", "xx1114", "xx1115", "xx9876"):
         refuses(m, "account_not_in_statement", m.require_account_match,
                 pages, bank, f"HDFC CA {wrong}")
+
+
+def test_real_hdfc_capture_binds_the_account_no_geometry_only(m):
+    """The unchanged capture pins the header field, not a convenient tail.
+
+    Customer values are sanitised, so several header numbers intentionally end
+    alike.  Its captured labels and coordinates still prove which field the
+    production selector reads.  A postcode label is not present in this
+    capture; this test makes no claim about an absent field.
+    """
+    bank = m.HDFC()
+    pages = capture("hdfc-bbox-capture.xml")
+
+    selected = [
+        [(round(x0, 3), round(y0, 3), round(x1, 3), round(y1, 3), text)
+         for x0, y0, x1, y1, text in group
+         if text in {"Account", "No"}]
+        for _, group in m._lines(pages[0])
+        if m._matches(group, bank.account_anchors)
+    ]
+    assert selected == [[
+        (340.157, 149.001, 367.261, 156.201, "Account"),
+        (369.261, 149.001, 379.037, 156.201, "No"),
+    ]], selected
+    account = m.require_account_match(pages, bank, "xx1111111")
+    assert account == "1" * 14
+
+    # Mutation controls select existing captured header geometry.  They prove
+    # that the production Account/No selector excludes phone, customer-id,
+    # IFSC and MICR rows even where their sanitised numeric tails overlap.
+    original = bank.account_anchors
+    try:
+        bank.account_anchors = (("Phone", "no."),)
+        assert m.require_account_match(pages, bank, "xx1112") == "11111112"
+
+        bank.account_anchors = (("Cust", "ID"),)
+        assert m.require_account_match(pages, bank, "xx111111111") == "111111111"
+
+        bank.account_anchors = (("RTGS/NEFT", "IFSC"),)
+        assert m.require_account_match(pages, bank, "xx1111111") == "1111111"
+
+        bank.account_anchors = (("MICR",),)
+        assert m.require_account_match(pages, bank, "xx1112") == "111111112"
+    finally:
+        bank.account_anchors = original
 
 
 def test_parse_real_sbi_capture(m):
@@ -378,9 +428,9 @@ def test_account_binding(m):
 
     It reads the line the statement labels as its account number, and nothing
     else. Reading the whole document lets a transaction reference stand in for
-    the account; reading the whole header block is barely better, because a
-    header prints a phone number, a customer id, an IFSC, a MICR code and a
-    postcode — on the real HDFC capture, four different wrong tails passed.
+    the account; reading the whole header block is barely better because it
+    includes non-account identifiers. The captured HDFC contract below keeps
+    that evidence tied to the bank-produced geometry.
     """
     hdfc = m.HDFC()
     m.require_account_match([HDFC_PAGE], hdfc, "HDFC CA xx1234")
@@ -392,7 +442,8 @@ def test_account_binding(m):
     # 9012 ends the UPI reference on row 1
     refuses(m, "account_not_in_statement", m.require_account_match,
             [HDFC_PAGE], hdfc, "HDFC CA xx9012")
-    # nor may any other number in the header: 4230 is the customer id
+    # nor may the other constructed header value; fixture-specific account
+    # binding against real header geometry remains in test_parse_real_hdfc_capture.
     refuses(m, "account_not_in_statement", m.require_account_match,
             [HDFC_PAGE], hdfc, "HDFC CA xx4230")
     # and a document with no account-number line fails closed
@@ -1222,6 +1273,43 @@ def test_windows_refuses_to_claim_a_privacy_it_cannot_deliver(m):
         assert pathlib.Path(target).read_text() == "<xml/>", "refused, so not truncated"
 
 
+def test_windows_cleanup_closes_a_new_output_before_unlinking(m):
+    """Windows cannot unlink an open exclusive output, so caught cleanup
+    releases its pin before removal. The branch is simulated; ACL/filesystem
+    behavior still needs an affected Windows host."""
+    with tempfile.TemporaryDirectory() as directory, pretending_windows(m) as shim:
+        target = pathlib.Path(directory, "out.xml")
+        events = []
+        real_close = shim.close
+        real_unlink = m._unlink_for_cleanup
+
+        def observe_close(handle):
+            events.append("close")
+            return real_close(handle)
+
+        def observe_unlink(path, identity, failures):
+            assert events == ["close"]
+            events.append("unlink")
+            return real_unlink(path, identity, failures)
+
+        shim.close = observe_close
+        m._unlink_for_cleanup = observe_unlink
+        try:
+            try:
+                m.write_outputs([(str(target), "<xml/>")], True,
+                                after_claim=lambda: (_ for _ in ()).throw(
+                                    OSError("controlled failure")))
+                raise AssertionError("the controlled failure must escape")
+            except OSError as error:
+                assert "controlled failure" in str(error)
+        finally:
+            shim.close = real_close
+            m._unlink_for_cleanup = real_unlink
+
+        assert events == ["close", "unlink"]
+        assert not target.exists()
+
+
 def test_a_windows_target_appearing_after_the_check_is_not_truncated(m):
     """The check and the create must be one operation.
 
@@ -1362,6 +1450,1553 @@ def test_a_failed_run_does_not_destroy_the_previous_output(m):
             ["new.csv", "previous.xml"]
 
 
+def test_write_outputs_writes_through_a_symlinked_destination(m):
+    """`os.replace` does not follow a symlink at the destination -- it
+    replaces the link itself, the same as `unlink` would. Renaming the staged
+    payload onto the link's own name would silently turn a live symlink into
+    a plain file, leaving whatever else reads through that link looking at
+    stale content forever. The swap must resolve through the link and land on
+    its target instead."""
+    with tempfile.TemporaryDirectory() as directory:
+        real_target = pathlib.Path(directory, "real-target.xml")
+        real_target.write_text("old")
+        link = pathlib.Path(directory, "out.xml")
+        link.symlink_to(real_target)
+
+        m.write_outputs([(str(link), "<new/>")])
+
+        assert link.is_symlink(), "the link itself must survive the write"
+        assert pathlib.Path(os.readlink(link)) == real_target
+        assert real_target.read_text() == "<new/>", \
+            "the payload must reach the link's target, not replace the link"
+
+
+def test_write_outputs_refuses_a_retargeted_symlink_before_commit(m):
+    """The destination observed after claiming must still name the same target
+    at the commit boundary. Otherwise a successful command updates a stale path
+    while the operator's requested path continues to expose old bytes."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first = root / "first.xml"
+        second = root / "second.xml"
+        link = root / "out.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        link.symlink_to(first)
+
+        def retarget():
+            link.unlink()
+            link.symlink_to(second)
+
+        refuses(m, "output_path_changed", m.write_outputs,
+                [(str(link), "new bytes")], False, retarget)
+        assert first.read_text() == "first old"
+        assert second.read_text() == "second old"
+        assert link.read_text() == "second old"
+        assert sorted(p.name for p in root.iterdir()) == ["first.xml", "out.xml", "second.xml"]
+
+
+def test_write_outputs_revalidates_a_symlink_after_backup_preparation(m):
+    """The check belongs directly before the swap, not before a backup syscall
+    which can itself be used to retarget the operator's path."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first = root / "first.xml"
+        second = root / "second.xml"
+        link = root / "out.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        link.symlink_to(first)
+        real_copy = m._copy_private_backup
+
+        def retarget_after_backup(src, identity, backup_handle):
+            result = real_copy(src, identity, backup_handle)
+            link.unlink()
+            link.symlink_to(second)
+            return result
+
+        m._copy_private_backup = retarget_after_backup
+        try:
+            refuses(m, "output_path_changed", m.write_outputs, [(str(link), "new bytes")])
+        finally:
+            m._copy_private_backup = real_copy
+
+        assert first.read_text() == "first old"
+        assert second.read_text() == "second old"
+        assert link.read_text() == "second old"
+        assert sorted(p.name for p in root.iterdir()) == ["first.xml", "out.xml", "second.xml"]
+
+
+def test_write_outputs_keeps_destination_during_private_backup_preparation(m):
+    """The requested output remains readable while its private backup is made.
+
+    `os.link` deliberately fails here: writable filesystems without hard-link
+    support still need the same caught-exception rollback behavior.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory, "previous.xml")
+        destination.write_text("old bytes")
+        real_copy = m._copy_private_backup
+        real_link = m.os.link
+        observed = []
+
+        def copy_while_observing(src, identity, backup_handle):
+            result = real_copy(src, identity, backup_handle)
+            observed.append((destination.exists(), destination.read_text()))
+            return result
+
+        m._copy_private_backup = copy_while_observing
+        m.os.link = lambda *_: (_ for _ in ()).throw(OSError("hard links unavailable"))
+        try:
+            m.write_outputs([(str(destination), "new bytes")])
+        finally:
+            m._copy_private_backup = real_copy
+            m.os.link = real_link
+
+        assert observed == [(True, "old bytes")]
+        assert destination.read_text() == "new bytes"
+
+
+def test_an_interrupt_after_private_backup_preserves_the_previous_output(m):
+    """The exclusive backup is private while interruption can still occur, and
+    cleanup removes only that owned copy while leaving the destination intact."""
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory, "previous.xml")
+        destination.write_text("old bytes")
+        root = pathlib.Path(directory)
+        real_copy = m._copy_private_backup
+        modes = []
+
+        def interrupt_after_backup_copy(src, identity, backup_handle):
+            result = real_copy(src, identity, backup_handle)
+            backups = list(root.glob("*.bak"))
+            assert len(backups) == 1
+            modes.append(stat.S_IMODE(backups[0].stat().st_mode))
+            raise KeyboardInterrupt("controlled interrupt after private backup")
+
+        m._copy_private_backup = interrupt_after_backup_copy
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("the controlled interrupt must escape")
+            except KeyboardInterrupt:
+                pass
+        finally:
+            m._copy_private_backup = real_copy
+
+        assert modes == [0o600]
+        assert destination.read_text() == "old bytes"
+        assert sorted(p.name for p in pathlib.Path(directory).iterdir()) == ["previous.xml"]
+
+
+def test_an_interrupt_after_a_swap_restores_the_previous_output(m):
+    """A caught interrupt may arrive after rename(2) took effect. Pending swap
+    state must therefore be restored, not discarded as if the call had failed
+    before touching the filesystem."""
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory, "previous.xml")
+        destination.write_text("old bytes")
+        real_replace = m.os.replace
+
+        def interrupt_after_swap(src, dst):
+            result = real_replace(src, dst)
+            if str(src).endswith(".part"):
+                raise KeyboardInterrupt("controlled interrupt after swap")
+            return result
+
+        m.os.replace = interrupt_after_swap
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("the controlled interrupt must escape")
+            except KeyboardInterrupt:
+                pass
+        finally:
+            m.os.replace = real_replace
+
+        assert destination.read_text() == "old bytes"
+        assert sorted(p.name for p in pathlib.Path(directory).iterdir()) == ["previous.xml"]
+
+
+def test_line_interrupt_after_recording_a_swap_restores_it_once(m):
+    """Trace the real line between append and clearing pending ownership."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "previous.xml"
+        destination.write_text("old bytes")
+        real_restore = m._restore_backup
+        restores = []
+        _, start = inspect.getsourcelines(m.write_outputs)
+        clear_line = start + [
+            index for index, line in enumerate(inspect.getsource(m.write_outputs).splitlines())
+            if line.strip() == "pending_swap = None"
+        ][-1]
+        old_trace = sys.gettrace()
+        fired = False
+
+        def interrupt_after_append(frame, event, _arg):
+            nonlocal fired
+            if (not fired and event == "line" and frame.f_code is m.write_outputs.__code__
+                    and frame.f_lineno == clear_line):
+                fired = True
+                raise KeyboardInterrupt("controlled interrupt after swap append")
+            return interrupt_after_append
+
+        def observe_restore(*args, **kwargs):
+            restores.append(args[0])
+            return real_restore(*args, **kwargs)
+
+        m._restore_backup = observe_restore
+        sys.settrace(interrupt_after_append)
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("the controlled interrupt must escape")
+            except KeyboardInterrupt:
+                pass
+        finally:
+            sys.settrace(old_trace)
+            m._restore_backup = real_restore
+
+        assert fired
+        assert len(restores) == 1, "one swap must have one rollback owner"
+        assert destination.read_text() == "old bytes"
+        assert sorted(path.name for path in root.iterdir()) == ["previous.xml"]
+
+
+def test_line_interrupt_before_clearing_pending_backup_has_one_cleanup_owner(m):
+    """An interrupt in the alias window must not clean one backup twice."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "previous.xml"
+        destination.write_text("old bytes")
+        _, start = inspect.getsourcelines(m.write_outputs)
+        clear_line = start + [
+            index for index, line in enumerate(inspect.getsource(m.write_outputs).splitlines())
+            if line.strip() == "pending_backup = None"
+        ][-1]
+        real_cleanup = m._cleanup_owned_path
+        cleanup_paths = []
+        old_trace = sys.gettrace()
+        fired = False
+
+        def interrupt_before_clear(frame, event, _arg):
+            nonlocal fired
+            if (not fired and event == "line" and frame.f_code is m.write_outputs.__code__
+                    and frame.f_lineno == clear_line):
+                fired = True
+                raise KeyboardInterrupt("controlled pending-backup interrupt")
+            return interrupt_before_clear
+
+        def observe_cleanup(record, failures, **kwargs):
+            cleanup_paths.append(str(record["path"]))
+            return real_cleanup(record, failures, **kwargs)
+
+        m._cleanup_owned_path = observe_cleanup
+        sys.settrace(interrupt_before_clear)
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("the controlled interrupt must escape")
+            except KeyboardInterrupt:
+                pass
+        finally:
+            sys.settrace(old_trace)
+            m._cleanup_owned_path = real_cleanup
+
+        assert fired
+        assert destination.read_text() == "old bytes"
+        assert sum(path.endswith(".bak") for path in cleanup_paths) == 1
+        assert sorted(path.name for path in root.iterdir()) == ["previous.xml"]
+
+
+def test_ownership_registration_failure_reconciles_a_created_path_and_closes_its_pin(m):
+    """The creator is not in an outer cleanup list until fstat succeeds."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        real_identity = m._fd_identity
+        real_close = m.os.close
+        closed = []
+        for position, failure in enumerate((OSError("fstat I/O"),
+                                            KeyboardInterrupt("fstat interrupt"))):
+            path = root / f"fresh-{position}.xml"
+            handle = m._open_private(path)
+            calls = 0
+
+            def fail_once(candidate):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    raise failure
+                return real_identity(candidate)
+
+            def observe_close(candidate):
+                closed.append(candidate)
+                return real_close(candidate)
+
+            m._fd_identity = fail_once
+            m.os.close = observe_close
+            try:
+                try:
+                    m._owned_path(path, handle, created=True)
+                    raise AssertionError("the original identity failure must escape")
+                except BaseException as error:
+                    assert error is failure
+            finally:
+                m._fd_identity = real_identity
+                m.os.close = real_close
+
+            assert not path.exists(), "a reconciled fresh output must not strand a refusal"
+            assert handle in closed
+
+
+def test_ownership_registration_recovery_discloses_a_retained_hard_link(m):
+    """Registration recovery has the same post-unlink alias obligation."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        path, alias = root / "fresh.xml", root / "alias.xml"
+        handle = m._open_private(path)
+        os.link(path, alias)
+        real_identity = m._fd_identity
+        calls = 0
+
+        def fail_first_identity(candidate):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise OSError("controlled registration identity failure")
+            return real_identity(candidate)
+
+        m._fd_identity = fail_first_identity
+        try:
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                try:
+                    m._owned_path(path, handle, created=True)
+                    raise AssertionError("the registration failure must escape")
+                except OSError as error:
+                    detail = (str(error) + "\n" + "\n".join(getattr(error, "__notes__", []))
+                              + stderr.getvalue())
+                    assert "controlled registration identity failure" in detail
+                    assert "owned output could not be located after cleanup" in detail
+        finally:
+            m._fd_identity = real_identity
+
+        assert not path.exists()
+        assert alias.read_bytes() == b""
+
+
+def test_ownership_registration_preserves_an_unproven_reclaimed_path(m):
+    """When fstat cannot establish ownership, foreign bytes survive visibly."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        path = root / "fresh.xml"
+        foreign = root / "foreign.xml"
+        handle = m._open_private(path)
+        foreign.write_text("foreign writer bytes")
+        os.replace(foreign, path)
+        real_identity = m._fd_identity
+
+        def fail_identity(_handle):
+            raise OSError("persistent fstat I/O")
+
+        m._fd_identity = fail_identity
+        try:
+            try:
+                m._owned_path(path, handle, created=True)
+                raise AssertionError("the identity failure must escape")
+            except OSError as error:
+                notes = "\n".join(getattr(error, "__notes__", []))
+        finally:
+            m._fd_identity = real_identity
+
+        assert path.read_text() == "foreign writer bytes"
+        assert str(path) in notes
+
+
+def test_original_pin_registration_failure_preserves_existing_output(m):
+    """A created=False pin failure re-raises the same error and closes its FD."""
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "previous.xml"
+        destination.write_text("old bytes")
+        handle = os.open(destination, os.O_RDONLY)
+        original = m._fd_identity
+        error = OSError("controlled original pin fstat failure")
+
+        def fail_original_pin(candidate):
+            assert candidate == handle
+            raise error
+
+        m._fd_identity = fail_original_pin
+        try:
+            try:
+                m._owned_path(destination, handle, created=False)
+                raise AssertionError("the controlled original-pin failure must escape")
+            except OSError as raised:
+                assert raised is error
+        finally:
+            m._fd_identity = original
+
+        try:
+            os.fstat(handle)
+            raise AssertionError("created=False registration failure must close its descriptor")
+        except OSError:
+            pass
+        assert destination.read_text() == "old bytes"
+
+
+def test_interrupted_committed_cleanup_preserves_interrupt_when_backup_inspection_fails(m):
+    """EACCES during reconciliation is diagnostic, not a replacement exception."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        backup_path, original_path, claimed_path = root / "old.bak", root / "old.xml", root / "new.xml"
+        for path in (backup_path, original_path, claimed_path):
+            path.write_text(path.name)
+        backup_fd, original_fd, claimed_fd = (os.open(path, os.O_RDONLY) for path in (backup_path, original_path, claimed_path))
+        backup = {"path": backup_path, "identity": m._fd_identity(backup_fd), "pin": backup_fd}
+        original_record = {"path": original_path, "identity": m._fd_identity(original_fd), "pin": original_fd}
+        claimed = {"path": claimed_path, "identity": m._fd_identity(claimed_fd), "pin": claimed_fd}
+        real_entry = m._entry_identity
+        def deny_backup(path):
+            if pathlib.Path(path) == backup_path:
+                raise PermissionError("controlled EACCES")
+            return real_entry(path)
+        m._entry_identity = deny_backup
+        retained, closes = [], []
+        real_close = m._close_owned_path
+        def record_close(record, failures, **kwargs):
+            closes.append(record["path"])
+            return real_close(record, failures, **kwargs)
+        m._close_owned_path = record_close
+        try:
+            original_error = KeyboardInterrupt("controlled interrupt")
+            try:
+                raise original_error
+            except BaseException as caught:
+                m._reconcile_interrupted_committed_cleanup(
+                    [{"backup": backup, "original": original_record}], [claimed], retained, [])
+                assert caught is original_error
+        finally:
+            m._entry_identity = real_entry
+            m._close_owned_path = real_close
+        assert backup_path in closes and original_path in closes and claimed_path in closes
+        assert any("could not inspect committed rollback copy" in value for value in retained)
+        assert backup_path.read_text() == "old.bak"
+
+
+def test_restore_reconciles_a_backup_replace_that_raised_after_effect(m):
+    """A restore rename can report an error after it has moved the private
+    backup. Its new identity then proves recovery completed and must not be
+    reported as a missing retained backup."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first = root / "first.xml"
+        second = root / "second.csv"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_replace = m.os.replace
+
+        def fail_second_swap_and_restore(src, dst):
+            if str(src).endswith(".part") and os.path.basename(dst) == "second.csv":
+                raise OSError("simulated second swap failure")
+            result = real_replace(src, dst)
+            if str(src).endswith(".bak"):
+                raise OSError("simulated restore failure after effect")
+            return result
+
+        m.os.replace = fail_second_swap_and_restore
+        try:
+            try:
+                m.write_outputs([(str(first), "new first"),
+                                 (str(second), "new second")])
+                raise AssertionError("the second target's swap must fail")
+            except OSError as error:
+                notes = getattr(error, "__notes__", [])
+                assert len(notes) == 1
+                assert str(first) in notes[0]
+                assert "extended ACLs and file flags were not verified" in notes[0]
+                assert ".bak" not in notes[0]
+        finally:
+            m.os.replace = real_replace
+
+        assert first.read_text() == "first old"
+        assert second.read_text() == "second old"
+        assert sorted(path.name for path in root.iterdir()) == ["first.xml", "second.csv"]
+
+
+def test_refusal_reports_rollback_metadata_scope_in_its_visible_code(m):
+    """Refusal is SystemExit, so rollback scope must be added to `code`, not
+    only an exception note that an unhandled process would omit."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first = root / "first.xml"
+        second = root / "second.csv"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_replace = m.os.replace
+
+        def replace_first_then_refuse_second(src, dst):
+            if str(src).endswith(".part") and os.path.basename(dst) == "second.csv":
+                raise m.Refusal("controlled_refusal", "controlled second swap refusal")
+            return real_replace(src, dst)
+
+        m.os.replace = replace_first_then_refuse_second
+        try:
+            refusal = refuses(m, "controlled_refusal", m.write_outputs,
+                              [(str(first), "new first"),
+                               (str(second), "new second")])
+        finally:
+            m.os.replace = real_replace
+
+        assert str(first) in str(refusal.code)
+        assert "extended ACLs and file flags were not verified" in str(refusal.code)
+        assert first.read_text() == "first old"
+        assert second.read_text() == "second old"
+
+
+def test_write_outputs_reports_a_retained_backup_after_commit(m):
+    """Successful replacement is not a successful command when cleanup leaves
+    prior bank-statement bytes at an undisclosed random backup path."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "previous.xml"
+        destination.write_text("old bytes")
+        real_unlink = m.os.unlink
+
+        def fail_committed_backup(path):
+            if str(path).endswith(".bak") and destination.read_text() == "new bytes":
+                raise OSError("controlled backup cleanup failure")
+            return real_unlink(path)
+
+        m.os.unlink = fail_committed_backup
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("a retained backup must be reported")
+            except m.OutputCleanupFailure as failure:
+                assert len(failure.retained_paths) == 1
+                backup = pathlib.Path(failure.retained_paths[0])
+                assert backup.exists()
+                assert backup.read_text() == "old bytes"
+        finally:
+            m.os.unlink = real_unlink
+            for path in root.glob("*.bak"):
+                path.unlink()
+
+        assert destination.read_text() == "new bytes"
+
+
+def test_interrupt_before_committed_cleanup_keeps_new_output_and_reports_backup(m):
+    """The committed flag covers the line before old-copy cleanup starts."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "previous.xml"
+        destination.write_text("old bytes")
+        real_close = m._close_owned_path
+        closed_paths = []
+        _, start = inspect.getsourcelines(m._cleanup_committed_outputs)
+        cleanup_line = start + next(
+            index for index, line in enumerate(
+                inspect.getsource(m._cleanup_committed_outputs).splitlines())
+            if line.strip() == "for swap in replaced:")
+        old_trace = sys.gettrace()
+        fired = False
+
+        def interrupt_before_cleanup(frame, event, _arg):
+            nonlocal fired
+            if (not fired and event == "line"
+                    and frame.f_code is m._cleanup_committed_outputs.__code__
+                    and frame.f_lineno == cleanup_line):
+                fired = True
+                raise KeyboardInterrupt("controlled interrupt before cleanup")
+            return interrupt_before_cleanup
+
+        def observe_close(record, failures, **kwargs):
+            if record.get("pin") is not None:
+                closed_paths.append(str(record["path"]))
+            return real_close(record, failures, **kwargs)
+
+        m._close_owned_path = observe_close
+        sys.settrace(interrupt_before_cleanup)
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("the controlled interrupt must escape")
+            except KeyboardInterrupt as error:
+                notes = "\n".join(getattr(error, "__notes__", []))
+                backups = list(root.glob("*.bak"))
+                assert len(backups) == 1
+                assert backups[0].read_text() == "old bytes"
+                assert "retained path(s):" in notes
+                assert os.path.realpath(backups[0]) in notes
+        finally:
+            sys.settrace(old_trace)
+            m._close_owned_path = real_close
+            for path in root.glob("*.bak"):
+                path.unlink()
+
+        assert fired
+        assert destination.read_text() == "new bytes"
+        assert os.path.realpath(destination) in closed_paths, closed_paths
+        assert any(path.endswith(".bak") for path in closed_paths)
+        assert any(path.endswith(".part") for path in closed_paths)
+
+
+def test_interrupt_after_backup_unlink_does_not_report_a_phantom_path(m):
+    """A cleanup syscall may interrupt after deletion; name no absent backup."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "previous.xml"
+        destination.write_text("old bytes")
+        real_unlink = m.os.unlink
+        real_close = m._close_owned_path
+        closed_paths = []
+        interrupted_backup = None
+
+        def interrupt_after_backup_unlink(path):
+            nonlocal interrupted_backup
+            result = real_unlink(path)
+            if str(path).endswith(".bak"):
+                interrupted_backup = str(path)
+                raise KeyboardInterrupt("controlled interrupt after backup unlink")
+            return result
+
+        def observe_close(record, failures, **kwargs):
+            if record.get("pin") is not None:
+                closed_paths.append(str(record["path"]))
+            return real_close(record, failures, **kwargs)
+
+        m.os.unlink = interrupt_after_backup_unlink
+        m._close_owned_path = observe_close
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("the controlled interrupt must escape")
+            except KeyboardInterrupt as error:
+                notes = "\n".join(getattr(error, "__notes__", []))
+                assert interrupted_backup is not None
+                assert not pathlib.Path(interrupted_backup).exists()
+                assert os.path.realpath(interrupted_backup) not in notes
+        finally:
+            m.os.unlink = real_unlink
+            m._close_owned_path = real_close
+
+        assert destination.read_text() == "new bytes"
+        assert not list(root.glob("*.bak"))
+        assert os.path.realpath(destination) in closed_paths, closed_paths
+        assert any(path.endswith(".bak") for path in closed_paths)
+        assert any(path.endswith(".part") for path in closed_paths)
+
+
+def test_legacy_oserror_cleanup_diagnostic_reaches_stderr(m):
+    """Python 3.10's OSError rendering ignores args mutations and needs stderr."""
+    program = f'''\
+import errno
+import importlib.util
+
+script = {str(SCRIPT)!r}
+spec = importlib.util.spec_from_file_location("bank_statement_import_subprocess", script)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+class LegacyOSError(OSError):
+    add_note = None
+error = LegacyOSError(errno.EIO, "controlled original failure", "/tmp/legacy-output.xml")
+module._note_cleanup_failures(error, ["/tmp/owned-backup.bak"])
+raise error
+'''
+    done = subprocess.run([sys.executable, "-c", program], text=True,
+                          capture_output=True, check=False)
+    assert done.returncode != 0
+    assert "controlled original failure" in done.stderr
+    assert "/tmp/legacy-output.xml" in done.stderr
+    assert "retained path(s): /tmp/owned-backup.bak" in done.stderr
+
+
+def test_refusal_reports_a_retained_backup_on_stderr(m):
+    """Refusal inherits SystemExit, whose unhandled rendering ignores
+    `BaseException.add_note`. Assert the CLI-visible error rather than the
+    in-process exception object so a sensitive retained backup is not hidden."""
+    program = f'''\
+import importlib.util
+import pathlib
+import tempfile
+
+script = {str(SCRIPT)!r}
+spec = importlib.util.spec_from_file_location("bank_statement_import_subprocess", script)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+with tempfile.TemporaryDirectory() as directory:
+    root = pathlib.Path(directory)
+    first = root / "first.xml"
+    second = root / "second.xml"
+    link = root / "out.xml"
+    first.write_text("first old")
+    second.write_text("second old")
+    link.symlink_to(first)
+    real_copy = module._copy_private_backup
+    real_cleanup = module._unlink_for_cleanup
+    def retarget_after_backup(src, identity, backup_handle):
+        result = real_copy(src, identity, backup_handle)
+        link.unlink()
+        link.symlink_to(second)
+        return result
+    def retain_backup(path, identity, failures):
+        if str(path).endswith(".bak"):
+            failures.append(path)
+        else:
+            real_cleanup(path, identity, failures)
+    module._copy_private_backup = retarget_after_backup
+    module._unlink_for_cleanup = retain_backup
+    module.write_outputs([(str(link), "new bytes")])
+'''
+    done = subprocess.run([sys.executable, "-c", program], text=True,
+                          capture_output=True, check=False)
+    assert done.returncode != 0
+    assert "output_path_changed" in done.stderr, done.stderr
+    assert "retained path(s):" in done.stderr, done.stderr
+    assert ".bak" in done.stderr, done.stderr
+
+
+def test_refusal_reports_rollback_metadata_scope_on_stderr(m):
+    """The ACL/file-flag limitation must survive unhandled SystemExit
+    rendering, where Python omits ordinary exception notes."""
+    program = f'''\
+import importlib.util
+import os
+import pathlib
+import tempfile
+
+script = {str(SCRIPT)!r}
+spec = importlib.util.spec_from_file_location("bank_statement_import_subprocess", script)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+with tempfile.TemporaryDirectory() as directory:
+    root = pathlib.Path(directory)
+    first = root / "first.xml"
+    second = root / "second.csv"
+    first.write_text("first old")
+    second.write_text("second old")
+    real_replace = module.os.replace
+    def replace_first_then_refuse_second(src, dst):
+        if str(src).endswith(".part") and os.path.basename(dst) == "second.csv":
+            raise module.Refusal("controlled_refusal", "controlled second swap refusal")
+        return real_replace(src, dst)
+    module.os.replace = replace_first_then_refuse_second
+    module.write_outputs([(str(first), "new first"), (str(second), "new second")])
+'''
+    done = subprocess.run([sys.executable, "-c", program], text=True,
+                          capture_output=True, check=False)
+    assert done.returncode != 0
+    assert "controlled_refusal" in done.stderr, done.stderr
+    assert "extended ACLs and file flags were not verified" in done.stderr, done.stderr
+
+
+def test_a_failed_swap_rolls_back_every_staged_replacement(m):
+    """Two existing destinations are both staged; the first's swap succeeds
+    and the second's fails. The rollback used to run only the un-staged
+    cleanup, so the first destination was left holding the new run's content
+    with no way back -- a mid-sequence failure must undo every replacement
+    this call already committed, not only the one in progress when it failed.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        first = pathlib.Path(directory, "first.xml")
+        second = pathlib.Path(directory, "second.csv")
+        first.write_text("first old")
+        second.write_text("second old")
+
+        real_replace = m.os.replace
+        calls = {"n": 0}
+
+        def flaky_replace(src, dst):
+            calls["n"] += 1
+            # The first destination's swap lands, then the second swap fails.
+            if calls["n"] == 2:
+                raise OSError("simulated failure mid-sequence")
+            return real_replace(src, dst)
+
+        m.os.replace = flaky_replace
+        try:
+            try:
+                m.write_outputs([(str(first), "<new-first/>"),
+                                  (str(second), "new-second\n")])
+                raise AssertionError("the second target's swap must fail")
+            except OSError:
+                pass
+        finally:
+            m.os.replace = real_replace
+
+        assert first.read_text() == "first old", \
+            "the first destination's already-committed swap must be rolled back"
+        assert second.read_text() == "second old"
+        # no stray .part/.bak file is left behind by either destination
+        assert sorted(p.name for p in pathlib.Path(directory).iterdir()) == \
+            ["first.xml", "second.csv"], \
+            sorted(p.name for p in pathlib.Path(directory).iterdir())
+
+
+def test_backup_copy_refuses_a_replaced_original_before_commit(m):
+    """Rollback bytes need the original inode's provenance, not whatever
+    happened to occupy its name while the private copy was being prepared."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "previous.xml"
+        replacement = root / "foreign.xml"
+        destination.write_text("old bytes")
+        replacement.write_text("foreign writer bytes")
+        real_copy = m._copy_private_backup
+        real_replace = m.os.replace
+
+        def replace_before_copy(src, identity, backup_handle):
+            real_replace(replacement, destination)
+            return real_copy(src, identity, backup_handle)
+
+        m._copy_private_backup = replace_before_copy
+        try:
+            refuses(m, "output_path_changed", m.write_outputs,
+                    [(str(destination), "new bytes")])
+        finally:
+            m._copy_private_backup = real_copy
+
+        assert destination.read_text() == "foreign writer bytes"
+        assert sorted(path.name for path in root.iterdir()) == ["previous.xml"]
+
+
+def test_claim_refuses_a_foreign_replacement_after_committing_original_identity(m):
+    """The descriptor, rather than a pre-open stat, commits the old inode.
+
+    An attacker can replace the path before this call opens it; without a
+    lock, that is the file the call is asked to replace. This regression covers
+    the actionable interval: a foreign replacement after the old descriptor
+    establishes identity but before the path is verified must remain untouched.
+    """
+    if os.name == "nt":
+        return  # Existing destinations are deliberately refused on Windows.
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "previous.xml"
+        foreign = root / "foreign.xml"
+        destination.write_text("old bytes")
+        foreign.write_text("foreign writer bytes")
+        real_owned_path = m._owned_path
+        real_replace = m.os.replace
+
+        def replace_after_identity(path, handle, *, created, **kwargs):
+            record = real_owned_path(path, handle, created=created, **kwargs)
+            if not created and os.path.realpath(path) == os.path.realpath(destination):
+                real_replace(foreign, destination)
+            return record
+
+        m._owned_path = replace_after_identity
+        try:
+            refuses(m, "output_path_changed", m.write_outputs,
+                    [(str(destination), "new bytes")])
+        finally:
+            m._owned_path = real_owned_path
+
+        assert destination.read_text() == "foreign writer bytes"
+        assert sorted(path.name for path in root.iterdir()) == ["previous.xml"]
+
+
+def test_line_interrupt_during_final_validation_rolls_back_replacements(m):
+    """A real line-traced SIGINT at the final validation stays recoverable."""
+    if os.name == "nt":
+        return  # Existing destinations are deliberately refused on Windows.
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first = root / "first.xml"
+        second = root / "second.csv"
+        first.write_text("first old")
+        second.write_text("second old")
+        _, start = inspect.getsourcelines(m.write_outputs)
+        validation_line = start + next(
+            index for index, line in enumerate(
+                inspect.getsource(m.write_outputs).splitlines())
+            if line.strip() == "if _claimed_output_changed(")
+        old_trace = sys.gettrace()
+        old_signal_handler = signal.getsignal(signal.SIGINT)
+        fired = False
+
+        def interrupt_final_validation(frame, event, _arg):
+            nonlocal fired
+            if (not fired and event == "line" and frame.f_code is m.write_outputs.__code__
+                    and frame.f_lineno == validation_line):
+                fired = True
+                signal.raise_signal(signal.SIGINT)
+            return interrupt_final_validation
+
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        sys.settrace(interrupt_final_validation)
+        try:
+            try:
+                m.write_outputs([(str(first), "new first"),
+                                 (str(second), "new second")])
+                raise AssertionError("the controlled interrupt must escape")
+            except KeyboardInterrupt:
+                pass
+        finally:
+            sys.settrace(old_trace)
+            signal.signal(signal.SIGINT, old_signal_handler)
+
+        assert fired
+        assert first.read_text() == "first old"
+        assert second.read_text() == "second old"
+        assert sorted(path.name for path in root.iterdir()) == ["first.xml", "second.csv"]
+
+
+def test_backup_copy_refuses_a_fifo_before_reading_it(m):
+    """An existing output is data only when it is a regular file; opening a
+    FIFO for its rollback copy would otherwise wait for an unrelated writer."""
+    if not hasattr(os, "mkfifo"):
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "previous.xml"
+        os.mkfifo(destination)
+
+        refuses(m, "output_not_regular", m.write_outputs,
+                [(str(destination), "new bytes")])
+
+        assert destination.is_fifo()
+        assert sorted(path.name for path in root.iterdir()) == ["previous.xml"]
+
+
+def test_duplicate_failure_after_claim_closes_and_removes_new_output(m):
+    """The claimed private descriptor is already recorded before a duplicate
+    is needed for writing, so descriptor exhaustion cannot leak the path."""
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory, "new.xml")
+        real_open_private = m._open_private
+        real_dup = m.os.dup
+        real_close = m.os.close
+        opened, closed = [], []
+
+        def observe_open(path, accept_inherited=False):
+            handle = real_open_private(path, accept_inherited)
+            opened.append(handle)
+            return handle
+
+        def exhausted_dup(_):
+            raise OSError("controlled descriptor exhaustion")
+
+        def observe_close(handle):
+            closed.append(handle)
+            return real_close(handle)
+
+        m._open_private = observe_open
+        m.os.dup = exhausted_dup
+        m.os.close = observe_close
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("the duplicate failure must escape")
+            except OSError as error:
+                assert "controlled descriptor exhaustion" in str(error)
+        finally:
+            m._open_private = real_open_private
+            m.os.dup = real_dup
+            m.os.close = real_close
+
+        assert len(opened) == 1
+        assert opened[0] in closed
+        assert not destination.exists()
+
+
+def test_backup_refuses_when_original_metadata_cannot_be_recorded(m):
+    """A rollback cannot claim to restore metadata it was unable to capture."""
+    if not hasattr(m.os, "listxattr"):
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "previous.xml"
+        destination.write_text("old bytes")
+        real_listxattr = m.os.listxattr
+
+        def unavailable_xattrs(_):
+            raise OSError("controlled xattr metadata failure")
+
+        m.os.listxattr = unavailable_xattrs
+        try:
+            refusal = refuses(m, "output_metadata_unavailable", m.write_outputs,
+                              [(str(destination), "new bytes")])
+        finally:
+            m.os.listxattr = real_listxattr
+
+        assert "controlled xattr metadata failure" in str(refusal.code)
+        assert destination.read_text() == "old bytes"
+        assert sorted(path.name for path in root.iterdir()) == ["previous.xml"]
+
+
+def test_cleanup_keeps_a_reclaimed_owned_path(m):
+    """A cleanup record proves only the path our run made. If that pathname
+    changes identity, reporting it is safe; unlinking it is not."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        owned = root / "output.xml.pending"
+        foreign = root / "foreign.xml"
+        owned.write_text("our temporary bytes")
+        identity = m._entry_identity(owned)
+        foreign.write_text("foreign writer bytes")
+        os.replace(foreign, owned)
+        failures = []
+
+        m._unlink_for_cleanup(owned, identity, failures)
+
+        assert owned.read_text() == "foreign writer bytes"
+        assert failures == [str(owned)]
+
+
+def test_cleanup_reconciles_a_reclaimed_path_after_unlink_error(m):
+    """An unlink error after a move must retain the moved inode diagnostic."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        path, moved, foreign = (
+            root / "output.xml.pending", root / "moved.xml.pending", root / "foreign.xml")
+        handle = m._open_private(path)
+        os.write(handle, b"generated statement")
+        record = m._owned_path(path, handle, created=True)
+        record["cleanup_path"] = path
+        foreign.write_text("foreign writer bytes")
+        real_unlink = m.os.unlink
+
+        def move_reclaim_then_fail(candidate):
+            if pathlib.Path(candidate) == path:
+                os.replace(path, moved)
+                os.replace(foreign, path)
+                raise OSError("controlled unlink failure before effect")
+            return real_unlink(candidate)
+
+        m.os.unlink = move_reclaim_then_fail
+        failures = []
+        try:
+            m._cleanup_owned_path(record, failures)
+        finally:
+            m.os.unlink = real_unlink
+
+        assert failures == [
+            f"owned output could not be located after cleanup: {path}"]
+        assert record["pin"] is None
+        assert path.read_text() == "foreign writer bytes"
+        assert moved.read_bytes() == b"generated statement"
+
+
+def test_pinned_backup_reclaimed_path_retains_cleanup_diagnostic(m):
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "rollback.bak"
+        moved = pathlib.Path(directory) / "moved.bak"
+        path.write_text("prior output")
+        identity = m._entry_identity(path)
+        handle = os.open(path, os.O_RDONLY)
+        record = {"path": path, "identity": identity, "pin": handle}
+        path.rename(moved)
+        path.write_text("foreign bytes")
+        failures = []
+        m._cleanup_owned_path(record, failures)
+        assert failures == [
+            str(path),
+            f"owned output could not be located after cleanup: {path}",
+        ]
+        assert record["pin"] is None
+        assert path.read_text() == "foreign bytes"
+        assert moved.read_text() == "prior output"
+
+
+def test_pinned_backup_parent_rename_reports_unlocated_copy(m):
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        before, after = root / "before", root / "after"
+        before.mkdir()
+        path = before / "rollback.bak"
+        path.write_text("prior output")
+        identity = m._entry_identity(path)
+        handle = os.open(path, os.O_RDONLY)
+        record = {"path": path, "identity": identity, "pin": handle}
+        try:
+            before.rename(after)
+            failures = []
+            m._cleanup_owned_path(record, failures)
+        finally:
+            if record["pin"] is not None:
+                os.close(record["pin"])
+        assert failures == [
+            f"owned output could not be located after cleanup: {path}"
+        ]
+        assert (after / "rollback.bak").read_text() == "prior output"
+
+
+def test_new_output_symlink_loop_is_a_typed_path_refusal(m):
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "output.xml"
+        real_resolve = m.pathlib.Path.resolve
+
+        def loop_resolve(path, *args, **kwargs):
+            if path == destination:
+                raise RuntimeError("controlled symlink loop")
+            return real_resolve(path, *args, **kwargs)
+
+        m.pathlib.Path.resolve = loop_resolve
+        try:
+            refusal = refuses(m, "output_path_changed", m.write_outputs,
+                              [(str(destination), "new bytes")])
+        finally:
+            m.pathlib.Path.resolve = real_resolve
+        assert "could not be resolved safely" in str(refusal.code)
+        assert not destination.exists()
+
+
+def test_new_output_final_revalidation_loop_cleans_all_claimed_outputs(m):
+    """A loop discovered after claiming still rolls back every fresh output."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        real_resolve = m.pathlib.Path.resolve
+        resolve_calls = 0
+
+        def loop_after_claim(path):
+            nonlocal resolve_calls
+            if pathlib.Path(path) == first:
+                resolve_calls += 1
+                # Claiming resolves once to choose the canonical path and once
+                # to verify the new inode. The third call is final
+                # revalidation, after both outputs have been written.
+                if resolve_calls == 3:
+                    raise RuntimeError("controlled post-claim symlink loop")
+            return real_resolve(path)
+
+        m.pathlib.Path.resolve = loop_after_claim
+        try:
+            refusal = refuses(
+                m,
+                "output_path_changed",
+                m.write_outputs,
+                [(str(first), "first bytes"), (str(second), "second bytes")],
+            )
+        finally:
+            m.pathlib.Path.resolve = real_resolve
+        assert resolve_calls == 3, "RuntimeError must be injected during final revalidation"
+        assert "could not be resolved safely" in str(refusal.code)
+        assert not first.exists(), "the first claimed output must be cleaned"
+        assert not second.exists(), "the earlier claimed output must be cleaned too"
+
+
+def test_unlinked_pinned_backup_does_not_claim_a_hard_link_alias(m):
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "rollback.bak"
+        path.write_text("prior output")
+        identity = m._entry_identity(path)
+        handle = os.open(path, os.O_RDONLY)
+        try:
+            path.unlink()
+            refusal = refuses(m, "output_path_changed", m._pinned_backup_still_has_one_link,
+                              {"path": path, "identity": identity, "pin": handle})
+            assert "hard-link alias" not in str(refusal.code)
+        finally:
+            os.close(handle)
+
+
+def test_fresh_output_parent_rename_reports_an_unlocated_owned_descriptor(m):
+    """A parent rename preserves a newly created inode under a name cleanup
+    cannot discover. The failure must disclose that fact rather than calling
+    stale-path ENOENT a successful rollback."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory) / "before"
+        moved = pathlib.Path(directory) / "after"
+        root.mkdir()
+        destination = root / "output.xml"
+
+        def rename_parent():
+            os.rename(root, moved)
+
+        try:
+            m.write_outputs([(str(destination), "new bytes")], after_claim=rename_parent)
+            raise AssertionError("a moved fresh output must refuse before commit")
+        except m.Refusal as refusal:
+            assert refusal.category == "output_path_changed"
+            assert "owned output could not be located after cleanup" in str(refusal.code)
+
+        retained = moved / "output.xml"
+        assert retained.read_text() == "new bytes"
+
+
+def test_fresh_output_parent_rename_with_foreign_replacement_reports_only_owned_uncertainty(m):
+    """A stale name can be reclaimed after its parent moves. Cleanup must not
+    remove or present that foreign file as the location of our pinned output."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory) / "before"
+        moved = pathlib.Path(directory) / "after"
+        root.mkdir()
+        destination = root / "output.xml"
+
+        def rename_parent_and_reclaim_old_name():
+            os.rename(root, moved)
+            root.mkdir()
+            destination.write_text("foreign bytes")
+
+        try:
+            m.write_outputs(
+                [(str(destination), "new bytes")], after_claim=rename_parent_and_reclaim_old_name)
+            raise AssertionError("a moved fresh output must refuse before commit")
+        except m.Refusal as refusal:
+            assert refusal.category == "output_path_changed"
+            detail = str(refusal.code)
+            assert "owned output could not be located after cleanup" in detail
+            assert "retained path(s): " + str(destination) not in detail
+
+        assert destination.read_text() == "foreign bytes"
+        assert (moved / "output.xml").read_text() == "new bytes"
+
+
+def test_writer_refuses_when_the_private_backup_path_is_reclaimed(m):
+    """The commit boundary must still name this run's backup; if it does not,
+    do not overwrite the destination without a recoverable owned copy."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "previous.xml"
+        foreign = root / "foreign.xml"
+        destination.write_text("old bytes")
+        real_copy = m._copy_private_backup
+
+        def reclaim_backup_after_copy(src, identity, backup_handle):
+            result = real_copy(src, identity, backup_handle)
+            backup, = root.glob("previous.xml.*.bak")
+            foreign.write_text("foreign writer bytes")
+            os.replace(foreign, backup)
+            return result
+
+        m._copy_private_backup = reclaim_backup_after_copy
+        try:
+            refusal = refuses(m, "output_path_changed", m.write_outputs,
+                              [(str(destination), "new bytes")])
+        finally:
+            m._copy_private_backup = real_copy
+
+        backups = list(root.glob("previous.xml.*.bak"))
+        assert destination.read_text() == "old bytes"
+        assert len(backups) == 1
+        assert backups[0].read_text() == "foreign writer bytes"
+        assert str(backups[0]) in str(refusal.code)
+
+
+def test_parent_rename_after_backup_preparation_discloses_unlocated_backup(m):
+    """A no-swap rollback must reconcile the pinned backup before closing it."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory) / "before"
+        moved = pathlib.Path(directory) / "after"
+        root.mkdir()
+        destination = root / "previous.xml"
+        destination.write_text("old bytes")
+        real_copy = m._copy_private_backup
+
+        def rename_parent_after_backup(source, identity, backup_handle):
+            result = real_copy(source, identity, backup_handle)
+            root.rename(moved)
+            return result
+
+        m._copy_private_backup = rename_parent_after_backup
+        detail = ""
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("the renamed parent must prevent a swap")
+            except FileNotFoundError as error:
+                detail = str(error) + "\n" + "\n".join(getattr(error, "__notes__", []))
+                assert "owned output could not be located after cleanup" in detail
+        finally:
+            m._copy_private_backup = real_copy
+
+        assert (moved / "previous.xml").read_text() == "old bytes"
+        backups = list(moved.glob("previous.xml.*.bak"))
+        assert len(backups) == 1
+        assert backups[0].read_text() == "old bytes"
+        old_backup_path = root.resolve() / backups[0].name
+        assert f"owned output could not be located after cleanup: {old_backup_path}" in detail
+
+
+def test_rollback_keeps_a_foreign_destination_and_private_backup(m):
+    """When an external writer replaces an already-swapped destination before
+    another target fails, rollback must retain the owned backup rather than
+    overwriting that writer's bytes."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first = root / "first.xml"
+        second = root / "second.csv"
+        foreign = root / "foreign.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_replace = m.os.replace
+        real_open_regular = m._open_regular_output
+        real_owned_path = m._owned_path
+        real_close = m.os.close
+        swaps = []
+        first_handles, closed_handles = [], []
+        owned_handles = {}
+
+        def observe_first_handles(path, identity):
+            handle = real_open_regular(path, identity)
+            if os.path.samefile(path, first):
+                first_handles.append(handle)
+            return handle
+
+        def observe_closes(handle):
+            closed_handles.append(handle)
+            return real_close(handle)
+
+        def observe_owned_path(path, handle, *, created, **kwargs):
+            record = real_owned_path(path, handle, created=created, **kwargs)
+            if os.path.basename(path).startswith("first.xml."):
+                owned_handles[pathlib.Path(path).suffix] = record["pin"]
+            return record
+
+        def replace_then_conflict(src, dst):
+            if str(src).endswith(".part") and os.path.basename(dst) == "first.xml":
+                swaps.append("first")
+                assert len(first_handles) == 2
+                # The first open is the ownership pin captured before the
+                # backup read. It must survive the first swap and the foreign
+                # replacement so that its inode cannot be recycled.
+                assert first_handles[0] not in closed_handles
+                assert first_handles[1] in closed_handles
+                assert owned_handles[".part"] not in closed_handles
+                assert owned_handles[".bak"] not in closed_handles
+                result = real_replace(src, dst)
+                foreign.write_text("foreign writer bytes")
+                real_replace(foreign, first)
+                return result
+            if str(src).endswith(".part") and os.path.basename(dst) == "second.csv":
+                swaps.append("second")
+                raise OSError("simulated failure after foreign writer")
+            return real_replace(src, dst)
+
+        m.os.replace = replace_then_conflict
+        m._open_regular_output = observe_first_handles
+        m._owned_path = observe_owned_path
+        m.os.close = observe_closes
+        diagnostic_notes = ""
+        try:
+            try:
+                m.write_outputs([(str(first), "new first"),
+                                 (str(second), "new second")])
+                raise AssertionError("the second target's swap must fail")
+            except OSError as error:
+                diagnostic_notes = "\n".join(
+                    str(note) for note in getattr(error, "__notes__", [])
+                )
+        finally:
+            m.os.replace = real_replace
+            m._open_regular_output = real_open_regular
+            m._owned_path = real_owned_path
+            m.os.close = real_close
+
+        backups = list(root.glob("first.xml.*.bak"))
+        assert len(backups) == 1
+        assert str(backups[0]) in diagnostic_notes
+        assert swaps == ["first", "second"]
+        assert first_handles[0] in closed_handles
+        assert owned_handles[".part"] in closed_handles
+        assert owned_handles[".bak"] in closed_handles
+        assert stat.S_IMODE(backups[0].stat().st_mode) == 0o600
+        assert backups[0].read_text() == "first old"
+        assert first.read_text() == "foreign writer bytes"
+        assert second.read_text() == "second old"
+
+
+def test_original_inode_pin_blocks_after_claim_replacement_before_backup(m):
+    """A same-name replacement after claim cannot make backup copy foreign bytes."""
+    if os.name == "nt":
+        return  # Existing destinations are deliberately refused on Windows.
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "output.xml"
+        foreign = root / "foreign.xml"
+        destination.write_text("original bytes")
+        real_open = m._open_regular_output
+        original_handles = []
+
+        def observe_original(path, identity):
+            handle = real_open(path, identity)
+            if os.path.realpath(path) == os.path.realpath(destination):
+                original_handles.append(handle)
+            return handle
+
+        def replace_after_claim():
+            assert original_handles, "the original inode must be pinned before the hook"
+            assert os.pread(original_handles[0], 32, 0) == b"original bytes"
+            foreign.write_text("foreign bytes")
+            os.replace(foreign, destination)
+            assert os.pread(original_handles[0], 32, 0) == b"original bytes"
+
+        m._open_regular_output = observe_original
+        try:
+            refusal = refuses(
+                m,
+                "output_path_changed",
+                m.write_outputs,
+                [(str(destination), "new bytes")],
+                False,
+                replace_after_claim,
+            )
+        finally:
+            m._open_regular_output = real_open
+        assert "changed" in str(refusal.code)
+        assert destination.read_text() == "foreign bytes"
+        assert original_handles
+        try:
+            os.fstat(original_handles[0])
+        except OSError:
+            pass
+        else:
+            raise AssertionError("the original pin must be closed during recovery")
+
+
+def test_committed_close_after_effect_does_not_report_missing_backup(m):
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "output.xml"
+        destination.write_text("old bytes")
+        real_close = m.os.close
+        real_owned = m._owned_path
+        backup_handles = set()
+        fired = False
+
+        def observe_owned(path, handle, *, created, **kwargs):
+            record = real_owned(path, handle, created=created, **kwargs)
+            if str(path).endswith(".bak"):
+                backup_handles.add(handle)
+            return record
+
+        def close_then_error(handle):
+            nonlocal fired
+            real_close(handle)
+            if handle in backup_handles and not fired:
+                fired = True
+                raise OSError("controlled close after effect")
+
+        m._owned_path, m.os.close = observe_owned, close_then_error
+        try:
+            m.write_outputs([(str(destination), "new bytes")])
+        finally:
+            m._owned_path, m.os.close = real_owned, real_close
+        assert fired
+        assert destination.read_text() == "new bytes"
+        assert list(pathlib.Path(directory).iterdir()) == [destination]
+
+
+def test_existing_hard_link_output_is_refused_with_topology_unchanged(m):
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "output.xml"
+        alias = pathlib.Path(directory) / "alias.xml"
+        destination.write_text("old bytes")
+        os.link(destination, alias)
+        refuses(m, "output_has_multiple_links", m.write_outputs,
+                [(str(destination), "new bytes")])
+        assert os.path.samefile(destination, alias)
+        assert destination.read_text() == alias.read_text() == "old bytes"
+        assert sorted(p.name for p in pathlib.Path(directory).iterdir()) == ["alias.xml", "output.xml"]
+
+
+def test_preswap_abort_restores_access_time_on_the_original_pin(m):
+    # Inject the access-time effect explicitly so this covers noatime hosts too.
+    for abort_before_replace in (True, False):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = pathlib.Path(directory) / "output.xml"
+            destination.write_text("old bytes")
+            old_atime = 1_600_000_000_000_000_000
+            old_mtime = 1_700_000_000_000_000_000
+            os.utime(destination, ns=(old_atime, old_mtime))
+            real_copy, real_replace = m._copy_private_backup, m.os.replace
+
+            def copy_with_access_time_effect(*args):
+                real_copy(*args)
+                os.utime(destination, ns=(old_mtime, old_mtime))
+                if abort_before_replace:
+                    raise OSError("controlled copy abort")
+
+            def refuse_replace(*_args):
+                raise OSError("controlled replace before effect")
+
+            m._copy_private_backup, m.os.replace = copy_with_access_time_effect, refuse_replace
+            try:
+                try:
+                    m.write_outputs([(str(destination), "new bytes")])
+                    raise AssertionError("the controlled abort must escape")
+                except OSError as error:
+                    assert str(error).startswith("controlled")
+            finally:
+                m._copy_private_backup, m.os.replace = real_copy, real_replace
+            final_stat = destination.stat()
+            assert final_stat.st_atime_ns == old_atime
+            assert final_stat.st_mtime_ns == old_mtime
+            assert destination.read_text() == "old bytes"
+            assert list(pathlib.Path(directory).iterdir()) == [destination]
+
+
+def test_rollback_restores_original_output_metadata(m):
+    """A caught later swap failure restores the former bytes and portable
+    metadata, while a retained pre-rollback backup stays private."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first = root / "first.xml"
+        second = root / "second.csv"
+        first.write_text("first old")
+        second.write_text("second old")
+        first.chmod(0o640)
+        old_atime_ns = 1_600_000_000_123_456_789
+        old_mtime_ns = 1_700_000_000_123_456_789
+        os.utime(first, ns=(old_atime_ns, old_mtime_ns))
+        xattr_name = "user.bridge_rollback_test"
+        xattr_value = b"original metadata"
+        preserves_xattr = False
+        if hasattr(os, "setxattr"):
+            try:
+                os.setxattr(first, xattr_name, xattr_value)
+                preserves_xattr = True
+            except OSError:
+                pass
+        real_replace = m.os.replace
+
+        def fail_second_swap(src, dst):
+            if str(src).endswith(".part") and os.path.basename(dst) == "second.csv":
+                raise OSError("controlled second swap failure")
+            return real_replace(src, dst)
+
+        m.os.replace = fail_second_swap
+        try:
+            try:
+                m.write_outputs([(str(first), "new first"),
+                                 (str(second), "new second")])
+                raise AssertionError("the controlled swap failure must escape")
+            except OSError as error:
+                assert "controlled second swap failure" in str(error)
+        finally:
+            m.os.replace = real_replace
+
+        restored = first.stat()
+        assert first.read_text() == "first old"
+        assert stat.S_IMODE(restored.st_mode) == 0o640
+        assert restored.st_atime_ns == old_atime_ns
+        assert restored.st_mtime_ns == old_mtime_ns
+        if preserves_xattr:
+            assert os.getxattr(first, xattr_name) == xattr_value
+        assert second.read_text() == "second old"
+        assert sorted(path.name for path in root.iterdir()) == ["first.xml", "second.csv"]
+
+
 def test_a_case_insensitive_collision_is_refused_before_anything_is_written(m):
     """`--out Result.xml --manifest result.XML` is one file on a case-insensitive
     volume. The lexical preflight cannot see it and `samefile` needs both paths
@@ -1468,6 +3103,1548 @@ def test_ledger_key_folds_exactly_what_its_docstring_claims(m):
     assert not same("A\u2013B", "A B"), "en dash is not an ASCII hyphen"
 
 
+def test_write_outputs_refuses_a_hard_link_added_after_backup_copy(m):
+    """The commit check must see a link created by a backup-time hook."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "output.xml"
+        alias = root / "alias.xml"
+        destination.write_text("old bytes")
+        real_copy = m._copy_private_backup
+
+        def add_link_after_backup(*args):
+            result = real_copy(*args)
+            os.link(destination, alias)
+            return result
+
+        m._copy_private_backup = add_link_after_backup
+        try:
+            refuses(
+                m,
+                "output_has_multiple_links",
+                m.write_outputs,
+                [(str(destination), "new bytes")],
+            )
+        finally:
+            m._copy_private_backup = real_copy
+
+        assert os.path.samefile(destination, alias)
+        assert destination.read_text() == alias.read_text() == "old bytes"
+        assert sorted(path.name for path in root.iterdir()) == ["alias.xml", "output.xml"]
+
+
+def test_write_outputs_refuses_a_hard_link_added_to_the_private_backup(m):
+    """The generated backup is ownership-only until commit. A link made after
+    its copy finishes leaves an unknown alias with old statement bytes, so the
+    run must refuse and describe the retention rather than report success."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "output.xml"
+        alias = root / "backup-alias.xml"
+        destination.write_text("old bytes")
+        real_copy = m._copy_private_backup
+
+        def add_link_after_backup_copy(*args):
+            result = real_copy(*args)
+            backup, = root.glob("output.xml.*.bak")
+            os.link(backup, alias)
+            return result
+
+        m._copy_private_backup = add_link_after_backup_copy
+        try:
+            refusal = refuses(
+                m,
+                "rollback_backup_has_multiple_links",
+                m.write_outputs,
+                [(str(destination), "new bytes")],
+            )
+        finally:
+            m._copy_private_backup = real_copy
+
+        assert "unknown hard-link alias" in str(refusal.code)
+        assert destination.read_text() == "old bytes"
+        assert alias.read_text() == "old bytes"
+        assert not list(root.glob("output.xml.*.bak"))
+
+
+def test_committed_new_output_close_failure_is_not_a_retained_backup(m):
+    """A failed ownership-pin close does not create a prior-output backup."""
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "output.xml"
+        real_close = m.os.close
+        real_owned = m._owned_path
+        output_handles = set()
+        fired = False
+
+        def observe_owned(path, handle, *, created, **kwargs):
+            record = real_owned(path, handle, created=created, **kwargs)
+            if created and pathlib.Path(path).resolve() == destination.resolve():
+                output_handles.add(handle)
+            return record
+
+        def close_then_error(handle):
+            nonlocal fired
+            real_close(handle)
+            if handle in output_handles and not fired:
+                fired = True
+                raise OSError("controlled close after effect")
+
+        m._owned_path, m.os.close = observe_owned, close_then_error
+        try:
+            m.write_outputs([(str(destination), "new bytes")])
+        finally:
+            m._owned_path, m.os.close = real_owned, real_close
+
+        # EBADF from the retained-descriptor probe proves this close took
+        # effect, so it is not a leaked-pin failure.
+        assert fired
+        assert destination.read_text() == "new bytes"
+        assert list(pathlib.Path(directory).iterdir()) == [destination]
+
+
+def test_new_output_unlink_after_claim_refuses_and_cleans_owned_canonical_path(m):
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "output.xml"
+        def unlink_after_claim():
+            destination.unlink()
+        refusal = refuses(m, "output_path_changed", m.write_outputs,
+                          [(str(destination), "new bytes")], False, unlink_after_claim)
+        assert "owned output could not be located after cleanup" not in str(refusal.code)
+        assert not destination.exists()
+
+
+def test_cleanup_unlinked_pinned_path_does_not_report_a_phantom_output(m):
+    """A descriptor with zero links is not an undisclosed cleanup location."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "output.xml"
+        path.write_text("new bytes")
+        handle = os.open(path, os.O_RDONLY)
+        record = {"path": path, "identity": m._fd_identity(handle), "pin": handle}
+        failures = []
+        m._cleanup_owned_path(record, failures)
+        assert failures == []
+        assert record["pin"] is None
+        assert not path.exists()
+
+
+def test_cleanup_after_effect_unlink_without_alias_does_not_report_a_phantom(m):
+    """An unlink that removes its only link before raising has no retained path."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "output.xml"
+        path.write_text("new bytes")
+        handle = os.open(path, os.O_RDONLY)
+        record = {"path": path, "identity": m._fd_identity(handle), "pin": handle}
+        real_unlink = m.os.unlink
+
+        def unlink_then_fail(candidate):
+            real_unlink(candidate)
+            raise OSError("controlled unlink after effect")
+
+        m.os.unlink = unlink_then_fail
+        try:
+            failures = []
+            m._cleanup_owned_path(record, failures)
+        finally:
+            m.os.unlink = real_unlink
+
+        assert failures == []
+        assert record["pin"] is None
+        assert not path.exists()
+
+
+def test_write_outputs_after_effect_unlink_discloses_retained_hard_link(m):
+    """A cleanup EIO after unlink still reconciles a pinned hard-link alias."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second, alias = root / "first.xml", root / "second.xml", root / "alias.xml"
+        real_dup, real_unlink = m.os.dup, m.os.unlink
+        dup_calls = 0
+
+        def fail_second_payload(handle):
+            nonlocal dup_calls
+            dup_calls += 1
+            if dup_calls == 2:
+                raise OSError("controlled later payload failure")
+            return real_dup(handle)
+
+        def unlink_after_effect(candidate):
+            real_unlink(candidate)
+            if pathlib.Path(candidate).resolve() == first.resolve():
+                raise OSError("controlled cleanup EIO after unlink")
+
+        m.os.dup, m.os.unlink = fail_second_payload, unlink_after_effect
+        try:
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                try:
+                    m.write_outputs(
+                        [(str(first), "first bytes"), (str(second), "second bytes")],
+                        after_claim=lambda: os.link(first, alias),
+                    )
+                    raise AssertionError("the controlled payload failure must escape")
+                except OSError as error:
+                    detail = (str(error) + "\n" + "\n".join(getattr(error, "__notes__", []))
+                              + stderr.getvalue())
+                    assert "controlled later payload failure" in detail
+                    assert "owned output could not be located after cleanup" in detail
+        finally:
+            m.os.dup, m.os.unlink = real_dup, real_unlink
+
+        assert not first.exists()
+        assert not second.exists()
+        assert alias.read_text() == "first bytes"
+
+
+def test_new_output_alias_after_claim_and_later_payload_failure_is_disclosed(m):
+    """Cleanup may remove our name while an after-claim hard link stays live."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second, alias = root / "first.xml", root / "second.xml", root / "alias.xml"
+        real_dup = m.os.dup
+        calls = 0
+
+        def fail_second_payload(handle):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("controlled later payload failure")
+            return real_dup(handle)
+
+        m.os.dup = fail_second_payload
+        try:
+            try:
+                m.write_outputs(
+                    [(str(first), "first bytes"), (str(second), "second bytes")],
+                    after_claim=lambda: os.link(first, alias),
+                )
+                raise AssertionError("the controlled payload failure must escape")
+            except OSError as error:
+                detail = str(error) + "\n" + "\n".join(getattr(error, "__notes__", []))
+                assert "controlled later payload failure" in detail
+                assert "owned output could not be located after cleanup" in detail
+        finally:
+            m.os.dup = real_dup
+
+        assert not first.exists()
+        assert not second.exists()
+        assert alias.read_text() == "first bytes"
+
+
+def test_write_outputs_inspection_eacces_is_not_reported_as_missing(m):
+    """A real payload rollback retains an inaccessible claimed output visibly."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        real_entry = m._entry_identity
+        real_dup = m.os.dup
+        denied = False
+        dup_calls = 0
+
+        def deny_entry(path):
+            if denied and pathlib.Path(path).resolve() == first.resolve():
+                raise PermissionError("controlled EACCES")
+            return real_entry(path)
+
+        def fail_second_payload(handle):
+            nonlocal dup_calls
+            dup_calls += 1
+            if dup_calls == 2:
+                raise OSError("controlled later payload failure")
+            return real_dup(handle)
+
+        def deny_after_claim():
+            nonlocal denied
+            denied = True
+
+        m._entry_identity, m.os.dup = deny_entry, fail_second_payload
+        try:
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                try:
+                    m.write_outputs(
+                        [(str(first), "first bytes"), (str(second), "second bytes")],
+                        after_claim=deny_after_claim,
+                    )
+                    raise AssertionError("the controlled payload failure must escape")
+                except OSError as error:
+                    detail = (str(error) + "\n" + "\n".join(getattr(error, "__notes__", []))
+                              + stderr.getvalue())
+                    assert "controlled later payload failure" in detail
+                    assert ("could not inspect owned output during cleanup: "
+                            + str(first.resolve())) in detail
+        finally:
+            m._entry_identity, m.os.dup = real_entry, real_dup
+
+        assert first.read_text() == "first bytes"
+        assert not second.exists()
+
+
+def test_new_output_parent_retarget_refuses_and_preserves_foreign_path(m):
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        original, foreign = root / "original", root / "foreign"
+        original.mkdir()
+        foreign.mkdir()
+        foreign_destination = foreign / "output.xml"
+        foreign_destination.write_text("foreign bytes")
+        destination = root / "linked" / "output.xml"
+        (root / "linked").symlink_to(original, target_is_directory=True)
+        def retarget_parent():
+            (root / "linked").unlink()
+            (root / "linked").symlink_to(foreign, target_is_directory=True)
+        refuses(m, "output_path_changed", m.write_outputs,
+                [(str(destination), "new bytes")], False, retarget_parent)
+        assert foreign_destination.read_text() == "foreign bytes"
+        assert original.exists() and not (original / "output.xml").exists()
+        assert (root / "linked").is_symlink(), "foreign retarget must not be deleted"
+        assert (root / "linked").joinpath("output.xml").read_text() == "foreign bytes"
+
+
+def test_new_output_replace_after_claim_preserves_foreign_bytes(m):
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination, foreign = root / "output.xml", root / "foreign.xml"
+        def replace_after_claim():
+            foreign.write_text("foreign bytes")
+            os.replace(foreign, destination)
+        refuses(m, "output_path_changed", m.write_outputs,
+                [(str(destination), "new bytes")], False, replace_after_claim)
+        assert destination.read_text() == "foreign bytes"
+
+
+def test_new_output_claim_inspection_failure_cleans_owned_path(m):
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "output.xml"
+        real_identity = m._file_identity
+        def fail_identity(path):
+            if pathlib.Path(path).resolve() == destination.resolve():
+                raise OSError("controlled claim inspection failure")
+            return real_identity(path)
+        m._file_identity = fail_identity
+        try:
+            refuses(m, "output_path_changed", m.write_outputs,
+                    [(str(destination), "new bytes")])
+        finally:
+            m._file_identity = real_identity
+        assert not destination.exists()
+
+
+def test_new_output_parent_retarget_during_open_cleans_actual_created_path(m):
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        original, foreign = root / "original", root / "foreign"
+        original.mkdir()
+        foreign.mkdir()
+        link = root / "linked"
+        link.symlink_to(original, target_is_directory=True)
+        foreign_destination = foreign / "output.xml"
+        foreign_destination.write_text("foreign bytes")
+        real_open = m._open_private
+        def retarget_open(path, accept_inherited):
+            link.unlink()
+            link.symlink_to(foreign, target_is_directory=True)
+            return real_open(path, accept_inherited)
+        m._open_private = retarget_open
+        try:
+            refuses(m, "output_path_changed", m.write_outputs,
+                    [(str(link / "output.xml"), "new bytes")])
+        finally:
+            m._open_private = real_open
+        assert not (original / "output.xml").exists()
+        assert foreign_destination.read_text() == "foreign bytes"
+
+
+def test_new_output_changed_during_later_swap_rolls_back_existing_output(m):
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        fresh, existing = root / "fresh.xml", root / "existing.xml"
+        existing.write_text("old bytes")
+        real_replace = m.os.replace
+        def replace_then_unlink(source, destination):
+            result = real_replace(source, destination)
+            if pathlib.Path(destination).resolve() == existing.resolve() and str(source).endswith(".part"):
+                fresh.unlink()
+            return result
+        m.os.replace = replace_then_unlink
+        try:
+            refuses(m, "output_path_changed", m.write_outputs,
+                    [(str(fresh), "new fresh"), (str(existing), "new existing")])
+        finally:
+            m.os.replace = real_replace
+        assert not fresh.exists()
+        assert existing.read_text() == "old bytes"
+        assert list(root.iterdir()) == [existing]
+
+
+def test_staged_output_hard_link_before_commit_refuses_and_reports_alias(m):
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination, alias = root / "output.xml", root / "alias.xml"
+        destination.write_text("old bytes")
+        def link_staged():
+            staged, = root.glob("output.xml.*.part")
+            os.link(staged, alias)
+        refusal = refuses(m, "staged_output_has_multiple_links", m.write_outputs,
+                          [(str(destination), "new bytes")], False, link_staged)
+        assert "unknown hard-link alias" in str(refusal.code)
+        assert destination.read_text() == "old bytes"
+        assert alias.read_text() == "new bytes"
+        assert not list(root.glob("*.part"))
+        assert not list(root.glob("*.bak"))
+
+
+def test_fresh_output_hard_link_before_commit_refuses_and_reports_alias(m):
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination, alias = root / "output.xml", root / "alias.xml"
+        refusal = refuses(m, "output_has_multiple_links", m.write_outputs,
+                          [(str(destination), "new bytes")], False,
+                          lambda: os.link(destination, alias))
+        assert "unknown hard-link alias" in str(refusal.code)
+        assert not destination.exists()
+        assert alias.read_text() == "new bytes"
+
+
+def test_staged_parent_rename_reports_unlocated_output(m):
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root, moved = pathlib.Path(directory) / "before", pathlib.Path(directory) / "after"
+        root.mkdir()
+        destination = root / "output.xml"
+        destination.write_text("old bytes")
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            try:
+                m.write_outputs([(str(destination), "new bytes")],
+                                after_claim=lambda: root.rename(moved))
+                raise AssertionError("missing backup parent must fail")
+            except FileNotFoundError as error:
+                detail = stderr.getvalue() + "\n".join(getattr(error, "__notes__", []))
+                assert "owned output could not be located after cleanup" in detail
+        staged, = moved.glob("output.xml.*.part")
+        assert staged.read_text() == "new bytes"
+        assert (moved / "output.xml").read_text() == "old bytes"
+
+
+def test_earlier_replacement_is_revalidated_after_later_swap(m):
+    for change in ("replace", "unlink", "symlink"):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            first, second, foreign = root / "first.xml", root / "second.xml", root / "foreign.xml"
+            first.write_text("old first")
+            second.write_text("old second")
+            foreign.write_text("foreign bytes")
+            supplied = root / "first-link.xml" if change == "symlink" else first
+            if change == "symlink":
+                supplied.symlink_to(first)
+            real_replace = m.os.replace
+            changed_first = []
+            def replace_then_change_first(source, destination):
+                result = real_replace(source, destination)
+                if (str(source).endswith(".part")
+                        and pathlib.Path(destination).resolve() == second.resolve()):
+                    changed_first.append(change)
+                    if change == "replace":
+                        real_replace(foreign, first)
+                    elif change == "unlink":
+                        first.unlink()
+                    else:
+                        supplied.unlink()
+                        supplied.symlink_to(foreign)
+                return result
+            m.os.replace = replace_then_change_first
+            try:
+                refusal = refuses(m, "output_path_changed", m.write_outputs,
+                                  [(str(supplied), "new first"), (str(second), "new second")])
+            finally:
+                m.os.replace = real_replace
+            assert changed_first == [change], "interleave must run after the second swap"
+            assert second.read_text() == "old second"
+            assert "owned output could not be located after cleanup" not in str(refusal.code)
+            if change == "replace":
+                assert first.read_text() == "foreign bytes"
+            elif change == "unlink":
+                assert not first.exists()
+            else:
+                assert first.read_text() == "old first"
+                assert supplied.read_text() == "foreign bytes"
+
+
+def test_rollback_keeps_an_aliased_earlier_backup_after_a_later_swap_failure(m):
+    """Recovery must not restore an old copy after it gained an unknown alias."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second, alias = root / "first.xml", root / "second.xml", root / "alias.xml"
+        first.write_text("old first")
+        second.write_text("old second")
+        real_replace = m.os.replace
+
+        def swap_first_alias_backup_then_fail_second(source, destination):
+            if (str(source).endswith(".part")
+                    and pathlib.Path(destination).resolve() == second.resolve()):
+                raise OSError("controlled later swap failure")
+            result = real_replace(source, destination)
+            if (str(source).endswith(".part")
+                    and pathlib.Path(destination).resolve() == first.resolve()):
+                backup, = root.glob("first.xml.*.bak")
+                os.link(backup, alias)
+            return result
+
+        m.os.replace = swap_first_alias_backup_then_fail_second
+        stderr = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(stderr):
+                try:
+                    m.write_outputs([(str(first), "new first"), (str(second), "new second")])
+                    raise AssertionError("the controlled later failure must escape")
+                except OSError as error:
+                    notes = str(error) + "\n" + "\n".join(getattr(error, "__notes__", [])) + stderr.getvalue()
+                    assert "unknown hard-link alias may retain rollback bytes" in notes
+                    assert "partially committed output could not be rolled back" in notes
+                    assert str(first.resolve()) in notes
+        finally:
+            m.os.replace = real_replace
+
+        backup, = root.glob("first.xml.*.bak")
+        assert first.read_text() == "new first"
+        assert second.read_text() == "old second"
+        assert backup.read_text() == alias.read_text() == "old first"
+
+
+def test_rollback_path_distinguishes_an_unlinked_backup_from_an_alias(m):
+    """A zero-link backup prevents restoration but must not claim an alias."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        first.write_text("old first")
+        second.write_text("old second")
+        real_replace = m.os.replace
+
+        def swap_first_unlink_backup_then_fail_second(source, destination):
+            if (str(source).endswith(".part")
+                    and pathlib.Path(destination).resolve() == second.resolve()):
+                raise OSError("controlled later swap failure")
+            result = real_replace(source, destination)
+            if (str(source).endswith(".part")
+                    and pathlib.Path(destination).resolve() == first.resolve()):
+                backup, = root.glob("first.xml.*.bak")
+                backup.unlink()
+            return result
+
+        m.os.replace = swap_first_unlink_backup_then_fail_second
+        stderr = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(stderr):
+                try:
+                    m.write_outputs([(str(first), "new first"), (str(second), "new second")])
+                    raise AssertionError("the controlled later failure must escape")
+                except OSError as error:
+                    details = str(error) + "\n" + "\n".join(getattr(error, "__notes__", [])) + stderr.getvalue()
+                    assert "controlled later swap failure" in str(error)
+                    assert "unknown hard-link alias" not in details
+        finally:
+            m.os.replace = real_replace
+
+        assert first.read_text() == "new first"
+        assert second.read_text() == "old second"
+        assert not list(root.glob("*.bak"))
+
+
+def test_rollback_alias_diagnostic_reaches_stderr(m):
+    """The alias warning survives both exception-note and stderr render paths."""
+    if os.name == "nt":
+        return
+    program = f'''\
+import importlib.util
+import os
+import pathlib
+import tempfile
+
+script = {str(SCRIPT)!r}
+spec = importlib.util.spec_from_file_location("bank_statement_import_subprocess", script)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+with tempfile.TemporaryDirectory() as directory:
+    root = pathlib.Path(directory)
+    first, second, alias = root / "first.xml", root / "second.xml", root / "alias.xml"
+    first.write_text("old first")
+    second.write_text("old second")
+    real_replace = module.os.replace
+    def replace_first_alias_then_fail_second(source, destination):
+        if str(source).endswith(".part") and pathlib.Path(destination).resolve() == second.resolve():
+            raise OSError("controlled later swap failure")
+        result = real_replace(source, destination)
+        if str(source).endswith(".part") and pathlib.Path(destination).resolve() == first.resolve():
+            backup, = root.glob("first.xml.*.bak")
+            os.link(backup, alias)
+        return result
+    module.os.replace = replace_first_alias_then_fail_second
+    module.write_outputs([(str(first), "new first"), (str(second), "new second")])
+'''
+    done = subprocess.run([sys.executable, "-c", program], text=True,
+                          capture_output=True, check=False)
+    assert done.returncode != 0
+    assert "controlled later swap failure" in done.stderr, done.stderr
+    assert "unknown hard-link alias may retain rollback bytes" in done.stderr, done.stderr
+
+
+def test_restore_metadata_orders_xattrs_before_final_mode(m):
+    """POSIX call-order proof; Linux permission enforcement is tested separately."""
+    if os.name != "posix":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "output.xml"
+        path.write_text("bytes")
+        handle = os.open(path, os.O_RDWR)
+        current = os.fstat(handle)
+        metadata = {
+            "mode": 0o400,
+            "uid": current.st_uid,
+            "gid": current.st_gid,
+            "atime_ns": current.st_atime_ns,
+            "mtime_ns": current.st_mtime_ns,
+            "xattrs": {"user.bridge_order": b"value"},
+        }
+        missing = object()
+        real_listxattr = getattr(m.os, "listxattr", missing)
+        real_setxattr = getattr(m.os, "setxattr", missing)
+        real_fchmod = m.os.fchmod
+        events = []
+
+        def list_no_xattrs(_):
+            return []
+
+        def record_setxattr(*args):
+            events.append("xattr")
+
+        def record_fchmod(*args):
+            events.append("mode")
+
+        m.os.listxattr, m.os.setxattr, m.os.fchmod = (
+            list_no_xattrs, record_setxattr, record_fchmod)
+        try:
+            m._restore_metadata(handle, metadata)
+        finally:
+            for name, original in (("listxattr", real_listxattr),
+                                   ("setxattr", real_setxattr)):
+                if original is missing:
+                    delattr(m.os, name)
+                else:
+                    setattr(m.os, name, original)
+            m.os.fchmod = real_fchmod
+            os.close(handle)
+
+        assert events == ["xattr", "mode"]
+
+
+def test_existing_destination_is_pinned_before_staging_side_effects(m):
+    """A mkstemp-time replacement is foreign because the original pin predates it."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination, foreign = root / "output.xml", root / "foreign.xml"
+        destination.write_text("old bytes")
+        foreign.write_text("foreign bytes")
+        real_mkstemp, real_replace = m.tempfile.mkstemp, m.os.replace
+        fired = False
+
+        def replace_from_part_mkstemp(*args, **kwargs):
+            nonlocal fired
+            handle, path = real_mkstemp(*args, **kwargs)
+            if kwargs.get("suffix") == ".part" and not fired:
+                fired = True
+                real_replace(foreign, destination)
+            return handle, path
+
+        m.tempfile.mkstemp = replace_from_part_mkstemp
+        try:
+            refuses(m, "output_path_changed", m.write_outputs,
+                    [(str(destination), "new bytes")])
+        finally:
+            m.tempfile.mkstemp = real_mkstemp
+
+        assert fired
+        assert destination.read_text() == "foreign bytes"
+        assert sorted(path.name for path in root.iterdir()) == ["output.xml"]
+
+
+def test_windows_modeled_close_after_effect_then_unlink_has_no_stale_retention(m):
+    """Model the Windows close-before-unlink order; Windows filesystem proof is separate."""
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "fresh.xml"
+        handle = m._open_private(path)
+        record = m._owned_path(path, handle, created=True)
+        real_close, real_name = m.os.close, m.os.name
+        fired, failures = False, []
+
+        def close_then_error(candidate):
+            nonlocal fired
+            real_close(candidate)
+            if candidate == handle and not fired:
+                fired = True
+                raise OSError("controlled close after effect")
+
+        m.os.close, m.os.name = close_then_error, "nt"
+        try:
+            m._cleanup_owned_path(record, failures)
+        finally:
+            m.os.close, m.os.name = real_close, real_name
+
+        assert fired
+        assert failures == []
+        assert not path.exists()
+
+
+def test_windows_modeled_cleanup_reports_an_alias_before_closing_the_pin(m):
+    """The Windows close-before-unlink branch still discloses linked output."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        path, alias = root / "fresh.xml", root / "fresh-alias.xml"
+        handle = m._open_private(path)
+        os.write(handle, b"generated statement")
+        record = m._owned_path(path, handle, created=True)
+        os.link(path, alias)
+        real_name, failures = m.os.name, []
+
+        m.os.name = "nt"
+        try:
+            m._cleanup_owned_path(record, failures)
+        finally:
+            m.os.name = real_name
+
+        assert not path.exists()
+        assert alias.read_bytes() == b"generated statement"
+        assert failures == [
+            f"unknown hard-link alias may retain output bytes: {path}"]
+
+
+def test_rollback_restores_xattrs_before_a_readonly_final_mode(m):
+    """Linux xattrs need the backup's temporary write permission during rollback."""
+    if os.name != "posix" or not hasattr(os, "setxattr"):
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        first.write_text("old first")
+        second.write_text("old second")
+        name, value = "user.bridge_readonly_rollback", b"original xattr"
+        try:
+            os.setxattr(first, name, value)
+        except OSError:
+            return
+        first.chmod(0o400)
+        real_replace = m.os.replace
+
+        def fail_second_swap(source, destination):
+            if str(source).endswith(".part") and pathlib.Path(destination) == second:
+                raise OSError("controlled second swap failure")
+            return real_replace(source, destination)
+
+        m.os.replace = fail_second_swap
+        try:
+            try:
+                m.write_outputs([(str(first), "new first"), (str(second), "new second")])
+                raise AssertionError("the controlled second swap failure must escape")
+            except OSError as error:
+                assert "controlled second swap failure" in str(error)
+        finally:
+            m.os.replace = real_replace
+
+        assert first.read_text() == "old first"
+        assert stat.S_IMODE(first.stat().st_mode) == 0o400
+        assert os.getxattr(first, name) == value
+        assert second.read_text() == "old second"
+
+
+def test_earlier_backup_alias_is_revalidated_after_later_swap(m):
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second, alias = root / "first.xml", root / "second.xml", root / "alias.xml"
+        first.write_text("old first")
+        second.write_text("old second")
+        real_replace = m.os.replace
+        linked = []
+        def replace_then_link_first_backup(source, destination):
+            result = real_replace(source, destination)
+            if (str(source).endswith(".part")
+                    and pathlib.Path(destination).resolve() == second.resolve()):
+                backup, = root.glob("first.xml.*.bak")
+                os.link(backup, alias)
+                linked.append(True)
+            return result
+        m.os.replace = replace_then_link_first_backup
+        try:
+            refusal = refuses(m, "rollback_backup_has_multiple_links", m.write_outputs,
+                              [(str(first), "new first"), (str(second), "new second")])
+        finally:
+            m.os.replace = real_replace
+        assert linked == [True]
+        assert "unknown hard-link alias may retain rollback bytes" in str(refusal.code)
+        backup, = root.glob("first.xml.*.bak")
+        assert first.read_text() == "new first"
+        assert second.read_text() == "old second"
+        assert backup.read_text() == alias.read_text() == "old first"
+
+
+def test_interrupt_during_fresh_registration_reconciles_the_created_output(m):
+    """A real SIGINT at record construction leaves the helper's pin to clean."""
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "fresh.xml"
+        _, start_line = inspect.getsourcelines(m._owned_path)
+        record_line = start_line + next(
+            offset for offset, line in enumerate(inspect.getsource(m._owned_path).splitlines())
+            if line.strip() == 'record = {"path": path, "identity": identity, "pin": handle}')
+        old_trace, old_handler = sys.gettrace(), signal.getsignal(signal.SIGINT)
+        fired = False
+
+        def interrupt_at_record_construction(frame, event, _arg):
+            nonlocal fired
+            if (not fired and event == "line" and frame.f_code is m._owned_path.__code__
+                    and frame.f_lineno == record_line
+                    and frame.f_locals.get("created")):
+                fired = True
+                signal.raise_signal(signal.SIGINT)
+            return interrupt_at_record_construction
+
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        sys.settrace(interrupt_at_record_construction)
+        try:
+            try:
+                m.write_outputs([(str(destination), "fresh bytes")])
+                raise AssertionError("the controlled interrupt must escape")
+            except KeyboardInterrupt:
+                pass
+        finally:
+            sys.settrace(old_trace)
+            signal.signal(signal.SIGINT, old_handler)
+
+        assert fired
+        assert not destination.exists()
+
+
+def test_created_output_fchmod_failure_preserves_a_foreign_replacement(m):
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination, foreign = root / "fresh.xml", root / "foreign.xml"
+        foreign.write_text("foreign bytes")
+        real_fchmod, real_replace = m.os.fchmod, m.os.replace
+        fired = False
+
+        def replace_then_fail(handle, mode):
+            nonlocal fired
+            if not fired:
+                fired = True
+                real_replace(foreign, destination)
+                raise OSError("controlled fchmod failure")
+            return real_fchmod(handle, mode)
+
+        m.os.fchmod = replace_then_fail
+        try:
+            try:
+                m.write_outputs([(str(destination), "fresh bytes")])
+                raise AssertionError("the controlled mode failure must escape")
+            except OSError as error:
+                assert "controlled fchmod failure" in str(error)
+        finally:
+            m.os.fchmod = real_fchmod
+
+        assert fired
+        assert destination.read_text() == "foreign bytes"
+
+
+
+def test_interrupt_after_fresh_registration_cleans_the_requested_output(m):
+    """A SIGINT after registration has a claimed cleanup owner already."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "fresh.xml"
+        _, start = inspect.getsourcelines(m._claim_owned_output)
+        return_line = start + next(
+            offset for offset, line in enumerate(inspect.getsource(m._claim_owned_output).splitlines())
+            if line.strip() == "return record")
+        old_trace, old_handler = sys.gettrace(), signal.getsignal(signal.SIGINT)
+        fired = False
+
+        def interrupt_after_registration(frame, event, _arg):
+            nonlocal fired
+            if (not fired and event == "line" and frame.f_code is m._claim_owned_output.__code__
+                    and frame.f_lineno == return_line
+                    and frame.f_locals.get("created")
+                    and frame.f_locals.get("owned_records") is not None):
+                fired = True
+                signal.raise_signal(signal.SIGINT)
+            return interrupt_after_registration
+
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        sys.settrace(interrupt_after_registration)
+        try:
+            try:
+                m.write_outputs([(str(destination), "fresh bytes")])
+                raise AssertionError("the controlled interrupt must escape")
+            except KeyboardInterrupt:
+                pass
+        finally:
+            sys.settrace(old_trace)
+            signal.signal(signal.SIGINT, old_handler)
+
+        assert fired
+        assert not destination.exists()
+        assert list(root.iterdir()) == []
+
+
+def test_sigint_during_created_factory_return_waits_for_ownership_handoff(m):
+    """A factory-side SIGINT cannot strand a file before registration."""
+    if not hasattr(signal, "pthread_sigmask"):
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "fresh.xml"
+        real_open = m._open_private
+        old_handler = signal.getsignal(signal.SIGINT)
+        fired = False
+
+        def create_then_interrupt(*args, **kwargs):
+            nonlocal fired
+            handle = real_open(*args, **kwargs)
+            fired = True
+            signal.raise_signal(signal.SIGINT)
+            return handle
+
+        m._open_private = create_then_interrupt
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        try:
+            try:
+                m.write_outputs([(str(destination), "fresh bytes")])
+                raise AssertionError("the controlled interrupt must escape")
+            except KeyboardInterrupt:
+                pass
+        finally:
+            m._open_private = real_open
+            signal.signal(signal.SIGINT, old_handler)
+
+        assert fired
+        assert not destination.exists()
+        assert list(root.iterdir()) == []
+
+
+def test_factory_sigint_without_pthread_mask_waits_for_ownership_handoff(m):
+    """The signal-handler fallback keeps no-pthread creation recoverable."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "fresh.xml"
+        real_open, real_signal = m._open_private, m.signal
+        old_handler = signal.getsignal(signal.SIGINT)
+        fired = False
+
+        def create_then_interrupt(*args, **kwargs):
+            nonlocal fired
+            handle = real_open(*args, **kwargs)
+            fired = True
+            signal.raise_signal(signal.SIGINT)
+            return handle
+
+        m.signal = types.SimpleNamespace(
+            SIGINT=signal.SIGINT,
+            getsignal=signal.getsignal,
+            signal=signal.signal,
+            raise_signal=signal.raise_signal,
+        )
+        m._open_private = create_then_interrupt
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        try:
+            try:
+                m.write_outputs([(str(destination), "fresh bytes")])
+                raise AssertionError("the controlled interrupt must escape")
+            except KeyboardInterrupt:
+                pass
+        finally:
+            m._open_private, m.signal = real_open, real_signal
+            signal.signal(signal.SIGINT, old_handler)
+
+        assert fired
+        assert not destination.exists()
+        assert list(root.iterdir()) == []
+
+
+def test_initial_existing_path_revalidation_is_a_typed_refusal(m):
+    """The first post-pin check cannot leak a raw filesystem exception."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "output.xml"
+        destination.write_text("old bytes")
+        real_open = m._open_regular_output
+
+        def open_then_remove(path, *args):
+            handle = real_open(path, *args)
+            if pathlib.Path(path).resolve() == destination.resolve():
+                destination.unlink()
+            return handle
+
+        m._open_regular_output = open_then_remove
+        try:
+            refusal = refuses(m, "output_path_changed", m.write_outputs,
+                              [(str(destination), "new bytes")])
+        finally:
+            m._open_regular_output = real_open
+
+        assert "changed while it was being claimed" in str(refusal.code)
+        assert not destination.exists()
+        assert list(root.iterdir()) == []
+
+
+def test_backup_copy_removal_during_final_source_check_is_a_typed_refusal(m):
+    """A removed source during post-copy validation cannot leak a traceback."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "output.xml"
+        destination.write_text("old bytes")
+        real_copy, real_identity = m._copy_private_backup, m._fd_identity
+
+        def copy_then_remove_at_final_identity(*args):
+            calls = 0
+
+            def remove_on_final_identity(handle):
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    destination.unlink()
+                return real_identity(handle)
+
+            m._fd_identity = remove_on_final_identity
+            try:
+                return real_copy(*args)
+            finally:
+                m._fd_identity = real_identity
+
+        m._copy_private_backup = copy_then_remove_at_final_identity
+        try:
+            refusal = refuses(m, "output_path_changed", m.write_outputs,
+                              [(str(destination), "new bytes")])
+        finally:
+            m._copy_private_backup = real_copy
+
+        assert "changed while its rollback copy was prepared" in str(refusal.code)
+        assert not destination.exists()
+        assert list(root.iterdir()) == []
+
+
+def test_existing_output_removed_after_backup_is_a_typed_path_refusal(m):
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "output.xml"
+        destination.write_text("old bytes")
+        real_copy = m._copy_private_backup
+
+        def copy_then_remove(*args):
+            result = real_copy(*args)
+            destination.unlink()
+            return result
+
+        m._copy_private_backup = copy_then_remove
+        try:
+            refusal = refuses(m, "output_path_changed", m.write_outputs,
+                              [(str(destination), "new bytes")])
+        finally:
+            m._copy_private_backup = real_copy
+
+        assert "changed after it was claimed" in str(refusal.code)
+        assert not destination.exists()
+        assert list(root.iterdir()) == []
+
+
+def test_committed_existing_output_close_failure_reports_destination(m):
+    """The post-rename staged pin must not inspect its stale .part spelling."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "output.xml"
+        destination.write_text("old bytes")
+        real_owned, real_close = m._owned_path, m.os.close
+        staged_handles, leaked = set(), []
+
+        def observe_owned(path, handle, *, created, **kwargs):
+            record = real_owned(path, handle, created=created, **kwargs)
+            if created and str(path).endswith(".part"):
+                staged_handles.add(handle)
+            return record
+
+        def fail_before_close(handle):
+            if handle in staged_handles:
+                leaked.append(handle)
+                raise OSError("controlled staged close failure")
+            return real_close(handle)
+
+        m._owned_path, m.os.close = observe_owned, fail_before_close
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("the close failure must be reported")
+            except m.OutputDescriptorCloseFailure as failure:
+                assert failure.output_paths == (str(destination.resolve()),)
+        finally:
+            m._owned_path, m.os.close = real_owned, real_close
+            for handle in leaked:
+                try:
+                    real_close(handle)
+                except OSError:
+                    pass
+
+        assert leaked
+        assert destination.read_text() == "new bytes"
+
+
+
+def test_committed_original_pin_close_failure_reports_destination(m):
+    """The old inode pin can stay open after its pathname names staged bytes."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "output.xml"
+        destination.write_text("old bytes")
+        real_owned, real_close = m._owned_path, m.os.close
+        original_handles, leaked = set(), []
+
+        def observe_owned(path, handle, *, created, **kwargs):
+            record = real_owned(path, handle, created=created, **kwargs)
+            if not created and pathlib.Path(path).resolve() == destination.resolve():
+                original_handles.add(handle)
+            return record
+
+        def fail_before_close(handle):
+            if handle in original_handles:
+                leaked.append(handle)
+                raise OSError("controlled original-pin close failure")
+            return real_close(handle)
+
+        m._owned_path, m.os.close = observe_owned, fail_before_close
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("the old descriptor leak must be reported")
+            except m.OutputDescriptorCloseFailure as failure:
+                assert failure.output_paths == (str(destination.resolve()),)
+        finally:
+            m._owned_path, m.os.close = real_owned, real_close
+            for handle in leaked:
+                try:
+                    real_close(handle)
+                except OSError:
+                    pass
+
+        assert leaked
+        assert destination.read_text() == "new bytes"
+
+
+def test_committed_close_unknown_descriptor_state_is_not_treated_as_after_effect(m):
+    """Only EBADF proves a failed close already released its descriptor."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "output.xml"
+        destination.write_text("old bytes")
+        real_owned, real_close, real_fstat = m._owned_path, m.os.close, m.os.fstat
+        original_handles, leaked = set(), []
+        close_attempted = set()
+
+        def observe_owned(path, handle, *, created, **kwargs):
+            record = real_owned(path, handle, created=created, **kwargs)
+            if not created and pathlib.Path(path).resolve() == destination.resolve():
+                original_handles.add(handle)
+            return record
+
+        def fail_before_close(handle):
+            if handle in original_handles:
+                close_attempted.add(handle)
+                leaked.append(handle)
+                raise OSError("controlled original-pin close failure")
+            return real_close(handle)
+
+        def unreadable_pin(handle):
+            if handle in close_attempted:
+                raise OSError(errno.EIO, "controlled descriptor inspection failure")
+            return real_fstat(handle)
+
+        m._owned_path, m.os.close, m.os.fstat = observe_owned, fail_before_close, unreadable_pin
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("unknown descriptor state must be reported")
+            except m.OutputDescriptorCloseFailure as failure:
+                assert failure.output_paths == (str(destination.resolve()),)
+        finally:
+            m._owned_path, m.os.close, m.os.fstat = real_owned, real_close, real_fstat
+            for handle in leaked:
+                try:
+                    real_close(handle)
+                except OSError:
+                    pass
+
+        assert destination.read_text() == "new bytes"
+
+
+def test_missing_earlier_backup_reports_the_partial_committed_destination(m):
+    """A vanished first rollback copy leaves its new destination explicit."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_copy = m._copy_private_backup
+
+        def remove_first_backup_during_second_prepare(source_path, *args):
+            result = real_copy(source_path, *args)
+            if pathlib.Path(source_path).resolve() == second.resolve():
+                first_backup, = root.glob("first.xml.*.bak")
+                first_backup.unlink()
+            return result
+
+        m._copy_private_backup = remove_first_backup_during_second_prepare
+        try:
+            refusal = refuses(
+                m, "output_path_changed", m.write_outputs,
+                [(str(first), "first new"), (str(second), "second new")])
+        finally:
+            m._copy_private_backup = real_copy
+
+        message = str(refusal.code)
+        assert str(first.resolve()) in message
+        assert "partially committed output could not be rolled back" in message
+        assert ".bak" not in message
+        assert ".part" not in message
+        assert first.read_text() == "first new"
+        assert second.read_text() == "second old"
+        assert not list(root.glob("*.bak"))
+        assert not list(root.glob("*.part"))
+
+
+def test_later_backup_prepare_failure_reports_an_earlier_partial_destination(m):
+    """Rollback recovery, not just final validation, owns this diagnosis."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_copy = m._copy_private_backup
+        fired = False
+
+        def remove_first_backup_then_fail_second_prepare(source_path, *args):
+            nonlocal fired
+            result = real_copy(source_path, *args)
+            if pathlib.Path(source_path).resolve() == second.resolve():
+                first_backup, = root.glob("first.xml.*.bak")
+                first_backup.unlink()
+                fired = True
+                raise OSError("controlled later backup preparation failure")
+            return result
+
+        m._copy_private_backup = remove_first_backup_then_fail_second_prepare
+        try:
+            try:
+                m.write_outputs([(str(first), "first new"), (str(second), "second new")])
+                raise AssertionError("the later preparation failure must escape")
+            except OSError as error:
+                detail = str(error) + "\n" + "\n".join(getattr(error, "__notes__", []))
+                assert "controlled later backup preparation failure" in detail
+                assert "partially committed output could not be rolled back" in detail
+                assert str(first.resolve()) in detail
+                assert ".bak" not in detail
+                assert ".part" not in detail
+        finally:
+            m._copy_private_backup = real_copy
+
+        assert fired
+        assert first.read_text() == "first new"
+        assert second.read_text() == "second old"
+        assert not list(root.glob("*.bak"))
+        assert not list(root.glob("*.part"))
+
+
+def test_all_missing_backups_report_every_partial_committed_destination(m):
+    """One final-check refusal must still reconcile every already-swapped row."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_changed = m._claimed_output_changed
+        fired = False
+
+        def remove_backups_before_final_checks(*args):
+            nonlocal fired
+            if not fired:
+                fired = True
+                for backup in root.glob("*.bak"):
+                    backup.unlink()
+            return real_changed(*args)
+
+        m._claimed_output_changed = remove_backups_before_final_checks
+        try:
+            refusal = refuses(
+                m, "output_path_changed", m.write_outputs,
+                [(str(first), "first new"), (str(second), "second new")])
+        finally:
+            m._claimed_output_changed = real_changed
+
+        detail = str(refusal.code)
+        assert fired
+        assert "partially committed output could not be rolled back" in detail
+        assert str(first.resolve()) in detail
+        assert str(second.resolve()) in detail
+        assert ".bak" not in detail
+        assert ".part" not in detail
+        assert first.read_text() == "first new"
+        assert second.read_text() == "second new"
+        assert not list(root.glob("*.bak"))
+        assert not list(root.glob("*.part"))
+
+
+
+def test_digest_pinned_bytes_preserves_the_owned_pin_position(m):
+    """The integrity check must not disturb later ownership operations."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "backup.bak"
+        path.write_bytes(b"rollback bytes")
+        handle = os.open(path, os.O_RDONLY)
+        try:
+            os.lseek(handle, 3, os.SEEK_SET)
+            assert m._digest_pinned_bytes(handle) == hashlib.sha256(b"rollback bytes").digest()
+            assert os.lseek(handle, 0, os.SEEK_CUR) == 3
+        finally:
+            os.close(handle)
+
+
+def test_backup_digest_read_failure_preserves_original_error_and_untrusted_copy(m):
+    """An unreadable pin is untrusted, never permission to restore from it."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_copy, real_digest = m._copy_private_backup, m._digest_pinned_bytes
+        first_handles = set()
+
+        def remember_first_backup_then_fail_second_prepare(source_path, identity, handle):
+            result = real_copy(source_path, identity, handle)
+            if pathlib.Path(source_path).resolve() == first.resolve():
+                first_handles.add(handle)
+            if pathlib.Path(source_path).resolve() == second.resolve():
+                raise OSError("controlled later preparation failure")
+            return result
+
+        def fail_first_backup_read(handle):
+            if handle in first_handles:
+                raise OSError("controlled backup digest read failure")
+            return real_digest(handle)
+
+        m._copy_private_backup, m._digest_pinned_bytes = (
+            remember_first_backup_then_fail_second_prepare, fail_first_backup_read)
+        try:
+            try:
+                m.write_outputs([(str(first), "first new"), (str(second), "second new")])
+                raise AssertionError("the later failure must escape")
+            except OSError as error:
+                detail = str(error) + "\n" + "\n".join(getattr(error, "__notes__", []))
+                assert "controlled later preparation failure" in detail
+                assert "partially committed output could not be rolled back" in detail
+                assert str(first.resolve()) in detail
+                backup, = root.glob("first.xml.*.bak")
+                assert str(backup) in detail
+        finally:
+            m._copy_private_backup, m._digest_pinned_bytes = real_copy, real_digest
+
+        assert first.read_text() == "first new"
+        assert second.read_text() == "second old"
+        assert not list(root.glob("*.part"))
+
+def test_mutated_backup_during_later_prepare_preserves_original_error_and_bytes(m):
+    """An inode-stable backup needs its verified content before restoration."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_copy = m._copy_private_backup
+        changed = []
+
+        def mutate_first_backup_then_fail_second_prepare(source_path, *args):
+            result = real_copy(source_path, *args)
+            if pathlib.Path(source_path).resolve() == second.resolve():
+                backup, = root.glob("first.xml.*.bak")
+                backup.write_text("injected bytes")
+                changed.append(backup)
+                raise OSError("controlled later preparation failure")
+            return result
+
+        m._copy_private_backup = mutate_first_backup_then_fail_second_prepare
+        try:
+            try:
+                m.write_outputs([(str(first), "first new"), (str(second), "second new")])
+                raise AssertionError("the later failure must escape")
+            except OSError as error:
+                detail = str(error) + "\n" + "\n".join(getattr(error, "__notes__", []))
+                assert "controlled later preparation failure" in detail
+                assert "partially committed output could not be rolled back" in detail
+                assert str(first.resolve()) in detail
+                assert str(changed[0]) in detail
+        finally:
+            m._copy_private_backup = real_copy
+
+        assert first.read_text() == "first new"
+        assert second.read_text() == "second old"
+        assert changed[0].read_text() == "injected bytes"
+        assert not list(root.glob("*.part"))
+
+
+def test_mutated_backup_before_final_check_is_not_restored(m):
+    """The final authority check uses the same pinned-byte digest."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_changed = m._claimed_output_changed
+        mutated = []
+
+        def mutate_first_backup_before_final_checks(*args):
+            if not mutated:
+                backup, = root.glob("first.xml.*.bak")
+                backup.write_text("injected bytes")
+                mutated.append(backup)
+            return real_changed(*args)
+
+        m._claimed_output_changed = mutate_first_backup_before_final_checks
+        try:
+            refusal = refuses(
+                m, "output_path_changed", m.write_outputs,
+                [(str(first), "first new"), (str(second), "second new")])
+        finally:
+            m._claimed_output_changed = real_changed
+
+        detail = str(refusal.code)
+        assert "rollback copy content could not be verified before commit" in detail
+        assert "partially committed output could not be rolled back" in detail
+        assert str(first.resolve()) in detail
+        assert str(mutated[0]) in detail
+        assert first.read_text() == "first new"
+        assert second.read_text() == "second old"
+        assert mutated[0].read_text() == "injected bytes"
+        assert not list(root.glob("*.part"))
+
+
+def test_moved_backup_during_later_prepare_is_disclosed_before_pin_close(m):
+    """A linked but renamed backup remains an unlocated retained old copy."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second, moved = root / "first.xml", root / "second.xml", root / "moved.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_copy = m._copy_private_backup
+
+        def move_first_backup_then_fail_second_prepare(source_path, *args):
+            result = real_copy(source_path, *args)
+            if pathlib.Path(source_path).resolve() == second.resolve():
+                backup, = root.glob("first.xml.*.bak")
+                backup.rename(moved)
+                raise OSError("controlled later preparation failure")
+            return result
+
+        m._copy_private_backup = move_first_backup_then_fail_second_prepare
+        try:
+            try:
+                m.write_outputs([(str(first), "first new"), (str(second), "second new")])
+                raise AssertionError("the later failure must escape")
+            except OSError as error:
+                detail = str(error) + "\n" + "\n".join(getattr(error, "__notes__", []))
+                assert "controlled later preparation failure" in detail
+                assert "partially committed output could not be rolled back" in detail
+                assert str(first.resolve()) in detail
+                assert "owned rollback copy could not be located after cleanup" in detail
+        finally:
+            m._copy_private_backup = real_copy
+
+        assert first.read_text() == "first new"
+        assert second.read_text() == "second old"
+        assert moved.read_text() == "first old"
+        assert not list(root.glob("*.bak"))
+        assert not list(root.glob("*.part"))
+
+def test_owner_only_outputs_survive_a_restrictive_umask(m):
+    """Use a child process so an extreme umask cannot affect this test process."""
+    if os.name != "posix":
+        return
+    program = f'''\
+import importlib.util
+import os
+import pathlib
+import stat
+import tempfile
+
+script = {str(SCRIPT)!r}
+spec = importlib.util.spec_from_file_location("bank_statement_import_subprocess", script)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+with tempfile.TemporaryDirectory() as directory:
+    root = pathlib.Path(directory)
+    fresh = root / "fresh.xml"
+    existing = root / "existing.xml"
+    existing.write_text("old bytes")
+    observed = []
+    real_copy = module._copy_private_backup
+    def observe_private_modes(*args):
+        result = real_copy(*args)
+        for path in root.glob("existing.xml.*"):
+            observed.append(stat.S_IMODE(path.stat().st_mode))
+        return result
+    old_umask = os.umask(0o777)
+    try:
+        module.write_outputs([(str(fresh), "fresh bytes")])
+        module._copy_private_backup = observe_private_modes
+        module.write_outputs([(str(existing), "new bytes")])
+    finally:
+        os.umask(old_umask)
+        module._copy_private_backup = real_copy
+    assert stat.S_IMODE(fresh.stat().st_mode) == 0o600
+    assert stat.S_IMODE(existing.stat().st_mode) == 0o600
+    assert observed and all(mode == 0o600 for mode in observed), observed
+'''
+    done = subprocess.run([sys.executable, "-c", program], text=True,
+                          capture_output=True, check=False)
+    assert done.returncode == 0, done.stderr
+
+
+
 def main():
     module = load()
     for name, test in sorted(globals().items()):
@@ -1476,6 +4653,185 @@ def main():
             print(f"ok  {name}")
     print("all offline contract tests passed")
     return 0
+
+def test_interrupted_committed_cleanup_parent_rename_retains_unlocated_backup(m):
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory) / "before"; moved = pathlib.Path(directory) / "after"; root.mkdir()
+        backup_path = root / "old.bak"; original_path = root / "old.xml"; claimed_path = root / "new.xml"
+        for path in (backup_path, original_path, claimed_path): path.write_text(path.name)
+        fds = [os.open(path, os.O_RDONLY) for path in (backup_path, original_path, claimed_path)]
+        records = [{"path": path, "identity": m._fd_identity(fd), "pin": fd} for path, fd in zip((backup_path, original_path, claimed_path), fds)]
+        root.rename(moved)
+        retained=[]
+        m._reconcile_interrupted_committed_cleanup([{"backup":records[0],"original":records[1]}], [records[2]], retained, [])
+        assert any("owned output could not be located after cleanup" in value for value in retained)
+        assert (moved / "old.bak").read_text() == "old.bak"
+
+
+def test_interrupted_committed_cleanup_reports_a_retained_backup_alias(m):
+    """A known .bak name cannot conceal a later hard-link alias."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        backup_path, alias = root / "old.bak", root / "old-alias.bak"
+        original_path, claimed_path = root / "old.xml", root / "new.xml"
+        for path in (backup_path, original_path, claimed_path):
+            path.write_text(path.name)
+        os.link(backup_path, alias)
+        fds = [os.open(path, os.O_RDONLY) for path in
+               (backup_path, original_path, claimed_path)]
+        backup, original, claimed = [
+            {"path": path, "identity": m._fd_identity(fd), "pin": fd}
+            for path, fd in zip((backup_path, original_path, claimed_path), fds)]
+        retained = []
+        m._reconcile_interrupted_committed_cleanup(
+            [{"backup": backup, "original": original}], [claimed], retained, [])
+
+        assert str(backup_path) in retained
+        assert any("unknown hard-link alias may retain rollback bytes" in value
+                   for value in retained)
+        assert backup["pin"] is None and original["pin"] is None and claimed["pin"] is None
+
+
+def test_interrupted_committed_cleanup_keeps_a_named_backup_after_prior_close(m):
+    """A prior cleanup may close its pin while leaving the known backup named."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        backup_path, original_path, claimed_path = (
+            root / "old.bak", root / "old.xml", root / "new.xml")
+        for path in (backup_path, original_path, claimed_path):
+            path.write_text(path.name)
+        backup_fd, original_fd, claimed_fd = (
+            os.open(path, os.O_RDONLY) for path in
+            (backup_path, original_path, claimed_path))
+        backup = {"path": backup_path, "identity": m._fd_identity(backup_fd), "pin": backup_fd}
+        original = {"path": original_path, "identity": m._fd_identity(original_fd), "pin": original_fd}
+        claimed = {"path": claimed_path, "identity": m._fd_identity(claimed_fd), "pin": claimed_fd}
+        os.close(backup_fd)
+        backup["pin"] = None
+        retained = []
+        m._reconcile_interrupted_committed_cleanup(
+            [{"backup": backup, "original": original}], [claimed], retained, [])
+
+        assert retained == [str(backup_path)]
+        assert original["pin"] is None and claimed["pin"] is None
+
+
+def test_failed_restore_before_effect_reports_the_partial_destination(m):
+    """A retained backup does not make an unchanged staged destination safe."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_replace = m.os.replace
+
+        def fail_second_swap_and_first_restore(source, destination):
+            source = pathlib.Path(source)
+            destination = pathlib.Path(destination)
+            if source.suffix == ".part" and destination.resolve() == second.resolve():
+                raise OSError("controlled later swap failure")
+            if source.suffix == ".bak" and destination.resolve() == first.resolve():
+                raise OSError("controlled restore failure before effect")
+            return real_replace(source, destination)
+
+        m.os.replace = fail_second_swap_and_first_restore
+        try:
+            try:
+                m.write_outputs([(str(first), "first new"), (str(second), "second new")])
+                raise AssertionError("the controlled swap failure must escape")
+            except OSError as error:
+                detail = str(error) + "\n" + "\n".join(getattr(error, "__notes__", []))
+        finally:
+            m.os.replace = real_replace
+
+        assert "controlled later swap failure" in detail
+        assert "partially committed output could not be rolled back" in detail
+        assert str(first.resolve()) in detail
+        assert first.read_text() == "first new"
+        assert second.read_text() == "second old"
+        backup, = root.glob("first.xml.*.bak")
+        assert backup.read_text() == "first old"
+
+
+def test_restore_backup_preserves_foreign_symlink_entry(m):
+    """A symlink to the staged-new inode is still a foreign directory entry."""
+    if os.name == "nt":
+        return
+    def make_swap(root):
+        original, destination, staged, backup = (root / name for name in
+            ("original-old.xml", "destination.xml", "staged-new.xml", "backup.bak"))
+        original.write_text("old original bytes")
+        destination.write_text("new destination bytes")
+        staged.write_text("new staged bytes")
+        backup.write_text("old backup bytes")
+        original_fd, backup_fd = os.open(original, os.O_RDONLY), os.open(backup, os.O_RDONLY)
+        swap = {"destination": destination, "original_identity": m._fd_identity(original_fd),
+                "staged_identity": m._entry_identity(staged), "metadata": None,
+                "swap_started": True, "original": None,
+                "backup": {"path": backup, "identity": m._fd_identity(backup_fd),
+                           "pin": backup_fd, "digest": m._digest_pinned_bytes(backup_fd)}}
+        destination.unlink(); destination.symlink_to(staged)
+        return destination, staged, backup, original_fd, backup_fd, swap
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination, staged, backup, original_fd, backup_fd, swap = make_swap(root)
+        try:
+            failures=[]
+            m._restore_backup(swap, failures, [])
+            assert destination.is_symlink()
+            assert staged.read_text() == "new staged bytes"
+            assert backup.read_text() == "old backup bytes"
+            assert failures == [backup]
+        finally:
+            os.close(original_fd); os.close(backup_fd)
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination, staged, backup, original_fd, backup_fd, swap = make_swap(root)
+        original_entry = m._entry_identity
+        m._entry_identity = m._file_identity
+        try:
+            try:
+                m._restore_backup(swap, [], [])
+            except TypeError:
+                pass
+            assert not destination.is_symlink(), "old stat-following check replaces the foreign link"
+            assert destination.read_text() == "old backup bytes"
+        finally:
+            m._entry_identity = original_entry
+            os.close(original_fd); os.close(backup_fd)
+
+
+def test_interrupted_cleanup_skips_closed_missing_backup_and_closes_later_pins(m):
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        gone, later, original, claimed = (root / name for name in ("gone.bak", "later.bak", "old.xml", "new.xml"))
+        for path in (gone, later, original, claimed): path.write_text(path.name)
+        fds = [os.open(path, os.O_RDONLY) for path in (gone, later, original, claimed)]
+        records = [{"path": path, "identity": m._fd_identity(fd), "pin": fd} for path, fd in zip((gone, later, original, claimed), fds)]
+        m._cleanup_owned_path(records[0], [])
+        assert records[0]["pin"] is None and not gone.exists()
+        real_entry=m._entry_identity
+        def deny_later(path):
+            if pathlib.Path(path) == later: raise PermissionError("controlled EACCES")
+            return real_entry(path)
+        m._entry_identity=deny_later
+        retained=[]
+        try:
+            m._reconcile_interrupted_committed_cleanup(
+                [{"backup":records[0],"original":records[2]}, {"backup":records[1],"original":records[2]}],
+                [records[3]], retained, [])
+        finally:
+            m._entry_identity=real_entry
+        assert any("could not inspect committed rollback copy" in value for value in retained)
+        assert records[1]["pin"] is None and records[2]["pin"] is None and records[3]["pin"] is None
 
 
 if __name__ == "__main__":

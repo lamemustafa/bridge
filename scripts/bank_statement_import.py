@@ -92,13 +92,16 @@ import contextlib
 import csv
 import datetime
 import decimal
+import errno
 import getpass
 import hashlib
 import io
 import os
 import pathlib
+import signal
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -124,6 +127,32 @@ class Refusal(SystemExit):
     def __init__(self, category, message):
         self.category = category
         super().__init__(f"{category}: {message}")
+
+
+class OutputCleanupFailure(OSError):
+    """Committed output is present, but an old sensitive copy remains.
+
+    `retained_paths` gives the operator the exact private backup location to
+    protect or remove. A normal return would conceal that copy.
+    """
+
+    def __init__(self, retained_paths):
+        self.retained_paths = tuple(retained_paths)
+        super().__init__(
+            "output cleanup failed; prior output retained at "
+            + ", ".join(self.retained_paths)
+        )
+
+
+class OutputDescriptorCloseFailure(OSError):
+    """New output committed, but an ownership descriptor close was uncertain."""
+
+    def __init__(self, output_paths):
+        self.output_paths = tuple(output_paths)
+        super().__init__(
+            "output committed; ownership descriptor close failed for "
+            + ", ".join(self.output_paths)
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -1468,10 +1497,6 @@ def windows_destination_refusal(path, accept_inherited):
 def _open_private(path, accept_inherited=False):
     """Create one output file readable only by its owner, and return the handle.
 
-    The XML and the manifest carry counterparty names, amounts, an account
-    label and every narration in the statement. On a shared host the default
-    022 umask would publish all of it as mode 0644.
-
     Always `O_EXCL`: this only ever creates a file that did not exist. On
     Windows that is the rule itself — an overwrite would keep the existing
     file's ACL — and deciding it at create time rather than after an
@@ -1486,6 +1511,821 @@ def _open_private(path, accept_inherited=False):
         return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
         raise _existing_target_on_windows(path) from None
+
+
+def _file_identity(path):
+    stat_result = os.stat(path)
+    return stat_result.st_dev, stat_result.st_ino
+
+
+def _fd_identity(handle):
+    stat_result = os.fstat(handle)
+    return stat_result.st_dev, stat_result.st_ino
+
+
+def _entry_identity(path):
+    """The inode `unlink` would remove, without following a replacement link."""
+    stat_result = os.lstat(path)
+    return stat_result.st_dev, stat_result.st_ino
+
+
+def _cleanup_entry_state(path, owned_identity=None):
+    """Classify a cleanup name without following a replacement symlink.
+
+    ``lexists`` maps permission errors to false, which would make an
+    inaccessible entry indistinguishable from one that an unlink removed.
+    Recovery needs that distinction before it can close the descriptor pin.
+    """
+    try:
+        identity = _entry_identity(path)
+    except FileNotFoundError:
+        return "missing"
+    except OSError:
+        return "uninspectable"
+    if owned_identity is None:
+        return "present"
+    return "owned" if identity == owned_identity else "reclaimed"
+
+
+def _record_uninspectable_cleanup(path, failures):
+    failures.append(f"could not inspect owned output during cleanup: {path}")
+
+
+def _resolve_output_path(path):
+    """Resolve an operator path into the spelling this run is authorised to touch.
+
+    Python raises ``RuntimeError`` for a symlink loop on supported 3.10--3.12
+    versions. That is a changed/unverifiable output path, not an implementation
+    traceback that should escape the writer.
+    """
+    try:
+        return str(pathlib.Path(path).resolve())
+    except RuntimeError as error:
+        raise Refusal(
+            "output_path_changed",
+            f"{path} could not be resolved safely before output was written",
+        ) from error
+
+
+def _unlink_for_cleanup(path, owned_identity, failures):
+    """Remove a path only while it still names the inode this run created."""
+    state = _cleanup_entry_state(path, owned_identity)
+    if state == "missing":
+        return "missing"
+    if state == "uninspectable":
+        _record_uninspectable_cleanup(path, failures)
+        return "uncertain"
+    if state == "reclaimed":
+        # The pathname has been reclaimed. It is not ours to delete, and
+        # reporting it gives the operator a chance to find the private copy
+        # if it still exists without making a claim about foreign bytes.
+        failures.append(str(path))
+        return "reclaimed"
+    try:
+        os.unlink(path)
+        return "removed"
+    except FileNotFoundError:
+        # A caller holding a descriptor can distinguish this from a successful
+        # unlink.  In particular, a parent-directory rename leaves the owned
+        # inode live at an unknown relative name rather than making it safe to
+        # call cleanup complete.
+        return "missing"
+    except OSError:
+        # A filesystem call can report an error after taking effect. Only retain
+        # the path when non-following reconciliation establishes that it remains.
+        state = _cleanup_entry_state(path, owned_identity)
+        if state == "missing":
+            return "missing"
+        if state == "reclaimed":
+            failures.append(str(path))
+            return "reclaimed"
+        if state == "owned":
+            failures.append(str(path))
+        elif state == "uninspectable":
+            _record_uninspectable_cleanup(path, failures)
+        return "uncertain"
+
+
+def _open_regular_output(path, expected_identity=None):
+    """Open and pin one existing regular output without waiting on a FIFO."""
+    handle = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        stat_result = os.fstat(handle)
+        if not stat.S_ISREG(stat_result.st_mode):
+            raise Refusal(
+                "output_not_regular",
+                f"{path}: an existing output must be a regular file",
+            )
+        if stat_result.st_nlink != 1:
+            raise Refusal(
+                "output_has_multiple_links",
+                f"{path}: replacement requires a single-link output; rollback "
+                "cannot preserve hard-link topology",
+            )
+        if (expected_identity is not None
+                and (stat_result.st_dev, stat_result.st_ino) != expected_identity):
+            raise Refusal(
+                "output_path_changed",
+                f"{path} changed while its rollback copy was prepared",
+            )
+        return handle
+    except BaseException:
+        os.close(handle)
+        raise
+
+
+@contextlib.contextmanager
+def _defer_sigint_during_claim():
+    """Pair a newly-created inode with its cleanup owner before SIGINT."""
+    if hasattr(signal, "pthread_sigmask"):
+        try:
+            previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
+        except (OSError, ValueError):
+            previous = None
+        if previous is not None:
+            try:
+                yield
+            finally:
+                signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+            return
+    # Windows has no pthread signal mask.  Temporarily retain Ctrl-C as a
+    # pending event, restore the caller's handler after registration, and then
+    # deliver it through that original handler.  A non-main-thread claim cannot
+    # install a signal handler, so its existing exception recovery remains the
+    # authority in that unsupported execution context.
+    pending = []
+    try:
+        previous = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, lambda _signum, _frame: pending.append(True))
+    except (OSError, ValueError):
+        yield
+        return
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, previous)
+        if pending:
+            signal.raise_signal(signal.SIGINT)
+
+
+def _owned_path(path, handle, *, created, owned_records=None):
+    """Record a pathname and retain the descriptor that pins its inode.
+
+    `created` is explicit because a registration failure has opposite cleanup
+    authority for a new private path and an existing output. Only the former
+    may be unlinked while recovery establishes descriptor ownership.
+    """
+    try:
+        identity = _fd_identity(handle)
+    except BaseException as error:
+        # The creator has already made `path`, but until its descriptor and
+        # pathname agree on one identity it has not entered any ownership list.
+        # Retry once for a transient fstat failure; if that still cannot prove
+        # ownership, preserve a possibly reclaimed pathname and say so rather
+        # than deleting a foreign file during failure cleanup.
+        failures = []
+        try:
+            try:
+                identity = _fd_identity(handle)
+            except BaseException:
+                identity = None
+            if created:
+                if identity is None:
+                    state = _cleanup_entry_state(path)
+                    if state == "present":
+                        failures.append(str(path))
+                    elif state == "uninspectable":
+                        _record_uninspectable_cleanup(path, failures)
+                else:
+                    outcome = _unlink_for_cleanup(path, identity, failures)
+                    _reconcile_owned_pin_after_cleanup(
+                        {"path": path, "identity": identity, "pin": handle},
+                        outcome,
+                        failures,
+                    )
+        finally:
+            try:
+                os.close(handle)
+            except OSError:
+                state = _cleanup_entry_state(path) if created else "missing"
+                if state == "present":
+                    failures.append(str(path))
+                elif state == "uninspectable":
+                    _record_uninspectable_cleanup(path, failures)
+        if failures:
+            _append_cleanup_detail(
+                error,
+                "output ownership registration failed; retained path(s): "
+                + ", ".join(sorted(set(failures))),
+            )
+        raise
+    record = {"path": path, "identity": identity, "pin": handle}
+    if owned_records is not None:
+        # Insert before returning to the caller: an interrupt after successful
+        # registration still leaves one cleanup authority for this new inode.
+        owned_records.append(record)
+    return record
+
+
+def _claim_owned_output(create, *, created, owned_records):
+    """Register a created or opened descriptor before a caller can own it.
+
+    The factory returns ``(handle, path)``.  If an interrupt lands after a
+    filesystem effect but before collection insertion, the still-pinned inode
+    is reconciled by identity; a replacement at that pathname is never
+    unlinked.  On POSIX, apply the private mode through the descriptor because
+    creation modes are filtered by the process umask.  Windows retains the
+    platform's existing ACL-based creation behavior.
+    """
+    handle = None
+    record = None
+    try:
+        # A private create can finish before its factory returns.  Defer Ctrl-C
+        # until the descriptor and its cleanup owner have been registered.
+        with _defer_sigint_during_claim():
+            handle, path = create()
+            record = _owned_path(path, handle, created=created)
+            if created and os.name != "nt":
+                os.fchmod(handle, 0o600)
+            owned_records.append(record)
+            return record
+    except BaseException as error:
+        # If registration already reached its collection, the outer handler is
+        # its sole cleanup authority.  Otherwise recover through the pin.
+        if handle is not None and not any(item.get("pin") == handle
+                                          for item in owned_records):
+            failures = []
+            try:
+                identity = _fd_identity(handle)
+            except OSError:
+                # `_owned_path` may already have reconciled and closed it.
+                pass
+            else:
+                fallback = {"path": path, "identity": identity, "pin": handle}
+                if created:
+                    _cleanup_owned_path(fallback, failures)
+                else:
+                    _close_owned_path(fallback, failures)
+            _note_cleanup_failures(error, failures)
+        raise
+
+
+def _claimed_output_changed(supplied_path, canonical_path, identity):
+    """Whether the pathname still names the descriptor-backed claimed inode.
+
+    This is deliberately a helper rather than an inner ``try`` in
+    ``write_outputs``. A signal raised while this validation runs must unwind
+    through the transaction's outer recovery handler, which owns every staged
+    replacement and backup.
+    """
+    try:
+        return (_resolve_output_path(supplied_path) != canonical_path
+                or _file_identity(supplied_path) != identity
+                or _entry_identity(canonical_path) != identity)
+    except (FileNotFoundError, OSError):
+        return True
+
+
+def _close_owned_path(record, failures, diagnostic_path=None, descriptor_failures=None):
+    """Release an ownership pin without guessing from a stale pathname.
+
+    ``close`` may report an error after releasing a descriptor.  EBADF from a
+    retained-descriptor ``fstat`` is the one supported indication of that
+    after-effect.  Every other failed or mismatched inspection remains a
+    descriptor uncertainty: never retry a close that could target a reused fd.
+    """
+    handle = record.get("pin")
+    if handle is None:
+        return
+    record["pin"] = None
+    try:
+        os.close(handle)
+        return
+    except OSError:
+        pass
+
+    diagnostic = str(diagnostic_path or record.get(
+        "cleanup_path", record["path"]))
+    destination = descriptor_failures if descriptor_failures is not None else failures
+    try:
+        stat_result = os.fstat(handle)
+    except OSError as error:
+        if error.errno == errno.EBADF:
+            # The close took effect (or the descriptor was independently made
+            # invalid).  Do not retry it: a later fd could be foreign.
+            return
+        destination.append(diagnostic)
+        return
+    if (stat_result.st_dev, stat_result.st_ino) == record["identity"]:
+        # The original descriptor is still open.  Its pathname may already
+        # name a staged replacement, so this is never a retained-path claim.
+        destination.append(diagnostic)
+        return
+    # A mocked or platform-specific close could leave a live but different fd.
+    # It is neither safe to close again nor evidence about a pathname.
+    destination.append(diagnostic)
+
+
+def _reconcile_owned_pin_after_cleanup(record, outcome, failures):
+    """Disclose an owned inode whose descriptor proves it remains linked.
+
+    A successful unlink only removes the claimed spelling. A hard-link alias or
+    parent-directory rename can leave the pinned inode linked elsewhere, where
+    this command has neither a pathname nor authority to remove it.
+    """
+    if outcome not in ("removed", "missing", "reclaimed"):
+        return
+    pin = record.get("pin")
+    if pin is None:
+        return
+    try:
+        stat_result = os.fstat(pin)
+    except OSError:
+        _record_uninspectable_cleanup(record["path"], failures)
+        return
+    if ((stat_result.st_dev, stat_result.st_ino) == record["identity"]
+            and stat_result.st_nlink > 0):
+        failures.append(
+            f"owned output could not be located after cleanup: {record['path']}")
+
+
+def _record_windows_cleanup_alias(record, failures):
+    """Disclose a hard-link alias while Windows still permits pin inspection."""
+    pin = record.get("pin")
+    if pin is None:
+        return
+    try:
+        stat_result = os.fstat(pin)
+    except OSError:
+        return
+    if ((stat_result.st_dev, stat_result.st_ino) == record["identity"]
+            and stat_result.st_nlink > 1):
+        failures.append(
+            f"unknown hard-link alias may retain output bytes: {record['path']}")
+
+
+def _cleanup_owned_path(record, failures, descriptor_failures=None):
+    """Remove one owned pathname, releasing its pin first on Windows.
+
+    POSIX keeps the descriptor open through the identity decision so an inode
+    cannot be recycled before cleanup. Windows does not permit unlinking an
+    open file, so fresh exclusive outputs close first and retain the existing
+    Windows cleanup behavior; actual Windows filesystem evidence remains
+    required for that platform-specific branch.
+    """
+    if os.name == "nt":
+        # Windows requires closing before unlinking.  A close can report an
+        # error after releasing the descriptor, so decide whether its
+        # pathname diagnostic remains only after the unlink outcome is known.
+        _record_windows_cleanup_alias(record, failures)
+        failure_start = len(failures)
+        _close_owned_path(record, failures, descriptor_failures=descriptor_failures)
+        outcome = _unlink_for_cleanup(
+            record.get("cleanup_path", record["path"]), record["identity"], failures)
+        if outcome == "removed":
+            del failures[failure_start:]
+    else:
+        cleanup_path = record.get("cleanup_path", record["path"])
+        failure_start = len(failures)
+        outcome = _unlink_for_cleanup(cleanup_path, record["identity"], failures)
+        if outcome == "reclaimed" and "cleanup_path" in record:
+            # A foreign claimant of the stale name is not a retained path of
+            # this output. Keep any earlier diagnostics, but replace this
+            # pathname with the separate pinned-inode conclusion below.
+            del failures[failure_start:]
+        _reconcile_owned_pin_after_cleanup(record, outcome, failures)
+        _close_owned_path(record, failures, descriptor_failures=descriptor_failures)
+
+
+def _metadata_from_handle(path, handle):
+    """Capture regular-output metadata while its original inode is pinned.
+
+    The private backup remains mode 0600. These values are applied only after
+    that backup has been atomically restored to its original pathname.
+    """
+    stat_result = os.fstat(handle)
+    metadata = {
+        "mode": stat.S_IMODE(stat_result.st_mode),
+        "uid": stat_result.st_uid,
+        "gid": stat_result.st_gid,
+        "atime_ns": stat_result.st_atime_ns,
+        "mtime_ns": stat_result.st_mtime_ns,
+        "xattrs": None,
+    }
+    if hasattr(os, "listxattr"):
+        try:
+            metadata["xattrs"] = {
+                name: os.getxattr(handle, name)
+                for name in os.listxattr(handle)
+            }
+        except OSError as error:
+            raise Refusal(
+                "output_metadata_unavailable",
+                f"{path}: could not record extended attributes for rollback: {error}",
+            ) from None
+    return metadata
+
+
+def _restore_metadata(handle, metadata):
+    """Restore captured metadata to an already-restored regular output."""
+    current = os.fstat(handle)
+    if (current.st_uid, current.st_gid) != (metadata["uid"], metadata["gid"]):
+        os.fchown(handle, metadata["uid"], metadata["gid"])
+    # The private backup is writable.  Restore extended attributes before the
+    # final mode: Linux requires write permission for xattr changes, including
+    # removal of attributes introduced by the staged output.
+    original_xattrs = metadata["xattrs"]
+    if original_xattrs is not None:
+        for name in os.listxattr(handle):
+            if name not in original_xattrs:
+                os.removexattr(handle, name)
+        for name, value in original_xattrs.items():
+            os.setxattr(handle, name, value)
+    os.utime(handle, ns=(metadata["atime_ns"], metadata["mtime_ns"]))
+    os.fchmod(handle, metadata["mode"])
+
+
+def _pinned_original_still_has_one_link(record):
+    """Refuse if the original gained a hard link after its first pin."""
+    stat_result = os.fstat(record["pin"])
+    if (stat_result.st_dev, stat_result.st_ino) != record["identity"]:
+        raise Refusal(
+            "output_path_changed",
+            f"{record['path']} changed while its rollback copy was prepared",
+        )
+    if stat_result.st_nlink != 1:
+        raise Refusal(
+            "output_has_multiple_links",
+            f"{record['path']}: replacement requires a single-link output; rollback "
+            "cannot preserve hard-link topology",
+        )
+
+
+def _require_single_owned_link(record, description, alias_category):
+    """Refuse an owned output that moved or gained an unlocatable alias."""
+    stat_result = os.fstat(record["pin"])
+    if ((stat_result.st_dev, stat_result.st_ino) != record["identity"]
+            or stat_result.st_nlink == 0):
+        raise Refusal(
+            "output_path_changed",
+            f"{record['path']} {description} changed before commit",
+        )
+    if stat_result.st_nlink != 1:
+        error = Refusal(
+            alias_category,
+            f"{record['path']}: {description} gained a hard-link alias before commit",
+        )
+        _append_cleanup_detail(
+            error, f"{description} has an unknown hard-link alias; it may retain output bytes")
+        raise error
+
+
+def _pinned_backup_still_has_one_link(record):
+    _require_single_owned_link(record, "rollback copy", "rollback_backup_has_multiple_links")
+
+
+
+def _digest_pinned_bytes(handle):
+    """Hash a retained descriptor without changing its caller's file offset."""
+    digest = hashlib.sha256()
+    if hasattr(os, "pread"):
+        offset = 0
+        while True:
+            chunk = os.pread(handle, 1024 * 1024, offset)
+            if not chunk:
+                return digest.digest()
+            digest.update(chunk)
+            offset += len(chunk)
+    # Existing-output replacement is refused on Windows, where ``pread`` is
+    # not universally available. Keep that fallback ownership-local as well.
+    original_offset = os.lseek(handle, 0, os.SEEK_CUR)
+    try:
+        os.lseek(handle, 0, os.SEEK_SET)
+        while True:
+            chunk = os.read(handle, 1024 * 1024)
+            if not chunk:
+                return digest.digest()
+            digest.update(chunk)
+    finally:
+        os.lseek(handle, original_offset, os.SEEK_SET)
+
+
+def _mark_rollback_unavailable(swap, failures, *, retain_named=False):
+    """Record a partial destination and reconcile its still-pinned backup.
+
+    A missing pathname does not prove the backup inode vanished: its descriptor
+    can still reveal a moved or aliased private copy.  Inspect before the outer
+    recovery releases that descriptor; zero links are the only no-path case.
+    """
+    swap["rollback_unavailable"] = True
+    if swap.get("rollback_unavailable_reported"):
+        return "unrollbackable"
+    swap["rollback_unavailable_reported"] = True
+    record = swap["backup"]
+    pin = record.get("pin")
+    if pin is None:
+        _record_uninspectable_cleanup(record["path"], failures)
+        return "unrollbackable"
+    try:
+        stat_result = os.fstat(pin)
+    except OSError:
+        _record_uninspectable_cleanup(record["path"], failures)
+        return "unrollbackable"
+    if (stat_result.st_dev, stat_result.st_ino) != record["identity"]:
+        _record_uninspectable_cleanup(record["path"], failures)
+        return "unrollbackable"
+    if stat_result.st_nlink == 0:
+        return "unrollbackable"
+    try:
+        still_named = _entry_identity(record["path"]) == record["identity"]
+    except FileNotFoundError:
+        still_named = False
+    except OSError:
+        _record_uninspectable_cleanup(record["path"], failures)
+        return "unrollbackable"
+    if stat_result.st_nlink > 1:
+        failures.append(
+            f"unknown hard-link alias may retain rollback bytes: {record['path']}")
+    elif still_named and retain_named:
+        failures.append(record["path"])
+    elif not still_named:
+        failures.append(
+            f"owned rollback copy could not be located after cleanup: {record['path']}")
+    return "unrollbackable"
+
+def _copy_private_backup(source_path, original_identity, backup_handle):
+    """Copy the original inode into an owner-only backup already opened O_EXCL.
+
+    The caller already pins the original inode through the transaction; this
+    read descriptor pins it while bytes are copied. The source path is checked
+    both before and after the copy; that catches an atomic path replacement
+    during preparation. Without filesystem locking, an adversary that modifies
+    the same inode while it is being read remains outside this command's
+    authority, so this does not promise a crash transaction.
+    """
+    source_handle = _open_regular_output(source_path, original_identity)
+    try:
+        if _fd_identity(source_handle) != original_identity:
+            raise Refusal(
+                "output_path_changed",
+                f"{source_path} changed while its rollback copy was prepared",
+            )
+        copied = hashlib.sha256()
+        while True:
+            chunk = os.read(source_handle, 1024 * 1024)
+            if not chunk:
+                break
+            copied.update(chunk)
+            view = memoryview(chunk)
+            while view:
+                written = os.write(backup_handle, view)
+                if written == 0:
+                    raise OSError("private backup write made no progress")
+                view = view[written:]
+        os.fsync(backup_handle)
+        os.lseek(backup_handle, 0, os.SEEK_SET)
+        verified = hashlib.sha256()
+        while True:
+            chunk = os.read(backup_handle, 1024 * 1024)
+            if not chunk:
+                break
+            verified.update(chunk)
+        if copied.digest() != verified.digest():
+            raise OSError("private backup did not retain the copied bytes")
+        backup_digest = verified.digest()
+        try:
+            source_unchanged = (
+                _fd_identity(source_handle) == original_identity
+                and _file_identity(source_path) == original_identity)
+        except (FileNotFoundError, OSError):
+            source_unchanged = False
+        if not source_unchanged:
+            raise Refusal(
+                "output_path_changed",
+                f"{source_path} changed while its rollback copy was prepared",
+            )
+        return backup_digest
+    finally:
+        os.close(source_handle)
+
+
+def _restore_backup(swap, failures, metadata_scope_warnings, descriptor_failures=None):
+    """Restore an owned private backup after a caught swap failure.
+
+    `os.replace` can report an exception after the filesystem call took effect.
+    Roll back only when the destination still names this run's staged inode.
+    A different inode may be a foreign writer's success, so keep the private
+    backup and report the conflict rather than overwriting it.
+    """
+    backup_record = swap["backup"]
+    backup, backup_identity = backup_record["path"], backup_record["identity"]
+    destination, original_identity = swap["destination"], swap["original_identity"]
+    staged_identity, metadata = swap["staged_identity"], swap["metadata"]
+    try:
+        current_identity = _entry_identity(destination)
+    except OSError:
+        current_identity = None
+    if not swap["swap_started"] or current_identity == original_identity:
+        # Backup reads can update atime before any swap. Restore that effect
+        # through the original inode pin, never through a possibly foreign path.
+        # Keep the current mtime and all other metadata: this read did not alter
+        # them, and restoring their old values could erase an external change.
+        original = swap["original"]
+        if original is not None and metadata is not None:
+            try:
+                handle = original["pin"]
+                current = os.fstat(handle)
+                os.utime(handle, ns=(metadata["atime_ns"], current.st_mtime_ns))
+            except OSError:
+                failures.append(destination)
+        _cleanup_owned_path(backup_record, failures, descriptor_failures=descriptor_failures)
+        return
+    if current_identity != staged_identity:
+        failures.append(backup)
+        return
+    if swap.get("rollback_unavailable"):
+        return _mark_rollback_unavailable(swap, failures)
+    restored = False
+    try:
+        _pinned_backup_still_has_one_link(backup_record)
+    except Refusal as refusal:
+        if refusal.category == "rollback_backup_has_multiple_links":
+            # Keep the original failure escaping.  The private backup is still
+            # named here, but its unknown alias may retain prior statement
+            # bytes; moving it back would make that alias a live copy of the
+            # destination.
+            return _mark_rollback_unavailable(swap, failures)
+        # A missing or changed backup cannot restore a destination that still
+        # names this run's staged inode.  Report that partial result by its
+        # actual destination, never by the vanished private spelling.
+        return _mark_rollback_unavailable(swap, failures)
+    except OSError:
+        failures.append(backup)
+        return None
+    try:
+        if _entry_identity(backup) != backup_identity:
+            return _mark_rollback_unavailable(swap, failures)
+        try:
+            digest_matches = (
+                _digest_pinned_bytes(backup_record["pin"]) == backup_record["digest"])
+        except OSError:
+            return _mark_rollback_unavailable(swap, failures, retain_named=True)
+        if not digest_matches:
+            return _mark_rollback_unavailable(swap, failures, retain_named=True)
+        # This observes ownership immediately before the replace. POSIX has no
+        # compare-and-swap rename, so a hostile concurrent rename after this
+        # check is still outside the CLI's locking authority.
+        os.replace(backup, destination)
+        restored = True
+    except OSError:
+        try:
+            restored = _entry_identity(destination) == backup_identity
+        except OSError:
+            restored = False
+        if not restored:
+            try:
+                backup_retained = _entry_identity(backup) == backup_identity
+            except OSError:
+                backup_retained = False
+            if backup_retained:
+                failures.append(backup)
+                try:
+                    destination_still_staged = (
+                        _entry_identity(destination) == staged_identity)
+                except OSError:
+                    destination_still_staged = False
+                if destination_still_staged:
+                    return _mark_rollback_unavailable(swap, failures)
+            elif current_identity == staged_identity:
+                return _mark_rollback_unavailable(swap, failures)
+            else:
+                failures.append(destination)
+    if restored:
+        try:
+            restore_handle = _open_regular_output(destination, backup_identity)
+            try:
+                _restore_metadata(restore_handle, metadata)
+            finally:
+                os.close(restore_handle)
+            metadata_scope_warnings.append(destination)
+        except (OSError, Refusal):
+            failures.append(destination)
+
+
+def _append_cleanup_detail(error, message):
+    """Keep recovery details visible on Python versions without add_note."""
+    # Python prints `SystemExit.code`, not exception notes. A Refusal is a
+    # SystemExit so that command-line validation exits without a traceback;
+    # put the retained location in its visible code rather than hiding it in
+    # an unrendered note.
+    if isinstance(error, Refusal):
+        error.code = f"{error.code}\n{message}"
+        return
+    add_note = getattr(error, "add_note", None)
+    if callable(add_note):
+        add_note(message)
+        return
+    # BaseException.add_note arrived in Python 3.11. OSError can render cached
+    # errno, strerror, and filename fields instead of its mutable `args`, so
+    # retain the original exception intact and write the recovery detail where
+    # an unhandled CLI failure will still show it on Python 3.10.
+    print(message, file=sys.stderr)
+
+
+def _note_cleanup_failures(error, failures):
+    if failures:
+        retained = ", ".join(sorted({str(failure) for failure in failures}))
+        message = "output cleanup or rollback failed; retained path(s): " + retained
+        _append_cleanup_detail(error, message)
+
+
+def _note_rollback_metadata_scope(error, restored_paths):
+    """Disclose metadata classes not established by this caught rollback."""
+    if not restored_paths:
+        return
+    restored = ", ".join(sorted(set(restored_paths)))
+    message = (
+        "rollback restored bytes and captured portable metadata for: "
+        f"{restored}; extended ACLs and file flags were not verified"
+    )
+    _append_cleanup_detail(error, message)
+
+
+def _cleanup_committed_outputs(replaced, claimed, retained_failures, descriptor_failures):
+    """Remove old private copies after every replacement has committed."""
+    for swap in replaced:
+        backup = swap["backup"]
+        _cleanup_owned_path(backup, retained_failures, descriptor_failures=descriptor_failures)
+        _close_owned_path(
+            swap["original"], retained_failures,
+            diagnostic_path=swap.get("destination", swap["original"]["path"]),
+            descriptor_failures=descriptor_failures)
+    for record in claimed:
+        # A claimed path did not exist before this run. Its close failure cannot
+        # retain a prior sensitive copy, so keep that diagnostic distinct from
+        # a backup that an operator must protect or remove.
+        _close_owned_path(
+            record, descriptor_failures, diagnostic_path=record.get("canonical_path"))
+
+
+def _reconcile_interrupted_committed_cleanup(
+        replaced, claimed, retained_failures, descriptor_failures):
+    """Close every pin and disclose old copies without undoing a commit.
+
+    Recovery runs while another exception is already escaping.  Inspection or
+    cleanup failures are diagnostics here: they must never replace that
+    original exception or skip closure of later ownership descriptors.
+    """
+    for swap in replaced:
+        backup = swap["backup"]
+        try:
+            try:
+                still_at_path = _entry_identity(backup["path"]) == backup["identity"]
+            except FileNotFoundError:
+                still_at_path = False
+            except OSError:
+                still_at_path = None
+            if still_at_path is True:
+                retained_failures.append(str(backup["path"]))
+                # A named backup can also have gained an alias after final
+                # validation.  Inspect its pin before release so the operator
+                # does not remove the .bak and miss a second private copy.
+                pin = backup.get("pin")
+                if pin is not None:
+                    try:
+                        stat_result = os.fstat(pin)
+                    except OSError:
+                        retained_failures.append(
+                            "could not inspect committed rollback copy: " + str(backup["path"]))
+                    else:
+                        if (stat_result.st_dev, stat_result.st_ino) != backup["identity"]:
+                            retained_failures.append(
+                                "could not inspect committed rollback copy: " + str(backup["path"]))
+                        elif stat_result.st_nlink > 1:
+                            retained_failures.append(
+                                "unknown hard-link alias may retain rollback bytes: "
+                                + str(backup["path"]))
+            elif still_at_path is False:
+                _cleanup_owned_path(backup, retained_failures, descriptor_failures=descriptor_failures)
+            else:
+                # We cannot identify an entry after an I/O/permission error.
+                # Preserve the original interruption and report no ownership
+                # claim about a possibly foreign pathname.
+                retained_failures.append(
+                    "could not inspect committed rollback copy: " + str(backup["path"]))
+        except OSError:
+            retained_failures.append(
+                "could not reconcile committed rollback copy: " + str(backup["path"]))
+        finally:
+            _close_owned_path(backup, retained_failures,
+                              descriptor_failures=descriptor_failures)
+            _close_owned_path(
+                swap["original"], retained_failures,
+                diagnostic_path=swap.get("destination", swap["original"]["path"]),
+                descriptor_failures=descriptor_failures)
+    for record in claimed:
+        _close_owned_path(
+            record, descriptor_failures, diagnostic_path=record.get("canonical_path"))
 
 
 def write_outputs(targets, accept_inherited=False, after_claim=None):
@@ -1515,8 +2355,44 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
     does not exist is created exclusively under its own name, which is both the
     reservation against a concurrent run and, on Windows, the rule itself —
     there an existing destination is refused outright rather than staged.
+
+    A destination that is a **symlink** is written through to its target: the
+    sibling temporary file is created next to (and the final rename targets)
+    `os.path.realpath(path)`, not `path` itself. `os.replace` does not follow a
+    symlink at the destination — it replaces the link, the same as `unlink`
+    would — so renaming onto the link's own name would silently turn it into a
+    plain file and leave whatever else reads through that link looking at
+    stale content.
+
+    Before replacing an existing POSIX destination, its old inode is copied from
+    an opened descriptor to a private sibling backup. The destination therefore
+    remains present until one `os.replace` atomically changes it from old bytes
+    to new bytes. This is rollback for exceptions caught in this process, not a
+    multi-file crash transaction: a process or host crash can retain private
+    `.bak` files and leave different destinations at different committed
+    versions.
+
+    The supplied destination's resolved path and inode are revalidated right
+    before that replacement. A symlink (or symlinked parent) retargeted after
+    claiming is refused instead of silently writing the stale target. This
+    detects changes observed at the commit boundary; a hostile filesystem that
+    changes the path again after that check remains outside this CLI's locking
+    authority.
     """
-    claimed, staged = [], []
+    claimed, staged, replaced = [], [], []
+    # These hold pins which successfully registered but have not yet been
+    # transferred into a staged swap.  They close or clean up an interrupt in
+    # the small caller-side handoff interval.
+    unpaired_originals, unpaired_backups = [], []
+    # A record is the one ownership authority for a pathname: cleanup may
+    # unlink it only while its identity still equals record["identity"].
+    pending_backup = None
+    pending_swap = None
+    cleanup_failures = []
+    descriptor_close_failures = []
+    metadata_scope_warnings = []
+    partial_commit_failures = []
+    committed = False
     try:
         for path, _ in targets:
             if os.path.exists(path):
@@ -1524,34 +2400,314 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 refusal = windows_destination_refusal(path, accept_inherited)
                 if refusal:
                     raise refusal
-                handle, temporary = tempfile.mkstemp(
-                    dir=os.path.dirname(os.path.abspath(path)),
-                    prefix=os.path.basename(path) + ".", suffix=".part")
-                claimed.append((temporary, handle))
-                staged.append((temporary, path))
+                real_path = os.path.realpath(path)
+                # Commit the existing inode before any staging syscall makes
+                # a visible sibling.  A replacement before this open is the
+                # requested current path; a replacement after it is detected
+                # before this run has authority to create or swap output.
+                original = _claim_owned_output(
+                    lambda: (_open_regular_output(real_path, None), real_path),
+                    created=False, owned_records=unpaired_originals)
+                original_identity = original["identity"]
+                state = {"temporary": None, "supplied_path": path,
+                         "real_path": real_path,
+                         "original_identity": original_identity,
+                         "original": original}
+                staged.append(state)
+                try:
+                    claimed_existing_output_changed = (
+                        _file_identity(real_path) != original_identity)
+                except (FileNotFoundError, OSError):
+                    claimed_existing_output_changed = True
+                if claimed_existing_output_changed:
+                    raise Refusal(
+                        "output_path_changed",
+                        f"{path} changed while it was being claimed",
+                    )
+                record = _claim_owned_output(
+                    lambda: tempfile.mkstemp(
+                        dir=os.path.dirname(real_path),
+                        prefix=os.path.basename(real_path) + ".", suffix=".part"),
+                    created=True, owned_records=claimed)
+                temporary = record["path"]
+                record["supplied_path"] = path
+                record["canonical_path"] = real_path
+                record["cleanup_path"] = temporary
+                state["temporary"] = record
             else:
-                claimed.append((path, _open_private(path, accept_inherited)))
+                supplied_path = path
+                canonical_path = _resolve_output_path(supplied_path)
+                # Register this newly created inode before returning to an
+                # interruptible caller line.  The record is the cleanup owner
+                # even if a signal arrives before its path metadata is filled.
+                record = _claim_owned_output(
+                    lambda: (_open_private(canonical_path, accept_inherited), canonical_path),
+                    created=True, owned_records=claimed)
+                # Keep cleanup on the canonical inode path captured before the
+                # open. The supplied spelling remains an authority that must
+                # still resolve to that same inode at commit time.
+                record["supplied_path"] = supplied_path
+                record["canonical_path"] = canonical_path
+                record["cleanup_path"] = canonical_path
+                record["path"] = supplied_path
+                try:
+                    claimed_path_changed = (
+                        _resolve_output_path(supplied_path) != canonical_path
+                        or _file_identity(canonical_path) != record["identity"])
+                except (FileNotFoundError, OSError):
+                    claimed_path_changed = True
+                if claimed_path_changed:
+                    raise Refusal(
+                        "output_path_changed",
+                        f"{supplied_path} changed while it was being claimed",
+                    )
         if after_claim is not None:
             after_claim()
-        for index, ((_, text), (where, handle)) in enumerate(zip(targets, claimed)):
-            claimed[index] = (where, None)  # fdopen owns the handle from here
+        for (_, text), record in zip(targets, claimed):
+            where = record["path"]
+            # The record already owns the opened descriptor, so a duplicate
+            # failure here can still close it and unlink the created path.
+            handle = os.dup(record["pin"])
             with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
                 stream.write(text)
-            os.chmod(where, 0o600)
-    except BaseException:
-        # Only paths this call created are removed. A created destination is
-        # still this run's; a staged file never was the destination at all.
-        for where, handle in claimed:
-            if handle is not None:
-                with contextlib.suppress(OSError):
-                    os.close(handle)
-            with contextlib.suppress(OSError):
-                os.unlink(where)
+        # Every payload is on disk. A private copy preserves the old bytes while
+        # the requested destination stays present until the atomic replacement.
+        for state in staged:
+            temporary = state["temporary"]
+            supplied_path, real_path = state["supplied_path"], state["real_path"]
+            original_identity = state["original_identity"]
+            pending_backup = _claim_owned_output(
+                lambda: tempfile.mkstemp(
+                    dir=os.path.dirname(real_path),
+                    prefix=os.path.basename(real_path) + ".", suffix=".bak"),
+                created=True, owned_records=unpaired_backups)
+            backup_handle, backup = pending_backup["pin"], pending_backup["path"]
+            pending_swap = {"backup": pending_backup, "destination": real_path,
+                            "original_identity": original_identity,
+                            "staged_identity": temporary["identity"],
+                            "temporary": temporary,
+                            "original": None, "metadata": None,
+                            "swap_started": False}
+            pending_backup = None
+            # This ownership pin both prevents original-inode ABA reuse and
+            # captures metadata before the backup read can update atime.
+            pending_swap["original"] = state["original"]
+            pending_swap["metadata"] = _metadata_from_handle(
+                real_path, pending_swap["original"]["pin"])
+            pending_swap["backup"]["digest"] = _copy_private_backup(
+                real_path, original_identity, backup_handle)
+            # The destination stays present until this one atomic replacement.
+            # `pending_swap` is set first because an interrupt may arrive after
+            # the filesystem call has taken effect but before it returns.
+            # Revalidate *after* the backup operation: it is a filesystem call
+            # an attacker can use to retarget the supplied symlink before this
+            # commit. The pending backup lets the refusal cleanly undo itself.
+            try:
+                existing_output_changed = (
+                    os.path.realpath(supplied_path) != real_path
+                    or _file_identity(real_path) != original_identity)
+            except FileNotFoundError:
+                # A missing leaf under its original parent is a commit-boundary
+                # path change.  A vanished parent can leave pinned private
+                # outputs under an unknown spelling, so preserve its existing
+                # recovery path and diagnostic rather than misclassifying it.
+                if os.path.isdir(os.path.dirname(real_path)):
+                    existing_output_changed = True
+                else:
+                    raise
+            except OSError:
+                existing_output_changed = True
+            if existing_output_changed:
+                raise Refusal(
+                    "output_path_changed",
+                    f"{supplied_path} changed after it was claimed; no output was replaced",
+                )
+            if _entry_identity(temporary["path"]) != temporary["identity"]:
+                raise Refusal(
+                    "output_path_changed",
+                    f"{supplied_path} staged output changed before replacement",
+                )
+            _require_single_owned_link(
+                temporary, "staged output", "staged_output_has_multiple_links")
+            if _entry_identity(pending_swap["backup"]["path"]) != \
+                    pending_swap["backup"]["identity"]:
+                raise Refusal(
+                    "output_path_changed",
+                    f"{supplied_path} rollback copy changed before replacement",
+                )
+            _pinned_backup_still_has_one_link(pending_swap["backup"])
+            # The first pin checked that the original was single-linked. A
+            # backup hook can still add an alias before the commit boundary;
+            # recheck this pinned inode so replacement never detaches a new
+            # hard link while reporting a successful overwrite.
+            _pinned_original_still_has_one_link(pending_swap["original"])
+            pending_swap["swap_started"] = True
+            os.replace(temporary["path"], real_path)
+            replaced.append(pending_swap)
+            pending_swap = None
+        # Keep this after every staged filesystem operation and before the
+        # committed boundary. Revalidate every fresh and replaced destination:
+        # an earlier swap can be invalidated while a later backup is prepared.
+        for record in claimed:
+            supplied_path = record["supplied_path"]
+            canonical_path = record["canonical_path"]
+            if _claimed_output_changed(
+                    supplied_path, canonical_path, record["identity"]):
+                raise Refusal(
+                    "output_path_changed",
+                    f"{supplied_path} changed before commit; no output was committed",
+                )
+            _require_single_owned_link(record, "output", "output_has_multiple_links")
+        # Earlier rollback copies can also be changed during later swaps.
+        # A commit may retire them only while their ownership remains proved.
+        for swap in replaced:
+            backup = swap["backup"]
+            try:
+                backup_unchanged = (
+                    _entry_identity(backup["path"]) == backup["identity"])
+            except OSError:
+                backup_unchanged = False
+            if not backup_unchanged:
+                _mark_rollback_unavailable(swap, cleanup_failures)
+                raise Refusal(
+                    "output_path_changed",
+                    f"{swap['destination']} rollback copy changed before commit; "
+                    "this already replaced output could not be rolled back",
+                )
+            try:
+                _pinned_backup_still_has_one_link(backup)
+            except Refusal as refusal:
+                if refusal.category == "output_path_changed":
+                    _mark_rollback_unavailable(swap, cleanup_failures)
+                raise
+            try:
+                digest_matches = (
+                    _digest_pinned_bytes(backup["pin"]) == backup["digest"])
+            except OSError:
+                digest_matches = False
+            if not digest_matches:
+                _mark_rollback_unavailable(swap, cleanup_failures, retain_named=True)
+                raise Refusal(
+                    "output_path_changed",
+                    f"{swap['destination']} rollback copy content could not be verified before commit; "
+                    "this already replaced output could not be rolled back",
+                )
+        # Final path validation is the boundary between rollback and committed
+        # cleanup. Keep it in this same handler so an interrupt before cleanup
+        # starts cannot skip both recovery paths.
+        committed = True
+        _cleanup_committed_outputs(
+            replaced, claimed, cleanup_failures, descriptor_close_failures)
+        if cleanup_failures:
+            raise OutputCleanupFailure(cleanup_failures)
+        if descriptor_close_failures:
+            raise OutputDescriptorCloseFailure(descriptor_close_failures)
+    except BaseException as error:
+        if committed:
+            # This is after the transaction committed. Never call
+            # `_restore_backup` here: an interrupt during old-copy cleanup must
+            # preserve the new output, close every ownership pin, and identify
+            # any old private copy that still needs operator cleanup.
+            _reconcile_interrupted_committed_cleanup(
+                replaced, claimed, cleanup_failures, descriptor_close_failures)
+            _note_cleanup_failures(error, cleanup_failures)
+            if descriptor_close_failures and not isinstance(error, OutputDescriptorCloseFailure):
+                _append_cleanup_detail(
+                    error,
+                    "ownership descriptor close failed for committed output(s): "
+                    + ", ".join(sorted(set(descriptor_close_failures))),
+                )
+            raise
+        # Reconcile a swap which may have completed before raising, then undo
+        # earlier committed swaps. Cleanup failures remain attached to the
+        # original exception with their recoverable locations.
+        if pending_swap is not None:
+            backup = pending_swap["backup"]
+            if _restore_backup(
+                    pending_swap, cleanup_failures, metadata_scope_warnings,
+                    descriptor_close_failures) == "unrollbackable":
+                partial_commit_failures.append(str(pending_swap["destination"]))
+            _close_owned_path(backup, cleanup_failures,
+                              descriptor_failures=descriptor_close_failures)
+            if pending_swap["original"] is not None:
+                _close_owned_path(
+                    pending_swap["original"], cleanup_failures,
+                    diagnostic_path=pending_swap["destination"],
+                    descriptor_failures=descriptor_close_failures)
+        if pending_backup is not None and (
+                pending_swap is None or pending_backup is not pending_swap["backup"]):
+            _cleanup_owned_path(pending_backup, cleanup_failures, descriptor_failures=descriptor_close_failures)
+        for swap in reversed(replaced):
+            # An interrupt can arrive after `_record_replaced_swap` appends but
+            # before its caller clears `pending_swap`. That one backup has
+            # already been reconciled above; restoring it twice risks treating
+            # the now-restored destination as a second transaction outcome.
+            if swap is pending_swap:
+                continue
+            backup = swap["backup"]
+            if _restore_backup(
+                    swap, cleanup_failures, metadata_scope_warnings,
+                    descriptor_close_failures) == "unrollbackable":
+                partial_commit_failures.append(str(swap["destination"]))
+            _close_owned_path(backup, cleanup_failures,
+                              descriptor_failures=descriptor_close_failures)
+            _close_owned_path(
+                swap["original"], cleanup_failures,
+                diagnostic_path=swap.get("destination", swap["original"]["path"]),
+                descriptor_failures=descriptor_close_failures)
+        unrollbackable_temporaries = {
+            id(swap["temporary"]) for swap in replaced
+            if swap.get("rollback_unavailable")
+        }
+        if pending_swap is not None and pending_swap.get("rollback_unavailable"):
+            unrollbackable_temporaries.add(id(pending_swap["temporary"]))
+        for record in claimed:
+            if id(record) in unrollbackable_temporaries:
+                _close_owned_path(
+                    record, cleanup_failures,
+                    diagnostic_path=record.get("canonical_path"),
+                    descriptor_failures=descriptor_close_failures)
+            else:
+                _cleanup_owned_path(record, cleanup_failures,
+                                    descriptor_failures=descriptor_close_failures)
+        # Existing destinations are pinned at first claim, before they enter a
+        # swap record. Close any pin whose state never reached the rollback
+        # loops above; it is a descriptor-only ownership record and must never
+        # be unlinked as if it were a fresh output.
+        for state in staged:
+            _close_owned_path(state["original"], cleanup_failures,
+                              diagnostic_path=state["real_path"],
+                              descriptor_failures=descriptor_close_failures)
+        # A signal can interrupt after _owned_path registered a backup or
+        # original pin but before its caller transferred it to pending_swap or
+        # staged.  Reconcile only those unpaired records here; paired records
+        # were handled above with their transaction state.
+        paired_originals = {id(state["original"]) for state in staged}
+        if pending_swap is not None and pending_swap["original"] is not None:
+            paired_originals.add(id(pending_swap["original"]))
+        paired_backups = {id(swap["backup"]) for swap in replaced}
+        if pending_swap is not None:
+            paired_backups.add(id(pending_swap["backup"]))
+        if pending_backup is not None:
+            paired_backups.add(id(pending_backup))
+        for record in unpaired_backups:
+            if id(record) not in paired_backups:
+                _cleanup_owned_path(record, cleanup_failures, descriptor_failures=descriptor_close_failures)
+        for record in unpaired_originals:
+            if id(record) not in paired_originals:
+                _close_owned_path(record, cleanup_failures,
+                                  descriptor_failures=descriptor_close_failures)
+        _note_cleanup_failures(error, cleanup_failures)
+        if partial_commit_failures:
+            _append_cleanup_detail(
+                error, "partially committed output could not be rolled back: "
+                + ", ".join(sorted(set(partial_commit_failures))))
+        if descriptor_close_failures:
+            _append_cleanup_detail(
+                error, "ownership descriptor close failed or could not be verified for: "
+                + ", ".join(sorted(set(descriptor_close_failures))))
+        _note_rollback_metadata_scope(error, metadata_scope_warnings)
         raise
-    # Every payload is on disk. Replacing now cannot lose an existing output to
-    # a failure that has already been ruled out.
-    for temporary, path in staged:
-        os.replace(temporary, path)
 
 
 def _check_paths(args):
@@ -1561,7 +2717,7 @@ def _check_paths(args):
     `--out` and `--manifest` sharing a path leaves whichever was written second,
     with both success lines printed.
     """
-    named = [(flag, pathlib.Path(value).expanduser().resolve())
+    named = [(flag, pathlib.Path(_resolve_output_path(pathlib.Path(value).expanduser())))
              for flag, value in (("--pdf", args.pdf), ("--mapping", args.mapping),
                                  ("--out", args.out), ("--manifest", args.manifest))
              if value]
