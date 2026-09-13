@@ -21,7 +21,7 @@ FAKE_GH = r'''#!/usr/bin/env python3
 import base64, json, os, sys
 args = sys.argv[1:]
 scenario = os.environ.get("GATE_SCENARIO", "pass")
-security_case = scenario.startswith("security-review-") or scenario in {"security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-documents-screen", "security-documents-screen-rename-out", "security-documents-screen-valid", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out", "security-ci-workflow", "security-ci-workflow-rename-out", "security-ci-workflow-valid", "security-release-preview", "security-release-preview-rename-out", "security-deploy-install-page", "security-deploy-install-page-rename-out", "security-deploy-install-page-valid", "workflow-notes-present", "workflow-delete-notes", "workflow-rename-out-notes"}
+security_case = scenario.startswith("security-review-") or scenario in {"security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-documents-screen", "security-documents-screen-rename-out", "security-documents-screen-valid", "security-tauri-cargo", "security-tauri-cargo-rename-out", "security-tauri-lib", "security-tauri-lib-rename-out", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out", "security-ci-workflow", "security-ci-workflow-rename-out", "security-ci-workflow-valid", "security-release-preview", "security-release-preview-rename-out", "security-deploy-install-page", "security-deploy-install-page-rename-out", "security-deploy-install-page-valid", "workflow-notes-present", "workflow-delete-notes", "workflow-rename-out-notes"}
 security_workflow_case = scenario in {"security-ci-workflow", "security-ci-workflow-rename-out", "security-ci-workflow-valid", "security-release-preview", "security-release-preview-rename-out", "security-deploy-install-page", "security-deploy-install-page-rename-out", "security-deploy-install-page-valid"}
 sync_case = scenario.startswith("sync-")
 head = "0123456789abcdef0123456789abcdef01234567"
@@ -227,6 +227,8 @@ if args[:2] == ["pr", "view"]:
         )
     if security_workflow_case:
         body += "\n## Rollback notes\n\nRevert the workflow change before the next release.\n"
+    if scenario in {"security-tauri-cargo", "security-tauri-cargo-rename-out"}:
+        body += "\n## Dependency rationale\n\nThe manifest boundary remains under independent credential-focused review.\n"
     if scenario == "security-encrypted-keystore":
         body += "\n## Rollback notes\n\nRevert the encrypted-store change before deployment.\n"
     if scenario in {"platform-evidence-present", "platform-powershell-evidence", "migration-template-wrapped", "security-notes-present", "security-none", "security-pending", "security-review-valid", "sync-migration-present"}:
@@ -306,7 +308,7 @@ if args[:2] == ["pr", "view"]:
     body = body.replace("blob/HEAD", f"blob/{head}")
     if scenario == "checklist-stale-ref":
         body = body.replace(f"blob/{head}", "blob/" + "f" * 40)
-    one_file = scenario in {"metadata-private", "files-empty", "formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-tab", "unicode-phone-two-lines", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "grouped-identifier-mixed", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "binary-review", "binary-review-private", "binary-review-head-moves", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "grouped-pan-space", "grouped-pan-hyphen", "grouped-masked-pan-space", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-sibling-migration", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "workflow-placeholders", "workflow-punctuated-placeholders", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-none", "security-pending", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "dependency-manifest-missing", "dependency-manifest-present", "home-macos", "home-unix", "home-windows", "crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path", "gitlink", "gitlink-existing", "implementation-p4-missing", "implementation-p4-present", "implementation-p4-continuation", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders", "platform-evidence-missing", "platform-evidence-present", "platform-evidence-heading", "platform-powershell-missing", "platform-powershell-evidence", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-inline-prose", "platform-negative-outcome", "platform-unaffected-bare", "platform-unaffected-rationale", "platform-evidence-bare-label", "platform-evidence-sibling-list", "platform-evidence-empty-fence", "platform-evidence-punctuated-placeholder", "platform-evidence-fenced-continuation", "platform-evidence-package-manager", "platform-windows-native-action", "platform-windows-native-action-rename-out", "platform-ci-workflow", "platform-ci-workflow-rename-out", "platform-release-mcpb-preview", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"} or scenario.startswith("home-") or security_case or sync_case
+    one_file = scenario in {"metadata-private", "files-empty", "formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-tab", "unicode-phone-two-lines", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "grouped-identifier-mixed", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "landline-grouped", "landline-standard-hyphen", "landline-standard-space", "landline-standard-underscore", "pem-certificate-envelope", "path-id", "binary-delete", "binary-review", "binary-review-private", "binary-review-head-moves", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "grouped-pan-space", "grouped-pan-hyphen", "grouped-masked-pan-space", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-sibling-migration", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "workflow-placeholders", "workflow-punctuated-placeholders", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-none", "security-pending", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "dependency-manifest-missing", "dependency-manifest-present", "home-macos", "home-unix", "home-windows", "crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path", "gitlink", "gitlink-existing", "implementation-p4-missing", "implementation-p4-present", "implementation-p4-continuation", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders", "platform-evidence-missing", "platform-evidence-present", "platform-evidence-heading", "platform-powershell-missing", "platform-powershell-evidence", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-inline-prose", "platform-negative-outcome", "platform-unaffected-bare", "platform-unaffected-rationale", "platform-evidence-bare-label", "platform-evidence-sibling-list", "platform-evidence-empty-fence", "platform-evidence-punctuated-placeholder", "platform-evidence-fenced-continuation", "platform-evidence-package-manager", "platform-windows-native-action", "platform-windows-native-action-rename-out", "platform-ci-workflow", "platform-ci-workflow-rename-out", "platform-release-mcpb-preview", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"} or scenario.startswith("home-") or security_case or sync_case
     selected_base = new_head if scenario == "base-oid-mismatch" else base
     emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
@@ -341,8 +343,12 @@ elif args[:2] == ["pr", "diff"]:
         emit("diff --git a/.github/workflows/deploy-install-page.yml b/docs/retired-install-page.yml\nsimilarity index 100%\nrename from .github/workflows/deploy-install-page.yml\nrename to docs/retired-install-page.yml\n")
     elif scenario == "security-documents-screen-rename-out":
         emit("diff --git a/src/DocumentsScreen.tsx b/docs/retired-documents-screen.tsx\nsimilarity index 100%\nrename from src/DocumentsScreen.tsx\nrename to docs/retired-documents-screen.tsx\n")
+    elif scenario == "security-tauri-cargo-rename-out":
+        emit("diff --git a/src-tauri/Cargo.toml b/docs/retired-tauri-cargo.toml\nsimilarity index 100%\nrename from src-tauri/Cargo.toml\nrename to docs/retired-tauri-cargo.toml\n")
+    elif scenario == "security-tauri-lib-rename-out":
+        emit("diff --git a/src-tauri/src/lib.rs b/docs/retired-tauri-lib.rs\nsimilarity index 100%\nrename from src-tauri/src/lib.rs\nrename to docs/retired-tauri-lib.rs\n")
     elif security_case:
-        paths = {"security-axal-frontend": "src/AxalScreen.tsx", "security-axal-native": "src-tauri/src/axal.rs", "security-encrypted-keystore": "src-tauri/src/db/encrypted.rs", "security-documents-consumer": "src-tauri/src/documents.rs", "security-documents-screen": "src/DocumentsScreen.tsx", "security-documents-screen-valid": "src/DocumentsScreen.tsx", "security-commands-facade": "src-tauri/src/commands.rs", "security-bank-statement-import": "scripts/bank_statement_import.py", "security-prune-package-compiler-cache": "scripts/prune-package-compiler-cache.mjs", "security-ci-workflow": ".github/workflows/ci.yml", "security-ci-workflow-valid": ".github/workflows/ci.yml", "security-release-preview": ".github/workflows/release-mcpb-preview.yml", "security-deploy-install-page": ".github/workflows/deploy-install-page.yml", "security-deploy-install-page-valid": ".github/workflows/deploy-install-page.yml"}
+        paths = {"security-axal-frontend": "src/AxalScreen.tsx", "security-axal-native": "src-tauri/src/axal.rs", "security-encrypted-keystore": "src-tauri/src/db/encrypted.rs", "security-documents-consumer": "src-tauri/src/documents.rs", "security-documents-screen": "src/DocumentsScreen.tsx", "security-documents-screen-valid": "src/DocumentsScreen.tsx", "security-tauri-cargo": "src-tauri/Cargo.toml", "security-tauri-lib": "src-tauri/src/lib.rs", "security-commands-facade": "src-tauri/src/commands.rs", "security-bank-statement-import": "scripts/bank_statement_import.py", "security-prune-package-compiler-cache": "scripts/prune-package-compiler-cache.mjs", "security-ci-workflow": ".github/workflows/ci.yml", "security-ci-workflow-valid": ".github/workflows/ci.yml", "security-release-preview": ".github/workflows/release-mcpb-preview.yml", "security-deploy-install-page": ".github/workflows/deploy-install-page.yml", "security-deploy-install-page-valid": ".github/workflows/deploy-install-page.yml"}
         path = paths.get(scenario, "src-tauri/src/dsc.rs")
         emit(f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -0,0 +1 @@\n+safe check\n")
     elif sync_case:
@@ -409,6 +415,15 @@ elif args[:2] == ["pr", "diff"]:
     elif scenario == "landline-grouped":
         landline = "0" + "11" + "-" + "2345" + "-" + "6789"
         emit(f"diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic {landline}\n")
+    elif scenario in {"landline-standard-hyphen", "landline-standard-space", "landline-standard-underscore"}:
+        separator = {"landline-standard-hyphen": "-", "landline-standard-space": " ", "landline-standard-underscore": "_"}[scenario]
+        landline = "0" + "11" + separator + "23456789"
+        emit(f"diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic {landline}\n")
+    elif scenario == "pem-certificate-envelope":
+        begin = "-" * 5 + "BEGIN CERTIFICATE" + "-" * 5
+        end = "-" * 5 + "END CERTIFICATE" + "-" * 5
+        body = "MII" + "A" * 48
+        emit(f"diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +3 @@\n+{begin}\n+{body}\n+{end}\n")
     elif scenario == "unicode-phone":
         emit("diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic 69876\u00a054321\n")
     elif scenario == "unicode-phone-tab":
@@ -599,7 +614,7 @@ elif args and args[0] == "api":
             emit([[]])
         else:
             records = [{"user": {"login": "chatgpt-codex-connector[bot]", "type": "Bot"}, "state": "COMMENTED", "commit_id": head}]
-            if security_case and scenario not in {"security-review-missing", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-documents-screen", "security-documents-screen-rename-out", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out", "security-ci-workflow", "security-ci-workflow-rename-out", "security-release-preview", "security-release-preview-rename-out", "security-deploy-install-page", "security-deploy-install-page-rename-out"}:
+            if security_case and scenario not in {"security-review-missing", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-documents-screen", "security-documents-screen-rename-out", "security-tauri-cargo", "security-tauri-cargo-rename-out", "security-tauri-lib", "security-tauri-lib-rename-out", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out", "security-ci-workflow", "security-ci-workflow-rename-out", "security-release-preview", "security-release-preview-rename-out", "security-deploy-install-page", "security-deploy-install-page-rename-out"}:
                 record = {"user": {"login": "reviewer", "type": "User"}, "author_association": "COLLABORATOR", "state": "COMMENTED", "commit_id": head, "body": f"Security review: {head}\nResult: accepted\nReviewed credential handling: token diagnostics remain redacted.\nSecurity rationale: the current access boundary prevents a cache token from reaching logs."}
                 if scenario == "security-review-stale": record["commit_id"] = new_head
                 if scenario == "security-review-author": record["user"]["login"] = "author"
@@ -655,6 +670,14 @@ elif args and args[0] == "api":
             emit([[{"filename": "src/DocumentsScreen.tsx", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "security-documents-screen-rename-out":
             emit([[{"filename": "docs/retired-documents-screen.tsx", "previous_filename": "src/DocumentsScreen.tsx", "status": "renamed", "additions": 0, "deletions": 0}]])
+        elif scenario == "security-tauri-cargo":
+            emit([[{"filename": "src-tauri/Cargo.toml", "status": "modified", "additions": 1, "deletions": 0}]])
+        elif scenario == "security-tauri-cargo-rename-out":
+            emit([[{"filename": "docs/retired-tauri-cargo.toml", "previous_filename": "src-tauri/Cargo.toml", "status": "renamed", "additions": 0, "deletions": 0}]])
+        elif scenario == "security-tauri-lib":
+            emit([[{"filename": "src-tauri/src/lib.rs", "status": "modified", "additions": 1, "deletions": 0}]])
+        elif scenario == "security-tauri-lib-rename-out":
+            emit([[{"filename": "docs/retired-tauri-lib.rs", "previous_filename": "src-tauri/src/lib.rs", "status": "renamed", "additions": 0, "deletions": 0}]])
         elif scenario == "security-documents-consumer-rename-out":
             emit([[{"filename": "docs/retired-documents.rs", "previous_filename": "src-tauri/src/documents.rs", "status": "renamed", "additions": 0, "deletions": 0}]])
         elif scenario in {"security-camel-dsc", "security-camel-credential"}:
@@ -669,8 +692,10 @@ elif args and args[0] == "api":
             emit([[{"filename": "docs/retired.rs", "previous_filename": "src-tauri/src/sync.rs", "status": "renamed", "additions": 0, "deletions": 0}]])
         elif scenario == "files-empty":
             emit([[]])
-        elif scenario in {"formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-tab", "unicode-phone-two-lines", "grouped-identifier-12", "grouped-identifier-16", "grouped-identifier-mixed", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "landline-grouped"}:
+        elif scenario in {"formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-tab", "unicode-phone-two-lines", "grouped-identifier-12", "grouped-identifier-16", "grouped-identifier-mixed", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "landline-grouped", "landline-standard-hyphen", "landline-standard-space", "landline-standard-underscore"}:
             emit([[{"filename": "docs/contact.md", "status": "added", "additions": 2 if scenario == "unicode-phone-two-lines" else 1, "deletions": 0}]])
+        elif scenario == "pem-certificate-envelope":
+            emit([[{"filename": "docs/example.md", "status": "added", "additions": 3, "deletions": 0}]])
         elif scenario == "platform-release-mcpb-preview":
             emit([[{"filename": ".github/workflows/release-mcpb-preview.yml", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario in {"workflow-notes-missing", "workflow-notes-present", "workflow-sibling-migration", "workflow-placeholders", "workflow-punctuated-placeholders", "platform-ci-workflow"}:
@@ -961,6 +986,22 @@ os.execv(os.environ["GATE_REAL_SED"], [os.environ["GATE_REAL_SED"], *sys.argv[1:
 
     def test_grouped_indian_landline_is_scanned_without_global_separator_joining(self):
         self.assert_blocked("landline-grouped", "privacy scan found")
+
+    def test_standard_indian_landline_is_scanned_without_global_separator_joining(self):
+        for scenario in ("landline-standard-hyphen", "landline-standard-space"):
+            with self.subTest(scenario=scenario):
+                self.assert_blocked(scenario, "privacy scan found")
+        result = self.run_gate("landline-standard-underscore")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_pem_certificate_envelope_is_blocked_without_echoing_payload(self):
+        begin = "-" * 5 + "BEGIN CERTIFICATE" + "-" * 5
+        body = "MII" + "A" * 48
+        result = self.run_gate("pem-certificate-envelope")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("PEM certificate envelope", result.stdout)
+        self.assertNotIn(begin, result.stdout)
+        self.assertNotIn(body, result.stdout)
 
     def test_header_shaped_added_payload_is_still_scanned(self):
         self.assert_blocked("hunk-header-phone", "privacy scan found")
@@ -1341,7 +1382,7 @@ os.execv(os.environ["GATE_REAL_SED"], [os.environ["GATE_REAL_SED"], *sys.argv[1:
         self.assertNotIn("z" * 100, result.stdout)
 
     def test_security_review_is_focused_independent_and_current(self):
-        for scenario in ("security-review-stale", "security-review-author", "security-review-unrelated", "security-review-no-scope", "security-review-bare-scope", "security-review-placeholder-rationale", "security-review-hidden", "security-review-hidden-unterminated", "security-review-outsider", "security-review-dismissed", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-documents-screen", "security-documents-screen-rename-out", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out", "security-ci-workflow", "security-ci-workflow-rename-out", "security-release-preview", "security-release-preview-rename-out", "security-deploy-install-page", "security-deploy-install-page-rename-out"):
+        for scenario in ("security-review-stale", "security-review-author", "security-review-unrelated", "security-review-no-scope", "security-review-bare-scope", "security-review-placeholder-rationale", "security-review-hidden", "security-review-hidden-unterminated", "security-review-outsider", "security-review-dismissed", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-documents-screen", "security-documents-screen-rename-out", "security-tauri-cargo", "security-tauri-cargo-rename-out", "security-tauri-lib", "security-tauri-lib-rename-out", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out", "security-ci-workflow", "security-ci-workflow-rename-out", "security-release-preview", "security-release-preview-rename-out", "security-deploy-install-page", "security-deploy-install-page-rename-out"):
             with self.subTest(scenario=scenario):
                 self.assert_indeterminate(scenario, "security-focused reviewer comment")
         result = self.run_gate("security-review-valid")

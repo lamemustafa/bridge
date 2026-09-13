@@ -847,7 +847,7 @@ if [ "$files_status" -eq 0 ]; then
        test("^scripts/bank_statement_import\\.py$"; "i") or
        test("^scripts/prune-package-compiler-cache\\.mjs$"; "i") or
        test("^\\.github/workflows/(ci\\.yml|release-mcpb-preview\\.yml|deploy-install-page\\.yml)$"; "i") or
-       test("^src/(AxalScreen|DocumentsScreen)\\.tsx$|^src-tauri/src/axal\\.rs$|^src-tauri/src/db/encrypted\\.rs$|^src-tauri/src/documents\\.rs$|^src-tauri/src/commands\\.rs$"; "i")))
+       test("^src-tauri/Cargo\\.toml$|^src-tauri/src/lib\\.rs$|^src/(AxalScreen|DocumentsScreen)\\.tsx$|^src-tauri/src/axal\\.rs$|^src-tauri/src/db/encrypted\\.rs$|^src-tauri/src/documents\\.rs$|^src-tauri/src/commands\\.rs$"; "i")))
   ' <<<"$files")
 fi
 validate_security_reviewer() {
@@ -1124,6 +1124,13 @@ $added"
     home_path_count=$(grep -Ec '.' <<<"$home_path_matches")
     bad "privacy scan found $home_path_count developer-home path shape(s)"
   fi
+  pem_certificate_status=0
+  pem_certificate_count=$(grep -Eic -- '-----BEGIN[[:space:]]+(X509[[:space:]]+)?CERTIFICATE-----' <<<"$scan_input") || pem_certificate_status=$?
+  if [ "$pem_certificate_status" -gt 1 ]; then
+    unknown "PEM certificate envelope scan expression failed"
+  elif [ "$pem_certificate_status" -eq 0 ]; then
+    bad "privacy scan found $pem_certificate_count PEM certificate envelope(s)"
+  fi
   redaction_status=0
   redacted=$(sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/<uuid>/g; s/[0-9a-fA-F]{32,}/<digest>/g' <<<"$scan_input") || redaction_status=$?
   if [ "$redaction_status" -ne 0 ]; then
@@ -1177,6 +1184,8 @@ $added"
   phone_matches=$(grep -Eo '(^|[^[:alnum:]])[6-9]([ ()+._-]{0,3}[0-9]){9}([^[:alnum:]]|$)' <<<"$normalized_whitespace") || phone_status=$?
   landline_status=0
   landline_matches=$(grep -Eo '(^|[^[:alnum:]])0[1-9][0-9][ ._-][0-9]{4}[ ._-][0-9]{4}([^[:alnum:]]|$)' <<<"$normalized_whitespace") || landline_status=$?
+  standard_landline_status=0
+  standard_landline_matches=$(grep -Eo '(^|[^[:alnum:]])0[1-9][0-9][ -][0-9]{8}([^[:alnum:]]|$)' <<<"$normalized_whitespace") || standard_landline_status=$?
   grouped_number_status=0
   grouped_number_matches=$(grep -Eo '(^|[^[:alnum:]])[0-9]{4}[ ._-][0-9]{4}[ ._-][0-9]{4}([ ._-][0-9]{4})?([^[:alnum:]]|$)' <<<"$redacted") || grouped_number_status=$?
   # A pair of compact dates, such as MMDD-YYYY MMDD-YYYY, has the same four
@@ -1192,15 +1201,17 @@ $added"
     grouped_number_non_dates+="${candidate}"$'\n'
   done <<<"$grouped_number_matches"
   grouped_number_matches="$grouped_number_non_dates"
-  if [ "$redaction_status" -ne 0 ] || [ "$normalized_status" -ne 0 ] || [ "$phone_status" -gt 1 ] || [ "$landline_status" -gt 1 ] || [ "$grouped_number_status" -gt 1 ]; then
+  if [ "$redaction_status" -ne 0 ] || [ "$normalized_status" -ne 0 ] || [ "$phone_status" -gt 1 ] || [ "$landline_status" -gt 1 ] || [ "$standard_landline_status" -gt 1 ] || [ "$grouped_number_status" -gt 1 ]; then
     unknown "formatted identifier scan expression failed"
   fi
   normalized_phone=$(sed -E 's/[^0-9]//g' <<<"$phone_matches")
   normalized_landlines=$(sed -E 's/[^0-9]//g' <<<"$landline_matches")
+  normalized_standard_landlines=$(sed -E 's/[^0-9]//g' <<<"$standard_landline_matches")
   normalized_grouped_numbers=$(sed -E 's/[^0-9]//g' <<<"$grouped_number_matches")
   scan_shapes="$redacted
 $normalized_phone
 $normalized_landlines
+$normalized_standard_landlines
 $normalized_grouped_numbers"
   hits_status=0
   hits=$(count_nonplaceholder '[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]{3}|[A-Z]{5}[ -][0-9]{4}[ -][A-Z]|[A-Z]{5}[0-9]{4}[A-Z]|[6-9][0-9]{9}' "$scan_shapes") || hits_status=$?
