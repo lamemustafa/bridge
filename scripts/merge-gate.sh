@@ -3,6 +3,7 @@
 #
 # Usage: scripts/merge-gate.sh <pr-number> [--repo OWNER/NAME]
 #        [--independent-review-sha FULL_SHA] (explicit manual review attestation)
+#        [--binary-review-sha FULL_SHA] (manual binary-byte, ownership, license, and NOTICE review)
 # DSC/credential review record format (review or PR comment by another reviewer):
 #   Security review: FULL_SHA
 #   Result: accepted
@@ -19,6 +20,7 @@ set -uo pipefail
 PR=""
 REPO=""
 INDEPENDENT_REVIEW_SHA=""
+BINARY_REVIEW_SHA=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo)
@@ -39,6 +41,16 @@ while [ $# -gt 0 ]; do
     --independent-review-sha=*)
       INDEPENDENT_REVIEW_SHA="${1#*=}"
       [ -n "$INDEPENDENT_REVIEW_SHA" ] || { echo "--independent-review-sha= needs a full commit SHA" >&2; exit 2; }
+      shift
+      ;;
+    --binary-review-sha)
+      BINARY_REVIEW_SHA="${2:-}"
+      [ -n "$BINARY_REVIEW_SHA" ] || { echo "--binary-review-sha needs a full commit SHA" >&2; exit 2; }
+      shift 2
+      ;;
+    --binary-review-sha=*)
+      BINARY_REVIEW_SHA="${1#*=}"
+      [ -n "$BINARY_REVIEW_SHA" ] || { echo "--binary-review-sha= needs a full commit SHA" >&2; exit 2; }
       shift
       ;;
     -h|--help)
@@ -145,6 +157,11 @@ if [ -n "$INDEPENDENT_REVIEW_SHA" ] && ! [[ "$INDEPENDENT_REVIEW_SHA" =~ ^[0-9a-
   bad "independent review attestation must be a full 40-hex commit SHA"
 elif [ -n "$INDEPENDENT_REVIEW_SHA" ] && [ "$INDEPENDENT_REVIEW_SHA" != "$head" ]; then
   bad "independent review attestation names a different commit than the PR head"
+fi
+if [ -n "$BINARY_REVIEW_SHA" ] && ! [[ "$BINARY_REVIEW_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+  bad "binary review attestation must be a full 40-hex commit SHA"
+elif [ -n "$BINARY_REVIEW_SHA" ] && [ "$BINARY_REVIEW_SHA" != "$head" ]; then
+  bad "binary review attestation names a different commit than the PR head"
 fi
 
 echo "PR #$PR ($REPO)  head=$short  base=$base  $mergeable/$mstate"
@@ -699,6 +716,7 @@ body_section_has_content() {
         waiting = 0
         next
       }
+      if (waiting && $0 ~ /^[[:space:]]*```/) next
       if (waiting && $0 ~ /[^[:space:]]/) {
         if ($0 ~ /^[[:space:]]*<!--/) next
         if (template_prompt($0)) next
@@ -746,7 +764,7 @@ for line in text.splitlines():
             continue
         if words and words[0] == "corepack":
             words = words[1:]
-        if len(words) >= 2 and (words[0] in {"python", "python3", "pytest", "pnpm", "npm", "cargo", "make", "bash", "sh", "gh"} or words[0].startswith("scripts/")):
+        if len(words) >= 2 and (words[0] in {"python", "python3", "pytest", "pnpm", "npm", "node", "cargo", "make", "bash", "sh", "gh"} or words[0].startswith("scripts/")):
             sys.exit(0)
 sys.exit(1)
 ' <<<"$1"
@@ -1125,7 +1143,16 @@ else
         record_coverage_issue "line totals for '$filename' differ from REST metadata"
       fi
     done <"$changed_records"
-    [ "$binary_count" -eq 0 ] || bad "$binary_count binary addition/change(s) require human privacy inspection"
+    # This option is an operator statement, never evidence inferred from the
+    # PR body: it attests that every current binary addition/change byte and
+    # its ownership, license, and NOTICE obligations were independently read.
+    if [ "$binary_count" -gt 0 ]; then
+      if [ "$BINARY_REVIEW_SHA" = "$head" ] && [ "$INDEPENDENT_REVIEW_SHA" = "$head" ]; then
+        say "ok" "$binary_count binary addition/change(s) have explicit current-head binary and independent review attestations"
+      else
+        bad "$binary_count binary addition/change(s) require matching --binary-review-sha and --independent-review-sha human attestations"
+      fi
+    fi
     [ "$gitlink_count" -eq 0 ] || unknown "$gitlink_count gitlink change(s) require explicit provenance, license, and NOTICE review"
     if [ "$coverage_count" -gt 0 ]; then
       unknown "privacy diff coverage failed for $coverage_count non-removed REST file(s): $coverage_examples"
@@ -1193,7 +1220,7 @@ $added"
   # accept only 4-4-4 and 4-4-4-4 grouped long-number forms.
   phone_status=0
   normalized_status=0
-  normalized_whitespace=$(python3 -c 'import sys, unicodedata; print("".join(" " if unicodedata.category(char) == "Zs" else char for char in sys.stdin.read()), end="")' <<<"$redacted") || normalized_status=$?
+  normalized_whitespace=$(python3 -c 'import sys, unicodedata; print("".join(" " if char == "\t" or unicodedata.category(char) == "Zs" else char for char in sys.stdin.read()), end="")' <<<"$redacted") || normalized_status=$?
   if [ "$normalized_status" -ne 0 ]; then
     unknown "Unicode whitespace normalization failed"
     normalized_whitespace=""

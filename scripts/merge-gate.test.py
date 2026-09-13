@@ -45,7 +45,7 @@ if args[:2] == ["pr", "view"]:
             pass
         with open(counter_path, "w") as counter:
             counter.write(str(view_count + 1))
-    selected_head = new_head if scenario == "head-moves" and view_count > 0 else head
+    selected_head = new_head if scenario in {"head-moves", "binary-review-head-moves"} and view_count > 0 else head
     final_state = "UNKNOWN_VALUE" if scenario == "final-unrecognized" and view_count > 0 else ("BLOCKED" if scenario == "blocked-state" else ("DRAFT" if scenario in {"draft-state", "draft-surface-fail"} else "CLEAN"))
     title = "Safe merge gate control"
     if scenario == "metadata-title-id":
@@ -135,13 +135,19 @@ if args[:2] == ["pr", "view"]:
             body += "\n## Migration compatibility\n\nNo persisted format change.\n"
     if scenario == "validation-command-outside":
         body = body.replace("`python3 scripts/merge-gate.test.py`", "Tests not run") + "\n## Rollback\n`cargo test`\n"
+    if scenario == "validation-node-command":
+        body = body.replace("`python3 scripts/merge-gate.test.py`", "`node --test scripts/prune-package-compiler-cache.test.mjs`")
+    if scenario == "empty-fenced-summary":
+        body = body.replace("A bounded merge preflight keeps incomplete evidence from becoming a merge.", "```\n```")
+    if scenario == "nonempty-fenced-summary":
+        body = body.replace("A bounded merge preflight keeps incomplete evidence from becoming a merge.", "```\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n```")
     if scenario == "policy-multiline-comment":
         body = body.replace("A bounded merge preflight keeps incomplete evidence from becoming a merge.", "<!--\nA hidden summary cannot establish the change.\n-->")
     if scenario == "validation-html-comment":
         body = body.replace("`python3 scripts/merge-gate.test.py`", "Tests not run <!-- `cargo test` -->")
     if scenario == "unterminated-html-comment":
         body = body.replace("`python3 scripts/merge-gate.test.py`", "<!-- hidden through EOF\n`cargo test`")
-    if scenario == "hidden-comment-identifier":
+    if scenario in {"hidden-comment-identifier", "binary-review-private"}:
         body += "\n<!-- " + "ABCDE" + "1234" + "F -->"
     if scenario == "body-comment-drift" and view_count > 0:
         body += "\n<!-- changed metadata -->"
@@ -220,7 +226,7 @@ if args[:2] == ["pr", "view"]:
     body = body.replace("blob/HEAD", f"blob/{head}")
     if scenario == "checklist-stale-ref":
         body = body.replace(f"blob/{head}", "blob/" + "f" * 40)
-    one_file = scenario in {"metadata-private", "files-empty", "formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-two-lines", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "workflow-placeholders", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-none", "security-pending", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "home-macos", "home-unix", "home-windows", "crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path", "gitlink", "implementation-p4-missing", "implementation-p4-present", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders", "platform-evidence-missing", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"} or scenario.startswith("home-") or security_case or sync_case
+    one_file = scenario in {"metadata-private", "files-empty", "formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-tab", "unicode-phone-two-lines", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "binary-review", "binary-review-private", "binary-review-head-moves", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "workflow-placeholders", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-none", "security-pending", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "home-macos", "home-unix", "home-windows", "crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path", "gitlink", "implementation-p4-missing", "implementation-p4-present", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders", "platform-evidence-missing", "platform-evidence-present", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"} or scenario.startswith("home-") or security_case or sync_case
     selected_base = new_head if scenario == "base-oid-mismatch" else base
     emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
@@ -265,6 +271,8 @@ elif args[:2] == ["pr", "diff"]:
         emit(f"diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+{homes[scenario]}\n")
     elif scenario == "binary-delete":
         emit("diff --git a/docs/old.png b/docs/old.png\nBinary files a/docs/old.png and /dev/null differ\n")
+    elif scenario in {"binary-review", "binary-review-private", "binary-review-head-moves"}:
+        emit("diff --git a/docs/new.png b/docs/new.png\nBinary files /dev/null and b/docs/new.png differ\n")
     elif scenario == "diff-omits-file":
         emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+safe text\n")
     elif scenario == "diff-truncated-payload":
@@ -296,6 +304,8 @@ elif args[:2] == ["pr", "diff"]:
         emit(f"diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic {phones[scenario]}\n")
     elif scenario == "unicode-phone":
         emit("diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic 69876\u00a054321\n")
+    elif scenario == "unicode-phone-tab":
+        emit("diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic 69876\t54321\n")
     elif scenario == "unicode-phone-two-lines":
         emit("diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +2 @@\n+69876\n+54321\n")
     elif scenario == "metadata-only":
@@ -492,7 +502,7 @@ elif args and args[0] == "api":
             emit([[{"filename": "docs/retired.rs", "previous_filename": "src-tauri/src/sync.rs", "status": "renamed", "additions": 0, "deletions": 0}]])
         elif scenario == "files-empty":
             emit([[]])
-        elif scenario in {"formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-two-lines", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized"}:
+        elif scenario in {"formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-tab", "unicode-phone-two-lines", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized"}:
             emit([[{"filename": "docs/contact.md", "status": "added", "additions": 2 if scenario == "unicode-phone-two-lines" else 1, "deletions": 0}]])
         elif scenario in {"workflow-notes-missing", "workflow-notes-present", "workflow-placeholders"}:
             emit([[{"filename": ".github/workflows/ci.yml", "status": "modified", "additions": 1, "deletions": 0}]])
@@ -520,6 +530,8 @@ elif args and args[0] == "api":
             emit([[{"filename": "docs/example.md", "status": "added", "additions": 1, "deletions": 0}]])
         elif scenario == "binary-delete":
             emit([[{"filename": "docs/old.png", "status": "removed", "additions": 0, "deletions": 0}]])
+        elif scenario in {"binary-review", "binary-review-private", "binary-review-head-moves"}:
+            emit([[{"filename": "docs/new.png", "status": "added", "additions": 0, "deletions": 0}]])
         elif scenario == "metadata-only":
             emit([[{"filename": "docs/example.md", "status": "modified", "additions": 0, "deletions": 0}]])
         elif scenario == "metadata-private":
@@ -738,7 +750,7 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
         self.assert_blocked("formatted-phone-grouped", "privacy scan found")
 
     def test_separated_indian_mobile_styles_are_scanned(self):
-        for scenario in ("phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "unicode-phone"):
+        for scenario in ("phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "unicode-phone", "unicode-phone-tab"):
             with self.subTest(scenario=scenario):
                 self.assert_blocked(scenario, "privacy scan found")
         result = self.run_gate("unicode-phone-two-lines")
@@ -777,6 +789,29 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
     def test_binary_deletion_is_not_treated_as_added_content(self):
         result = self.run_gate("binary-delete")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_binary_additions_require_two_current_head_manual_attestations(self):
+        self.assert_blocked("binary-review", "require matching --binary-review-sha and --independent-review-sha")
+        binary_only = self.run_gate("binary-review", ("--binary-review-sha", HEAD))
+        self.assertEqual(binary_only.returncode, 1, binary_only.stdout + binary_only.stderr)
+        self.assertIn("require matching --binary-review-sha and --independent-review-sha", binary_only.stdout)
+        malformed = self.run_gate("binary-review", ("--binary-review-sha", "not-a-sha", "--independent-review-sha", HEAD))
+        self.assertEqual(malformed.returncode, 1, malformed.stdout + malformed.stderr)
+        self.assertIn("binary review attestation must be a full 40-hex", malformed.stdout)
+        stale = self.run_gate("binary-review", ("--binary-review-sha", "f" * 40, "--independent-review-sha", HEAD))
+        self.assertEqual(stale.returncode, 1, stale.stdout + stale.stderr)
+        self.assertIn("binary review attestation names a different commit", stale.stdout)
+        current = self.run_gate("binary-review", ("--binary-review-sha", HEAD, "--independent-review-sha", HEAD))
+        self.assertEqual(current.returncode, 0, current.stdout + current.stderr)
+        self.assertIn("explicit current-head binary and independent review attestations", current.stdout)
+        moved = self.run_gate("binary-review-head-moves", ("--binary-review-sha", HEAD, "--independent-review-sha", HEAD))
+        self.assertEqual(moved.returncode, 1, moved.stdout + moved.stderr)
+        self.assertIn("PR head moved during preflight", moved.stdout)
+
+    def test_binary_attestation_does_not_bypass_privacy_metadata_scan(self):
+        result = self.run_gate("binary-review-private", ("--binary-review-sha", HEAD, "--independent-review-sha", HEAD))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("privacy scan found", result.stdout)
 
     def test_malformed_surface_is_indeterminate(self):
         self.assert_indeterminate("surface-malformed", "could not read and validate compatibility surface")
@@ -1052,6 +1087,13 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
         for scenario in ("validation-command-outside", "validation-tool-prose", "validation-placeholder-command", "validation-html-comment"):
             with self.subTest(scenario=scenario):
                 self.assert_blocked(scenario, "actual test or reproduction command")
+        result = self.run_gate("validation-node-command")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_empty_fenced_functional_summary_is_not_content(self):
+        self.assert_blocked("empty-fenced-summary", "non-empty functional summary")
+        result = self.run_gate("nonempty-fenced-summary")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_checklist_heading_is_not_a_completed_item(self):
         self.assert_blocked("checklist-heading", "review-checklist link")
