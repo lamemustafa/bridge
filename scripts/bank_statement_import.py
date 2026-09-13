@@ -2114,7 +2114,20 @@ def _copy_private_backup(source_path, original_identity, backup_handle):
             )
         return backup_digest
     finally:
-        os.close(source_handle)
+        active_error = sys.exc_info()[1]
+        try:
+            os.close(source_handle)
+        except OSError:
+            if active_error is None:
+                raise
+            # The typed copy refusal is the transaction outcome.  A failed
+            # source-pin close is separately actionable, but must not replace
+            # that refusal with an untyped descriptor exception.
+            _append_cleanup_detail(
+                active_error,
+                "ownership descriptor close failed or could not be verified for: "
+                + str(source_path),
+            )
 
 
 def _restore_backup(swap, failures, metadata_scope_warnings, descriptor_failures=None):
@@ -2190,6 +2203,16 @@ def _restore_backup(swap, failures, metadata_scope_warnings, descriptor_failures
         except OSError:
             return _mark_rollback_unavailable(swap, failures, retain_named=True)
         if not digest_matches:
+            return _mark_rollback_unavailable(swap, failures, retain_named=True)
+        try:
+            destination_still_staged = (
+                _entry_identity(destination) == staged_identity)
+        except OSError:
+            destination_still_staged = False
+        if not destination_still_staged:
+            # A concurrent writer now owns the destination.  Keep its bytes
+            # intact and reconcile this run's private rollback copy instead
+            # of restoring over the foreign inode.
             return _mark_rollback_unavailable(swap, failures, retain_named=True)
         # This observes ownership immediately before the replace. POSIX has no
         # compare-and-swap rename, so a hostile concurrent rename after this
@@ -2594,6 +2617,22 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             # recheck this pinned inode so replacement never detaches a new
             # hard link while reporting a successful overwrite.
             _pinned_original_still_has_one_link(pending_swap["original"])
+            try:
+                original_still_current = (
+                    _entry_identity(real_path) == original_identity)
+            except OSError:
+                original_still_current = False
+            if not original_still_current:
+                # The pre-claim original remains pinned, but its pathname no
+                # longer gives this run authority to replace it. Reconcile the
+                # pin before recovery closes it so a moved prior statement is
+                # not silently lost from the diagnostic.
+                _reconcile_owned_pin_after_cleanup(
+                    pending_swap["original"], "missing", cleanup_failures)
+                raise Refusal(
+                    "output_path_changed",
+                    f"{supplied_path} changed before replacement; no output was replaced",
+                )
             pending_swap["swap_started"] = True
             os.replace(temporary["path"], real_path)
             replaced.append(pending_swap)
