@@ -113,7 +113,9 @@ jobs:
   workflow-consistency:
     name: Workflow consistency
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Allow the full suite and setup to finish on slower runners while retaining
+    # a bounded job timeout.
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -138,6 +140,7 @@ jobs:
       - run: python3 scripts/retain-macos-test-binaries.test.py
       - run: python3 scripts/bank_statement_import.test.py
       - run: python3 scripts/sanitise-bbox-capture.test.py
+      - run: python3 scripts/merge-gate.test.py
 
   tally-portable:
     name: Tally portable core
