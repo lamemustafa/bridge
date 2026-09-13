@@ -5041,7 +5041,7 @@ def test_uninspectable_rollback_destination_reports_partial_output(m):
             m._entry_identity = real_entry
 
         assert "controlled later swap failure" in detail
-        assert first_entry_checks == 2
+        assert first_entry_checks == 3, first_entry_checks
         assert "partially committed output could not be rolled back" in detail
         assert str(first.resolve()) in detail
         assert first.read_text() == "first new"
