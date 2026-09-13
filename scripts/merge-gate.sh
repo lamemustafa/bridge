@@ -662,30 +662,45 @@ placeholders = {
     "not impacted", "no impact", "pending", "todo", "tbd",
 }
 marker = r"(validation|evidence|test|check|unaffected|not applicable|not affected|not impact)"
+def normalize(value):
+    return value.strip().lower().rstrip(".,;:!?").strip()
+def continuation_evidence(value):
+    value = normalize(value)
+    if not value or value in placeholders or re.match(r"^(?:[-*]\s+)?(?:note|notes|status|tracking|todo)\b", value):
+        return False
+    command = re.search(r"(?:^|[`$\s])(?:python(?:3)?|pytest|pnpm|npm|node|cargo|make|bash|sh|gh)(?:[\s`]|$)", value)
+    outcome = re.search(r"\b(?:passed|succeeded|validated|completed)\b", value) and re.search(r"\b(?:ci|test|check|validation|windows|macos)\b", value)
+    unaffected = re.search(r"\b(?:unaffected|not affected|not impacted)\b", value) and re.search(r"\b(?:because|as|this)\b", value)
+    return bool(command or outcome or unaffected)
 waiting = False
 for raw in sys.stdin.read().splitlines():
     lower = re.sub(r"<!--.*?(?:-->|$)", "", raw).strip().lower()
     if not lower:
         continue
+    is_fence = bool(re.match(r"^(?:```|~~~)", lower))
     is_heading = bool(re.match(r"^#{1,6}\s+", lower))
     is_field = host in lower and bool(re.search(marker, lower))
     if waiting:
+        # Empty fence delimiters carry no validation result. Keep looking so a
+        # real fenced command can still establish the named host evidence.
+        if is_fence:
+            continue
         # A new evidence field or heading ends the preceding empty field; it
         # cannot be treated as the earlier host evidence.
         if is_heading or (re.match(r"^[-*]\s+", lower) and re.search(marker, lower)):
             waiting = False
-        elif lower not in placeholders and not re.match(r"^[-*]\s*\[[ xX]\]", lower):
+        elif continuation_evidence(lower):
             raise SystemExit(0)
         else:
             waiting = False
     if not is_field:
         continue
     if ":" in lower:
-        value = re.sub(r"^#{1,6}\s+", "", lower.split(":", 1)[1].strip())
+        value = normalize(re.sub(r"^#{1,6}\s+", "", lower.split(":", 1)[1]))
         if value not in placeholders:
             raise SystemExit(0)
     # Headings and list labels without an inline answer may be completed by a
-    # following substantive line. All other bare forms follow the same rule.
+    # following substantive validation result. All other bare forms fail.
     waiting = True
 raise SystemExit(1)
 ' "$host" <<<"$body"
