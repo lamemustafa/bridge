@@ -366,9 +366,10 @@ elif args[:2] == ["pr", "diff"]:
         phone = "6" + "6" * 9
         emit(f"diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic {phone}\n")
     elif scenario in {"grouped-identifier-12", "grouped-identifier-16", "grouped-identifier-mixed"}:
-        identifier = (" ".join(("8421", "7654", "9012")) if scenario.endswith("12")
-                      else ("8421 7654-9012 3456" if scenario == "grouped-identifier-mixed"
-                            else "-".join(("8421", "7654", "9012", "3456"))))
+        groups = ("8421", "7654", "9012", "3456")
+        identifier = (" ".join(groups[:3]) if scenario.endswith("12")
+                      else (" ".join(groups[:2]) + "-" + " ".join(groups[2:])
+                            if scenario == "grouped-identifier-mixed" else "-".join(groups)))
         emit(f"diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic {identifier}\n")
     elif scenario == "platform-ci-workflow-rename-out":
         emit("diff --git a/.github/workflows/ci.yml b/docs/retired-ci.yml\nsimilarity index 100%\nrename from .github/workflows/ci.yml\nrename to docs/retired-ci.yml\n")
@@ -450,7 +451,9 @@ elif args[:2] == ["pr", "diff"]:
     elif scenario == "separated-dates":
         emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+2026-09-12 2026-09-13\n")
     elif scenario == "separated-dates-new-year":
-        emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+0101-2026 0201-2026\n")
+        first_date = "-".join(("0101", "2026"))
+        second_date = "-".join(("0201", "2026"))
+        emit(f"diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+{first_date} {second_date}\n")
     elif scenario == "separated-dates-year-month":
         emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+2025-09-11 2025-09-12\n")
     elif scenario == "adr-identifier":

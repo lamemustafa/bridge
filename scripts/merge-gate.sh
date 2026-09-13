@@ -1167,7 +1167,7 @@ $added"
   phone_matches=$(grep -Eo '(^|[^[:alnum:]])[6-9]([ ()+._-]{0,3}[0-9]){9}([^[:alnum:]]|$)' <<<"$normalized_whitespace") || phone_status=$?
   grouped_number_status=0
   grouped_number_matches=$(grep -Eo '(^|[^[:alnum:]])[0-9]{4}[ ._-][0-9]{4}[ ._-][0-9]{4}([ ._-][0-9]{4})?([^[:alnum:]]|$)' <<<"$redacted") || grouped_number_status=$?
-  # A pair of compact dates, such as 0101-2026 0201-2026, has the same four
+  # A pair of compact dates, such as MMDD-YYYY MMDD-YYYY, has the same four
   # 4-digit groups as a mixed-separator identifier. Retain the pre-existing
   # date-range exclusion without weakening actual mixed group detection.
   grouped_number_non_dates=""
