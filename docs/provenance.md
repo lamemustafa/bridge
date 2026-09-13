@@ -103,3 +103,29 @@ actual image linkage and refusal of a different executable. Apple's
 defines frame image indexes and binary image UUID/architecture fields. Native
 CI still disables debug information; retaining a binary does not restore absent
 source line tables or identify which individual nextest test executed it.
+
+## Windows Perl inventory experiment
+
+The installed-distribution inventory script, tests and dedicated experiment
+workflow are project-authored under this repository's Apache-2.0 license.
+Artifacts contain relative file names, byte counts, SHA-256 digests and scoped
+Perl runtime identity. The distribution is supplied by the existing pinned
+Windows prerequisite action, retaining its upstream attribution resources.
+
+The cold-correctness helper reuses the project-authored bounded log collector
+and the existing disposable SQLCipher regression test. Its filesystem failure
+controls use this test file's own bytes and explicit replacement bytes; they
+are not evidence that a reduced Perl runtime builds native dependencies.
+The dedicated Windows comparison temporarily moves three inventoried MinGW
+build directories on disposable runners, restores their bytes, and retains
+fresh native-build timings plus source and installation hashes. It does not
+save a distribution or compiler cache, change production prerequisites, or
+establish a cache-extraction speed improvement.
+
+The archive measurement helper and its controls are project-authored. It reuses
+the installed inventory, directory-move control and bounded log capture helpers.
+Its disposable Windows workflow uses the existing GNU tar/zstd commands and
+performs full byte/hash round trips before reporting timings. The prior cold
+native comparison is retained in run 34332893760 at commit 67fa357; the archive
+stage does not rerun native tests or save production caches. Archive payloads
+stay on the disposable runner; uploaded evidence contains metadata and logs.
