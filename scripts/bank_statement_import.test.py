@@ -4222,6 +4222,187 @@ def test_all_missing_backups_report_every_partial_committed_destination(m):
         assert not list(root.glob("*.bak"))
         assert not list(root.glob("*.part"))
 
+
+
+def test_digest_pinned_bytes_preserves_the_owned_pin_position(m):
+    """The integrity check must not disturb later ownership operations."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "backup.bak"
+        path.write_bytes(b"rollback bytes")
+        handle = os.open(path, os.O_RDONLY)
+        try:
+            os.lseek(handle, 3, os.SEEK_SET)
+            assert m._digest_pinned_bytes(handle) == hashlib.sha256(b"rollback bytes").digest()
+            assert os.lseek(handle, 0, os.SEEK_CUR) == 3
+        finally:
+            os.close(handle)
+
+
+def test_backup_digest_read_failure_preserves_original_error_and_untrusted_copy(m):
+    """An unreadable pin is untrusted, never permission to restore from it."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_copy, real_digest = m._copy_private_backup, m._digest_pinned_bytes
+        first_handles = set()
+
+        def remember_first_backup_then_fail_second_prepare(source_path, identity, handle):
+            result = real_copy(source_path, identity, handle)
+            if pathlib.Path(source_path).resolve() == first.resolve():
+                first_handles.add(handle)
+            if pathlib.Path(source_path).resolve() == second.resolve():
+                raise OSError("controlled later preparation failure")
+            return result
+
+        def fail_first_backup_read(handle):
+            if handle in first_handles:
+                raise OSError("controlled backup digest read failure")
+            return real_digest(handle)
+
+        m._copy_private_backup, m._digest_pinned_bytes = (
+            remember_first_backup_then_fail_second_prepare, fail_first_backup_read)
+        try:
+            try:
+                m.write_outputs([(str(first), "first new"), (str(second), "second new")])
+                raise AssertionError("the later failure must escape")
+            except OSError as error:
+                detail = str(error) + "\n" + "\n".join(getattr(error, "__notes__", []))
+                assert "controlled later preparation failure" in detail
+                assert "partially committed output could not be rolled back" in detail
+                assert str(first.resolve()) in detail
+                backup, = root.glob("first.xml.*.bak")
+                assert str(backup) in detail
+        finally:
+            m._copy_private_backup, m._digest_pinned_bytes = real_copy, real_digest
+
+        assert first.read_text() == "first new"
+        assert second.read_text() == "second old"
+        assert not list(root.glob("*.part"))
+
+def test_mutated_backup_during_later_prepare_preserves_original_error_and_bytes(m):
+    """An inode-stable backup needs its verified content before restoration."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_copy = m._copy_private_backup
+        changed = []
+
+        def mutate_first_backup_then_fail_second_prepare(source_path, *args):
+            result = real_copy(source_path, *args)
+            if pathlib.Path(source_path).resolve() == second.resolve():
+                backup, = root.glob("first.xml.*.bak")
+                backup.write_text("injected bytes")
+                changed.append(backup)
+                raise OSError("controlled later preparation failure")
+            return result
+
+        m._copy_private_backup = mutate_first_backup_then_fail_second_prepare
+        try:
+            try:
+                m.write_outputs([(str(first), "first new"), (str(second), "second new")])
+                raise AssertionError("the later failure must escape")
+            except OSError as error:
+                detail = str(error) + "\n" + "\n".join(getattr(error, "__notes__", []))
+                assert "controlled later preparation failure" in detail
+                assert "partially committed output could not be rolled back" in detail
+                assert str(first.resolve()) in detail
+                assert str(changed[0]) in detail
+        finally:
+            m._copy_private_backup = real_copy
+
+        assert first.read_text() == "first new"
+        assert second.read_text() == "second old"
+        assert changed[0].read_text() == "injected bytes"
+        assert not list(root.glob("*.part"))
+
+
+def test_mutated_backup_before_final_check_is_not_restored(m):
+    """The final authority check uses the same pinned-byte digest."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_changed = m._claimed_output_changed
+        mutated = []
+
+        def mutate_first_backup_before_final_checks(*args):
+            if not mutated:
+                backup, = root.glob("first.xml.*.bak")
+                backup.write_text("injected bytes")
+                mutated.append(backup)
+            return real_changed(*args)
+
+        m._claimed_output_changed = mutate_first_backup_before_final_checks
+        try:
+            refusal = refuses(
+                m, "output_path_changed", m.write_outputs,
+                [(str(first), "first new"), (str(second), "second new")])
+        finally:
+            m._claimed_output_changed = real_changed
+
+        detail = str(refusal.code)
+        assert "rollback copy content could not be verified before commit" in detail
+        assert "partially committed output could not be rolled back" in detail
+        assert str(first.resolve()) in detail
+        assert str(mutated[0]) in detail
+        assert first.read_text() == "first new"
+        assert second.read_text() == "second old"
+        assert mutated[0].read_text() == "injected bytes"
+        assert not list(root.glob("*.part"))
+
+
+def test_moved_backup_during_later_prepare_is_disclosed_before_pin_close(m):
+    """A linked but renamed backup remains an unlocated retained old copy."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second, moved = root / "first.xml", root / "second.xml", root / "moved.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_copy = m._copy_private_backup
+
+        def move_first_backup_then_fail_second_prepare(source_path, *args):
+            result = real_copy(source_path, *args)
+            if pathlib.Path(source_path).resolve() == second.resolve():
+                backup, = root.glob("first.xml.*.bak")
+                backup.rename(moved)
+                raise OSError("controlled later preparation failure")
+            return result
+
+        m._copy_private_backup = move_first_backup_then_fail_second_prepare
+        try:
+            try:
+                m.write_outputs([(str(first), "first new"), (str(second), "second new")])
+                raise AssertionError("the later failure must escape")
+            except OSError as error:
+                detail = str(error) + "\n" + "\n".join(getattr(error, "__notes__", []))
+                assert "controlled later preparation failure" in detail
+                assert "partially committed output could not be rolled back" in detail
+                assert str(first.resolve()) in detail
+                assert "owned rollback copy could not be located after cleanup" in detail
+        finally:
+            m._copy_private_backup = real_copy
+
+        assert first.read_text() == "first new"
+        assert second.read_text() == "second old"
+        assert moved.read_text() == "first old"
+        assert not list(root.glob("*.bak"))
+        assert not list(root.glob("*.part"))
+
 def test_owner_only_outputs_survive_a_restrictive_umask(m):
     """Use a child process so an extreme umask cannot affect this test process."""
     if os.name != "posix":
@@ -4307,7 +4488,8 @@ def test_restore_backup_preserves_foreign_symlink_entry(m):
         swap = {"destination": destination, "original_identity": m._fd_identity(original_fd),
                 "staged_identity": m._entry_identity(staged), "metadata": None,
                 "swap_started": True, "original": None,
-                "backup": {"path": backup, "identity": m._fd_identity(backup_fd), "pin": backup_fd}}
+                "backup": {"path": backup, "identity": m._fd_identity(backup_fd),
+                           "pin": backup_fd, "digest": m._digest_pinned_bytes(backup_fd)}}
         destination.unlink(); destination.symlink_to(staged)
         return destination, staged, backup, original_fd, backup_fd, swap
     with tempfile.TemporaryDirectory() as directory:

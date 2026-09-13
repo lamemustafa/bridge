@@ -1927,6 +1927,75 @@ def _pinned_backup_still_has_one_link(record):
     _require_single_owned_link(record, "rollback copy", "rollback_backup_has_multiple_links")
 
 
+
+def _digest_pinned_bytes(handle):
+    """Hash a retained descriptor without changing its caller's file offset."""
+    digest = hashlib.sha256()
+    if hasattr(os, "pread"):
+        offset = 0
+        while True:
+            chunk = os.pread(handle, 1024 * 1024, offset)
+            if not chunk:
+                return digest.digest()
+            digest.update(chunk)
+            offset += len(chunk)
+    # Existing-output replacement is refused on Windows, where ``pread`` is
+    # not universally available. Keep that fallback ownership-local as well.
+    original_offset = os.lseek(handle, 0, os.SEEK_CUR)
+    try:
+        os.lseek(handle, 0, os.SEEK_SET)
+        while True:
+            chunk = os.read(handle, 1024 * 1024)
+            if not chunk:
+                return digest.digest()
+            digest.update(chunk)
+    finally:
+        os.lseek(handle, original_offset, os.SEEK_SET)
+
+
+def _mark_rollback_unavailable(swap, failures, *, retain_named=False):
+    """Record a partial destination and reconcile its still-pinned backup.
+
+    A missing pathname does not prove the backup inode vanished: its descriptor
+    can still reveal a moved or aliased private copy.  Inspect before the outer
+    recovery releases that descriptor; zero links are the only no-path case.
+    """
+    swap["rollback_unavailable"] = True
+    if swap.get("rollback_unavailable_reported"):
+        return "unrollbackable"
+    swap["rollback_unavailable_reported"] = True
+    record = swap["backup"]
+    pin = record.get("pin")
+    if pin is None:
+        _record_uninspectable_cleanup(record["path"], failures)
+        return "unrollbackable"
+    try:
+        stat_result = os.fstat(pin)
+    except OSError:
+        _record_uninspectable_cleanup(record["path"], failures)
+        return "unrollbackable"
+    if (stat_result.st_dev, stat_result.st_ino) != record["identity"]:
+        _record_uninspectable_cleanup(record["path"], failures)
+        return "unrollbackable"
+    if stat_result.st_nlink == 0:
+        return "unrollbackable"
+    try:
+        still_named = _entry_identity(record["path"]) == record["identity"]
+    except FileNotFoundError:
+        still_named = False
+    except OSError:
+        _record_uninspectable_cleanup(record["path"], failures)
+        return "unrollbackable"
+    if stat_result.st_nlink > 1:
+        failures.append(
+            f"unknown hard-link alias may retain rollback bytes: {record['path']}")
+    elif still_named and retain_named:
+        failures.append(record["path"])
+    elif not still_named:
+        failures.append(
+            f"owned rollback copy could not be located after cleanup: {record['path']}")
+    return "unrollbackable"
+
 def _copy_private_backup(source_path, original_identity, backup_handle):
     """Copy the original inode into an owner-only backup already opened O_EXCL.
 
@@ -1966,12 +2035,14 @@ def _copy_private_backup(source_path, original_identity, backup_handle):
             verified.update(chunk)
         if copied.digest() != verified.digest():
             raise OSError("private backup did not retain the copied bytes")
+        backup_digest = verified.digest()
         if (_fd_identity(source_handle) != original_identity
                 or _file_identity(source_path) != original_identity):
             raise Refusal(
                 "output_path_changed",
                 f"{source_path} changed while its rollback copy was prepared",
             )
+        return backup_digest
     finally:
         os.close(source_handle)
 
@@ -2011,7 +2082,7 @@ def _restore_backup(swap, failures, metadata_scope_warnings, descriptor_failures
         failures.append(backup)
         return
     if swap.get("rollback_unavailable"):
-        return "unrollbackable"
+        return _mark_rollback_unavailable(swap, failures)
     restored = False
     try:
         _pinned_backup_still_has_one_link(backup_record)
@@ -2027,15 +2098,20 @@ def _restore_backup(swap, failures, metadata_scope_warnings, descriptor_failures
         # A missing or changed backup cannot restore a destination that still
         # names this run's staged inode.  Report that partial result by its
         # actual destination, never by the vanished private spelling.
-        swap["rollback_unavailable"] = True
-        return "unrollbackable"
+        return _mark_rollback_unavailable(swap, failures)
     except OSError:
         failures.append(backup)
         return None
     try:
         if _entry_identity(backup) != backup_identity:
-            swap["rollback_unavailable"] = True
-            return "unrollbackable"
+            return _mark_rollback_unavailable(swap, failures)
+        try:
+            digest_matches = (
+                _digest_pinned_bytes(backup_record["pin"]) == backup_record["digest"])
+        except OSError:
+            return _mark_rollback_unavailable(swap, failures, retain_named=True)
+        if not digest_matches:
+            return _mark_rollback_unavailable(swap, failures, retain_named=True)
         # This observes ownership immediately before the replace. POSIX has no
         # compare-and-swap rename, so a hostile concurrent rename after this
         # check is still outside the CLI's locking authority.
@@ -2054,8 +2130,7 @@ def _restore_backup(swap, failures, metadata_scope_warnings, descriptor_failures
             if backup_retained:
                 failures.append(backup)
             elif current_identity == staged_identity:
-                swap["rollback_unavailable"] = True
-                return "unrollbackable"
+                return _mark_rollback_unavailable(swap, failures)
             else:
                 failures.append(destination)
     if restored:
@@ -2329,7 +2404,8 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             pending_swap["original"] = state["original"]
             pending_swap["metadata"] = _metadata_from_handle(
                 real_path, pending_swap["original"]["pin"])
-            _copy_private_backup(real_path, original_identity, backup_handle)
+            pending_swap["backup"]["digest"] = _copy_private_backup(
+                real_path, original_identity, backup_handle)
             # The destination stays present until this one atomic replacement.
             # `pending_swap` is set first because an interrupt may arrive after
             # the filesystem call has taken effect but before it returns.
@@ -2402,7 +2478,7 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             except OSError:
                 backup_unchanged = False
             if not backup_unchanged:
-                swap["rollback_unavailable"] = True
+                _mark_rollback_unavailable(swap, cleanup_failures)
                 raise Refusal(
                     "output_path_changed",
                     f"{swap['destination']} rollback copy changed before commit; "
@@ -2412,8 +2488,20 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 _pinned_backup_still_has_one_link(backup)
             except Refusal as refusal:
                 if refusal.category == "output_path_changed":
-                    swap["rollback_unavailable"] = True
+                    _mark_rollback_unavailable(swap, cleanup_failures)
                 raise
+            try:
+                digest_matches = (
+                    _digest_pinned_bytes(backup["pin"]) == backup["digest"])
+            except OSError:
+                digest_matches = False
+            if not digest_matches:
+                _mark_rollback_unavailable(swap, cleanup_failures, retain_named=True)
+                raise Refusal(
+                    "output_path_changed",
+                    f"{swap['destination']} rollback copy content could not be verified before commit; "
+                    "this already replaced output could not be rolled back",
+                )
         # Final path validation is the boundary between rollback and committed
         # cleanup. Keep it in this same handler so an interrupt before cleanup
         # starts cannot skip both recovery paths.
