@@ -4965,5 +4965,80 @@ def test_fresh_output_in_place_mutation_refuses_at_final_authority_boundary(m):
         assert not list(root.iterdir())
 
 
+def test_uninspectable_rollback_destination_reports_partial_output(m):
+    """An unknown post-swap destination cannot be treated as a foreign inode."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_replace = m.os.replace
+        real_entry = m._entry_identity
+
+        def fail_second_swap(source, destination):
+            if (pathlib.Path(source).suffix == ".part"
+                    and pathlib.Path(destination).resolve() == second.resolve()):
+                raise OSError("controlled later swap failure")
+            return real_replace(source, destination)
+
+        def deny_first_destination(path):
+            if pathlib.Path(path).resolve() == first.resolve():
+                raise PermissionError("controlled rollback destination inspection failure")
+            return real_entry(path)
+
+        m.os.replace = fail_second_swap
+        m._entry_identity = deny_first_destination
+        try:
+            try:
+                m.write_outputs([(str(first), "first new"), (str(second), "second new")])
+                raise AssertionError("the controlled later swap failure must escape")
+            except OSError as error:
+                detail = str(error) + "\n" + "\n".join(getattr(error, "__notes__", []))
+        finally:
+            m.os.replace = real_replace
+            m._entry_identity = real_entry
+
+        assert "controlled later swap failure" in detail
+        assert "partially committed output could not be rolled back" in detail
+        assert str(first.resolve()) in detail
+        assert first.read_text() == "first new"
+        assert second.read_text() == "second old"
+        backup, = root.glob("first.xml.*.bak")
+        assert backup.read_text() == "first old"
+        assert not list(root.glob("*.part"))
+
+
+def test_vanished_staged_output_is_a_typed_refusal(m):
+    """A removed .part after backup creation must not leak FileNotFoundError."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "previous.xml"
+        destination.write_text("old bytes")
+        real_copy = m._copy_private_backup
+
+        def remove_staged_after_backup(source_path, *args):
+            result = real_copy(source_path, *args)
+            if pathlib.Path(source_path).resolve() == destination.resolve():
+                staged, = root.glob("previous.xml.*.part")
+                staged.unlink()
+            return result
+
+        m._copy_private_backup = remove_staged_after_backup
+        try:
+            refusal = refuses(m, "output_path_changed", m.write_outputs,
+                              [(str(destination), "new bytes")])
+        finally:
+            m._copy_private_backup = real_copy
+
+        assert "staged output changed before replacement" in str(refusal.code)
+        assert destination.read_text() == "old bytes"
+        assert not list(root.glob("*.part"))
+        assert not list(root.glob("*.bak"))
+
+
 if __name__ == "__main__":
     raise SystemExit(main())

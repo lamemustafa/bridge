@@ -2127,6 +2127,12 @@ def _restore_backup(swap, failures, metadata_scope_warnings, descriptor_failures
     try:
         current_identity = _entry_identity(destination)
     except OSError:
+        # After a replacement started, an uninspectable destination might
+        # still name this run's staged inode.  It is not evidence of a foreign
+        # writer, so keep the private backup and report the real destination
+        # as a partial result.
+        if swap["swap_started"]:
+            return _mark_rollback_unavailable(swap, failures)
         current_identity = None
     if not swap["swap_started"] or current_identity == original_identity:
         # Backup reads can update atime before any swap. Restore that effect
@@ -2542,7 +2548,12 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                     "output_path_changed",
                     f"{supplied_path} changed after it was claimed; no output was replaced",
                 )
-            if _entry_identity(temporary["path"]) != temporary["identity"]:
+            try:
+                staged_entry_unchanged = (
+                    _entry_identity(temporary["path"]) == temporary["identity"])
+            except OSError:
+                staged_entry_unchanged = False
+            if not staged_entry_unchanged:
                 raise Refusal(
                     "output_path_changed",
                     f"{supplied_path} staged output changed before replacement",
