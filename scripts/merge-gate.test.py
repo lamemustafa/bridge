@@ -21,7 +21,8 @@ FAKE_GH = r'''#!/usr/bin/env python3
 import base64, json, os, sys
 args = sys.argv[1:]
 scenario = os.environ.get("GATE_SCENARIO", "pass")
-security_case = scenario.startswith("security-review-") or scenario in {"security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out"}
+security_case = scenario.startswith("security-review-") or scenario in {"security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out", "security-ci-workflow", "security-ci-workflow-rename-out", "security-ci-workflow-valid", "security-release-preview", "security-release-preview-rename-out"}
+security_workflow_case = scenario in {"security-ci-workflow", "security-ci-workflow-rename-out", "security-ci-workflow-valid", "security-release-preview", "security-release-preview-rename-out"}
 sync_case = scenario.startswith("sync-")
 head = "0123456789abcdef0123456789abcdef01234567"
 new_head = "fedcba9876543210fedcba9876543210fedcba98"
@@ -224,6 +225,8 @@ if args[:2] == ["pr", "view"]:
             "\n- Windows validation evidence: Windows CI passed `python3 scripts/merge-gate.test.py`.\n"
             "- macOS validation evidence: macOS CI passed `python3 scripts/merge-gate.test.py`.\n"
         )
+    if security_workflow_case:
+        body += "\n## Rollback notes\n\nRevert the workflow change before the next release.\n"
     if scenario == "security-encrypted-keystore":
         body += "\n## Rollback notes\n\nRevert the encrypted-store change before deployment.\n"
     if scenario in {"platform-evidence-present", "platform-powershell-evidence", "migration-template-wrapped", "security-notes-present", "security-none", "security-pending", "security-review-valid", "sync-migration-present"}:
@@ -330,8 +333,12 @@ elif args[:2] == ["pr", "diff"]:
         emit("diff --git a/src-tauri/src/documents.rs b/docs/retired-documents.rs\nsimilarity index 100%\nrename from src-tauri/src/documents.rs\nrename to docs/retired-documents.rs\n")
     elif scenario == "security-prune-package-compiler-cache-rename-out":
         emit("diff --git a/scripts/prune-package-compiler-cache.mjs b/docs/retired-cache-pruner.mjs\nsimilarity index 100%\nrename from scripts/prune-package-compiler-cache.mjs\nrename to docs/retired-cache-pruner.mjs\n")
+    elif scenario == "security-ci-workflow-rename-out":
+        emit("diff --git a/.github/workflows/ci.yml b/docs/retired-ci.yml\nsimilarity index 100%\nrename from .github/workflows/ci.yml\nrename to docs/retired-ci.yml\n")
+    elif scenario == "security-release-preview-rename-out":
+        emit("diff --git a/.github/workflows/release-mcpb-preview.yml b/docs/retired-preview.yml\nsimilarity index 100%\nrename from .github/workflows/release-mcpb-preview.yml\nrename to docs/retired-preview.yml\n")
     elif security_case:
-        paths = {"security-axal-frontend": "src/AxalScreen.tsx", "security-axal-native": "src-tauri/src/axal.rs", "security-encrypted-keystore": "src-tauri/src/db/encrypted.rs", "security-documents-consumer": "src-tauri/src/documents.rs", "security-commands-facade": "src-tauri/src/commands.rs", "security-bank-statement-import": "scripts/bank_statement_import.py", "security-prune-package-compiler-cache": "scripts/prune-package-compiler-cache.mjs"}
+        paths = {"security-axal-frontend": "src/AxalScreen.tsx", "security-axal-native": "src-tauri/src/axal.rs", "security-encrypted-keystore": "src-tauri/src/db/encrypted.rs", "security-documents-consumer": "src-tauri/src/documents.rs", "security-commands-facade": "src-tauri/src/commands.rs", "security-bank-statement-import": "scripts/bank_statement_import.py", "security-prune-package-compiler-cache": "scripts/prune-package-compiler-cache.mjs", "security-ci-workflow": ".github/workflows/ci.yml", "security-ci-workflow-valid": ".github/workflows/ci.yml", "security-release-preview": ".github/workflows/release-mcpb-preview.yml"}
         path = paths.get(scenario, "src-tauri/src/dsc.rs")
         emit(f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -0,0 +1 @@\n+safe check\n")
     elif sync_case:
@@ -394,6 +401,9 @@ elif args[:2] == ["pr", "diff"]:
             "phone-parenthesized": "(" + "69876" + ") 54321",
         }
         emit(f"diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic {phones[scenario]}\n")
+    elif scenario == "landline-grouped":
+        landline = "0" + "11" + "-" + "2345" + "-" + "6789"
+        emit(f"diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic {landline}\n")
     elif scenario == "unicode-phone":
         emit("diff --git a/docs/contact.md b/docs/contact.md\n--- a/docs/contact.md\n+++ b/docs/contact.md\n@@ -0,0 +1 @@\n+synthetic 69876\u00a054321\n")
     elif scenario == "unicode-phone-tab":
@@ -584,12 +594,14 @@ elif args and args[0] == "api":
             emit([[]])
         else:
             records = [{"user": {"login": "chatgpt-codex-connector[bot]", "type": "Bot"}, "state": "COMMENTED", "commit_id": head}]
-            if security_case and scenario not in {"security-review-missing", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out"}:
-                record = {"user": {"login": "reviewer", "type": "User"}, "author_association": "COLLABORATOR", "state": "COMMENTED", "commit_id": head, "body": f"Security review: {head}\nResult: accepted\nReviewed credential handling and error redaction."}
+            if security_case and scenario not in {"security-review-missing", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out", "security-ci-workflow", "security-ci-workflow-rename-out", "security-release-preview", "security-release-preview-rename-out"}:
+                record = {"user": {"login": "reviewer", "type": "User"}, "author_association": "COLLABORATOR", "state": "COMMENTED", "commit_id": head, "body": f"Security review: {head}\nResult: accepted\nReviewed credential handling: token diagnostics remain redacted.\nSecurity rationale: the current access boundary prevents a cache token from reaching logs."}
                 if scenario == "security-review-stale": record["commit_id"] = new_head
                 if scenario == "security-review-author": record["user"]["login"] = "author"
                 if scenario == "security-review-unrelated": record["body"] = "Looks good"
                 if scenario == "security-review-no-scope": record["body"] = f"Security review: {head}\nResult: accepted"
+                if scenario == "security-review-bare-scope": record["body"] = f"Security review: {head}\nResult: accepted\nReviewed credential:\nSecurity rationale: the current access boundary prevents a cache token from reaching logs."
+                if scenario == "security-review-placeholder-rationale": record["body"] = f"Security review: {head}\nResult: accepted\nReviewed credential handling: token diagnostics remain redacted.\nSecurity rationale: TBD"
                 if scenario == "security-review-hidden": record["body"] = f"<!--\nSecurity review: {head}\nResult: accepted\nReviewed credential handling and error redaction.\n-->"
                 if scenario == "security-review-hidden-unterminated": record["body"] = f"<!--\nSecurity review: {head}\nResult: accepted\nReviewed credential handling and error redaction."
                 if scenario == "security-review-outsider": record["author_association"] = "NONE"
@@ -622,6 +634,14 @@ elif args and args[0] == "api":
             emit([[{"filename": "scripts/prune-package-compiler-cache.mjs", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "security-prune-package-compiler-cache-rename-out":
             emit([[{"filename": "docs/retired-cache-pruner.mjs", "previous_filename": "scripts/prune-package-compiler-cache.mjs", "status": "renamed", "additions": 0, "deletions": 0}]])
+        elif scenario in {"security-ci-workflow", "security-ci-workflow-valid"}:
+            emit([[{"filename": ".github/workflows/ci.yml", "status": "modified", "additions": 1, "deletions": 0}]])
+        elif scenario == "security-ci-workflow-rename-out":
+            emit([[{"filename": "docs/retired-ci.yml", "previous_filename": ".github/workflows/ci.yml", "status": "renamed", "additions": 0, "deletions": 0}]])
+        elif scenario == "security-release-preview":
+            emit([[{"filename": ".github/workflows/release-mcpb-preview.yml", "status": "modified", "additions": 1, "deletions": 0}]])
+        elif scenario == "security-release-preview-rename-out":
+            emit([[{"filename": "docs/retired-preview.yml", "previous_filename": ".github/workflows/release-mcpb-preview.yml", "status": "renamed", "additions": 0, "deletions": 0}]])
         elif scenario == "security-documents-consumer-rename-out":
             emit([[{"filename": "docs/retired-documents.rs", "previous_filename": "src-tauri/src/documents.rs", "status": "renamed", "additions": 0, "deletions": 0}]])
         elif scenario in {"security-camel-dsc", "security-camel-credential"}:
@@ -636,7 +656,7 @@ elif args and args[0] == "api":
             emit([[{"filename": "docs/retired.rs", "previous_filename": "src-tauri/src/sync.rs", "status": "renamed", "additions": 0, "deletions": 0}]])
         elif scenario == "files-empty":
             emit([[]])
-        elif scenario in {"formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-tab", "unicode-phone-two-lines", "grouped-identifier-12", "grouped-identifier-16", "grouped-identifier-mixed", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized"}:
+        elif scenario in {"formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-tab", "unicode-phone-two-lines", "grouped-identifier-12", "grouped-identifier-16", "grouped-identifier-mixed", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "landline-grouped"}:
             emit([[{"filename": "docs/contact.md", "status": "added", "additions": 2 if scenario == "unicode-phone-two-lines" else 1, "deletions": 0}]])
         elif scenario == "platform-release-mcpb-preview":
             emit([[{"filename": ".github/workflows/release-mcpb-preview.yml", "status": "modified", "additions": 1, "deletions": 0}]])
@@ -925,6 +945,9 @@ os.execv(os.environ["GATE_REAL_SED"], [os.environ["GATE_REAL_SED"], *sys.argv[1:
                 self.assert_blocked(scenario, "privacy scan found")
         result = self.run_gate("unicode-phone-two-lines")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_grouped_indian_landline_is_scanned_without_global_separator_joining(self):
+        self.assert_blocked("landline-grouped", "privacy scan found")
 
     def test_header_shaped_added_payload_is_still_scanned(self):
         self.assert_blocked("hunk-header-phone", "privacy scan found")
@@ -1305,10 +1328,12 @@ os.execv(os.environ["GATE_REAL_SED"], [os.environ["GATE_REAL_SED"], *sys.argv[1:
         self.assertNotIn("z" * 100, result.stdout)
 
     def test_security_review_is_focused_independent_and_current(self):
-        for scenario in ("security-review-stale", "security-review-author", "security-review-unrelated", "security-review-no-scope", "security-review-hidden", "security-review-hidden-unterminated", "security-review-outsider", "security-review-dismissed", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out"):
+        for scenario in ("security-review-stale", "security-review-author", "security-review-unrelated", "security-review-no-scope", "security-review-bare-scope", "security-review-placeholder-rationale", "security-review-hidden", "security-review-hidden-unterminated", "security-review-outsider", "security-review-dismissed", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out", "security-ci-workflow", "security-ci-workflow-rename-out", "security-release-preview", "security-release-preview-rename-out"):
             with self.subTest(scenario=scenario):
                 self.assert_indeterminate(scenario, "security-focused reviewer comment")
         result = self.run_gate("security-review-valid")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.run_gate("security-ci-workflow-valid")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_sync_rename_out_requires_migration_notes(self):

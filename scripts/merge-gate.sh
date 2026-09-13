@@ -825,14 +825,14 @@ if [ "$files_status" -eq 0 ]; then
   security_sensitive_change=$(jq -r '
     (if all(.[]; type == "array") then flatten else . end) |
     any(.[]; [ .filename, (.previous_filename? // "") ][] |
-      ascii_downcase | test("^src-tauri/(crates|src)/|^src/|^docs/(tally|agent)/|^scripts/(bank_statement_import|sanitise-bbox-capture)|(^|/)[^/]*(dsc|credential|tally)[^/]*(/|$)"))
+      ascii_downcase | test("^src-tauri/(crates|src)/|^src/|^docs/(tally|agent)/|^scripts/(bank_statement_import|sanitise-bbox-capture|prune-package-compiler-cache)|^\\.github/workflows/(ci\\.yml|release-mcpb-preview\\.yml)$|(^|/)[^/]*(dsc|credential|tally)[^/]*(/|$)"))
   ' <<<"$files")
 fi
 if [ "$security_sensitive_change" = "true" ]; then
   if ! body_section_has_content "$prbody" 'security impact|security implications' true; then
-    bad "DSC, Tally, or credential path change lacks non-empty security-impact notes"
+    bad "credential-sensitive path change lacks non-empty security-impact notes"
   else
-    say "ok" "DSC, Tally, or credential path change includes security-impact notes"
+    say "ok" "credential-sensitive path change includes security-impact notes"
   fi
 
 fi
@@ -846,6 +846,7 @@ if [ "$files_status" -eq 0 ]; then
       (test("(^|[/_.-])(dsc|credential[s]?|certificate[s]?|keystore|secret[s]?)(?=[/_.-]|$|[A-Z])"; "i") or
        test("^scripts/bank_statement_import\\.py$"; "i") or
        test("^scripts/prune-package-compiler-cache\\.mjs$"; "i") or
+       test("^\\.github/workflows/(ci\\.yml|release-mcpb-preview\\.yml)$"; "i") or
        test("^src/AxalScreen\\.tsx$|^src-tauri/src/axal\\.rs$|^src-tauri/src/db/encrypted\\.rs$|^src-tauri/src/documents\\.rs$|^src-tauri/src/commands\\.rs$"; "i")))
   ' <<<"$files")
 fi
@@ -864,17 +865,24 @@ if [ "$security_reviewer_change" = "true" ]; then
         ((.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") or
          (.user.login == "chatgpt-codex-connector[bot]" and .user.type == "Bot"));
       def visible_body: .body | gsub("(?s:<!--.*?(?:-->|$))"; "");
+      def substantive:
+        gsub("^[[:space:]]+|[[:space:]]+$"; "") as $text |
+        ($text | length >= 12) and
+        ($text | test("^(n/?a|none|tbd|todo|pending|unknown|not applicable)[[:space:].,:;!?-]*$"; "i") | not);
+      def has_substantive_line($label):
+        [try (capture("(?im)^#{0,6} *(?:" + $label + ")[ ]*:[ ]*(?<value>.+)$").value | select(substantive)) catch empty] | length > 0;
       def focused: (.body | type == "string") and
         (visible_body | test("(?im)^#{0,6} *security review: *" + $head + " *$")) and
         (visible_body | test("(?im)^result: *accepted *$")) and
-        (visible_body | test("(?im)^#{0,6} *reviewed (dsc|credential|certificate|keystore|secret)"));
+        (visible_body | has_substantive_line("reviewed +(dsc|credential|certificate|keystore|secret)([ ]+[A-Za-z][A-Za-z-]*)?")) and
+        (visible_body | has_substantive_line("security rationale|security reasoning"));
       ([($reviews | source_records | records)[] | select(reviewer and focused and .commit_id == $head and
          (.state == "APPROVED" or .state == "COMMENTED"))] +
        [($comments | source_records | records)[] | select(reviewer and focused)]) | length > 0
     ' 2>/dev/null) || security_review=false
   fi
   if [ "$security_review" != "true" ]; then
-    unknown "DSC or credential change lacks a separate current-head security-focused reviewer comment"
+    unknown "credential-sensitive change lacks a separate current-head security-focused reviewer comment"
   else
     say "ok" "separate security-focused reviewer comment names full current head $short"
   fi
@@ -1158,7 +1166,7 @@ $added"
   # Join separators only inside recognised identifier shapes. A global
   # separator-free projection fuses unrelated values and creates false
   # identifiers, including adjacent date fragments. Alongside mobile numbers,
-  # accept only 4-4-4 and 4-4-4-4 grouped long-number forms.
+  # accept only bounded 0XX-XXXX-XXXX landlines and 4-4-4(/4) long-number forms.
   phone_status=0
   normalized_status=0
   normalized_whitespace=$(python3 -c 'import sys, unicodedata; print("".join(" " if char == "\t" or unicodedata.category(char) == "Zs" else char for char in sys.stdin.read()), end="")' <<<"$redacted") || normalized_status=$?
@@ -1167,6 +1175,8 @@ $added"
     normalized_whitespace=""
   fi
   phone_matches=$(grep -Eo '(^|[^[:alnum:]])[6-9]([ ()+._-]{0,3}[0-9]){9}([^[:alnum:]]|$)' <<<"$normalized_whitespace") || phone_status=$?
+  landline_status=0
+  landline_matches=$(grep -Eo '(^|[^[:alnum:]])0[1-9][0-9][ ._-][0-9]{4}[ ._-][0-9]{4}([^[:alnum:]]|$)' <<<"$normalized_whitespace") || landline_status=$?
   grouped_number_status=0
   grouped_number_matches=$(grep -Eo '(^|[^[:alnum:]])[0-9]{4}[ ._-][0-9]{4}[ ._-][0-9]{4}([ ._-][0-9]{4})?([^[:alnum:]]|$)' <<<"$redacted") || grouped_number_status=$?
   # A pair of compact dates, such as MMDD-YYYY MMDD-YYYY, has the same four
@@ -1182,13 +1192,15 @@ $added"
     grouped_number_non_dates+="${candidate}"$'\n'
   done <<<"$grouped_number_matches"
   grouped_number_matches="$grouped_number_non_dates"
-  if [ "$redaction_status" -ne 0 ] || [ "$normalized_status" -ne 0 ] || [ "$phone_status" -gt 1 ] || [ "$grouped_number_status" -gt 1 ]; then
+  if [ "$redaction_status" -ne 0 ] || [ "$normalized_status" -ne 0 ] || [ "$phone_status" -gt 1 ] || [ "$landline_status" -gt 1 ] || [ "$grouped_number_status" -gt 1 ]; then
     unknown "formatted identifier scan expression failed"
   fi
   normalized_phone=$(sed -E 's/[^0-9]//g' <<<"$phone_matches")
+  normalized_landlines=$(sed -E 's/[^0-9]//g' <<<"$landline_matches")
   normalized_grouped_numbers=$(sed -E 's/[^0-9]//g' <<<"$grouped_number_matches")
   scan_shapes="$redacted
 $normalized_phone
+$normalized_landlines
 $normalized_grouped_numbers"
   hits_status=0
   hits=$(count_nonplaceholder '[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]{3}|[A-Z]{5}[ -][0-9]{4}[ -][A-Z]|[A-Z]{5}[0-9]{4}[A-Z]|[6-9][0-9]{9}' "$scan_shapes") || hits_status=$?
