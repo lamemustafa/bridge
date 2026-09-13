@@ -114,9 +114,19 @@ pub(super) fn tool_definitions(import_enabled: bool, writes_enabled: bool) -> Va
     definitions
 }
 
+#[cfg(feature = "lab-writes")]
+fn lab_tools_env_enabled() -> bool {
+    super::lab::env_lab_writes_enabled()
+}
+#[cfg(not(feature = "lab-writes"))]
+fn lab_tools_env_enabled() -> bool {
+    false
+}
+
 // Retain the internal schema while bounded change enumeration is unqualified.
 pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: bool) -> Value {
-    let names = [
+    #[allow(unused_mut)] // only mutated when the `lab-writes` feature is compiled in
+    let mut names = vec![
         "tally_status",
         "list_companies",
         "voucher_schema",
@@ -133,6 +143,8 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
         "read_evidence",
         "egress_log",
     ];
+    #[cfg(feature = "lab-writes")]
+    names.push("lab_read_inventory");
     Value::Array(
         names
             .into_iter()
@@ -141,6 +153,10 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
             // uncertain saved batch can still be checked safely.
             .filter(|name| import_enabled || *name != "build_import_xml")
             .filter(|name| writes_enabled || *name != "post_import")
+            // LAB-ONLY: registered only when the `lab-writes` feature is
+            // compiled in AND `BRIDGE_LAB_WRITES=1` is set (checked fresh on
+            // every catalog build, not cached at startup).
+            .filter(|name| *name != "lab_read_inventory" || lab_tools_env_enabled())
             .map(|name| {
                 let (description, input_schema) = match name {
                     "voucher_schema" => (
@@ -199,6 +215,10 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
                         "Return bounded local metadata-only read evidence or egress receipts.",
                         json!({"type":"object","additionalProperties":false,"properties":{"limit":{"type":"integer","minimum":1,"default":20}}}),
                     ),
+                    "lab_read_inventory" => (
+                        "LAB-ONLY. Compiled only behind the `lab-writes` feature and refuses unless BRIDGE_LAB_WRITES=1, BRIDGE_TALLY_PORT=9001, and BRIDGE_LAB_TARGET_GUID/BRIDGE_LAB_DENY_GUIDS are both set to well-formed GUIDs. This is a read: company_guid selects the company like any other read tool and is verified the same way (`company_identity_not_found`/`company_identity_ambiguous`), independent of the configured lab target -- the stronger loaded-company/deny-list guard applies only to a lab write batch, not a read. Read-only: units, godowns, stock groups and stock items (parent, base unit, opening qty/rate/value, GST/HSN fields as returned, unclassified), plus inventory entries per voucher for a date window. Reuses the same windowing and window_honoured corroboration as `vouchers`. No signed compatibility evidence exists yet for any inventory field on this Tally release/mode -- treat every value as exploratory.",
+                        json!({"type":"object","additionalProperties":false,"required":["company_guid","from","to"],"properties":{"company_guid":{"type":"string","minLength":1},"from":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"to":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"offset":{"type":"integer","minimum":0,"default":0},"limit":{"type":"integer","minimum":1,"default":500}}}),
+                    ),
                     _ => (
                         "Bridge read-only Tally tool",
                         json!({"type":"object", "additionalProperties": false}),
@@ -207,6 +227,9 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
                 let mut tool = json!({"name": name, "description": description, "inputSchema": input_schema});
                 if name == "post_import" {
                     tool["annotations"] = json!({"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true});
+                }
+                if name == "lab_read_inventory" {
+                    tool["annotations"] = json!({"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":true});
                 }
                 tool
             })
