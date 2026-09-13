@@ -51,8 +51,9 @@
 
 use super::*;
 use bridge_tally_core::ExactDecimal;
+use bridge_tally_protocol::is_tally_reserved_root;
 use serde::Deserialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
 const MAX_MASTER_BATCH: usize = 200;
@@ -359,6 +360,103 @@ fn find_readback_row<'a>(
 }
 
 // ---------------------------------------------------------------------------
+// Tally default masters -- every new company has these before this tool ever
+// runs, so a same-name row is not the Create-overwrite collision §9.4 exists
+// to catch. Distinguished from a true collision so a default is (a) never
+// sent as a Create, and (b) still diffed against the book and, for Ledger,
+// partially Altered if a writable field differs. Any other same-name master
+// remains an ordinary refusal.
+// ---------------------------------------------------------------------------
+
+/// Where a *default* ledger's `PARENT` is expected to resolve. Compared with
+/// [`canonical_master_key`] / [`is_tally_reserved_root`] -- never written:
+/// [`render_ledger_xml`] still defaults a missing parent to the plain word
+/// `Primary`, never to the reserved-root marker.
+enum DefaultLedgerParent {
+    /// A named reserved group (matched by the §9.4d fold), e.g. `Cash-in-Hand`.
+    ReservedGroup(&'static str),
+    /// Tally's reserved primary root itself (`Profit & Loss A/c`'s parent).
+    ReservedPrimary,
+}
+
+/// Tally auto-creates both of these in every new company: ledger `Cash`
+/// under the reserved group `Cash-in-Hand`, and `Profit & Loss A/c` under
+/// the reserved primary root. Matched by name only here -- the caller must
+/// additionally confirm the *observed* parent before treating a same-name
+/// row as this default; see [`is_default_ledger`].
+fn default_ledger_parent(name: &str) -> Option<DefaultLedgerParent> {
+    let key = canonical_master_key(name);
+    if key == canonical_master_key("Cash") {
+        Some(DefaultLedgerParent::ReservedGroup("Cash-in-Hand"))
+    } else if key == canonical_master_key("Profit & Loss A/c") {
+        Some(DefaultLedgerParent::ReservedPrimary)
+    } else {
+        None
+    }
+}
+
+/// Whether an *existing* ledger row is Tally's own default for `name`, not a
+/// same-name collision. Requires the observed parent to match the default's
+/// expected parent too -- a ledger named "Cash" moved under a different
+/// group, or a user-created "Profit & Loss A/c" that is not actually under
+/// the reserved root, is a true collision and must still fall through to the
+/// ordinary refusal, not be silently treated as the default.
+fn is_default_ledger(name: &str, observed_parent: &str) -> bool {
+    match default_ledger_parent(name) {
+        Some(DefaultLedgerParent::ReservedGroup(expected)) => {
+            canonical_master_key(observed_parent) == canonical_master_key(expected)
+        }
+        Some(DefaultLedgerParent::ReservedPrimary) => is_tally_reserved_root(observed_parent),
+        None => false,
+    }
+}
+
+/// Whether an existing Group row is one of Tally's own predefined/reserved
+/// groups (every new company has all of them), signalled by a non-empty
+/// `RESERVEDNAME` -- the same signal `group_ancestry.rs`'s `GroupIndex`
+/// already uses to recognise a predefined group identity.
+fn is_default_group(row: &BTreeMap<String, String>) -> bool {
+    row.get("RESERVEDNAME")
+        .is_some_and(|value| !value.trim().is_empty())
+}
+
+/// Which writable field(s) on an existing *default* ledger differ from the
+/// book and need a partial `Alter` (Brain trap: `Create` on an existing
+/// ledger overwrites its opening balance instead of merging; a partial
+/// `Alter` carrying only the changed field(s) is the safe write here).
+/// Deliberately restricted to `OPENINGBALANCE`: the module doc / §8.3 already
+/// establish that the GST-related fields (`PARTYGSTIN`/`TAXTYPE`/
+/// `GSTDUTYHEAD`/`ISBILLWISEON`) are settable at Create but silently dropped
+/// at Alter, so they are never offered as an Alter candidate.
+fn ledger_alter_fields(
+    book: &BookLedger,
+    row: &BTreeMap<String, String>,
+) -> Vec<(&'static str, String)> {
+    let mut fields = Vec::new();
+    let expected_opening = book.opening_balance.as_deref().unwrap_or("0.00");
+    let observed_opening = row.get("OPENINGBALANCE").map(String::as_str).unwrap_or("");
+    if !amounts_equal(expected_opening, observed_opening) {
+        fields.push(("OPENINGBALANCE", expected_opening.to_string()));
+    }
+    fields
+}
+
+/// Renders a partial `Alter`: only the given fields, never the full ledger
+/// (an Alter that omitted a field would leave it unchanged, but resending
+/// every field would also silently re-assert ones §8.3 already says are
+/// Alter-inert -- so this renders exactly, and only, `fields`).
+fn render_ledger_alter_xml(name: &str, fields: &[(&'static str, String)]) -> String {
+    let body: String = fields
+        .iter()
+        .map(|(tag, value)| format!("<{tag}>{}</{tag}>", xml_escape(value)))
+        .collect();
+    format!(
+        "<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><LEDGER NAME=\"{name}\" ACTION=\"Alter\">{body}</LEDGER></TALLYMESSAGE>",
+        name = xml_escape(name)
+    )
+}
+
+// ---------------------------------------------------------------------------
 // Master XML renderers (Create). See module doc: UNVERIFIED for the gateway
 // on every kind except the fields §8.3/§9.4a already qualify for Ledger.
 // ---------------------------------------------------------------------------
@@ -620,8 +718,15 @@ pub(in crate::agent) async fn lab_import_masters(
     }
 
     // ---- Create-overwrite pre-check (§9.4): refuse before any write if the
-    // target already carries a same-name master under ANY kind requested. ----
+    // target already carries a same-name master under ANY kind requested --
+    // except a Tally *default* (ledger `Cash`/`Profit & Loss A/c`, or any
+    // reserved Group), which every new company already has before this tool
+    // ever runs and so is never a collision. A default is excluded from the
+    // Create batch below and, for Ledger, scheduled for a partial Alter if a
+    // writable field differs. Any other same-name master is still refused.
     let mut collisions: Vec<String> = Vec::new();
+    let mut default_ledger_alters: Vec<(BookLedger, BTreeMap<String, String>)> = Vec::new();
+    let mut default_group_keys: BTreeSet<String> = BTreeSet::new();
     for kind in MasterKind::IMPORT_ORDER {
         let requested = kind.names(&masters);
         if requested.is_empty() {
@@ -635,9 +740,42 @@ pub(in crate::agent) async fn lab_import_masters(
         let rows = parse_lab_master_rows(&xml, kind.tally_type())
             .map_err(|code| ToolFailure::from(code).with_prior_evidence(evidence.clone()))?;
         for name in &requested {
-            if find_readback_row(&rows, name).is_some() {
-                collisions.push(format!("{}:{name}", kind.tally_type()));
+            if kind == MasterKind::Group && is_tally_reserved_root(name) {
+                // A requested Group named as Tally's own reserved-primary
+                // marker (raw or sanitized `\u{4}`/`\u{fffd}#4;` prefix) is
+                // never a real master to create: it *is* the root every
+                // company already has. It also never collision-matches by
+                // name -- Tally's own row is plainly "Primary", not the
+                // marker-decorated form a book may carry -- so without this
+                // check it would fall through as "new" and get Created with
+                // a garbled name. Refuse explicitly instead.
+                collisions.push(format!("{}:{name}:reserved_root", kind.tally_type()));
+                continue;
             }
+            let Some(existing) = find_readback_row(&rows, name) else {
+                continue;
+            };
+            match kind {
+                MasterKind::Ledger => {
+                    let observed_parent = existing.get("PARENT").map(String::as_str).unwrap_or("");
+                    if is_default_ledger(name, observed_parent) {
+                        let book_ledger = masters
+                            .ledgers
+                            .iter()
+                            .find(|l| canonical_master_key(&l.name) == canonical_master_key(name))
+                            .expect("name was drawn from kind.names(&masters)")
+                            .clone();
+                        default_ledger_alters.push((book_ledger, existing.clone()));
+                        continue;
+                    }
+                }
+                MasterKind::Group if is_default_group(existing) => {
+                    default_group_keys.insert(canonical_master_key(name));
+                    continue;
+                }
+                _ => {}
+            }
+            collisions.push(format!("{}:{name}", kind.tally_type()));
         }
     }
     if !collisions.is_empty() {
@@ -646,12 +784,27 @@ pub(in crate::agent) async fn lab_import_masters(
             .with_prior_evidence(evidence));
     }
 
+    // Masters actually sent as Create: every requested master minus the
+    // defaults just identified above (Creating an existing default would hit
+    // the very overwrite trap the pre-check exists to avoid).
+    let default_ledger_keys: BTreeSet<String> = default_ledger_alters
+        .iter()
+        .map(|(ledger, _)| canonical_master_key(&ledger.name))
+        .collect();
+    let mut creatable = masters.clone();
+    creatable
+        .ledgers
+        .retain(|l| !default_ledger_keys.contains(&canonical_master_key(&l.name)));
+    creatable
+        .groups
+        .retain(|g| !default_group_keys.contains(&canonical_master_key(&g.name)));
+
     let mut batches = Vec::new();
     let mut mismatches: Vec<String> = Vec::new();
     let mut counts = serde_json::Map::new();
 
     'kinds: for kind in MasterKind::IMPORT_ORDER {
-        let total = kind.count(&masters);
+        let total = kind.count(&creatable);
         if total == 0 {
             continue;
         }
@@ -662,7 +815,7 @@ pub(in crate::agent) async fn lab_import_masters(
             let (_company, identity, admit_evidence) = admit_lab_target(server).await?;
             evidence = combine_evidence(evidence.clone(), admit_evidence);
 
-            let chunk_masters = chunked_masters(&masters, kind, chunk_start, MAX_MASTER_BATCH);
+            let chunk_masters = chunked_masters(&creatable, kind, chunk_start, MAX_MASTER_BATCH);
             let chunk_len = kind.count(&chunk_masters);
             let xml = render_master_batch_xml(identity.display_name(), kind, &chunk_masters);
             let (response, post_evidence) =
@@ -706,6 +859,94 @@ pub(in crate::agent) async fn lab_import_masters(
             chunk_start += MAX_MASTER_BATCH;
         }
         counts.insert(kind.tally_type().to_string(), json!(created));
+    }
+
+    // ---- Default-ledger partial Alter (Brain trap: Create on an existing
+    // ledger overwrites its opening balance; a partial Alter carrying only
+    // the changed field(s) is the safe write here). Only runs if nothing
+    // above already stopped on a mismatch, and only sends an Alter for
+    // ledgers whose book value actually differs from the target. ----
+    if mismatches.is_empty() && !default_ledger_alters.is_empty() {
+        let to_alter: Vec<(&BookLedger, Vec<(&'static str, String)>)> = default_ledger_alters
+            .iter()
+            .map(|(ledger, row)| (ledger, ledger_alter_fields(ledger, row)))
+            .filter(|(_, fields)| !fields.is_empty())
+            .collect();
+        if !to_alter.is_empty() {
+            let (_company, identity, admit_evidence) = admit_lab_target(server).await?;
+            evidence = combine_evidence(evidence.clone(), admit_evidence);
+            let messages: String = to_alter
+                .iter()
+                .map(|(ledger, fields)| render_ledger_alter_xml(&ledger.name, fields))
+                .collect();
+            let xml = render_import_envelope(identity.display_name(), "All Masters", &messages);
+            let (response, post_evidence) = post_lab_batch(
+                server,
+                &identity,
+                "lab_import_masters.write.default_alter",
+                xml,
+            )
+            .await?;
+            evidence = combine_evidence(evidence.clone(), post_evidence);
+            let outcome = bridge_tally_protocol::parse_import_outcome(&response)
+                .map_err(|_| ToolFailure::from("lab_import_response_invalid".to_string()))?;
+            let clean = outcome
+                .counters()
+                .is_clean_success_for(0, to_alter.len() as u64, 0);
+            counts.insert("LedgerDefaultAlter".to_string(), json!(to_alter.len()));
+            batches.push(json!({
+                "kind": "LedgerDefaultAlter",
+                "requested": to_alter.len(),
+                "counters_clean": clean,
+                "ok": clean,
+            }));
+            if !clean {
+                mismatches.push(
+                    "default ledger alter: import counters not a clean altered-only success"
+                        .to_string(),
+                );
+            }
+        }
+
+        // Mandatory read-back over every default ledger, altered or not
+        // (plan: "include defaults in read-back diff") -- reuses the same
+        // `readback_mismatches` diff the ordinary Create batches use.
+        if mismatches.is_empty() {
+            let (_company, identity, admit_evidence) = admit_lab_target(server).await?;
+            evidence = combine_evidence(evidence.clone(), admit_evidence);
+            let read_request =
+                render_master_collection_request(identity.display_name(), MasterKind::Ledger)
+                    .map_err(ToolFailure::from)?;
+            let (read_xml, read_evidence) = lab_post_read(
+                server,
+                &identity,
+                "lab_import_masters.readback.default",
+                read_request,
+            )
+            .await?;
+            evidence = combine_evidence(evidence.clone(), read_evidence);
+            let rows = parse_lab_master_rows(&read_xml, MasterKind::Ledger.tally_type())
+                .map_err(|code| ToolFailure::from(code).with_prior_evidence(evidence.clone()))?;
+            let default_book = BookMasters {
+                ledgers: default_ledger_alters
+                    .iter()
+                    .map(|(ledger, _)| ledger.clone())
+                    .collect(),
+                ..Default::default()
+            };
+            let default_mismatches = readback_mismatches(MasterKind::Ledger, &default_book, &rows);
+            let default_ok = default_mismatches.is_empty();
+            batches.push(json!({
+                "kind": "LedgerDefaultReadback",
+                "requested": default_ledger_alters.len(),
+                "counters_clean": true,
+                "mismatches": default_mismatches,
+                "ok": default_ok,
+            }));
+            if !default_ok {
+                mismatches.extend(default_mismatches);
+            }
+        }
     }
 
     let ok = mismatches.is_empty();

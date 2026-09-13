@@ -708,3 +708,208 @@ fn amounts_equal_ignores_decimal_formatting_but_not_value() {
     assert!(amounts_equal("100.00", "100"));
     assert!(!amounts_equal("100.00", "100.01"));
 }
+
+// ---------------------------------------------------------------------------
+// Tally default masters: default skip, default opening alter, true collision
+// still refused, reserved parent normalisation.
+// ---------------------------------------------------------------------------
+
+fn default_cash_ledger(opening: &str) -> BookLedger {
+    BookLedger {
+        name: "Cash".into(),
+        parent: Some("Cash-in-Hand".into()),
+        opening_balance: Some(opening.into()),
+        is_billwise_on: None,
+        party_gstin: None,
+        tax_type: None,
+        gst_duty_head: None,
+        opening_bill_allocations: vec![],
+    }
+}
+
+fn default_pl_ledger() -> BookLedger {
+    BookLedger {
+        name: "Profit & Loss A/c".into(),
+        parent: None,
+        opening_balance: Some("0.00".into()),
+        is_billwise_on: None,
+        party_gstin: None,
+        tax_type: None,
+        gst_duty_head: None,
+        opening_bill_allocations: vec![],
+    }
+}
+
+#[test]
+fn is_default_ledger_recognises_cash_under_cash_in_hand() {
+    assert!(is_default_ledger("Cash", "Cash-in-Hand"));
+    // §9.4d fold applies to the parent comparison too.
+    assert!(is_default_ledger("Cash", "cash in hand"));
+}
+
+#[test]
+fn is_default_ledger_recognises_profit_and_loss_under_the_reserved_primary() {
+    // Sanitized form `tolerant_xml` actually produces for the raw U+0004
+    // metadata prefix (see `bridge_tally_protocol::TALLY_SANITIZED_ROOT_MARKER`).
+    assert!(is_default_ledger(
+        "Profit & Loss A/c",
+        "\u{fffd}#4; Primary"
+    ));
+    assert!(is_default_ledger("Profit & Loss A/c", "Primary"));
+}
+
+#[test]
+fn is_default_ledger_rejects_a_same_name_ledger_under_a_different_parent() {
+    // A "Cash" ledger moved (or created by a user) under some other group is
+    // not Tally's own default -- it must remain a true collision, not be
+    // silently treated as the default and skipped.
+    assert!(!is_default_ledger("Cash", "Bank Accounts"));
+    assert!(!is_default_ledger(
+        "Profit & Loss A/c",
+        "Current Liabilities"
+    ));
+}
+
+#[test]
+fn is_default_ledger_does_not_recognise_an_unrelated_name() {
+    assert!(!is_default_ledger(
+        "Sri Ram Cables Private Limited",
+        "Primary"
+    ));
+}
+
+#[test]
+fn a_requested_group_named_as_the_reserved_root_marker_is_recognised_as_such() {
+    // The exact defect this pre-flight caught in the rehearsal book: a
+    // requested Group literally named with Tally's sanitized U+0004 marker
+    // (the self-referential root) must be recognised so the caller can
+    // refuse it, rather than silently Creating a garbled-name group -- it
+    // never collision-matches Tally's own plainly-named "Primary" row.
+    assert!(is_tally_reserved_root("\u{fffd}#4; Primary"));
+    assert!(is_tally_reserved_root("Primary"));
+    assert!(!is_tally_reserved_root("Sundry Debtors"));
+}
+
+#[test]
+fn is_default_group_reads_reserved_name_not_the_group_name() {
+    assert!(is_default_group(&row(&[
+        ("NAME", "Sundry Debtors"),
+        ("RESERVEDNAME", "Sundry Debtors")
+    ])));
+    // A user-created group with the same displayed name as a reserved one
+    // but an empty RESERVEDNAME is not a default.
+    assert!(!is_default_group(&row(&[
+        ("NAME", "Sundry Debtors"),
+        ("RESERVEDNAME", "")
+    ])));
+    assert!(!is_default_group(&row(&[("NAME", "Custom Group")])));
+}
+
+#[test]
+fn ledger_alter_fields_is_empty_when_the_default_already_matches_the_book() {
+    // "default skip": no diff, no Alter is offered.
+    let l = default_cash_ledger("0.00");
+    let observed = row(&[("PARENT", "Cash-in-Hand"), ("OPENINGBALANCE", "0.00")]);
+    assert!(ledger_alter_fields(&l, &observed).is_empty());
+}
+
+#[test]
+fn ledger_alter_fields_offers_only_the_changed_opening_balance() {
+    // "default opening alter": book differs from target -> a partial Alter
+    // carrying only OPENINGBALANCE, never a Create (which would overwrite).
+    let l = default_cash_ledger("5000.00");
+    let observed = row(&[("PARENT", "Cash-in-Hand"), ("OPENINGBALANCE", "0.00")]);
+    let fields = ledger_alter_fields(&l, &observed);
+    assert_eq!(fields, vec![("OPENINGBALANCE", "5000.00".to_string())]);
+}
+
+#[test]
+fn ledger_alter_fields_never_offers_a_gst_field_alter_9_4d() {
+    // §8.3: GST fields are settable at Create but silently dropped at Alter
+    // -- never offered here even when they differ from the target.
+    let mut l = default_cash_ledger("0.00");
+    l.tax_type = Some("GST".into());
+    l.gst_duty_head = Some("State Tax".into());
+    let observed = row(&[
+        ("PARENT", "Cash-in-Hand"),
+        ("OPENINGBALANCE", "0.00"),
+        ("TAXTYPE", "Others"),
+        ("GSTDUTYHEAD", "CGST"),
+    ]);
+    assert!(ledger_alter_fields(&l, &observed).is_empty());
+}
+
+#[test]
+fn render_ledger_alter_xml_carries_only_the_given_fields() {
+    let xml = render_ledger_alter_xml("Cash", &[("OPENINGBALANCE", "5000.00".to_string())]);
+    assert_eq!(
+        xml,
+        "<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><LEDGER NAME=\"Cash\" ACTION=\"Alter\">\
+<OPENINGBALANCE>5000.00</OPENINGBALANCE></LEDGER></TALLYMESSAGE>"
+    );
+    // Never a Create, and never a field beyond what was asked for.
+    assert!(!xml.contains("ACTION=\"Create\""));
+    assert!(!xml.contains("PARENT"));
+}
+
+#[test]
+fn default_ledger_and_default_group_precheck_classification_end_to_end() {
+    // A compact end-to-end check of the precheck classification a real
+    // `lab_import_masters` call performs: for each requested master, decide
+    // default-skip vs. true-collision the same way the tool body does.
+    let requested_ledgers = [default_cash_ledger("5000.00"), default_pl_ledger()];
+    let existing_ledger_rows = [
+        row(&[
+            ("NAME", "Cash"),
+            ("PARENT", "Cash-in-Hand"),
+            ("OPENINGBALANCE", "0.00"),
+        ]),
+        row(&[
+            ("NAME", "Profit & Loss A/c"),
+            ("PARENT", "\u{fffd}#4; Primary"),
+            ("OPENINGBALANCE", "0.00"),
+        ]),
+    ];
+    let mut collisions = Vec::new();
+    let mut alters = Vec::new();
+    for ledger in &requested_ledgers {
+        let existing = find_readback_row(&existing_ledger_rows, &ledger.name).unwrap();
+        let observed_parent = existing.get("PARENT").map(String::as_str).unwrap_or("");
+        if is_default_ledger(&ledger.name, observed_parent) {
+            alters.push((ledger.name.clone(), ledger_alter_fields(ledger, existing)));
+        } else {
+            collisions.push(ledger.name.clone());
+        }
+    }
+    assert!(collisions.is_empty(), "both are real Tally defaults");
+    assert_eq!(alters[0].0, "Cash");
+    assert_eq!(alters[0].1, vec![("OPENINGBALANCE", "5000.00".to_string())]);
+    assert_eq!(alters[1].0, "Profit & Loss A/c");
+    assert!(
+        alters[1].1.is_empty(),
+        "Profit & Loss A/c already matches -> default skip, no Alter"
+    );
+
+    // "true collision still refused": a non-default same-name ledger.
+    let existing_debtor_rows = vec![row(&[
+        ("NAME", "Sri Ram Cables Private Limited"),
+        ("PARENT", "Sundry Debtors"),
+    ])];
+    let requested_debtor = BookLedger {
+        name: "Sri Ram Cables Private Limited".into(),
+        parent: Some("Sundry Debtors".into()),
+        opening_balance: None,
+        is_billwise_on: None,
+        party_gstin: None,
+        tax_type: None,
+        gst_duty_head: None,
+        opening_bill_allocations: vec![],
+    };
+    let existing = find_readback_row(&existing_debtor_rows, &requested_debtor.name).unwrap();
+    let observed_parent = existing.get("PARENT").map(String::as_str).unwrap_or("");
+    assert!(
+        !is_default_ledger(&requested_debtor.name, observed_parent),
+        "an ordinary pre-existing ledger is never treated as a default"
+    );
+    let _ = requested_debtor.parent; // constructed only to exercise the classification above
+}
