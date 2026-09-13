@@ -667,6 +667,9 @@ body_section_has_content() {
       lower = tolower(value)
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", lower)
       if (lower == "") return 0
+      # Fence delimiters and thematic breaks are structure, not policy content.
+      if (lower ~ /^(```|~~~)/) return 0
+      if (lower ~ /^([-][[:space:]]*){3,}$/ || lower ~ /^([*][[:space:]]*){3,}$/ || lower ~ /^(_[[:space:]]*){3,}$/) return 0
       if (allow_placeholders == "true" && lower ~ /^(n\/a|none|no impact)$/) return 1
       return lower !~ /^(n\/a|none|pending|todo|tbd|not applicable|unaffected|not affected|not impacted|no impact)$/
     }
@@ -716,7 +719,6 @@ body_section_has_content() {
         waiting = 0
         next
       }
-      if (waiting && $0 ~ /^[[:space:]]*```/) next
       if (waiting && $0 ~ /[^[:space:]]/) {
         if ($0 ~ /^[[:space:]]*<!--/) next
         if (template_prompt($0)) next

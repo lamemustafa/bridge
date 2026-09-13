@@ -137,10 +137,20 @@ if args[:2] == ["pr", "view"]:
         body = body.replace("`python3 scripts/merge-gate.test.py`", "Tests not run") + "\n## Rollback\n`cargo test`\n"
     if scenario == "validation-node-command":
         body = body.replace("`python3 scripts/merge-gate.test.py`", "`node --test scripts/prune-package-compiler-cache.test.mjs`")
-    if scenario == "empty-fenced-summary":
-        body = body.replace("A bounded merge preflight keeps incomplete evidence from becoming a merge.", "```\n```")
-    if scenario == "nonempty-fenced-summary":
-        body = body.replace("A bounded merge preflight keeps incomplete evidence from becoming a merge.", "```\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n```")
+    structural_summaries = {
+        "empty-fenced-summary": "```\n```",
+        "empty-tilde-summary": "~~~\n~~~",
+        "empty-typed-tilde-summary": "~~~text example\n~~~",
+        "empty-rule-summary": "---\n* * *\n___",
+        "inline-fence-summary": "~~~text",
+    }
+    if scenario in structural_summaries:
+        body = body.replace("A bounded merge preflight keeps incomplete evidence from becoming a merge.", structural_summaries[scenario])
+        if scenario == "inline-fence-summary":
+            body = body.replace("## Functional summary\n\n", "## Functional summary: ")
+    if scenario in {"nonempty-fenced-summary", "nonempty-tilde-summary"}:
+        fence = "~~~text" if scenario == "nonempty-tilde-summary" else "```"
+        body = body.replace("A bounded merge preflight keeps incomplete evidence from becoming a merge.", fence + "\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n" + fence[:3])
     if scenario == "policy-multiline-comment":
         body = body.replace("A bounded merge preflight keeps incomplete evidence from becoming a merge.", "<!--\nA hidden summary cannot establish the change.\n-->")
     if scenario == "validation-html-comment":
@@ -1091,9 +1101,13 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_empty_fenced_functional_summary_is_not_content(self):
-        self.assert_blocked("empty-fenced-summary", "non-empty functional summary")
-        result = self.run_gate("nonempty-fenced-summary")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for scenario in ("empty-fenced-summary", "empty-tilde-summary", "empty-typed-tilde-summary", "empty-rule-summary", "inline-fence-summary"):
+            with self.subTest(scenario=scenario):
+                self.assert_blocked(scenario, "non-empty functional summary")
+        for scenario in ("nonempty-fenced-summary", "nonempty-tilde-summary"):
+            with self.subTest(scenario=scenario):
+                result = self.run_gate(scenario)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_checklist_heading_is_not_a_completed_item(self):
         self.assert_blocked("checklist-heading", "review-checklist link")

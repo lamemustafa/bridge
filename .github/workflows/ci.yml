@@ -113,8 +113,8 @@ jobs:
   workflow-consistency:
     name: Workflow consistency
     runs-on: ubuntu-latest
-    # The Linux suite has exceeded 780 seconds before setup overhead; retain a
-    # bounded budget while allowing every required consistency check to finish.
+    # Allow the full suite and setup to finish on slower runners while retaining
+    # a bounded job timeout.
     timeout-minutes: 20
     permissions:
       contents: read
