@@ -21,7 +21,7 @@ FAKE_GH = r'''#!/usr/bin/env python3
 import base64, json, os, sys
 args = sys.argv[1:]
 scenario = os.environ.get("GATE_SCENARIO", "pass")
-security_case = scenario.startswith("security-review-") or scenario in {"security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-commands-facade"}
+security_case = scenario.startswith("security-review-") or scenario in {"security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-commands-facade", "security-bank-statement-import"}
 sync_case = scenario.startswith("sync-")
 head = "0123456789abcdef0123456789abcdef01234567"
 new_head = "fedcba9876543210fedcba9876543210fedcba98"
@@ -329,7 +329,7 @@ elif args[:2] == ["pr", "diff"]:
     if scenario == "security-documents-consumer-rename-out":
         emit("diff --git a/src-tauri/src/documents.rs b/docs/retired-documents.rs\nsimilarity index 100%\nrename from src-tauri/src/documents.rs\nrename to docs/retired-documents.rs\n")
     elif security_case:
-        paths = {"security-axal-frontend": "src/AxalScreen.tsx", "security-axal-native": "src-tauri/src/axal.rs", "security-encrypted-keystore": "src-tauri/src/db/encrypted.rs", "security-documents-consumer": "src-tauri/src/documents.rs", "security-commands-facade": "src-tauri/src/commands.rs"}
+        paths = {"security-axal-frontend": "src/AxalScreen.tsx", "security-axal-native": "src-tauri/src/axal.rs", "security-encrypted-keystore": "src-tauri/src/db/encrypted.rs", "security-documents-consumer": "src-tauri/src/documents.rs", "security-commands-facade": "src-tauri/src/commands.rs", "security-bank-statement-import": "scripts/bank_statement_import.py"}
         path = paths.get(scenario, "src-tauri/src/dsc.rs")
         emit(f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -0,0 +1 @@\n+safe check\n")
     elif sync_case:
@@ -582,7 +582,7 @@ elif args and args[0] == "api":
             emit([[]])
         else:
             records = [{"user": {"login": "chatgpt-codex-connector[bot]", "type": "Bot"}, "state": "COMMENTED", "commit_id": head}]
-            if security_case and scenario not in {"security-review-missing", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-commands-facade"}:
+            if security_case and scenario not in {"security-review-missing", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-commands-facade", "security-bank-statement-import"}:
                 record = {"user": {"login": "reviewer", "type": "User"}, "author_association": "COLLABORATOR", "state": "COMMENTED", "commit_id": head, "body": f"Security review: {head}\nResult: accepted\nReviewed credential handling and error redaction."}
                 if scenario == "security-review-stale": record["commit_id"] = new_head
                 if scenario == "security-review-author": record["user"]["login"] = "author"
@@ -614,6 +614,8 @@ elif args and args[0] == "api":
             emit([[{"filename": "src-tauri/src/documents.rs", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "security-commands-facade":
             emit([[{"filename": "src-tauri/src/commands.rs", "status": "modified", "additions": 1, "deletions": 0}]])
+        elif scenario == "security-bank-statement-import":
+            emit([[{"filename": "scripts/bank_statement_import.py", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "security-documents-consumer-rename-out":
             emit([[{"filename": "docs/retired-documents.rs", "previous_filename": "src-tauri/src/documents.rs", "status": "renamed", "additions": 0, "deletions": 0}]])
         elif scenario in {"security-camel-dsc", "security-camel-credential"}:
@@ -1297,7 +1299,7 @@ os.execv(os.environ["GATE_REAL_SED"], [os.environ["GATE_REAL_SED"], *sys.argv[1:
         self.assertNotIn("z" * 100, result.stdout)
 
     def test_security_review_is_focused_independent_and_current(self):
-        for scenario in ("security-review-stale", "security-review-author", "security-review-unrelated", "security-review-no-scope", "security-review-hidden", "security-review-hidden-unterminated", "security-review-outsider", "security-review-dismissed", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-commands-facade"):
+        for scenario in ("security-review-stale", "security-review-author", "security-review-unrelated", "security-review-no-scope", "security-review-hidden", "security-review-hidden-unterminated", "security-review-outsider", "security-review-dismissed", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-commands-facade", "security-bank-statement-import"):
             with self.subTest(scenario=scenario):
                 self.assert_indeterminate(scenario, "security-focused reviewer comment")
         result = self.run_gate("security-review-valid")

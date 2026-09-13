@@ -844,6 +844,7 @@ if [ "$files_status" -eq 0 ]; then
     (if all(.[]; type == "array") then flatten else . end) |
     any(.[]; [.filename, (.previous_filename? // "")][] |
       (test("(^|[/_.-])(dsc|credential[s]?|certificate[s]?|keystore|secret[s]?)(?=[/_.-]|$|[A-Z])"; "i") or
+       test("^scripts/bank_statement_import\\.py$"; "i") or
        test("^src/AxalScreen\\.tsx$|^src-tauri/src/axal\\.rs$|^src-tauri/src/db/encrypted\\.rs$|^src-tauri/src/documents\\.rs$|^src-tauri/src/commands\\.rs$"; "i")))
   ' <<<"$files")
 fi
