@@ -4941,5 +4941,29 @@ def test_staged_output_in_place_mutation_refuses_before_replacement(m):
         assert not list(root.glob("*.bak"))
 
 
+def test_fresh_output_in_place_mutation_refuses_at_final_authority_boundary(m):
+    """Fresh output bytes need the same pinned-content proof as staged bytes."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "fresh.xml"
+        real_changed = m._claimed_output_changed
+
+        def mutate_before_final_validation(supplied_path, canonical_path, identity):
+            if pathlib.Path(canonical_path).resolve() == destination.resolve():
+                destination.write_text("foreign output bytes")
+            return real_changed(supplied_path, canonical_path, identity)
+
+        m._claimed_output_changed = mutate_before_final_validation
+        try:
+            refusal = refuses(m, "output_path_changed", m.write_outputs,
+                              [(str(destination), "owned output bytes")])
+        finally:
+            m._claimed_output_changed = real_changed
+
+        assert "output contents changed before commit" in str(refusal.code)
+        assert not destination.exists()
+        assert not list(root.iterdir())
+
+
 if __name__ == "__main__":
     raise SystemExit(main())

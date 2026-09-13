@@ -1508,7 +1508,10 @@ def _open_private(path, accept_inherited=False):
     if refusal:
         raise refusal
     try:
-        return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        # The retained ownership pin is also the final byte-verification
+        # authority.  It must be readable without reopening the pathname,
+        # which could have been reclaimed by another writer.
+        return os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
         raise _existing_target_on_windows(path) from None
 
@@ -2483,11 +2486,9 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             handle = os.dup(record["pin"])
             with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
                 stream.write(text)
-            # ``_open_private`` retains a write-only ownership pin, so retain
-            # the exact UTF-8/no-translation payload digest here.  A later
-            # in-place edit of a staged .part preserves its entry identity and
-            # link count, so those checks alone cannot prove it is still this
-            # run's output.
+            # Retain the exact UTF-8/no-translation payload digest. A later
+            # in-place edit preserves the entry identity and link count, so
+            # those checks alone cannot prove it is still this run's output.
             record["digest"] = hashlib.sha256(text.encode("utf-8")).digest()
         # Every payload is on disk. A private copy preserves the old bytes while
         # the requested destination stays present until the atomic replacement.
@@ -2585,6 +2586,17 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 raise Refusal(
                     "output_path_changed",
                     f"{supplied_path} changed before commit; no output was committed",
+                )
+            try:
+                payload_digest_matches = (
+                    _digest_pinned_bytes(record["pin"]) == record["digest"])
+            except OSError:
+                payload_digest_matches = False
+            if not payload_digest_matches:
+                raise Refusal(
+                    "output_path_changed",
+                    f"{supplied_path} output contents changed before commit; "
+                    "no output was committed",
                 )
             _require_single_owned_link(record, "output", "output_has_multiple_links")
         # Earlier rollback copies can also be changed during later swaps.
