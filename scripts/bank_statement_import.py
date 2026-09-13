@@ -1650,7 +1650,7 @@ def _open_regular_output(path, expected_identity=None):
 
 @contextlib.contextmanager
 def _defer_sigint_during_claim():
-    """Pair a newly-created inode with its cleanup owner before SIGINT."""
+    """Keep an ownership handoff whole until a pending SIGINT can unwind it."""
     if hasattr(signal, "pthread_sigmask"):
         try:
             previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
@@ -1808,15 +1808,18 @@ def _close_owned_path(record, failures, diagnostic_path=None, descriptor_failure
     after-effect.  Every other failed or mismatched inspection remains a
     descriptor uncertainty: never retry a close that could target a reused fd.
     """
-    handle = record.get("pin")
-    if handle is None:
+    close_failed = False
+    with _defer_sigint_during_claim():
+        handle = record.get("pin")
+        if handle is None:
+            return
+        record["pin"] = None
+        try:
+            os.close(handle)
+        except OSError:
+            close_failed = True
+    if not close_failed:
         return
-    record["pin"] = None
-    try:
-        os.close(handle)
-        return
-    except OSError:
-        pass
 
     diagnostic = str(diagnostic_path or record.get(
         "cleanup_path", record["path"]))
@@ -2281,6 +2284,13 @@ def _restore_backup(swap, failures, metadata_scope_warnings, descriptor_failures
             restore_handle = _open_regular_output(destination, backup_identity)
             try:
                 _restore_metadata(restore_handle, metadata)
+                try:
+                    restored_still_current = (
+                        _entry_identity(destination) == backup_identity)
+                except OSError:
+                    return _mark_rollback_unavailable(swap, failures)
+                if not restored_still_current:
+                    return _mark_rollback_unavailable(swap, failures)
             finally:
                 _close_owned_path(
                     {"path": destination, "identity": backup_identity,
@@ -2350,8 +2360,8 @@ def _cleanup_committed_outputs(replaced, claimed, retained_failures, descriptor_
             record, descriptor_failures, diagnostic_path=record.get("canonical_path"))
 
 
-def _reconcile_committed_staged_output_pin(record, failures):
-    """Check a staged descriptor at its committed name before releasing it."""
+def _reconcile_staged_output_pin(record, failures):
+    """Check a moved staged descriptor at its destination before release."""
     if record.get("cleanup_path") == record.get("canonical_path"):
         return
     pin = record.get("pin")
@@ -2373,7 +2383,7 @@ def _reconcile_committed_staged_output_pin(record, failures):
         committed_here = False
     if not committed_here:
         failures.append(
-            "committed staged output could not be located after cleanup: "
+            "staged output could not be located after cleanup: "
             + str(record["canonical_path"]))
 
 
@@ -2435,7 +2445,7 @@ def _reconcile_interrupted_committed_cleanup(
                 diagnostic_path=swap.get("destination", swap["original"]["path"]),
                 descriptor_failures=descriptor_failures)
     for record in claimed:
-        _reconcile_committed_staged_output_pin(record, retained_failures)
+        _reconcile_staged_output_pin(record, retained_failures)
         _close_owned_path(
             record, descriptor_failures, diagnostic_path=record.get("canonical_path"))
 
@@ -2633,14 +2643,10 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                     os.path.realpath(supplied_path) != real_path
                     or _file_identity(real_path) != original_identity)
             except FileNotFoundError:
-                # A missing leaf under its original parent is a commit-boundary
-                # path change.  A vanished parent can leave pinned private
-                # outputs under an unknown spelling, so preserve its existing
-                # recovery path and diagnostic rather than misclassifying it.
-                if os.path.isdir(os.path.dirname(real_path)):
-                    existing_output_changed = True
-                else:
-                    raise
+                # A missing leaf or parent is a commit-boundary path change.
+                # Recovery retains any pinned inode it cannot locate, but the
+                # operator still receives the typed path outcome.
+                existing_output_changed = True
             except OSError:
                 existing_output_changed = True
             if existing_output_changed:
@@ -2850,6 +2856,7 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             unrollbackable_temporaries.add(id(pending_swap["temporary"]))
         for record in claimed:
             if id(record) in unrollbackable_temporaries:
+                _reconcile_staged_output_pin(record, cleanup_failures)
                 _close_owned_path(
                     record, cleanup_failures,
                     diagnostic_path=record.get("canonical_path"),

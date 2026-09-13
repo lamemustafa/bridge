@@ -2716,8 +2716,9 @@ def test_parent_rename_after_backup_preparation_discloses_unlocated_backup(m):
             try:
                 m.write_outputs([(str(destination), "new bytes")])
                 raise AssertionError("the renamed parent must prevent a swap")
-            except FileNotFoundError as error:
-                detail = str(error) + "\n" + "\n".join(getattr(error, "__notes__", []))
+            except m.Refusal as error:
+                detail = str(error.code) + "\n" + "\n".join(getattr(error, "__notes__", []))
+                assert error.category == "output_path_changed"
                 assert "owned output could not be located after cleanup" in detail
         finally:
             m._copy_private_backup = real_copy
@@ -5642,7 +5643,7 @@ def test_interrupted_committed_cleanup_reconciles_moved_staged_output_pin(m):
         m._reconcile_interrupted_committed_cleanup([], [record], retained, [])
 
         assert retained == [
-            "committed staged output could not be located after cleanup: "
+            "staged output could not be located after cleanup: "
             + str(destination)]
         assert record["pin"] is None
         assert moved.read_text() == "committed bytes"
@@ -5720,6 +5721,188 @@ def test_restored_output_close_recovers_after_effect_without_a_false_retention(m
         assert failures == []
         assert descriptor_failures == []
         assert restored == [destination]
+
+
+def test_precommit_unrollbackable_staged_pin_is_reconciled_before_close(m):
+    """A partial staged output moved during recovery stays visible before close."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second, moved, foreign = (
+            root / "first.xml", root / "second.xml", root / "moved.xml", root / "foreign.xml")
+        first.write_text("first old")
+        second.write_text("second old")
+        real_copy, real_digest, real_reconcile, real_replace = (
+            m._copy_private_backup, m._digest_pinned_bytes,
+            m._reconcile_staged_output_pin, m.os.replace)
+        first_backup_pins, reconciled = set(), []
+
+        def fail_second_prepare(source_path, identity, backup_handle):
+            if pathlib.Path(source_path).resolve() == second.resolve():
+                raise OSError("controlled later preparation failure")
+            result = real_copy(source_path, identity, backup_handle)
+            first_backup_pins.add(backup_handle)
+            return result
+
+        def fail_first_backup_digest(handle):
+            if handle in first_backup_pins:
+                raise OSError("controlled rollback digest failure")
+            return real_digest(handle)
+
+        def move_partial_before_reconciliation(record, failures):
+            if pathlib.Path(record.get("canonical_path", "")).resolve() == first.resolve():
+                first.rename(moved)
+                foreign.write_text("foreign bytes")
+                real_replace(foreign, first)
+                reconciled.append(record)
+            return real_reconcile(record, failures)
+
+        m._copy_private_backup = fail_second_prepare
+        m._digest_pinned_bytes = fail_first_backup_digest
+        m._reconcile_staged_output_pin = move_partial_before_reconciliation
+        try:
+            try:
+                m.write_outputs([(str(first), "first new"), (str(second), "second new")])
+                raise AssertionError("the controlled preparation failure must escape")
+            except OSError as error:
+                detail = str(error) + "\n" + "\n".join(getattr(error, "__notes__", []))
+        finally:
+            m._copy_private_backup = real_copy
+            m._digest_pinned_bytes = real_digest
+            m._reconcile_staged_output_pin = real_reconcile
+
+        assert reconciled
+        assert "controlled later preparation failure" in detail
+        assert "staged output could not be located after cleanup" in detail
+        assert first.read_text() == "foreign bytes"
+        assert moved.read_text() == "first new"
+        assert second.read_text() == "second old"
+
+
+def test_close_owned_path_defers_sigint_until_the_pin_is_closed(m):
+    """The record cannot lose its fd ownership between clearing and close."""
+    if not hasattr(signal, "pthread_sigmask"):
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "output.xml"
+        path.write_text("bytes")
+        handle = os.open(path, os.O_RDONLY)
+
+        class InterruptOnClear(dict):
+            def __setitem__(self, key, value):
+                result = super().__setitem__(key, value)
+                if key == "pin" and value is None:
+                    signal.raise_signal(signal.SIGINT)
+                return result
+
+        record = InterruptOnClear(path=path, identity=m._fd_identity(handle), pin=handle)
+        old_handler = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        try:
+            try:
+                m._close_owned_path(record, [])
+                raise AssertionError("the deferred SIGINT must escape after close")
+            except KeyboardInterrupt:
+                pass
+        finally:
+            signal.signal(signal.SIGINT, old_handler)
+
+        assert record["pin"] is None
+        try:
+            os.fstat(handle)
+            raise AssertionError("the descriptor must close before the deferred interrupt")
+        except OSError as error:
+            assert error.errno == errno.EBADF
+
+
+def test_restore_revalidates_destination_after_metadata_before_reporting_success(m):
+    """Metadata work cannot turn a retargeted restored destination into success."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        original, destination, backup, moved, foreign = (
+            root / "original.xml", root / "destination.xml", root / "rollback.bak",
+            root / "moved.xml", root / "foreign.xml")
+        original.write_text("old bytes")
+        destination.write_text("new bytes")
+        backup.write_text("old bytes")
+        backup_fd = os.open(backup, os.O_RDONLY)
+        swap = {
+            "backup": {"path": backup, "identity": m._fd_identity(backup_fd),
+                       "pin": backup_fd, "digest": m._digest_pinned_bytes(backup_fd)},
+            "destination": destination,
+            "original_identity": m._entry_identity(original),
+            "staged_identity": m._entry_identity(destination),
+            "metadata": {}, "swap_started": True, "original": None,
+        }
+        real_restore = m._restore_metadata
+
+        def retarget_after_metadata(*_):
+            destination.rename(moved)
+            foreign.write_text("foreign bytes")
+            os.replace(foreign, destination)
+
+        m._restore_metadata = retarget_after_metadata
+        try:
+            failures, restored = [], []
+            assert m._restore_backup(swap, failures, restored) == "unrollbackable"
+        finally:
+            m._restore_metadata = real_restore
+            os.close(backup_fd)
+
+        assert restored == []
+        assert failures == [
+            f"owned rollback copy could not be located after cleanup: {backup}"]
+        assert destination.read_text() == "foreign bytes"
+        assert moved.read_text() == "old bytes"
+
+
+def test_restore_reconciles_backup_when_post_metadata_destination_is_uninspectable(m):
+    """A failed post-metadata inspection is not evidence that restore held."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        original, destination, backup = (
+            root / "original.xml", root / "destination.xml", root / "rollback.bak")
+        original.write_text("old bytes")
+        destination.write_text("new bytes")
+        backup.write_text("old bytes")
+        backup_fd = os.open(backup, os.O_RDONLY)
+        swap = {
+            "backup": {"path": backup, "identity": m._fd_identity(backup_fd),
+                       "pin": backup_fd, "digest": m._digest_pinned_bytes(backup_fd)},
+            "destination": destination,
+            "original_identity": m._entry_identity(original),
+            "staged_identity": m._entry_identity(destination),
+            "metadata": {}, "swap_started": True, "original": None,
+        }
+        real_restore, real_entry = m._restore_metadata, m._entry_identity
+        metadata_finished = False
+
+        def finish_metadata(*_):
+            nonlocal metadata_finished
+            metadata_finished = True
+
+        def deny_only_post_metadata_destination(path):
+            if metadata_finished and pathlib.Path(path) == destination:
+                raise PermissionError("controlled post-metadata inspection failure")
+            return real_entry(path)
+
+        m._restore_metadata, m._entry_identity = (
+            finish_metadata, deny_only_post_metadata_destination)
+        try:
+            failures = []
+            assert m._restore_backup(swap, failures, []) == "unrollbackable"
+        finally:
+            m._restore_metadata, m._entry_identity = real_restore, real_entry
+            os.close(backup_fd)
+
+        assert failures == [
+            f"owned rollback copy could not be located after cleanup: {backup}"]
+        assert destination.read_text() == "old bytes"
 
 
 if __name__ == "__main__":
