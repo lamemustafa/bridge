@@ -270,7 +270,7 @@ jobs:
           toolchain: 1.96.0
           components: clippy
       - name: Install pinned nextest
-        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
+        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
         with:
           tool: cargo-nextest@0.9.143
           fallback: none
@@ -438,7 +438,7 @@ jobs:
       - run: corepack pnpm run license:all
       - name: Install pinned package compiler cache
         id: package-sccache
-        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
+        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
         with:
           tool: sccache@0.17.0
           fallback: none
