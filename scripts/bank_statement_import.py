@@ -1883,7 +1883,8 @@ def _record_windows_cleanup_alias(record, failures):
             f"unknown hard-link alias may retain output bytes: {record['path']}")
 
 
-def _cleanup_owned_path(record, failures, descriptor_failures=None):
+def _cleanup_owned_path(
+        record, failures, descriptor_failures=None, suppress_reclaimed_name=False):
     """Remove one owned pathname, releasing its pin first on Windows.
 
     POSIX keeps the descriptor open through the identity decision so an inode
@@ -1901,13 +1902,19 @@ def _cleanup_owned_path(record, failures, descriptor_failures=None):
         _close_owned_path(record, failures, descriptor_failures=descriptor_failures)
         outcome = _unlink_for_cleanup(
             record.get("cleanup_path", record["path"]), record["identity"], failures)
-        if outcome == "removed":
+        if outcome == "removed" or (
+                outcome == "reclaimed" and suppress_reclaimed_name):
             del failures[failure_start:]
+            if outcome == "reclaimed":
+                failures.append(
+                    "owned output could not be located after cleanup: "
+                    + str(record["path"]))
     else:
         cleanup_path = record.get("cleanup_path", record["path"])
         failure_start = len(failures)
         outcome = _unlink_for_cleanup(cleanup_path, record["identity"], failures)
-        if outcome == "reclaimed" and "cleanup_path" in record:
+        if outcome == "reclaimed" and (
+                suppress_reclaimed_name or "cleanup_path" in record):
             # A foreign claimant of the stale name is not a retained path of
             # this output. Keep any earlier diagnostics, but replace this
             # pathname with the separate pinned-inode conclusion below.
@@ -1967,7 +1974,8 @@ def _restore_metadata(handle, metadata):
 def _pinned_original_still_has_one_link(record):
     """Refuse if the original gained a hard link after its first pin."""
     stat_result = os.fstat(record["pin"])
-    if (stat_result.st_dev, stat_result.st_ino) != record["identity"]:
+    if ((stat_result.st_dev, stat_result.st_ino) != record["identity"]
+            or stat_result.st_nlink == 0):
         raise Refusal(
             "output_path_changed",
             f"{record['path']} changed while its rollback copy was prepared",
@@ -2161,7 +2169,7 @@ def _restore_backup(swap, failures, metadata_scope_warnings, descriptor_failures
         # writer, so keep the private backup and report the real destination
         # as a partial result.
         if swap["swap_started"]:
-            return _mark_rollback_unavailable(swap, failures)
+            return _mark_rollback_unavailable(swap, failures, retain_named=True)
         current_identity = None
     if not swap["swap_started"] or current_identity == original_identity:
         # Backup reads can update atime before any swap. Restore that effect
@@ -2176,7 +2184,9 @@ def _restore_backup(swap, failures, metadata_scope_warnings, descriptor_failures
                 os.utime(handle, ns=(metadata["atime_ns"], current.st_mtime_ns))
             except OSError:
                 failures.append(destination)
-        _cleanup_owned_path(backup_record, failures, descriptor_failures=descriptor_failures)
+        _cleanup_owned_path(
+            backup_record, failures, descriptor_failures=descriptor_failures,
+            suppress_reclaimed_name=True)
         return
     if current_identity != staged_identity:
         # Keep the foreign destination untouched, but reconcile the pinned
@@ -2272,7 +2282,11 @@ def _restore_backup(swap, failures, metadata_scope_warnings, descriptor_failures
             try:
                 _restore_metadata(restore_handle, metadata)
             finally:
-                os.close(restore_handle)
+                _close_owned_path(
+                    {"path": destination, "identity": backup_identity,
+                     "pin": restore_handle},
+                    failures, diagnostic_path=destination,
+                    descriptor_failures=descriptor_failures)
             metadata_scope_warnings.append(destination)
         except (OSError, Refusal):
             failures.append(destination)
@@ -2321,7 +2335,9 @@ def _cleanup_committed_outputs(replaced, claimed, retained_failures, descriptor_
     """Remove old private copies after every replacement has committed."""
     for swap in replaced:
         backup = swap["backup"]
-        _cleanup_owned_path(backup, retained_failures, descriptor_failures=descriptor_failures)
+        _cleanup_owned_path(
+            backup, retained_failures, descriptor_failures=descriptor_failures,
+            suppress_reclaimed_name=True)
         _close_owned_path(
             swap["original"], retained_failures,
             diagnostic_path=swap.get("destination", swap["original"]["path"]),
@@ -2332,6 +2348,33 @@ def _cleanup_committed_outputs(replaced, claimed, retained_failures, descriptor_
         # a backup that an operator must protect or remove.
         _close_owned_path(
             record, descriptor_failures, diagnostic_path=record.get("canonical_path"))
+
+
+def _reconcile_committed_staged_output_pin(record, failures):
+    """Check a staged descriptor at its committed name before releasing it."""
+    if record.get("cleanup_path") == record.get("canonical_path"):
+        return
+    pin = record.get("pin")
+    if pin is None:
+        return
+    try:
+        stat_result = os.fstat(pin)
+    except OSError:
+        _record_uninspectable_cleanup(record["canonical_path"], failures)
+        return
+    if ((stat_result.st_dev, stat_result.st_ino) != record["identity"]
+            or stat_result.st_nlink == 0):
+        _record_uninspectable_cleanup(record["canonical_path"], failures)
+        return
+    try:
+        committed_here = (
+            _entry_identity(record["canonical_path"]) == record["identity"])
+    except OSError:
+        committed_here = False
+    if not committed_here:
+        failures.append(
+            "committed staged output could not be located after cleanup: "
+            + str(record["canonical_path"]))
 
 
 def _reconcile_interrupted_committed_cleanup(
@@ -2372,7 +2415,9 @@ def _reconcile_interrupted_committed_cleanup(
                                 "unknown hard-link alias may retain rollback bytes: "
                                 + str(backup["path"]))
             elif still_at_path is False:
-                _cleanup_owned_path(backup, retained_failures, descriptor_failures=descriptor_failures)
+                _cleanup_owned_path(
+                    backup, retained_failures, descriptor_failures=descriptor_failures,
+                    suppress_reclaimed_name=True)
             else:
                 # We cannot identify an entry after an I/O/permission error.
                 # Preserve the original interruption and report no ownership
@@ -2390,6 +2435,7 @@ def _reconcile_interrupted_committed_cleanup(
                 diagnostic_path=swap.get("destination", swap["original"]["path"]),
                 descriptor_failures=descriptor_failures)
     for record in claimed:
+        _reconcile_committed_staged_output_pin(record, retained_failures)
         _close_owned_path(
             record, descriptor_failures, diagnostic_path=record.get("canonical_path"))
 
@@ -2774,7 +2820,10 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                     descriptor_failures=descriptor_close_failures)
         if pending_backup is not None and (
                 pending_swap is None or pending_backup is not pending_swap["backup"]):
-            _cleanup_owned_path(pending_backup, cleanup_failures, descriptor_failures=descriptor_close_failures)
+            _cleanup_owned_path(
+                pending_backup, cleanup_failures,
+                descriptor_failures=descriptor_close_failures,
+                suppress_reclaimed_name=True)
         for swap in reversed(replaced):
             # An interrupt can arrive after `_record_replaced_swap` appends but
             # before its caller clears `pending_swap`. That one backup has
@@ -2830,7 +2879,10 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             paired_backups.add(id(pending_backup))
         for record in unpaired_backups:
             if id(record) not in paired_backups:
-                _cleanup_owned_path(record, cleanup_failures, descriptor_failures=descriptor_close_failures)
+                _cleanup_owned_path(
+                    record, cleanup_failures,
+                    descriptor_failures=descriptor_close_failures,
+                    suppress_reclaimed_name=True)
         for record in unpaired_originals:
             if id(record) not in paired_originals:
                 _close_owned_path(record, cleanup_failures,

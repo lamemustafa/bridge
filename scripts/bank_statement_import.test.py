@@ -2663,7 +2663,7 @@ def test_fresh_output_parent_rename_with_foreign_replacement_reports_only_owned_
 
 def test_writer_refuses_when_the_private_backup_path_is_reclaimed(m):
     """The commit boundary must still name this run's backup; if it does not,
-    do not overwrite the destination without a recoverable owned copy."""
+    do not overwrite the destination or claim a foreign backup as owned."""
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
         destination = root / "previous.xml"
@@ -2689,7 +2689,8 @@ def test_writer_refuses_when_the_private_backup_path_is_reclaimed(m):
         assert destination.read_text() == "old bytes"
         assert len(backups) == 1
         assert backups[0].read_text() == "foreign writer bytes"
-        assert str(backups[0]) in str(refusal.code)
+        detail = str(refusal.code)
+        assert "retained path(s): " + str(backups[0]) not in detail
 
 
 def test_parent_rename_after_backup_preparation_discloses_unlocated_backup(m):
@@ -5507,6 +5508,185 @@ def test_commit_rechecks_staged_path_before_replacement(m):
         assert moved.read_text() == "new bytes"
         assert retargeted[0].read_text() == "foreign staged bytes"
         assert not list(root.glob("*.bak"))
+
+
+def test_reclaimed_committed_backup_is_not_reported_as_its_old_path(m):
+    """A foreign claimant of a backup name is never an owned retained output."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        backup_path, moved, foreign = (
+            root / "old.bak", root / "moved.bak", root / "foreign.bak")
+        original_path, claimed_path = root / "old.xml", root / "new.xml"
+        for path in (backup_path, original_path, claimed_path):
+            path.write_text(path.name)
+        backup_fd, original_fd, claimed_fd = (
+            os.open(path, os.O_RDONLY) for path in
+            (backup_path, original_path, claimed_path))
+        backup, original, claimed = [
+            {"path": path, "identity": m._fd_identity(fd), "pin": fd}
+            for path, fd in zip((backup_path, original_path, claimed_path),
+                                (backup_fd, original_fd, claimed_fd))]
+        backup_path.rename(moved)
+        foreign.write_text("foreign backup bytes")
+        os.replace(foreign, backup_path)
+        retained = []
+
+        m._reconcile_interrupted_committed_cleanup(
+            [{"backup": backup, "original": original}], [claimed], retained, [])
+
+        assert str(backup_path) not in retained
+        assert retained == [
+            f"owned output could not be located after cleanup: {backup_path}"]
+        assert backup_path.read_text() == "foreign backup bytes"
+        assert moved.read_text() == "old.bak"
+
+
+def test_uninspectable_post_swap_destination_retains_named_backup(m):
+    """An unknown post-swap destination keeps the inspectable backup visible."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        original, destination, backup = (
+            root / "original.xml", root / "destination.xml", root / "rollback.bak")
+        original.write_text("old bytes")
+        destination.write_text("new bytes")
+        backup.write_text("old bytes")
+        backup_fd = os.open(backup, os.O_RDONLY)
+        swap = {
+            "backup": {"path": backup, "identity": m._fd_identity(backup_fd),
+                       "pin": backup_fd, "digest": m._digest_pinned_bytes(backup_fd)},
+            "destination": destination,
+            "original_identity": m._entry_identity(original),
+            "staged_identity": m._entry_identity(destination),
+            "metadata": None,
+            "swap_started": True,
+            "original": None,
+        }
+        real_entry = m._entry_identity
+
+        def deny_destination(path):
+            if pathlib.Path(path) == destination:
+                raise PermissionError("controlled post-swap inspection failure")
+            return real_entry(path)
+
+        m._entry_identity = deny_destination
+        try:
+            failures = []
+            assert m._restore_backup(swap, failures, []) == "unrollbackable"
+        finally:
+            m._entry_identity = real_entry
+            os.close(backup_fd)
+
+        assert failures == [backup]
+        assert backup.read_text() == "old bytes"
+        assert destination.read_text() == "new bytes"
+
+
+def test_interrupted_committed_cleanup_reconciles_moved_staged_output_pin(m):
+    """A committed .part pin is checked at its destination before close."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        staged, destination, moved = (
+            root / "output.xml.owned.part", root / "output.xml", root / "moved.xml")
+        staged.write_text("committed bytes")
+        pin = os.open(staged, os.O_RDONLY)
+        record = {
+            "path": staged,
+            "identity": m._fd_identity(pin),
+            "pin": pin,
+            "cleanup_path": staged,
+            "canonical_path": destination,
+        }
+        os.replace(staged, destination)
+        destination.rename(moved)
+        retained = []
+
+        m._reconcile_interrupted_committed_cleanup([], [record], retained, [])
+
+        assert retained == [
+            "committed staged output could not be located after cleanup: "
+            + str(destination)]
+        assert record["pin"] is None
+        assert moved.read_text() == "committed bytes"
+
+
+def test_zero_link_original_is_a_typed_path_change(m):
+    """An unlinked original is a move, never a multiple-link topology."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "previous.xml"
+        path.write_text("old bytes")
+        pin = os.open(path, os.O_RDONLY)
+        record = {"path": path, "identity": m._fd_identity(pin), "pin": pin}
+        try:
+            path.unlink()
+            refusal = refuses(m, "output_path_changed", m._pinned_original_still_has_one_link,
+                              record)
+        finally:
+            os.close(pin)
+
+        assert "changed while its rollback copy was prepared" in str(refusal.code)
+
+
+def test_restored_output_close_recovers_after_effect_without_a_false_retention(m):
+    """A restored descriptor close may report after release without failing rollback."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        original, destination, backup = (
+            root / "original.xml", root / "destination.xml", root / "rollback.bak")
+        original.write_text("old bytes")
+        destination.write_text("new bytes")
+        backup.write_text("old bytes")
+        backup_fd = os.open(backup, os.O_RDONLY)
+        swap = {
+            "backup": {"path": backup, "identity": m._fd_identity(backup_fd),
+                       "pin": backup_fd, "digest": m._digest_pinned_bytes(backup_fd)},
+            "destination": destination,
+            "original_identity": m._entry_identity(original),
+            "staged_identity": m._entry_identity(destination),
+            "metadata": {},
+            "swap_started": True,
+            "original": None,
+        }
+        real_open, real_close, real_restore = (
+            m._open_regular_output, m.os.close, m._restore_metadata)
+        restored_handles = []
+
+        def remember_restored_handle(*args):
+            handle = real_open(*args)
+            restored_handles.append(handle)
+            return handle
+
+        def close_then_report_failure(handle):
+            if handle in restored_handles:
+                real_close(handle)
+                raise OSError("controlled close failure after effect")
+            return real_close(handle)
+
+        m._open_regular_output = remember_restored_handle
+        m.os.close = close_then_report_failure
+        m._restore_metadata = lambda *_: None
+        try:
+            failures, descriptor_failures, restored = [], [], []
+            m._restore_backup(swap, failures, restored, descriptor_failures)
+        finally:
+            m._open_regular_output = real_open
+            m.os.close = real_close
+            m._restore_metadata = real_restore
+            os.close(backup_fd)
+
+        assert destination.read_text() == "old bytes"
+        assert failures == []
+        assert descriptor_failures == []
+        assert restored == [destination]
 
 
 if __name__ == "__main__":
