@@ -2251,19 +2251,21 @@ def _reconcile_interrupted_committed_cleanup(
                 # A named backup can also have gained an alias after final
                 # validation.  Inspect its pin before release so the operator
                 # does not remove the .bak and miss a second private copy.
-                try:
-                    stat_result = os.fstat(backup["pin"])
-                except OSError:
-                    retained_failures.append(
-                        "could not inspect committed rollback copy: " + str(backup["path"]))
-                else:
-                    if (stat_result.st_dev, stat_result.st_ino) != backup["identity"]:
+                pin = backup.get("pin")
+                if pin is not None:
+                    try:
+                        stat_result = os.fstat(pin)
+                    except OSError:
                         retained_failures.append(
                             "could not inspect committed rollback copy: " + str(backup["path"]))
-                    elif stat_result.st_nlink > 1:
-                        retained_failures.append(
-                            "unknown hard-link alias may retain rollback bytes: "
-                            + str(backup["path"]))
+                    else:
+                        if (stat_result.st_dev, stat_result.st_ino) != backup["identity"]:
+                            retained_failures.append(
+                                "could not inspect committed rollback copy: " + str(backup["path"]))
+                        elif stat_result.st_nlink > 1:
+                            retained_failures.append(
+                                "unknown hard-link alias may retain rollback bytes: "
+                                + str(backup["path"]))
             elif still_at_path is False:
                 _cleanup_owned_path(backup, retained_failures, descriptor_failures=descriptor_failures)
             else:

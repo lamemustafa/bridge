@@ -4560,6 +4560,30 @@ def test_interrupted_committed_cleanup_reports_a_retained_backup_alias(m):
         assert backup["pin"] is None and original["pin"] is None and claimed["pin"] is None
 
 
+def test_interrupted_committed_cleanup_keeps_a_named_backup_after_prior_close(m):
+    """A prior cleanup may close its pin while leaving the known backup named."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        backup_path, original_path, claimed_path = (
+            root / "old.bak", root / "old.xml", root / "new.xml")
+        for path in (backup_path, original_path, claimed_path):
+            path.write_text(path.name)
+        backup_fd, original_fd, claimed_fd = (
+            os.open(path, os.O_RDONLY) for path in
+            (backup_path, original_path, claimed_path))
+        backup = {"path": backup_path, "identity": m._fd_identity(backup_fd), "pin": backup_fd}
+        original = {"path": original_path, "identity": m._fd_identity(original_fd), "pin": original_fd}
+        claimed = {"path": claimed_path, "identity": m._fd_identity(claimed_fd), "pin": claimed_fd}
+        os.close(backup_fd)
+        backup["pin"] = None
+        retained = []
+        m._reconcile_interrupted_committed_cleanup(
+            [{"backup": backup, "original": original}], [claimed], retained, [])
+
+        assert retained == [str(backup_path)]
+        assert original["pin"] is None and claimed["pin"] is None
+
+
 def test_failed_restore_before_effect_reports_the_partial_destination(m):
     """A retained backup does not make an unchanged staged destination safe."""
     if os.name == "nt":
