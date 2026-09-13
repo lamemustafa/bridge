@@ -1633,7 +1633,18 @@ def _open_regular_output(path, expected_identity=None):
             )
         return handle
     except BaseException:
-        os.close(handle)
+        active_error = sys.exc_info()[1]
+        try:
+            os.close(handle)
+        except OSError:
+            # The validation refusal identifies the unsafe output shape.  A
+            # failed pin close is separately actionable, but must not replace
+            # that typed outcome or be silently forgotten.
+            _append_cleanup_detail(
+                active_error,
+                "ownership descriptor close failed or could not be verified for: "
+                + str(path),
+            )
         raise
 
 
@@ -2235,7 +2246,12 @@ def _restore_backup(swap, failures, metadata_scope_warnings, descriptor_failures
                     destination_still_staged = (
                         _entry_identity(destination) == staged_identity)
                 except OSError:
-                    destination_still_staged = False
+                    # The failed replace may have taken effect.  An unknown
+                    # destination cannot be classified as a safe foreign
+                    # inode, so disclose this actual partial result while the
+                    # named backup remains inspectable.
+                    return _mark_rollback_unavailable(
+                        swap, failures, retain_named=True)
                 if destination_still_staged:
                     return _mark_rollback_unavailable(swap, failures)
             elif current_identity == staged_identity:
@@ -2671,7 +2687,8 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             except OSError:
                 backup_unchanged = False
             if not backup_unchanged:
-                _mark_rollback_unavailable(swap, cleanup_failures)
+                _mark_rollback_unavailable(
+                    swap, cleanup_failures, retain_named=True)
                 raise Refusal(
                     "output_path_changed",
                     f"{swap['destination']} rollback copy changed before commit; "

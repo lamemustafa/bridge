@@ -5293,5 +5293,133 @@ def test_backup_refusal_survives_source_close_failure(m):
         assert "ownership descriptor close failed or could not be verified" in detail
 
 
+def test_regular_output_refusal_survives_pin_close_failure(m):
+    """Validation keeps its category when releasing the rejected pin fails."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        path, alias = root / "previous.xml", root / "previous-alias.xml"
+        path.write_text("old bytes")
+        os.link(path, alias)
+        real_open, real_close = m.os.open, m.os.close
+        opened = []
+
+        def remember_open(*args):
+            handle = real_open(*args)
+            opened.append(handle)
+            return handle
+
+        def fail_rejected_pin_close(handle):
+            if handle in opened:
+                raise OSError("controlled rejected-pin close failure")
+            return real_close(handle)
+
+        m.os.open, m.os.close = remember_open, fail_rejected_pin_close
+        try:
+            refusal = refuses(m, "output_has_multiple_links", m._open_regular_output, path)
+        finally:
+            m.os.open, m.os.close = real_open, real_close
+            for handle in opened:
+                try:
+                    real_close(handle)
+                except OSError:
+                    pass
+
+        detail = str(refusal.code)
+        assert "replacement requires a single-link output" in detail
+        assert "ownership descriptor close failed or could not be verified" in detail
+
+
+def test_uninspectable_post_failed_restore_reports_partial_destination(m):
+    """A failed restore with an unknown destination remains an in-band partial."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_replace, real_entry = m.os.replace, m._entry_identity
+        deny_after_restore_failure = False
+
+        def fail_second_swap_and_first_restore(source, destination):
+            nonlocal deny_after_restore_failure
+            source, destination = pathlib.Path(source), pathlib.Path(destination)
+            if source.suffix == ".part" and destination.resolve() == second.resolve():
+                raise OSError("controlled later swap failure")
+            if source.suffix == ".bak" and destination.resolve() == first.resolve():
+                deny_after_restore_failure = True
+                raise OSError("controlled restore failure before effect")
+            return real_replace(source, destination)
+
+        def deny_first_after_failed_restore(path):
+            if deny_after_restore_failure and pathlib.Path(path).resolve() == first.resolve():
+                raise OSError("controlled post-restore destination inspection failure")
+            return real_entry(path)
+
+        m.os.replace, m._entry_identity = (
+            fail_second_swap_and_first_restore, deny_first_after_failed_restore)
+        try:
+            try:
+                m.write_outputs([(str(first), "first new"), (str(second), "second new")])
+                raise AssertionError("the controlled later swap failure must escape")
+            except OSError as error:
+                detail = str(error) + "\n" + "\n".join(getattr(error, "__notes__", []))
+        finally:
+            m.os.replace, m._entry_identity = real_replace, real_entry
+
+        assert "controlled later swap failure" in detail
+        assert "partially committed output could not be rolled back" in detail
+        assert str(first.resolve()) in detail
+        assert first.read_text() == "first new"
+        assert second.read_text() == "second old"
+        backup, = root.glob("first.xml.*.bak")
+        assert backup.read_text() == "first old"
+        assert not list(root.glob("*.part"))
+
+
+def test_transient_final_backup_inspection_reports_named_backup(m):
+    """One transient backup lstat failure still leaves its private name visible."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_entry = m._entry_identity
+        first_backup_checks = 0
+
+        def fail_only_final_first_backup_check(path):
+            nonlocal first_backup_checks
+            name = pathlib.Path(path).name
+            if name.startswith("first.xml.") and name.endswith(".bak"):
+                first_backup_checks += 1
+                if first_backup_checks == 2:
+                    raise OSError("controlled transient final backup inspection failure")
+            return real_entry(path)
+
+        m._entry_identity = fail_only_final_first_backup_check
+        try:
+            refusal = refuses(
+                m, "output_path_changed", m.write_outputs,
+                [(str(first), "first new"), (str(second), "second new")])
+        finally:
+            m._entry_identity = real_entry
+
+        detail = str(refusal.code)
+        backup, = root.glob("first.xml.*.bak")
+        assert first_backup_checks == 3
+        assert "rollback copy changed before commit" in detail
+        assert "partially committed output could not be rolled back" in detail
+        assert str(first.resolve()) in detail
+        assert str(backup) in detail
+        assert first.read_text() == "first new"
+        assert second.read_text() == "second old"
+        assert backup.read_text() == "first old"
+        assert not list(root.glob("*.part"))
+
+
 if __name__ == "__main__":
     raise SystemExit(main())
