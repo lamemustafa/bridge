@@ -98,6 +98,7 @@ import hashlib
 import io
 import os
 import pathlib
+import signal
 import re
 import shutil
 import stat
@@ -1630,6 +1631,23 @@ def _open_regular_output(path, expected_identity=None):
         raise
 
 
+@contextlib.contextmanager
+def _defer_sigint_during_claim():
+    """Pair a newly-created inode with its cleanup owner before SIGINT."""
+    if not hasattr(signal, "pthread_sigmask"):
+        yield
+        return
+    try:
+        previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
+    except (OSError, ValueError):
+        yield
+        return
+    try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+
+
 def _owned_path(path, handle, *, created, owned_records=None):
     """Record a pathname and retain the descriptor that pins its inode.
 
@@ -1702,12 +1720,15 @@ def _claim_owned_output(create, *, created, owned_records):
     handle = None
     record = None
     try:
-        handle, path = create()
-        record = _owned_path(path, handle, created=created)
-        if created and os.name != "nt":
-            os.fchmod(handle, 0o600)
-        owned_records.append(record)
-        return record
+        # A private create can finish before its factory returns.  Defer Ctrl-C
+        # until the descriptor and its cleanup owner have been registered.
+        with _defer_sigint_during_claim():
+            handle, path = create()
+            record = _owned_path(path, handle, created=created)
+            if created and os.name != "nt":
+                os.fchmod(handle, 0o600)
+            owned_records.append(record)
+            return record
     except BaseException as error:
         # If registration already reached its collection, the outer handler is
         # its sole cleanup authority.  Otherwise recover through the pin.
@@ -2129,6 +2150,13 @@ def _restore_backup(swap, failures, metadata_scope_warnings, descriptor_failures
                 backup_retained = False
             if backup_retained:
                 failures.append(backup)
+                try:
+                    destination_still_staged = (
+                        _entry_identity(destination) == staged_identity)
+                except OSError:
+                    destination_still_staged = False
+                if destination_still_staged:
+                    return _mark_rollback_unavailable(swap, failures)
             elif current_identity == staged_identity:
                 return _mark_rollback_unavailable(swap, failures)
             else:
@@ -2220,6 +2248,22 @@ def _reconcile_interrupted_committed_cleanup(
                 still_at_path = None
             if still_at_path is True:
                 retained_failures.append(str(backup["path"]))
+                # A named backup can also have gained an alias after final
+                # validation.  Inspect its pin before release so the operator
+                # does not remove the .bak and miss a second private copy.
+                try:
+                    stat_result = os.fstat(backup["pin"])
+                except OSError:
+                    retained_failures.append(
+                        "could not inspect committed rollback copy: " + str(backup["path"]))
+                else:
+                    if (stat_result.st_dev, stat_result.st_ino) != backup["identity"]:
+                        retained_failures.append(
+                            "could not inspect committed rollback copy: " + str(backup["path"]))
+                    elif stat_result.st_nlink > 1:
+                        retained_failures.append(
+                            "unknown hard-link alias may retain rollback bytes: "
+                            + str(backup["path"]))
             elif still_at_path is False:
                 _cleanup_owned_path(backup, retained_failures, descriptor_failures=descriptor_failures)
             else:
@@ -2329,7 +2373,12 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                          "original_identity": original_identity,
                          "original": original}
                 staged.append(state)
-                if _file_identity(real_path) != original_identity:
+                try:
+                    claimed_existing_output_changed = (
+                        _file_identity(real_path) != original_identity)
+                except (FileNotFoundError, OSError):
+                    claimed_existing_output_changed = True
+                if claimed_existing_output_changed:
                     raise Refusal(
                         "output_path_changed",
                         f"{path} changed while it was being claimed",

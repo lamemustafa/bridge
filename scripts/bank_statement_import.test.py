@@ -3947,6 +3947,67 @@ def test_interrupt_after_fresh_registration_cleans_the_requested_output(m):
         assert list(root.iterdir()) == []
 
 
+def test_sigint_during_created_factory_return_waits_for_ownership_handoff(m):
+    """A factory-side SIGINT cannot strand a file before registration."""
+    if not hasattr(signal, "pthread_sigmask"):
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "fresh.xml"
+        real_open = m._open_private
+        old_handler = signal.getsignal(signal.SIGINT)
+        fired = False
+
+        def create_then_interrupt(*args, **kwargs):
+            nonlocal fired
+            handle = real_open(*args, **kwargs)
+            fired = True
+            signal.raise_signal(signal.SIGINT)
+            return handle
+
+        m._open_private = create_then_interrupt
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        try:
+            try:
+                m.write_outputs([(str(destination), "fresh bytes")])
+                raise AssertionError("the controlled interrupt must escape")
+            except KeyboardInterrupt:
+                pass
+        finally:
+            m._open_private = real_open
+            signal.signal(signal.SIGINT, old_handler)
+
+        assert fired
+        assert not destination.exists()
+        assert list(root.iterdir()) == []
+
+
+def test_initial_existing_path_revalidation_is_a_typed_refusal(m):
+    """The first post-pin check cannot leak a raw filesystem exception."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "output.xml"
+        destination.write_text("old bytes")
+        real_open = m._open_regular_output
+
+        def open_then_remove(path, *args):
+            handle = real_open(path, *args)
+            if pathlib.Path(path).resolve() == destination.resolve():
+                destination.unlink()
+            return handle
+
+        m._open_regular_output = open_then_remove
+        try:
+            refusal = refuses(m, "output_path_changed", m.write_outputs,
+                              [(str(destination), "new bytes")])
+        finally:
+            m._open_regular_output = real_open
+
+        assert "changed while it was being claimed" in str(refusal.code)
+        assert not destination.exists()
+        assert list(root.iterdir()) == []
+
+
 def test_existing_output_removed_after_backup_is_a_typed_path_refusal(m):
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
@@ -4471,6 +4532,71 @@ def test_interrupted_committed_cleanup_parent_rename_retains_unlocated_backup(m)
         m._reconcile_interrupted_committed_cleanup([{"backup":records[0],"original":records[1]}], [records[2]], retained, [])
         assert any("owned output could not be located after cleanup" in value for value in retained)
         assert (moved / "old.bak").read_text() == "old.bak"
+
+
+def test_interrupted_committed_cleanup_reports_a_retained_backup_alias(m):
+    """A known .bak name cannot conceal a later hard-link alias."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        backup_path, alias = root / "old.bak", root / "old-alias.bak"
+        original_path, claimed_path = root / "old.xml", root / "new.xml"
+        for path in (backup_path, original_path, claimed_path):
+            path.write_text(path.name)
+        os.link(backup_path, alias)
+        fds = [os.open(path, os.O_RDONLY) for path in
+               (backup_path, original_path, claimed_path)]
+        backup, original, claimed = [
+            {"path": path, "identity": m._fd_identity(fd), "pin": fd}
+            for path, fd in zip((backup_path, original_path, claimed_path), fds)]
+        retained = []
+        m._reconcile_interrupted_committed_cleanup(
+            [{"backup": backup, "original": original}], [claimed], retained, [])
+
+        assert str(backup_path) in retained
+        assert any("unknown hard-link alias may retain rollback bytes" in value
+                   for value in retained)
+        assert backup["pin"] is None and original["pin"] is None and claimed["pin"] is None
+
+
+def test_failed_restore_before_effect_reports_the_partial_destination(m):
+    """A retained backup does not make an unchanged staged destination safe."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_replace = m.os.replace
+
+        def fail_second_swap_and_first_restore(source, destination):
+            source = pathlib.Path(source)
+            destination = pathlib.Path(destination)
+            if source.suffix == ".part" and destination.resolve() == second.resolve():
+                raise OSError("controlled later swap failure")
+            if source.suffix == ".bak" and destination.resolve() == first.resolve():
+                raise OSError("controlled restore failure before effect")
+            return real_replace(source, destination)
+
+        m.os.replace = fail_second_swap_and_first_restore
+        try:
+            try:
+                m.write_outputs([(str(first), "first new"), (str(second), "second new")])
+                raise AssertionError("the controlled swap failure must escape")
+            except OSError as error:
+                detail = str(error) + "\n" + "\n".join(getattr(error, "__notes__", []))
+        finally:
+            m.os.replace = real_replace
+
+        assert "controlled later swap failure" in detail
+        assert "partially committed output could not be rolled back" in detail
+        assert str(first.resolve()) in detail
+        assert first.read_text() == "first new"
+        assert second.read_text() == "second old"
+        backup, = root.glob("first.xml.*.bak")
+        assert backup.read_text() == "first old"
 
 
 def test_restore_backup_preserves_foreign_symlink_entry(m):
