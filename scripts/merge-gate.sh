@@ -673,11 +673,15 @@ def continuation_evidence(value):
     unaffected = re.search(r"\b(?:unaffected|not affected|not impacted)\b", value) and re.search(r"\b(?:because|as|this)\b", value)
     return bool(command or outcome or unaffected)
 waiting = False
+waiting_list_indent = None
 for raw in sys.stdin.read().splitlines():
-    lower = re.sub(r"<!--.*?(?:-->|$)", "", raw).strip().lower()
+    visible = re.sub(r"<!--.*?(?:-->|$)", "", raw)
+    indent = len(visible) - len(visible.lstrip(" \t"))
+    lower = visible.strip().lower()
     if not lower:
         continue
     is_fence = bool(re.match(r"^(?:```|~~~)", lower))
+    is_list_item = bool(re.match(r"^[-*]\s+", lower))
     is_heading = bool(re.match(r"^#{1,6}\s+", lower))
     is_field = host in lower and bool(re.search(marker, lower))
     if waiting:
@@ -687,12 +691,15 @@ for raw in sys.stdin.read().splitlines():
             continue
         # A new evidence field or heading ends the preceding empty field; it
         # cannot be treated as the earlier host evidence.
-        if is_heading or (re.match(r"^[-*]\s+", lower) and re.search(marker, lower)):
+        if ((waiting_list_indent is not None and is_list_item and indent <= waiting_list_indent) or
+                is_heading or (is_list_item and re.search(marker, lower))):
             waiting = False
+            waiting_list_indent = None
         elif continuation_evidence(lower):
             raise SystemExit(0)
         else:
             waiting = False
+            waiting_list_indent = None
     if not is_field:
         continue
     if ":" in lower:
@@ -702,6 +709,7 @@ for raw in sys.stdin.read().splitlines():
     # Headings and list labels without an inline answer may be completed by a
     # following substantive validation result. All other bare forms fail.
     waiting = True
+    waiting_list_indent = indent if is_list_item else None
 raise SystemExit(1)
 ' "$host" <<<"$body"
 }
