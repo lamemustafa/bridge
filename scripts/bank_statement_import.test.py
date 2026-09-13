@@ -4137,6 +4137,91 @@ def test_missing_earlier_backup_reports_the_partial_committed_destination(m):
         assert not list(root.glob("*.bak"))
         assert not list(root.glob("*.part"))
 
+
+def test_later_backup_prepare_failure_reports_an_earlier_partial_destination(m):
+    """Rollback recovery, not just final validation, owns this diagnosis."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_copy = m._copy_private_backup
+        fired = False
+
+        def remove_first_backup_then_fail_second_prepare(source_path, *args):
+            nonlocal fired
+            result = real_copy(source_path, *args)
+            if pathlib.Path(source_path).resolve() == second.resolve():
+                first_backup, = root.glob("first.xml.*.bak")
+                first_backup.unlink()
+                fired = True
+                raise OSError("controlled later backup preparation failure")
+            return result
+
+        m._copy_private_backup = remove_first_backup_then_fail_second_prepare
+        try:
+            try:
+                m.write_outputs([(str(first), "first new"), (str(second), "second new")])
+                raise AssertionError("the later preparation failure must escape")
+            except OSError as error:
+                detail = str(error) + "\n" + "\n".join(getattr(error, "__notes__", []))
+                assert "controlled later backup preparation failure" in detail
+                assert "partially committed output could not be rolled back" in detail
+                assert str(first.resolve()) in detail
+                assert ".bak" not in detail
+                assert ".part" not in detail
+        finally:
+            m._copy_private_backup = real_copy
+
+        assert fired
+        assert first.read_text() == "first new"
+        assert second.read_text() == "second old"
+        assert not list(root.glob("*.bak"))
+        assert not list(root.glob("*.part"))
+
+
+def test_all_missing_backups_report_every_partial_committed_destination(m):
+    """One final-check refusal must still reconcile every already-swapped row."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_changed = m._claimed_output_changed
+        fired = False
+
+        def remove_backups_before_final_checks(*args):
+            nonlocal fired
+            if not fired:
+                fired = True
+                for backup in root.glob("*.bak"):
+                    backup.unlink()
+            return real_changed(*args)
+
+        m._claimed_output_changed = remove_backups_before_final_checks
+        try:
+            refusal = refuses(
+                m, "output_path_changed", m.write_outputs,
+                [(str(first), "first new"), (str(second), "second new")])
+        finally:
+            m._claimed_output_changed = real_changed
+
+        detail = str(refusal.code)
+        assert fired
+        assert "partially committed output could not be rolled back" in detail
+        assert str(first.resolve()) in detail
+        assert str(second.resolve()) in detail
+        assert ".bak" not in detail
+        assert ".part" not in detail
+        assert first.read_text() == "first new"
+        assert second.read_text() == "second new"
+        assert not list(root.glob("*.bak"))
+        assert not list(root.glob("*.part"))
+
 def test_owner_only_outputs_survive_a_restrictive_umask(m):
     """Use a child process so an extreme umask cannot affect this test process."""
     if os.name != "posix":

@@ -2010,6 +2010,8 @@ def _restore_backup(swap, failures, metadata_scope_warnings, descriptor_failures
     if current_identity != staged_identity:
         failures.append(backup)
         return
+    if swap.get("rollback_unavailable"):
+        return "unrollbackable"
     restored = False
     try:
         _pinned_backup_still_has_one_link(backup_record)
@@ -2021,19 +2023,19 @@ def _restore_backup(swap, failures, metadata_scope_warnings, descriptor_failures
             # destination.
             failures.append(
                 f"unknown hard-link alias may retain rollback bytes: {backup}")
-        else:
-            # A missing or changed pinned backup is not an alias.  Preserve
-            # the original error and disclose only the rollback path whose
-            # identity could no longer support a restore.
-            failures.append(backup)
-        return
+            return None
+        # A missing or changed backup cannot restore a destination that still
+        # names this run's staged inode.  Report that partial result by its
+        # actual destination, never by the vanished private spelling.
+        swap["rollback_unavailable"] = True
+        return "unrollbackable"
     except OSError:
         failures.append(backup)
-        return
+        return None
     try:
         if _entry_identity(backup) != backup_identity:
-            failures.append(backup)
-            return
+            swap["rollback_unavailable"] = True
+            return "unrollbackable"
         # This observes ownership immediately before the replace. POSIX has no
         # compare-and-swap rename, so a hostile concurrent rename after this
         # check is still outside the CLI's locking authority.
@@ -2049,7 +2051,13 @@ def _restore_backup(swap, failures, metadata_scope_warnings, descriptor_failures
                 backup_retained = _entry_identity(backup) == backup_identity
             except OSError:
                 backup_retained = False
-            failures.append(backup if backup_retained else destination)
+            if backup_retained:
+                failures.append(backup)
+            elif current_identity == staged_identity:
+                swap["rollback_unavailable"] = True
+                return "unrollbackable"
+            else:
+                failures.append(destination)
     if restored:
         try:
             restore_handle = _open_regular_output(destination, backup_identity)
@@ -2437,9 +2445,10 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
         # original exception with their recoverable locations.
         if pending_swap is not None:
             backup = pending_swap["backup"]
-            _restore_backup(
-                pending_swap, cleanup_failures, metadata_scope_warnings,
-                descriptor_close_failures)
+            if _restore_backup(
+                    pending_swap, cleanup_failures, metadata_scope_warnings,
+                    descriptor_close_failures) == "unrollbackable":
+                partial_commit_failures.append(str(pending_swap["destination"]))
             _close_owned_path(backup, cleanup_failures,
                               descriptor_failures=descriptor_close_failures)
             if pending_swap["original"] is not None:
@@ -2458,12 +2467,10 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             if swap is pending_swap:
                 continue
             backup = swap["backup"]
-            if swap.get("rollback_unavailable"):
-                partial_commit_failures.append(str(swap["destination"]))
-            else:
-                _restore_backup(
+            if _restore_backup(
                     swap, cleanup_failures, metadata_scope_warnings,
-                    descriptor_close_failures)
+                    descriptor_close_failures) == "unrollbackable":
+                partial_commit_failures.append(str(swap["destination"]))
             _close_owned_path(backup, cleanup_failures,
                               descriptor_failures=descriptor_close_failures)
             _close_owned_path(
@@ -2474,6 +2481,8 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             id(swap["temporary"]) for swap in replaced
             if swap.get("rollback_unavailable")
         }
+        if pending_swap is not None and pending_swap.get("rollback_unavailable"):
+            unrollbackable_temporaries.add(id(pending_swap["temporary"]))
         for record in claimed:
             if id(record) in unrollbackable_temporaries:
                 _close_owned_path(
