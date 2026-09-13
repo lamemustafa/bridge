@@ -5040,5 +5040,110 @@ def test_vanished_staged_output_is_a_typed_refusal(m):
         assert not list(root.glob("*.bak"))
 
 
+def test_windows_modeled_alias_inspection_failure_is_retained_before_close(m):
+    """Windows cleanup cannot erase uncertainty about an uninspectable pin."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        path, alias = root / "fresh.xml", root / "fresh-alias.xml"
+        handle = m._open_private(path)
+        os.write(handle, b"generated statement")
+        record = m._owned_path(path, handle, created=True)
+        os.link(path, alias)
+        real_name, real_fstat = m.os.name, m.os.fstat
+
+        def deny_owned_pin(candidate):
+            if candidate == handle:
+                raise OSError("controlled Windows alias inspection failure")
+            return real_fstat(candidate)
+
+        failures = []
+        m.os.name, m.os.fstat = "nt", deny_owned_pin
+        try:
+            m._cleanup_owned_path(record, failures)
+        finally:
+            m.os.name, m.os.fstat = real_name, real_fstat
+
+        assert not path.exists()
+        assert alias.read_bytes() == b"generated statement"
+        assert failures == [
+            f"could not inspect owned output during cleanup: {path}"]
+
+
+def test_vanished_pending_backup_is_a_typed_refusal(m):
+    """A removed .bak after copy creation must not leak FileNotFoundError."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "previous.xml"
+        destination.write_text("old bytes")
+        real_copy = m._copy_private_backup
+
+        def remove_backup_after_copy(source_path, *args):
+            result = real_copy(source_path, *args)
+            if pathlib.Path(source_path).resolve() == destination.resolve():
+                backup, = root.glob("previous.xml.*.bak")
+                backup.unlink()
+            return result
+
+        m._copy_private_backup = remove_backup_after_copy
+        try:
+            refusal = refuses(m, "output_path_changed", m.write_outputs,
+                              [(str(destination), "new bytes")])
+        finally:
+            m._copy_private_backup = real_copy
+
+        assert "rollback copy changed before replacement" in str(refusal.code)
+        assert destination.read_text() == "old bytes"
+        assert not list(root.glob("*.part"))
+        assert not list(root.glob("*.bak"))
+
+
+def test_moved_backup_with_foreign_destination_is_reported_unlocated(m):
+    """Foreign bytes stay intact while the pinned moved rollback copy is named."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second, foreign, moved = (
+            root / "first.xml", root / "second.xml", root / "foreign.xml", root / "moved.bak")
+        first.write_text("first old")
+        second.write_text("second old")
+        real_replace = m.os.replace
+
+        def replace_first_then_move_backup_and_fail_second(source, destination):
+            source, destination = pathlib.Path(source), pathlib.Path(destination)
+            if source.suffix == ".part" and destination.resolve() == first.resolve():
+                result = real_replace(source, destination)
+                foreign.write_text("foreign writer bytes")
+                real_replace(foreign, first)
+                backup, = root.glob("first.xml.*.bak")
+                backup.rename(moved)
+                return result
+            if source.suffix == ".part" and destination.resolve() == second.resolve():
+                raise OSError("controlled later swap failure")
+            return real_replace(source, destination)
+
+        m.os.replace = replace_first_then_move_backup_and_fail_second
+        try:
+            try:
+                m.write_outputs([(str(first), "first new"), (str(second), "second new")])
+                raise AssertionError("the controlled later swap failure must escape")
+            except OSError as error:
+                detail = str(error) + "\n" + "\n".join(getattr(error, "__notes__", []))
+        finally:
+            m.os.replace = real_replace
+
+        assert "controlled later swap failure" in detail
+        assert "partially committed output could not be rolled back" in detail
+        assert str(first.resolve()) in detail
+        assert "owned rollback copy could not be located after cleanup" in detail
+        assert first.read_text() == "foreign writer bytes"
+        assert second.read_text() == "second old"
+        assert moved.read_text() == "first old"
+        assert not list(root.glob("*.part"))
+        assert not list(root.glob("first.xml.*.bak"))
+
+
 if __name__ == "__main__":
     raise SystemExit(main())

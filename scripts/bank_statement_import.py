@@ -1860,6 +1860,11 @@ def _record_windows_cleanup_alias(record, failures):
     try:
         stat_result = os.fstat(pin)
     except OSError:
+        # Windows must close before it can unlink.  If this pre-close
+        # inspection cannot determine whether a hard-link alias exists, the
+        # later unlink of the known spelling cannot make that uncertainty go
+        # away.
+        _record_uninspectable_cleanup(record["path"], failures)
         return
     if ((stat_result.st_dev, stat_result.st_ino) == record["identity"]
             and stat_result.st_nlink > 1):
@@ -2150,8 +2155,10 @@ def _restore_backup(swap, failures, metadata_scope_warnings, descriptor_failures
         _cleanup_owned_path(backup_record, failures, descriptor_failures=descriptor_failures)
         return
     if current_identity != staged_identity:
-        failures.append(backup)
-        return
+        # Keep the foreign destination untouched, but reconcile the pinned
+        # rollback inode before releasing it.  A moved backup has no longer
+        # been disclosed merely by its stale private spelling.
+        return _mark_rollback_unavailable(swap, failures, retain_named=True)
     if swap.get("rollback_unavailable"):
         return _mark_rollback_unavailable(swap, failures)
     restored = False
@@ -2570,8 +2577,13 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 )
             _require_single_owned_link(
                 temporary, "staged output", "staged_output_has_multiple_links")
-            if _entry_identity(pending_swap["backup"]["path"]) != \
-                    pending_swap["backup"]["identity"]:
+            try:
+                pending_backup_unchanged = (
+                    _entry_identity(pending_swap["backup"]["path"])
+                    == pending_swap["backup"]["identity"])
+            except OSError:
+                pending_backup_unchanged = False
+            if not pending_backup_unchanged:
                 raise Refusal(
                     "output_path_changed",
                     f"{supplied_path} rollback copy changed before replacement",
