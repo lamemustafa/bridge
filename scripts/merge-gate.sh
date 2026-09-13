@@ -527,6 +527,10 @@ body_section_has_content() {
       gsub(/<!--[[:print:][:space:]]*-->/, "", value)
       lower = tolower(value)
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", lower)
+      # A terminal dot or similar punctuation does not make an otherwise empty
+      # template answer substantive (for example, `N/A.` or `TBD.`).
+      gsub(/[,.;:!?]+$/, "", lower)
+      gsub(/[[:space:]]+$/, "", lower)
       if (lower == "") return 0
       # Fence delimiters and thematic breaks are structure, not policy content.
       if (lower ~ /^(```|~~~)/) return 0
@@ -614,7 +618,7 @@ for line in text.splitlines():
         continue
     if not active:
         continue
-    if re.match(r"^\s*```", line):
+    if re.match(r"^\s*(?:```|~~~)", line):
         fenced = not fenced
         continue
     candidates = [(line.strip()[2:] if line.strip().startswith("$ ") else line.strip())] if fenced else re.findall(r"`([^`]+)`", line)
@@ -648,9 +652,8 @@ body_has_p4_answers() {
 
 body_has_platform_evidence() {
   local body="$1" host="$2"
-  # A bare checked template box has no host, command, or rationale.  Require
-  # a filled heading/list field that names the host and either evidence or a
-  # justified unaffected statement.
+  # A named host field must include evidence on that line or in a following
+  # content line. A bare list label is only a template prompt, not evidence.
   python3 -c '
 import re, sys
 host = sys.argv[1].lower()
@@ -658,32 +661,32 @@ placeholders = {
     "", "none", "n/a", "not applicable", "unaffected", "not affected",
     "not impacted", "no impact", "pending", "todo", "tbd",
 }
+marker = r"(validation|evidence|test|check|unaffected|not applicable|not affected|not impact)"
 waiting = False
 for raw in sys.stdin.read().splitlines():
-    lower = re.sub(r"<!--.*?-->", "", raw).strip().lower()
+    lower = re.sub(r"<!--.*?(?:-->|$)", "", raw).strip().lower()
     if not lower:
         continue
-    if re.match(r"^#{1,6}\s+", lower) and host not in lower:
-        waiting = False
-        continue
-    if host in lower and re.search(r"(validation|evidence|test|check|unaffected|not applicable|not affected|not impact)", lower):
-        if ":" not in lower:
-            if not re.match(r"^#{1,6}\s+", lower) and not re.match(r"^[-*]\s*\[[ xX]\]", lower):
-                raise SystemExit(0)
-        else:
-            value = re.sub(r"^#{1,6}\s+", "", lower.split(":", 1)[1].strip())
-            if value not in placeholders:
-                raise SystemExit(0)
-        waiting = True
-        continue
+    is_heading = bool(re.match(r"^#{1,6}\s+", lower))
+    is_field = host in lower and bool(re.search(marker, lower))
     if waiting:
-        if re.match(r"^[-*]\s+", lower) and re.search(r"(validation|evidence|test|check|unaffected|not applicable|not affected|not impact)", lower):
+        # A new evidence field or heading ends the preceding empty field; it
+        # cannot be treated as the earlier host evidence.
+        if is_heading or (re.match(r"^[-*]\s+", lower) and re.search(marker, lower)):
             waiting = False
-            continue
-        if (not re.match(r"^[-*]\s*\[[ xX]\]", lower) and
-                not lower.startswith("<!--") and lower not in placeholders):
+        elif lower not in placeholders and not re.match(r"^[-*]\s*\[[ xX]\]", lower):
             raise SystemExit(0)
-        waiting = False
+        else:
+            waiting = False
+    if not is_field:
+        continue
+    if ":" in lower:
+        value = re.sub(r"^#{1,6}\s+", "", lower.split(":", 1)[1].strip())
+        if value not in placeholders:
+            raise SystemExit(0)
+    # Headings and list labels without an inline answer may be completed by a
+    # following substantive line. All other bare forms follow the same rule.
+    waiting = True
 raise SystemExit(1)
 ' "$host" <<<"$body"
 }
@@ -800,7 +803,7 @@ if [ "$files_status" -eq 0 ]; then
   security_reviewer_change=$(jq '
     (if all(.[]; type == "array") then flatten else . end) |
     any(.[]; [.filename, (.previous_filename? // "")][] |
-      test("(^|[/_.-])(dsc|credential[s]?|certificate[s]?|keystore|secret[s]?)([/_.-]|$)"; "i"))
+      test("(^|[/_.-])(dsc|credential[s]?|certificate[s]?|keystore|secret[s]?)(?=[/_.-]|$|[A-Z])"; "i"))
   ' <<<"$files")
 fi
 validate_security_reviewer() {
@@ -817,9 +820,11 @@ if [ "$security_reviewer_change" = "true" ]; then
         .user.login != $author and (.user.type == "User" or .user.type == "Bot") and
         ((.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") or
          (.user.login == "chatgpt-codex-connector[bot]" and .user.type == "Bot"));
+      def visible_body: .body | gsub("(?s:<!--.*?(?:-->|$))"; "");
       def focused: (.body | type == "string") and
-        (.body | test("(?im)^#{0,6} *security review: *" + $head + " *$")) and
-        (.body | test("(?im)^result: *accepted *$"));
+        (visible_body | test("(?im)^#{0,6} *security review: *" + $head + " *$")) and
+        (visible_body | test("(?im)^result: *accepted *$")) and
+        (visible_body | test("(?im)^#{0,6} *reviewed (dsc|credential|certificate|keystore|secret)"));
       ([($reviews | source_records | records)[] | select(reviewer and focused and .commit_id == $head and
          (.state == "APPROVED" or .state == "COMMENTED"))] +
        [($comments | source_records | records)[] | select(reviewer and focused)]) | length > 0
@@ -1056,8 +1061,9 @@ $added"
   home_path_status=0
   mac_home='/'"Users"'/[A-Za-z0-9._-]+'
   unix_home='/'"home"'/[A-Za-z0-9._-]+'
+  root_home='/'"root"
   windows_home='[A-Za-z]:[\\/]{1,2}'"Users"'[\\/]{1,2}[A-Za-z0-9._-]+'
-  home_path_matches=$(grep -Eio "(^|[^[:alnum:]_])(${mac_home}|${unix_home}|${windows_home})(\$|/|\\\\|[^[:alnum:]_.-])" <<<"$scan_input") || home_path_status=$?
+  home_path_matches=$(grep -Eio "(^|[^[:alnum:]_])(${mac_home}|${unix_home}|${root_home}|${windows_home})(\$|/|\\\\|[^[:alnum:]_.-])" <<<"$scan_input") || home_path_status=$?
   if [ "$home_path_status" -gt 1 ]; then
     unknown "developer-home path scan expression failed"
   elif [ "$home_path_status" -eq 0 ]; then

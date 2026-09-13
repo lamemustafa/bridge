@@ -21,7 +21,7 @@ FAKE_GH = r'''#!/usr/bin/env python3
 import base64, json, os, sys
 args = sys.argv[1:]
 scenario = os.environ.get("GATE_SCENARIO", "pass")
-security_case = scenario.startswith("security-review-")
+security_case = scenario.startswith("security-review-") or scenario in {"security-camel-dsc", "security-camel-credential"}
 sync_case = scenario.startswith("sync-")
 head = "0123456789abcdef0123456789abcdef01234567"
 new_head = "fedcba9876543210fedcba9876543210fedcba98"
@@ -137,6 +137,8 @@ if args[:2] == ["pr", "view"]:
         body = body.replace("`python3 scripts/merge-gate.test.py`", "Tests not run") + "\n## Rollback\n`cargo test`\n"
     if scenario == "validation-node-command":
         body = body.replace("`python3 scripts/merge-gate.test.py`", "`node --test scripts/prune-package-compiler-cache.test.mjs`")
+    if scenario == "validation-tilde-command":
+        body = body.replace("`python3 scripts/merge-gate.test.py`", "~~~bash\npython3 scripts/merge-gate.test.py\n~~~")
     structural_summaries = {
         "empty-fenced-summary": "```\n```",
         "empty-tilde-summary": "~~~\n~~~",
@@ -249,10 +251,14 @@ if args[:2] == ["pr", "view"]:
         )
     if scenario == "workflow-placeholders":
         body += "\n## Rollback notes\n\nN/A\n\n## Migration compatibility\n\nTBD\n"
+    if scenario == "workflow-punctuated-placeholders":
+        body += "\n## Rollback notes\n\nN/A.\n\n## Migration compatibility\n\nTBD.\n"
+    if scenario == "platform-evidence-bare-label":
+        body += "\n- Windows validation evidence\n- macOS validation evidence\n"
     body = body.replace("blob/HEAD", f"blob/{head}")
     if scenario == "checklist-stale-ref":
         body = body.replace(f"blob/{head}", "blob/" + "f" * 40)
-    one_file = scenario in {"metadata-private", "files-empty", "formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-tab", "unicode-phone-two-lines", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "binary-review", "binary-review-private", "binary-review-head-moves", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "workflow-placeholders", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-none", "security-pending", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "home-macos", "home-unix", "home-windows", "crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path", "gitlink", "gitlink-existing", "implementation-p4-missing", "implementation-p4-present", "implementation-p4-continuation", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders", "platform-evidence-missing", "platform-evidence-present", "platform-evidence-heading", "platform-powershell-missing", "platform-powershell-evidence", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"} or scenario.startswith("home-") or security_case or sync_case
+    one_file = scenario in {"metadata-private", "files-empty", "formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-tab", "unicode-phone-two-lines", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "path-id", "binary-delete", "binary-review", "binary-review-private", "binary-review-head-moves", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "workflow-placeholders", "workflow-punctuated-placeholders", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-none", "security-pending", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "home-macos", "home-unix", "home-windows", "crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path", "gitlink", "gitlink-existing", "implementation-p4-missing", "implementation-p4-present", "implementation-p4-continuation", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders", "platform-evidence-missing", "platform-evidence-present", "platform-evidence-heading", "platform-powershell-missing", "platform-powershell-evidence", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale", "platform-evidence-bare-label", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"} or scenario.startswith("home-") or security_case or sync_case
     selected_base = new_head if scenario == "base-oid-mismatch" else base
     emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
@@ -293,7 +299,7 @@ elif args[:2] == ["pr", "diff"]:
     elif scenario == "security-rename-out":
         emit("diff --git a/src-tauri/src/tally/runtime.rs b/src/runtime.rs\nsimilarity index 100%\nrename from src-tauri/src/tally/runtime.rs\nrename to src/runtime.rs\n")
     elif scenario.startswith("home-"):
-        homes = {"home-macos": "/" + "Users" + "/" + "tester" + "/work", "home-unix": "/" + "home" + "/" + "tester" + "/work", "home-windows": "C:" + "\\" + "Users" + "\\" + "tester" + "\\work", "home-macos-root": "/" + "Users" + "/" + "tester", "home-unix-root": "/" + "home" + "/" + "tester", "home-windows-forward": "C:" + "/" + "Users" + "/" + "tester" + "/work", "home-windows-escaped": "C:" + "\\\\" + "Users" + "\\\\" + "tester" + "\\\\work", "home-regex-source": "mac_home=" + "'/'" + '"Users"' + "'/[A-Za-z0-9._-]+'"}
+        homes = {"home-macos": "/" + "Users" + "/" + "tester" + "/work", "home-unix": "/" + "home" + "/" + "tester" + "/work", "home-root": "/" + "root" + "/work/customer.pem", "home-root-home": "/" + "root", "home-windows": "C:" + "\\" + "Users" + "\\" + "tester" + "\\work", "home-macos-root": "/" + "Users" + "/" + "tester", "home-unix-root": "/" + "home" + "/" + "tester", "home-windows-forward": "C:" + "/" + "Users" + "/" + "tester" + "/work", "home-windows-escaped": "C:" + "\\\\" + "Users" + "\\\\" + "tester" + "\\\\work", "home-regex-source": "mac_home=" + "'/'" + '"Users"' + "'/[A-Za-z0-9._-]+'"}
         emit(f"diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+{homes[scenario]}\n")
     elif scenario == "binary-delete":
         emit("diff --git a/docs/old.png b/docs/old.png\nBinary files a/docs/old.png and /dev/null differ\n")
@@ -503,11 +509,14 @@ elif args and args[0] == "api":
             emit([[]])
         else:
             records = [{"user": {"login": "chatgpt-codex-connector[bot]", "type": "Bot"}, "state": "COMMENTED", "commit_id": head}]
-            if security_case and scenario != "security-review-missing":
+            if security_case and scenario not in {"security-review-missing", "security-camel-dsc", "security-camel-credential"}:
                 record = {"user": {"login": "reviewer", "type": "User"}, "author_association": "COLLABORATOR", "state": "COMMENTED", "commit_id": head, "body": f"Security review: {head}\nResult: accepted\nReviewed credential handling and error redaction."}
                 if scenario == "security-review-stale": record["commit_id"] = new_head
                 if scenario == "security-review-author": record["user"]["login"] = "author"
                 if scenario == "security-review-unrelated": record["body"] = "Looks good"
+                if scenario == "security-review-no-scope": record["body"] = f"Security review: {head}\nResult: accepted"
+                if scenario == "security-review-hidden": record["body"] = f"<!--\nSecurity review: {head}\nResult: accepted\nReviewed credential handling and error redaction.\n-->"
+                if scenario == "security-review-hidden-unterminated": record["body"] = f"<!--\nSecurity review: {head}\nResult: accepted\nReviewed credential handling and error redaction."
                 if scenario == "security-review-outsider": record["author_association"] = "NONE"
                 if scenario == "security-review-dismissed": record["state"] = "DISMISSED"
                 records.append(record)
@@ -526,7 +535,10 @@ elif args and args[0] == "api":
             summary = f"codex-pull-request-review-summary\n| 📝 | ✅ **Completed** | `{head[:7]}` |"
             emit([[{"user": {"login": "chatgpt-codex-connector[bot]", "type": "Bot"}, "body": summary}]])
     elif "/pulls/321/files" in joined:
-        if security_case:
+        if scenario in {"security-camel-dsc", "security-camel-credential"}:
+            path = "src/DscScreen.tsx" if scenario == "security-camel-dsc" else "src/CredentialScreen.tsx"
+            emit([[{"filename": path, "status": "modified", "additions": 1, "deletions": 0}]])
+        elif security_case:
             emit([[{"filename": "src-tauri/src/dsc.rs", "status": "modified", "additions": 1, "deletions": 0}]])
         elif sync_case:
             emit([[{"filename": "docs/retired.rs", "previous_filename": "src-tauri/src/sync.rs", "status": "renamed", "additions": 0, "deletions": 0}]])
@@ -534,7 +546,7 @@ elif args and args[0] == "api":
             emit([[]])
         elif scenario in {"formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-tab", "unicode-phone-two-lines", "grouped-identifier-12", "grouped-identifier-16", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized"}:
             emit([[{"filename": "docs/contact.md", "status": "added", "additions": 2 if scenario == "unicode-phone-two-lines" else 1, "deletions": 0}]])
-        elif scenario in {"workflow-notes-missing", "workflow-notes-present", "workflow-placeholders"}:
+        elif scenario in {"workflow-notes-missing", "workflow-notes-present", "workflow-placeholders", "workflow-punctuated-placeholders"}:
             emit([[{"filename": ".github/workflows/ci.yml", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario in {"workflow-delete", "workflow-delete-notes"}:
             emit([[{"filename": ".github/workflows/ci.yml", "status": "removed", "additions": 0, "deletions": 1}]])
@@ -588,7 +600,7 @@ elif args and args[0] == "api":
         elif scenario in {"implementation-p4-missing", "implementation-p4-present", "implementation-p4-continuation", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders"}:
             suffix = {"implementation-p4-shell": "sh", "implementation-p4-powershell": "ps1", "implementation-p4-sql": "sql"}.get(scenario, "py")
             emit([[{"filename": f"scripts/example.{suffix}", "status": "modified", "additions": 1, "deletions": 0}]])
-        elif scenario in {"platform-evidence-missing", "platform-evidence-present", "platform-evidence-heading", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale"}:
+        elif scenario in {"platform-evidence-missing", "platform-evidence-present", "platform-evidence-heading", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-unaffected-bare", "platform-unaffected-rationale", "platform-evidence-bare-label"}:
             emit([[{"filename": "src-tauri/src/local_files/paths.rs", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario in {"platform-powershell-missing", "platform-powershell-evidence"}:
             emit([[{"filename": "scripts/signing.ps1", "status": "modified", "additions": 1, "deletions": 0}]])
@@ -1065,6 +1077,7 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
     def test_workflow_change_requires_rollback_and_migration_notes(self):
         self.assert_blocked("workflow-notes-missing", "workflow change lacks non-empty rollback notes")
         self.assert_blocked("workflow-placeholders", "workflow change lacks non-empty rollback notes")
+        self.assert_blocked("workflow-punctuated-placeholders", "workflow change lacks non-empty rollback notes")
 
     def test_workflow_change_with_required_notes_can_pass(self):
         result = self.run_gate("workflow-notes-present")
@@ -1125,6 +1138,8 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
                 self.assert_blocked(scenario, "actual test or reproduction command")
         result = self.run_gate("validation-node-command")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.run_gate("validation-tilde-command")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_empty_fenced_functional_summary_is_not_content(self):
         for scenario in ("empty-fenced-summary", "empty-tilde-summary", "empty-typed-tilde-summary", "empty-rule-summary", "inline-fence-summary"):
@@ -1153,7 +1168,7 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
         self.assertNotIn("z" * 100, result.stdout)
 
     def test_security_review_is_focused_independent_and_current(self):
-        for scenario in ("security-review-stale", "security-review-author", "security-review-unrelated", "security-review-outsider", "security-review-dismissed"):
+        for scenario in ("security-review-stale", "security-review-author", "security-review-unrelated", "security-review-no-scope", "security-review-hidden", "security-review-hidden-unterminated", "security-review-outsider", "security-review-dismissed", "security-camel-dsc", "security-camel-credential"):
             with self.subTest(scenario=scenario):
                 self.assert_indeterminate(scenario, "security-focused reviewer comment")
         result = self.run_gate("security-review-valid")
@@ -1185,6 +1200,7 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assert_blocked("platform-checkbox-comment", "substantive Windows validation")
         self.assert_blocked("platform-unaffected-bare", "substantive Windows validation")
+        self.assert_blocked("platform-evidence-bare-label", "substantive Windows validation")
         result = self.run_gate("platform-unaffected-rationale")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
@@ -1210,7 +1226,7 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
         self.assert_blocked("migration-template-other-field", "database migration path lacks non-empty rollback notes")
 
     def test_developer_home_path_shapes_are_scanned_without_echoing_values(self):
-        for scenario in ("home-macos", "home-unix", "home-windows", "home-macos-root", "home-unix-root", "home-windows-forward", "home-windows-escaped"):
+        for scenario in ("home-macos", "home-unix", "home-root", "home-root-home", "home-windows", "home-macos-root", "home-unix-root", "home-windows-forward", "home-windows-escaped"):
             with self.subTest(scenario=scenario):
                 result = self.run_gate(scenario)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
