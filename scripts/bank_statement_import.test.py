@@ -31,6 +31,7 @@ error starts firing first, which is exactly how a regression hides.
 import contextlib
 import datetime
 import decimal
+import errno
 import hashlib
 import io
 import importlib.util
@@ -322,7 +323,7 @@ def test_real_hdfc_capture_binds_the_account_no_geometry_only(m):
         (369.261, 149.001, 379.037, 156.201, "No"),
     ]], selected
     account = m.require_account_match(pages, bank, "xx1111111")
-    assert account == "11111111111111"
+    assert account == "1" * 14
 
     # Mutation controls select existing captured header geometry.  They prove
     # that the production Account/No selector excludes phone, customer-id,
@@ -1687,9 +1688,9 @@ def test_line_interrupt_before_clearing_pending_backup_has_one_cleanup_owner(m):
                 raise KeyboardInterrupt("controlled pending-backup interrupt")
             return interrupt_before_clear
 
-        def observe_cleanup(record, failures):
+        def observe_cleanup(record, failures, **kwargs):
             cleanup_paths.append(str(record["path"]))
-            return real_cleanup(record, failures)
+            return real_cleanup(record, failures, **kwargs)
 
         m._cleanup_owned_path = observe_cleanup
         sys.settrace(interrupt_before_clear)
@@ -3154,15 +3155,12 @@ def test_committed_new_output_close_failure_is_not_a_retained_backup(m):
 
         m._owned_path, m.os.close = observe_owned, close_then_error
         try:
-            try:
-                m.write_outputs([(str(destination), "new bytes")])
-                raise AssertionError("the controlled close failure must escape")
-            except m.OutputDescriptorCloseFailure as failure:
-                assert failure.output_paths == (str(destination.resolve()),)
-                assert "prior output retained" not in str(failure)
+            m.write_outputs([(str(destination), "new bytes")])
         finally:
             m._owned_path, m.os.close = real_owned, real_close
 
+        # EBADF from the retained-descriptor probe proves this close took
+        # effect, so it is not a leaked-pin failure.
         assert fired
         assert destination.read_text() == "new bytes"
         assert list(pathlib.Path(directory).iterdir()) == [destination]
@@ -4013,6 +4011,131 @@ def test_committed_existing_output_close_failure_reports_destination(m):
         assert leaked
         assert destination.read_text() == "new bytes"
 
+
+
+def test_committed_original_pin_close_failure_reports_destination(m):
+    """The old inode pin can stay open after its pathname names staged bytes."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "output.xml"
+        destination.write_text("old bytes")
+        real_owned, real_close = m._owned_path, m.os.close
+        original_handles, leaked = set(), []
+
+        def observe_owned(path, handle, *, created, **kwargs):
+            record = real_owned(path, handle, created=created, **kwargs)
+            if not created and pathlib.Path(path).resolve() == destination.resolve():
+                original_handles.add(handle)
+            return record
+
+        def fail_before_close(handle):
+            if handle in original_handles:
+                leaked.append(handle)
+                raise OSError("controlled original-pin close failure")
+            return real_close(handle)
+
+        m._owned_path, m.os.close = observe_owned, fail_before_close
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("the old descriptor leak must be reported")
+            except m.OutputDescriptorCloseFailure as failure:
+                assert failure.output_paths == (str(destination.resolve()),)
+        finally:
+            m._owned_path, m.os.close = real_owned, real_close
+            for handle in leaked:
+                try:
+                    real_close(handle)
+                except OSError:
+                    pass
+
+        assert leaked
+        assert destination.read_text() == "new bytes"
+
+
+def test_committed_close_unknown_descriptor_state_is_not_treated_as_after_effect(m):
+    """Only EBADF proves a failed close already released its descriptor."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "output.xml"
+        destination.write_text("old bytes")
+        real_owned, real_close, real_fstat = m._owned_path, m.os.close, m.os.fstat
+        original_handles, leaked = set(), []
+        close_attempted = set()
+
+        def observe_owned(path, handle, *, created, **kwargs):
+            record = real_owned(path, handle, created=created, **kwargs)
+            if not created and pathlib.Path(path).resolve() == destination.resolve():
+                original_handles.add(handle)
+            return record
+
+        def fail_before_close(handle):
+            if handle in original_handles:
+                close_attempted.add(handle)
+                leaked.append(handle)
+                raise OSError("controlled original-pin close failure")
+            return real_close(handle)
+
+        def unreadable_pin(handle):
+            if handle in close_attempted:
+                raise OSError(errno.EIO, "controlled descriptor inspection failure")
+            return real_fstat(handle)
+
+        m._owned_path, m.os.close, m.os.fstat = observe_owned, fail_before_close, unreadable_pin
+        try:
+            try:
+                m.write_outputs([(str(destination), "new bytes")])
+                raise AssertionError("unknown descriptor state must be reported")
+            except m.OutputDescriptorCloseFailure as failure:
+                assert failure.output_paths == (str(destination.resolve()),)
+        finally:
+            m._owned_path, m.os.close, m.os.fstat = real_owned, real_close, real_fstat
+            for handle in leaked:
+                try:
+                    real_close(handle)
+                except OSError:
+                    pass
+
+        assert destination.read_text() == "new bytes"
+
+
+def test_missing_earlier_backup_reports_the_partial_committed_destination(m):
+    """A vanished first rollback copy leaves its new destination explicit."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        first, second = root / "first.xml", root / "second.xml"
+        first.write_text("first old")
+        second.write_text("second old")
+        real_copy = m._copy_private_backup
+
+        def remove_first_backup_during_second_prepare(source_path, *args):
+            result = real_copy(source_path, *args)
+            if pathlib.Path(source_path).resolve() == second.resolve():
+                first_backup, = root.glob("first.xml.*.bak")
+                first_backup.unlink()
+            return result
+
+        m._copy_private_backup = remove_first_backup_during_second_prepare
+        try:
+            refusal = refuses(
+                m, "output_path_changed", m.write_outputs,
+                [(str(first), "first new"), (str(second), "second new")])
+        finally:
+            m._copy_private_backup = real_copy
+
+        message = str(refusal.code)
+        assert str(first.resolve()) in message
+        assert "partially committed output could not be rolled back" in message
+        assert ".bak" not in message
+        assert ".part" not in message
+        assert first.read_text() == "first new"
+        assert second.read_text() == "second old"
+        assert not list(root.glob("*.bak"))
+        assert not list(root.glob("*.part"))
 
 def test_owner_only_outputs_survive_a_restrictive_umask(m):
     """Use a child process so an extreme umask cannot affect this test process."""

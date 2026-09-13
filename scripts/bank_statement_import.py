@@ -92,6 +92,7 @@ import contextlib
 import csv
 import datetime
 import decimal
+import errno
 import getpass
 import hashlib
 import io
@@ -1744,29 +1745,44 @@ def _claimed_output_changed(supplied_path, canonical_path, identity):
         return True
 
 
-def _close_owned_path(record, failures, diagnostic_path=None):
-    """Release an ownership pin only after its cleanup decision is complete."""
+def _close_owned_path(record, failures, diagnostic_path=None, descriptor_failures=None):
+    """Release an ownership pin without guessing from a stale pathname.
+
+    ``close`` may report an error after releasing a descriptor.  EBADF from a
+    retained-descriptor ``fstat`` is the one supported indication of that
+    after-effect.  Every other failed or mismatched inspection remains a
+    descriptor uncertainty: never retry a close that could target a reused fd.
+    """
     handle = record.get("pin")
     if handle is None:
         return
     record["pin"] = None
     try:
         os.close(handle)
+        return
     except OSError:
-        # close can fail after taking effect. Only an extant owned entry is a
-        # retained-path failure; an already-unlinked backup has no such path.
-        try:
-            cleanup_path = diagnostic_path or record.get("cleanup_path", record["path"])
-            if _entry_identity(cleanup_path) == record["identity"]:
-                failures.append(cleanup_path)
-        except FileNotFoundError:
-            pass
-        except OSError:
-            state = _cleanup_entry_state(cleanup_path, record["identity"])
-            if state in ("owned", "reclaimed"):
-                failures.append(cleanup_path)
-            elif state == "uninspectable":
-                _record_uninspectable_cleanup(cleanup_path, failures)
+        pass
+
+    diagnostic = str(diagnostic_path or record.get(
+        "cleanup_path", record["path"]))
+    destination = descriptor_failures if descriptor_failures is not None else failures
+    try:
+        stat_result = os.fstat(handle)
+    except OSError as error:
+        if error.errno == errno.EBADF:
+            # The close took effect (or the descriptor was independently made
+            # invalid).  Do not retry it: a later fd could be foreign.
+            return
+        destination.append(diagnostic)
+        return
+    if (stat_result.st_dev, stat_result.st_ino) == record["identity"]:
+        # The original descriptor is still open.  Its pathname may already
+        # name a staged replacement, so this is never a retained-path claim.
+        destination.append(diagnostic)
+        return
+    # A mocked or platform-specific close could leave a live but different fd.
+    # It is neither safe to close again nor evidence about a pathname.
+    destination.append(diagnostic)
 
 
 def _reconcile_owned_pin_after_cleanup(record, outcome, failures):
@@ -1792,7 +1808,7 @@ def _reconcile_owned_pin_after_cleanup(record, outcome, failures):
             f"owned output could not be located after cleanup: {record['path']}")
 
 
-def _cleanup_owned_path(record, failures):
+def _cleanup_owned_path(record, failures, descriptor_failures=None):
     """Remove one owned pathname, releasing its pin first on Windows.
 
     POSIX keeps the descriptor open through the identity decision so an inode
@@ -1806,7 +1822,7 @@ def _cleanup_owned_path(record, failures):
         # error after releasing the descriptor, so decide whether its
         # pathname diagnostic remains only after the unlink outcome is known.
         failure_start = len(failures)
-        _close_owned_path(record, failures)
+        _close_owned_path(record, failures, descriptor_failures=descriptor_failures)
         outcome = _unlink_for_cleanup(
             record.get("cleanup_path", record["path"]), record["identity"], failures)
         if outcome == "removed":
@@ -1821,7 +1837,7 @@ def _cleanup_owned_path(record, failures):
             # pathname with the separate pinned-inode conclusion below.
             del failures[failure_start:]
         _reconcile_owned_pin_after_cleanup(record, outcome, failures)
-        _close_owned_path(record, failures)
+        _close_owned_path(record, failures, descriptor_failures=descriptor_failures)
 
 
 def _metadata_from_handle(path, handle):
@@ -1960,7 +1976,7 @@ def _copy_private_backup(source_path, original_identity, backup_handle):
         os.close(source_handle)
 
 
-def _restore_backup(swap, failures, metadata_scope_warnings):
+def _restore_backup(swap, failures, metadata_scope_warnings, descriptor_failures=None):
     """Restore an owned private backup after a caught swap failure.
 
     `os.replace` can report an exception after the filesystem call took effect.
@@ -1989,7 +2005,7 @@ def _restore_backup(swap, failures, metadata_scope_warnings):
                 os.utime(handle, ns=(metadata["atime_ns"], current.st_mtime_ns))
             except OSError:
                 failures.append(destination)
-        _cleanup_owned_path(backup_record, failures)
+        _cleanup_owned_path(backup_record, failures, descriptor_failures=descriptor_failures)
         return
     if current_identity != staged_identity:
         failures.append(backup)
@@ -2089,8 +2105,11 @@ def _cleanup_committed_outputs(replaced, claimed, retained_failures, descriptor_
     """Remove old private copies after every replacement has committed."""
     for swap in replaced:
         backup = swap["backup"]
-        _cleanup_owned_path(backup, retained_failures)
-        _close_owned_path(swap["original"], retained_failures)
+        _cleanup_owned_path(backup, retained_failures, descriptor_failures=descriptor_failures)
+        _close_owned_path(
+            swap["original"], retained_failures,
+            diagnostic_path=swap.get("destination", swap["original"]["path"]),
+            descriptor_failures=descriptor_failures)
     for record in claimed:
         # A claimed path did not exist before this run. Its close failure cannot
         # retain a prior sensitive copy, so keep that diagnostic distinct from
@@ -2119,7 +2138,7 @@ def _reconcile_interrupted_committed_cleanup(
             if still_at_path is True:
                 retained_failures.append(str(backup["path"]))
             elif still_at_path is False:
-                _cleanup_owned_path(backup, retained_failures)
+                _cleanup_owned_path(backup, retained_failures, descriptor_failures=descriptor_failures)
             else:
                 # We cannot identify an entry after an I/O/permission error.
                 # Preserve the original interruption and report no ownership
@@ -2130,8 +2149,12 @@ def _reconcile_interrupted_committed_cleanup(
             retained_failures.append(
                 "could not reconcile committed rollback copy: " + str(backup["path"]))
         finally:
-            _close_owned_path(backup, retained_failures)
-            _close_owned_path(swap["original"], retained_failures)
+            _close_owned_path(backup, retained_failures,
+                              descriptor_failures=descriptor_failures)
+            _close_owned_path(
+                swap["original"], retained_failures,
+                diagnostic_path=swap.get("destination", swap["original"]["path"]),
+                descriptor_failures=descriptor_failures)
     for record in claimed:
         _close_owned_path(
             record, descriptor_failures, diagnostic_path=record.get("canonical_path"))
@@ -2200,6 +2223,7 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
     cleanup_failures = []
     descriptor_close_failures = []
     metadata_scope_warnings = []
+    partial_commit_failures = []
     committed = False
     try:
         for path, _ in targets:
@@ -2288,6 +2312,7 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             pending_swap = {"backup": pending_backup, "destination": real_path,
                             "original_identity": original_identity,
                             "staged_identity": temporary["identity"],
+                            "temporary": temporary,
                             "original": None, "metadata": None,
                             "swap_started": False}
             pending_backup = None
@@ -2363,9 +2388,24 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
         # A commit may retire them only while their ownership remains proved.
         for swap in replaced:
             backup = swap["backup"]
-            if _entry_identity(backup["path"]) != backup["identity"]:
-                raise Refusal("output_path_changed", "rollback copy changed before commit")
-            _pinned_backup_still_has_one_link(backup)
+            try:
+                backup_unchanged = (
+                    _entry_identity(backup["path"]) == backup["identity"])
+            except OSError:
+                backup_unchanged = False
+            if not backup_unchanged:
+                swap["rollback_unavailable"] = True
+                raise Refusal(
+                    "output_path_changed",
+                    f"{swap['destination']} rollback copy changed before commit; "
+                    "this already replaced output could not be rolled back",
+                )
+            try:
+                _pinned_backup_still_has_one_link(backup)
+            except Refusal as refusal:
+                if refusal.category == "output_path_changed":
+                    swap["rollback_unavailable"] = True
+                raise
         # Final path validation is the boundary between rollback and committed
         # cleanup. Keep it in this same handler so an interrupt before cleanup
         # starts cannot skip both recovery paths.
@@ -2397,13 +2437,19 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
         # original exception with their recoverable locations.
         if pending_swap is not None:
             backup = pending_swap["backup"]
-            _restore_backup(pending_swap, cleanup_failures, metadata_scope_warnings)
-            _close_owned_path(backup, cleanup_failures)
+            _restore_backup(
+                pending_swap, cleanup_failures, metadata_scope_warnings,
+                descriptor_close_failures)
+            _close_owned_path(backup, cleanup_failures,
+                              descriptor_failures=descriptor_close_failures)
             if pending_swap["original"] is not None:
-                _close_owned_path(pending_swap["original"], cleanup_failures)
+                _close_owned_path(
+                    pending_swap["original"], cleanup_failures,
+                    diagnostic_path=pending_swap["destination"],
+                    descriptor_failures=descriptor_close_failures)
         if pending_backup is not None and (
                 pending_swap is None or pending_backup is not pending_swap["backup"]):
-            _cleanup_owned_path(pending_backup, cleanup_failures)
+            _cleanup_owned_path(pending_backup, cleanup_failures, descriptor_failures=descriptor_close_failures)
         for swap in reversed(replaced):
             # An interrupt can arrive after `_record_replaced_swap` appends but
             # before its caller clears `pending_swap`. That one backup has
@@ -2412,17 +2458,39 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             if swap is pending_swap:
                 continue
             backup = swap["backup"]
-            _restore_backup(swap, cleanup_failures, metadata_scope_warnings)
-            _close_owned_path(backup, cleanup_failures)
-            _close_owned_path(swap["original"], cleanup_failures)
+            if swap.get("rollback_unavailable"):
+                partial_commit_failures.append(str(swap["destination"]))
+            else:
+                _restore_backup(
+                    swap, cleanup_failures, metadata_scope_warnings,
+                    descriptor_close_failures)
+            _close_owned_path(backup, cleanup_failures,
+                              descriptor_failures=descriptor_close_failures)
+            _close_owned_path(
+                swap["original"], cleanup_failures,
+                diagnostic_path=swap.get("destination", swap["original"]["path"]),
+                descriptor_failures=descriptor_close_failures)
+        unrollbackable_temporaries = {
+            id(swap["temporary"]) for swap in replaced
+            if swap.get("rollback_unavailable")
+        }
         for record in claimed:
-            _cleanup_owned_path(record, cleanup_failures)
+            if id(record) in unrollbackable_temporaries:
+                _close_owned_path(
+                    record, cleanup_failures,
+                    diagnostic_path=record.get("canonical_path"),
+                    descriptor_failures=descriptor_close_failures)
+            else:
+                _cleanup_owned_path(record, cleanup_failures,
+                                    descriptor_failures=descriptor_close_failures)
         # Existing destinations are pinned at first claim, before they enter a
         # swap record. Close any pin whose state never reached the rollback
         # loops above; it is a descriptor-only ownership record and must never
         # be unlinked as if it were a fresh output.
         for state in staged:
-            _close_owned_path(state["original"], cleanup_failures)
+            _close_owned_path(state["original"], cleanup_failures,
+                              diagnostic_path=state["real_path"],
+                              descriptor_failures=descriptor_close_failures)
         # A signal can interrupt after _owned_path registered a backup or
         # original pin but before its caller transferred it to pending_swap or
         # staged.  Reconcile only those unpaired records here; paired records
@@ -2437,11 +2505,20 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             paired_backups.add(id(pending_backup))
         for record in unpaired_backups:
             if id(record) not in paired_backups:
-                _cleanup_owned_path(record, cleanup_failures)
+                _cleanup_owned_path(record, cleanup_failures, descriptor_failures=descriptor_close_failures)
         for record in unpaired_originals:
             if id(record) not in paired_originals:
-                _close_owned_path(record, cleanup_failures)
+                _close_owned_path(record, cleanup_failures,
+                                  descriptor_failures=descriptor_close_failures)
         _note_cleanup_failures(error, cleanup_failures)
+        if partial_commit_failures:
+            _append_cleanup_detail(
+                error, "partially committed output could not be rolled back: "
+                + ", ".join(sorted(set(partial_commit_failures))))
+        if descriptor_close_failures:
+            _append_cleanup_detail(
+                error, "ownership descriptor close failed or could not be verified for: "
+                + ", ".join(sorted(set(descriptor_close_failures))))
         _note_rollback_metadata_scope(error, metadata_scope_warnings)
         raise
 
