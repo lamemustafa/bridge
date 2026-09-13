@@ -2449,6 +2449,42 @@ def test_cleanup_keeps_a_reclaimed_owned_path(m):
         assert failures == [str(owned)]
 
 
+def test_cleanup_reconciles_a_reclaimed_path_after_unlink_error(m):
+    """An unlink error after a move must retain the moved inode diagnostic."""
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        path, moved, foreign = (
+            root / "output.xml.pending", root / "moved.xml.pending", root / "foreign.xml")
+        handle = m._open_private(path)
+        os.write(handle, b"generated statement")
+        record = m._owned_path(path, handle, created=True)
+        record["cleanup_path"] = path
+        foreign.write_text("foreign writer bytes")
+        real_unlink = m.os.unlink
+
+        def move_reclaim_then_fail(candidate):
+            if pathlib.Path(candidate) == path:
+                os.replace(path, moved)
+                os.replace(foreign, path)
+                raise OSError("controlled unlink failure before effect")
+            return real_unlink(candidate)
+
+        m.os.unlink = move_reclaim_then_fail
+        failures = []
+        try:
+            m._cleanup_owned_path(record, failures)
+        finally:
+            m.os.unlink = real_unlink
+
+        assert failures == [
+            f"owned output could not be located after cleanup: {path}"]
+        assert record["pin"] is None
+        assert path.read_text() == "foreign writer bytes"
+        assert moved.read_bytes() == b"generated statement"
+
+
 def test_pinned_backup_reclaimed_path_retains_cleanup_diagnostic(m):
     if os.name == "nt":
         return
@@ -3575,6 +3611,8 @@ def test_rollback_keeps_an_aliased_earlier_backup_after_a_later_swap_failure(m):
                 except OSError as error:
                     notes = str(error) + "\n" + "\n".join(getattr(error, "__notes__", [])) + stderr.getvalue()
                     assert "unknown hard-link alias may retain rollback bytes" in notes
+                    assert "partially committed output could not be rolled back" in notes
+                    assert str(first.resolve()) in notes
         finally:
             m.os.replace = real_replace
 
@@ -3769,6 +3807,29 @@ def test_windows_modeled_close_after_effect_then_unlink_has_no_stale_retention(m
         assert fired
         assert failures == []
         assert not path.exists()
+
+
+def test_windows_modeled_cleanup_reports_an_alias_before_closing_the_pin(m):
+    """The Windows close-before-unlink branch still discloses linked output."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        path, alias = root / "fresh.xml", root / "fresh-alias.xml"
+        handle = m._open_private(path)
+        os.write(handle, b"generated statement")
+        record = m._owned_path(path, handle, created=True)
+        os.link(path, alias)
+        real_name, failures = m.os.name, []
+
+        m.os.name = "nt"
+        try:
+            m._cleanup_owned_path(record, failures)
+        finally:
+            m.os.name = real_name
+
+        assert not path.exists()
+        assert alias.read_bytes() == b"generated statement"
+        assert failures == [
+            f"unknown hard-link alias may retain output bytes: {path}"]
 
 
 def test_rollback_restores_xattrs_before_a_readonly_final_mode(m):
@@ -3982,6 +4043,45 @@ def test_sigint_during_created_factory_return_waits_for_ownership_handoff(m):
         assert list(root.iterdir()) == []
 
 
+def test_factory_sigint_without_pthread_mask_waits_for_ownership_handoff(m):
+    """The signal-handler fallback keeps no-pthread creation recoverable."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "fresh.xml"
+        real_open, real_signal = m._open_private, m.signal
+        old_handler = signal.getsignal(signal.SIGINT)
+        fired = False
+
+        def create_then_interrupt(*args, **kwargs):
+            nonlocal fired
+            handle = real_open(*args, **kwargs)
+            fired = True
+            signal.raise_signal(signal.SIGINT)
+            return handle
+
+        m.signal = types.SimpleNamespace(
+            SIGINT=signal.SIGINT,
+            getsignal=signal.getsignal,
+            signal=signal.signal,
+            raise_signal=signal.raise_signal,
+        )
+        m._open_private = create_then_interrupt
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        try:
+            try:
+                m.write_outputs([(str(destination), "fresh bytes")])
+                raise AssertionError("the controlled interrupt must escape")
+            except KeyboardInterrupt:
+                pass
+        finally:
+            m._open_private, m.signal = real_open, real_signal
+            signal.signal(signal.SIGINT, old_handler)
+
+        assert fired
+        assert not destination.exists()
+        assert list(root.iterdir()) == []
+
+
 def test_initial_existing_path_revalidation_is_a_typed_refusal(m):
     """The first post-pin check cannot leak a raw filesystem exception."""
     with tempfile.TemporaryDirectory() as directory:
@@ -4004,6 +4104,42 @@ def test_initial_existing_path_revalidation_is_a_typed_refusal(m):
             m._open_regular_output = real_open
 
         assert "changed while it was being claimed" in str(refusal.code)
+        assert not destination.exists()
+        assert list(root.iterdir()) == []
+
+
+def test_backup_copy_removal_during_final_source_check_is_a_typed_refusal(m):
+    """A removed source during post-copy validation cannot leak a traceback."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        destination = root / "output.xml"
+        destination.write_text("old bytes")
+        real_copy, real_identity = m._copy_private_backup, m._fd_identity
+
+        def copy_then_remove_at_final_identity(*args):
+            calls = 0
+
+            def remove_on_final_identity(handle):
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    destination.unlink()
+                return real_identity(handle)
+
+            m._fd_identity = remove_on_final_identity
+            try:
+                return real_copy(*args)
+            finally:
+                m._fd_identity = real_identity
+
+        m._copy_private_backup = copy_then_remove_at_final_identity
+        try:
+            refusal = refuses(m, "output_path_changed", m.write_outputs,
+                              [(str(destination), "new bytes")])
+        finally:
+            m._copy_private_backup = real_copy
+
+        assert "changed while its rollback copy was prepared" in str(refusal.code)
         assert not destination.exists()
         assert list(root.iterdir()) == []
 

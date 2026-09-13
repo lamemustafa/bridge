@@ -1596,7 +1596,10 @@ def _unlink_for_cleanup(path, owned_identity, failures):
         state = _cleanup_entry_state(path, owned_identity)
         if state == "missing":
             return "missing"
-        if state in ("owned", "reclaimed"):
+        if state == "reclaimed":
+            failures.append(str(path))
+            return "reclaimed"
+        if state == "owned":
             failures.append(str(path))
         elif state == "uninspectable":
             _record_uninspectable_cleanup(path, failures)
@@ -1634,18 +1637,35 @@ def _open_regular_output(path, expected_identity=None):
 @contextlib.contextmanager
 def _defer_sigint_during_claim():
     """Pair a newly-created inode with its cleanup owner before SIGINT."""
-    if not hasattr(signal, "pthread_sigmask"):
-        yield
-        return
+    if hasattr(signal, "pthread_sigmask"):
+        try:
+            previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
+        except (OSError, ValueError):
+            previous = None
+        if previous is not None:
+            try:
+                yield
+            finally:
+                signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+            return
+    # Windows has no pthread signal mask.  Temporarily retain Ctrl-C as a
+    # pending event, restore the caller's handler after registration, and then
+    # deliver it through that original handler.  A non-main-thread claim cannot
+    # install a signal handler, so its existing exception recovery remains the
+    # authority in that unsupported execution context.
+    pending = []
     try:
-        previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
+        previous = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, lambda _signum, _frame: pending.append(True))
     except (OSError, ValueError):
         yield
         return
     try:
         yield
     finally:
-        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+        signal.signal(signal.SIGINT, previous)
+        if pending:
+            signal.raise_signal(signal.SIGINT)
 
 
 def _owned_path(path, handle, *, created, owned_records=None):
@@ -1829,6 +1849,21 @@ def _reconcile_owned_pin_after_cleanup(record, outcome, failures):
             f"owned output could not be located after cleanup: {record['path']}")
 
 
+def _record_windows_cleanup_alias(record, failures):
+    """Disclose a hard-link alias while Windows still permits pin inspection."""
+    pin = record.get("pin")
+    if pin is None:
+        return
+    try:
+        stat_result = os.fstat(pin)
+    except OSError:
+        return
+    if ((stat_result.st_dev, stat_result.st_ino) == record["identity"]
+            and stat_result.st_nlink > 1):
+        failures.append(
+            f"unknown hard-link alias may retain output bytes: {record['path']}")
+
+
 def _cleanup_owned_path(record, failures, descriptor_failures=None):
     """Remove one owned pathname, releasing its pin first on Windows.
 
@@ -1842,6 +1877,7 @@ def _cleanup_owned_path(record, failures, descriptor_failures=None):
         # Windows requires closing before unlinking.  A close can report an
         # error after releasing the descriptor, so decide whether its
         # pathname diagnostic remains only after the unlink outcome is known.
+        _record_windows_cleanup_alias(record, failures)
         failure_start = len(failures)
         _close_owned_path(record, failures, descriptor_failures=descriptor_failures)
         outcome = _unlink_for_cleanup(
@@ -2057,8 +2093,13 @@ def _copy_private_backup(source_path, original_identity, backup_handle):
         if copied.digest() != verified.digest():
             raise OSError("private backup did not retain the copied bytes")
         backup_digest = verified.digest()
-        if (_fd_identity(source_handle) != original_identity
-                or _file_identity(source_path) != original_identity):
+        try:
+            source_unchanged = (
+                _fd_identity(source_handle) == original_identity
+                and _file_identity(source_path) == original_identity)
+        except (FileNotFoundError, OSError):
+            source_unchanged = False
+        if not source_unchanged:
             raise Refusal(
                 "output_path_changed",
                 f"{source_path} changed while its rollback copy was prepared",
@@ -2113,9 +2154,7 @@ def _restore_backup(swap, failures, metadata_scope_warnings, descriptor_failures
             # named here, but its unknown alias may retain prior statement
             # bytes; moving it back would make that alias a live copy of the
             # destination.
-            failures.append(
-                f"unknown hard-link alias may retain rollback bytes: {backup}")
-            return None
+            return _mark_rollback_unavailable(swap, failures)
         # A missing or changed backup cannot restore a destination that still
         # names this run's staged inode.  Report that partial result by its
         # actual destination, never by the vanished private spelling.
