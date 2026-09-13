@@ -3810,6 +3810,39 @@ def test_windows_modeled_close_after_effect_then_unlink_has_no_stale_retention(m
         assert not path.exists()
 
 
+def test_windows_modeled_reclaimed_backup_name_is_not_retained(m):
+    """A foreign replacement after close is disclosed only as an unlocated copy."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        path, moved, foreign = (
+            root / "rollback.bak", root / "moved.bak", root / "foreign.bak")
+        handle = m._open_private(path)
+        os.write(handle, b"prior statement bytes")
+        record = m._owned_path(path, handle, created=True)
+        real_close, real_name = m.os.close, m.os.name
+
+        def close_then_reclaim(candidate):
+            result = real_close(candidate)
+            if candidate == handle:
+                path.rename(moved)
+                foreign.write_text("foreign backup bytes")
+                os.replace(foreign, path)
+            return result
+
+        failures = []
+        m.os.close, m.os.name = close_then_reclaim, "nt"
+        try:
+            m._cleanup_owned_path(record, failures, suppress_reclaimed_name=True)
+        finally:
+            m.os.close, m.os.name = real_close, real_name
+
+        assert record["pin"] is None
+        assert failures == [
+            f"owned output could not be located after cleanup: {path}"]
+        assert path.read_text() == "foreign backup bytes"
+        assert moved.read_bytes() == b"prior statement bytes"
+
+
 def test_windows_modeled_cleanup_reports_an_alias_before_closing_the_pin(m):
     """The Windows close-before-unlink branch still discloses linked output."""
     with tempfile.TemporaryDirectory() as directory:
