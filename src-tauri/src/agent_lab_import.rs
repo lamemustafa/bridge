@@ -2040,13 +2040,69 @@ fn narration_marker(narration: Option<&str>) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
+/// The narration Tally stored with this module's own `[BRIDGE-LAB:...]`
+/// attribution suffix (added at write time by `narration_with_marker`)
+/// stripped back off -- the counterpart to `narration_marker`, and the
+/// third alternate identity key `voucher_already_verified` checks below.
+///
+/// It exists because every voucher this rehearsal posted **before** the
+/// 2026-09-14 `lab_marker_id` fix carries a marker derived from a fresh
+/// `Uuid::new_v4()` minted at write time, not from `source_guid` -- so for
+/// those vouchers the marker can never be recomputed and compared on a
+/// later resume, and `marker_matches` below is permanently false. The
+/// plain narration text is not in that position: it is not among the
+/// fields `tally-rewrites-what-you-import.md` documents Tally rewriting,
+/// so it survives a write byte-for-byte, and this book's narration values
+/// each carry a UPI/RTGS transaction reference or equivalent, so a
+/// same-day same-type same-content collision on text alone is a materially
+/// smaller risk than the bare `(type, date, amount)` tuple the comment on
+/// `voucher_already_verified` originally warned about (no narration at
+/// all).
+fn narration_text(narration: Option<&str>) -> Option<String> {
+    let text = narration?;
+    let body = match text.rfind("[BRIDGE-LAB:") {
+        Some(idx) => &text[..idx],
+        None => text,
+    };
+    let trimmed = body.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+/// Deterministic per-voucher identity marker, embedded into every write's
+/// narration via `narration_with_marker` and recomputed here on any later
+/// precheck or readback -- **not** a fresh random id per write attempt
+/// (the pre-2026-09-14 behaviour: `Uuid::new_v4()` per batch, discarded
+/// once the call returns, so it could never be reconstructed and left this
+/// marker path permanently dead in practice). Derived from `source_guid`
+/// alone so a resume, run from any process at any later time, recomputes
+/// the exact same marker Tally is holding.
+fn lab_marker_id(source_guid: &str) -> Uuid {
+    Uuid::new_v5(&Uuid::NAMESPACE_OID, source_guid.as_bytes())
+}
+
 /// A voucher counts as already-posted-and-verified for a resume pre-check
-/// only on (type, date, total-debit-amount, narration marker OR voucher
-/// number) -- content alone (date/ledger/amount) is not an attribution key,
-/// per §9.3: a book with a recurring same-day payment can already contain a
-/// voucher with that tuple. Matching on the marker this module stamps into
-/// every write closes that hole the same way the production path's
-/// narration tag does.
+/// on (type, date, ledger lines) plus at least one of three alternate
+/// identity keys: the book's own `voucher_number`, this module's
+/// deterministic narration marker, or the plain narration text (see
+/// `narration_text` for why a third key is needed).
+///
+/// `voucher_number` alone is not durable: TallyPrime silently reassigns it
+/// to its own per-voucher-type sequential series on Create, in **receipt**
+/// order, not the value supplied
+/// (`brain/10-domains/11-tally/tally-rewrites-what-you-import.md` #6,
+/// reproduced on both Education and licensed builds). The 2026-09-14
+/// rehearsal hit exactly this: batch 1 posted two same-date groups
+/// (Payment 20250518 #98-106, Contra 20250609 #9-11) whose supplied
+/// numbers were NOT in ascending numeric order in the request (a separate,
+/// now-fixed bug -- the batch sort compared `voucher_number` as a string,
+/// so "100" sorted before "98"), so Tally's receipt-order renumbering
+/// landed on different values than the book's own numbers for 11 of the
+/// 100 vouchers, even though every field Tally stores was otherwise
+/// correct. Content alone (date/ledger/amount) is still not sufficient on
+/// its own, per §9.3: a book can hold a recurring same-day payment with an
+/// identical `(type, date, amount)` tuple and no narration to disambiguate
+/// it -- so at least one of the three identity keys above is always
+/// required before the ledger-line comparison runs.
 fn voucher_already_verified(expected: &BookVoucher, observed: &[ObservedVoucher]) -> bool {
     // Compare in Tally's own wire form: `normalized_date` accepts the book
     // model's date (which may or may not already be YYYYMMDD) and the
@@ -2054,6 +2110,8 @@ fn voucher_already_verified(expected: &BookVoucher, observed: &[ObservedVoucher]
     // the *signed* wire amount (§9.13's Dr-negative convention), since
     // book.json stores an unsigned magnitude plus a side.
     let expected_date = normalized_date(&expected.date).unwrap_or_else(|_| expected.date.clone());
+    let expected_marker = lab_marker_id(&expected.source_guid).to_string();
+    let expected_narration_text = narration_text(expected.narration.as_deref());
     observed.iter().any(|row| {
         if row.is_cancelled {
             return false;
@@ -2066,10 +2124,11 @@ fn voucher_already_verified(expected: &BookVoucher, observed: &[ObservedVoucher]
         }
         let number_matches =
             expected.voucher_number.is_some() && row.voucher_number == expected.voucher_number;
-        let marker_matches = narration_marker(row.narration.as_deref()).is_some()
-            && narration_marker(row.narration.as_deref())
-                == narration_marker(expected.narration.as_deref());
-        if !number_matches && !marker_matches {
+        let marker_matches =
+            narration_marker(row.narration.as_deref()).as_deref() == Some(expected_marker.as_str());
+        let narration_matches = expected_narration_text.is_some()
+            && narration_text(row.narration.as_deref()) == expected_narration_text;
+        if !number_matches && !marker_matches && !narration_matches {
             return false;
         }
         expected.ledger_lines.iter().all(|line| {
@@ -2083,6 +2142,134 @@ fn voucher_already_verified(expected: &BookVoucher, observed: &[ObservedVoucher]
     })
 }
 
+/// Per-voucher mismatch detail for an unverified book voucher: which
+/// observed voucher (if any) is the closest candidate, and exactly which
+/// fields differ from what the book expects. Used by `lab_import_vouchers`
+/// to report actionable detail instead of only a batch-level count, per
+/// the 2026-09-14 rehearsal stop (`readback_mismatch`, no field-level
+/// detail available at all).
+fn voucher_mismatch_detail(expected: &BookVoucher, observed: &[ObservedVoucher]) -> Value {
+    let expected_date = normalized_date(&expected.date).unwrap_or_else(|_| expected.date.clone());
+    let expected_marker = lab_marker_id(&expected.source_guid).to_string();
+    let expected_narration_text = narration_text(expected.narration.as_deref());
+    let expected_number = expected.voucher_number.as_deref().unwrap_or("(none)");
+
+    // The population this voucher could be hiding inside under a
+    // Tally-reassigned VOUCHERNUMBER: same voucher type, same date.
+    let candidates: Vec<&ObservedVoucher> = observed
+        .iter()
+        .filter(|row| {
+            !row.is_cancelled
+                && row.voucher_type.as_deref() == Some(expected.voucher_type.as_str())
+                && row.date == expected_date
+        })
+        .collect();
+
+    if candidates.is_empty() {
+        return json!({
+            "source_guid": expected.source_guid,
+            "field": "presence",
+            "expected": format!("{} #{} on {}", expected.voucher_type, expected_number, expected_date),
+            "observed": "no voucher of this type was found on this date on readback",
+        });
+    }
+
+    // Best candidate: prefer an exact narration-text match (the field this
+    // codebase's own findings say survives every Tally rewrite), then the
+    // one whose ledger lines overlap the book's the most.
+    let best = *candidates
+        .iter()
+        .max_by_key(|row| {
+            let narration_hit = expected_narration_text.is_some()
+                && narration_text(row.narration.as_deref()) == expected_narration_text;
+            let ledger_hits = expected
+                .ledger_lines
+                .iter()
+                .filter(|line| {
+                    let expected_signed = signed_wire_amount(&line.side, &line.amount);
+                    row.ledger_entries.iter().any(|(ledger, is_dr, amount)| {
+                        ledger == &line.ledger
+                            && ((line.side == "Dr") == (is_dr == "Yes"))
+                            && amounts_equal(amount, &expected_signed)
+                    })
+                })
+                .count();
+            (narration_hit, ledger_hits)
+        })
+        .expect("candidates is non-empty, checked above");
+
+    let mut fields = Vec::new();
+    let observed_number = best.voucher_number.as_deref().unwrap_or("(none)");
+    if expected_number != observed_number {
+        fields.push(json!({
+            "field": "voucher_number",
+            "expected": expected_number,
+            "observed": observed_number,
+        }));
+    }
+    let observed_marker = narration_marker(best.narration.as_deref());
+    if observed_marker.as_deref() != Some(expected_marker.as_str()) {
+        fields.push(json!({
+            "field": "narration_marker",
+            "expected": expected_marker,
+            "observed": observed_marker.unwrap_or_else(|| "(none)".to_string()),
+        }));
+    }
+    let observed_narration_text = narration_text(best.narration.as_deref());
+    if observed_narration_text != expected_narration_text {
+        fields.push(json!({
+            "field": "narration_text",
+            "expected": expected_narration_text.clone().unwrap_or_default(),
+            "observed": observed_narration_text.unwrap_or_default(),
+        }));
+    }
+    for line in &expected.ledger_lines {
+        let expected_signed = signed_wire_amount(&line.side, &line.amount);
+        let found = best.ledger_entries.iter().any(|(ledger, is_dr, amount)| {
+            ledger == &line.ledger
+                && ((line.side == "Dr") == (is_dr == "Yes"))
+                && amounts_equal(amount, &expected_signed)
+        });
+        if !found {
+            fields.push(json!({
+                "field": format!("ledger_line[{}]", line.ledger),
+                "expected": format!("{} {}", line.side, line.amount),
+                "observed": best
+                    .ledger_entries
+                    .iter()
+                    .map(|(l, dr, a)| format!("{l} {dr} {a}"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            }));
+        }
+    }
+
+    json!({
+        "source_guid": expected.source_guid,
+        "candidate_observed_voucher_number": best.voucher_number,
+        "field_mismatches": fields,
+    })
+}
+
+/// Sort key placing vouchers into date-ordered batches, `voucher_number`
+/// compared **numerically** when it parses as an integer. The original code
+/// compared `voucher_number` as a plain `&str`, so for one date "100"
+/// sorted before "98" -- a batch is posted to Tally in THIS order, and
+/// TallyPrime auto-numbers Payment/Receipt/Contra by receipt order rather
+/// than by the supplied `VOUCHERNUMBER`
+/// (`tally-rewrites-what-you-import.md` #6), so a scrambled posting order
+/// produces Tally-assigned numbers that no longer line up with the book's
+/// own numbers. This is what actually produced the 2026-09-14 rehearsal's
+/// 11 batch-1 mismatches: two same-date groups (Payment 20250518 #98-106,
+/// Contra 20250609 #9-11) whose numbers cross a power-of-10 boundary were
+/// sent out of numeric order. A non-numeric or missing `voucher_number`
+/// falls back to a string compare against its own kind so it still sorts
+/// deterministically, just not interleaved with numeric ones by value.
+fn voucher_sort_key(voucher: &BookVoucher) -> (&str, Option<i64>, &str) {
+    let raw = voucher.voucher_number.as_deref().unwrap_or("");
+    (voucher.date.as_str(), raw.parse::<i64>().ok(), raw)
+}
+
 // ---------------------------------------------------------------------------
 // lab_import_vouchers
 // ---------------------------------------------------------------------------
@@ -2092,10 +2279,7 @@ pub(in crate::agent) async fn lab_import_vouchers(
     args: &Value,
 ) -> Result<ToolOutcome, ToolFailure> {
     let mut vouchers: Vec<BookVoucher> = parse_book_value(args, "vouchers", "vouchers")?;
-    vouchers.sort_by(|a, b| {
-        (a.date.as_str(), a.voucher_number.as_deref().unwrap_or(""))
-            .cmp(&(b.date.as_str(), b.voucher_number.as_deref().unwrap_or("")))
-    });
+    vouchers.sort_by(|a, b| voucher_sort_key(a).cmp(&voucher_sort_key(b)));
     let guid = required_string(args, "company_guid")?;
     let start_batch = arg_usize(args, "start_batch", 0)?;
 
@@ -2151,9 +2335,15 @@ pub(in crate::agent) async fn lab_import_vouchers(
             // Partial match on an uncertain prior attempt: stop rather than
             // guess which subset is safe to resend. Returned immediately
             // below, so this batch never reaches `stopped_at`'s summary use.
+            let mismatch_details: Vec<Value> = batch
+                .iter()
+                .filter(|v| !voucher_already_verified(v, &observed))
+                .map(|v| voucher_mismatch_detail(v, &observed))
+                .collect();
             batch_reports.push(json!({
                 "batch": batch_index, "count": batch.len(), "state": "partially_verified_uncertain",
                 "verified": verified_count, "posted": false,
+                "mismatch_details": mismatch_details,
             }));
             return Err(
                 ToolFailure::from("lab_batch_partially_verified_uncertain".to_string())
@@ -2161,7 +2351,13 @@ pub(in crate::agent) async fn lab_import_vouchers(
             );
         }
 
-        let attribution_ids: Vec<Uuid> = batch.iter().map(|_| Uuid::new_v4()).collect();
+        // Deterministic, not `Uuid::new_v4()`: the marker embedded here must
+        // be reconstructible from `source_guid` alone on a later precheck or
+        // readback (this run's or a resumed one's) -- see `lab_marker_id`.
+        let attribution_ids: Vec<Uuid> = batch
+            .iter()
+            .map(|v| lab_marker_id(&v.source_guid))
+            .collect();
         let xml = render_voucher_batch_xml(identity.display_name(), batch, &attribution_ids)
             .map_err(ToolFailure::from)?;
         let (response, post_evidence) =
@@ -2208,6 +2404,15 @@ pub(in crate::agent) async fn lab_import_vouchers(
             .filter(|v| voucher_already_verified(v, &readback))
             .count();
         let batch_ok = clean && posted_count == batch.len();
+        let mismatch_details: Vec<Value> = if batch_ok {
+            Vec::new()
+        } else {
+            batch
+                .iter()
+                .filter(|v| !voucher_already_verified(v, &readback))
+                .map(|v| voucher_mismatch_detail(v, &readback))
+                .collect()
+        };
 
         batch_reports.push(json!({
             "batch": batch_index,
@@ -2217,6 +2422,7 @@ pub(in crate::agent) async fn lab_import_vouchers(
             "state": if batch_ok { "posted_verified" } else { "readback_mismatch" },
             "posted": true,
             "source_guids": source_guids,
+            "mismatch_details": mismatch_details,
         }));
         if !batch_ok {
             stopped_at = Some(batch_index);
