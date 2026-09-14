@@ -949,6 +949,35 @@ fn a_requested_group_named_as_the_reserved_root_marker_is_recognised_as_such() {
 }
 
 #[test]
+fn is_reserved_root_any_spelling_recognises_every_observed_form() {
+    // Live, second 2026-09-14 rehearsal: the target's `Profit & Loss A/c`
+    // read back with PARENT as the raw control character (this module's own
+    // decoded_agent_reference-based parsers produce this since the
+    // entity-decoding fix), while book.json separately carries the
+    // sanitized placeholder -- three spellings, one marker.
+    assert!(is_reserved_root_any_spelling("\u{4} Primary")); // raw control character
+    assert!(is_reserved_root_any_spelling("\u{fffd}#4; Primary")); // sanitized placeholder
+    assert!(is_reserved_root_any_spelling("&#4; Primary")); // undecoded XML numeric reference
+    assert!(is_reserved_root_any_spelling("Primary")); // bare word (report rendering)
+    assert!(!is_reserved_root_any_spelling("Sundry Debtors"));
+    assert!(!is_reserved_root_any_spelling(""));
+}
+
+#[test]
+fn is_reserved_root_any_spelling_agrees_with_the_shared_function_where_it_recognises_anything() {
+    // Deliberately wider, never narrower: everything the shared
+    // `bridge_tally_protocol::is_tally_reserved_root` recognises, this does
+    // too.
+    for value in ["\u{fffd}#4; Primary", "Primary", "primary", "  Primary  "] {
+        assert_eq!(
+            is_reserved_root_any_spelling(value),
+            is_tally_reserved_root(value),
+            "{value:?}"
+        );
+    }
+}
+
+#[test]
 fn is_default_group_reads_reserved_name_not_the_group_name() {
     assert!(is_default_group(&row(&[
         ("NAME", "Sundry Debtors"),
@@ -967,7 +996,11 @@ fn is_default_group_reads_reserved_name_not_the_group_name() {
 fn ledger_alter_fields_is_empty_when_the_default_already_matches_the_book() {
     // "default skip": no diff, no Alter is offered.
     let l = default_cash_ledger("0.00");
-    let observed = row(&[("PARENT", "Cash-in-Hand"), ("OPENINGBALANCE", "0.00")]);
+    let observed = row(&[
+        ("PARENT", "Cash-in-Hand"),
+        ("OPENINGBALANCE", "0.00"),
+        ("ISBILLWISEON", "No"),
+    ]);
     assert!(ledger_alter_fields(&l, &observed).is_empty());
 }
 
@@ -976,25 +1009,67 @@ fn ledger_alter_fields_offers_only_the_changed_opening_balance() {
     // "default opening alter": book differs from target -> a partial Alter
     // carrying only OPENINGBALANCE, never a Create (which would overwrite).
     let l = default_cash_ledger("5000.00");
-    let observed = row(&[("PARENT", "Cash-in-Hand"), ("OPENINGBALANCE", "0.00")]);
+    let observed = row(&[
+        ("PARENT", "Cash-in-Hand"),
+        ("OPENINGBALANCE", "0.00"),
+        ("ISBILLWISEON", "No"),
+    ]);
     let fields = ledger_alter_fields(&l, &observed);
     assert_eq!(fields, vec![("OPENINGBALANCE", "5000.00".to_string())]);
 }
 
 #[test]
-fn ledger_alter_fields_never_offers_a_gst_field_alter_9_4d() {
-    // §8.3: GST fields are settable at Create but silently dropped at Alter
-    // -- never offered here even when they differ from the target.
+fn ledger_alter_fields_never_offers_gst_duty_head_9_4d() {
+    // §8.3: GSTDUTYHEAD specifically is settable at Create but silently NOT
+    // updated at Alter ("Measured both ways... the field stays empty") --
+    // never offered here even when it differs from the target. TAXTYPE has
+    // no equivalent citation and IS offered (see the function's doc
+    // comment); the mandatory post-Alter read-back is what actually proves
+    // whether it landed.
     let mut l = default_cash_ledger("0.00");
+    l.parent = Some("Duties & Taxes".into()); // so the TAXTYPE gate admits it
     l.tax_type = Some("GST".into());
     l.gst_duty_head = Some("State Tax".into());
     let observed = row(&[
-        ("PARENT", "Cash-in-Hand"),
+        ("PARENT", "Duties & Taxes"),
         ("OPENINGBALANCE", "0.00"),
+        ("ISBILLWISEON", "No"),
         ("TAXTYPE", "Others"),
         ("GSTDUTYHEAD", "CGST"),
     ]);
-    assert!(ledger_alter_fields(&l, &observed).is_empty());
+    let fields = ledger_alter_fields(&l, &observed);
+    assert!(
+        fields
+            .iter()
+            .any(|(tag, value)| *tag == "TAXTYPE" && value == "GST"),
+        "TAXTYPE should be offered: {fields:?}"
+    );
+    assert!(
+        !fields.iter().any(|(tag, _)| *tag == "GSTDUTYHEAD"),
+        "GSTDUTYHEAD must never be offered: {fields:?}"
+    );
+}
+
+#[test]
+fn ledger_alter_fields_offers_billwise_and_party_gstin_when_they_differ() {
+    // Widened 2026-09-14 (coordinator instruction, second live rehearsal):
+    // no citation establishes ISBILLWISEON or PARTYGSTIN as Alter-inert, so
+    // an earlier, narrower version of this function excluding them anyway
+    // was an unwarranted generalisation from the one measured field
+    // (GSTDUTYHEAD). Both are offered here; the mandatory read-back proves
+    // whether Tally actually applied them.
+    let mut l = default_cash_ledger("0.00");
+    l.is_billwise_on = Some(true);
+    l.party_gstin = Some("27ZZZZZ0000Z1Z5".into());
+    let observed = row(&[
+        ("PARENT", "Cash-in-Hand"),
+        ("OPENINGBALANCE", "0.00"),
+        ("ISBILLWISEON", "No"),
+        ("PARTYGSTIN", ""),
+    ]);
+    let fields = ledger_alter_fields(&l, &observed);
+    assert!(fields.contains(&("ISBILLWISEON", "Yes".to_string())));
+    assert!(fields.contains(&("PARTYGSTIN", "27ZZZZZ0000Z1Z5".to_string())));
 }
 
 #[test]
@@ -1193,6 +1268,77 @@ fn already_present_verified_classification_end_to_end() {
     .is_empty());
 }
 
+// ---------------------------------------------------------------------------
+// Ledger reconcile via partial Alter (coordinator instruction, 2026-09-14,
+// second live rehearsal): a pre-existing ledger whose PARENT matches the
+// book but some other writable field does not is reconciled, not refused;
+// a PARENT (or otherwise unreconcilable) difference still refuses.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ledger_parent_mismatch_is_none_when_the_book_specifies_no_parent() {
+    // Nothing to compare, so nothing to refuse on.
+    let l = BookLedger {
+        parent: None,
+        ..matching_book_ledger()
+    };
+    let row = row(&[("PARENT", "Anything At All")]);
+    assert!(ledger_parent_mismatch(&l, &row).is_none());
+}
+
+#[test]
+fn ledger_parent_mismatch_is_none_when_parents_match_under_the_9_4d_fold() {
+    let l = matching_book_ledger();
+    let row = row(&[("PARENT", "indirect-expenses")]); // hyphen/case fold
+    assert!(ledger_parent_mismatch(&l, &row).is_none());
+}
+
+#[test]
+fn ledger_parent_mismatch_flags_a_real_difference() {
+    let l = matching_book_ledger();
+    let row = row(&[("PARENT", "Direct Expenses")]);
+    let mismatch = ledger_parent_mismatch(&l, &row);
+    assert!(mismatch.is_some());
+    assert!(mismatch.unwrap().contains("parent"));
+}
+
+#[test]
+fn ordinary_ledger_reconcile_classification_end_to_end() {
+    // Mirrors `lab_import_masters`'s precheck loop for the new reconcile
+    // path: parent matches -> reconcile candidate with exactly the
+    // differing writable field(s); parent differs -> still a collision,
+    // never offered for Alter regardless of how many other fields match.
+    let masters = BookMasters {
+        ledgers: vec![matching_book_ledger()], // "Bank Charges", Indirect Expenses, No, 0.00
+        ..Default::default()
+    };
+    let book_ledger = &masters.ledgers[0];
+
+    // Parent matches, ISBILLWISEON differs -- a real live scenario: 17
+    // ledgers CREATED bill-wise No, book now says two of them should be Yes.
+    let billwise_only_diff = row(&[
+        ("PARENT", "Indirect Expenses"),
+        ("ISBILLWISEON", "Yes"),
+        ("OPENINGBALANCE", "0.00"),
+    ]);
+    assert!(ledger_parent_mismatch(book_ledger, &billwise_only_diff).is_none());
+    let fields = ledger_alter_fields(book_ledger, &billwise_only_diff);
+    assert_eq!(fields, vec![("ISBILLWISEON", "No".to_string())]);
+
+    // Parent differs -- still refuse, even though ISBILLWISEON also
+    // happens to differ (never offered as a partial Alter for a ledger
+    // whose group changed).
+    let parent_and_billwise_diff = row(&[
+        ("PARENT", "Direct Expenses"),
+        ("ISBILLWISEON", "Yes"),
+        ("OPENINGBALANCE", "0.00"),
+    ]);
+    assert!(ledger_parent_mismatch(book_ledger, &parent_and_billwise_diff).is_some());
+    // (the precheck loop never calls `ledger_alter_fields` once
+    // `ledger_parent_mismatch` is `Some` -- this is the gate that decides
+    // reconcile vs. refuse, exercised directly here.)
+}
+
 #[test]
 fn default_ledger_and_default_group_precheck_classification_end_to_end() {
     // A compact end-to-end check of the precheck classification a real
@@ -1204,11 +1350,13 @@ fn default_ledger_and_default_group_precheck_classification_end_to_end() {
             ("NAME", "Cash"),
             ("PARENT", "Cash-in-Hand"),
             ("OPENINGBALANCE", "0.00"),
+            ("ISBILLWISEON", "No"),
         ]),
         row(&[
             ("NAME", "Profit & Loss A/c"),
             ("PARENT", "\u{fffd}#4; Primary"),
             ("OPENINGBALANCE", "0.00"),
+            ("ISBILLWISEON", "No"),
         ]),
     ];
     let mut collisions = Vec::new();
