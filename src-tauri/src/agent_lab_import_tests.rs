@@ -726,6 +726,36 @@ fn a_non_voucher_child_of_collection_is_refused() {
     );
 }
 
+#[test]
+fn voucher_readback_decodes_entities_in_party_ledger_and_narration() {
+    // 2026-09-14 coordinator finding: quick_xml delivers `&amp;` as its own
+    // `GeneralRef` event, separate from the surrounding `Text` events. Before
+    // this fix that reference was silently dropped, so "Akash Acid & Sons"
+    // read back as "Akash Acid  Sons" (two spaces, the entity gone) --
+    // producing a false parent/party mismatch on a target Tally itself
+    // reports correctly.
+    let xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+<VOUCHER><DATE>20260405</DATE><VOUCHERNUMBER>60</VOUCHERNUMBER><VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>\
+<PARTYLEDGERNAME>Akash Acid &amp; Sons</PARTYLEDGERNAME><GUID>g-2</GUID><ISCANCELLED>No</ISCANCELLED>\
+<NARRATION>Invoice for R &amp; D chemicals [BRIDGE-LAB:abc]</NARRATION>\
+<ALLLEDGERENTRIES.LIST><LEDGERNAME>Duties &amp; Taxes</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>900.00</AMOUNT></ALLLEDGERENTRIES.LIST>\
+<ALLLEDGERENTRIES.LIST><LEDGERNAME>Akash Acid &amp; Sons</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-900.00</AMOUNT></ALLLEDGERENTRIES.LIST>\
+</VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
+    let rows = parse_voucher_readback_nested(xml).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].narration.as_deref(),
+        Some("Invoice for R & D chemicals [BRIDGE-LAB:abc]")
+    );
+    assert_eq!(rows[0].ledger_entries[0].0, "Duties & Taxes");
+    assert_eq!(rows[0].ledger_entries[1].0, "Akash Acid & Sons");
+    // Never the entity literal, and never dropped to a bare double space.
+    for entry in &rows[0].ledger_entries {
+        assert!(!entry.0.contains("&amp;"));
+        assert!(!entry.0.contains("  "));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // parse_book_value: inline vs book_path
 // ---------------------------------------------------------------------------
@@ -978,6 +1008,189 @@ fn render_ledger_alter_xml_carries_only_the_given_fields() {
     // Never a Create, and never a field beyond what was asked for.
     assert!(!xml.contains("ACTION=\"Create\""));
     assert!(!xml.contains("PARENT"));
+}
+
+// ---------------------------------------------------------------------------
+// Idempotent-resume precheck (coordinator instruction, 2026-09-14): the live
+// rehearsal's ledgers were genuinely CREATED. Re-running `lab_import_masters`
+// against the same book must not refuse them as collisions -- it must
+// recognise them as already present and verified, and let the run proceed.
+// ---------------------------------------------------------------------------
+
+fn matching_book_ledger() -> BookLedger {
+    BookLedger {
+        name: "Bank Charges".into(),
+        parent: Some("Indirect Expenses".into()),
+        opening_balance: Some("0.00".into()),
+        is_billwise_on: Some(false),
+        party_gstin: None,
+        tax_type: None,
+        gst_duty_head: None,
+        opening_bill_allocations: vec![],
+    }
+}
+
+#[test]
+fn already_present_verified_mismatches_is_empty_when_the_target_matches_the_book() {
+    let l = matching_book_ledger();
+    // Exactly what render_ledger_xml would have sent for this ledger, as
+    // Tally would read it back: ISBILLWISEON explicit, no OPENINGBALANCE row
+    // (zero), no TAXTYPE (Tally's own inert default aside).
+    let observed = row(&[
+        ("PARENT", "Indirect Expenses"),
+        ("ISBILLWISEON", "No"),
+        ("OPENINGBALANCE", "0.00"),
+        ("TAXTYPE", "Others"),
+    ]);
+    assert!(ledger_already_present_mismatches(&l, &observed).is_empty());
+    let masters = BookMasters {
+        ledgers: vec![l],
+        ..Default::default()
+    };
+    assert!(already_present_verified_mismatches(
+        MasterKind::Ledger,
+        &masters,
+        "Bank Charges",
+        &observed
+    )
+    .is_empty());
+}
+
+#[test]
+fn already_present_verified_mismatches_flags_a_bill_wise_flag_difference() {
+    let mut l = matching_book_ledger();
+    l.is_billwise_on = Some(true);
+    let observed = row(&[
+        ("PARENT", "Indirect Expenses"),
+        ("ISBILLWISEON", "No"),
+        ("OPENINGBALANCE", "0.00"),
+    ]);
+    let mismatches = ledger_already_present_mismatches(&l, &observed);
+    assert!(
+        mismatches.iter().any(|m| m.contains("is_billwise_on")),
+        "expected a bill-wise mismatch, got {mismatches:?}"
+    );
+}
+
+#[test]
+fn already_present_verified_mismatches_flags_a_wrong_opening_balance() {
+    let l = matching_book_ledger();
+    let observed = row(&[
+        ("PARENT", "Indirect Expenses"),
+        ("ISBILLWISEON", "No"),
+        ("OPENINGBALANCE", "500.00"),
+    ]);
+    let mismatches = ledger_already_present_mismatches(&l, &observed);
+    assert!(
+        mismatches.iter().any(|m| m.contains("opening_balance")),
+        "expected an opening_balance mismatch, got {mismatches:?}"
+    );
+}
+
+#[test]
+fn already_present_verified_mismatches_flags_a_real_gst_duty_type_difference() {
+    let mut l = matching_book_ledger();
+    l.parent = Some("Duties & Taxes".into());
+    l.tax_type = Some("GST".into());
+    let observed = row(&[
+        ("PARENT", "Duties & Taxes"),
+        ("ISBILLWISEON", "No"),
+        ("OPENINGBALANCE", "0.00"),
+        ("TAXTYPE", "VAT"), // wrong -- the target carries a different value
+    ]);
+    let mismatches = ledger_already_present_mismatches(&l, &observed);
+    assert!(
+        mismatches.iter().any(|m| m.contains("tax_type")),
+        "expected a tax_type mismatch, got {mismatches:?}"
+    );
+}
+
+#[test]
+fn already_present_verified_mismatches_ignores_taxtype_others_outside_duties_and_taxes() {
+    // The book never asked for a GST classification here (tax_type is
+    // "Others"/absent and the parent is not Duties & Taxes), so Tally's own
+    // default TAXTYPE on the observed row -- present on every ledger,
+    // GST-relevant or not -- must never be treated as a mismatch.
+    let l = matching_book_ledger();
+    let observed = row(&[
+        ("PARENT", "Indirect Expenses"),
+        ("ISBILLWISEON", "No"),
+        ("OPENINGBALANCE", "0.00"),
+        ("TAXTYPE", "Others"),
+    ]);
+    assert!(ledger_already_present_mismatches(&l, &observed).is_empty());
+}
+
+#[test]
+fn already_present_verified_mismatches_covers_non_ledger_kinds_via_the_existing_diff_functions() {
+    let masters = BookMasters {
+        groups: vec![BookNamedParent {
+            name: "Sundry Debtors (Retail)".into(),
+            parent: Some("Sundry Debtors".into()),
+        }],
+        ..Default::default()
+    };
+    let matching = row(&[("PARENT", "Sundry Debtors")]);
+    assert!(already_present_verified_mismatches(
+        MasterKind::Group,
+        &masters,
+        "Sundry Debtors (Retail)",
+        &matching
+    )
+    .is_empty());
+    let mismatching = row(&[("PARENT", "Sundry Creditors")]);
+    assert!(!already_present_verified_mismatches(
+        MasterKind::Group,
+        &masters,
+        "Sundry Debtors (Retail)",
+        &mismatching
+    )
+    .is_empty());
+}
+
+#[test]
+fn already_present_verified_classification_end_to_end() {
+    // Mirrors `lab_import_masters`'s precheck loop for the case that matters
+    // most after the 2026-09-14 rehearsal: an ordinary (non-default)
+    // same-name ledger already in the target. If it matches the book on
+    // every field this tool writes, resuming must skip it, not refuse it
+    // (`already_present_verified`); if it differs, it must still fall
+    // through to the ordinary `lab_master_already_exists` collision.
+    let masters = BookMasters {
+        ledgers: vec![matching_book_ledger()],
+        ..Default::default()
+    };
+    // Not a Tally default, so the loop's default-ledger branch never fires
+    // for it -- it reaches the idempotent-resume check either way.
+    assert!(!is_default_ledger("Bank Charges", "Indirect Expenses"));
+
+    let matching_row = row(&[
+        ("NAME", "Bank Charges"),
+        ("PARENT", "Indirect Expenses"),
+        ("ISBILLWISEON", "No"),
+        ("OPENINGBALANCE", "0.00"),
+    ]);
+    assert!(already_present_verified_mismatches(
+        MasterKind::Ledger,
+        &masters,
+        "Bank Charges",
+        &matching_row
+    )
+    .is_empty());
+
+    let mismatched_row = row(&[
+        ("NAME", "Bank Charges"),
+        ("PARENT", "Direct Expenses"), // wrong parent -- a real difference
+        ("ISBILLWISEON", "No"),
+        ("OPENINGBALANCE", "0.00"),
+    ]);
+    assert!(!already_present_verified_mismatches(
+        MasterKind::Ledger,
+        &masters,
+        "Bank Charges",
+        &mismatched_row
+    )
+    .is_empty());
 }
 
 #[test]
