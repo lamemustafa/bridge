@@ -17,6 +17,11 @@
 
 set -uo pipefail
 
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || {
+  echo "could not resolve merge-gate script directory" >&2
+  exit 2
+}
+
 PR=""
 REPO=""
 INDEPENDENT_REVIEW_SHA=""
@@ -1106,123 +1111,24 @@ else
     # carry no newly added material and are deliberately excluded.
     path_text=$(awk -F '\t' '$2 != "removed" { print $1 }' "$changed_records")
   fi
-  added=$(cat "$added_payload")
-  scan_input="$privacy_metadata
-$path_text
-$added"
-  # Diagnostic counts only: never echo matched home paths, which could repeat
-  # the private value in a merge-gate result.
-  home_path_status=0
-  mac_home='/'"Users"'/[^/[:space:]]+'
-  unix_home='/'"home"'/[^/[:space:]]+'
-  root_home=$'\x2f\x72\x6f\x6f\x74'
-  windows_home='[A-Za-z]:[\\/]{1,2}'"Users"'[\\/]{1,2}[^\\/[:space:]]+'
-  home_path_matches=$(grep -Eio "(^|[^[:alnum:]_])(${mac_home}|${unix_home}|${root_home}|${windows_home})(\$|/|\\\\|[^[:alnum:]_.-])" <<<"$scan_input") || home_path_status=$?
-  if [ "$home_path_status" -gt 1 ]; then
-    unknown "developer-home path scan expression failed"
-  elif [ "$home_path_status" -eq 0 ]; then
-    home_path_count=$(grep -Ec '.' <<<"$home_path_matches")
-    bad "privacy scan found $home_path_count developer-home path shape(s)"
-  fi
-  pem_certificate_status=0
-  pem_certificate_count=$(grep -Eic -- '-----BEGIN[[:space:]]+(X509[[:space:]]+)?CERTIFICATE-----' <<<"$scan_input") || pem_certificate_status=$?
-  if [ "$pem_certificate_status" -gt 1 ]; then
-    unknown "PEM certificate envelope scan expression failed"
-  elif [ "$pem_certificate_status" -eq 0 ]; then
-    bad "privacy scan found $pem_certificate_count PEM certificate envelope(s)"
-  fi
-  redaction_status=0
-  redacted=$(sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/<uuid>/g; s/[0-9a-fA-F]{32,}/<digest>/g' <<<"$scan_input") || redaction_status=$?
-  if [ "$redaction_status" -ne 0 ]; then
-    unknown "privacy redaction failed"
-    redacted=""
+  scan_input_file="$tmpdir/privacy-scan-input"
+  {
+    printf '%s\n%s\n' "$privacy_metadata" "$path_text"
+    cat "$added_payload"
+  } >"$scan_input_file"
+  privacy_result_status=0
+  privacy_result=$(python3 "$script_dir/merge_gate_privacy.py" --head "$head" <"$scan_input_file") || privacy_result_status=$?
+  if [ "$privacy_result_status" -ne 0 ] || ! jq -e '
+    type == "object" and
+    (.blockers | type == "array" and all(.[]; type == "string" and length > 0)) and
+    (.indeterminate | type == "array" and all(.[]; type == "string" and length > 0)) and
+    (.notes | type == "array" and all(.[]; type == "string" and length > 0))
+  ' <<<"$privacy_result" >/dev/null 2>&1; then
+    unknown "privacy classifier failed or returned malformed output"
   else
-    exempt=$(grep -Ec '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{32,}' <<<"$scan_input")
-    [ "$exempt" -eq 0 ] || say "note" "$exempt added/path line(s) carried generated UUID/digest shapes; inspect those lines"
-  fi
-  placeholder='^(X+|Z+)[0-9]+(X|Z)?$|^[0-9]{2}(X+|Z+)[0-9]+[0-9A-Z]*$'
-  if printf '%s\n' 'XXXXX1234X' | grep -qE "$placeholder"; then :; else
-    probe_status=$?
-    if [ "$probe_status" -eq 1 ]; then
-      bad "privacy placeholder control did not match its synthetic probe"
-    else
-      unknown "privacy placeholder expression failed"
-    fi
-  fi
-  count_nonplaceholder() {
-    local pattern="$1" input="$2" matches="" status=0 item count=0
-    if matches=$(grep -Eio "$pattern" <<<"$input"); then
-      :
-    else
-      status=$?
-      if [ "$status" -eq 1 ]; then matches=""; else return 2; fi
-    fi
-    while IFS= read -r item; do
-      [ -n "$item" ] || continue
-      item=$(tr '[:lower:]' '[:upper:]' <<<"$item")
-      item_compact=$(tr -d ' -' <<<"$item")
-      if printf '%s\n' "$item_compact" | grep -qE "$placeholder"; then
-        :
-      else
-        status=$?
-        [ "$status" -eq 1 ] && count=$((count + 1)) || return 2
-      fi
-    done <<<"$matches"
-    printf '%s\n' "$count"
-  }
-  # Join separators only inside recognised identifier shapes. A global
-  # separator-free projection fuses unrelated values and creates false
-  # identifiers, including adjacent date fragments. Alongside mobile numbers,
-  # accept only bounded 0XX-XXXX-XXXX landlines and 4-4-4(/4) long-number forms.
-  phone_status=0
-  normalized_status=0
-  normalized_whitespace=$(python3 -c 'import sys, unicodedata; print("".join(" " if char == "\t" or unicodedata.category(char) == "Zs" else char for char in sys.stdin.read()), end="")' <<<"$redacted") || normalized_status=$?
-  if [ "$normalized_status" -ne 0 ]; then
-    unknown "Unicode whitespace normalization failed"
-    normalized_whitespace=""
-  fi
-  phone_matches=$(grep -Eo '(^|[^[:alnum:]])[6-9]([ ()+._-]{0,3}[0-9]){9}([^[:alnum:]]|$)' <<<"$normalized_whitespace") || phone_status=$?
-  landline_status=0
-  landline_matches=$(grep -Eo '(^|[^[:alnum:]])0[1-9][0-9][ ._-][0-9]{4}[ ._-][0-9]{4}([^[:alnum:]]|$)' <<<"$normalized_whitespace") || landline_status=$?
-  standard_landline_status=0
-  standard_landline_matches=$(grep -Eo '(^|[^[:alnum:]])0[1-9][0-9][ -][0-9]{8}([^[:alnum:]]|$)' <<<"$normalized_whitespace") || standard_landline_status=$?
-  grouped_number_status=0
-  grouped_number_matches=$(grep -Eo '(^|[^[:alnum:]])[0-9]{4}[ ._-][0-9]{4}[ ._-][0-9]{4}([ ._-][0-9]{4})?([^[:alnum:]]|$)' <<<"$redacted") || grouped_number_status=$?
-  # A pair of compact dates, such as MMDD-YYYY MMDD-YYYY, has the same four
-  # 4-digit groups as a mixed-separator identifier. Retain the pre-existing
-  # date-range exclusion without weakening actual mixed group detection.
-  grouped_number_non_dates=""
-  while IFS= read -r candidate; do
-    candidate="${candidate#"${candidate%%[![:space:]]*}"}"
-    candidate="${candidate%"${candidate##*[![:space:]]}"}"
-    if [[ "$candidate" =~ ^(0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01])-20[0-9]{2}[[:space:]]+(0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01])-20[0-9]{2}$ ]]; then
-      continue
-    fi
-    grouped_number_non_dates+="${candidate}"$'\n'
-  done <<<"$grouped_number_matches"
-  grouped_number_matches="$grouped_number_non_dates"
-  if [ "$redaction_status" -ne 0 ] || [ "$normalized_status" -ne 0 ] || [ "$phone_status" -gt 1 ] || [ "$landline_status" -gt 1 ] || [ "$standard_landline_status" -gt 1 ] || [ "$grouped_number_status" -gt 1 ]; then
-    unknown "formatted identifier scan expression failed"
-  fi
-  normalized_phone=$(sed -E 's/[^0-9]//g' <<<"$phone_matches")
-  normalized_landlines=$(sed -E 's/[^0-9]//g' <<<"$landline_matches")
-  normalized_standard_landlines=$(sed -E 's/[^0-9]//g' <<<"$standard_landline_matches")
-  normalized_grouped_numbers=$(sed -E 's/[^0-9]//g' <<<"$grouped_number_matches")
-  scan_shapes="$redacted
-$normalized_phone
-$normalized_landlines
-$normalized_standard_landlines
-$normalized_grouped_numbers"
-  hits_status=0
-  hits=$(count_nonplaceholder '[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]{3}|[A-Z]{5}[ -][0-9]{4}[ -][A-Z]|[A-Z]{5}[0-9]{4}[A-Z]|[6-9][0-9]{9}' "$scan_shapes") || hits_status=$?
-  runs_status=0
-  runs=$(count_nonplaceholder '[0-9]{11,18}' "$scan_shapes") || runs_status=$?
-  if [ "$hits_status" -ne 0 ] || [ "$runs_status" -ne 0 ]; then
-    unknown "privacy scan expression failed"
-  elif [ "$hits" -eq 0 ] && [ "$runs" -eq 0 ]; then
-    say "ok" "PR metadata, destination paths, and payload lines carry no identifier shapes"
-  else
-    bad "privacy scan found $hits identifier shape(s) and $runs unexplained long digit run(s)"
+    while IFS= read -r message; do bad "$message"; done < <(jq -r '.blockers[]' <<<"$privacy_result")
+    while IFS= read -r message; do unknown "$message"; done < <(jq -r '.indeterminate[]' <<<"$privacy_result")
+    while IFS= read -r message; do say "note" "$message"; done < <(jq -r '.notes[]' <<<"$privacy_result")
   fi
   fi
 fi
@@ -1518,6 +1424,20 @@ else
   [ "$(jq -r '.headRefOid' <<<"$late_meta")" = "$head" ] || bad "PR head moved after final CI evidence"
   [ "$(jq -r '.baseRefOid' <<<"$late_meta")" = "$base_ref_oid" ] || bad "PR base OID moved after final CI evidence"
   [ "$(jq -r '.baseRefName' <<<"$late_meta")" = "$base" ] || bad "PR base moved after final CI evidence"
+fi
+
+# The branch endpoint is independent of the PR metadata endpoint.  Re-read it
+# after the final check/status snapshot and identity fence so a base advance in
+# that last interval cannot produce a merge command for an unreviewed tree.
+if [ -n "$base_tip" ]; then
+  : >"$errfile"
+  final_fenced_base_tip_status=0
+  final_fenced_base_tip=$(gh api "repos/$REPO/branches/$base" --jq '.commit.sha' 2>"$errfile") || final_fenced_base_tip_status=$?
+  if [ "$final_fenced_base_tip_status" -ne 0 ] || ! [[ "$final_fenced_base_tip" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    unknown "could not revalidate base tip after final CI evidence"
+  elif [ "$final_fenced_base_tip" != "$base_tip" ]; then
+    bad "base tip moved after final CI evidence"
+  fi
 fi
 
 echo
