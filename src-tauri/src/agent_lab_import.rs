@@ -761,6 +761,122 @@ fn diff_stock_item(s: &BookStockItem, row: &BTreeMap<String, String>) -> Vec<Str
 }
 
 // ---------------------------------------------------------------------------
+// Idempotent-resume precheck (coordinator instruction, 2026-09-14): a
+// same-name, non-default master already in the target is not automatically
+// a collision. If every field this tool would itself have written already
+// matches the book, it is evidence of a prior successful (or partially
+// successful) write -- skip it (`already_present_verified`), do not refuse
+// and do not re-Create. Any field difference still falls through to the
+// ordinary `lab_master_already_exists` refusal.
+// ---------------------------------------------------------------------------
+
+/// Ledger-specific comparison for the idempotent-resume precheck: parent,
+/// bill-wise flag, opening balance, and GST fields -- every field
+/// `render_ledger_xml` would itself have sent, compared exactly as that
+/// renderer computes the value, so a genuinely-identical prior write reads
+/// back as equal rather than as a false mismatch. Extends `diff_ledger`
+/// (parent/opening/GSTIN) rather than replacing it, so the ordinary
+/// post-Create read-back check (which never looks at bill-wise/TAXTYPE/
+/// GSTDUTYHEAD) is untouched by this addition.
+fn ledger_already_present_mismatches(
+    l: &BookLedger,
+    row: &BTreeMap<String, String>,
+) -> Vec<String> {
+    let mut mismatches = diff_ledger(l, row);
+    let expected_billwise = if l.is_billwise_on.unwrap_or(false) {
+        "Yes"
+    } else {
+        "No"
+    };
+    let observed_billwise = row.get("ISBILLWISEON").map(String::as_str).unwrap_or("");
+    if !observed_billwise.eq_ignore_ascii_case(expected_billwise) {
+        mismatches.push(format!(
+            "ledger {}: is_billwise_on expected {expected_billwise}, observed {observed_billwise:?}",
+            l.name
+        ));
+    }
+    // Only compared when the renderer would actually have sent it (real
+    // GST/duty type, parent resolves to Duties & Taxes) -- see
+    // `render_ledger_xml`'s identical gate. Tally's own inert default
+    // (`Others`) is never a mismatch source here.
+    let parent = l.parent.as_deref().unwrap_or("Primary");
+    if let Some(expected) = l.tax_type.as_deref() {
+        if is_real_gst_duty_type(expected) && is_duties_and_taxes_parent(parent) {
+            let observed = row.get("TAXTYPE").map(String::as_str).unwrap_or("");
+            if expected != observed {
+                mismatches.push(format!(
+                    "ledger {}: tax_type expected {expected:?}, observed {observed:?}",
+                    l.name
+                ));
+            }
+        }
+    }
+    if let Some(expected) = l.gst_duty_head.as_deref() {
+        let observed = row.get("GSTDUTYHEAD").map(String::as_str).unwrap_or("");
+        if expected != observed {
+            mismatches.push(format!(
+                "ledger {}: gst_duty_head expected {expected:?}, observed {observed:?}",
+                l.name
+            ));
+        }
+    }
+    mismatches
+}
+
+/// Dispatches to the right per-kind comparison for the idempotent-resume
+/// precheck. Reuses the same diff functions the post-Create read-back check
+/// uses (`diff_unit`/`diff_parented`/`diff_stock_item`) for every kind
+/// except Ledger, which needs the wider `ledger_already_present_mismatches`
+/// above. An empty result means "safe to skip"; any entry means "still a
+/// real collision, refuse".
+fn already_present_verified_mismatches(
+    kind: MasterKind,
+    masters: &BookMasters,
+    name: &str,
+    row: &BTreeMap<String, String>,
+) -> Vec<String> {
+    let key = canonical_master_key(name);
+    match kind {
+        MasterKind::Unit => masters
+            .units
+            .iter()
+            .find(|u| canonical_master_key(&u.name) == key)
+            .map(|u| diff_unit(u, row))
+            .unwrap_or_default(),
+        MasterKind::Godown => masters
+            .godowns
+            .iter()
+            .find(|g| canonical_master_key(&g.name) == key)
+            .map(|g| diff_parented("godown", g, row))
+            .unwrap_or_default(),
+        MasterKind::StockGroup => masters
+            .stock_groups
+            .iter()
+            .find(|g| canonical_master_key(&g.name) == key)
+            .map(|g| diff_parented("stock group", g, row))
+            .unwrap_or_default(),
+        MasterKind::Group => masters
+            .groups
+            .iter()
+            .find(|g| canonical_master_key(&g.name) == key)
+            .map(|g| diff_parented("group", g, row))
+            .unwrap_or_default(),
+        MasterKind::Ledger => masters
+            .ledgers
+            .iter()
+            .find(|l| canonical_master_key(&l.name) == key)
+            .map(|l| ledger_already_present_mismatches(l, row))
+            .unwrap_or_default(),
+        MasterKind::StockItem => masters
+            .stock_items
+            .iter()
+            .find(|s| canonical_master_key(&s.name) == key)
+            .map(|s| diff_stock_item(s, row))
+            .unwrap_or_default(),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // lab_import_masters
 // ---------------------------------------------------------------------------
 
@@ -787,6 +903,12 @@ pub(in crate::agent) async fn lab_import_masters(
     let mut collisions: Vec<String> = Vec::new();
     let mut default_ledger_alters: Vec<(BookLedger, BTreeMap<String, String>)> = Vec::new();
     let mut default_group_keys: BTreeSet<String> = BTreeSet::new();
+    // Idempotent resume (coordinator instruction, 2026-09-14): a same-name
+    // master already in the target, verified equal to the book on every
+    // field this tool would itself write, is not a collision -- see
+    // `already_present_verified_mismatches` above.
+    let mut already_present_verified: Vec<String> = Vec::new();
+    let mut already_present_keys: BTreeSet<(&'static str, String)> = BTreeSet::new();
     for kind in MasterKind::IMPORT_ORDER {
         let requested = kind.names(&masters);
         if requested.is_empty() {
@@ -835,6 +957,20 @@ pub(in crate::agent) async fn lab_import_masters(
                 }
                 _ => {}
             }
+            // Not a Tally default -- a genuine same-name master. Before
+            // refusing, check whether it already matches the book on every
+            // field this tool would itself have written: if so, a prior run
+            // already created it (successfully, or up to this point before
+            // stopping elsewhere), and resuming must not refuse or re-Create
+            // it. Any field difference still falls through to the ordinary
+            // refusal below.
+            let already_mismatches =
+                already_present_verified_mismatches(kind, &masters, name, existing);
+            if already_mismatches.is_empty() {
+                already_present_verified.push(format!("{}:{name}", kind.tally_type()));
+                already_present_keys.insert((kind.tally_type(), canonical_master_key(name)));
+                continue;
+            }
             collisions.push(format!("{}:{name}", kind.tally_type()));
         }
     }
@@ -846,18 +982,36 @@ pub(in crate::agent) async fn lab_import_masters(
 
     // Masters actually sent as Create: every requested master minus the
     // defaults just identified above (Creating an existing default would hit
-    // the very overwrite trap the pre-check exists to avoid).
+    // the very overwrite trap the pre-check exists to avoid) and minus
+    // whatever the idempotent-resume check above already verified present.
     let default_ledger_keys: BTreeSet<String> = default_ledger_alters
         .iter()
         .map(|(ledger, _)| canonical_master_key(&ledger.name))
         .collect();
+    let already_present = |kind: MasterKind, name: &str| {
+        already_present_keys.contains(&(kind.tally_type(), canonical_master_key(name)))
+    };
     let mut creatable = masters.clone();
     creatable
-        .ledgers
-        .retain(|l| !default_ledger_keys.contains(&canonical_master_key(&l.name)));
+        .units
+        .retain(|u| !already_present(MasterKind::Unit, &u.name));
     creatable
-        .groups
-        .retain(|g| !default_group_keys.contains(&canonical_master_key(&g.name)));
+        .godowns
+        .retain(|g| !already_present(MasterKind::Godown, &g.name));
+    creatable
+        .stock_groups
+        .retain(|g| !already_present(MasterKind::StockGroup, &g.name));
+    creatable.groups.retain(|g| {
+        !default_group_keys.contains(&canonical_master_key(&g.name))
+            && !already_present(MasterKind::Group, &g.name)
+    });
+    creatable.ledgers.retain(|l| {
+        !default_ledger_keys.contains(&canonical_master_key(&l.name))
+            && !already_present(MasterKind::Ledger, &l.name)
+    });
+    creatable
+        .stock_items
+        .retain(|s| !already_present(MasterKind::StockItem, &s.name));
 
     let mut batches = Vec::new();
     let mut mismatches: Vec<String> = Vec::new();
@@ -1056,6 +1210,14 @@ pub(in crate::agent) async fn lab_import_masters(
             "counts": counts,
             "batches": batches,
             "mismatches": mismatches,
+            // Idempotent-resume precheck: same-name masters already present
+            // in the target and verified equal to the book, so skipped
+            // rather than refused or re-Created. Non-empty even on a run
+            // that creates nothing new -- `ok` is still true in that case
+            // (an all-already_present_verified masters result is success,
+            // not a no-op failure), so a caller resuming after a prior
+            // successful write proceeds straight to vouchers.
+            "already_present_verified": already_present_verified,
         }}),
         evidence,
         company_guid: Some(guid.to_string()),
@@ -1595,6 +1757,31 @@ fn parse_voucher_readback_nested(xml: &str) -> Result<Vec<ObservedVoucher>, Stri
             }
             Ok(quick_xml::events::Event::Text(text)) => {
                 let value = decoded_agent_text(text)?;
+                let parent = &path[..path.len().saturating_sub(1)];
+                if parent == ENTRY_PREFIX {
+                    if let Some(row) = entry.as_mut() {
+                        append_agent_text(row, &current_tag, value);
+                    }
+                } else if parent == VOUCHER_PREFIX {
+                    if let Some(row) = voucher.as_mut() {
+                        append_agent_text(row, &current_tag, value);
+                    }
+                }
+            }
+            // quick_xml delivers a general entity/character reference
+            // (`&amp;`, `&#4;`, ...) as its own `GeneralRef` event, separate
+            // from the surrounding `Text` events -- NOT inline within them.
+            // Without this arm the reference is silently dropped by the
+            // catch-all below, which is exactly the 2026-09-14 rehearsal
+            // read-back bug: "Duties &amp; Taxes" arrived as two Text events
+            // ("Duties " and " Taxes") with the entity between them
+            // discarded, producing the false mismatch "Duties  Taxes". Every
+            // other native-collection parser in this crate
+            // (agent_voucher_parse.rs, agent_change_parse.rs,
+            // agent_company_checkpoint.rs, source_draft_xml.rs) already
+            // handles this event; the lab read-back path did not.
+            Ok(quick_xml::events::Event::GeneralRef(reference)) => {
+                let value = decoded_agent_reference(reference)?;
                 let parent = &path[..path.len().saturating_sub(1)];
                 if parent == ENTRY_PREFIX {
                     if let Some(row) = entry.as_mut() {

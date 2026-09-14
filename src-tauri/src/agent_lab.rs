@@ -369,6 +369,22 @@ fn parse_lab_master_rows(
                     }
                 }
             }
+            // See the identical arm in `agent_lab_import.rs`'s
+            // `parse_voucher_readback_nested`: quick_xml delivers an entity
+            // reference (`&amp;`, ...) as its own `GeneralRef` event, not
+            // inline within `Text`. Without this arm it is silently dropped
+            // by the catch-all below -- the exact 2026-09-14 rehearsal bug
+            // that read "Duties & Taxes" back as "Duties  Taxes".
+            Ok(quick_xml::events::Event::GeneralRef(reference)) => {
+                let is_row_field = path.len() == 6
+                    && path[..4] == ["ENVELOPE", "BODY", "DATA", "COLLECTION"]
+                    && path[4] == row_tag;
+                if is_row_field {
+                    if let Some(row) = current.as_mut() {
+                        append_agent_text(row, &current_tag, decoded_agent_reference(reference)?);
+                    }
+                }
+            }
             Ok(quick_xml::events::Event::End(event)) => {
                 let end = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
                 if path.last().map(String::as_str) == Some(end.as_str())
@@ -499,6 +515,23 @@ fn parse_lab_inventory_vouchers(xml: &str) -> Result<Vec<Value>, String> {
                 let value = decoded_agent_text(text)?;
                 // `path` here includes the just-opened `current_tag`, so a
                 // field at depth N+1 belongs to the container at depth N.
+                if path_is(&path[..path.len().saturating_sub(1)], &BATCH_PREFIX) {
+                    if let Some(row) = batch.as_mut() {
+                        append_agent_text(row, &current_tag, value);
+                    }
+                } else if path_is(&path[..path.len().saturating_sub(1)], &ENTRY_PREFIX) {
+                    if let Some(row) = entry.as_mut() {
+                        append_agent_text(row, &current_tag, value);
+                    }
+                } else if path_is(&path[..path.len().saturating_sub(1)], &VOUCHER_PREFIX) {
+                    if let Some(row) = voucher.as_mut() {
+                        append_agent_text(row, &current_tag, value);
+                    }
+                }
+            }
+            // Same entity-reference gap as `parse_lab_master_rows` above.
+            Ok(quick_xml::events::Event::GeneralRef(reference)) => {
+                let value = decoded_agent_reference(reference)?;
                 if path_is(&path[..path.len().saturating_sub(1)], &BATCH_PREFIX) {
                     if let Some(row) = batch.as_mut() {
                         append_agent_text(row, &current_tag, value);
@@ -799,6 +832,40 @@ mod tests {
         assert_eq!(json["opening_rate"], "50.00");
         assert_eq!(json["opening_value"], "5000.00");
         assert_eq!(json["hsn_code"], "28362000");
+    }
+
+    #[test]
+    fn master_readback_decodes_entities_in_parent_names() {
+        // 2026-09-14 coordinator finding, live rehearsal: the target's
+        // ledgers read back with PARENT "Duties  Taxes" / "Loans  Advances
+        // (Asset)" (note the double space -- the `&amp;` entity dropped
+        // entirely, not merely left literal) while production `ledger_masters`
+        // against the same company correctly reported "Duties & Taxes".
+        // Root cause: quick_xml delivers `&amp;` as its own `GeneralRef`
+        // event, separate from the surrounding `Text` events, and this
+        // parser had no arm for it.
+        let xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+<LEDGER NAME=\"GST Paid\"><PARENT>Loans &amp; Advances (Asset)</PARENT>\
+<OPENINGBALANCE>0.00</OPENINGBALANCE></LEDGER>\
+<LEDGER NAME=\"Output CGST 9%\"><PARENT>Duties &amp; Taxes</PARENT>\
+<TAXTYPE>GST</TAXTYPE></LEDGER>\
+</COLLECTION></DATA></BODY></ENVELOPE>";
+        let rows = parse_lab_master_rows(xml, "Ledger").unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows[0].get("PARENT").map(String::as_str),
+            Some("Loans & Advances (Asset)")
+        );
+        assert_eq!(
+            rows[1].get("PARENT").map(String::as_str),
+            Some("Duties & Taxes")
+        );
+        // Never the entity literal, and never dropped to a bare double space.
+        for row in &rows {
+            let parent = row.get("PARENT").unwrap();
+            assert!(!parent.contains("&amp;"));
+            assert!(!parent.contains("  "));
+        }
     }
 
     #[test]
