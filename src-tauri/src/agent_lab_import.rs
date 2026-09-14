@@ -109,6 +109,36 @@ fn amounts_equal(a: &str, b: &str) -> bool {
     }
 }
 
+/// Whether `value` is numerically zero (or blank/unparseable, which a master
+/// renderer treats the same as zero -- nothing to report). Used to gate
+/// `OPENINGBALANCE`/`OPENINGVALUE`: the proven-good capture
+/// (`babul-masters-complete.xml`) only ever emits an opening amount element
+/// when it is non-zero -- a zero-balance ledger's `<LEDGER>` carries no
+/// `OPENINGBALANCE` at all.
+fn is_zero_amount(value: &str) -> bool {
+    match ExactDecimal::parse(value) {
+        Ok(amount) => amount.numeric_eq(&ExactDecimal::parse("0").expect("literal parses")),
+        Err(_) => value.trim().is_empty(),
+    }
+}
+
+/// Whether a ledger's recorded `tax_type` is a real GST/duty classification
+/// worth sending, as opposed to an empty value or Tally's own inert default
+/// `"Others"` -- the shape that reached the gateway request in the 2026-09-14
+/// rehearsal sent `<TAXTYPE>Others</TAXTYPE>` on every ledger, including bank
+/// and expense ledgers that are not duty heads at all.
+fn is_real_gst_duty_type(tax_type: &str) -> bool {
+    let trimmed = tax_type.trim();
+    !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("others")
+}
+
+/// Whether `parent` resolves (via the §9.4d fold) to the `Duties & Taxes`
+/// group -- `TAXTYPE` is only ever meaningful on a ledger actually parented
+/// there.
+fn is_duties_and_taxes_parent(parent: &str) -> bool {
+    canonical_master_key(parent) == canonical_master_key("Duties & Taxes")
+}
+
 // ---------------------------------------------------------------------------
 // Book model (input) -- see SP/specs/book_schema.md for the full schema.
 // ---------------------------------------------------------------------------
@@ -450,8 +480,12 @@ fn render_ledger_alter_xml(name: &str, fields: &[(&'static str, String)]) -> Str
         .iter()
         .map(|(tag, value)| format!("<{tag}>{}</{tag}>", xml_escape(value)))
         .collect();
+    // No `xmlns:UDF`: this partial Alter carries only plain writable fields
+    // (currently `OPENINGBALANCE`), never a `UDF:`-namespaced element, so the
+    // namespace declaration has nothing to bind to -- see module doc / proven
+    // shape (`babul-masters-complete.xml`) for the same convention on Create.
     format!(
-        "<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><LEDGER NAME=\"{name}\" ACTION=\"Alter\">{body}</LEDGER></TALLYMESSAGE>",
+        "<TALLYMESSAGE><LEDGER NAME=\"{name}\" ACTION=\"Alter\">{body}</LEDGER></TALLYMESSAGE>",
         name = xml_escape(name)
     )
 }
@@ -468,12 +502,21 @@ fn render_import_envelope(company: &str, report_name: &str, messages: &str) -> S
     )
 }
 
+// No renderer below declares `xmlns:UDF="TallyUDF"`: none of them emit a
+// `UDF:`-namespaced element (that would require a genuine User Defined
+// Field, which this book model never carries), so the earlier blanket
+// declaration bound to nothing. The proven-good capture
+// (`babul-masters-complete.xml`) confirms an ordinary ledger Create carries
+// no such attribute at all -- only one incidental `TALLYMESSAGE` in that
+// capture (for a UDF-bearing ledger the source system emitted) has it.
+
 fn render_unit_xml(u: &BookUnit) -> String {
     let simple = u.is_simple_unit.as_deref().unwrap_or("Yes");
     let decimals = u.decimal_places.as_deref().unwrap_or("2");
+    let name = xml_escape(&u.name);
     format!(
-        "<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><UNIT NAME=\"{name}\" ACTION=\"Create\"><ISSIMPLEUNIT>{simple}</ISSIMPLEUNIT><DECIMALPLACES>{decimals}</DECIMALPLACES></UNIT></TALLYMESSAGE>",
-        name = xml_escape(&u.name),
+        "<TALLYMESSAGE><UNIT NAME=\"{name}\" ACTION=\"Create\"><NAME>{name}</NAME>\
+<ISSIMPLEUNIT>{simple}</ISSIMPLEUNIT><DECIMALPLACES>{decimals}</DECIMALPLACES></UNIT></TALLYMESSAGE>",
         simple = xml_escape(simple),
         decimals = xml_escape(decimals)
     )
@@ -481,26 +524,35 @@ fn render_unit_xml(u: &BookUnit) -> String {
 
 fn render_parented_xml(tag: &str, item: &BookNamedParent) -> String {
     let parent = item.parent.as_deref().unwrap_or("Primary");
+    let name = xml_escape(&item.name);
     format!(
-        "<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><{tag} NAME=\"{name}\" ACTION=\"Create\"><PARENT>{parent}</PARENT></{tag}></TALLYMESSAGE>",
+        "<TALLYMESSAGE><{tag} NAME=\"{name}\" ACTION=\"Create\"><NAME>{name}</NAME><PARENT>{parent}</PARENT></{tag}></TALLYMESSAGE>",
         tag = tag,
-        name = xml_escape(&item.name),
         parent = xml_escape(parent)
     )
 }
 
 fn render_ledger_xml(l: &BookLedger) -> String {
     let parent = l.parent.as_deref().unwrap_or("Primary");
+    let name = xml_escape(&l.name);
+    // Explicit on every Create, defaulting the unspecified case to `No` --
+    // the proven capture never omits it.
+    let billwise = format!(
+        "<ISBILLWISEON>{}</ISBILLWISEON>",
+        if l.is_billwise_on.unwrap_or(false) {
+            "Yes"
+        } else {
+            "No"
+        }
+    );
+    // Only when non-zero: the proven capture's zero-balance ledgers (e.g.
+    // "Sales", "Wages and Salary") carry no `OPENINGBALANCE` element at all.
     let opening = l.opening_balance.as_deref().unwrap_or("0.00");
-    let billwise = l
-        .is_billwise_on
-        .map(|b| {
-            format!(
-                "<ISBILLWISEON>{}</ISBILLWISEON>",
-                if b { "Yes" } else { "No" }
-            )
-        })
-        .unwrap_or_default();
+    let opening_balance = if is_zero_amount(opening) {
+        String::new()
+    } else {
+        format!("<OPENINGBALANCE>{}</OPENINGBALANCE>", xml_escape(opening))
+    };
     // GST fields are passed through exactly as observed on the source ledger
     // (§8.3: `GSTDUTYHEAD` vocabulary is irregular, `State Tax` not `SGST`);
     // never synthesised. §8.3: settable at Create, silently not at Alter --
@@ -510,9 +562,15 @@ fn render_ledger_xml(l: &BookLedger) -> String {
         .as_deref()
         .map(|g| format!("<PARTYGSTIN>{}</PARTYGSTIN>", xml_escape(g)))
         .unwrap_or_default();
+    // Only when the book actually carries a real GST/duty classification
+    // (not empty, not Tally's own inert default "Others") AND the ledger is
+    // parented under Duties & Taxes -- the 2026-09-14 rehearsal sent
+    // `<TAXTYPE>Others</TAXTYPE>` on every ledger, including "HDFC Bank
+    // 1649" and "Wages and Salary", which is not a duty head at all.
     let tax_type = l
         .tax_type
         .as_deref()
+        .filter(|t| is_real_gst_duty_type(t) && is_duties_and_taxes_parent(parent))
         .map(|t| format!("<TAXTYPE>{}</TAXTYPE>", xml_escape(t)))
         .unwrap_or_default();
     let duty_head = l
@@ -537,26 +595,28 @@ fn render_ledger_xml(l: &BookLedger) -> String {
         })
         .collect::<String>();
     format!(
-        "<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><LEDGER NAME=\"{name}\" ACTION=\"Create\"><PARENT>{parent}</PARENT><OPENINGBALANCE>{opening}</OPENINGBALANCE>{billwise}{gstin}{tax_type}{duty_head}{opening_bills}</LEDGER></TALLYMESSAGE>",
-        name = xml_escape(&l.name),
-        parent = xml_escape(parent),
-        opening = xml_escape(opening)
+        "<TALLYMESSAGE><LEDGER NAME=\"{name}\" ACTION=\"Create\"><NAME>{name}</NAME>\
+<PARENT>{parent}</PARENT>{billwise}{opening_balance}{gstin}{tax_type}{duty_head}{opening_bills}</LEDGER></TALLYMESSAGE>",
+        parent = xml_escape(parent)
     )
 }
 
 fn render_stock_item_xml(s: &BookStockItem) -> String {
     let parent = s.parent.as_deref().unwrap_or("Primary");
+    let name = xml_escape(&s.name);
     let base_units = s
         .base_unit
         .as_deref()
         .map(|u| format!("<BASEUNITS>{}</BASEUNITS>", xml_escape(u)))
         .unwrap_or_default();
+    // Only when there is a genuinely non-zero opening value -- same
+    // zero-suppression convention as the ledger's `OPENINGBALANCE`.
     let opening = match (
         s.opening_qty.as_deref(),
         s.opening_rate.as_deref(),
         s.opening_value.as_deref(),
     ) {
-        (Some(qty), Some(rate), Some(value)) => format!(
+        (Some(qty), Some(rate), Some(value)) if !is_zero_amount(value) => format!(
             "<OPENINGBALANCE>{}</OPENINGBALANCE><OPENINGRATE>{}</OPENINGRATE><OPENINGVALUE>{}</OPENINGVALUE>",
             xml_escape(qty), xml_escape(rate), xml_escape(value)
         ),
@@ -573,8 +633,8 @@ fn render_stock_item_xml(s: &BookStockItem) -> String {
         .map(|h| format!("<HSNCODE>{}</HSNCODE>", xml_escape(h)))
         .unwrap_or_default();
     format!(
-        "<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><STOCKITEM NAME=\"{name}\" ACTION=\"Create\"><PARENT>{parent}</PARENT>{base_units}{opening}{gst}{hsn}</STOCKITEM></TALLYMESSAGE>",
-        name = xml_escape(&s.name),
+        "<TALLYMESSAGE><STOCKITEM NAME=\"{name}\" ACTION=\"Create\"><NAME>{name}</NAME>\
+<PARENT>{parent}</PARENT>{base_units}{opening}{gst}{hsn}</STOCKITEM></TALLYMESSAGE>",
         parent = xml_escape(parent)
     )
 }
@@ -823,9 +883,33 @@ pub(in crate::agent) async fn lab_import_masters(
             evidence = combine_evidence(evidence.clone(), post_evidence);
             let outcome = bridge_tally_protocol::parse_import_outcome(&response)
                 .map_err(|_| ToolFailure::from("lab_import_response_invalid".to_string()))?;
-            let clean = outcome
-                .counters()
-                .is_clean_success_for(chunk_len as u64, 0, 0);
+            let counters = outcome.counters();
+
+            if tally_rejected(counters) {
+                // Tally refused the whole batch (e.g. the 2026-09-14
+                // rehearsal's CREATED=0 ERRORS=0 EXCEPTIONS=17) -- report
+                // that explicitly, with any LINEERROR text, before the
+                // mandatory read-back rather than after it: a read-back can
+                // only ever say "not found", which does not distinguish a
+                // rejected write from one that was never sent.
+                let line_errors = extract_line_error_texts(&response);
+                batches.push(json!({
+                    "kind": kind.tally_type(),
+                    "requested": chunk_len,
+                    "state": "tally_rejected",
+                    "counters": tally_import_counters_json(counters),
+                    "line_errors": line_errors,
+                    "ok": false,
+                }));
+                mismatches.push(tally_rejection_message(
+                    kind.tally_type(),
+                    counters,
+                    &line_errors,
+                ));
+                break 'kinds;
+            }
+
+            let clean = counters.is_clean_success_for(chunk_len as u64, 0, 0);
 
             // Mandatory read-back, regardless of the counters (§9.2: never
             // trust CREATED/ERRORS alone).
@@ -890,21 +974,37 @@ pub(in crate::agent) async fn lab_import_masters(
             evidence = combine_evidence(evidence.clone(), post_evidence);
             let outcome = bridge_tally_protocol::parse_import_outcome(&response)
                 .map_err(|_| ToolFailure::from("lab_import_response_invalid".to_string()))?;
-            let clean = outcome
-                .counters()
-                .is_clean_success_for(0, to_alter.len() as u64, 0);
+            let counters = outcome.counters();
             counts.insert("LedgerDefaultAlter".to_string(), json!(to_alter.len()));
-            batches.push(json!({
-                "kind": "LedgerDefaultAlter",
-                "requested": to_alter.len(),
-                "counters_clean": clean,
-                "ok": clean,
-            }));
-            if !clean {
-                mismatches.push(
-                    "default ledger alter: import counters not a clean altered-only success"
-                        .to_string(),
-                );
+            if tally_rejected(counters) {
+                let line_errors = extract_line_error_texts(&response);
+                batches.push(json!({
+                    "kind": "LedgerDefaultAlter",
+                    "requested": to_alter.len(),
+                    "state": "tally_rejected",
+                    "counters": tally_import_counters_json(counters),
+                    "line_errors": line_errors,
+                    "ok": false,
+                }));
+                mismatches.push(tally_rejection_message(
+                    "LedgerDefaultAlter",
+                    counters,
+                    &line_errors,
+                ));
+            } else {
+                let clean = counters.is_clean_success_for(0, to_alter.len() as u64, 0);
+                batches.push(json!({
+                    "kind": "LedgerDefaultAlter",
+                    "requested": to_alter.len(),
+                    "counters_clean": clean,
+                    "ok": clean,
+                }));
+                if !clean {
+                    mismatches.push(
+                        "default ledger alter: import counters not a clean altered-only success"
+                            .to_string(),
+                    );
+                }
             }
         }
 
@@ -1069,6 +1169,94 @@ fn chunked_masters(
             ..Default::default()
         },
     }
+}
+
+// ---------------------------------------------------------------------------
+// Explicit Tally-rejection reporting (2026-09-14 rehearsal: 17 ledgers sent,
+// Tally answered CREATED=0 ERRORS=0 EXCEPTIONS=17, no mutation). A batch
+// whose response reports ERRORS or EXCEPTIONS was rejected outright -- that
+// must be reported as such, with whatever LINEERROR text Tally attached,
+// instead of proceeding to the mandatory read-back and reporting only
+// "not found on readback" (indistinguishable from a request that was never
+// sent at all).
+// ---------------------------------------------------------------------------
+
+/// Best-effort extraction of every `<LINEERROR>` element's text from a raw
+/// import response. Deliberately separate from
+/// `bridge_tally_protocol::ParsedImportEvidence`, which redacts this text by
+/// design (retaining only a sha256 digest) for persisted evidence -- this is
+/// a one-shot diagnostic surfaced directly in the tool's own JSON result, not
+/// persisted evidence, so the raw text is exactly what a caller needs to act
+/// on a rejection.
+fn extract_line_error_texts(xml: &str) -> Vec<String> {
+    let mut reader = quick_xml::Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+    let mut errors = Vec::new();
+    let mut in_line_error = false;
+    loop {
+        match reader.read_event() {
+            Ok(quick_xml::events::Event::Start(event))
+                if event.name().as_ref().eq_ignore_ascii_case(b"LINEERROR") =>
+            {
+                in_line_error = true;
+            }
+            Ok(quick_xml::events::Event::End(event))
+                if event.name().as_ref().eq_ignore_ascii_case(b"LINEERROR") =>
+            {
+                in_line_error = false;
+            }
+            Ok(quick_xml::events::Event::Text(text)) if in_line_error => {
+                if let Ok(value) = decoded_agent_text(text) {
+                    let trimmed = value.trim();
+                    if !trimmed.is_empty() {
+                        errors.push(trimmed.to_string());
+                    }
+                }
+            }
+            Ok(quick_xml::events::Event::Eof) => break,
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    errors
+}
+
+fn tally_import_counters_json(counters: &bridge_tally_protocol::TallyImportResult) -> Value {
+    json!({
+        "created": counters.created,
+        "altered": counters.altered,
+        "deleted": counters.deleted,
+        "ignored": counters.ignored,
+        "errors": counters.errors,
+        "cancelled": counters.cancelled,
+        "exceptions": counters.exceptions,
+    })
+}
+
+fn tally_rejection_message(
+    label: &str,
+    counters: &bridge_tally_protocol::TallyImportResult,
+    line_errors: &[String],
+) -> String {
+    let suffix = if line_errors.is_empty() {
+        String::new()
+    } else {
+        format!(" LINEERROR: {}", line_errors.join("; "))
+    };
+    format!(
+        "{label} rejected by Tally: CREATED={} ALTERED={} ERRORS={} EXCEPTIONS={}{suffix}",
+        counters.created, counters.altered, counters.errors, counters.exceptions
+    )
+}
+
+/// Whether the response counters signal an outright rejection: any `ERRORS`
+/// or `EXCEPTIONS` -- the exact shape the 2026-09-14 rehearsal produced
+/// (`CREATED=0 ERRORS=0 EXCEPTIONS=17`). Checked ahead of, and independently
+/// of, `is_clean_success_for`'s exact-count comparison so a rejection is
+/// reported as `tally_rejected` rather than folded into an ordinary
+/// mismatch.
+fn tally_rejected(counters: &bridge_tally_protocol::TallyImportResult) -> bool {
+    counters.errors > 0 || counters.exceptions > 0
 }
 
 fn persist_lab_precheck_collisions(server: &Server, collisions: &[String]) {
@@ -1591,9 +1779,27 @@ pub(in crate::agent) async fn lab_import_vouchers(
         evidence = combine_evidence(evidence.clone(), post_evidence);
         let outcome = bridge_tally_protocol::parse_import_outcome(&response)
             .map_err(|_| ToolFailure::from("lab_import_response_invalid".to_string()))?;
-        let clean = outcome
-            .counters()
-            .is_clean_success_for(batch.len() as u64, 0, 0);
+        let counters = outcome.counters();
+
+        if tally_rejected(counters) {
+            // Same explicit-rejection reporting as lab_import_masters: a
+            // read-back after this can only ever say "not found", so report
+            // the rejection itself, with any LINEERROR text, and stop.
+            let line_errors = extract_line_error_texts(&response);
+            batch_reports.push(json!({
+                "batch": batch_index,
+                "count": batch.len(),
+                "state": "tally_rejected",
+                "counters": tally_import_counters_json(counters),
+                "line_errors": line_errors,
+                "posted": true,
+                "source_guids": source_guids,
+            }));
+            stopped_at = Some(batch_index);
+            break;
+        }
+
+        let clean = counters.is_clean_success_for(batch.len() as u64, 0, 0);
 
         // Mandatory read-back.
         let (readback_xml, readback_evidence) = lab_post_read(

@@ -69,7 +69,7 @@ fn unit_create_xml_golden() {
     };
     assert_eq!(
         render_unit_xml(&u),
-        "<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><UNIT NAME=\"Kgs\" ACTION=\"Create\">\
+        "<TALLYMESSAGE><UNIT NAME=\"Kgs\" ACTION=\"Create\"><NAME>Kgs</NAME>\
 <ISSIMPLEUNIT>Yes</ISSIMPLEUNIT><DECIMALPLACES>3</DECIMALPLACES></UNIT></TALLYMESSAGE>"
     );
 }
@@ -82,17 +82,72 @@ fn godown_create_xml_golden() {
     };
     assert_eq!(
         render_parented_xml("GODOWN", &g),
-        "<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><GODOWN NAME=\"Main Godown\" ACTION=\"Create\">\
+        "<TALLYMESSAGE><GODOWN NAME=\"Main Godown\" ACTION=\"Create\"><NAME>Main Godown</NAME>\
 <PARENT>Primary</PARENT></GODOWN></TALLYMESSAGE>"
     );
 }
 
+// Golden fixtures below are derived byte-for-byte from the proven-good,
+// live-created shape captured in
+// brain/50-projects/viniyug-fieldwork-2026-09-11/artifacts/Babul-Final-Import/
+// Babul-Rounded-2026-09-11/fresh-company-only/babul-masters-complete.xml
+// (this exact company's masters were created with it on TallyPrime 7.1):
+// `<NAME>` mirrors the attribute, `ISBILLWISEON` is always explicit,
+// `OPENINGBALANCE` appears only when the source ledger's balance is
+// non-zero, and no `TALLYMESSAGE` declares `xmlns:UDF`.
+
 #[test]
-fn ledger_create_xml_golden_with_gst_and_billwise() {
+fn ledger_create_xml_golden_babul_bank_ledger_with_negative_opening() {
+    // Babul's "HDFC Bank 1649": non-zero (negative) opening balance, no GST
+    // fields, ISBILLWISEON explicit No.
+    let l = BookLedger {
+        name: "HDFC Bank 1649".into(),
+        parent: Some("Bank Accounts".into()),
+        opening_balance: Some("-5013.35".into()),
+        is_billwise_on: Some(false),
+        party_gstin: None,
+        tax_type: None,
+        gst_duty_head: None,
+        opening_bill_allocations: vec![],
+    };
+    assert_eq!(
+        render_ledger_xml(&l),
+        "<TALLYMESSAGE><LEDGER NAME=\"HDFC Bank 1649\" ACTION=\"Create\">\
+<NAME>HDFC Bank 1649</NAME><PARENT>Bank Accounts</PARENT><ISBILLWISEON>No</ISBILLWISEON>\
+<OPENINGBALANCE>-5013.35</OPENINGBALANCE></LEDGER></TALLYMESSAGE>"
+    );
+}
+
+#[test]
+fn ledger_create_xml_golden_babul_zero_balance_ledger_omits_opening_balance() {
+    // Babul's "Sales": zero opening balance -- the proven capture carries no
+    // `OPENINGBALANCE` element at all for this ledger.
+    let l = BookLedger {
+        name: "Sales".into(),
+        parent: Some("Sales Accounts".into()),
+        opening_balance: Some("0.00".into()),
+        is_billwise_on: Some(false),
+        party_gstin: None,
+        tax_type: None,
+        gst_duty_head: None,
+        opening_bill_allocations: vec![],
+    };
+    assert_eq!(
+        render_ledger_xml(&l),
+        "<TALLYMESSAGE><LEDGER NAME=\"Sales\" ACTION=\"Create\">\
+<NAME>Sales</NAME><PARENT>Sales Accounts</PARENT><ISBILLWISEON>No</ISBILLWISEON></LEDGER></TALLYMESSAGE>"
+    );
+}
+
+#[test]
+fn ledger_create_xml_golden_babul_billwise_party_with_gstin() {
+    // Babul's "Sri Ram Cables Private Limited": ISBILLWISEON=Yes, zero
+    // opening balance (so still no OPENINGBALANCE), plus a GSTIN this
+    // module's own book model carries that the Babul capture itself did not.
     let l = BookLedger {
         name: "Sri Ram Cables Private Limited".into(),
         parent: Some("Sundry Debtors".into()),
-        opening_balance: Some("1000.00".into()),
+        opening_balance: Some("0.00".into()),
         is_billwise_on: Some(true),
         party_gstin: Some("27ZZZZZ0000Z1Z5".into()),
         tax_type: None,
@@ -101,10 +156,28 @@ fn ledger_create_xml_golden_with_gst_and_billwise() {
     };
     assert_eq!(
         render_ledger_xml(&l),
-        "<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><LEDGER NAME=\"Sri Ram Cables Private Limited\" ACTION=\"Create\">\
-<PARENT>Sundry Debtors</PARENT><OPENINGBALANCE>1000.00</OPENINGBALANCE><ISBILLWISEON>Yes</ISBILLWISEON>\
-<PARTYGSTIN>27ZZZZZ0000Z1Z5</PARTYGSTIN></LEDGER></TALLYMESSAGE>"
+        "<TALLYMESSAGE><LEDGER NAME=\"Sri Ram Cables Private Limited\" ACTION=\"Create\">\
+<NAME>Sri Ram Cables Private Limited</NAME><PARENT>Sundry Debtors</PARENT>\
+<ISBILLWISEON>Yes</ISBILLWISEON><PARTYGSTIN>27ZZZZZ0000Z1Z5</PARTYGSTIN></LEDGER></TALLYMESSAGE>"
     );
+}
+
+#[test]
+fn ledger_create_xml_billwise_defaults_to_no_when_unspecified() {
+    let l = BookLedger {
+        name: "Wages and Salary".into(),
+        parent: Some("Direct Expenses".into()),
+        opening_balance: None,
+        is_billwise_on: None,
+        party_gstin: None,
+        tax_type: None,
+        gst_duty_head: None,
+        opening_bill_allocations: vec![],
+    };
+    let xml = render_ledger_xml(&l);
+    // ISBILLWISEON is explicit even though the book model left it unset.
+    assert!(xml.contains("<ISBILLWISEON>No</ISBILLWISEON>"));
+    assert!(!xml.contains("OPENINGBALANCE"));
 }
 
 #[test]
@@ -130,6 +203,42 @@ fn ledger_create_xml_uses_the_irregular_9_4d_duty_head_vocabulary_verbatim() {
 }
 
 #[test]
+fn ledger_create_xml_never_emits_taxtype_others() {
+    // The 2026-09-14 rehearsal bug: every ledger, including a bank account
+    // and a wages ledger, carried `<TAXTYPE>Others</TAXTYPE>` -- Tally's own
+    // inert default, not a real classification, and not appropriate outside
+    // Duties & Taxes. Tally answered CREATED=0 EXCEPTIONS=17.
+    let l = BookLedger {
+        name: "HDFC Bank 1649".into(),
+        parent: Some("Bank Accounts".into()),
+        opening_balance: Some("-5013.35".into()),
+        is_billwise_on: Some(false),
+        party_gstin: None,
+        tax_type: Some("Others".into()),
+        gst_duty_head: None,
+        opening_bill_allocations: vec![],
+    };
+    assert!(!render_ledger_xml(&l).contains("TAXTYPE"));
+}
+
+#[test]
+fn ledger_create_xml_never_emits_taxtype_outside_duties_and_taxes() {
+    // A real, non-"Others" tax_type value must still be withheld if the
+    // ledger is not parented under Duties & Taxes.
+    let l = BookLedger {
+        name: "GST Paid".into(),
+        parent: Some("Loans & Advances (Asset)".into()),
+        opening_balance: None,
+        is_billwise_on: None,
+        party_gstin: None,
+        tax_type: Some("GST".into()),
+        gst_duty_head: None,
+        opening_bill_allocations: vec![],
+    };
+    assert!(!render_ledger_xml(&l).contains("TAXTYPE"));
+}
+
+#[test]
 fn stock_item_create_xml_golden() {
     let s = BookStockItem {
         name: "Sodium Bicarbonate".into(),
@@ -144,11 +253,30 @@ fn stock_item_create_xml_golden() {
     let xml = render_stock_item_xml(&s);
     assert_eq!(
         xml,
-        "<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><STOCKITEM NAME=\"Sodium Bicarbonate\" ACTION=\"Create\">\
-<PARENT>Chemicals</PARENT><BASEUNITS>Kgs</BASEUNITS><OPENINGBALANCE>100</OPENINGBALANCE>\
+        "<TALLYMESSAGE><STOCKITEM NAME=\"Sodium Bicarbonate\" ACTION=\"Create\">\
+<NAME>Sodium Bicarbonate</NAME><PARENT>Chemicals</PARENT><BASEUNITS>Kgs</BASEUNITS>\
+<OPENINGBALANCE>100</OPENINGBALANCE>\
 <OPENINGRATE>50.00</OPENINGRATE><OPENINGVALUE>5000.00</OPENINGVALUE>\
 <GSTAPPLICABLE>Applicable</GSTAPPLICABLE><HSNCODE>28362000</HSNCODE></STOCKITEM></TALLYMESSAGE>"
     );
+}
+
+#[test]
+fn stock_item_create_xml_omits_opening_balance_when_zero() {
+    let s = BookStockItem {
+        name: "Sample Item".into(),
+        parent: Some("Primary".into()),
+        base_unit: Some("Kgs".into()),
+        opening_qty: Some("0".into()),
+        opening_rate: Some("0".into()),
+        opening_value: Some("0.00".into()),
+        gst_applicable: None,
+        hsn_code: None,
+    };
+    let xml = render_stock_item_xml(&s);
+    assert!(!xml.contains("OPENINGBALANCE"));
+    assert!(!xml.contains("OPENINGRATE"));
+    assert!(!xml.contains("OPENINGVALUE"));
 }
 
 // ---------------------------------------------------------------------------
@@ -844,7 +972,7 @@ fn render_ledger_alter_xml_carries_only_the_given_fields() {
     let xml = render_ledger_alter_xml("Cash", &[("OPENINGBALANCE", "5000.00".to_string())]);
     assert_eq!(
         xml,
-        "<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><LEDGER NAME=\"Cash\" ACTION=\"Alter\">\
+        "<TALLYMESSAGE><LEDGER NAME=\"Cash\" ACTION=\"Alter\">\
 <OPENINGBALANCE>5000.00</OPENINGBALANCE></LEDGER></TALLYMESSAGE>"
     );
     // Never a Create, and never a field beyond what was asked for.
@@ -912,4 +1040,114 @@ fn default_ledger_and_default_group_precheck_classification_end_to_end() {
         "an ordinary pre-existing ledger is never treated as a default"
     );
     let _ = requested_debtor.parent; // constructed only to exercise the classification above
+}
+
+// ---------------------------------------------------------------------------
+// Explicit Tally-rejection reporting (2026-09-14 rehearsal: 17 ledgers sent,
+// Tally answered CREATED=0 ERRORS=0 EXCEPTIONS=17, no mutation).
+// ---------------------------------------------------------------------------
+
+/// The exact response Tally returned for the failing rehearsal (captured in
+/// the request-evidence directory as this batch's `.response.xml`).
+const REHEARSAL_REJECTION_RESPONSE: &str = "<RESPONSE>\
+ <CREATED>0</CREATED>\
+ <ALTERED>0</ALTERED>\
+ <DELETED>0</DELETED>\
+ <LASTVCHID>0</LASTVCHID>\
+ <LASTMID>0</LASTMID>\
+ <COMBINED>0</COMBINED>\
+ <IGNORED>0</IGNORED>\
+ <ERRORS>0</ERRORS>\
+ <CANCELLED>0</CANCELLED>\
+ <EXCEPTIONS>17</EXCEPTIONS>\
+</RESPONSE>";
+
+const CLEAN_RESPONSE: &str = "<RESPONSE>\
+ <CREATED>17</CREATED>\
+ <ALTERED>0</ALTERED>\
+ <DELETED>0</DELETED>\
+ <LASTVCHID>0</LASTVCHID>\
+ <LASTMID>0</LASTMID>\
+ <COMBINED>0</COMBINED>\
+ <IGNORED>0</IGNORED>\
+ <ERRORS>0</ERRORS>\
+ <CANCELLED>0</CANCELLED>\
+ <EXCEPTIONS>0</EXCEPTIONS>\
+</RESPONSE>";
+
+#[test]
+fn tally_rejected_true_for_the_exact_rehearsal_response() {
+    let outcome = bridge_tally_protocol::parse_import_outcome(REHEARSAL_REJECTION_RESPONSE)
+        .expect("valid RESPONSE shape");
+    assert!(tally_rejected(outcome.counters()));
+    assert_eq!(outcome.counters().created, 0);
+    assert_eq!(outcome.counters().exceptions, 17);
+}
+
+#[test]
+fn tally_rejected_false_for_a_clean_response() {
+    let outcome =
+        bridge_tally_protocol::parse_import_outcome(CLEAN_RESPONSE).expect("valid RESPONSE shape");
+    assert!(!tally_rejected(outcome.counters()));
+}
+
+#[test]
+fn tally_rejected_true_when_errors_reported_even_with_zero_exceptions() {
+    let response = "<RESPONSE><CREATED>0</CREATED><ALTERED>0</ALTERED><DELETED>0</DELETED>\
+<LASTVCHID>0</LASTVCHID><LASTMID>0</LASTMID><COMBINED>0</COMBINED><IGNORED>0</IGNORED>\
+<ERRORS>2</ERRORS><CANCELLED>0</CANCELLED><EXCEPTIONS>0</EXCEPTIONS></RESPONSE>";
+    let outcome =
+        bridge_tally_protocol::parse_import_outcome(response).expect("valid RESPONSE shape");
+    assert!(tally_rejected(outcome.counters()));
+}
+
+#[test]
+fn tally_rejection_message_reports_counters_and_no_line_errors_when_absent() {
+    let outcome = bridge_tally_protocol::parse_import_outcome(REHEARSAL_REJECTION_RESPONSE)
+        .expect("valid RESPONSE shape");
+    let line_errors = extract_line_error_texts(REHEARSAL_REJECTION_RESPONSE);
+    assert!(
+        line_errors.is_empty(),
+        "the captured rehearsal response carried no LINEERROR text"
+    );
+    let message = tally_rejection_message("Ledger", outcome.counters(), &line_errors);
+    assert_eq!(
+        message,
+        "Ledger rejected by Tally: CREATED=0 ALTERED=0 ERRORS=0 EXCEPTIONS=17"
+    );
+    assert!(!message.contains("LINEERROR"));
+}
+
+#[test]
+fn extract_line_error_texts_reads_every_lineerror_element() {
+    let response = "<RESPONSE><CREATED>0</CREATED><ALTERED>0</ALTERED><DELETED>0</DELETED>\
+<LASTVCHID>0</LASTVCHID><LASTMID>0</LASTMID><COMBINED>0</COMBINED><IGNORED>0</IGNORED>\
+<ERRORS>0</ERRORS><CANCELLED>0</CANCELLED><EXCEPTIONS>2</EXCEPTIONS>\
+<LINEERROR>Could not set OPENINGBALANCE : Duplicate name</LINEERROR>\
+<LINEERROR>Vch/Ledger deletion/alteration is not permitted</LINEERROR></RESPONSE>";
+    let errors = extract_line_error_texts(response);
+    assert_eq!(
+        errors,
+        vec![
+            "Could not set OPENINGBALANCE : Duplicate name".to_string(),
+            "Vch/Ledger deletion/alteration is not permitted".to_string(),
+        ]
+    );
+    let outcome =
+        bridge_tally_protocol::parse_import_outcome(response).expect("valid RESPONSE shape");
+    let message = tally_rejection_message("Ledger", outcome.counters(), &errors);
+    assert!(message.contains(
+        "LINEERROR: Could not set OPENINGBALANCE : Duplicate name; \
+Vch/Ledger deletion/alteration is not permitted"
+    ));
+}
+
+#[test]
+fn tally_import_counters_json_surfaces_every_counter() {
+    let outcome = bridge_tally_protocol::parse_import_outcome(REHEARSAL_REJECTION_RESPONSE)
+        .expect("valid RESPONSE shape");
+    let json = tally_import_counters_json(outcome.counters());
+    assert_eq!(json["created"], 0);
+    assert_eq!(json["errors"], 0);
+    assert_eq!(json["exceptions"], 17);
 }
