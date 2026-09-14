@@ -292,6 +292,7 @@ if args[:2] == ["pr", "view"]:
     if scenario == "checklist-stale-ref":
         body = body.replace(f"blob/{head}", "blob/" + "f" * 40)
     one_file = scenario in {"metadata-private", "files-empty", "formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-tab", "unicode-phone-two-lines", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "grouped-identifier-mixed", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "landline-grouped", "landline-standard-hyphen", "landline-standard-space", "landline-standard-underscore", "pem-certificate-envelope", "path-id", "binary-delete", "binary-review", "binary-review-private", "binary-review-head-moves", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "grouped-pan-space", "grouped-pan-hyphen", "grouped-masked-pan-space", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-sibling-migration", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "workflow-placeholders", "workflow-punctuated-placeholders", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-none", "security-pending", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "dependency-manifest-missing", "dependency-manifest-present", "home-macos", "home-unix", "home-windows", "crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path", "gitlink", "gitlink-existing", "implementation-p4-missing", "implementation-p4-present", "implementation-p4-continuation", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders", "platform-evidence-missing", "platform-evidence-present", "platform-evidence-heading", "platform-powershell-missing", "platform-powershell-evidence", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-inline-prose", "platform-negative-outcome", "platform-unaffected-bare", "platform-unaffected-rationale", "platform-evidence-bare-label", "platform-evidence-sibling-list", "platform-evidence-empty-fence", "platform-evidence-punctuated-placeholder", "platform-evidence-fenced-continuation", "platform-evidence-package-manager", "platform-windows-native-action", "platform-windows-native-action-rename-out", "platform-ci-workflow", "platform-ci-workflow-rename-out", "platform-release-mcpb-preview", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"} or scenario.startswith("home-") or security_case or sync_case
+    one_file = one_file or scenario in {"skipped-native-scope", "skipped-bundle-scope"}
     selected_base = new_head if scenario == "base-oid-mismatch" else base
     emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
@@ -307,12 +308,22 @@ elif args[:2] == ["pr", "checks"]:
     elif scenario == "missing-required":
         emit([{"bucket": "pass", "name": "Required checks"}])
     else:
-        emit([{"bucket": "pass", "name": "Frontend build"},
-              {"bucket": "pass", "name": "Rust format"},
-              {"bucket": "pass", "name": "GitGuardian Security Checks"},
-              {"bucket": "pass", "name": "Dependency security"},
-              {"bucket": "pass", "name": "Required checks"},
-              {"bucket": "skipping", "name": "Optional documentation"}])
+        checks = [{"bucket": "pass", "name": "Frontend build"},
+                  {"bucket": "pass", "name": "Rust format"},
+                  {"bucket": "pass", "name": "GitGuardian Security Checks"},
+                  {"bucket": "pass", "name": "Dependency security"},
+                  {"bucket": "pass", "name": "Required checks"},
+                  {"bucket": "skipping", "name": "Retain two compiler-cache snapshots per OS"}]
+        if scenario in {"skipped-docs-matrix", "skipped-native-scope", "skipped-bundle-scope"}:
+            checks.extend([
+                {"bucket": "skipping", "name": "Native checks (windows-latest)"},
+                {"bucket": "skipping", "name": "Native checks (macos-latest)"},
+                {"bucket": "skipping", "name": "Bundle smoke (windows-latest)"},
+                {"bucket": "skipping", "name": "Bundle smoke (macos-latest)"},
+            ])
+        if scenario == "skipped-unallowlisted":
+            checks.append({"bucket": "skipping", "name": "Unreviewed conditional job"})
+        emit(checks)
 elif args[:2] == ["pr", "diff"]:
     if scenario == "security-documents-consumer-rename-out":
         emit("diff --git a/src-tauri/src/documents.rs b/docs/retired-documents.rs\nsimilarity index 100%\nrename from src-tauri/src/documents.rs\nrename to docs/retired-documents.rs\n")
@@ -342,6 +353,10 @@ elif args[:2] == ["pr", "diff"]:
     elif scenario == "path-id":
         path_id = "ABCDE" + "1234" + "F"
         emit(f"diff --git a/docs/safe.md b/docs/{path_id}.md\n--- a/docs/safe.md\n+++ b/docs/{path_id}.md\n@@ -0,0 +1 @@\n+safe text\n")
+    elif scenario == "skipped-native-scope":
+        emit("diff --git a/tools/ci-check.md b/tools/ci-check.md\n--- /dev/null\n+++ b/tools/ci-check.md\n@@ -0,0 +1 @@\n+safe text\n")
+    elif scenario == "skipped-bundle-scope":
+        emit("diff --git a/index.html b/index.html\n--- a/index.html\n+++ b/index.html\n@@ -0,0 +1 @@\n+safe text\n")
     elif scenario in {"security-notes-missing", "security-notes-present", "security-none", "security-pending"}:
         emit("diff --git a/src-tauri/src/tally/runtime.rs b/src-tauri/src/tally/runtime.rs\n--- a/src-tauri/src/tally/runtime.rs\n+++ b/src-tauri/src/tally/runtime.rs\n@@ -0,0 +1 @@\n+safe text\n")
     elif scenario in {"security-crate", "security-agent-import", "security-dsc"}:
@@ -530,8 +545,8 @@ elif args and args[0] == "api":
         total_count = 3 if scenario == "check-run-count-mismatch" else 2
         second_id = 1 if scenario == "check-run-duplicate-id" else 2
         run_status = "queued" if scenario == "check-run-incomplete" else "completed"
-        conclusion = "failure" if scenario in {"check-run-failed", "late-check-run-failure"} and (scenario != "late-check-run-failure" or check_call > 0) else ("skipped" if scenario in {"check-run-required-skip", "check-run-optional-skip"} else "success")
-        run_name = "Optional changed after rollup" if scenario in {"check-run-failed", "check-run-optional-skip"} else "Required checks"
+        conclusion = "failure" if scenario in {"check-run-failed", "late-check-run-failure"} and (scenario != "late-check-run-failure" or check_call > 0) else ("skipped" if scenario in {"check-run-required-skip", "check-run-optional-skip", "check-run-allowlisted-skip"} or (scenario == "late-check-run-unallowlisted-skip" and check_call > 0) else "success")
+        run_name = "Unreviewed final conditional job" if scenario == "late-check-run-unallowlisted-skip" and check_call > 0 else ("Native checks (windows-latest)" if scenario == "check-run-allowlisted-skip" else ("Optional changed after rollup" if scenario in {"check-run-failed", "check-run-optional-skip"} else "Required checks"))
         emit([{"total_count": total_count, "check_runs": [
             {"id": 1, "name": run_name, "head_sha": run_head, "status": run_status, "conclusion": conclusion},
             {"id": second_id, "name": "Rust format", "head_sha": run_head, "status": "completed", "conclusion": "success"}]}])
@@ -690,6 +705,10 @@ elif args and args[0] == "api":
             emit([[{"filename": "docs/contact.md", "status": "added", "additions": 2 if scenario == "unicode-phone-two-lines" else 1, "deletions": 0}]])
         elif scenario in {"pem-certificate-envelope", "trusted-pem-certificate-envelope"}:
             emit([[{"filename": "docs/example.md", "status": "added", "additions": 3, "deletions": 0}]])
+        elif scenario == "skipped-native-scope":
+            emit([[{"filename": "tools/ci-check.md", "status": "added", "additions": 1, "deletions": 0}]])
+        elif scenario == "skipped-bundle-scope":
+            emit([[{"filename": "index.html", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "platform-release-mcpb-preview":
             emit([[{"filename": ".github/workflows/release-mcpb-preview.yml", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario in {"workflow-notes-missing", "workflow-notes-present", "workflow-sibling-migration", "workflow-placeholders", "workflow-punctuated-placeholders", "platform-ci-workflow"}:

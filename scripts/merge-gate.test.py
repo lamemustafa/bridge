@@ -99,10 +99,15 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
         self.assertIn("MAY MERGE", result.stdout)
         self.assertIn("--match-head-commit 0123456789abcdef0123456789abcdef01234567", result.stdout)
 
-    def test_optional_skipped_check_does_not_block(self):
-        result = self.run_gate()
+    def test_allowlisted_docs_only_skipped_checks_do_not_block(self):
+        result = self.run_gate("skipped-docs-matrix")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("optional check(s) are skipped", result.stdout)
+        self.assertIn("allowlisted skipped native CI matrix job", result.stdout)
+
+    def test_skipped_ci_jobs_require_an_explicit_allowlist_and_matching_path_condition(self):
+        self.assert_blocked("skipped-unallowlisted", "skipped CI job outside the explicit workflow allowlist")
+        self.assert_blocked("skipped-native-scope", "skipped native CI matrix job despite native-scope changed files")
+        self.assert_blocked("skipped-bundle-scope", "skipped bundle CI matrix job despite bundle-scope changed files")
 
     def test_required_skipped_check_blocks(self):
         self.assert_blocked("required-skip", "required check 'Required checks' is not passing")
@@ -292,6 +297,7 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
 
     def test_final_check_and_status_snapshots_do_not_inherit_earlier_success(self):
         self.assert_blocked("late-check-run-failure", "final check run(s) are failed")
+        self.assert_blocked("late-check-run-unallowlisted-skip", "final refreshed check-run evidence reports a skipped CI job outside the explicit workflow allowlist")
         self.assert_blocked("late-status-failure", "final combined commit-status evidence reports a failure")
 
     def test_base_oid_mismatch_is_indeterminate(self):
@@ -596,10 +602,11 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
         self.assert_indeterminate("security-review-missing", "security-focused reviewer comment")
 
     def test_refreshed_failed_or_required_skipped_runs_block(self):
-        for scenario in ("check-run-failed", "check-run-required-skip"):
+        for scenario in ("check-run-failed", "check-run-required-skip", "check-run-optional-skip"):
             with self.subTest(scenario=scenario):
-                self.assert_blocked(scenario, "refreshed check run(s)")
-        result = self.run_gate("check-run-optional-skip")
+                phrase = "skipped CI job outside the explicit workflow allowlist" if scenario == "check-run-optional-skip" else "refreshed check run(s)"
+                self.assert_blocked(scenario, phrase)
+        result = self.run_gate("check-run-allowlisted-skip")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_nonempty_pending_legacy_status_is_indeterminate(self):

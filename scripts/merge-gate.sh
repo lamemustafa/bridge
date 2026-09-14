@@ -266,6 +266,9 @@ printf '%s\n' "$required_contexts" >"$tmpdir/required-contexts"
 # then parse JSON and require each protected context individually.
 : >"$errfile"
 check_status=0
+context_report_valid=false
+check_bad=1
+all_bad=1
 buckets=$(gh pr checks "$PR" --repo "$REPO" --json bucket,name 2>"$errfile") || check_status=$?
 if [ -z "$buckets" ]; then
   unknown "checks query returned no JSON"
@@ -310,8 +313,7 @@ else
     all_bad=$(jq '[.[] | select(.bucket == "fail" or .bucket == "cancel" or .bucket == "pending")] | length' <<<"$buckets")
     skipped=$(jq '[.[] | select(.bucket == "skipping")] | length' <<<"$buckets")
     [ "$all_bad" -eq 0 ] || bad "$all_bad reported check(s) are failing, cancelled, or pending"
-    [ "$skipped" -eq 0 ] || say "note" "$skipped optional check(s) are skipped; required skipped contexts remain blocking"
-    [ "$context_report_valid" = true ] && [ "$check_bad" -eq 0 ] && [ "$all_bad" -eq 0 ] && say "ok" "all reported checks concluded successfully"
+    [ "$skipped" -eq 0 ] || say "note" "$skipped skipped check(s) await explicit workflow allowlist and path-condition validation"
   fi
 fi
 
@@ -341,6 +343,7 @@ if [ "$check_runs_status" -ne 0 ] || ! jq -e --arg head "$head" '
 ' <<<"$check_runs" >/dev/null 2>&1; then
   unknown "could not validate complete head-bound check-run evidence"
 else
+  printf '%s' "$check_runs" >"$tmpdir/check-runs.json"
   failed_runs_status=0
   failed_runs=$(jq --rawfile contexts "$tmpdir/required-contexts" '
     ($contexts | split("\n")) as $required |
@@ -739,6 +742,7 @@ raise SystemExit(1)
 files_status=0
 files=$(gh api --paginate --slurp "repos/$REPO/pulls/$PR/files?per_page=100" 2>"$errfile") || files_status=$?
 changed_records="$tmpdir/changed-files.tsv"
+changed_inventory_complete=false
 if [ "$files_status" -ne 0 ] || ! jq -e '
   type == "array" and
   (all(.[]; type == "array" and all(.[];
@@ -768,8 +772,80 @@ else
     unknown "PR reports $changed_files_expected changed files beyond the REST files API cap"
   elif [ "$changed_count" -ne "$changed_files_expected" ] || [ "$unique_changed_count" -ne "$changed_count" ]; then
     unknown "changed-file response has $changed_count unique records; PR metadata reports $changed_files_expected"
+  else
+    changed_inventory_complete=true
   fi
 fi
+
+# The PR workflow has exactly three job-level skip paths. Native and bundle
+# matrix jobs may skip only when the same changed-file patterns that ci.yml
+# uses evaluate false; compiler-cache retention skips on every PR because its
+# job condition is master-only. Every other skipped check is evidence of an
+# unreviewed workflow condition and blocks rather than becoming "optional".
+validate_skipped_ci_jobs() {
+  local source="$1" names_file="$2" policy_ok_var="${3:-skipped_ci_policy_ok}" encoded name paths_file
+  local native_pattern bundle_pattern
+  native_pattern='^(\.github/workflows/ci\.yml|\.github/actions/setup-windows-native/|rust-toolchain\.toml|src-tauri/|tools/)'
+  bundle_pattern='^(\.github/workflows/ci\.yml|\.github/actions/setup-windows-native/|packaging/mcpb/|package\.json|pnpm-lock\.yaml|\.node-version|vite\.config\.ts|tsconfig\.json|postcss\.config\.js|index\.html|src/|src-tauri/(src/|crates/|Cargo\.lock|Cargo\.toml|.*/Cargo\.toml|tauri\.conf\.json|build\.rs|icons/)|LICENSE$|NOTICE$|THIRD_PARTY_LICENSES\.txt$|THIRD_PARTY_LICENSES_RUST\.txt$|scripts/(capture-package-log(\.test)?\.py|check-mcpb-bundle(\.test)?\.py|package-mcpb\.mjs|check-license-metadata\.mjs|check-dependency-inventory\.mjs|check-windows-bundle-resources\.ps1|check-macos-bundle-resources(\.mutation)?\.mjs)$)'
+
+  [ -s "$names_file" ] || return
+  if [ "$changed_inventory_complete" != true ]; then
+    printf -v "$policy_ok_var" '%s' false
+    unknown "$source reports skipped CI job(s), but their path conditions could not be validated from the complete changed-file set"
+    return
+  fi
+  paths_file="$tmpdir/skipped-ci-paths"
+  awk -F '\t' '{ print $1; if ($2 == "renamed") print $5 }' "$changed_records" >"$paths_file"
+  while IFS= read -r encoded; do
+    name=$(printf '%s' "$encoded" | base64 --decode 2>/dev/null) || name=$(printf '%s' "$encoded" | base64 -D 2>/dev/null) || {
+      printf -v "$policy_ok_var" '%s' false
+      unknown "$source returned an unreadable skipped CI job name"
+      continue
+    }
+    case "$name" in
+      "Native checks (windows-latest)"|"Native checks (macos-latest)")
+        if grep -Eq "$native_pattern" "$paths_file"; then
+          printf -v "$policy_ok_var" '%s' false
+          bad "$source reports a skipped native CI matrix job despite native-scope changed files"
+        else
+          say "note" "$source reports an allowlisted skipped native CI matrix job for a non-native change"
+        fi
+        ;;
+      "Bundle smoke (windows-latest)"|"Bundle smoke (macos-latest)")
+        if grep -Eq "$bundle_pattern" "$paths_file"; then
+          printf -v "$policy_ok_var" '%s' false
+          bad "$source reports a skipped bundle CI matrix job despite bundle-scope changed files"
+        else
+          say "note" "$source reports an allowlisted skipped bundle CI matrix job for a non-bundle change"
+        fi
+        ;;
+      "Retain two compiler-cache snapshots per OS")
+        say "note" "$source reports the allowlisted master-only compiler-cache retention job skipped on this PR"
+        ;;
+      *)
+        printf -v "$policy_ok_var" '%s' false
+        bad "$source reports a skipped CI job outside the explicit workflow allowlist"
+        ;;
+    esac
+  done <"$names_file"
+}
+
+check_bucket_skips="$tmpdir/check-bucket-skips.b64"
+check_run_skips="$tmpdir/check-run-skips.b64"
+skipped_ci_policy_ok=true
+if [ ! -f "$tmpdir/check-buckets.json" ]; then
+  skipped_ci_policy_ok=false
+elif ! jq -r '.[] | select(.bucket == "skipping") | .name | @base64' "$tmpdir/check-buckets.json" >"$check_bucket_skips"; then
+  skipped_ci_policy_ok=false
+  unknown "could not read skipped check names from the checks rollup"
+elif [ -f "$tmpdir/check-runs.json" ] && ! jq -r '.[] | .check_runs[] | select(.conclusion == "skipped") | .name | @base64' "$tmpdir/check-runs.json" >"$check_run_skips"; then
+  skipped_ci_policy_ok=false
+  unknown "could not read skipped check names from refreshed check-run evidence"
+else
+  validate_skipped_ci_jobs "checks rollup" "$check_bucket_skips"
+  [ -f "$tmpdir/check-runs.json" ] && validate_skipped_ci_jobs "refreshed check-run evidence" "$check_run_skips"
+fi
+[ "$context_report_valid" = true ] && [ "$check_bad" -eq 0 ] && [ "$all_bad" -eq 0 ] && [ "$skipped_ci_policy_ok" = true ] && say "ok" "all reported checks concluded successfully"
 
 # Existing workflow changes require the rollback and migration-compatibility
 # notes mandated by the project review flow. The complete REST file set, rather
@@ -1366,6 +1442,14 @@ if [ "$final_check_runs_status" -ne 0 ] || ! jq -e --arg head "$head" '
 ' <<<"$final_check_runs" >/dev/null 2>&1; then
   unknown "could not revalidate final head-bound check-run evidence"
 else
+  final_check_run_skips="$tmpdir/final-check-run-skips.b64"
+  final_skipped_ci_policy_ok=true
+  if ! jq -r '.[] | .check_runs[] | select(.conclusion == "skipped") | .name | @base64' <<<"$final_check_runs" >"$final_check_run_skips"; then
+    final_skipped_ci_policy_ok=false
+    unknown "could not read skipped check names from final refreshed check-run evidence"
+  else
+    validate_skipped_ci_jobs "final refreshed check-run evidence" "$final_check_run_skips" final_skipped_ci_policy_ok
+  fi
   final_failed_runs_status=0
   final_failed_runs=$(jq --rawfile contexts "$tmpdir/required-contexts" '
     ($contexts | split("\n")) as $required |
@@ -1377,6 +1461,8 @@ else
     unknown "could not evaluate final check-run conclusions"
   elif [ "$final_failed_runs" -gt 0 ]; then
     bad "$final_failed_runs final check run(s) are failed or required-but-not-successful"
+  elif [ "$final_skipped_ci_policy_ok" != true ]; then
+    :
   else
     say "ok" "final check-run pages are successful and bound to head $short"
   fi
