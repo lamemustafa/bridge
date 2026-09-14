@@ -928,7 +928,7 @@ if [ "$files_status" -eq 0 ]; then
        test("^scripts/bank_statement_import\\.py$"; "i") or
        test("^scripts/prune-package-compiler-cache\\.mjs$"; "i") or
        test("^\\.github/workflows/(ci\\.yml|release-mcpb-preview\\.yml|deploy-install-page\\.yml)$"; "i") or
-       test("^src-tauri/Cargo\\.toml$|^src-tauri/src/lib\\.rs$|^src/(AxalScreen|DocumentsScreen)\\.tsx$|^src-tauri/src/axal\\.rs$|^src-tauri/src/db/encrypted\\.rs$|^src-tauri/src/documents\\.rs$|^src-tauri/src/commands\\.rs$"; "i")))
+       test("^src-tauri/Cargo\\.(toml|lock)$|^src-tauri/src/lib\\.rs$|^src/(AxalScreen|DocumentsScreen)\\.tsx$|^src-tauri/src/axal\\.rs$|^src-tauri/src/db/encrypted\\.rs$|^src-tauri/src/documents\\.rs$|^src-tauri/src/commands\\.rs$"; "i")))
   ' <<<"$files")
 fi
 validate_security_reviewer() {

@@ -658,12 +658,14 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
         self.assertNotIn("z" * 100, result.stdout)
 
     def test_security_review_is_focused_independent_and_current(self):
-        for scenario in ("security-review-stale", "security-review-author", "security-review-unrelated", "security-review-no-scope", "security-review-bare-scope", "security-review-placeholder-rationale", "security-review-hidden", "security-review-hidden-unterminated", "security-review-outsider", "security-review-dismissed", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-documents-screen", "security-documents-screen-rename-out", "security-tauri-cargo", "security-tauri-cargo-rename-out", "security-tauri-lib", "security-tauri-lib-rename-out", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out", "security-ci-workflow", "security-ci-workflow-rename-out", "security-release-preview", "security-release-preview-rename-out", "security-deploy-install-page", "security-deploy-install-page-rename-out"):
+        for scenario in ("security-review-stale", "security-review-author", "security-review-unrelated", "security-review-no-scope", "security-review-bare-scope", "security-review-placeholder-rationale", "security-review-hidden", "security-review-hidden-unterminated", "security-review-outsider", "security-review-dismissed", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-documents-screen", "security-documents-screen-rename-out", "security-tauri-cargo", "security-tauri-cargo-rename-out", "security-tauri-cargo-lock", "security-tauri-cargo-lock-rename-out", "security-tauri-lib", "security-tauri-lib-rename-out", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out", "security-ci-workflow", "security-ci-workflow-rename-out", "security-release-preview", "security-release-preview-rename-out", "security-deploy-install-page", "security-deploy-install-page-rename-out"):
             with self.subTest(scenario=scenario):
                 self.assert_indeterminate(scenario, "security-focused reviewer comment")
         result = self.run_gate("security-review-valid")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         result = self.run_gate("security-ci-workflow-valid")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.run_gate("non-sensitive-cargo-lock")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         result = self.run_gate("security-deploy-install-page-valid")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
