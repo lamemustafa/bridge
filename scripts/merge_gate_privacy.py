@@ -39,13 +39,13 @@ EMAIL_RE = re.compile(r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@([
 EXAMPLE_EMAIL_DOMAINS = {"example.com", "example.org", "example.net", "example.invalid"}
 CREDENTIAL_KEY_RE = r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|credential|session[_-]?token)"
 CREDENTIAL_ASSIGNMENT_RE = re.compile(
-    r"(?i)(?P<prefix>(?<![A-Za-z0-9_-])" + CREDENTIAL_KEY_RE +
-    r"(?![A-Za-z0-9_-])\s*(?:=|:)\s*)(?P<value>.*)$"
+    r"(?i)(?P<prefix>(?<![A-Za-z0-9_-])(?P<key_quote>['\"])?" + CREDENTIAL_KEY_RE +
+    r"(?(key_quote)(?P=key_quote))(?![A-Za-z0-9_-])\s*(?:=|:)\s*)(?P<value>.*)$"
 )
 AUTHORIZATION_BEARER_RE = re.compile(
     r"(?i)(?P<prefix>\bauthorization\s*:\s*bearer(?:\s+)?)(?P<value>.*)$"
 )
-QUOTED_VALUE_RE = re.compile(r"^(['\"])((?:\\.|(?!\1).)*)\1(?:\s*[,;].*)?$")
+QUOTED_VALUE_RE = re.compile(r"^(['\"])((?:\\.|(?!\1).)*)\1(?:\s*[,;].*|\s*[}\]])?$")
 PLACEHOLDER_VALUE_RE = re.compile(
     r"^(?:\*{3,}|(?:redacted|masked|placeholder|example|sample|null|none|n/?a)|"
     r"(?:your|replace(?:_me)?|example|sample)[_-](?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|credential|session[_-]?token))$",
@@ -57,7 +57,10 @@ SUBSTITUTION_VALUE_RE = re.compile(
     r"(?:process\.env\.[A-Za-z_][A-Za-z0-9_]*|os\.environ(?:\.get)?\([^\n]+\)|env\([^\n]+\)))$",
     re.I,
 )
-TYPE_REFERENCE_RE = re.compile(r"^(?:str|string|bytes|secret(?:str)?|token|optional\[[A-Za-z]+\]|[A-Z][A-Za-z0-9_]*(?:Token|Secret))$", re.I)
+# Only established type spellings may be lower-case.  Keeping the custom-type
+# branch case-sensitive prevents ordinary values such as ``productionToken``
+# and ``supersecret`` from being mistaken for annotations.
+TYPE_REFERENCE_RE = re.compile(r"^(?:str|string|bytes|secret(?:str)?|token|Optional\[[A-Za-z]+\]|[A-Z][A-Za-z0-9_]*(?:Token|Secret))$")
 HOME_RE = re.compile(
     r"(^|[^\w])(?:/Users/[^/\s]+|/home/[^/\s]+|/root|[A-Za-z]:[\\/]{1,2}Users[\\/]{1,2}[^\\/\s]+)"
     r"($|/|\\|[^\w.-])",

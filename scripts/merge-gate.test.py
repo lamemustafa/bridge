@@ -486,6 +486,7 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
         literals = (
             f"Authorization: Bearer {value_prefix}-token-123",
             f"api_key = '{value_prefix}-api-key-123'",
+            f'{{"api_key": "{value_prefix}-json-api-key-123"}}',
             f"access_token: {value_prefix}-access-token-123",
             f"refresh_token={value_prefix}-refresh-token-123",
             f"client_secret: {value_prefix}-client-secret-123",
@@ -502,10 +503,23 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
                 result = privacy.scan(value, HEAD)
                 self.assertTrue(result["indeterminate"])
                 self.assertNotIn(value, json.dumps(result))
-        for value in ("api_key = ${API_KEY}", "access_token: <redacted>", "client_secret: str", "tokenizer reference"):
+        for value in (
+            "api_key = ${API_KEY}",
+            '{"api_key": "${API_KEY}"}',
+            "access_token: <redacted>",
+            "client_secret: str",
+            "client_secret: Optional[str]",
+            "client_secret: MyToken",
+            "tokenizer reference",
+        ):
             with self.subTest(value=value):
                 result = privacy.scan(value, HEAD)
                 self.assertFalse(result["blockers"] + result["indeterminate"])
+        for value in ("api_key: productionToken", "api_key: supersecret"):
+            with self.subTest(value=value):
+                result = privacy.scan(value, HEAD)
+                self.assertTrue(result["blockers"])
+                self.assertNotIn(value, json.dumps(result))
 
     def test_privacy_email_lane_scans_content_sources_but_not_validated_commit_identity(self):
         privacy = load_privacy_module()
