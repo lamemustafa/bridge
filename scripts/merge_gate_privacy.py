@@ -35,6 +35,29 @@ CREDENTIAL_CONTEXT_RE = re.compile(
     r"(?:credential|session|token|bearer)(?:[_-]|(?=[A-Z])))",
     re.I,
 )
+EMAIL_RE = re.compile(r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@([A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+)(?![A-Za-z0-9._%+-])")
+EXAMPLE_EMAIL_DOMAINS = {"example.com", "example.org", "example.net", "example.invalid"}
+CREDENTIAL_KEY_RE = r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|credential|session[_-]?token)"
+CREDENTIAL_ASSIGNMENT_RE = re.compile(
+    r"(?i)(?P<prefix>(?<![A-Za-z0-9_-])" + CREDENTIAL_KEY_RE +
+    r"(?![A-Za-z0-9_-])\s*(?:=|:)\s*)(?P<value>.*)$"
+)
+AUTHORIZATION_BEARER_RE = re.compile(
+    r"(?i)(?P<prefix>\bauthorization\s*:\s*bearer(?:\s+)?)(?P<value>.*)$"
+)
+QUOTED_VALUE_RE = re.compile(r"^(['\"])((?:\\.|(?!\1).)*)\1(?:\s*[,;].*)?$")
+PLACEHOLDER_VALUE_RE = re.compile(
+    r"^(?:\*{3,}|(?:redacted|masked|placeholder|example|sample|null|none|n/?a)|"
+    r"(?:your|replace(?:_me)?|example|sample)[_-](?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|credential|session[_-]?token))$",
+    re.I,
+)
+SUBSTITUTION_VALUE_RE = re.compile(
+    r"^(?:\$[A-Za-z_][A-Za-z0-9_]*|\$\{[^{}\s]+\}|\{\{[^{}\n]+\}\}|"
+    r"<(?:redacted|masked|token|secret|credential)>|\[(?:redacted|masked)\]|"
+    r"(?:process\.env\.[A-Za-z_][A-Za-z0-9_]*|os\.environ(?:\.get)?\([^\n]+\)|env\([^\n]+\)))$",
+    re.I,
+)
+TYPE_REFERENCE_RE = re.compile(r"^(?:str|string|bytes|secret(?:str)?|token|optional\[[A-Za-z]+\]|[A-Z][A-Za-z0-9_]*(?:Token|Secret))$", re.I)
 HOME_RE = re.compile(
     r"(^|[^\w])(?:/Users/[^/\s]+|/home/[^/\s]+|/root|[A-Za-z]:[\\/]{1,2}Users[\\/]{1,2}[^\\/\s]+)"
     r"($|/|\\|[^\w.-])",
@@ -129,6 +152,59 @@ def tokenize_uuids(text, allowed, record):
     return "".join(retained)
 
 
+def credential_value_status(value):
+    """Classify an explicitly assigned credential value without returning it."""
+    value = value.strip()
+    if not value:
+        return "indeterminate"
+    quoted = QUOTED_VALUE_RE.match(value)
+    if value[0:1] in ("'", '"') and not quoted:
+        return "indeterminate"
+    if quoted:
+        value = quoted.group(2)
+    else:
+        value = re.split(r"[\s,;#]", value, 1)[0]
+    if not value:
+        return "indeterminate"
+    if PLACEHOLDER_VALUE_RE.fullmatch(value) or SUBSTITUTION_VALUE_RE.fullmatch(value) or TYPE_REFERENCE_RE.fullmatch(value):
+        return "placeholder"
+    return "blocker"
+
+
+def tokenize_credential_literals(text, record):
+    """Block assigned secret material before UUID/digest masking can hide it."""
+    blocked = 0
+    malformed = 0
+    retained = []
+    for line in text.splitlines(True):
+        match = AUTHORIZATION_BEARER_RE.search(line) or CREDENTIAL_ASSIGNMENT_RE.search(line)
+        if not match:
+            retained.append(line)
+            continue
+        status = credential_value_status(match.group("value"))
+        if status == "placeholder":
+            retained.append(line)
+        else:
+            retained.append(line[:match.start("value")] + "<credential-value>" + ("\n" if line.endswith("\n") else ""))
+            if status == "blocker":
+                blocked += 1
+            else:
+                malformed += 1
+    if blocked:
+        add(record, "blockers", "privacy scan found %d literal credential, bearer, or API token value(s)" % blocked)
+    if malformed:
+        add(record, "indeterminate", "privacy scan found %d malformed or truncated credential assignment(s)" % malformed)
+    return "".join(retained)
+
+
+def customer_email_count(text):
+    count = 0
+    for match in EMAIL_RE.finditer(text):
+        if match.group(1).lower() not in EXAMPLE_EMAIL_DOMAINS:
+            count += 1
+    return count
+
+
 def nonplaceholder_count(pattern, text):
     count = 0
     for match in pattern.finditer(text):
@@ -163,7 +239,12 @@ def scan(text, head, fixture_provenance=None):
     if pem_count:
         add(record, "blockers", "privacy scan found %d PEM certificate envelope(s)" % pem_count)
 
-    uuid_tokenized = tokenize_uuids(text, allowed, record)
+    credential_tokenized = tokenize_credential_literals(text, record)
+    email_count = customer_email_count(credential_tokenized)
+    if email_count:
+        add(record, "blockers", "privacy scan found %d customer email shape(s)" % email_count)
+
+    uuid_tokenized = tokenize_uuids(credential_tokenized, allowed, record)
     redacted = UUID_OR_DIGEST_RE.sub("<digest>", uuid_tokenized)
     exempt = len(UUID_OR_DIGEST_RE.findall(uuid_tokenized))
     if exempt:

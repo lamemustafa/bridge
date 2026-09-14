@@ -422,21 +422,20 @@ if [ -z "${metadata_commit_total:-}" ] || [ "$metadata_status" -ne 0 ] || ! jq -
     (.commit | type == "object") and
     (.commit.message | type == "string") and
     (.commit.author | type == "object" and
-      (.name | type == "string") and (.email | type == "string")) and
+      (.name | type == "string") and (.email | type == "string" and test("^[A-Za-z0-9.!#$%&*+/=?^_`{|}~-]+@[A-Za-z0-9][A-Za-z0-9.-]*\\.[A-Za-z]{2,}$"))) and
     (.commit.committer | type == "object" and
-      (.name | type == "string") and (.email | type == "string")) and
+      (.name | type == "string") and (.email | type == "string" and test("^[A-Za-z0-9.!#$%&*+/=?^_`{|}~-]+@[A-Za-z0-9][A-Za-z0-9.-]*\\.[A-Za-z]{2,}$"))) and
     ((.author == null) or (.author | type == "object" and (.login | type == "string"))) and
     ((.committer == null) or (.committer | type == "object" and (.login | type == "string")))))
 ' <<<"$metadata_commits" >/dev/null 2>&1; then
   unknown "could not prove complete head-bound PR commit metadata for the privacy scan"
   privacy_metadata=""
 else
-  # These are Git's standard author/committer and linked-account fields.  The
-  # privacy scanner checks identifier/path shapes in their literal values; it
-  # does not claim that ordinary names or email addresses are private data.
+  # Author and committer emails were structurally validated above and are an
+  # explicit identity-only source class. Do not mix them into payload/path/
+  # metadata scan input, where an identical address would be customer data.
   commit_messages=$(jq -r '(if all(.[]; type == "array") then flatten else . end)[] |
-    [.commit.message, .commit.author.name, .commit.author.email,
-     .commit.committer.name, .commit.committer.email,
+    [.commit.message, .commit.author.name, .commit.committer.name,
      (.author.login? // null), (.committer.login? // null)] |
     map(select(. != null))[]' <<<"$metadata_commits")
   privacy_metadata="$title
@@ -925,7 +924,7 @@ if [ "$files_status" -eq 0 ]; then
     (if all(.[]; type == "array") then flatten else . end) |
     any(.[]; [.filename, (.previous_filename? // "")][] |
       (test("(^|[/_.-])(dsc|credential[s]?|certificate[s]?|keystore|secret[s]?)(?=[/_.-]|$|[A-Z])"; "i") or
-       test("^scripts/bank_statement_import\\.py$"; "i") or
+       test("^scripts/(merge-gate\\.sh|merge_gate_privacy\\.py|merge_gate_diff\\.py|bank_statement_import\\.py)$"; "i") or
        test("^scripts/prune-package-compiler-cache\\.mjs$"; "i") or
        test("^\\.github/workflows/(ci\\.yml|release-mcpb-preview\\.yml|deploy-install-page\\.yml)$"; "i") or
        test("^src-tauri/Cargo\\.(toml|lock)$|^src-tauri/src/lib\\.rs$|^src/(AxalScreen|DocumentsScreen)\\.tsx$|^src-tauri/src/axal\\.rs$|^src-tauri/src/db/encrypted\\.rs$|^src-tauri/src/documents\\.rs$|^src-tauri/src/commands\\.rs$"; "i")))
@@ -945,7 +944,7 @@ if [ "$security_reviewer_change" = "true" ]; then
         .user.login != $author and (.user.type == "User" or .user.type == "Bot") and
         ((.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") or
          (.user.login == "chatgpt-codex-connector[bot]" and .user.type == "Bot"));
-      def visible_body: .body | gsub("(?s:<!--.*?(?:-->|$))"; "");
+      def visible_body: .body | gsub("(?s:<!--.*?(?:-->|$))"; "") | gsub("(?ms)^[ ]{0,3}(```|~~~)[^\\n]*\\n.*?(^[ ]{0,3}\\1[ \\t]*$|\\z)"; "");
       def substantive:
         gsub("^[[:space:]]+|[[:space:]]+$"; "") as $text |
         ($text | length >= 12) and

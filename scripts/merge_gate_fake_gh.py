@@ -5,6 +5,7 @@ import base64, json, os, sys
 args = sys.argv[1:]
 scenario = os.environ.get("GATE_SCENARIO", "pass")
 security_case = scenario.startswith("security-review-") or scenario in {"security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-documents-screen", "security-documents-screen-rename-out", "security-documents-screen-valid", "security-tauri-cargo", "security-tauri-cargo-rename-out", "security-tauri-cargo-lock", "security-tauri-cargo-lock-rename-out", "security-tauri-lib", "security-tauri-lib-rename-out", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out", "security-ci-workflow", "security-ci-workflow-rename-out", "security-ci-workflow-valid", "security-release-preview", "security-release-preview-rename-out", "security-deploy-install-page", "security-deploy-install-page-rename-out", "security-deploy-install-page-valid", "workflow-notes-present", "workflow-delete-notes", "workflow-rename-out-notes"}
+security_case = security_case or scenario.startswith("security-review-path-")
 security_workflow_case = scenario in {"security-ci-workflow", "security-ci-workflow-rename-out", "security-ci-workflow-valid", "security-release-preview", "security-release-preview-rename-out", "security-deploy-install-page", "security-deploy-install-page-rename-out", "security-deploy-install-page-valid"}
 sync_case = scenario.startswith("sync-")
 head = "0123456789abcdef0123456789abcdef01234567"
@@ -46,6 +47,8 @@ if args[:2] == ["pr", "view"]:
     title = "Safe merge gate control"
     if scenario == "metadata-title-id":
         title = "Customer " + "ABCDE" + "1234" + "F"
+    elif scenario == "privacy-email-title":
+        title = "Customer customer@company.test"
     body = (
         "## Outcome and reason\n\nA bounded merge preflight keeps incomplete evidence from becoming a merge.\n\n"
         "## Validation and evidence\n\n`python3 scripts/merge-gate.test.py`\n\n"
@@ -288,11 +291,13 @@ if args[:2] == ["pr", "view"]:
         body += "\n- Windows validation evidence: N/A.\n- macOS validation evidence: TBD.\n"
     if scenario == "platform-evidence-fenced-continuation":
         body += "\n### Windows validation evidence\n~~~text\nWindows CI passed `python3 scripts/merge-gate.test.py`.\n~~~\n### macOS validation evidence\n~~~text\nmacOS CI passed `python3 scripts/merge-gate.test.py`.\n~~~\n"
+    if scenario == "privacy-email-body":
+        body += "\nCustomer contact: customer@company.test\n"
     body = body.replace("blob/HEAD", f"blob/{head}")
     if scenario == "checklist-stale-ref":
         body = body.replace(f"blob/{head}", "blob/" + "f" * 40)
     one_file = scenario in {"metadata-private", "files-empty", "formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-tab", "unicode-phone-two-lines", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "grouped-identifier-mixed", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "landline-grouped", "landline-standard-hyphen", "landline-standard-space", "landline-standard-underscore", "pem-certificate-envelope", "path-id", "binary-delete", "binary-review", "binary-review-private", "binary-review-head-moves", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "grouped-pan-space", "grouped-pan-hyphen", "grouped-masked-pan-space", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-sibling-migration", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "workflow-placeholders", "workflow-punctuated-placeholders", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-none", "security-pending", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "dependency-manifest-missing", "dependency-manifest-present", "home-macos", "home-unix", "home-windows", "crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path", "gitlink", "gitlink-existing", "implementation-p4-missing", "implementation-p4-present", "implementation-p4-continuation", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders", "platform-evidence-missing", "platform-evidence-present", "platform-evidence-heading", "platform-powershell-missing", "platform-powershell-evidence", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-inline-prose", "platform-negative-outcome", "platform-unaffected-bare", "platform-unaffected-rationale", "platform-evidence-bare-label", "platform-evidence-sibling-list", "platform-evidence-empty-fence", "platform-evidence-punctuated-placeholder", "platform-evidence-fenced-continuation", "platform-evidence-package-manager", "platform-windows-native-action", "platform-windows-native-action-rename-out", "platform-ci-workflow", "platform-ci-workflow-rename-out", "platform-release-mcpb-preview", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"} or scenario.startswith("home-") or security_case or sync_case
-    one_file = one_file or scenario in {"skipped-native-scope", "skipped-bundle-scope", "non-sensitive-cargo-lock"}
+    one_file = one_file or scenario in {"skipped-native-scope", "skipped-bundle-scope", "non-sensitive-cargo-lock", "privacy-email-payload", "privacy-email-destination", "privacy-email-title", "privacy-email-body", "privacy-email-commit", "privacy-email-author"}
     selected_base = new_head if scenario == "base-oid-mismatch" else base
     emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
           "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
@@ -341,10 +346,18 @@ elif args[:2] == ["pr", "diff"]:
         emit("diff --git a/src-tauri/Cargo.toml b/docs/retired-tauri-cargo.toml\nsimilarity index 100%\nrename from src-tauri/Cargo.toml\nrename to docs/retired-tauri-cargo.toml\n")
     elif scenario == "security-tauri-cargo-lock-rename-out":
         emit("diff --git a/src-tauri/Cargo.lock b/docs/retired-tauri-cargo.lock\nsimilarity index 100%\nrename from src-tauri/Cargo.lock\nrename to docs/retired-tauri-cargo.lock\n")
+    elif scenario.startswith("security-review-path-") and scenario.endswith("-rename-out"):
+        paths = {
+            "security-review-path-privacy-module-rename-out": ("scripts/merge_gate_privacy.py", "docs/retired-privacy.py"),
+            "security-review-path-privacy-coordinator-rename-out": ("scripts/merge-gate.sh", "docs/retired-merge-gate.sh"),
+            "security-review-path-diff-parser-rename-out": ("scripts/merge_gate_diff.py", "docs/retired-diff.py"),
+        }
+        old_path, new_path = paths[scenario]
+        emit(f"diff --git a/{old_path} b/{new_path}\nsimilarity index 100%\nrename from {old_path}\nrename to {new_path}\n")
     elif scenario == "security-tauri-lib-rename-out":
         emit("diff --git a/src-tauri/src/lib.rs b/docs/retired-tauri-lib.rs\nsimilarity index 100%\nrename from src-tauri/src/lib.rs\nrename to docs/retired-tauri-lib.rs\n")
     elif security_case:
-        paths = {"security-axal-frontend": "src/AxalScreen.tsx", "security-axal-native": "src-tauri/src/axal.rs", "security-encrypted-keystore": "src-tauri/src/db/encrypted.rs", "security-documents-consumer": "src-tauri/src/documents.rs", "security-documents-screen": "src/DocumentsScreen.tsx", "security-documents-screen-valid": "src/DocumentsScreen.tsx", "security-tauri-cargo": "src-tauri/Cargo.toml", "security-tauri-cargo-lock": "src-tauri/Cargo.lock", "security-tauri-lib": "src-tauri/src/lib.rs", "security-commands-facade": "src-tauri/src/commands.rs", "security-bank-statement-import": "scripts/bank_statement_import.py", "security-prune-package-compiler-cache": "scripts/prune-package-compiler-cache.mjs", "security-ci-workflow": ".github/workflows/ci.yml", "security-ci-workflow-valid": ".github/workflows/ci.yml", "security-release-preview": ".github/workflows/release-mcpb-preview.yml", "security-deploy-install-page": ".github/workflows/deploy-install-page.yml", "security-deploy-install-page-valid": ".github/workflows/deploy-install-page.yml"}
+        paths = {"security-axal-frontend": "src/AxalScreen.tsx", "security-axal-native": "src-tauri/src/axal.rs", "security-encrypted-keystore": "src-tauri/src/db/encrypted.rs", "security-documents-consumer": "src-tauri/src/documents.rs", "security-documents-screen": "src/DocumentsScreen.tsx", "security-documents-screen-valid": "src/DocumentsScreen.tsx", "security-tauri-cargo": "src-tauri/Cargo.toml", "security-tauri-cargo-lock": "src-tauri/Cargo.lock", "security-tauri-lib": "src-tauri/src/lib.rs", "security-commands-facade": "src-tauri/src/commands.rs", "security-bank-statement-import": "scripts/bank_statement_import.py", "security-prune-package-compiler-cache": "scripts/prune-package-compiler-cache.mjs", "security-ci-workflow": ".github/workflows/ci.yml", "security-ci-workflow-valid": ".github/workflows/ci.yml", "security-release-preview": ".github/workflows/release-mcpb-preview.yml", "security-deploy-install-page": ".github/workflows/deploy-install-page.yml", "security-deploy-install-page-valid": ".github/workflows/deploy-install-page.yml", "security-review-path-privacy-module": "scripts/merge_gate_privacy.py", "security-review-path-privacy-coordinator": "scripts/merge-gate.sh", "security-review-path-diff-parser": "scripts/merge_gate_diff.py"}
         path = paths.get(scenario, "src-tauri/src/dsc.rs")
         emit(f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -0,0 +1 @@\n+safe check\n")
     elif sync_case:
@@ -361,6 +374,12 @@ elif args[:2] == ["pr", "diff"]:
         emit("diff --git a/index.html b/index.html\n--- a/index.html\n+++ b/index.html\n@@ -0,0 +1 @@\n+safe text\n")
     elif scenario == "non-sensitive-cargo-lock":
         emit("diff --git a/tools/Cargo.lock b/tools/Cargo.lock\n--- a/tools/Cargo.lock\n+++ b/tools/Cargo.lock\n@@ -0,0 +1 @@\n+safe text\n")
+    elif scenario == "privacy-email-payload":
+        emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+customer@company.test\n")
+    elif scenario == "privacy-email-destination":
+        emit("diff --git a/docs/customer@company.test.md b/docs/customer@company.test.md\n--- /dev/null\n+++ b/docs/customer@company.test.md\n@@ -0,0 +1 @@\n+safe text\n")
+    elif scenario in {"privacy-email-title", "privacy-email-body", "privacy-email-commit", "privacy-email-author"}:
+        emit("diff --git a/docs/example.md b/docs/example.md\n--- a/docs/example.md\n+++ b/docs/example.md\n@@ -0,0 +1 @@\n+safe text\n")
     elif scenario in {"security-notes-missing", "security-notes-present", "security-none", "security-pending"}:
         emit("diff --git a/src-tauri/src/tally/runtime.rs b/src-tauri/src/tally/runtime.rs\n--- a/src-tauri/src/tally/runtime.rs\n+++ b/src-tauri/src/tally/runtime.rs\n@@ -0,0 +1 @@\n+safe text\n")
     elif scenario in {"security-crate", "security-agent-import", "security-dsc"}:
@@ -586,9 +605,13 @@ elif args and args[0] == "api":
         message = "safe commit metadata"
         if scenario == "metadata-commit-id":
             message = "Customer " + "ABCDE" + "1234" + "F"
+        elif scenario == "privacy-email-commit":
+            message = "Customer customer@company.test"
         identity = {"name": "Maintainer", "email": "maintainer@example.invalid"}
         if scenario == "metadata-author-id":
             identity = {"name": "ABCDE" + "1234" + "F", "email": "maintainer@example.invalid"}
+        elif scenario == "privacy-email-author":
+            identity = {"name": "Maintainer", "email": "maintainer@company.test"}
         linked_author = None if scenario == "metadata-unlinked-identities" else {"login": "author"}
         linked_committer = None if scenario == "metadata-unlinked-identities" else {"login": "committer"}
         commits = [{"sha": head, "commit": {"message": message, "author": identity, "committer": identity},
@@ -627,7 +650,7 @@ elif args and args[0] == "api":
             emit([[]])
         else:
             records = [{"user": {"login": "chatgpt-codex-connector[bot]", "type": "Bot"}, "state": "COMMENTED", "commit_id": head}]
-            if security_case and scenario not in {"security-review-missing", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-documents-screen", "security-documents-screen-rename-out", "security-tauri-cargo", "security-tauri-cargo-rename-out", "security-tauri-cargo-lock", "security-tauri-cargo-lock-rename-out", "security-tauri-lib", "security-tauri-lib-rename-out", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out", "security-ci-workflow", "security-ci-workflow-rename-out", "security-release-preview", "security-release-preview-rename-out", "security-deploy-install-page", "security-deploy-install-page-rename-out"}:
+            if security_case and not scenario.startswith("security-review-path-") and scenario not in {"security-review-missing", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-documents-screen", "security-documents-screen-rename-out", "security-tauri-cargo", "security-tauri-cargo-rename-out", "security-tauri-cargo-lock", "security-tauri-cargo-lock-rename-out", "security-tauri-lib", "security-tauri-lib-rename-out", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out", "security-ci-workflow", "security-ci-workflow-rename-out", "security-release-preview", "security-release-preview-rename-out", "security-deploy-install-page", "security-deploy-install-page-rename-out"}:
                 record = {"user": {"login": "reviewer", "type": "User"}, "author_association": "COLLABORATOR", "state": "COMMENTED", "commit_id": head, "body": f"Security review: {head}\nResult: accepted\nReviewed credential handling: token diagnostics remain redacted.\nSecurity rationale: the current access boundary prevents a cache token from reaching logs."}
                 if scenario == "security-review-stale": record["commit_id"] = new_head
                 if scenario == "security-review-author": record["user"]["login"] = "author"
@@ -637,6 +660,9 @@ elif args and args[0] == "api":
                 if scenario == "security-review-placeholder-rationale": record["body"] = f"Security review: {head}\nResult: accepted\nReviewed credential handling: token diagnostics remain redacted.\nSecurity rationale: TBD"
                 if scenario == "security-review-hidden": record["body"] = f"<!--\nSecurity review: {head}\nResult: accepted\nReviewed credential handling and error redaction.\n-->"
                 if scenario == "security-review-hidden-unterminated": record["body"] = f"<!--\nSecurity review: {head}\nResult: accepted\nReviewed credential handling and error redaction."
+                if scenario in {"security-review-fenced", "security-review-fenced-unterminated"}:
+                    closing = "\n```" if scenario == "security-review-fenced" else ""
+                    record["body"] = f"```text\nSecurity review: {head}\nResult: accepted\nReviewed credential handling: token diagnostics remain redacted.\nSecurity rationale: the current access boundary prevents a cache token from reaching logs.{closing}"
                 if scenario == "security-review-outsider": record["author_association"] = "NONE"
                 if scenario == "security-review-dismissed": record["state"] = "DISMISSED"
                 records.append(record)
@@ -691,6 +717,20 @@ elif args and args[0] == "api":
             emit([[{"filename": "src-tauri/Cargo.lock", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "security-tauri-cargo-lock-rename-out":
             emit([[{"filename": "docs/retired-tauri-cargo.lock", "previous_filename": "src-tauri/Cargo.lock", "status": "renamed", "additions": 0, "deletions": 0}]])
+        elif scenario.startswith("security-review-path-"):
+            paths = {
+                "security-review-path-privacy-module": ("scripts/merge_gate_privacy.py", None),
+                "security-review-path-privacy-module-rename-out": ("docs/retired-privacy.py", "scripts/merge_gate_privacy.py"),
+                "security-review-path-privacy-coordinator": ("scripts/merge-gate.sh", None),
+                "security-review-path-privacy-coordinator-rename-out": ("docs/retired-merge-gate.sh", "scripts/merge-gate.sh"),
+                "security-review-path-diff-parser": ("scripts/merge_gate_diff.py", None),
+                "security-review-path-diff-parser-rename-out": ("docs/retired-diff.py", "scripts/merge_gate_diff.py"),
+            }
+            filename, previous_filename = paths[scenario]
+            record = {"filename": filename, "status": "renamed" if previous_filename else "modified", "additions": 0 if previous_filename else 1, "deletions": 0}
+            if previous_filename:
+                record["previous_filename"] = previous_filename
+            emit([[record]])
         elif scenario == "security-tauri-lib":
             emit([[{"filename": "src-tauri/src/lib.rs", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "security-tauri-lib-rename-out":
@@ -725,6 +765,12 @@ elif args and args[0] == "api":
             emit([[{"filename": "package.json", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario == "non-sensitive-cargo-lock":
             emit([[{"filename": "tools/Cargo.lock", "status": "modified", "additions": 1, "deletions": 0}]])
+        elif scenario == "privacy-email-payload":
+            emit([[{"filename": "docs/example.md", "status": "modified", "additions": 1, "deletions": 0}]])
+        elif scenario == "privacy-email-destination":
+            emit([[{"filename": "docs/customer@company.test.md", "status": "added", "additions": 1, "deletions": 0}]])
+        elif scenario in {"privacy-email-title", "privacy-email-body", "privacy-email-commit", "privacy-email-author"}:
+            emit([[{"filename": "docs/example.md", "status": "modified", "additions": 1, "deletions": 0}]])
         elif scenario in {"workflow-delete", "workflow-delete-notes"}:
             emit([[{"filename": ".github/workflows/ci.yml", "status": "removed", "additions": 0, "deletions": 1}]])
         elif scenario == "platform-ci-workflow-rename-out":

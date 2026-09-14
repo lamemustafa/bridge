@@ -480,6 +480,53 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
                 self.assertIn(expected, "\n".join(result["blockers"]))
                 self.assertNotIn(value, json.dumps(result))
 
+    def test_privacy_module_classifies_literal_credentials_and_customer_emails_without_echoing_values(self):
+        privacy = load_privacy_module()
+        value_prefix = "live"
+        literals = (
+            f"Authorization: Bearer {value_prefix}-token-123",
+            f"api_key = '{value_prefix}-api-key-123'",
+            f"access_token: {value_prefix}-access-token-123",
+            f"refresh_token={value_prefix}-refresh-token-123",
+            f"client_secret: {value_prefix}-client-secret-123",
+            f"credential = {value_prefix}-credential-123",
+            f"session-token: {value_prefix}-session-token-123",
+        )
+        for value in literals:
+            with self.subTest(value=value):
+                result = privacy.scan(value, HEAD)
+                self.assertTrue(result["blockers"])
+                self.assertNotIn(value, json.dumps(result))
+        for value in ("Authorization: Bearer", "api_key =", "client_secret: '"):
+            with self.subTest(value=value):
+                result = privacy.scan(value, HEAD)
+                self.assertTrue(result["indeterminate"])
+                self.assertNotIn(value, json.dumps(result))
+        for value in ("api_key = ${API_KEY}", "access_token: <redacted>", "client_secret: str", "tokenizer reference"):
+            with self.subTest(value=value):
+                result = privacy.scan(value, HEAD)
+                self.assertFalse(result["blockers"] + result["indeterminate"])
+
+    def test_privacy_email_lane_scans_content_sources_but_not_validated_commit_identity(self):
+        privacy = load_privacy_module()
+        for scenario in ("privacy-email-payload", "privacy-email-destination", "privacy-email-title", "privacy-email-body", "privacy-email-commit"):
+            with self.subTest(scenario=scenario):
+                result = self.run_gate(scenario)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("customer email shape", result.stdout)
+                self.assertNotIn("customer@company.test", result.stdout)
+        result = self.run_gate("privacy-email-author")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for value in ("customer@company.test", "customer@example.com.attacker.test"):
+            with self.subTest(value=value):
+                result = privacy.scan(value, HEAD)
+                self.assertTrue(result["blockers"])
+                self.assertNotIn(value, json.dumps(result))
+        for value in ("customer@example.com", "customer@example.invalid"):
+            with self.subTest(value=value):
+                result = privacy.scan(value, HEAD)
+                self.assertFalse(result["blockers"] + result["indeterminate"])
+
     def test_duplicate_thread_ids_are_indeterminate(self):
         self.assert_indeterminate("threads-duplicate-id", "pagination repeated thread IDs")
 
@@ -658,7 +705,7 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
         self.assertNotIn("z" * 100, result.stdout)
 
     def test_security_review_is_focused_independent_and_current(self):
-        for scenario in ("security-review-stale", "security-review-author", "security-review-unrelated", "security-review-no-scope", "security-review-bare-scope", "security-review-placeholder-rationale", "security-review-hidden", "security-review-hidden-unterminated", "security-review-outsider", "security-review-dismissed", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-documents-screen", "security-documents-screen-rename-out", "security-tauri-cargo", "security-tauri-cargo-rename-out", "security-tauri-cargo-lock", "security-tauri-cargo-lock-rename-out", "security-tauri-lib", "security-tauri-lib-rename-out", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out", "security-ci-workflow", "security-ci-workflow-rename-out", "security-release-preview", "security-release-preview-rename-out", "security-deploy-install-page", "security-deploy-install-page-rename-out"):
+        for scenario in ("security-review-stale", "security-review-author", "security-review-unrelated", "security-review-no-scope", "security-review-bare-scope", "security-review-placeholder-rationale", "security-review-hidden", "security-review-hidden-unterminated", "security-review-fenced", "security-review-fenced-unterminated", "security-review-outsider", "security-review-dismissed", "security-camel-dsc", "security-camel-credential", "security-axal-frontend", "security-axal-native", "security-encrypted-keystore", "security-documents-consumer", "security-documents-consumer-rename-out", "security-documents-screen", "security-documents-screen-rename-out", "security-tauri-cargo", "security-tauri-cargo-rename-out", "security-tauri-cargo-lock", "security-tauri-cargo-lock-rename-out", "security-tauri-lib", "security-tauri-lib-rename-out", "security-commands-facade", "security-bank-statement-import", "security-prune-package-compiler-cache", "security-prune-package-compiler-cache-rename-out", "security-ci-workflow", "security-ci-workflow-rename-out", "security-release-preview", "security-release-preview-rename-out", "security-deploy-install-page", "security-deploy-install-page-rename-out", "security-review-path-privacy-module", "security-review-path-privacy-module-rename-out", "security-review-path-privacy-coordinator", "security-review-path-privacy-coordinator-rename-out", "security-review-path-diff-parser", "security-review-path-diff-parser-rename-out"):
             with self.subTest(scenario=scenario):
                 self.assert_indeterminate(scenario, "security-focused reviewer comment")
         result = self.run_gate("security-review-valid")
