@@ -42,6 +42,10 @@ class MergeGateControls(unittest.TestCase):
 import os, sys
 if os.environ.get("GATE_SCENARIO") == "context-report-jq-failure" and "--rawfile" in sys.argv and "contexts" in sys.argv:
     raise SystemExit(1)
+if os.environ.get("GATE_SCENARIO") == "final-required-jq-failure" and "--slurpfile" in sys.argv and "runs" in sys.argv:
+    raise SystemExit(1)
+if os.environ.get("GATE_SCENARIO") == "late-meta-jq-failure" and "--slurpfile" in sys.argv and "initial" in sys.argv:
+    raise SystemExit(2)
 os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]])
 """)
         jq.chmod(0o755)
@@ -184,6 +188,48 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
 
     def test_raw_html_comment_drift_blocks_revalidation(self):
         self.assert_blocked("body-comment-drift", "description changed during preflight")
+
+    def test_last_identity_fence_rejects_each_late_mutable_metadata_change(self):
+        for field in ("title", "title-newline", "body-comment", "body-newline", "draft", "state", "mergeable", "merge-state", "changed-files"):
+            with self.subTest(field=field):
+                result = self.run_gate("late-meta-" + field)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("PR metadata changed after final CI evidence", result.stdout)
+                self.assertNotIn("changed during preflight", result.stdout)
+                self.assertNotIn("MAY MERGE", result.stdout)
+
+    def test_last_identity_fence_preserves_head_and_base_move_rejection(self):
+        for field, phrase in (("head", "PR head moved"), ("base-oid", "PR base OID moved"), ("base-name", "PR base moved")):
+            with self.subTest(field=field):
+                self.assert_blocked("late-meta-" + field, phrase + " after final CI evidence")
+
+    def test_last_identity_fence_rejects_unreadable_or_malformed_metadata(self):
+        for field in ("error", "missing-body", "body-wrong-type", "unknown-state"):
+            with self.subTest(field=field):
+                self.assert_indeterminate("late-meta-" + field, "could not revalidate PR identity after final CI evidence")
+        self.assert_indeterminate("late-meta-jq-failure", "could not compare PR metadata after final CI evidence")
+
+    def test_final_required_context_union_rejects_disappearing_contexts(self):
+        for scenario, count in (("final-contexts-empty", 5), ("final-check-context-disappears", 1), ("final-status-context-disappears", 1)):
+            with self.subTest(scenario=scenario):
+                result = self.run_gate(scenario)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("all 5 required check contexts passed", result.stdout)
+                self.assertIn(f"{count} required check context(s) missing or not successful after final CI evidence", result.stdout)
+                self.assertNotIn("MAY MERGE", result.stdout)
+
+    def test_final_required_context_union_accepts_paginated_status_only_contexts(self):
+        result = self.run_gate("final-required-statuses-pass")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("all required check contexts remain successful in final CI evidence", result.stdout)
+
+    def test_final_required_context_union_rejects_non_success_and_computation_errors(self):
+        for scenario in ("final-required-check-skipped", "final-required-check-neutral"):
+            with self.subTest(scenario=scenario):
+                self.assert_blocked(scenario, "1 required check context(s) missing or not successful after final CI evidence")
+        self.assert_blocked("final-required-status-fails", "final combined commit-status evidence reports a failure")
+        self.assert_indeterminate("final-required-check-pending", "could not revalidate final head-bound check-run evidence")
+        self.assert_indeterminate("final-required-jq-failure", "could not evaluate final required check contexts")
 
     def test_repeated_digit_phone_is_scanned(self):
         self.assert_blocked("repeated-phone", "privacy scan found")
@@ -520,6 +566,36 @@ os.execv(os.environ["GATE_REAL_JQ"], [os.environ["GATE_REAL_JQ"], *sys.argv[1:]]
                 result = privacy.scan(value, HEAD)
                 self.assertTrue(result["blockers"])
                 self.assertNotIn(value, json.dumps(result))
+
+    def test_privacy_module_scans_password_passphrase_and_private_key_literals_without_echoing_values(self):
+        privacy = load_privacy_module()
+        literals = (
+            "password = 'live-password-123'",
+            '"passphrase": "live-passphrase-123"',
+            "'private-key': 'live-private-key-123'",
+            '"private_key": "live-private-key-456"',
+        )
+        for value in literals:
+            with self.subTest(value=value):
+                result = privacy.scan(value, HEAD)
+                self.assertTrue(result["blockers"])
+                self.assertNotIn(value, json.dumps(result))
+
+        for value in (
+            '"password": "${PASSWORD}"',
+            '"passphrase": "<redacted>"',
+            '"private-key": "str"',
+        ):
+            with self.subTest(value=value):
+                result = privacy.scan(value, HEAD)
+                self.assertFalse(result["blockers"] + result["indeterminate"])
+
+    def test_privacy_module_scans_every_credential_assignment_in_minified_json(self):
+        privacy = load_privacy_module()
+        value = '{"api_key":"${API_KEY}","password":"live-password-123"}'
+        result = privacy.scan(value, HEAD)
+        self.assertTrue(result["blockers"])
+        self.assertNotIn(value, json.dumps(result))
 
     def test_privacy_email_lane_scans_content_sources_but_not_validated_commit_identity(self):
         privacy = load_privacy_module()

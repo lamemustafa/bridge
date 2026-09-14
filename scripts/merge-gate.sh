@@ -1441,6 +1441,7 @@ if [ "$final_check_runs_status" -ne 0 ] || ! jq -e --arg head "$head" '
 ' <<<"$final_check_runs" >/dev/null 2>&1; then
   unknown "could not revalidate final head-bound check-run evidence"
 else
+  printf '%s' "$final_check_runs" >"$tmpdir/final-check-runs.json"
   final_check_run_skips="$tmpdir/final-check-run-skips.b64"
   final_skipped_ci_policy_ok=true
   if ! jq -r '.[] | .check_runs[] | select(.conclusion == "skipped") | .name | @base64' <<<"$final_check_runs" >"$final_check_run_skips"; then
@@ -1495,20 +1496,65 @@ if [ "$final_statuses_status" -ne 0 ] || ! jq -e --arg head "$head" '
 elif jq -e 'any(.[]; (.state == "failure" or .state == "error") or any(.statuses[]; .state == "failure" or .state == "error"))' <<<"$final_statuses" >/dev/null; then
   bad "final combined commit-status evidence reports a failure"
 else
+  printf '%s' "$final_statuses" >"$tmpdir/final-statuses.json"
   say "ok" "final commit-status pages are bound to head $short"
 fi
 
+# Complete pages can still omit a context that the initial rollup reported.
+# Reconstruct the final union, including status-only contexts, and require every
+# originally protected context to remain present with only successful results.
+if [ -f "$tmpdir/final-check-runs.json" ] && [ -f "$tmpdir/final-statuses.json" ]; then
+  final_required_status=0
+  final_required_bad=$(jq -n --rawfile contexts "$tmpdir/required-contexts" \
+    --slurpfile runs "$tmpdir/final-check-runs.json" --slurpfile statuses "$tmpdir/final-statuses.json" '
+    ([$runs[0][] | .check_runs[] | {name, state: .conclusion}] +
+     [$statuses[0][] | .statuses[] | {name: .context, state}]) as $reported |
+    [$contexts | split("\n")[] | select(length > 0) | . as $context |
+      [$reported[] | select(.name == $context)] |
+      select(length == 0 or any(.[]; .state != "success"))] | length
+  ') || final_required_status=$?
+  if [ "$final_required_status" -ne 0 ] || ! [[ "$final_required_bad" =~ ^[0-9]+$ ]]; then
+    unknown "could not evaluate final required check contexts"
+  elif [ "$final_required_bad" -gt 0 ]; then
+    bad "$final_required_bad required check context(s) missing or not successful after final CI evidence"
+  else
+    say "ok" "all required check contexts remain successful in final CI evidence"
+  fi
+fi
+
 # The last check/status snapshot is useful only while it still names this PR
-# and base. A head/base move after it invalidates the entire preflight.
+# and base and the metadata examined above remains unchanged.
 : >"$errfile"
 late_meta_status=0
-late_meta=$(gh pr view "$PR" --repo "$REPO" --json headRefOid,baseRefOid,baseRefName 2>"$errfile") || late_meta_status=$?
-if [ "$late_meta_status" -ne 0 ] || ! jq -e 'type == "object" and (.headRefOid | type == "string" and test("^[0-9a-fA-F]{40}$")) and (.baseRefOid | type == "string" and test("^[0-9a-fA-F]{40}$")) and (.baseRefName | type == "string")' <<<"$late_meta" >/dev/null 2>&1; then
+late_meta=$(gh pr view "$PR" --repo "$REPO" \
+  --json headRefOid,baseRefOid,baseRefName,mergeable,mergeStateStatus,isDraft,state,title,body,changedFiles 2>"$errfile") || late_meta_status=$?
+if [ "$late_meta_status" -ne 0 ] || ! jq -e '
+  type == "object" and
+  (.headRefOid | type == "string" and test("^[0-9a-fA-F]{40}$")) and
+  (.baseRefOid | type == "string" and test("^[0-9a-fA-F]{40}$")) and
+  (.baseRefName | type == "string" and length > 0) and
+  (.mergeable | type == "string") and
+  (.mergeStateStatus | . == "CLEAN" or . == "HAS_HOOKS" or . == "BEHIND" or . == "DIRTY" or . == "UNKNOWN" or . == "BLOCKED" or . == "UNSTABLE" or . == "DRAFT") and
+  (.isDraft | type == "boolean") and (.state | type == "string") and
+  (.title | type == "string") and (.body | type == "string") and
+  (.changedFiles | type == "number" and floor == . and . >= 0)
+' <<<"$late_meta" >/dev/null 2>&1; then
   unknown "could not revalidate PR identity after final CI evidence"
 else
   [ "$(jq -r '.headRefOid' <<<"$late_meta")" = "$head" ] || bad "PR head moved after final CI evidence"
   [ "$(jq -r '.baseRefOid' <<<"$late_meta")" = "$base_ref_oid" ] || bad "PR base OID moved after final CI evidence"
   [ "$(jq -r '.baseRefName' <<<"$late_meta")" = "$base" ] || bad "PR base moved after final CI evidence"
+  printf '%s' "$meta" >"$tmpdir/initial-pr-metadata.json"
+  late_metadata_match_status=0
+  jq -e --slurpfile initial "$tmpdir/initial-pr-metadata.json" '
+    def mutable_fields: {title, body, isDraft, state, mergeable, mergeStateStatus, changedFiles};
+    mutable_fields == ($initial[0] | mutable_fields)
+  ' <<<"$late_meta" >/dev/null 2>&1 || late_metadata_match_status=$?
+  case "$late_metadata_match_status" in
+    0) : ;;
+    1) bad "PR metadata changed after final CI evidence; re-run preflight" ;;
+    *) unknown "could not compare PR metadata after final CI evidence" ;;
+  esac
 fi
 
 # The branch endpoint is independent of the PR metadata endpoint.  Re-read it

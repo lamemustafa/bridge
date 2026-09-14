@@ -37,10 +37,10 @@ CREDENTIAL_CONTEXT_RE = re.compile(
 )
 EMAIL_RE = re.compile(r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@([A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+)(?![A-Za-z0-9._%+-])")
 EXAMPLE_EMAIL_DOMAINS = {"example.com", "example.org", "example.net", "example.invalid"}
-CREDENTIAL_KEY_RE = r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|credential|session[_-]?token)"
+CREDENTIAL_KEY_RE = r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|credential|session[_-]?token|password|passphrase|private[_-]?key)"
 CREDENTIAL_ASSIGNMENT_RE = re.compile(
     r"(?i)(?P<prefix>(?<![A-Za-z0-9_-])(?P<key_quote>['\"])?" + CREDENTIAL_KEY_RE +
-    r"(?(key_quote)(?P=key_quote))(?![A-Za-z0-9_-])\s*(?:=|:)\s*)(?P<value>.*)$"
+    r"(?(key_quote)(?P=key_quote))(?![A-Za-z0-9_-])\s*(?:=|:)\s*)"
 )
 AUTHORIZATION_BEARER_RE = re.compile(
     r"(?i)(?P<prefix>\bauthorization\s*:\s*bearer(?:\s+)?)(?P<value>.*)$"
@@ -174,25 +174,53 @@ def credential_value_status(value):
     return "blocker"
 
 
+def credential_value_span(text, start):
+    """Return one assignment value's bounds without consuming later fields."""
+    if start >= len(text):
+        return start, start
+    if text[start] in ("'", '"'):
+        quote = text[start]
+        cursor = start + 1
+        while cursor < len(text):
+            if text[cursor] == "\\":
+                cursor += 2
+            elif text[cursor] == quote:
+                return start, cursor + 1
+            else:
+                cursor += 1
+        return start, len(text)
+    cursor = start
+    while cursor < len(text) and text[cursor] not in "\t\r\n ,;#":
+        cursor += 1
+    return start, cursor
+
+
 def tokenize_credential_literals(text, record):
     """Block assigned secret material before UUID/digest masking can hide it."""
     blocked = 0
     malformed = 0
     retained = []
-    for line in text.splitlines(True):
-        match = AUTHORIZATION_BEARER_RE.search(line) or CREDENTIAL_ASSIGNMENT_RE.search(line)
+    cursor = 0
+    while cursor < len(text):
+        bearer = AUTHORIZATION_BEARER_RE.search(text, cursor)
+        assignment = CREDENTIAL_ASSIGNMENT_RE.search(text, cursor)
+        match = min((candidate for candidate in (bearer, assignment) if candidate), key=lambda candidate: candidate.start(), default=None)
         if not match:
-            retained.append(line)
-            continue
-        status = credential_value_status(match.group("value"))
+            retained.append(text[cursor:])
+            break
+        value_start = match.end("prefix")
+        value_start, value_end = credential_value_span(text, value_start)
+        status = credential_value_status(text[value_start:value_end])
+        retained.append(text[cursor:value_start])
         if status == "placeholder":
-            retained.append(line)
+            retained.append(text[value_start:value_end])
         else:
-            retained.append(line[:match.start("value")] + "<credential-value>" + ("\n" if line.endswith("\n") else ""))
+            retained.append("<credential-value>")
             if status == "blocker":
                 blocked += 1
             else:
                 malformed += 1
+        cursor = value_end
     if blocked:
         add(record, "blockers", "privacy scan found %d literal credential, bearer, or API token value(s)" % blocked)
     if malformed:

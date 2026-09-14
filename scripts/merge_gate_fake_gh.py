@@ -299,10 +299,36 @@ if args[:2] == ["pr", "view"]:
     one_file = scenario in {"metadata-private", "files-empty", "formatted-phone", "formatted-phone-grouped", "unicode-phone", "unicode-phone-tab", "unicode-phone-two-lines", "repeated-phone", "grouped-identifier-12", "grouped-identifier-16", "grouped-identifier-mixed", "phone-space", "phone-dot", "phone-plus", "phone-underscore", "phone-parenthesized", "landline-grouped", "landline-standard-hyphen", "landline-standard-space", "landline-standard-underscore", "pem-certificate-envelope", "path-id", "binary-delete", "binary-review", "binary-review-private", "binary-review-head-moves", "metadata-only", "metadata-incomplete", "hunk-header-phone", "hunk-header-literals", "hunk-binary-literal", "separated-dates", "separated-dates-new-year", "separated-dates-year-month", "adr-identifier", "all-a-pan", "masked-pan", "grouped-pan-space", "grouped-pan-hyphen", "grouped-masked-pan-space", "quoted-path", "control-path", "workflow-notes-missing", "workflow-notes-present", "workflow-sibling-migration", "workflow-delete", "workflow-delete-notes", "workflow-rename-out", "workflow-rename-out-notes", "workflow-placeholders", "workflow-punctuated-placeholders", "renamed-previous-missing", "renamed-previous-null", "renamed-previous-false", "security-notes-missing", "security-notes-present", "security-none", "security-pending", "security-rename-out", "security-crate", "security-agent-import", "security-dsc", "dependency-manifest-missing", "dependency-manifest-present", "home-macos", "home-unix", "home-windows", "crlf-diff", "ambiguous-unquoted-path", "ambiguous-rename-path", "gitlink", "gitlink-existing", "implementation-p4-missing", "implementation-p4-present", "implementation-p4-continuation", "implementation-p4-shell", "implementation-p4-powershell", "implementation-p4-sql", "p4-placeholders", "platform-evidence-missing", "platform-evidence-present", "platform-evidence-heading", "platform-powershell-missing", "platform-powershell-evidence", "platform-checkbox-evidence", "platform-checkbox-comment", "platform-inline-prose", "platform-negative-outcome", "platform-unaffected-bare", "platform-unaffected-rationale", "platform-evidence-bare-label", "platform-evidence-sibling-list", "platform-evidence-empty-fence", "platform-evidence-punctuated-placeholder", "platform-evidence-fenced-continuation", "platform-evidence-package-manager", "platform-windows-native-action", "platform-windows-native-action-rename-out", "platform-ci-workflow", "platform-ci-workflow-rename-out", "platform-release-mcpb-preview", "migration-rollback-missing", "migration-rollback-present", "migration-template-wrapped", "migration-template-other-field"} or scenario.startswith("home-") or security_case or sync_case
     one_file = one_file or scenario in {"skipped-native-scope", "skipped-bundle-scope", "non-sensitive-cargo-lock", "privacy-email-payload", "privacy-email-destination", "privacy-email-title", "privacy-email-body", "privacy-email-commit", "privacy-email-author"}
     selected_base = new_head if scenario == "base-oid-mismatch" else base
-    emit({"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
-          "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
-          "isDraft": False, "state": "OPEN", "title": title,
-          "body": body, "changedFiles": 1 if one_file else 2})
+    metadata = {"headRefOid": selected_head, "baseRefOid": selected_base, "baseRefName": "master",
+                "mergeable": "MERGEABLE", "mergeStateStatus": final_state,
+                "isDraft": False, "state": "OPEN", "title": title,
+                "body": body, "changedFiles": 1 if one_file else 2}
+    if view_count >= 2:
+        late_changes = {
+            "late-meta-head": ("headRefOid", new_head),
+            "late-meta-base-oid": ("baseRefOid", new_head),
+            "late-meta-base-name": ("baseRefName", "other"),
+            "late-meta-title": ("title", "Changed title"),
+            "late-meta-title-newline": ("title", title + "\n"),
+            "late-meta-body-comment": ("body", body + "\n<!-- changed metadata -->"),
+            "late-meta-body-newline": ("body", body + "\n"),
+            "late-meta-draft": ("isDraft", True),
+            "late-meta-state": ("state", "CLOSED"),
+            "late-meta-mergeable": ("mergeable", "CONFLICTING"),
+            "late-meta-merge-state": ("mergeStateStatus", "HAS_HOOKS"),
+            "late-meta-unknown-state": ("mergeStateStatus", "UNKNOWN_VALUE"),
+            "late-meta-changed-files": ("changedFiles", 3),
+            "late-meta-body-wrong-type": ("body", False),
+        }
+        if scenario == "late-meta-error":
+            fail("controlled final PR metadata read failure")
+        if scenario == "late-meta-missing-body":
+            del metadata["body"]
+        if scenario in late_changes:
+            field, value = late_changes[scenario]
+            metadata[field] = value
+    requested_fields = args[args.index("--json") + 1].split(",")
+    emit({field: metadata[field] for field in requested_fields if field in metadata})
 elif args[:2] == ["pr", "checks"]:
     if scenario == "checks-silent":
         raise SystemExit(0)
@@ -565,19 +591,44 @@ elif args and args[0] == "api":
             run_head = new_head
         else:
             run_head = head
-        total_count = 3 if scenario == "check-run-count-mismatch" else 2
         second_id = 1 if scenario == "check-run-duplicate-id" else 2
         run_status = "queued" if scenario == "check-run-incomplete" else "completed"
         conclusion = "failure" if scenario in {"check-run-failed", "late-check-run-failure"} and (scenario != "late-check-run-failure" or check_call > 0) else ("skipped" if scenario in {"check-run-required-skip", "check-run-optional-skip", "check-run-allowlisted-skip"} or (scenario == "late-check-run-unallowlisted-skip" and check_call > 0) else "success")
         run_name = "Unreviewed final conditional job" if scenario == "late-check-run-unallowlisted-skip" and check_call > 0 else ("Native checks (windows-latest)" if scenario == "check-run-allowlisted-skip" else ("Optional changed after rollup" if scenario in {"check-run-failed", "check-run-optional-skip"} else "Required checks"))
-        emit([{"total_count": total_count, "check_runs": [
+        rows = [
             {"id": 1, "name": run_name, "head_sha": run_head, "status": run_status, "conclusion": conclusion},
-            {"id": second_id, "name": "Rust format", "head_sha": run_head, "status": "completed", "conclusion": "success"}]}])
+            {"id": second_id, "name": "Rust format", "head_sha": run_head, "status": "completed", "conclusion": "success"}]
+        for name in ("Required checks", "Frontend build", "GitGuardian Security Checks", "Dependency security"):
+            if not any(row["name"] == name for row in rows):
+                rows.append({"id": len(rows) + 1, "name": name, "head_sha": run_head,
+                             "status": "completed", "conclusion": "success"})
+        if scenario in {"final-required-statuses-pass", "final-status-context-disappears", "final-required-status-fails"}:
+            rows = [row for row in rows if row["name"] not in {"GitGuardian Security Checks", "Dependency security"}]
+        if check_call > 0:
+            if scenario == "final-contexts-empty":
+                rows = []
+            elif scenario == "final-check-context-disappears":
+                rows = [row for row in rows if row["name"] != "Rust format"]
+            elif scenario in {"final-required-check-skipped", "final-required-check-neutral", "final-required-check-pending"}:
+                rows[0]["conclusion"] = scenario.rsplit("-", 1)[1]
+                if scenario == "final-required-check-pending":
+                    rows[0].update(status="queued", conclusion=None)
+        total_count = len(rows) + (1 if scenario == "check-run-count-mismatch" else 0)
+        emit([{"total_count": total_count, "check_runs": rows}])
     elif "/commits/" in joined and "/status?" in joined:
         status_call = next_counter("GATE_STATUS_COUNTER")
         def status_page(rows, total_count, state="success", page_head=head):
             return {"sha": page_head, "state": state, "total_count": total_count, "statuses": rows}
-        if scenario == "status-two-page":
+        if scenario in {"final-required-statuses-pass", "final-status-context-disappears", "final-required-status-fails"}:
+            rows = [{"id": 1, "context": "GitGuardian Security Checks", "state": "success"},
+                    {"id": 2, "context": "Dependency security", "state": "success"}]
+            state = "success"
+            if status_call > 0 and scenario == "final-status-context-disappears":
+                rows = rows[1:]
+            elif status_call > 0 and scenario == "final-required-status-fails":
+                rows[0]["state"] = state = "failure"
+            emit([status_page([row], len(rows), state) for row in rows])
+        elif scenario == "status-two-page":
             emit([status_page([{"id": 1, "context": "legacy one", "state": "success"}], 2),
                   status_page([{"id": 2, "context": "legacy two", "state": "success"}], 2)])
         elif scenario == "status-truncated":
