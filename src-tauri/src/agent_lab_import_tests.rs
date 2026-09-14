@@ -691,6 +691,172 @@ fn narration_marker_extracts_the_bracketed_uuid() {
 }
 
 // ---------------------------------------------------------------------------
+// lab_marker_id -- deterministic marker (2026-09-14 rehearsal fix)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn lab_marker_id_is_deterministic_and_distinct_per_source_guid() {
+    assert_eq!(lab_marker_id("src-1"), lab_marker_id("src-1"));
+    assert_ne!(lab_marker_id("src-1"), lab_marker_id("src-2"));
+}
+
+#[test]
+fn voucher_already_verified_matches_via_the_deterministic_marker_when_the_number_is_absent() {
+    // Simulates a resume: the book no longer supplies a voucher_number
+    // (or Tally reassigned it), but the marker this module embedded at
+    // write time -- now derived from source_guid, not a random UUID -- is
+    // still recoverable from the readback.
+    let mut expected = payment_voucher();
+    expected.voucher_number = None;
+    let marker = lab_marker_id(&expected.source_guid);
+    let matching = observed(
+        "Payment",
+        "20260405",
+        Some("999"), // Tally's own reassigned number -- deliberately not "59"
+        Some(&format!("UPI payment [BRIDGE-LAB:{marker}]")),
+        &[
+            ("HDFC Bank 1649", "No", "30000.00"),
+            ("Labour Charges", "Yes", "-30000.00"),
+        ],
+    );
+    assert!(voucher_already_verified(&expected, &[matching]));
+}
+
+#[test]
+fn narration_text_strips_the_marker_suffix_and_trims() {
+    assert_eq!(
+        narration_text(Some(
+            "UPI payment [BRIDGE-LAB:00000000-0000-4000-8000-000000000002]"
+        )),
+        Some("UPI payment".to_string())
+    );
+    assert_eq!(
+        narration_text(Some("  plain narration  ")),
+        Some("plain narration".to_string())
+    );
+    assert_eq!(narration_text(Some("   ")), None);
+    assert_eq!(narration_text(None), None);
+}
+
+#[test]
+fn voucher_already_verified_matches_via_narration_text_when_tally_reassigned_the_number() {
+    // Reproduces the exact 2026-09-14 rehearsal batch-1 failure: Tally
+    // silently reassigned VOUCHERNUMBER (tally-rewrites-what-you-import.md
+    // #6) and the observed marker is a stale random one from a write
+    // attempt that predates the `lab_marker_id` fix -- so neither the
+    // number nor the marker matches. The narration TEXT (minus any marker
+    // suffix) is the only surviving identity signal, and it must still be
+    // enough on its own when the ledger lines also agree.
+    let expected = payment_voucher(); // voucher_number = Some("59")
+    let renumbered_by_tally = observed(
+        "Payment",
+        "20260405",
+        Some("57"), // NOT "59" -- Tally's own receipt-order number
+        Some("UPI payment [BRIDGE-LAB:11111111-1111-4111-8111-111111111111]"), // stale, pre-fix marker
+        &[
+            ("HDFC Bank 1649", "No", "30000.00"),
+            ("Labour Charges", "Yes", "-30000.00"),
+        ],
+    );
+    assert!(voucher_already_verified(&expected, &[renumbered_by_tally]));
+}
+
+#[test]
+fn voucher_already_verified_still_refuses_a_narration_collision_with_wrong_ledger_content() {
+    // The narration-text key is an ADDITIONAL alternate, not a licence to
+    // skip the ledger-line check: same narration text, wrong amount, must
+    // still be refused.
+    let expected = payment_voucher();
+    let wrong_amount = observed(
+        "Payment",
+        "20260405",
+        Some("57"),
+        Some("UPI payment [BRIDGE-LAB:11111111-1111-4111-8111-111111111111]"),
+        &[
+            ("HDFC Bank 1649", "No", "5.00"),
+            ("Labour Charges", "Yes", "-5.00"),
+        ],
+    );
+    assert!(!voucher_already_verified(&expected, &[wrong_amount]));
+}
+
+// ---------------------------------------------------------------------------
+// voucher_sort_key -- numeric, not lexicographic (2026-09-14 rehearsal fix)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn voucher_sort_key_orders_voucher_numbers_numerically_within_a_date() {
+    // The 2026-09-14 rehearsal's exact digit-boundary case: a plain string
+    // compare puts "100".."106" before "98"/"99" (since '1' < '9'), which
+    // is what scrambled batch 1's posting order in the first place.
+    let mut numbers = vec!["100", "101", "106", "98", "99"];
+    numbers.sort_by_key(|n| {
+        let raw: &str = n;
+        raw.parse::<i64>().ok()
+    });
+    assert_eq!(numbers, vec!["98", "99", "100", "101", "106"]);
+
+    fn voucher(date: &str, number: &str) -> BookVoucher {
+        let mut v = payment_voucher();
+        v.date = date.to_string();
+        v.voucher_number = Some(number.to_string());
+        v
+    }
+    let mut vouchers = vec![
+        voucher("20250518", "100"),
+        voucher("20250518", "98"),
+        voucher("20250518", "99"),
+        voucher("20250518", "101"),
+    ];
+    vouchers.sort_by(|a, b| voucher_sort_key(a).cmp(&voucher_sort_key(b)));
+    let ordered: Vec<&str> = vouchers
+        .iter()
+        .map(|v| v.voucher_number.as_deref().unwrap())
+        .collect();
+    assert_eq!(ordered, vec!["98", "99", "100", "101"]);
+}
+
+// ---------------------------------------------------------------------------
+// voucher_mismatch_detail -- per-voucher diagnostic (2026-09-14 rehearsal fix)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn voucher_mismatch_detail_reports_not_found_when_no_candidate_exists() {
+    let expected = payment_voucher();
+    let detail = voucher_mismatch_detail(&expected, &[]);
+    assert_eq!(detail["source_guid"], "src-1");
+    assert_eq!(detail["field"], "presence");
+}
+
+#[test]
+fn voucher_mismatch_detail_names_the_voucher_number_field_for_a_tally_renumbered_candidate() {
+    // Same scenario as the narration-text test above, but this time from
+    // the reporting side: the tool must surface the wrong-number,
+    // wrong-marker candidate it found, not just a bare count.
+    let expected = payment_voucher();
+    let renumbered_by_tally = observed(
+        "Payment",
+        "20260405",
+        Some("57"),
+        Some("UPI payment [BRIDGE-LAB:11111111-1111-4111-8111-111111111111]"),
+        &[
+            ("HDFC Bank 1649", "No", "30000.00"),
+            ("Labour Charges", "Yes", "-30000.00"),
+        ],
+    );
+    let detail = voucher_mismatch_detail(&expected, &[renumbered_by_tally]);
+    assert_eq!(detail["source_guid"], "src-1");
+    assert_eq!(detail["candidate_observed_voucher_number"], "57");
+    let fields = detail["field_mismatches"].as_array().unwrap();
+    assert!(fields
+        .iter()
+        .any(|f| f["field"] == "voucher_number" && f["expected"] == "59" && f["observed"] == "57"));
+    assert!(fields.iter().any(|f| f["field"] == "narration_marker"));
+    // The narration TEXT matched, so it must not appear as a mismatched field.
+    assert!(!fields.iter().any(|f| f["field"] == "narration_text"));
+}
+
+// ---------------------------------------------------------------------------
 // Voucher read-back parsing (synthetic Tally export)
 // ---------------------------------------------------------------------------
 
