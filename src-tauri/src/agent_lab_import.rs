@@ -389,6 +389,50 @@ fn find_readback_row<'a>(
         .find(|row| canonical_master_key(row.get("NAME").map(String::as_str).unwrap_or("")) == key)
 }
 
+/// The raw control character Tally's reserved-root marker begins with when
+/// an XML numeric character reference (`&#4;`) has been decoded to its
+/// literal Unicode scalar value -- exactly what this module's own
+/// `decoded_agent_reference`-based read-back parsers now produce, since the
+/// 2026-09-14 entity-decoding fix (`extract_line_error_texts`'s sibling
+/// arms in `agent_lab.rs`/`agent_lab_import.rs`).
+const RESERVED_ROOT_RAW_MARKER: char = '\u{4}';
+
+/// The literal, undecoded XML numeric-character-reference text for the same
+/// marker -- observed verbatim in `book.json` (built by a separate Python
+/// codebase that does not always XML-unescape a captured value before this
+/// point; see `build_book.py`'s own widened `is_tally_reserved_root`).
+const RESERVED_ROOT_UNDECODED_MARKER: &str = "&#4;";
+
+/// Whether `value` names Tally's reserved top-level root under *any*
+/// spelling this codebase has been observed to produce for it (found live,
+/// second 2026-09-14 rehearsal: the target's `Profit & Loss A/c` read back
+/// with `PARENT` as the raw control character, and `book.json` separately
+/// carries the sanitized placeholder, causing a false
+/// `lab_master_already_exists` refusal on a ledger that is in fact Tally's
+/// own recognised default). Deliberately wider than
+/// [`bridge_tally_protocol::is_tally_reserved_root`] itself: that function's
+/// narrower definition (only the sanitized placeholder) is a considered,
+/// tested choice for the production group-ancestry walk -- an unrecognised
+/// raw marker there safely resolves as an absent group, pinned by
+/// `group_ancestry.rs`'s own
+/// `every_refusal_is_distinguishable_and_none_is_an_answer` test -- and must
+/// not be widened for every one of that function's other consumers just to
+/// fix this lab-only default-master detection gap (widening a shared
+/// function changes behaviour for every consumer silently). This wrapper
+/// strips the two extra spellings first and falls through to the shared
+/// function for everything else, so the two stay in agreement on whatever
+/// the shared function already recognises.
+fn is_reserved_root_any_spelling(value: &str) -> bool {
+    let trimmed = value.trim();
+    let stripped = trimmed
+        .strip_prefix(RESERVED_ROOT_RAW_MARKER)
+        .or_else(|| trimmed.strip_prefix(RESERVED_ROOT_UNDECODED_MARKER));
+    match stripped {
+        Some(rest) => rest.trim().eq_ignore_ascii_case("primary"),
+        None => is_tally_reserved_root(trimmed),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tally default masters -- every new company has these before this tool ever
 // runs, so a same-name row is not the Create-overwrite collision §9.4 exists
@@ -436,7 +480,9 @@ fn is_default_ledger(name: &str, observed_parent: &str) -> bool {
         Some(DefaultLedgerParent::ReservedGroup(expected)) => {
             canonical_master_key(observed_parent) == canonical_master_key(expected)
         }
-        Some(DefaultLedgerParent::ReservedPrimary) => is_tally_reserved_root(observed_parent),
+        Some(DefaultLedgerParent::ReservedPrimary) => {
+            is_reserved_root_any_spelling(observed_parent)
+        }
         None => false,
     }
 }
@@ -450,14 +496,50 @@ fn is_default_group(row: &BTreeMap<String, String>) -> bool {
         .is_some_and(|value| !value.trim().is_empty())
 }
 
-/// Which writable field(s) on an existing *default* ledger differ from the
-/// book and need a partial `Alter` (Brain trap: `Create` on an existing
-/// ledger overwrites its opening balance instead of merging; a partial
-/// `Alter` carrying only the changed field(s) is the safe write here).
-/// Deliberately restricted to `OPENINGBALANCE`: the module doc / §8.3 already
-/// establish that the GST-related fields (`PARTYGSTIN`/`TAXTYPE`/
-/// `GSTDUTYHEAD`/`ISBILLWISEON`) are settable at Create but silently dropped
-/// at Alter, so they are never offered as an Alter candidate.
+/// Whether an existing ledger row's `PARENT` differs from the book (via the
+/// §9.4d fold). A hard mismatch -- coordinator instruction, 2026-09-14
+/// (second live rehearsal): "parent/name differences still refuse". Split
+/// out from the writable-field comparison below because only THIS mismatch
+/// makes an existing ledger a true collision; any other difference is a
+/// partial-Alter reconcile candidate. `None` when the book does not specify
+/// a parent at all (nothing to compare, so nothing to refuse on).
+fn ledger_parent_mismatch(book: &BookLedger, row: &BTreeMap<String, String>) -> Option<String> {
+    let expected = book.parent.as_deref()?;
+    let observed = row.get("PARENT").map(String::as_str).unwrap_or("");
+    if canonical_master_key(expected) != canonical_master_key(observed) {
+        Some(format!(
+            "ledger {}: parent expected {expected:?}, observed {observed:?}",
+            book.name
+        ))
+    } else {
+        None
+    }
+}
+
+/// Which writable field(s) on an existing ledger differ from the book and
+/// need a partial `Alter` (Brain trap: `Create` on an existing ledger
+/// overwrites its opening balance instead of merging; a partial `Alter`
+/// carrying only the changed field(s) is the safe write here). Used for
+/// Tally's own default ledgers (Cash/Profit & Loss A/c) and, since
+/// 2026-09-14 (coordinator instruction, second live rehearsal), for any
+/// other pre-existing ledger whose `PARENT` already matches the book (see
+/// `ledger_parent_mismatch` -- a parent difference is never offered here,
+/// it must refuse instead).
+///
+/// Every writable field is offered EXCEPT `GSTDUTYHEAD`: §8.3 of
+/// `TALLY_PROTOCOL_REFERENCE.md` measured that field specifically as
+/// settable at Create but silently *not* updated at Alter -- "Measured both
+/// ways... `ALTERED=1`... and the field stays empty" -- so offering it here
+/// would only ever produce a write that reports success but never lands,
+/// which the mandatory post-Alter read-back this feeds into would then
+/// correctly report as a failed reconcile even when every *other* field
+/// genuinely changed. `ISBILLWISEON`/`PARTYGSTIN`/`TAXTYPE` have no
+/// equivalent citation establishing Alter-inertness -- an earlier version of
+/// this function excluded them anyway, generalising the one measured field
+/// to three unmeasured ones (a "private allowance" this module's own
+/// discipline exists to catch). They are attempted here; the mandatory
+/// read-back this feeds into is what actually proves whether Tally applied
+/// them, exactly like every other write in this module.
 fn ledger_alter_fields(
     book: &BookLedger,
     row: &BTreeMap<String, String>,
@@ -467,6 +549,34 @@ fn ledger_alter_fields(
     let observed_opening = row.get("OPENINGBALANCE").map(String::as_str).unwrap_or("");
     if !amounts_equal(expected_opening, observed_opening) {
         fields.push(("OPENINGBALANCE", expected_opening.to_string()));
+    }
+    let expected_billwise = if book.is_billwise_on.unwrap_or(false) {
+        "Yes"
+    } else {
+        "No"
+    };
+    let observed_billwise = row.get("ISBILLWISEON").map(String::as_str).unwrap_or("");
+    if !observed_billwise.eq_ignore_ascii_case(expected_billwise) {
+        fields.push(("ISBILLWISEON", expected_billwise.to_string()));
+    }
+    if let Some(expected) = book.party_gstin.as_deref() {
+        let observed = row.get("PARTYGSTIN").map(String::as_str).unwrap_or("");
+        if expected != observed {
+            fields.push(("PARTYGSTIN", expected.to_string()));
+        }
+    }
+    // Only when the book actually carries a real GST/duty classification
+    // (not empty, not Tally's own inert default "Others") AND the ledger is
+    // parented under Duties & Taxes -- the same gate `render_ledger_xml`
+    // uses at Create.
+    let parent = book.parent.as_deref().unwrap_or("Primary");
+    if let Some(expected) = book.tax_type.as_deref() {
+        if is_real_gst_duty_type(expected) && is_duties_and_taxes_parent(parent) {
+            let observed = row.get("TAXTYPE").map(String::as_str).unwrap_or("");
+            if expected != observed {
+                fields.push(("TAXTYPE", expected.to_string()));
+            }
+        }
     }
     fields
 }
@@ -899,14 +1009,27 @@ pub(in crate::agent) async fn lab_import_masters(
     // reserved Group), which every new company already has before this tool
     // ever runs and so is never a collision. A default is excluded from the
     // Create batch below and, for Ledger, scheduled for a partial Alter if a
-    // writable field differs. Any other same-name master is still refused.
+    // writable field differs. Any other same-name master is still refused,
+    // *unless* (coordinator instruction, 2026-09-14, second live rehearsal)
+    // its only differences from the book are in writable fields (parent
+    // matches) -- see `reconcile_ledger_alters` below.
     let mut collisions: Vec<String> = Vec::new();
     let mut default_ledger_alters: Vec<(BookLedger, BTreeMap<String, String>)> = Vec::new();
+    // Ordinary (non-default) pre-existing ledgers whose PARENT matches the
+    // book but some other writable field does not -- reconciled via the same
+    // partial-Alter-then-verify mechanism as `default_ledger_alters` below,
+    // merged with it before that mechanism runs. Never populated when the
+    // parent itself differs (`ledger_parent_mismatch`), or when book.json
+    // names the ledger as the reserved root (excluded above): those are
+    // real collisions, not reconcile candidates.
+    let mut reconcile_ledger_alters: Vec<(BookLedger, BTreeMap<String, String>)> = Vec::new();
     let mut default_group_keys: BTreeSet<String> = BTreeSet::new();
     // Idempotent resume (coordinator instruction, 2026-09-14): a same-name
     // master already in the target, verified equal to the book on every
     // field this tool would itself write, is not a collision -- see
-    // `already_present_verified_mismatches` above.
+    // `already_present_verified_mismatches` above. Also covers a Tally
+    // default ledger (Cash/Profit & Loss A/c) that already matches: those
+    // are classified below, not pushed to `default_ledger_alters` at all.
     let mut already_present_verified: Vec<String> = Vec::new();
     let mut already_present_keys: BTreeSet<(&'static str, String)> = BTreeSet::new();
     for kind in MasterKind::IMPORT_ORDER {
@@ -922,7 +1045,7 @@ pub(in crate::agent) async fn lab_import_masters(
         let rows = parse_lab_master_rows(&xml, kind.tally_type())
             .map_err(|code| ToolFailure::from(code).with_prior_evidence(evidence.clone()))?;
         for name in &requested {
-            if kind == MasterKind::Group && is_tally_reserved_root(name) {
+            if kind == MasterKind::Group && is_reserved_root_any_spelling(name) {
                 // A requested Group named as Tally's own reserved-primary
                 // marker (raw or sanitized `\u{4}`/`\u{fffd}#4;` prefix) is
                 // never a real master to create: it *is* the root every
@@ -947,7 +1070,16 @@ pub(in crate::agent) async fn lab_import_masters(
                             .find(|l| canonical_master_key(&l.name) == canonical_master_key(name))
                             .expect("name was drawn from kind.names(&masters)")
                             .clone();
-                        default_ledger_alters.push((book_ledger, existing.clone()));
+                        // A default that already matches the book on every
+                        // writable field is `already_present_verified`, not
+                        // scheduled for an Alter that would carry no fields.
+                        if ledger_alter_fields(&book_ledger, existing).is_empty() {
+                            already_present_verified.push(format!("{}:{name}", kind.tally_type()));
+                            already_present_keys
+                                .insert((kind.tally_type(), canonical_master_key(name)));
+                        } else {
+                            default_ledger_alters.push((book_ledger, existing.clone()));
+                        }
                         continue;
                     }
                 }
@@ -971,6 +1103,34 @@ pub(in crate::agent) async fn lab_import_masters(
                 already_present_keys.insert((kind.tally_type(), canonical_master_key(name)));
                 continue;
             }
+            // A genuine difference from the book. For Ledger only
+            // (coordinator instruction, 2026-09-14): if the difference is
+            // confined to writable fields -- the parent itself matches --
+            // reconcile it with a partial Alter instead of refusing. A
+            // parent difference, or a difference `ledger_alter_fields`
+            // deliberately never offers (GSTDUTYHEAD -- see its doc
+            // comment), still falls through to the ordinary refusal.
+            if kind == MasterKind::Ledger {
+                let book_ledger = masters
+                    .ledgers
+                    .iter()
+                    .find(|l| canonical_master_key(&l.name) == canonical_master_key(name))
+                    .expect("name was drawn from kind.names(&masters)")
+                    .clone();
+                if ledger_parent_mismatch(&book_ledger, existing).is_none() {
+                    let alter_fields = ledger_alter_fields(&book_ledger, existing);
+                    if !alter_fields.is_empty() {
+                        reconcile_ledger_alters.push((book_ledger, existing.clone()));
+                        continue;
+                    }
+                    // Parent matches and nothing `ledger_alter_fields` can
+                    // reconcile is offered, yet `already_mismatches` was
+                    // non-empty -- the only way that happens is a GSTDUTYHEAD
+                    // difference (the sole field excluded from that
+                    // function, per its own doc comment). Not reconcilable:
+                    // fall through to the ordinary refusal below.
+                }
+            }
             collisions.push(format!("{}:{name}", kind.tally_type()));
         }
     }
@@ -986,6 +1146,7 @@ pub(in crate::agent) async fn lab_import_masters(
     // whatever the idempotent-resume check above already verified present.
     let default_ledger_keys: BTreeSet<String> = default_ledger_alters
         .iter()
+        .chain(reconcile_ledger_alters.iter())
         .map(|(ledger, _)| canonical_master_key(&ledger.name))
         .collect();
     let already_present = |kind: MasterKind, name: &str| {
@@ -1016,6 +1177,12 @@ pub(in crate::agent) async fn lab_import_masters(
     let mut batches = Vec::new();
     let mut mismatches: Vec<String> = Vec::new();
     let mut counts = serde_json::Map::new();
+    // Per-master report (coordinator instruction, 2026-09-14): every master
+    // actually Created in this call, "Kind:Name" -- alongside
+    // `already_present_verified`/`altered_verified` below, this is the
+    // `created` quarter of "created / already_present_verified /
+    // altered_verified / refused".
+    let mut created_masters: Vec<String> = Vec::new();
 
     'kinds: for kind in MasterKind::IMPORT_ORDER {
         let total = kind.count(&creatable);
@@ -1093,78 +1260,93 @@ pub(in crate::agent) async fn lab_import_masters(
                 mismatches.extend(batch_mismatches);
                 break 'kinds; // stop on first mismatch, per the plan
             }
+            created_masters.extend(
+                kind.names(&chunk_masters)
+                    .into_iter()
+                    .map(|name| format!("{}:{name}", kind.tally_type())),
+            );
             created += chunk_len;
             chunk_start += MAX_MASTER_BATCH;
         }
         counts.insert(kind.tally_type().to_string(), json!(created));
     }
 
-    // ---- Default-ledger partial Alter (Brain trap: Create on an existing
-    // ledger overwrites its opening balance; a partial Alter carrying only
-    // the changed field(s) is the safe write here). Only runs if nothing
-    // above already stopped on a mismatch, and only sends an Alter for
-    // ledgers whose book value actually differs from the target. ----
-    if mismatches.is_empty() && !default_ledger_alters.is_empty() {
-        let to_alter: Vec<(&BookLedger, Vec<(&'static str, String)>)> = default_ledger_alters
+    // ---- Ledger reconcile: partial Alter for every pre-existing ledger --
+    // Tally default (Cash/Profit & Loss A/c) or ordinary (coordinator
+    // instruction, 2026-09-14) -- whose only differences from the book are
+    // in writable fields (Brain trap: Create on an existing ledger
+    // overwrites its opening balance; a partial Alter carrying only the
+    // changed field(s) is the safe write here). Only runs if nothing above
+    // already stopped on a mismatch, and only sends an Alter for ledgers
+    // whose book value actually differs from the target -- every entry here
+    // was already confirmed non-empty-fields at precheck time (see the loop
+    // above), so no further filtering is needed. ----
+    let ledger_alter_candidates: Vec<(BookLedger, BTreeMap<String, String>)> =
+        default_ledger_alters
+            .into_iter()
+            .chain(reconcile_ledger_alters)
+            .collect();
+    let mut altered_verified: Vec<String> = Vec::new();
+    if mismatches.is_empty() && !ledger_alter_candidates.is_empty() {
+        let to_alter: Vec<(&BookLedger, Vec<(&'static str, String)>)> = ledger_alter_candidates
             .iter()
             .map(|(ledger, row)| (ledger, ledger_alter_fields(ledger, row)))
-            .filter(|(_, fields)| !fields.is_empty())
             .collect();
-        if !to_alter.is_empty() {
-            let (_company, identity, admit_evidence) = admit_lab_target(server).await?;
-            evidence = combine_evidence(evidence.clone(), admit_evidence);
-            let messages: String = to_alter
-                .iter()
-                .map(|(ledger, fields)| render_ledger_alter_xml(&ledger.name, fields))
-                .collect();
-            let xml = render_import_envelope(identity.display_name(), "All Masters", &messages);
-            let (response, post_evidence) = post_lab_batch(
-                server,
-                &identity,
-                "lab_import_masters.write.default_alter",
-                xml,
-            )
-            .await?;
-            evidence = combine_evidence(evidence.clone(), post_evidence);
-            let outcome = bridge_tally_protocol::parse_import_outcome(&response)
-                .map_err(|_| ToolFailure::from("lab_import_response_invalid".to_string()))?;
-            let counters = outcome.counters();
-            counts.insert("LedgerDefaultAlter".to_string(), json!(to_alter.len()));
-            if tally_rejected(counters) {
-                let line_errors = extract_line_error_texts(&response);
-                batches.push(json!({
-                    "kind": "LedgerDefaultAlter",
-                    "requested": to_alter.len(),
-                    "state": "tally_rejected",
-                    "counters": tally_import_counters_json(counters),
-                    "line_errors": line_errors,
-                    "ok": false,
-                }));
-                mismatches.push(tally_rejection_message(
-                    "LedgerDefaultAlter",
-                    counters,
-                    &line_errors,
-                ));
-            } else {
-                let clean = counters.is_clean_success_for(0, to_alter.len() as u64, 0);
-                batches.push(json!({
-                    "kind": "LedgerDefaultAlter",
-                    "requested": to_alter.len(),
-                    "counters_clean": clean,
-                    "ok": clean,
-                }));
-                if !clean {
-                    mismatches.push(
-                        "default ledger alter: import counters not a clean altered-only success"
-                            .to_string(),
-                    );
-                }
+        let (_company, identity, admit_evidence) = admit_lab_target(server).await?;
+        evidence = combine_evidence(evidence.clone(), admit_evidence);
+        let messages: String = to_alter
+            .iter()
+            .map(|(ledger, fields)| render_ledger_alter_xml(&ledger.name, fields))
+            .collect();
+        let xml = render_import_envelope(identity.display_name(), "All Masters", &messages);
+        let (response, post_evidence) =
+            post_lab_batch(server, &identity, "lab_import_masters.write.reconcile", xml).await?;
+        evidence = combine_evidence(evidence.clone(), post_evidence);
+        let outcome = bridge_tally_protocol::parse_import_outcome(&response)
+            .map_err(|_| ToolFailure::from("lab_import_response_invalid".to_string()))?;
+        let counters = outcome.counters();
+        counts.insert("LedgerReconcileAlter".to_string(), json!(to_alter.len()));
+        if tally_rejected(counters) {
+            let line_errors = extract_line_error_texts(&response);
+            batches.push(json!({
+                "kind": "LedgerReconcileAlter",
+                "requested": to_alter.len(),
+                "state": "tally_rejected",
+                "counters": tally_import_counters_json(counters),
+                "line_errors": line_errors,
+                "ok": false,
+            }));
+            mismatches.push(tally_rejection_message(
+                "LedgerReconcileAlter",
+                counters,
+                &line_errors,
+            ));
+        } else {
+            let clean = counters.is_clean_success_for(0, to_alter.len() as u64, 0);
+            batches.push(json!({
+                "kind": "LedgerReconcileAlter",
+                "requested": to_alter.len(),
+                "counters_clean": clean,
+                "ok": clean,
+            }));
+            if !clean {
+                mismatches.push(
+                    "ledger reconcile alter: import counters not a clean altered-only success"
+                        .to_string(),
+                );
             }
         }
 
-        // Mandatory read-back over every default ledger, altered or not
-        // (plan: "include defaults in read-back diff") -- reuses the same
-        // `readback_mismatches` diff the ordinary Create batches use.
+        // Mandatory read-back over every reconciled ledger, requiring full
+        // equality with the book -- not just the fields this batch tried to
+        // change: `ledger_already_present_mismatches` is the same "does this
+        // now match the book" check the idempotent-resume precheck uses, so
+        // "altered_verified" means exactly what "already_present_verified"
+        // means, just reached by a write instead of by finding it already
+        // so. This is also what actually proves whether Tally applied
+        // ISBILLWISEON/PARTYGSTIN/TAXTYPE (§8.3 measured only GSTDUTYHEAD as
+        // Alter-inert; this settles the other fields empirically rather
+        // than assuming).
         if mismatches.is_empty() {
             let (_company, identity, admit_evidence) = admit_lab_target(server).await?;
             evidence = combine_evidence(evidence.clone(), admit_evidence);
@@ -1174,31 +1356,38 @@ pub(in crate::agent) async fn lab_import_masters(
             let (read_xml, read_evidence) = lab_post_read(
                 server,
                 &identity,
-                "lab_import_masters.readback.default",
+                "lab_import_masters.readback.reconcile",
                 read_request,
             )
             .await?;
             evidence = combine_evidence(evidence.clone(), read_evidence);
             let rows = parse_lab_master_rows(&read_xml, MasterKind::Ledger.tally_type())
                 .map_err(|code| ToolFailure::from(code).with_prior_evidence(evidence.clone()))?;
-            let default_book = BookMasters {
-                ledgers: default_ledger_alters
-                    .iter()
-                    .map(|(ledger, _)| ledger.clone())
-                    .collect(),
-                ..Default::default()
-            };
-            let default_mismatches = readback_mismatches(MasterKind::Ledger, &default_book, &rows);
-            let default_ok = default_mismatches.is_empty();
+            let mut reconcile_mismatches: Vec<String> = Vec::new();
+            for (ledger, _) in &ledger_alter_candidates {
+                match find_readback_row(&rows, &ledger.name) {
+                    None => reconcile_mismatches
+                        .push(format!("ledger {} not found on readback", ledger.name)),
+                    Some(row) => {
+                        let per_ledger = ledger_already_present_mismatches(ledger, row);
+                        if per_ledger.is_empty() {
+                            altered_verified.push(format!("Ledger:{}", ledger.name));
+                        } else {
+                            reconcile_mismatches.extend(per_ledger);
+                        }
+                    }
+                }
+            }
+            let reconcile_ok = reconcile_mismatches.is_empty();
             batches.push(json!({
-                "kind": "LedgerDefaultReadback",
-                "requested": default_ledger_alters.len(),
+                "kind": "LedgerReconcileReadback",
+                "requested": ledger_alter_candidates.len(),
                 "counters_clean": true,
-                "mismatches": default_mismatches,
-                "ok": default_ok,
+                "mismatches": reconcile_mismatches,
+                "ok": reconcile_ok,
             }));
-            if !default_ok {
-                mismatches.extend(default_mismatches);
+            if !reconcile_ok {
+                mismatches.extend(reconcile_mismatches);
             }
         }
     }
@@ -1210,6 +1399,18 @@ pub(in crate::agent) async fn lab_import_masters(
             "counts": counts,
             "batches": batches,
             "mismatches": mismatches,
+            // Per-master reconcile report (coordinator instruction,
+            // 2026-09-14): every requested master resolves to exactly one
+            // of these four states -- `created` (this call's own Create
+            // batches, "Kind:Name"), `already_present_verified` (existing,
+            // matched the book, nothing written), `altered_verified`
+            // (existing, a partial Alter reconciled the differing writable
+            // field(s), and the mandatory read-back confirmed equality), or
+            // refused (an unrecoverable collision -- reported via the
+            // `lab_master_already_exists` error path instead, since any
+            // such collision stops the whole call before any write; see
+            // `persist_lab_precheck_collisions`).
+            //
             // Idempotent-resume precheck: same-name masters already present
             // in the target and verified equal to the book, so skipped
             // rather than refused or re-Created. Non-empty even on a run
@@ -1217,7 +1418,9 @@ pub(in crate::agent) async fn lab_import_masters(
             // (an all-already_present_verified masters result is success,
             // not a no-op failure), so a caller resuming after a prior
             // successful write proceeds straight to vouchers.
+            "created": created_masters,
             "already_present_verified": already_present_verified,
+            "altered_verified": altered_verified,
         }}),
         evidence,
         company_guid: Some(guid.to_string()),
