@@ -291,8 +291,6 @@ pub enum BindingBasis {
     Identifier,
     /// Byte equality with the observed master name.
     ExactName,
-    /// Equality under the comparison key, unique in the catalog.
-    NormalizedName,
 }
 
 /// The masters worth showing, and — in the variant itself — what an absence of
@@ -427,9 +425,11 @@ pub struct Unresolved {
 ///   acting on a binding re-reads and revalidates through the admission path
 ///   that owns identity; nothing here is a lease on the book.
 /// - **Not that the name may be written as given.** Only `ExactName` is byte
-///   equality. A `NormalizedName` or `Identifier` bind means the payload and
-///   the live name *differ*, and Bridge's write gate admits `exact` only — use
-///   `catalog_name`, not what was requested.
+///   equality. Binding reports have no core persistence reader, so current
+///   `BindingBasis` deliberately rejects historical folded wire values; current
+///   folded names are candidates. An `Identifier` bind means
+///   the payload and live name can differ, and Bridge's write gate admits
+///   `exact` only — use `catalog_name`, not what was requested.
 /// - **Not that this is the right master in business terms.** It establishes
 ///   that one deterministic rule selected one master uniquely. Whether that
 ///   party is the one the document meant is a judgement the rules cannot make.
@@ -676,9 +676,10 @@ impl FallbackBinding {
 pub struct SourceEntity {
     position: usize,
     name: String,
-    /// The wide fold. Suggests; never resolves.
+    /// The wide fold. Suggests candidates; never decides a binding.
     key: String,
-    /// The narrow fold. Resolves.
+    /// The observed gateway fold. In this unscoped catalog it also only
+    /// suggests candidates; authority requires an explicit scoped path.
     binding_key: String,
     identifiers: Vec<Identifier>,
 }
@@ -1219,27 +1220,18 @@ fn bind_one(
             basis: BindingBasis::Identifier,
         }
     } else {
-        // The narrow index, not the wide one: only a transformation Tally was
-        // measured performing may settle which master was meant. Everything the
-        // wide fold reaches and this does not falls through to `collect_candidates`
-        // below, where it is offered as `NormalizedEqual` for a human to confirm.
+        // This catalog carries no scope-qualified authority for a fold. A
+        // gateway observation can inform a candidate search, but cannot make a
+        // name authoritative for a different observed product/tier/scope.
+        // Exact names and identifiers above remain decisive; every folded name
+        // reaches the existing candidate path for a human to confirm.
         match catalog
             .by_binding_key
             .get(&entity.binding_key)
             .map(Vec::as_slice)
         {
-            // §9.4d measured **ledgers**. Whether stock items match by the
-            // same rule is not merely unmeasured, it was never sent — so a
-            // folded stock-item name may suggest and may not resolve. Byte
-            // equality is unaffected: it needs no fold and is checked above.
-            Some([index]) if catalog.class == MasterClass::Ledger => BindingStatus::Bound {
-                catalog_name: catalog.entries[*index].name.clone(),
-                basis: BindingBasis::NormalizedName,
-            },
-            // A single folded match that the class does not license is not an
-            // ambiguity — nothing shares its key. `NameAmbiguous` would tell a
-            // consumer that several masters collided when exactly one did not
-            // qualify, which is a different fact with a different remedy.
+            // A single candidate is not an ambiguity — exactly one master was
+            // found, but the catalog cannot prove the fold names it.
             Some([_]) => unresolved_status(
                 catalog,
                 entity,
@@ -1355,7 +1347,7 @@ fn unresolved_status(
         // equality was observed, which left the operator reading the two facts
         // that disagreed without being told one of them was exact.
         candidates.retain(|(candidate, _)| *candidate != index);
-        candidates.push((index, CandidateRule::ExactName));
+        candidates.insert(0, (index, CandidateRule::ExactName));
     }
     unresolved_from(
         catalog,
@@ -1380,8 +1372,13 @@ fn unresolved_from(
     count_evidence: CountEvidence<'_>,
     budget: &mut usize,
 ) -> BindingStatus {
-    let mut ordered = candidates;
-    ordered.sort_by(|left, right| candidate_order(catalog, left, right));
+    // `collect_candidates` has already applied the bounded presentation order,
+    // including the narrower binding-key holders before wider-only candidates.
+    // Keep that order through the byte budget: sorting again by name here can
+    // spend the budget on a long wide candidate and hide the narrow evidence.
+    // Exact-name evidence is inserted at the front by `unresolved_status`, so
+    // the rule precedence remains explicit without discarding same-rule order.
+    let ordered = candidates;
     let (found, count_is_lower_bound) = candidate_count(
         masters_found,
         &ordered,
@@ -1640,12 +1637,12 @@ fn collect_candidates(
     // token sets and memo keys across the whole module on the strength of it,
     // and still leave the candidate list assembled from a key that is not the
     // one the ambiguity was found in.
-    for index in catalog
+    let binding_matches = catalog
         .by_binding_key
         .get(&entity.binding_key)
-        .into_iter()
-        .flatten()
-    {
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    for index in binding_matches {
         offer(*index, CandidateRule::NormalizedEqual);
     }
     if withheld.is_empty() {
@@ -1718,27 +1715,30 @@ fn collect_candidates(
     //
     // `found` is computed above from the full union, so the count an operator
     // sees is unaffected by the cap; only the listing is.
-    listed.sort_by(|left, right| candidate_order(catalog, left, right));
+    // The narrower historical index was the reason this near-miss was reached.
+    // Preserve its candidates before the bounded listing drops wider-only ones;
+    // this is visibility, never authority or a similarity score.
+    listed.sort_by(|left, right| {
+        // Candidate-rule precedence is unchanged: an identifier still leads a
+        // folded suggestion. Within the same rule, a binary-searchable narrow
+        // holder gets the bounded slot before a wider-only holder.
+        left.1
+            .rank()
+            .cmp(&right.1.rank())
+            .then_with(|| {
+                binding_matches
+                    .binary_search(&right.0)
+                    .is_ok()
+                    .cmp(&binding_matches.binary_search(&left.0).is_ok())
+            })
+            .then_with(|| {
+                catalog.entries[left.0]
+                    .name
+                    .cmp(&catalog.entries[right.0].name)
+            })
+    });
     listed.truncate(MAX_CANDIDATES_PER_ENTITY);
     (listed, found)
-}
-
-/// How candidates are ordered wherever they are ordered: by the rule that
-/// reached them, then by the master's name.
-///
-/// Defined once because `collect_candidates` truncates in this order and
-/// `unresolved_from` sorts in it, and a disagreement between the two would
-/// silently drop a candidate that should have been listed.
-fn candidate_order(
-    catalog: &MasterCatalog,
-    left: &(usize, CandidateRule),
-    right: &(usize, CandidateRule),
-) -> std::cmp::Ordering {
-    left.1.rank().cmp(&right.1.rank()).then_with(|| {
-        catalog.entries[left.0]
-            .name
-            .cmp(&catalog.entries[right.0].name)
-    })
 }
 
 /// A name is retained **verbatim**, on both sides.
@@ -1749,8 +1749,8 @@ fn candidate_order(
 /// against, so trimming it would let `Bank ` claim an exact match on `Bank`
 /// while the import file still carries the trailing space. The comparison key
 /// collapses surrounding whitespace anyway, so the two still meet as a
-/// normalized match — which is a bind the write gate does not admit, and that
-/// is the correct, loud outcome.
+/// normalized candidate. It can help an operator find the observed spelling,
+/// but no generic catalog is authorized to select it.
 fn validated_name(value: &str) -> Result<String, MasterBindingError> {
     validate_name_bounds(value)?;
     Ok(value.to_string())
@@ -1803,12 +1803,12 @@ pub(crate) fn comparison_key(value: &str) -> String {
 /// The **wide** fold: which masters are worth showing a human.
 ///
 /// This is deliberately looser than anything measured, and it may never decide
-/// a binding. `verified_fold` does that. The separation is the whole design:
-/// §9.4b verified three transformations and marks the rest UNVERIFIED, and its
-/// own remedy is that a looser fold may *suggest* while only the measured ones
-/// resolve. So the reverse hyphen direction, collapsed whitespace runs, leading
-/// whitespace and the Unicode dash variants all live here, where the worst they
-/// can do is put the right master in front of an operator.
+/// a binding. The observed gateway fold is narrower, but this catalog has no
+/// product, release, tier, endpoint, or operator-approval scope to treat that
+/// observation as selection authority. Both folds therefore only suggest
+/// candidates here. So the reverse hyphen direction, collapsed whitespace
+/// runs, leading whitespace and the Unicode dash variants all live here, where
+/// the worst they can do is put the right master in front of an operator.
 ///
 /// An earlier version of this module let this fold bind. It read naturally and
 /// was wrong: `X - Y` is a common ledger convention — six of seventeen
@@ -1832,20 +1832,15 @@ fn master_identity_key(value: &str) -> String {
         .join(" ")
 }
 
-/// The fold that may **resolve** a name to a master: exactly the equivalences
-/// `TALLY_PROTOCOL_REFERENCE.md` §9.4d measured on the SKU this writes to.
+/// A historical candidate index, retained for deterministic ordering.
 ///
-/// §9.4b measured Edit Log 7.0 Educational and marked most of this UNVERIFIED,
-/// so an earlier version of this module resolved on three transformations only
-/// and offered the rest as candidates. §9.4d re-ran that measurement on
-/// **licensed TallyPrime 7.1**, read the day book back to see which master each
-/// name actually reached, and found the gateway wider than the Educational
-/// scope allowed anyone to claim:
-///
-/// - ASCII case folds;
-/// - leading and trailing whitespace is ignored;
-/// - an internal run of spaces collapses;
-/// - **space, `-` and `/` are one separator**, in both directions.
+/// It may be broader than qualified gateway measurements and cannot resolve a
+/// name through `MasterCatalog`, whose constructor receives neither a product,
+/// release, tier, endpoint, nor explicit operator approval. The historical
+/// record was scoped to Silver and measured a slash in the source reaching a
+/// space in the master; it did not establish the reverse direction or a
+/// generic symmetric separator rule. This key can therefore only suggest a
+/// candidate to an operator.
 ///
 /// Everything else is exact on codepoints. So the two rules that matter are
 /// both negative, and neither is guessable from appearance:
@@ -1861,8 +1856,8 @@ fn master_identity_key(value: &str) -> String {
 /// onto a master the gateway keeps apart. It reads like decoding rather than
 /// folding, which is how it survived two audits of this function.
 ///
-/// Both hyphen directions are measured now, so this is symmetric and one key
-/// per side is enough — the asymmetric index an earlier version needed is gone.
+/// The implementation remains symmetric solely for candidate discovery. That
+/// convenience does not claim symmetric gateway behavior.
 fn verified_fold(value: &str) -> String {
     value
         .chars()
@@ -1937,12 +1932,12 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
         } else if token.chars().any(char::is_alphanumeric) {
             previous_was_mask = false;
         }
-        // Only the separators §9.4d measured may be discarded. Filtering to
-        // alphanumerics dropped **every** ASCII punctuation mark, so
+        // This historical parser discards only `-` and `/`, rather than every
+        // ASCII punctuation mark. It is not a claim of gateway equivalence.
+        // Filtering to alphanumerics dropped **every** ASCII punctuation mark, so
         // `AB_123456` and `AB-123456` canonicalized alike and one identifier
-        // bound the other's master — while §9.4d had sent an underscore and
-        // watched Tally *reject* it. The evidence for this fold is one
-        // measurement about hyphens and slashes; everything else stays content.
+        // bound the other's master; underscore remains content rather than
+        // joining the historical candidate normalization.
         let canonical = token
             .chars()
             .filter(|character| !matches!(character, '-' | '/'))
@@ -1980,8 +1975,8 @@ fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingErro
             && digits >= MIN_CODE_IDENTIFIER_DIGITS
             && letters >= 2
             && !foreign_content
-            // A separator works in both directions, so the date guard has to
-            // run on both spellings. Removing `-` can *reveal* a date —
+            // This parser removes separators in either spelling, so the date
+            // guard has to run on both spellings. Removing `-` can *reveal* a date —
             // `2025-09-11` becomes `20250911` — and it can just as easily
             // *hide* two: `DATED20250911-20250912` fuses into one sixteen-digit
             // run that reads as no date at all, and `is_period` does not see it
