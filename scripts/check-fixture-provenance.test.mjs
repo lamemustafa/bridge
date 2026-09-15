@@ -55,13 +55,13 @@ test("an empty covered tree passes (nothing to document)", async () => {
   }
 });
 
-test("a fixture named nowhere in any Markdown file fails the gate", async () => {
+test("a fixture named in no provenance record fails the gate", async () => {
   const root = await makeTree();
   try {
     await writeFile(join(root, "scripts/fixtures/mystery-capture.xml"), "<x/>\n");
     const output = runGateExpectingFailure(root);
     assert.match(output, /mystery-capture\.xml/);
-    assert.match(output, /not named in any Markdown file/);
+    assert.match(output, /named in no provenance record/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -149,3 +149,159 @@ test("a byte-count-only mismatch (same filename, wrong declared size) still fail
 // this gate is proposed as REPORTING rather than BLOCKING; this suite
 // verifies behaviour on synthetic trees, not repository readiness.
 console.log("\nrunning check-fixture-provenance contract tests via node:test above");
+
+// --- provenance that is not Markdown ------------------------------------
+//
+// The agent fixtures record provenance as a JSON sidecar per capture, and one
+// Markdown file documents its fixture by filename pairing rather than by
+// naming it in the text. Reading only Markdown text reported 82 undocumented
+// fixtures where 51 are, and left 13 declared hashes unchecked -- a gate
+// understating its own strength and overstating its own backlog.
+
+const SIDECAR_DIR = join(
+  "src-tauri/crates/bridge-tally-protocol/tests/fixtures",
+  "agent",
+);
+
+test("a JSON sidecar carrying `source` documents the fixture sharing its stem", async () => {
+  const root = await makeTree();
+  await mkdir(join(root, SIDECAR_DIR), { recursive: true });
+  await writeFile(join(root, SIDECAR_DIR, "cap.utf16le.xml"), "captured bytes");
+  await writeFile(
+    join(root, SIDECAR_DIR, "cap.json"),
+    JSON.stringify({ source: "Live licensed TallyPrime synthetic-company read" }),
+  );
+  const output = runGate(root);
+  assert.match(output, /Fixture provenance is intact/);
+});
+
+test("a sidecar declaring a fixture hash escalates to the same check a table row does", async () => {
+  const root = await makeTree();
+  await mkdir(join(root, SIDECAR_DIR), { recursive: true });
+  const bytes = "captured bytes";
+  await writeFile(join(root, SIDECAR_DIR, "cap.utf16le.xml"), bytes);
+  await writeFile(
+    join(root, SIDECAR_DIR, "cap.json"),
+    JSON.stringify({
+      source: "Live licensed TallyPrime synthetic-company read",
+      fixture_bytes: Buffer.byteLength(bytes),
+      fixture_sha256: createHash("sha256").update(bytes).digest("hex"),
+    }),
+  );
+  assert.match(runGate(root), /1 captured-fixture hash\(es\) verified|hash\(es\) verified/);
+
+  // And the whole point: a swapped fixture under a stale sidecar must fail.
+  await writeFile(join(root, SIDECAR_DIR, "cap.utf16le.xml"), "hand-authored substitute");
+  const failure = runGateExpectingFailure(root);
+  assert.match(failure, /cap\.utf16le\.xml/);
+  assert.match(failure, /hand-authored-substitute pattern/);
+});
+
+test("a JSON file without a `source` string is a fixture, not a record", async () => {
+  const root = await makeTree();
+  await mkdir(join(root, SIDECAR_DIR), { recursive: true });
+  // An ordinary expected-output fixture. It must still need its own paper
+  // trail -- otherwise any .json in the tree could excuse itself.
+  await writeFile(join(root, SIDECAR_DIR, "expected.json"), JSON.stringify({ rows: [] }));
+  const failure = runGateExpectingFailure(root);
+  assert.match(failure, /expected\.json/);
+});
+
+test("a sidecar cannot document a fixture that merely shares a prefix", async () => {
+  const root = await makeTree();
+  await mkdir(join(root, SIDECAR_DIR), { recursive: true });
+  await writeFile(join(root, SIDECAR_DIR, "cap.json"), JSON.stringify({ source: "a live read" }));
+  await writeFile(join(root, SIDECAR_DIR, "cap.utf16le.xml"), "documented");
+  // `cap-extra` shares the prefix `cap` but not the stem `cap.`; documenting
+  // it would be the gate excusing a neighbouring fixture by accident.
+  await writeFile(join(root, SIDECAR_DIR, "cap-extra.utf16le.xml"), "undocumented");
+  const failure = runGateExpectingFailure(root);
+  assert.match(failure, /cap-extra\.utf16le\.xml/);
+  assert.doesNotMatch(failure, /(?<!-extra)(?<!-)\bcap\.utf16le\.xml/);
+});
+
+test("`<stem>.PROVENANCE.md` documents `<stem>.*` without naming it in the text", async () => {
+  const root = await makeTree();
+  await mkdir(join(root, SIDECAR_DIR), { recursive: true });
+  await writeFile(join(root, SIDECAR_DIR, "cap.utf8.xml"), "captured bytes");
+  // Deliberately never writes the fixture's filename -- this is how
+  // native-company-book-extents-with-number.PROVENANCE.md is written.
+  await writeFile(
+    join(root, SIDECAR_DIR, "cap.PROVENANCE.md"),
+    "# A field observation\n\nExact decoded XML captured on 2026-09-09.\n",
+  );
+  assert.match(runGate(root), /Fixture provenance is intact/);
+});
+
+test("a bare PROVENANCE.md still documents only what it names", async () => {
+  const root = await makeTree();
+  await mkdir(join(root, SIDECAR_DIR), { recursive: true });
+  await writeFile(join(root, SIDECAR_DIR, "cap.utf8.xml"), "captured bytes");
+  // No stem, so no filename pairing: the directory-level file has to say which
+  // fixture it means, exactly as before this change.
+  await writeFile(join(root, SIDECAR_DIR, "PROVENANCE.md"), "# Notes\n\nNothing named here.\n");
+  const failure = runGateExpectingFailure(root);
+  assert.match(failure, /cap\.utf8\.xml/);
+});
+
+test("the failure names the real backlog, not just the sample it prints", async () => {
+  const root = await makeTree();
+  await mkdir(join(root, SIDECAR_DIR), { recursive: true });
+  for (let index = 0; index < 30; index += 1) {
+    await writeFile(join(root, SIDECAR_DIR, `undocumented-${index}.xml`), "bytes");
+  }
+  const failure = runGateExpectingFailure(root);
+  // Capped output, uncapped count: quoting the sample as the total is how a
+  // headline number ends up wrong.
+  assert.match(failure, /shown of 30 undocumented fixture\(s\)/);
+});
+
+// The real sidecars are not schema-consistent, and reading only the canonical
+// key name exempted two of them from swap detection while their own records
+// held the correct hash. These cases use the key names actually present in
+// the repository rather than only the one the convention prefers.
+
+test("a sidecar declaring its hash as `sha256` is checked, not treated as prose", async () => {
+  const root = await makeTree();
+  await mkdir(join(root, SIDECAR_DIR), { recursive: true });
+  const bytes = "captured bytes";
+  await writeFile(join(root, SIDECAR_DIR, "cap.utf16le.xml"), bytes);
+  await writeFile(
+    join(root, SIDECAR_DIR, "cap.json"),
+    // `sha256`, not `fixture_sha256` -- the spelling in
+    // native-three-vouchers.json and native-empty-collection.json.
+    JSON.stringify({
+      source: "Live licensed TallyPrime synthetic-company read",
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    }),
+  );
+  assert.match(runGate(root), /hash\(es\) verified/);
+
+  await writeFile(join(root, SIDECAR_DIR, "cap.utf16le.xml"), "hand-authored substitute");
+  const failure = runGateExpectingFailure(root);
+  assert.match(failure, /cap\.utf16le\.xml/);
+  assert.match(failure, /hand-authored-substitute pattern/);
+});
+
+test("a sidecar with no byte count is checked on its hash and says so", async () => {
+  const root = await makeTree();
+  await mkdir(join(root, SIDECAR_DIR), { recursive: true });
+  const bytes = "captured bytes";
+  await writeFile(join(root, SIDECAR_DIR, "cap.utf16le.xml"), bytes);
+  await writeFile(
+    join(root, SIDECAR_DIR, "cap.json"),
+    // `fixture_sha256` without `fixture_bytes` -- native-namespaced-journal.json.
+    JSON.stringify({
+      source: "a live read",
+      fixture_sha256: createHash("sha256").update(bytes).digest("hex"),
+    }),
+  );
+  assert.match(runGate(root), /hash\(es\) verified/);
+
+  // The hash must still be able to fail. Inferring the byte count from the
+  // file would compare it against itself and never fail on size.
+  await writeFile(join(root, SIDECAR_DIR, "cap.utf16le.xml"), "swapped");
+  const failure = runGateExpectingFailure(root);
+  assert.match(failure, /\(no byte count\)/);
+  assert.match(failure, /cap\.utf16le\.xml/);
+});
