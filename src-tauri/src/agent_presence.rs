@@ -167,15 +167,12 @@ impl Server {
                 evidence.state = "partial";
                 evidence.reason_code = reason.map(str::to_string);
                 // The adapter has no source-side cardinality for nonempty
-                // windows. A later catalogue reread cannot change the fixed
-                // `Partial` state into a complete observation, so avoid the
-                // extra endpoint load and fail with the evidence already in
-                // hand. A future qualified nonempty path can continue to the
-                // paired-snapshot checks below.
-                return Err(PresenceError::WindowIncomplete
-                    .safe_reason_code()
-                    .to_string()
-                    .into());
+                // windows, so `read` stays `Partial` (its default above) and
+                // this window can never license `Absent` (`book_presence`
+                // degrades that to `WindowNotProvenComplete` instead of
+                // refusing it). `Present` and `PossiblyPresent` need no
+                // completeness proof, so the read continues to the
+                // paired-snapshot checks below rather than refusing outright.
             }
 
             // The verdict is built from two independently timed observations,
@@ -213,6 +210,7 @@ impl Server {
             let (result, truncated) = presence_result(
                 &report,
                 &catalogue,
+                read,
                 reason,
                 offset,
                 limit,
@@ -463,6 +461,7 @@ fn bounded_observations(mut book: Value, budget: usize) -> Value {
 fn presence_result(
     report: &PresenceReport,
     catalogue: &[String],
+    read: WindowRead,
     corroboration_reason: Option<&'static str>,
     offset: usize,
     limit: usize,
@@ -470,6 +469,10 @@ fn presence_result(
 ) -> (Value, bool) {
     let (from, to) = report.window();
     let total = report.vouchers().len();
+    let read_label = match read {
+        WindowRead::Complete => "complete",
+        WindowRead::Partial => "partial",
+    };
     // Paged like every other read in this adapter, for one reason beyond
     // consistency: this result shape is otherwise invisible to `page_shape`,
     // so an over-large report would be discarded wholesale *after* all three
@@ -487,8 +490,10 @@ fn presence_result(
     let mut result = json!({
         "profile": "agent_voucher_presence_v1",
         // Every verdict is relative to this window. `absent` means absent from
-        // this range and never absent from the book.
-        "window": {"from": from, "to": to, "read": "complete", "reason": corroboration_reason},
+        // this range and never absent from the book, and it is only ever
+        // produced when `read` here is "complete" -- a "partial" window still
+        // yields `present`/`possibly_present`, just never `absent`.
+        "window": {"from": from, "to": to, "read": read_label, "reason": corroboration_reason},
         "items": items,
         "offset": offset,
         "total": total,
