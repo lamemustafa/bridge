@@ -38,10 +38,24 @@ manifest cannot tell you which, because it records paths and not reasons — and
 that is the actual problem: the seal's boundary is currently an accident of
 history rather than a decision anyone can review.
 
-That needs headroom in `MAX_SURFACE_FILES`, and as of this writing there is none
-(217 of 217 — see #416). A decomposition of a pinned file therefore travels with a
-cap change and uses `scripts/reseal.sh --pins-changed`, the documented inversion
-for when the pin *list* changes rather than only the hashes.
+That needs capacity in `MAX_SURFACE_FILES`, and there is none by design — 217 of
+217.
+
+**Do not read that as a shortage to be fixed.** `RESERVED_SURFACE_FILES` is
+documented as capacity for *"one small cohesive surface change"*, and the cap's
+own rationale says it *"makes further unreviewed additions an explicit
+compatibility-surface decision"*, closing with *"one file for one named reason —
+not headroom."* The cap has been raised four times, each reason recorded in the
+comment, and three of those raises came from branches that could not see each
+other. The friction is the control.
+
+So a decomposition of a pinned file **travels with its own cap raise**, in its own
+PR, naming its own reason and pinning what it adds — the pattern #406 followed.
+Use `scripts/reseal.sh --pins-changed`, the documented inversion for when the pin
+*list* changes rather than only the hashes.
+
+Budget for that when planning. Splitting a 6,000-line module four ways is four
+surface decisions, not one refactor.
 
 Check before you start:
 
