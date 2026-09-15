@@ -344,7 +344,18 @@ function main() {
     writeFileSync(join(root, MATRIX_REL), `${JSON.stringify(draft, null, 2)}\n`);
   }
 
-  const reseal = spawnSync("bash", [RESEAL], { cwd: root, encoding: "utf8", stdio: "inherit" });
+  // The draft written above always starts with manifest_sha256 (and the
+  // matrix's placeholder compatibility_surface_sha256) empty -- reseal.sh's
+  // ordinary order requires an already-valid checksum to rehash from (see
+  // its own header), so an unsealed draft needs --pins-changed's inverted
+  // order (seal first to attest the reconciled list, then the ordinary
+  // three) every time this driver runs it, regardless of whether the pin
+  // *list* actually changed on either side.
+  const reseal = spawnSync("bash", [RESEAL, "--pins-changed"], {
+    cwd: root,
+    encoding: "utf8",
+    stdio: "inherit",
+  });
   if (reseal.status !== 0) {
     fail(
       "the reconciled pin/claim list failed to reseal -- see scripts/reseal.sh's output above. " +
