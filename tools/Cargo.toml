@@ -6,3 +6,12 @@ members = [
   "bridge-tally-read-transport",
 ]
 resolver = "2"
+
+# Mirrors src-tauri/Cargo.toml's [workspace.lints.clippy] table — same
+# reasoning, and the same two lints dropped for the same measured reason (see
+# that file's comment and docs/proposed-ci-gates.md). This is a separate,
+# standalone Cargo workspace so it needs its own copy.
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+missing_errors_doc = { level = "allow", priority = 1 }
+must_use_candidate = { level = "allow", priority = 1 }

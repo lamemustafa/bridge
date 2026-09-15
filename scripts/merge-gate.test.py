@@ -76,13 +76,13 @@ class MergeGateControls(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
-    def run_gate(self, scenario="pass", extra_args=()):
+    def run_gate(self, scenario="pass", extra_args=(), cwd=None):
         env = os.environ.copy()
         env["PATH"] = f"{self.bin}:{env['PATH']}"
         env["GATE_SCENARIO"] = scenario
         return subprocess.run(
             [str(SCRIPT), "321", "--repo", "lamemustafa/bridge", *extra_args],
-            cwd=ROOT,
+            cwd=str(cwd) if cwd else ROOT,
             env=env,
             text=True,
             stdout=subprocess.PIPE,
@@ -222,6 +222,23 @@ class MergeGateControls(unittest.TestCase):
         # the whole commit-metadata fetch and the PR went INDETERMINATE.
         result = self.assert_pass("author-email-localhost")
         self.assertNotIn("could not prove complete head-bound PR commit metadata", result.stdout)
+
+    def test_finding374_helpers_resolve_relative_to_the_script(self):
+        """#374: the gate must locate its own helper scripts by $script_dir.
+
+        Every other test runs with cwd=ROOT, so a working-directory-relative
+        invocation of merge_gate_diff.py passes there and fails anywhere else.
+        Running the gate from an unrelated directory is the only thing that
+        exercises the difference.
+        """
+        with tempfile.TemporaryDirectory(prefix="merge-gate-cwd-") as elsewhere:
+            result = self.run_gate("pass", cwd=elsewhere)
+        combined = result.stdout + result.stderr
+        self.assertNotIn("merge_gate_diff.py: No such file or directory", combined)
+        self.assertNotIn("can't open file", combined)
+        self.assertEqual(result.returncode, 0, combined)
+        self.assertIn("MAY MERGE", result.stdout)
+
 
 
 class PrivacyScannerFindingsPR335(unittest.TestCase):
