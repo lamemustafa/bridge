@@ -630,9 +630,10 @@ licensed or standard TallyPrime.
 
 These rows establish only the supplied candidate against the recorded master;
 they do **not** establish a symmetric case/separator normalizer or canonical
-fold. Automatic binding is exact-codepoint unless the authoritative protocol
-records the particular directional comparison. In particular, do not infer a
-slash rule from this baseline.
+fold. The shared binder cannot enforce product, release and licence scope, so
+these directional observations do not authorize automatic folded-name binding:
+folded names remain candidates for operator selection and exact revalidation.
+In particular, do not infer a slash rule from this baseline.
 
 > **Promoted to `TALLY_PROTOCOL_REFERENCE.md` §9.4b**, which is where observed gateway behaviour
 > belongs and which carries the consequences for a writer. This entry stays as the measurement

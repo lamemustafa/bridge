@@ -113,6 +113,38 @@ def _split_tokens(text):
 # 19 of them had been issued to sources with no mask in that position at all.
 # Excluding X makes an X in a replacement mean exactly one thing — the source
 # was masked there — so the shapes no longer compete.
+# The shortest run of `X` that `bank_statement_import` will treat as a masked
+# account (`[Xx]{4,}\d*`). Below this a run of `X` is data, not a convention.
+MASK_MIN_XS = 4
+
+
+# `bank_statement_import` recognises the short mask `[Xx]+\d+` ONLY inside an
+# `IMPS/` component, behind an alphabetic prefix and hyphens
+# (`^[A-Za-z]+-\s*[Xx]+\d+-`). Outside that, a short run of X with digits is not
+# a masking convention to any parser here — it is a customer token that happens
+# to start with the letter X.
+def _is_mask(token):
+    """True when `token` is a masked account: `[Xx]{4,}` optionally then digits.
+
+    **Only the unambiguous form.** `bank_statement_import` also reads a short
+    `[Xx]+\\d+` inside an `IMPS/` component, and mirroring that here cost four
+    revisions — per character, per token, per word containing `IMPS/`, per
+    position within the word — each one leaking a customer `X` into a public
+    fixture in a narrower place than the last, because a context-free tokeniser
+    cannot reliably mirror a context-sensitive rule.
+
+    Measured before dropping it: the short form preserves **one** token across
+    both committed fixtures, and the importer's own IMPS tests use constructed
+    eight-X masks rather than that token. So the whole feature bought one
+    masked-account shape in one fixture and produced four rounds of findings.
+
+    A sanitiser may be narrower than the parser — the cost is a fabricated mask
+    shape — but never wider, because the cost there is a customer character
+    preserved verbatim. Given a doubt about scope, this is the narrow answer and
+    it needs no context at all to be checked.
+    """
+    return bool(re.fullmatch(rf"[Xx]{{{MASK_MIN_XS},}}\d*", token))
+
 ALPHA = "ZQVWKJYBGFHLMNPRSTDC"
 # Markup escapes: syntax, held out and restored untouched.
 STRUCTURAL_ENTITY = re.compile(r"&(?:amp|lt|gt|quot|apos);")
@@ -231,11 +263,27 @@ def _fake_token(token):
     """
     if token in _seen:
         return _seen[token]
-    positions = [index for index, character in enumerate(token) if character != "X"]
-    if not positions:
-        # Entirely a masking convention. There is no data here to fabricate, and
-        # a run of X is exactly what the parsers look for.
-        return token
+    # An `X` is only a masking convention when the WHOLE token is the shape the
+    # parsers actually look for. `bank_statement_import` requires
+    # `[Xx]{4,}\d*` to call something a masked account, so a bare `X` or `XX`
+    # is not a mask — it is a customer value that happens to be the letter X,
+    # an initial for instance. Returning those verbatim copied source text into
+    # the fixture and bypassed `reserve_source_tokens` entirely, which is the
+    # one check that exists to stop exactly that.
+    #
+    # Deciding that per CHARACTER rather than per token leaked the same way by
+    # a narrower door: in `XAVIER` or `ABXXCD` the non-X characters make the
+    # free-position list nonempty, so the all-X branch never runs, and every
+    # `X` survives into the fixture as `XZZZZZ` or `ZZXXZZ`. Those `X`s are
+    # customer letters. Classify the token against the parser's own pattern
+    # first, and only then treat `X` as structure; everywhere else an `X` is
+    # data like any other letter.
+    if _is_mask(token):
+        positions = [index for index, character in enumerate(token) if character.isdigit()]
+        if not positions:
+            return token
+    else:
+        positions = list(range(len(token)))
 
     alphabets = [
         DIGITS if token[index].isdigit()
@@ -248,7 +296,9 @@ def _fake_token(token):
         total *= len(alphabet)
 
     shape = _shape_of(token)
-    index = _next.get(shape, 0)
+    # Fixed mask positions do not share the ordinary token allocation space.
+    allocation_key = (shape, tuple(positions))
+    index = _next.get(allocation_key, 0)
     candidate = None
     while index < total:
         digits, built = index, list(token)
@@ -288,7 +338,7 @@ def _fake_token(token):
             f"through. Shorten the capture, or widen this shape's alphabet "
             f"(ALPHA for letters, DIGITS for digits)."
         )
-    _next[shape] = index
+    _next[allocation_key] = index
     _seen[token] = candidate
     _taken.add(candidate.upper())
     return candidate
@@ -361,6 +411,8 @@ def _scrub_plain(text):
         if text not in _days:
             _days[text] = f"{len(_days) % 28 + 1:02d}"
         return _days[text]
+    # The short mask shape is only a convention inside an IMPS component, so the
+    # decision needs the surrounding field, which the token alone cannot carry.
     out = []
     for is_token, piece in _split_tokens(text):
         if piece in TEMPLATE:
@@ -401,9 +453,12 @@ BANNER_TEMPLATE = """<!--
   default. Distinct source tokens map to distinct fabricated ones in
   first-appearance order, so repeats and name/reference structure survive while
   the substitution is not a cipher over the original text. Character shape is
-  preserved — digits stay digits, a run of X stays a run of X — because the
+  preserved — digits stay digits and whole-token masks with at least four Xs
+  retain those Xs — because the
   parsers find the end of a counterparty name by recognising the shape of the
-  field after it.
+  field after it. Shorter X-plus-digit forms are fabricated even inside IMPS.
+  A regenerated capture therefore does not preserve that contextual mask shape;
+  the existing captured short-mask parser evidence must be retained separately.
 
   Dates are remapped rather than digit-substituted, since a digit substitution
   produces 11/22/33, which is not a calendar date. A whole date becomes a
@@ -438,7 +493,13 @@ def _kept_words(pages, keep):
 
 def main(source, destination, keep, bank):
     """keep: [(page_index, [(y_min, y_max), ...]), ...] regions to retain."""
-    pages = pathlib.Path(source).read_text().split("<page ")[1:]
+    # `pdftotext` emits UTF-8. `read_text()` without an encoding decodes with
+    # the host's locale, so on a Windows Python whose locale is not UTF-8 a raw
+    # `Café` becomes mojibake with extra code points and Indic bytes raise
+    # `UnicodeDecodeError` before sanitisation runs at all. Neither CI nor the
+    # unit cases reach this boundary: CI is ubuntu-only, and the Unicode tests
+    # call `_scrub_plain` with strings that are already decoded.
+    pages = pathlib.Path(source).read_text(encoding="utf-8").split("<page ")[1:]
     regions = list(_kept_words(pages, keep))
     # Two passes, and the first one has to be complete before the second starts.
     # A replacement is only safe once the allocator knows every token the

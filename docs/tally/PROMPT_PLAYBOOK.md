@@ -308,12 +308,17 @@ Implement:
      §9.4d's individually measured **directional** comparisons; do not turn
      them into a canonical fold. In particular, its slash row supplied a
      slash candidate against a space-bearing master. The reverse was not
-     measured, so slash-bearing cross-spellings remain exact-codepoint only
-     until both directions are qualified. Preserve every other codepoint,
+     measured: the supplied slash-to-master-space direction remains a
+     qualified observation in that exact scope; the reverse remains
+     exact-codepoint only. Preserve every other codepoint,
      including NFC/NFD, en dash and underscore distinctions.
    - Other licensed scopes remain exact-codepoint unless a capture
      qualifies their particular rule. Compatibility live-READ receipts
      do not establish write behaviour (`compatibility/README`).
+   The shared binder has no product/release/licence qualification input, so
+   these observations cannot authorize its automatic folded-name binding.
+   Folded spellings stay candidates: an operator chooses an exact catalogue
+   name and the existing assign path revalidates it.
    Name keys are exact at storage. Apply any permitted fold only while
    resolving a request against retained rows; if a fold reaches more than
    one row, surface ambiguity. Storing folded keys can erase a distinct
@@ -697,9 +702,11 @@ Implement — write core (masters):
    project writes to, for **ledgers**.
    So: for **ledgers on licensed 7.1 Silver (`education_mode=false`)**,
    match only under §9.4d's individually measured directional rows. Its
-   slash row does not qualify the reverse, so a slash-bearing cross-spelling
-   is **exact-codepoint only** and fails loudly until both directions are
-   captured. Gold, other tiers and unqualified versions remain exact-codepoint
+   slash row qualifies a **supplied slash against a space-bearing master**;
+   the unmeasured reverse is **exact-codepoint only** and fails loudly.
+   This observed direction does not authorize automatic folded binding by
+   the shared binder, which cannot enforce the product/release/licence scope.
+   Gold, other tiers and unqualified versions remain exact-codepoint
    only. For **every other master type** — stock items, groups, voucher types
    — §9.4d measured nothing, so match on **exact codepoints** and let a case
    or separator difference fail loudly.
