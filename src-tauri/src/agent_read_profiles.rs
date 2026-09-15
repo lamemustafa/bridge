@@ -74,6 +74,29 @@ fn render_windowed_vouchers(
     ))
 }
 
+/// The FETCH list for LAB-ONLY inventory-entry reads (`lab_read_inventory`,
+/// feature `lab-writes`). Unlike [`AGENT_VOUCHER_FETCH`], this asks for
+/// `ALLINVENTORYENTRIES.*` instead of `ALLLEDGERENTRIES.*` -- no shipped tool
+/// reads inventory today (see the plan-research note §4.2), so this shape is
+/// exploratory pending a live capture, not a qualified/compatibility-evidenced
+/// read.
+#[cfg(feature = "lab-writes")]
+const AGENT_LAB_INVENTORY_VOUCHER_FETCH: &str = "DATE,VOUCHERNUMBER,VOUCHERTYPENAME,\
+PARTYLEDGERNAME,NARRATION,GUID,ALTERID,MASTERID,ISCANCELLED,ISOPTIONAL,ALLINVENTORYENTRIES.*";
+
+/// Windowed voucher read for the LAB-ONLY `lab_read_inventory` tool. Reuses
+/// the same [`render_windowed_vouchers`] windowing machinery (and therefore
+/// the same `window_honoured` corroboration path) as `vouchers`/
+/// `ledger_movement` -- only the FETCH list differs.
+#[cfg(feature = "lab-writes")]
+pub(super) fn render_agent_lab_inventory_vouchers(
+    company: &str,
+    from: &str,
+    to: &str,
+) -> Result<String, String> {
+    render_windowed_vouchers(company, from, to, None, AGENT_LAB_INVENTORY_VOUCHER_FETCH)
+}
+
 pub(super) fn render_agent_changed_vouchers(
     company: &str,
     checkpoint: u64,

@@ -975,6 +975,10 @@ servo_arc 0.4.3
 License: MIT OR Apache-2.0
 Source: https://github.com/servo/stylo
 
+sha1_smol 1.0.1
+License: BSD-3-Clause
+Source: https://github.com/mitsuhiko/sha1-smol
+
 sha2 0.10.9
 License: MIT OR Apache-2.0
 Source: https://github.com/RustCrypto/hashes
@@ -10847,6 +10851,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 BSD 3-Clause "New" or "Revised" License
 - alloc-stdlib 0.2.4
 - aws-lc-sys 0.44.0
+- sha1_smol 1.0.1
 
 Copyright (c) <year> <owner>.
 
