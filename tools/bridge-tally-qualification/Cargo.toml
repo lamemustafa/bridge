@@ -8,6 +8,9 @@ publish = false
 edition = "2021"
 rust-version = "1.96"
 
+[lints]
+workspace = true
+
 [dependencies]
 bridge-tally-protocol = { path = "../../src-tauri/crates/bridge-tally-protocol" }
 hex = "0.4"
