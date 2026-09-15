@@ -285,7 +285,11 @@ fn incomplete_bill_allocations_are_refused_instead_of_becoming_empty() {
 }
 
 #[test]
-fn contradictory_signed_amounts_are_refused_before_accounting_math() {
+fn a_sign_the_polarity_flag_contradicts_is_reported_on_the_entry_not_refused() {
+    // This read used to be refused. On a real book every disagreement was a
+    // rounding ledger whose arithmetic was correct -- summing AMOUNT alone
+    // reproduced Tally's own closing balance -- so refusing discarded the whole
+    // window over entries that were right. The disagreement is recorded instead.
     let captured = captured_native_vouchers();
     for (original, replacement) in [("-101.01", "101.01"), ("101.01", "-101.01")] {
         let damaged = captured.replacen(
@@ -295,27 +299,95 @@ fn contradictory_signed_amounts_are_refused_before_accounting_math() {
         );
         assert_ne!(damaged, captured);
         for accounting_state in [false, true] {
-            assert_eq!(
-                parse_agent_rows_with_accounting_state(
-                    &damaged,
-                    accounting_state,
-                    CAPTURED_VOUCHER_COMPANY_GUID
-                ),
-                Err("voucher_entry_polarity_mismatch".into())
-            );
+            let rows = parse_agent_rows_with_accounting_state(
+                &damaged,
+                accounting_state,
+                CAPTURED_VOUCHER_COMPANY_GUID,
+            )
+            .expect("a contradicted sign must not refuse the read");
+            let flagged = rows
+                .iter()
+                .flat_map(|row| row["amounts"].as_array().cloned().unwrap_or_default())
+                .filter(|entry| entry["polarity_disagrees_with_amount"] == json!(true))
+                .count();
+            assert_eq!(flagged, 1, "the disagreement must be visible on the entry");
         }
     }
+
+    // An entry whose observations agree carries no marker at all.
+    let rows = parse_agent_rows(&captured, CAPTURED_VOUCHER_COMPANY_GUID).unwrap();
+    assert!(rows
+        .iter()
+        .flat_map(|row| row["amounts"].as_array().cloned().unwrap_or_default())
+        .all(|entry| entry.get("polarity_disagrees_with_amount").is_none()));
+
+    // Zero has no sign to contradict, so either flag agrees with it.
     for zero in ["0", "0.00", "-0.000"] {
         for polarity in [false, true] {
-            assert_eq!(
-                validate_tally_entry_polarity(
-                    &bridge_tally_core::ExactDecimal::parse(zero.to_string()).unwrap(),
-                    polarity
-                ),
-                Ok(())
-            );
+            assert!(tally_entry_polarity_agrees(
+                &bridge_tally_core::ExactDecimal::parse(zero.to_string()).unwrap(),
+                polarity
+            ));
         }
     }
+}
+
+#[test]
+fn an_empty_ledger_entry_list_is_an_empty_list_not_a_malformed_entry() {
+    // A Stock Journal moves inventory and has no accounting effect, so Tally
+    // returns ALLLEDGERENTRIES.LIST with no children. Refusing it lost the whole
+    // window. A partially populated entry must still be refused: that is what a
+    // truncated response or a request-shape regression looks like.
+    let captured = captured_native_vouchers();
+    let entry_start = captured.find("<ALLLEDGERENTRIES.LIST>").unwrap();
+    let entry_end =
+        captured.find("</ALLLEDGERENTRIES.LIST>").unwrap() + "</ALLLEDGERENTRIES.LIST>".len();
+    let before = parse_agent_rows(&captured, CAPTURED_VOUCHER_COMPANY_GUID).unwrap();
+    let entries_before: usize = before
+        .iter()
+        .map(|row| row["amounts"].as_array().map_or(0, Vec::len))
+        .sum();
+
+    let mut emptied = captured.clone();
+    emptied.replace_range(
+        entry_start..entry_end,
+        "<ALLLEDGERENTRIES.LIST></ALLLEDGERENTRIES.LIST>",
+    );
+    let after = parse_agent_rows(&emptied, CAPTURED_VOUCHER_COMPANY_GUID)
+        .expect("an empty entry list must not refuse the read");
+    let entries_after: usize = after
+        .iter()
+        .map(|row| row["amounts"].as_array().map_or(0, Vec::len))
+        .sum();
+    assert_eq!(
+        entries_after,
+        entries_before - 1,
+        "the empty list contributes no entry, and no other entry is lost"
+    );
+    assert_eq!(
+        after.len(),
+        before.len(),
+        "the voucher itself is still returned"
+    );
+
+    // Whitespace-only is still empty; a single populated field is not.
+    let mut spaced = captured.clone();
+    spaced.replace_range(
+        entry_start..entry_end,
+        "<ALLLEDGERENTRIES.LIST>\r\n     </ALLLEDGERENTRIES.LIST>",
+    );
+    assert!(parse_agent_rows(&spaced, CAPTURED_VOUCHER_COMPANY_GUID).is_ok());
+
+    let mut partial = captured.clone();
+    partial.replace_range(
+        entry_start..entry_end,
+        "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Partial</LEDGERNAME></ALLLEDGERENTRIES.LIST>",
+    );
+    assert_eq!(
+        parse_agent_rows(&partial, CAPTURED_VOUCHER_COMPANY_GUID),
+        Err("agent_read_protocol_invalid".into()),
+        "a partially populated entry must stay refused"
+    );
 }
 
 #[test]

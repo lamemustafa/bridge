@@ -7,6 +7,37 @@ fn source_rows() -> Vec<ReadVoucher> {
 }
 
 #[test]
+fn a_flipped_read_back_sign_is_caught_by_the_write_comparison_not_the_parse() {
+    // The parse used to refuse a sign that ISDEEMEDPOSITIVE contradicts. On a real
+    // book that disagreement is ordinary -- a rounding ledger produces it -- so
+    // refusing lost the verification read for every voucher in the window, not just
+    // the one entry. The check that matters here is narrower and stronger anyway:
+    // read-back is compared against what Bridge actually wrote, so a flipped sign
+    // shows up as a fingerprint difference. This proves that signal survives.
+    let captured = boundary_tests::captured_vouchers();
+    let flipped = captured.replace(">-101.01</AMOUNT>", ">101.01</AMOUNT>");
+    assert_ne!(flipped, captured, "fault must reach the amount");
+
+    let clean = parse_import_vouchers(&captured, CAPTURED_GUID)
+        .expect("the captured verification read must parse");
+    let damaged = parse_import_vouchers(&flipped, CAPTURED_GUID)
+        .expect("a contradicted sign must not refuse the verification read");
+
+    let clean_fingerprint = actual_entry_fingerprint(&clean.rows[0]);
+    let damaged_fingerprint = actual_entry_fingerprint(&damaged.rows[0]);
+    assert_ne!(
+        clean_fingerprint, damaged_fingerprint,
+        "the flipped sign must reach the fingerprint the write comparison uses"
+    );
+    assert!(
+        damaged_fingerprint
+            .iter()
+            .any(|entry| entry.contains("|101.01|Yes")),
+        "the observed entry must carry the sign Tally actually returned"
+    );
+}
+
+#[test]
 fn import_source_rejects_repeated_identity_independently_of_tags_or_other_identity_fields() {
     let rows = source_rows();
     let mut first = rows[0].clone();
@@ -129,11 +160,6 @@ fn captured_import_sources_reject_failed_exports_duplicate_fields_and_invalid_sc
             "</AMOUNT>",
             "</AMOUNT><AMOUNT>1</AMOUNT>",
             "import_verification_export_invalid",
-        ),
-        (
-            ">-101.01</AMOUNT>",
-            ">101.01</AMOUNT>",
-            "voucher_entry_polarity_mismatch",
         ),
         (
             "REMOTEID=\"",
