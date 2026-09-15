@@ -403,17 +403,27 @@ Re-sending the identical voucher payload, same `VOUCHERNUMBER`, produced `CREATE
 
 > **Superseded 2026-09-11 — do not build the fingerprint on the strength of this.** The measurement holds: without a client `REMOTEID`, a repeated payload creates a second voucher. But it is not the *only* thing available, because the vouchers measured here carried no client `REMOTEID` and Tally therefore assigned its own. `IMPLEMENTATION_GUIDE.md` §3.3a measures the controlled case: with a client-supplied `REMOTEID`, a byte-identical re-import returns `CREATED=0, ALTERED=1` and leaves **one** voucher. So a duplicate-prevention scheme does not need a TDL plugin or a UDF fingerprint **on the path that was measured**, which is a byte-identical Journal repeat on one licensed instance. §9.8 states its own exclusions: not other voucher types, and **not restart behaviour**. Recovery code must not read this as a general licence to redispatch — a retry after a Tally restart, or on a voucher type nobody has qualified, is exactly where a categorical reading of `REMOTEID` would recreate the client-data duplication §8.4 exists to prevent. Qualify each context live before retrying in it. See also `TALLY_PROTOCOL_REFERENCE.md` §9.3, whose title carried the same overgeneralisation until it was corrected.
 >
-> **This narrows §3.1.2's fingerprint; it does not remove the outbox.** `REMOTEID` prevents a duplicate. It does not tell you, after a crash, *what you sent* — the returned `REMOTEID` **attribute** is Tally's own value, not yours, so the dispatch intent has to survive locally or the write is neither provable nor safely reconstructible. Be precise about which field: the key itself does survive in anything Tally does not own, and the committed capture returns it inside `NARRATION` as `[BRIDGE:…]`. A categorical "Tally does not return the key" would send recovery work to discard the one attribution channel that works. The `row fsynced before dispatch` invariant in this plan and the restart-reconciliation flow in `docs/agent/README.md` both still stand, and a resend is only safe while the exact key and payload are still on disk.
+> **This narrows §3.1.2's fingerprint; it does not remove the outbox.** `REMOTEID` prevents a duplicate. It does not tell you, after a crash, *what you sent* — the returned `REMOTEID` **attribute** is Tally's own value, not yours, so the dispatch intent has to survive locally or the write is neither provable nor safely reconstructible. Be precise about which field: the key itself does survive in anything Tally does not own, and the committed capture returns it inside `NARRATION` as `[BRIDGE:…]`. A categorical "Tally does not return the key" would send recovery work to discard the one attribution channel that works. The `row fsynced before dispatch` invariant in this plan and the restart-reconciliation flow in `docs/agent/README.md` both still stand, and the exact key and payload must remain on disk for read-only reconciliation. They do not authorize a resend after an unknown outcome.
 
 ### 8.5 Re-creating an existing master silently becomes an Alter
 
 Re-sending the identical ledger `ACTION="Create"` returned `CREATED=0, ALTERED=1` — no error. A retry silently **overwrites** the existing master with the retry payload, including any defaulted fields.
 
-**Adds to §6:** master creates require a pre-existence read before dispatch, and `CREATED` vs `ALTERED` must persist as distinct outbox outcomes. "No duplicate was made" is not the same as "my create succeeded."
+**DEVIATION 2026-09-12 — amends §6:** a pre-existence read is necessary but does not
+authorize master creation. Require a qualified Complete catalogue for the exact company and
+master class, plus a qualified mutation-time condition or proven exclusive-write window.
+Concurrent automatic creation remains UNQUALIFIED until those prerequisites hold; another
+ordinary pre-read or operator confirmation is insufficient. Apply the full creation/bind/refusal
+contract in `PROMPT_PLAYBOOK.md` Phase 4 step 3a, including approved-field equality before
+binding an existing name. Retain unresolved proposals and block dependent writes when evidence
+is missing. Persist `CREATED` and `ALTERED` as distinct outcomes; avoiding a duplicate does not
+establish that the requested create succeeded.
 
 ### 8.6 `LASTMID` is 0 on successful master creates; `LASTVCHID` works
 
-Both ledger creates returned `LASTMID=0` despite `CREATED=1`. **Confirms §5.1.4's choice**: masters must be read back by normalized name. `LASTVCHID` is populated for vouchers and usable, still subject to the foreign-writer cross-check.
+Both ledger creates returned `LASTMID=0` despite `CREATED=1`. **Confirms §5.1.4's choice**: masters must be read back by name. Which name-matching rule applies is decided by the SCOPE GATE in `PROMPT_PLAYBOOK.md` Phase 4 step 4 and by nothing here: §9.4b's case-folding and separator rows inherit §0's **Edit Log 7.0 Educational** baseline and mark licensed TallyPrime UNVERIFIED, so on a licensed SKU match on **exact codepoints** and let a case or separator difference fail loudly. Widen only where a licensed capture has qualified a **directional write comparison**: §9.4d does so for **ledgers** on licensed 7.1 **Silver**, with `education_mode=false`, by importing vouchers naming folded spellings and reading the day book back, and for no other master type or licence tier. Its slash row is slash-candidate against space-master only; the reverse is not qualified, so slash-bearing cross-spellings remain exact-only. Gold and other unqualified tiers remain exact-only. A compatibility result cannot widen it — that evidence is a live-**read** receipt and `compatibility/README` says it never establishes any write behaviour. `LASTVCHID` is populated for vouchers and usable, still subject to the foreign-writer cross-check.
+
+DEVIATION 2026-09-12 (`TALLY_PROTOCOL_REFERENCE.md` §9.4b): "normalized name" here never means NFC/NFD normalization, which is WITHDRAWN. §9.4b is MEASURED: Tally matches master names on exact codepoints, so an NFD create read back with NFC folding applied would resolve onto a pre-existing, distinct NFC master and promote the wrong object. Compare on exact codepoints. This deviation removes normalization; it does not decide whether any case or separator fold is permitted on top — that is the SCOPE GATE's question, answered above, and on an unqualified licensed SKU the answer is exact codepoints and nothing else.
 
 ### 8.7 AlterID high-water marks move — Drift Sentinel's mechanism is sound
 
@@ -734,8 +744,11 @@ not say so. That is the failure this plan is least able to detect, because nothi
 no counter is wrong.
 
 The correction, with the full table of what each signal does support, is in
-[`IMPLEMENTATION_GUIDE.md`](./IMPLEMENTATION_GUIDE.md) §6.2, and
-`TALLY_PROTOCOL_REFERENCE.md` §3.3a states the same rule from the other side:
+[`IMPLEMENTATION_GUIDE.md`](./IMPLEMENTATION_GUIDE.md) **§3.4a** — §6.2 is the Unicode
+round-trip result and carries none of this — and
+[`TALLY_PROTOCOL_REFERENCE.md`](./TALLY_PROTOCOL_REFERENCE.md) **§9.3** states the same rule from
+the other side. (`§3.3a` is a section of the implementation guide, not of the reference; citing it
+under the wrong document sent readers to a section that does not exist.)
 
 | Signal | What it supports |
 | --- | --- |
@@ -743,8 +756,15 @@ The correction, with the full table of what each signal does support, is in
 | narration marker | attribution — which client write produced which voucher |
 | date/amount/ledger tuple | "these look alike, a human should check" — **not** a dedupe decision |
 
-**Consequence for the qualification work:** the regression in
-[`PROMPT_PLAYBOOK.md`](./PROMPT_PLAYBOOK.md) §6 — "duplicate re-dispatch with edited narration is
-still caught by the fingerprint check" — is still a *useful* case, but its exit criterion is that
-the pair is **flagged for review**, not that the second dispatch is suppressed. A qualification
-that passes by suppressing it is qualifying the defect.
+**Deviation 2026-09-12 — unknown outcomes remain read-only.** The former
+qualification wording below required a second dispatch and treated preventing it
+as a defect. That acceptance criterion is withdrawn. After an unknown outcome,
+reconcile the original saved batch without sending another write; an edited
+narration or an absent fingerprint match cannot authorize replay. Assert that the
+dispatch count does not increase and unresolved evidence remains visible for
+manual review, as required by `PROMPT_PLAYBOOK.md` Phase 4 recovery and §6.
+
+The original distinction remains relevant to independently proposed business
+events: a similar date/amount/ledger tuple is a review flag and cannot by itself
+suppress a separately approved legitimate payment. It does not turn recovery of
+one unknown attempt into a new business event.
