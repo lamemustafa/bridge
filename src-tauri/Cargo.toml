@@ -10,6 +10,9 @@ edition = "2021"
 rust-version = "1.96"
 default-run = "bridge"
 
+[lints]
+workspace = true
+
 [features]
 # Legacy voucher-scan outstandings path. Shipped/default builds take the
 # native Bills Receivable/Payable + List of Ledgers path unconditionally;
@@ -33,6 +36,37 @@ members = [
   "crates/tally-protocol-simulator",
 ]
 resolver = "2"
+
+# Repo has no automated code review any more, so this is the deterministic
+# half of the replacement coverage. Every lint starts at `warn`, never `deny`:
+# a `deny` here would turn a plain `cargo check`/`cargo build` from every
+# contributor's editor into a hard failure the moment clippy's opinion changes
+# out from under them, which is a much bigger blast radius than a CI gate. CI
+# is free to escalate specific gates to `-D warnings` on its own (existing
+# `cargo clippy -- -D warnings` steps already do, and inherit whatever is
+# enabled here — see docs/proposed-ci-gates.md for the measured effect of
+# adding this table on those existing steps).
+#
+# `pedantic` is the group `too_many_lines` (see src-tauri/clippy.toml) and the
+# other findings-worthy lints in this analysis live in. It is enabled as a
+# whole group, at `priority = -1`, so any lint inside it can still be
+# dialled back individually below without the group re-asserting itself.
+#
+# Measured against this tree (2026-09-15, both workspaces): bare `pedantic`
+# produced 2,399 warnings, and two lints alone were 1,154 of them —
+# `missing_errors_doc` (770) and `must_use_candidate` (430). Both are pure
+# API-documentation style opinions (every `Result`-returning public fn needs
+# an `# Errors` doc section; every side-effect-free fn needs `#[must_use]`);
+# neither maps to any of the five mechanically-catchable finding classes this
+# lint table exists to cover, and together they would have buried the other
+# 1,245 warnings under noise. They are turned back off, individually, at
+# `priority = 1` so the override wins over the group. Every other pedantic
+# lint is left at `warn` — see docs/proposed-ci-gates.md for the resulting
+# count and its breakdown by lint.
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+missing_errors_doc = { level = "allow", priority = 1 }
+must_use_candidate = { level = "allow", priority = 1 }
 
 [profile.dev]
 debug = "line-tables-only"
