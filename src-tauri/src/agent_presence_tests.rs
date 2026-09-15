@@ -1215,14 +1215,28 @@ async fn replay_the_twenty_invoice_engagement() {
                 "numbering": numbering, "vouchers": proposals}),
         )
         .await;
+    // A nonempty window still cannot be proven complete -- no source-side
+    // cardinality control exists -- but that now withholds exactly one verdict
+    // instead of refusing the request. The window answers; nothing in it may
+    // come back `absent`, because absence is the only claim that needs to have
+    // seen the whole range.
     assert_eq!(
-        response["isError"], true,
-        "the nonempty window must fail closed"
+        response["isError"], false,
+        "a nonempty window must answer rather than refuse: {response}"
     );
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(result["window"]["read"], "partial");
     assert_eq!(
-        response["structuredContent"]["result"]["error"]["code"],
-        "presence_window_incomplete"
+        result["totals"]["absent"], 0,
+        "no proposal may be reported absent from a window that was never \
+         proven complete: {result}"
     );
+    for item in result["items"].as_array().expect("items") {
+        assert_ne!(
+            item["presence"], "absent",
+            "absent requires a proven-complete window: {item}"
+        );
+    }
     assert_eq!(
         response["structuredContent"]["evidence"]["state"],
         "partial"
