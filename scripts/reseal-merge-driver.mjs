@@ -17,12 +17,16 @@
 //
 // git invokes this as (configured exactly this way by the documented
 // `git config` line):
-//   node scripts/reseal-merge-driver.mjs %O %A %B %P
+//   node scripts/reseal-merge-driver.mjs %O %A %B %P %S %X %Y
 // %O = common ancestor's blob (temp file), %A = "ours" blob (temp file --
 // git expects the resolved content written back into THIS path), %B =
 // "theirs" blob (temp file), %P = the path being merged (one of the two
 // files above; this script is invoked once per conflicting path, in an
-// order git does not document or guarantee).
+// order git does not document or guarantee). %S/%X/%Y are resolvable
+// revisions for the common ancestor / local head / other head -- see
+// mergeRefsFromArgs() below for why those three, and not %O/%A/%B or the
+// index, are what this driver actually reads cross-file and pinned-file
+// content from.
 //
 // WHY THIS IS SAFE FOR THE COMMON CASE, AND WHY IT REFUSES THE OTHERS
 // --------------------------------------------------------------------
@@ -104,36 +108,38 @@ function repoRoot() {
 // different plumbing this driver does not attempt to read, so
 // detectMergeRefs() returning null degrades to per-file-only handling (see
 // the two "*InputsUsable" checks below), never to a silent wrong answer.
-function detectMergeRefs(root) {
-  // NOT necessarily `join(root, ".git", "MERGE_HEAD")`: in a linked git
-  // worktree (as opposed to the main checkout), `<root>/.git` is a plain
-  // text file pointing elsewhere (`gitdir: .../.git/worktrees/<name>`), not
-  // a directory -- MERGE_HEAD lives under that real git-dir, not under
-  // `<root>/.git`. `git rev-parse --git-path` resolves this correctly in
-  // both layouts; hardcoding `.git/MERGE_HEAD` silently never finds it in a
-  // worktree checkout, which is exactly how this was first written and
-  // first tested (a worktree) and always fell back without erroring.
-  const gitPathResult = spawnSync("git", ["rev-parse", "--git-path", "MERGE_HEAD"], {
-    cwd: root,
-    encoding: "utf8",
-  });
-  if (gitPathResult.status !== 0) return null;
-  const mergeHeadPath = gitPathResult.stdout.trim();
-  let theirs;
-  try {
-    theirs = readFileSync(
-      mergeHeadPath.startsWith("/") ? mergeHeadPath : join(root, mergeHeadPath),
-      "utf8",
-    ).trim();
-  } catch {
-    return null; // not an ordinary `git merge` in progress
-  }
-  const headResult = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" });
-  if (headResult.status !== 0) return null;
-  const ours = headResult.stdout.trim();
-  const baseResult = spawnSync("git", ["merge-base", ours, theirs], { cwd: root, encoding: "utf8" });
-  if (baseResult.status !== 0) return null;
-  return { ours, theirs, base: baseResult.stdout.trim() };
+// Two things this driver needs and neither %O/%A/%B nor the index can give:
+// (1) the OTHER file's (not %P's) three versions, to reconcile both files
+// consistently from a single invocation regardless of invocation order, and
+// (2) a way to fetch an arbitrary OTHER pinned file's post-merge content
+// without racing git's own working-tree checkout (see
+// computeCorrectSurfaceFiles's header). Both need base/ours/theirs as
+// resolvable git revisions.
+//
+// Two things that look like they'd supply that reliably do not:
+//   - Index stages 1/2/3 for the conflicted path: git only populates these
+//     AFTER a configured merge driver has run and reported failure, so they
+//     are empty while this process is still running.
+//   - `.git/MERGE_HEAD`: even resolved correctly via `git rev-parse
+//     --git-path` (a hardcoded `<root>/.git/MERGE_HEAD` also silently never
+//     finds it in a linked git worktree, where `.git` is a redirect file,
+//     not a directory), it does not exist yet either -- git only writes it
+//     once the whole tree-level merge has finished, which is after every
+//     driver invocation for it, not before.
+// Both were tried and both were proven wrong by ENOENT / empty reads in a
+// real merge run before this comment was written.
+//
+// What actually works: gitattributes' merge.*.driver placeholders %S / %X /
+// %Y ("conflict labels ... for the common ancestor, local head and other
+// head"). Despite the "label" name these come through as resolvable
+// revisions in ordinary usage (the merge base's abbreviated commit, and
+// "HEAD" / the branch or commit being merged) -- confirmed empirically
+// against a real `git merge` in this repository's own worktree checkout.
+// Wired via the git config line documented in docs/release-process.md:
+//   driver = node scripts/reseal-merge-driver.mjs %O %A %B %P %S %X %Y
+function mergeRefsFromArgs(baseRef, oursRef, theirsRef) {
+  if (!baseRef || !oursRef || !theirsRef) return null;
+  return { base: baseRef, ours: oursRef, theirs: theirsRef };
 }
 
 function readAtRef(root, ref, path) {
@@ -364,9 +370,9 @@ function fallbackToPlainMerge(baseFile, oursFile, theirsFile) {
 }
 
 function main() {
-  const [baseFile, oursFile, theirsFile, path] = process.argv.slice(2);
+  const [baseFile, oursFile, theirsFile, path, baseRef, oursRef, theirsRef] = process.argv.slice(2);
   if (!baseFile || !oursFile || !theirsFile || !path) {
-    fail("expected 4 arguments: %O %A %B %P (see the git config line in docs/release-process.md)");
+    fail("expected 7 arguments: %O %A %B %P %S %X %Y (see the git config line in docs/release-process.md)");
   }
   if (path !== SURFACE_REL && path !== MATRIX_REL) {
     fail(
@@ -375,18 +381,20 @@ function main() {
   }
 
   const root = repoRoot();
-  const refs = detectMergeRefs(root);
+  const refs = mergeRefsFromArgs(baseRef, oursRef, theirsRef);
 
   // Everything below -- the cross-file reconciliation AND the ref-based
   // hashing in computeCorrectSurfaceFiles() -- depends on knowing base/ours/
-  // theirs as commits, not just as this invocation's own three temp files.
-  // Without that (a rebase, cherry-pick, or anything else that doesn't leave
-  // .git/MERGE_HEAD), there is no safe fast path: fall straight back to a
-  // plain three-way text merge of the one file this invocation is
-  // responsible for.
+  // theirs as resolvable revisions, not just as this invocation's own three
+  // temp files. %S/%X/%Y (see mergeRefsFromArgs's header) cover an ordinary
+  // `git merge`; if the configured driver command line is missing them (an
+  // out-of-date git config from before this was added) or git ever leaves
+  // one empty, there is no safe fast path: fall straight back to a plain
+  // three-way text merge of the one file this invocation is responsible for.
   if (!refs) {
     warn(
-      "no .git/MERGE_HEAD (not an ordinary `git merge`) -- this driver only auto-resolves that case; falling back",
+      "missing %S/%X/%Y -- check `git config --get merge.bridge-compat-reseal.driver` against " +
+        "docs/release-process.md; falling back",
     );
     fallbackToPlainMerge(baseFile, oursFile, theirsFile);
     return;
