@@ -4,7 +4,7 @@
 //! catches the mistake regardless of which features the test binary itself
 //! was built with.
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn workflows_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -14,10 +14,19 @@ fn workflows_dir() -> PathBuf {
         .join("workflows")
 }
 
-#[test]
-fn no_workflow_enables_the_lab_writes_feature() {
-    let dir = workflows_dir();
-    let entries = fs::read_dir(&dir).unwrap_or_else(|error| {
+/// The scan itself, taking the directory as an argument.
+///
+/// Factored out for one reason: the tripwire below must drive *this* code, not
+/// a copy of it. It previously re-implemented the substring check inline
+/// against its own fixture, which proved `str::contains` works -- never in
+/// doubt -- while leaving the real scan free to lose a case with the tripwire
+/// still green. A tripwire that does not call the thing it guards is the
+/// failure it exists to catch.
+///
+/// Returns how many workflow files were examined and every offending line, so
+/// a caller can assert it actually looked at something.
+fn scan_workflows_for_lab_writes(dir: &Path) -> (usize, Vec<String>) {
+    let entries = fs::read_dir(dir).unwrap_or_else(|error| {
         panic!(
             "workflows directory {} must be readable: {error}",
             dir.display()
@@ -60,6 +69,13 @@ fn no_workflow_enables_the_lab_writes_feature() {
             }
         }
     }
+    (checked_files, offenders)
+}
+
+#[test]
+fn no_workflow_enables_the_lab_writes_feature() {
+    let dir = workflows_dir();
+    let (checked_files, offenders) = scan_workflows_for_lab_writes(&dir);
     assert!(
         checked_files > 0,
         "expected at least one workflow file under {}",
@@ -72,24 +88,63 @@ fn no_workflow_enables_the_lab_writes_feature() {
     );
 }
 
-/// A tripwire for the tripwire: this test must actually be capable of
-/// failing. Prove that against a synthetic workflow file in a temp
-/// directory rather than by editing a real one.
+/// A tripwire for the tripwire: the scan above must actually be capable of
+/// failing, and must catch every spelling it claims to.
+///
+/// This drives `scan_workflows_for_lab_writes` against synthetic fixtures
+/// rather than editing a real workflow. Each spelling gets its own case, so
+/// dropping any one condition from the scan fails a named case here instead of
+/// quietly narrowing the gate.
 #[test]
-fn the_gate_actually_fails_on_a_workflow_that_enables_the_feature() {
+fn the_scan_catches_every_spelling_it_claims_to() {
+    for (label, line) in [
+        (
+            "hyphenated",
+            "      - run: cargo build --features lab-writes",
+        ),
+        (
+            "underscored",
+            "      - run: cargo build --features lab_writes",
+        ),
+        ("all-features", "      - run: cargo build --all-features"),
+        (
+            "mixed case",
+            "      - run: cargo build --features LAB-WRITES",
+        ),
+    ] {
+        let dir = tempfile::tempdir().expect("temp dir for the tripwire fixture");
+        fs::write(
+            dir.path().join("fake.yml"),
+            format!("jobs:\n  build:\n    steps:\n{line}\n"),
+        )
+        .expect("write synthetic workflow fixture");
+        let (checked_files, offenders) = scan_workflows_for_lab_writes(dir.path());
+        assert_eq!(checked_files, 1, "{label}: the fixture must have been read");
+        assert_eq!(
+            offenders.len(),
+            1,
+            "{label}: the scan must catch this spelling -- if it does not, the gate \
+            has been narrowed and the real workflows are no longer covered for it"
+        );
+    }
+}
+
+/// The other half of the pair: the scan must stay silent on a workflow that
+/// does nothing wrong. Without this, a scan that flagged every line would pass
+/// the test above while making the gate useless.
+#[test]
+fn the_scan_is_silent_on_a_workflow_that_enables_nothing() {
     let dir = tempfile::tempdir().expect("temp dir for the tripwire fixture");
-    let workflow_path = dir.path().join("fake.yml");
     fs::write(
-        &workflow_path,
-        "jobs:\n  build:\n    steps:\n      - run: cargo build --features lab-writes\n",
+        dir.path().join("clean.yml"),
+        "jobs:\n  build:\n    steps:\n      - run: cargo build --locked\n",
     )
     .expect("write synthetic workflow fixture");
-    let contents = fs::read_to_string(&workflow_path).unwrap();
-    let tripped = contents
-        .lines()
-        .any(|line| line.to_ascii_lowercase().contains("lab-writes"));
+    fs::write(dir.path().join("ignored.txt"), "lab-writes\n").expect("write non-workflow file");
+    let (checked_files, offenders) = scan_workflows_for_lab_writes(dir.path());
+    assert_eq!(checked_files, 1, "only the .yml file counts as a workflow");
     assert!(
-        tripped,
-        "the substring check itself must catch this fixture"
+        offenders.is_empty(),
+        "a clean workflow must not trip the gate: {offenders:#?}"
     );
 }
