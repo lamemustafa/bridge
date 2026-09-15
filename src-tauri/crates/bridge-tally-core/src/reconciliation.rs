@@ -101,12 +101,7 @@ pub fn assess_core_accounting(core: &CoreAccountingBatch) -> CoreAccountingAsses
     push_issue(
         &mut issues,
         "voucher_entry_polarity_mismatch",
-        core.ledger_entries
-            .iter()
-            .filter(|entry| !excluded_from_books.contains(entry.voucher_source_id.as_str()))
-            .filter(|entry| !entry_polarity_matches_amount(entry))
-            .map(|entry| entry.source_id.clone())
-            .collect(),
+        inverted_voucher_entries(core, &excluded_from_books),
     );
     let voucher_entry_polarity =
         if state_for_codes(&issues, &["voucher_entry_polarity_mismatch"]) == CheckState::Mismatch {
@@ -196,6 +191,78 @@ fn state_for_codes(issues: &[AccountingIssue], codes: &[&str]) -> CheckState {
     } else {
         CheckState::Passed
     }
+}
+
+/// The entries of every voucher whose polarity is inverted *as a whole*.
+///
+/// A single entry disagreeing with its amount sign is not a defect. Tally's
+/// `ISDEEMEDPOSITIVE` records the column an entry was made in, not its
+/// arithmetic sign, and the two legitimately diverge — this document's own
+/// protocol reference already records that bill-allocation polarity is
+/// "contextual, not an amount-sign invariant", measured in both directions,
+/// and outstandings deliberately does not validate one against the other.
+///
+/// Measured on twelve monthly windows of a real trading book, by two
+/// independent parsers: **on the order of 110 of ~6,900 entries** disagree
+/// (111 and 104 respectively -- the ~5% gap is unresolved and is most likely
+/// XML-parsing edge cases, so treat the count as approximate). Both passes
+/// agree exactly on the shape that matters: the disagreement is **always
+/// exactly one entry** of a voucher four to six wide, in both directions, and
+/// **never** the whole voucher. Flagging each was ~110 reconciliation
+/// mismatches on an ordinary book, which is how a check teaches its reader to
+/// ignore it.
+///
+/// What the check is actually for survives: a voucher can sum to zero while
+/// every entry's polarity is inverted, which the balance check cannot see
+/// (`numeric_zero_sum_cannot_hide_contradictory_tally_polarity`). That shape is
+/// systematic and cannot be explained by contextual polarity, so it is still
+/// reported. On the same real book it occurs **zero** times.
+///
+/// `polarity` itself is unchanged and still comes from the flag. It is read
+/// here and in `transport_qualification.rs`, which projects it into a transport
+/// parity fingerprint; no accounting total is derived from it.
+fn inverted_voucher_entries(
+    core: &CoreAccountingBatch,
+    excluded_from_books: &BTreeSet<&str>,
+) -> Vec<String> {
+    // Judge only the entries that carry a sign. A zero amount agrees with
+    // either polarity by definition -- `entry_polarity_matches_amount` returns
+    // true for every one of them -- so folding them in would let a single zero
+    // leg prove the voucher "not wholly inverted" and silently disable this
+    // check for that voucher. Zero legs are ordinary: 227 of 6,854 entries in
+    // the captured year. They are counted in `judged` nowhere, so a voucher of
+    // nothing but zero amounts reports nothing rather than everything.
+    struct Tally {
+        judged: usize,
+        inverted: usize,
+        entries: Vec<String>,
+    }
+    let mut by_voucher: BTreeMap<&str, Tally> = BTreeMap::new();
+    for entry in core
+        .ledger_entries
+        .iter()
+        .filter(|entry| !excluded_from_books.contains(entry.voucher_source_id.as_str()))
+    {
+        let slot = by_voucher
+            .entry(entry.voucher_source_id.as_str())
+            .or_insert(Tally {
+                judged: 0,
+                inverted: 0,
+                entries: Vec::new(),
+            });
+        if !entry_amount_is_zero(entry) {
+            slot.judged += 1;
+            if !entry_polarity_matches_amount(entry) {
+                slot.inverted += 1;
+            }
+        }
+        slot.entries.push(entry.source_id.clone());
+    }
+    by_voucher
+        .into_values()
+        .filter(|tally| tally.judged > 0 && tally.inverted == tally.judged)
+        .flat_map(|tally| tally.entries)
+        .collect()
 }
 
 fn entry_polarity_matches_amount(entry: &LedgerEntryRecord) -> bool {
@@ -294,6 +361,81 @@ mod tests {
             assessment.checks.voucher_entry_polarity,
             CheckState::Mismatch
         );
+    }
+
+    #[test]
+    fn a_single_rounding_entry_is_contextual_polarity_not_a_mismatch() {
+        // The shape bridge#392 is about, and the one an ordinary Indian
+        // trading book produces constantly: a balanced voucher whose round-off
+        // leg was entered in the debit column while carrying a positive
+        // amount. `ISDEEMEDPOSITIVE` records the column, not the sign.
+        //
+        // Measured over twelve monthly windows of a real book: 111 of 6,957
+        // entries look like this, every one of them the sole disagreeing entry
+        // in a voucher of four to six, and in both directions. Reporting each
+        // as a reconciliation mismatch made the check fire 111 times on a book
+        // with nothing wrong with it.
+        let assessment = assess_core_accounting(&batch(
+            &[
+                ("-1000.00", LedgerEntryPolarity::Debit),
+                ("900.00", LedgerEntryPolarity::Credit),
+                ("99.50", LedgerEntryPolarity::Credit),
+                ("0.50", LedgerEntryPolarity::Debit),
+            ],
+            false,
+        ));
+        assert_eq!(assessment.checks.voucher_entry_balance, CheckState::Passed);
+        assert_eq!(assessment.checks.voucher_entry_polarity, CheckState::Passed);
+        assert!(assessment
+            .issues
+            .iter()
+            .all(|issue| issue.safe_reason_code != "voucher_entry_polarity_mismatch"));
+    }
+
+    #[test]
+    fn whole_voucher_inversion_is_still_reported_at_any_entry_count() {
+        // The defect the check exists for, at a width where a single
+        // contextual entry could not explain it. Guards against "fix" the
+        // false positive by deleting the check.
+        let assessment = assess_core_accounting(&batch(
+            &[
+                ("1000.00", LedgerEntryPolarity::Debit),
+                ("-900.00", LedgerEntryPolarity::Credit),
+                ("-100.00", LedgerEntryPolarity::Credit),
+            ],
+            false,
+        ));
+        assert_eq!(assessment.checks.voucher_entry_balance, CheckState::Passed);
+        assert_eq!(
+            assessment.checks.voucher_entry_polarity,
+            CheckState::Mismatch
+        );
+    }
+
+    #[test]
+    fn a_zero_leg_does_not_disable_whole_voucher_inversion_detection() {
+        // Found in review. `entry_polarity_matches_amount` reports true for
+        // every zero amount, so folding zero legs into "is every entry
+        // inverted?" let one of them prove the voucher innocent and silently
+        // switched this check off for that voucher -- reporting nothing where
+        // the per-entry check had reported two issues. Zero legs are ordinary
+        // (227 of 6,854 entries in the captured year), so this is not a corner.
+        let assessment = assess_core_accounting(&batch(
+            &[
+                ("0.00", LedgerEntryPolarity::Debit),
+                ("900.00", LedgerEntryPolarity::Debit),
+                ("-900.00", LedgerEntryPolarity::Credit),
+            ],
+            false,
+        ));
+        assert_eq!(
+            assessment.checks.voucher_entry_polarity,
+            CheckState::Mismatch
+        );
+        assert!(assessment
+            .issues
+            .iter()
+            .any(|issue| issue.safe_reason_code == "voucher_entry_polarity_mismatch"));
     }
 
     #[test]
