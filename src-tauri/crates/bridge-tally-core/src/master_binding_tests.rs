@@ -3046,3 +3046,86 @@ fn a_catalog_keeps_a_control_character_name_that_a_proposal_may_not_carry() {
         "the observed spelling is carried through unchanged"
     );
 }
+
+/// `char::is_control` is category Cc. Bidi overrides and zero-width characters
+/// are Cf, so the proposal side's control-character check never saw one: a
+/// supplied name could carry a right-to-left override and be accepted, while
+/// the catalog refused the same character.
+///
+/// That was the wrong way round. A name read from a book is a fact about the
+/// book; a name a caller supplies is the one that can be *chosen* to render as
+/// a different master than the one it binds.
+#[test]
+fn a_proposed_name_cannot_carry_a_character_that_makes_it_read_as_another() {
+    for deceptive in [
+        '\u{202E}', // right-to-left override
+        '\u{200B}', // zero-width space
+        '\u{061C}', // Arabic letter mark
+        '\u{FEFF}', // zero-width no-break space
+        '\u{2066}', // left-to-right isolate
+    ] {
+        let name = format!("Alpha{deceptive}Traders");
+        assert!(
+            !name.chars().any(char::is_control),
+            "U+{:04X} is category Cf, so the control-character check cannot see it \
+             -- that is the whole reason this test exists",
+            deceptive as u32
+        );
+        assert_eq!(
+            SourceEntity::new(0, &name).unwrap_err().safe_reason_code(),
+            "master_name_unsafe",
+            "a proposed name carrying U+{:04X} must be refused",
+            deceptive as u32
+        );
+        assert_eq!(
+            MasterCatalog::new(MasterClass::Ledger, [name.as_str()])
+                .unwrap_err()
+                .safe_reason_code(),
+            "master_name_unsafe",
+            "and the catalog refuses it too, so the claim of symmetry is true"
+        );
+    }
+
+    // An ordinary name is untouched, and so is the newline case the catalog
+    // deliberately admits.
+    assert!(SourceEntity::new(0, "Alpha Traders").is_ok());
+    assert!(MasterCatalog::new(MasterClass::Ledger, ["Two Line\r\nName"]).is_ok());
+}
+
+/// ZWNJ and ZWJ sit inside `U+200B..=U+200F`, so a single range over that span
+/// refuses them along with the genuinely deceptive characters. They are not
+/// deceptive -- they are **orthography**. Devanagari and other Indic scripts use
+/// them to force or prevent a conjunct, and this repository's own fixtures are
+/// full of Indic ledger names.
+///
+/// Refusing them would fail the whole catalog on a legitimately spelled Hindi or
+/// Marathi ledger, which is the exact failure the newline fix existed to remove.
+#[test]
+fn indic_orthography_is_not_treated_as_deception() {
+    // U+200C prevents a conjunct; U+200D forces one. Both are ordinary spelling.
+    for (label, name) in [
+        ("ZWNJ", "\u{915}\u{94d}\u{200c}\u{937} Traders"),
+        ("ZWJ", "\u{915}\u{94d}\u{200d}\u{937} Traders"),
+    ] {
+        assert!(
+            SourceEntity::new(0, name).is_ok(),
+            "a proposed Indic name using {label} must be admissible"
+        );
+        assert!(
+            MasterCatalog::new(MasterClass::Ledger, [name]).is_ok(),
+            "and a book holding one must not fail its whole catalog"
+        );
+    }
+
+    // The neighbours in that same span stay refused, so this narrowed the set
+    // rather than abandoning it.
+    for refused in ['\u{200B}', '\u{200E}', '\u{200F}'] {
+        let name = format!("Alpha{refused}Traders");
+        assert_eq!(
+            SourceEntity::new(0, &name).unwrap_err().safe_reason_code(),
+            "master_name_unsafe",
+            "U+{:04X} carries no orthographic role and stays refused",
+            refused as u32
+        );
+    }
+}
