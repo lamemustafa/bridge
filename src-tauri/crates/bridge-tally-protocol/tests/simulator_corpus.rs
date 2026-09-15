@@ -56,6 +56,46 @@ fn export_status_rejects_duplicate_misplaced_and_active_xml_constructs() {
 }
 
 #[test]
+fn export_status_reads_bank_allocation_status_as_data_not_protocol() {
+    // Tally names a bank-allocation field STATUS. Judged by name rather than by
+    // position it looked like a second, misplaced protocol status, and the read
+    // of every Payment, Receipt and Contra voucher carrying a bank allocation
+    // was refused. See the fixture's PROVENANCE record for the observation.
+    let bytes = include_bytes!("fixtures/agent/native-bank-allocation-status.utf16le.xml");
+    let captured = String::from_utf16(
+        &bytes[2..]
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .expect("fixture decodes as UTF-16LE");
+    assert!(
+        captured.contains("<BANKALLOCATIONS.LIST>"),
+        "fixture must carry the observed nesting"
+    );
+    assert_eq!(
+        export_status(&captured).unwrap(),
+        TallyExportStatus::Success
+    );
+
+    // The relaxation stops at the envelope's own frame: a STATUS placed directly
+    // under BODY is still refused, and so is one outside HEADER entirely.
+    for xml in [
+        "<ENVELOPE><HEADER><VERSION>1</VERSION></HEADER><BODY><STATUS>1</STATUS></BODY></ENVELOPE>",
+        "<ENVELOPE><HEADER><VERSION>1</VERSION></HEADER><STATUS>1</STATUS><BODY/></ENVELOPE>",
+    ] {
+        assert!(export_status(xml).is_err(), "must still reject {xml}");
+    }
+
+    // A data element may shadow any protocol name, including with attributes.
+    let shadowed = "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><ALLLEDGERENTRIES.LIST><BANKALLOCATIONS.LIST><STATUS TYPE=\"Number\">0</STATUS><VERSION>2</VERSION><HEADER>x</HEADER></BANKALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
+    assert_eq!(
+        export_status(shadowed).unwrap(),
+        TallyExportStatus::Success
+    );
+}
+
+#[test]
 fn primary_rows_and_company_context_must_use_supported_export_parents() {
     let nested_ledger = format!(
         r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYCONTEXT SCHEMA="{}" OBJECTTYPE="LEDGER" NAME="BRIDGE SYNTHETIC BOOK" GUID="company-guid" RECORDCOUNT="1"/><UNEXPECTED><LEDGER NAME="BRIDGE LEDGER" GUID="ledger-guid"><PARENT>Primary</PARENT></LEDGER></UNEXPECTED></BODY></ENVELOPE>"#,

@@ -4962,6 +4962,26 @@ fn domain_sha256(domain: &[u8], value: &[u8]) -> String {
     encoded
 }
 
+/// `ENVELOPE`, `HEADER`, `BODY`, `VERSION` and `STATUS` are protocol element names
+/// only in the envelope's own frame -- the root, its direct children, and the
+/// header's fields. Tally reuses the same spellings for ordinary data: a real
+/// trading book returns
+/// `VOUCHER/ALLLEDGERENTRIES.LIST/BANKALLOCATIONS.LIST/STATUS` on every Payment,
+/// Receipt and Contra voucher that carries a bank allocation, and reading that
+/// bank field as a second, misplaced protocol status refused the whole response.
+///
+/// `ENVELOPE/BODY` stays inside the frame deliberately. A `STATUS` placed there
+/// is still refused as misplaced, because Tally does not emit data at that depth
+/// and the existing guarantee is worth more than the extra permissiveness.
+/// Everything below it -- `DESC`, `DATA`, and their descendants -- is data, and
+/// is judged by position rather than by name.
+fn in_protocol_region(path: &[Vec<u8>]) -> bool {
+    path.is_empty()
+        || path_eq(path, &[b"ENVELOPE"])
+        || path_eq(path, &[b"ENVELOPE", b"HEADER"])
+        || path_eq(path, &[b"ENVELOPE", b"BODY"])
+}
+
 pub fn export_status(xml: &str) -> anyhow::Result<TallyExportStatus> {
     let mut reader = configured_reader(xml);
     let mut path = Vec::<Vec<u8>>::new();
@@ -4975,10 +4995,12 @@ pub fn export_status(xml: &str) -> anyhow::Result<TallyExportStatus> {
         match reader.read_event()? {
             Event::Start(element) => {
                 let name = element.name().as_ref().to_ascii_uppercase();
-                if matches!(
-                    name.as_slice(),
-                    b"ENVELOPE" | b"HEADER" | b"BODY" | b"VERSION" | b"STATUS"
-                ) {
+                if in_protocol_region(&path)
+                    && matches!(
+                        name.as_slice(),
+                        b"ENVELOPE" | b"HEADER" | b"BODY" | b"VERSION" | b"STATUS"
+                    )
+                {
                     validate_only_attributes(&element, &[]).map_err(|_| {
                         anyhow::anyhow!("Tally export response attributes were invalid")
                     })?;
@@ -5003,7 +5025,10 @@ pub fn export_status(xml: &str) -> anyhow::Result<TallyExportStatus> {
                         anyhow::bail!("Tally export response contained an extra ENVELOPE child");
                     }
                 }
-                if name.as_slice() == b"HEADER" {
+                if !in_protocol_region(&path) {
+                    // Body data. Record depth; judge nothing by element name.
+                    path.push(name);
+                } else if name.as_slice() == b"HEADER" {
                     if !path_eq(&path, &[b"ENVELOPE"]) || header_seen {
                         anyhow::bail!("Tally export response repeated or misplaced HEADER");
                     }
@@ -5039,10 +5064,12 @@ pub fn export_status(xml: &str) -> anyhow::Result<TallyExportStatus> {
             }
             Event::Empty(element) => {
                 let name = element.name().as_ref().to_ascii_uppercase();
-                if matches!(
-                    name.as_slice(),
-                    b"ENVELOPE" | b"HEADER" | b"BODY" | b"VERSION" | b"STATUS"
-                ) {
+                if in_protocol_region(&path)
+                    && matches!(
+                        name.as_slice(),
+                        b"ENVELOPE" | b"HEADER" | b"BODY" | b"VERSION" | b"STATUS"
+                    )
+                {
                     validate_only_attributes(&element, &[]).map_err(|_| {
                         anyhow::anyhow!("Tally export response attributes were invalid")
                     })?;
@@ -5060,7 +5087,9 @@ pub fn export_status(xml: &str) -> anyhow::Result<TallyExportStatus> {
                     body_seen = true;
                 } else if path_eq(&path, &[b"ENVELOPE"]) {
                     anyhow::bail!("Tally export response contained an unexpected ENVELOPE child");
-                } else if matches!(name.as_slice(), b"HEADER" | b"VERSION" | b"STATUS") {
+                } else if in_protocol_region(&path)
+                    && matches!(name.as_slice(), b"HEADER" | b"VERSION" | b"STATUS")
+                {
                     anyhow::bail!("Tally export response contained an empty critical header field");
                 }
             }
