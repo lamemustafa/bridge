@@ -1645,10 +1645,23 @@ fn master_match_json(binding: &EntityBinding) -> Value {
                 BindingBasis::ExactName => "exact",
                 BindingBasis::Identifier => "identifier",
             };
+            // A catalogue name can now hold characters the *proposal* side
+            // refuses -- a ledger genuinely named across two lines, say. That
+            // asymmetry is deliberate: the book's name is a fact, a caller's
+            // proposed name is input. But it means the live spelling is not
+            // always something the caller can send back, and the guidance below
+            // used to tell them to copy it regardless. Following that failed the
+            // whole batch on `master_name_unsafe`, because `source_entities`
+            // collects into one Result and refuses on the first bad name.
+            //
+            // Ask the proposal constructor rather than restating its rule, so
+            // the two can never disagree about what is admissible.
+            let importable = SourceEntity::new(binding.position, catalog_name).is_ok();
             json!({
                 "requested": requested,
                 "match_state": match_state,
                 "exact_live_spelling": party_name(catalog_name.clone()),
+                "importable": importable,
             })
         }
         BindingStatus::Ambiguous(unresolved) | BindingStatus::Unmatched(unresolved) => {
@@ -1711,12 +1724,20 @@ fn master_match_json(binding: &EntityBinding) -> Value {
 
 fn master_recovery_guidance(report: &[Value]) -> String {
     let mut guidance = Vec::new();
-    if report
-        .iter()
-        .any(|master| master["match_state"] == "identifier")
-    {
+    if report.iter().any(|master| {
+        master["match_state"] == "identifier" && master["importable"] != Value::Bool(false)
+    }) {
         guidance
             .push("For identifier-bound entries, copy exact_live_spelling from this fresh result.");
+    }
+    // Said separately, because the remedy is the opposite one: this spelling
+    // cannot be copied back at all, and no retry of this payload will post
+    // against that ledger.
+    if report
+        .iter()
+        .any(|master| master["importable"] == Value::Bool(false))
+    {
+        guidance.push("One matched ledger is named with a character imports do not accept, so its exact_live_spelling cannot be sent back; have an operator rename it in Tally, then run validate_masters again.");
     }
     if report
         .iter()

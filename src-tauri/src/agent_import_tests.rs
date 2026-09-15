@@ -1632,6 +1632,59 @@ fn import_recovery_guidance_names_the_state_and_next_safe_read() {
     assert!(guidance.contains("validate_masters again before building"));
 }
 
+/// A book may legitimately hold a ledger named across two lines. The catalogue
+/// carries that name verbatim -- it is a fact about the book -- while the
+/// proposal side still refuses a control character, because a caller's name is
+/// input. The gap between those two correct rules is a spelling the tool can
+/// report but the caller cannot send back.
+///
+/// Telling them to copy it anyway failed the *entire* batch: `source_entities`
+/// collects into one Result and refuses on the first bad name, so one such
+/// ledger takes every voucher in the request down with it.
+#[test]
+fn a_live_spelling_imports_cannot_accept_is_not_offered_for_copying() {
+    let two_line = "GAMMA 5550000002\r\nSecond Line";
+    let matched = one_master_match("GAMMA 5550000002", &[two_line]);
+
+    assert_eq!(
+        matched["match_state"], "identifier",
+        "the ledger still binds on its embedded identifier"
+    );
+    // Party names are wrapped in the egress marker, so read through it rather
+    // than off the field.
+    assert_eq!(
+        matched["exact_live_spelling"][super::super::PARTY_NAME_MARKER].as_str(),
+        Some(two_line),
+        "the book's own spelling is still reported verbatim, because it is what the book holds"
+    );
+    assert_eq!(
+        matched["importable"], false,
+        "but it is marked as one the import side will refuse"
+    );
+
+    let guidance = master_recovery_guidance(&[matched]);
+    assert!(
+        !guidance.contains("copy exact_live_spelling"),
+        "the tool must not instruct a caller to copy a spelling that fails the whole batch"
+    );
+    assert!(
+        guidance.contains("rename it in Tally"),
+        "and must say what the operator can actually do instead"
+    );
+}
+
+/// The ordinary identifier match is unaffected: its spelling is copyable and is
+/// still offered.
+#[test]
+fn an_importable_live_spelling_is_still_offered_for_copying() {
+    let matched = one_master_match("GAMMA 5550000001", &["GAMMA (5550000001)"]);
+    assert_eq!(matched["match_state"], "identifier");
+    assert_eq!(matched["importable"], true);
+    let guidance = master_recovery_guidance(&[matched]);
+    assert!(guidance.contains("copy exact_live_spelling"));
+    assert!(!guidance.contains("rename it in Tally"));
+}
+
 #[tokio::test]
 async fn import_bounds_distinct_ledger_names_before_tally_without_reducing_voucher_limit() {
     let mut repeated = payload();
