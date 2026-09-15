@@ -1,0 +1,127 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# cargo-audit configuration for `cargo audit --file src-tauri/Cargo.lock`.
+#
+# cargo-audit resolves this file at `./.cargo/audit.toml`, relative to the
+# process's CURRENT WORKING DIRECTORY -- not relative to `--file`'s lockfile,
+# and not relative to a Cargo manifest. `.github/workflows/dependency-security.yml`
+# runs `cargo audit` from the repository root with no `working-directory`
+# override, so this file MUST live at the repository root's `.cargo/`, not
+# under `src-tauri/.cargo/`. Moving it there silently stops it from being read
+# and every ignore below starts failing CI again with no config-loading error
+# of any kind -- cargo-audit just falls back to `~/.cargo/audit.toml` (usually
+# absent) or no config at all.
+#
+# WHAT THIS FILE CAN AND CANNOT EXPRESS
+# --------------------------------------------------------------------------
+# `[advisories].ignore` is a flat list of RUSTSEC ids (`AuditConfig` in
+# cargo-audit 0.22.2's own source, `#[serde(deny_unknown_fields)]`). There is
+# no per-entry field for a reason, a "who does this reach" note, or a review
+# date -- adding one would be an unknown field and cargo-audit would refuse to
+# parse the whole file. So every entry below carries that information as a
+# comment immediately above its id, not as structured TOML. A comment cannot
+# be checked by a machine; only a human reviewing this file (or the delta
+# script below, for *new* ids) enforces it. Say this plainly rather than
+# implying cargo-audit tracks review dates itself: it does not.
+#
+# This file intentionally does NOT set `[output].deny`. The default already
+# treats every advisory kind (vulnerability, unmaintained, unsound, notice,
+# yanked) as at least a warning; `cargo audit`'s process exit code is already
+# non-zero only for an actual `error` (a real vulnerability, or an ignored-id
+# that turns out to still be unresolved) unless explicitly told to also fail
+# on warnings. The 9 entries below are accepted WARNINGS, each with a reason;
+# nothing here silences an actual vulnerability (`error`), and the workflow's
+# real job -- catching a new one, like RUSTSEC-2026-0285 against `rustls` on
+# 2026-09-15 -- is untouched by this file. `--ignore` only removes an id from
+# the report entirely; that is deliberately not used here, because we want
+# these to keep showing up in `cargo audit`'s terminal output (as accepted
+# warnings) rather than vanish, even though they no longer fail the build.
+#
+# Reachability was checked with, e.g.:
+#   cargo tree --locked -p bridge -i <crate> --target aarch64-apple-darwin
+#   cargo tree --locked -p bridge -i <crate> --target x86_64-pc-windows-msvc
+#   cargo tree --locked -i <crate> --target all
+# against src-tauri/Cargo.lock on 2026-09-15. Re-run these before renewing an
+# entry past its review-by date; a dependency bump can change the path
+# (or remove it) between reviews.
+[advisories]
+ignore = [
+  # --- RUSTSEC-2022-0034 -- pkcs11 0.5.0, unsound ---------------------------
+  # Direct dependency of the `bridge` crate itself (src-tauri/Cargo.toml),
+  # used in src-tauri/src/dsc.rs for PKCS#11 hardware-token DSC signing.
+  # Reachable on every shipped target (`cargo tree -i pkcs11` resolves on
+  # both aarch64-apple-darwin and x86_64-pc-windows-msvc) -- this is real
+  # attack surface, not dead weight, and is the entry in this file most
+  # worth re-checking rather than renewing on autopilot. No actively
+  # maintained PKCS#11 crate at this API surface exists yet; `cryptoki`
+  # (already a dependency, see src-tauri/Cargo.toml) is the eventual
+  # replacement candidate and DSC signing should migrate to it fully rather
+  # than carry both. Review-by: 2026-11-15 (60 days) -- re-check whether the
+  # `cryptoki` migration can drop `pkcs11` entirely before renewing.
+  "RUSTSEC-2022-0034",
+
+  # --- RUSTSEC-2024-0429 -- glib 0.18.5, unsound (VariantStrIter) ----------
+  # Transitive only through Tauri's Linux webview backend:
+  #   glib <- atk <- gtk <- {muda, tao, webkit2gtk, tauri-runtime-wry} <- tauri
+  # This project ships only macOS and Windows builds (docs/release-process.md,
+  # "Hosts: current GitHub-hosted Windows and macOS runners"); confirmed with
+  # `cargo tree --locked -p bridge -i glib --target aarch64-apple-darwin` and
+  # `--target x86_64-pc-windows-msvc`, both of which print nothing (the
+  # dependency is not part of the resolved graph for either shipped target),
+  # versus `--target all`, which shows the gtk/webkit2gtk chain above. The
+  # vulnerable code is not compiled into anything we build or distribute.
+  # Review-by: 2027-03-15 (6 months) -- re-run the target check above if a
+  # Linux build target is ever added to this project.
+  "RUSTSEC-2024-0429",
+
+  # --- RUSTSEC-2024-0370 -- proc-macro-error 1.0.4, unmaintained -----------
+  # Same Linux-only chain as glib above, one hop further: proc-macro-error is
+  # a build-time dependency of glib-macros, which glib depends on. Not
+  # reachable on the macOS/Windows targets we ship (`cargo tree --locked -i
+  # proc-macro-error --target all` shows only the glib-macros -> glib -> gtk
+  # -> tauri chain; darwin/windows targets print nothing). Not a known
+  # vulnerability, only "no longer maintained".
+  # Review-by: 2027-03-15 (6 months) -- same trigger as RUSTSEC-2024-0429.
+  "RUSTSEC-2024-0370",
+
+  # --- unic-* crates, all unmaintained (RUSTSEC-2025-0075/0080/0081/0098/0100) --
+  # unic-char-range, unic-common, unic-char-property, unic-ucd-version and
+  # unic-ucd-ident form one dependency chain:
+  #   unic-ucd-ident <- urlpattern <- tauri-utils <- tauri
+  # Unlike glib, this one IS reachable on every shipped target -- confirmed
+  # with `cargo tree --locked -i unic-ucd-ident --target aarch64-apple-darwin`
+  # and `--target x86_64-pc-windows-msvc`, both showing the tauri-utils path.
+  # `tauri-utils` uses `urlpattern` for its own IPC/navigation URL-pattern
+  # matching; we do not call any `unic-*` API directly and have no
+  # `unic-*` dependency of our own. All five advisories are "unmaintained",
+  # not a known vulnerability -- this is an upstream Tauri dependency-freshness
+  # problem, not something patchable from this repository short of vendoring
+  # or pinning an alternate `urlpattern`/`tauri-utils`, either of which is a
+  # bigger change than accepting the warning.
+  # Review-by: 2026-12-15 (90 days) -- shorter than the Linux-only entries
+  # above because this chain IS in the shipped binaries; re-check whether a
+  # `tauri`/`tauri-utils` upgrade has replaced `urlpattern`'s `unic-ucd-ident`
+  # dependency (its changelog is the fastest way to check) before renewing.
+  "RUSTSEC-2025-0075",
+  "RUSTSEC-2025-0080",
+  "RUSTSEC-2025-0081",
+  "RUSTSEC-2025-0098",
+  "RUSTSEC-2025-0100",
+]
+# `chacha20 0.10.1` (yanked, no RUSTSEC id -- cargo-audit reports yanked
+# crates separately from `ignore`-able advisory ids) is deliberately NOT
+# listed here because it can't be: `--ignore` takes an advisory id and a
+# yanked-crate warning has none. It is also, on inspection, not a real
+# ignore decision to make: `cargo tree --locked -i chacha20 --target all`
+# and `cargo tree --locked -i "rand@0.10.2" --target all` (chacha20's only
+# dependent in this lockfile) both print nothing against src-tauri's actual
+# workspace members on 2026-09-15 -- it is an orphaned Cargo.lock entry, not
+# reachable from any target of any workspace crate. The fix is a lockfile
+# cleanup (a `cargo update`/dependency bump that drops the stale resolution),
+# not an accepted-risk entry; see docs/proposed-dependency-policy.md.
+
+[yanked]
+# Keep yanked-crate checking on (the tool default) -- it is what caught
+# chacha20 above -- but see the note in docs/proposed-dependency-policy.md
+# about that specific finding.
+enabled = true
