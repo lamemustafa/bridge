@@ -435,6 +435,20 @@ fn parse_lab_master_rows(
             Ok(quick_xml::events::Event::GeneralRef(reference)) => {
                 buffer.push(&decoded_agent_reference(reference)?);
             }
+            // Tally splits a scalar across CDATA too: the production parser's
+            // `scalar_content_preserves_cdata_and_rejects_nested_markup` pins
+            // `<AMOUNT><![CDATA[-101.01]]></AMOUNT>` and `-101<![CDATA[.]]>01`
+            // as having to read identically to the plain text. Dropped here,
+            // the first yields nothing and the second yields `-10101` -- a
+            // wrong number that still looks like one. Same buffer, so a value
+            // split across Text, GeneralRef and CDATA rejoins in order.
+            Ok(quick_xml::events::Event::CData(text)) => {
+                buffer.push(
+                    &text
+                        .decode()
+                        .map_err(|_| "agent_read_protocol_invalid".to_string())?,
+                );
+            }
             Ok(quick_xml::events::Event::Empty(_)) => buffer.abandon(),
             Ok(quick_xml::events::Event::End(event)) => {
                 let end = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
@@ -585,6 +599,20 @@ fn parse_lab_inventory_vouchers(xml: &str) -> Result<Vec<Value>, String> {
             // event kinds feed one buffer so a value split across them rejoins.
             Ok(quick_xml::events::Event::GeneralRef(reference)) => {
                 buffer.push(&decoded_agent_reference(reference)?);
+            }
+            // Tally splits a scalar across CDATA too: the production parser's
+            // `scalar_content_preserves_cdata_and_rejects_nested_markup` pins
+            // `<AMOUNT><![CDATA[-101.01]]></AMOUNT>` and `-101<![CDATA[.]]>01`
+            // as having to read identically to the plain text. Dropped here,
+            // the first yields nothing and the second yields `-10101` -- a
+            // wrong number that still looks like one. Same buffer, so a value
+            // split across Text, GeneralRef and CDATA rejoins in order.
+            Ok(quick_xml::events::Event::CData(text)) => {
+                buffer.push(
+                    &text
+                        .decode()
+                        .map_err(|_| "agent_read_protocol_invalid".to_string())?,
+                );
             }
             Ok(quick_xml::events::Event::Empty(_)) => buffer.abandon(),
             Ok(quick_xml::events::Event::End(event)) => {
@@ -1258,6 +1286,50 @@ mod tests {
         // It must not overwrite or extend the batch's own, nor the entry's.
         assert_eq!(batches[0]["amount"], "-4800.00");
         assert_eq!(entries[0]["amount"], "-8000.00");
+    }
+
+    #[test]
+    fn a_scalar_split_across_cdata_rejoins_in_both_parsers() {
+        // The production parser pins this shape in
+        // `scalar_content_preserves_cdata_and_rejects_nested_markup`: a value
+        // carried in or split by a CDATA section must read identically to the
+        // same value as plain text. `Event::CData` is its own event, so a
+        // parser without an arm for it drops the fragment silently -- and for
+        // an AMOUNT that yields a wrong number that still looks like one.
+        let voucher = |amount: &str| {
+            format!(
+                "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+<VOUCHER><DATE>20260401</DATE><VOUCHERNUMBER>1</VOUCHERNUMBER>\
+<VOUCHERTYPENAME>Sales</VOUCHERTYPENAME><GUID>fixture-guid-1</GUID>\
+<ISCANCELLED>No</ISCANCELLED>\
+<ALLINVENTORYENTRIES.LIST><STOCKITEMNAME>Sodium Bicarbonate</STOCKITEMNAME>\
+<AMOUNT>{amount}</AMOUNT></ALLINVENTORYENTRIES.LIST>\
+</VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"
+            )
+        };
+        let plain = parse_lab_inventory_vouchers(&voucher("-101.01")).unwrap();
+        for split in [
+            "-101<![CDATA[.]]>01",
+            "<![CDATA[-101.01]]>",
+            "-101<![CDATA[.01]]>",
+        ] {
+            let got = parse_lab_inventory_vouchers(&voucher(split)).unwrap();
+            assert_eq!(got, plain, "inventory parser lost the CDATA in {split:?}");
+        }
+
+        // The same for a master row's scalar.
+        let unit = |places: &str| {
+            format!(
+                "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+<UNIT NAME=\"Kgs\"><NAME>Kgs</NAME><DECIMALPLACES>{places}</DECIMALPLACES></UNIT>\
+</COLLECTION></DATA></BODY></ENVELOPE>"
+            )
+        };
+        let plain = parse_lab_master_rows(&unit("3"), "Unit").unwrap();
+        for split in ["<![CDATA[3]]>", "<![CDATA[]]>3"] {
+            let got = parse_lab_master_rows(&unit(split), "Unit").unwrap();
+            assert_eq!(got, plain, "master parser lost the CDATA in {split:?}");
+        }
     }
 
     #[test]

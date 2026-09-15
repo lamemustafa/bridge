@@ -893,6 +893,66 @@ fn a_non_voucher_child_of_collection_is_refused() {
 }
 
 #[test]
+fn voucher_readback_survives_an_indented_response_and_cdata() {
+    // bridge#379 again, in the third parser of the same family: this one is
+    // what the import mismatch report compares, so an AMOUNT that grows an
+    // indentation tail reports a false mismatch against a target Tally has
+    // stored correctly. Real gateway responses are CRLF-indented and dense
+    // with self-closing elements, and `Event::Empty` never disturbed the
+    // tag being accumulated into.
+    let entry = |amount: &str| {
+        format!(
+            "<ALLLEDGERENTRIES.LIST>\r\n      <LEDGERNAME>Bank Account</LEDGERNAME>\r\n      \
+<ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>\r\n      <AMOUNT>{amount}</AMOUNT>\r\n      \
+<BANKALLOCATIONS.LIST>\r\n      <BANKNAME>Fixture Bank</BANKNAME>\r\n      </BANKALLOCATIONS.LIST>\r\n      \
+</ALLLEDGERENTRIES.LIST>"
+        )
+    };
+    let xml = format!(
+        "<ENVELOPE>\r\n      <HEADER>\r\n      <STATUS>1</STATUS>\r\n      </HEADER>\r\n      \
+<BODY>\r\n      <DATA>\r\n      <COLLECTION>\r\n      <VOUCHER>\r\n      \
+<DATE>20260405</DATE>\r\n      <NARRATION/>\r\n      <VOUCHERNUMBER>61</VOUCHERNUMBER>\r\n      \
+<VOUCHERTYPENAME>Payment</VOUCHERTYPENAME>\r\n      <GUID>g-3</GUID>\r\n      \
+<ISCANCELLED>No</ISCANCELLED>\r\n      {}\r\n      {}\r\n      </VOUCHER>\r\n      \
+</COLLECTION>\r\n      </DATA>\r\n      </BODY>\r\n      </ENVELOPE>",
+        entry("30000.00"),
+        entry("-30000.00"),
+    );
+    let rows = parse_voucher_readback_nested(&xml).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].voucher_number.as_deref(), Some("61"));
+    assert_eq!(rows[0].ledger_entries.len(), 2);
+    // Exact values: no indentation tail on the amount, and the nested bank
+    // allocation's own STATUS does not reach the entry.
+    assert_eq!(
+        rows[0].ledger_entries[0],
+        (
+            "Bank Account".to_string(),
+            "No".to_string(),
+            "30000.00".to_string()
+        )
+    );
+    assert_eq!(rows[0].ledger_entries[1].2, "-30000.00");
+    for entry in &rows[0].ledger_entries {
+        assert!(
+            !entry.2.contains('\r'),
+            "amount carries an indentation run: {:?}",
+            entry.2
+        );
+        assert_eq!(entry.0.trim(), entry.0);
+    }
+
+    // And a scalar split across CDATA rejoins rather than reading short.
+    let split = xml.replacen(
+        "<AMOUNT>30000.00</AMOUNT>",
+        "<AMOUNT>300<![CDATA[00]]>.00</AMOUNT>",
+        1,
+    );
+    let rows = parse_voucher_readback_nested(&split).unwrap();
+    assert_eq!(rows[0].ledger_entries[0].2, "30000.00");
+}
+
+#[test]
 fn voucher_readback_decodes_entities_in_party_ledger_and_narration() {
     // 2026-09-14 coordinator finding: quick_xml delivers `&amp;` as its own
     // `GeneralRef` event, separate from the surrounding `Text` events. Before
