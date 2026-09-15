@@ -128,6 +128,15 @@ def textual_destination(line: str) -> str | None:
     return path[2:]
 
 
+# A Git LFS pointer is committed as ordinary text -- three or four short
+# lines naming the spec version, the real object's oid, and its size -- so it
+# never triggers Git's own "GIT binary patch" / "Binary files ... differ"
+# markers. Its *content* is the only signal that the tracked file is actually
+# binary. Treat the presence of the spec-version line in an added hunk as
+# binary so it cannot bypass the binary-review attestation gate.
+LFS_POINTER_VERSION_LINE = "version https://git-lfs.github.com/spec/v1"
+
+
 def parse(lines: list[str]) -> dict[str, object]:
     records: list[dict[str, object]] = []
     added_payload: list[str] = []
@@ -182,8 +191,11 @@ def parse(lines: list[str]) -> dict[str, object]:
             record["in_hunk"] = True
             continue
         if record["in_hunk"] and raw_line.startswith("+"):
+            content = raw_line[1:]
             record["added"] = int(record["added"]) + 1
-            added_payload.append(raw_line[1:])
+            added_payload.append(content)
+            if content.rstrip("\r\n") == LFS_POINTER_VERSION_LINE:
+                record["binary"] = True
         elif record["in_hunk"] and raw_line.startswith("-"):
             record["deleted"] = int(record["deleted"]) + 1
     emit()

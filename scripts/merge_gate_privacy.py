@@ -253,10 +253,36 @@ def normalize_whitespace(text):
 def grouped_numbers(text):
     values = []
     for match in GROUPED_NUMBER_RE.finditer(text):
-        value = match.group(0).strip()
+        # group(0) includes the single boundary character captured by each of
+        # the regex's leading/trailing `(^|[^\w])` anchors (0 or 1 char each,
+        # e.g. a wrapping paren or a trailing comma/period). Strip exactly
+        # those captured characters -- not just whitespace -- before testing
+        # the compact-date exclusion, or a parenthesized/punctuated date range
+        # such as "(0101-2026 0201-2026)" never matches DATE_RANGE_RE and is
+        # misreported as an unexplained long digit run.
+        whole = match.group(0)
+        lead = len(match.group(1))
+        trail = len(match.group(2))
+        value = whole[lead:len(whole) - trail]
         if not DATE_RANGE_RE.fullmatch(value):
             values.append(value)
     return "\n".join(values)
+
+
+def redact_shapes(text):
+    """Mask the classifier's own identifier/digest/email shapes in-place.
+
+    Used to sanitize a bounded diagnostic example (for example, a filename
+    echoed into a merge-gate coverage message) before it leaves the gate, so
+    the example itself cannot carry a home-directory path, identifier, long
+    digit run, digest/UUID, or email shape into gate output.
+    """
+    text = HOME_RE.sub(lambda m: m.group(1) + "<home>" + m.group(2), text)
+    text = UUID_OR_DIGEST_RE.sub("<digest>", text)
+    text = IDENTIFIER_RE.sub("<identifier>", text)
+    text = LONG_RUN_RE.sub("<digits>", text)
+    text = EMAIL_RE.sub("<email>", text)
+    return text
 
 
 def scan(text, head, fixture_provenance=None):
@@ -303,10 +329,22 @@ def scan(text, head, fixture_provenance=None):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--head", required=True)
+    parser.add_argument("--head")
     parser.add_argument("--fixture-provenance")
+    parser.add_argument(
+        "--redact-shapes", action="store_true",
+        help="Redact identifier/digest/home-path/email shapes from stdin and "
+             "print the result. No classification; no --head required.",
+    )
     args = parser.parse_args(argv)
-    if not re.fullmatch(r"[0-9A-Fa-f]{40}", args.head):
+    if args.redact_shapes:
+        try:
+            text = sys.stdin.read()
+        except UnicodeError:
+            return 0
+        sys.stdout.write(redact_shapes(text))
+        return 0
+    if not args.head or not re.fullmatch(r"[0-9A-Fa-f]{40}", args.head):
         parser.error("--head must be a full 40-hex commit SHA")
     try:
         text = sys.stdin.read()
