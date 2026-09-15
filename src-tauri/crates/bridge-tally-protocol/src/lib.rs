@@ -1869,8 +1869,30 @@ fn normalized_standard_value(value: &str, label: &str) -> anyhow::Result<String>
     Ok(value.to_string())
 }
 
+/// A ledger name is an **identity** value, not a display string: it is matched
+/// against proposals by exact codepoint, and echoed back as the import spelling
+/// that has to round-trip to Tally. So the only things it can be refused for are
+/// the two that make it unusable as an identity -- absent, or past the bound this
+/// parser is willing to hold.
+///
+/// It deliberately does **not** refuse control or bidi characters. Real books
+/// hold ledger names with an embedded newline, and books migrated from other
+/// software hold names with C1 bytes baked in by a double-encoding import. When
+/// this refused them, one such master failed the entire company's catalog and
+/// with it every read that needs one -- presence, a ledger-scoped voucher
+/// window, and import validation. A malformed name must not remove a real
+/// master, and must not be rewritten either: Tally matches by exact codepoint,
+/// so a cleaned-up spelling addresses a ledger that does not exist.
+///
+/// What it still refuses is the set that makes a name *lie about itself*:
+/// bidirectional overrides and zero-width characters, which can render one
+/// spelling as another. A newline is ugly in a terminal and the renderer's
+/// problem; a right-to-left override is a forged name and this parser's.
 fn observed_standard_ledger_name(value: &str) -> Result<String, StandardLedgerCatalogError> {
-    if value.trim().is_empty() || value.len() > 512 || value.chars().any(unsafe_display_character) {
+    if value.trim().is_empty()
+        || value.len() > 512
+        || value.chars().any(deceptive_display_character)
+    {
         return Err(StandardLedgerCatalogError::MalformedResponse);
     }
     Ok(value.to_string())
@@ -1904,11 +1926,22 @@ fn safe_standard_ledger_parent(value: &str) -> Option<String> {
 }
 
 fn unsafe_display_character(value: char) -> bool {
-    value.is_control()
-        || matches!(
-            value,
-            '\u{061C}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}' | '\u{2066}'..='\u{206F}' | '\u{FEFF}'
-        )
+    value.is_control() || deceptive_display_character(value)
+}
+
+/// The half of [`unsafe_display_character`] that is about *deception* rather
+/// than about rendering: characters that reorder or hide the text around them,
+/// so that the spelling shown is not the spelling stored.
+///
+/// Split out because the two halves earn different answers on an observed
+/// master name. A control character there is a real, if untidy, name a book
+/// genuinely holds; one of these is a name forged to read as another, and no
+/// book has a legitimate reason to hold one.
+fn deceptive_display_character(value: char) -> bool {
+    matches!(
+        value,
+        '\u{061C}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}' | '\u{2066}'..='\u{206F}' | '\u{FEFF}'
+    )
 }
 
 fn set_bootstrap_context_once(

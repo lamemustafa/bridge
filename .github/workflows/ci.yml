@@ -2,9 +2,16 @@ name: Bridge CI
 
 on:
   push:
+    # Only master. A branch push needs no run of its own: a branch worth
+    # checking has a pull request, and that is what triggers below.
     branches: [master]
   pull_request:
-    branches: [master]
+    # Deliberately unfiltered by base branch. Filtering to `[master]` meant a
+    # pull request stacked on another branch got no run at all, and reported
+    # `mergeStateStatus: CLEAN` off the one check that is not this workflow --
+    # a green that said only "nothing required failed", never "the suite ran".
+    # A stack then accumulated unchecked changes until its root merged, so the
+    # first real run faced several pull requests' worth of change at once.
     types: [opened, reopened, synchronize, ready_for_review]
   workflow_dispatch:
 

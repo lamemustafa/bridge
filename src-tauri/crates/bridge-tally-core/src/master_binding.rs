@@ -799,7 +799,7 @@ impl MasterCatalog {
             if entries.len() >= MAX_CATALOG_ENTRIES {
                 return Err(MasterBindingError::CatalogTooLarge);
             }
-            let name = validated_name(name.as_ref())?;
+            let name = validated_catalog_name(name.as_ref())?;
             // Per-name and per-count bounds do not bound the product of the
             // two: 20,000 names of 16,384 characters satisfies both and is
             // 327 MB of ASCII before this constructor builds its keys, tokens
@@ -1754,6 +1754,47 @@ fn collect_candidates(
 fn validated_name(value: &str) -> Result<String, MasterBindingError> {
     validate_name_bounds(value)?;
     Ok(value.to_string())
+}
+
+/// The catalog half of [`validated_name`], for names **observed from Tally**
+/// rather than supplied by a caller.
+///
+/// It keeps the blank and length bounds and drops only the control-character
+/// refusal, because the two sides are not the same kind of value. A caller's
+/// proposed name is input, and a control character in it is worth refusing. A
+/// catalog name is a *fact about the book*: real books hold ledger names with
+/// an embedded newline, and migrated books hold names carrying C1 bytes from an
+/// old double-encoding import. Refusing one of those rejected the whole catalog
+/// and denied every read that needs one.
+///
+/// Such a ledger is still unbindable by name -- no admissible proposal can spell
+/// it -- but it is present, counted, and cannot be mistaken for absent. That is
+/// the point: a malformed name must never remove a real master.
+///
+/// Bidi overrides and zero-width characters stay refused on both sides. Those
+/// do not make a name untidy, they make it *read as a different name*, and a
+/// catalog exists to say which master is which.
+fn validated_catalog_name(value: &str) -> Result<String, MasterBindingError> {
+    if value.trim().is_empty() {
+        return Err(MasterBindingError::NameBlank);
+    }
+    if value.chars().any(deceptive_name_character) {
+        return Err(MasterBindingError::NameUnsafe);
+    }
+    if value.chars().count() > MAX_NAME_CHARS {
+        return Err(MasterBindingError::NameTooLong);
+    }
+    Ok(value.to_string())
+}
+
+/// Characters that reorder or hide the text around them, so a stored name can
+/// be rendered as a different one. Refused wherever a name is used to decide
+/// *which master this is*.
+fn deceptive_name_character(value: char) -> bool {
+    matches!(
+        value,
+        '\u{061C}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}' | '\u{2066}'..='\u{206F}' | '\u{FEFF}'
+    )
 }
 
 fn validate_name_bounds(value: &str) -> Result<(), MasterBindingError> {
