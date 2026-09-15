@@ -14,6 +14,8 @@ expected string only tests the cases somebody thought of.
 Run: python3 scripts/sanitise-bbox-capture.test.py
 """
 import contextlib
+import datetime
+import decimal
 import importlib.util
 import io
 import itertools
@@ -46,6 +48,37 @@ def check(name, condition, detail=""):
     else:
         failures.append(name)
         print(f"FAIL {name}{(': ' + detail) if detail else ''}")
+
+
+# The generation gate must reject both directions of class corruption. These
+# controls exercise its bounded two-dictionary proof without fabricating a
+# statement or weakening the real parser-path checks below.
+for label, source, output, expected, category in (
+    ("party classes preserve", ["A", "B", "A"], ["X", "Y", "X"], True, None),
+    ("party false merge rejects", ["A", "B"], ["X", "X"], False, "party_partition_merged"),
+    ("party false split rejects", ["A", "A"], ["X", "Y"], False, "party_partition_split"),
+    ("party sentinel rejects", ["UNRESOLVED"], ["X"], False, "party_evidence_underdetermined"),
+):
+    rejected = False
+    try:
+        m._assert_party_partition(source, output, "sbi")
+    except m.EvidenceRefusal as refusal:
+        rejected = refusal.category == category and refusal.bank == "sbi" and refusal.row_index is not None
+    check(label, rejected is (not expected))
+
+try:
+    m._load_parser("regression")
+except m.EvidenceRefusal as refusal:
+    check("unsupported parser profile rejects", refusal.category == "unsupported_parser_profile")
+else:
+    check("unsupported parser profile rejects", False)
+
+try:
+    m._validate_parser_evidence(*m._load_parser("sbi"), [], [], "sbi")
+except m.EvidenceRefusal as refusal:
+    check("empty parser evidence rejects", refusal.category == "parser_evidence_empty_or_misaligned")
+else:
+    check("empty parser evidence rejects", False)
 
 
 def scrub_all(module, words):
@@ -292,14 +325,55 @@ short_capture = pathlib.Path(__file__).with_name("fixtures") / "sbi-bbox-capture
 with tempfile.TemporaryDirectory() as directory:
     destination = pathlib.Path(directory) / "short-mask-fabricated.xml"
     fresh = load()
-    with contextlib.redirect_stdout(io.StringIO()):
-        fresh.main(str(short_capture), str(destination), [(0, [(0, 10000)])], "SBI")
-    short_box = (143.66, 701.384, 183.68, 712.484)
-    words = {tuple(map(float, match.groups()[:4])): match.group(5)
-             for match in fresh.WORD.finditer(destination.read_text(encoding="utf-8"))}
-    check("capture writer fabricates the measured short IMPS mask",
-          short_box in words and "X" not in words[short_box].upper(),
-          repr(words.get(short_box)))
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            fresh.main(str(short_capture), str(destination), [(0, [(0, 10000)])], "sbi")
+    except SystemExit as refusal:
+        check("short-mask capture refuses underdetermined generated party",
+              type(refusal).__name__ == "EvidenceRefusal"
+              and refusal.category == "party_evidence_underdetermined", getattr(refusal, "category", ""))
+        check("short-mask refusal emits no destination", not destination.exists())
+    else:
+        short_box = (143.66, 701.384, 183.68, 712.484)
+        words = {tuple(map(float, match.groups()[:4])): match.group(5)
+                 for match in fresh.WORD.finditer(destination.read_text(encoding="utf-8"))}
+        check("capture writer fabricates the measured short IMPS mask",
+              short_box in words and "X" not in words[short_box].upper(),
+              repr(words.get(short_box)))
+
+# Boundary controls use unchanged captured geometry: a crop without an
+# accounting side is incomplete, a supported-but-wrong profile cannot parse it,
+# and unequal page sets cannot be compared. Every refusal leaves no output.
+with tempfile.TemporaryDirectory() as directory:
+    destination = pathlib.Path(directory) / "refused.xml"
+    try:
+        m.main(str(pathlib.Path(__file__).with_name("fixtures") / "hdfc-bbox-capture.xml"),
+               str(destination), [(1, [(220.0, 250.0)])], "hdfc")
+    except SystemExit as refusal:
+        check("cropped accounting row refuses",
+              type(refusal).__name__ == "EvidenceRefusal"
+              and refusal.category == "parser_evidence_empty_or_misaligned", getattr(refusal, "category", ""))
+        check("cropped accounting row emits no destination", not destination.exists())
+    else:
+        check("cropped accounting row refuses", False)
+    try:
+        m.main(str(short_capture), str(destination), [(0, [(0, 10000)])], "hdfc")
+    except SystemExit as refusal:
+        check("wrong supported parser refuses",
+              type(refusal).__name__ == "EvidenceRefusal"
+              and refusal.category == "parser_evidence_empty_or_misaligned")
+        check("wrong parser emits no destination", not destination.exists())
+    else:
+        check("wrong supported parser refuses", False)
+    parser, bank = m._load_parser("sbi")
+    pages = short_capture.read_text(encoding="utf-8").split("<page ")[1:]
+    try:
+        m._validate_parser_evidence(parser, bank, pages, [], "sbi")
+    except SystemExit as refusal:
+        check("row-count mismatch refuses",
+              isinstance(refusal, m.EvidenceRefusal) and refusal.category == "parser_evidence_empty_or_misaligned")
+    else:
+        check("row-count mismatch refuses", False)
 
 # The invariant the case above turns on, asserted directly so it cannot be
 # undone by editing one string. A replacement character that is an X must mean
@@ -574,6 +648,100 @@ check("the digits behind an X run are replaced", out != "XXXXXXXX1234", f"-> {ou
 # Devanagari name and every byte of it is ASCII. Without the decode this check
 # reported both fixtures clean while `scrub()` was copying such names through.
 WORD_BODY = re.compile(r"<word[^>]*>(.*?)</word>", re.S)
+# Debit and credit are different preserved facts, even though both are one-sided.
+class _EvidenceParser:
+    D = decimal.Decimal
+    @staticmethod
+    def parse_pages(pages, bank): return pages
+    @staticmethod
+    def _key(value): return value.upper()
+class _EvidenceBank:
+    debit_column, credit_column, balance_column, date_column = "dr", "cr", "bal", "date"
+    @staticmethod
+    def parse_date(value): return datetime.date(2026, 8, 1)
+    @staticmethod
+    def reference(row): return ("REF", "123456" + "789012")
+    @staticmethod
+    def party(row): return "PARTY"
+_real_importer, _ = m._load_parser("hdfc")
+_EvidenceParser._money = staticmethod(_real_importer._money)
+_EvidenceParser._balance = staticmethod(_real_importer._balance)
+try:
+    m._validate_parser_evidence(_EvidenceParser, _EvidenceBank,
+        [{"date":"02/08/26", "dr":"100.00", "cr":"", "bal":"900.00"}],
+        [{"date":"03/08/26", "dr":"", "cr":"100.00", "bal":"900.00"}], "hdfc")
+except m.EvidenceRefusal as refusal:
+    check("debit-credit side swap refuses with row context", refusal.category == "accounting_row_shape_misaligned" and refusal.bank == "hdfc" and refusal.row_index == 0)
+else:
+    check("debit-credit side swap refuses with row context", False)
+
+
+def evidence_row(**changes):
+    row = {"date": "02/08/26", "dr": "100.00", "cr": "", "bal": "900.00"}
+    row.update(changes)
+    return row
+
+
+def evidence_refusal_for(row, bank_name):
+    try:
+        m._validate_parser_evidence(_EvidenceParser, _EvidenceBank, [row], [row], bank_name)
+    except m.EvidenceRefusal as refusal:
+        return refusal
+    return None
+
+
+# The sanitizer's proof must use the import boundary grammar, not Decimal's
+# broader syntax. Exercise both supported profile labels: they share the
+# importer parser, but the refusal must retain the selected bank and row.
+for bank_name, label, row in (
+    ("hdfc", "negative debit", evidence_row(dr="-100.00")),
+    ("sbi", "three-decimal credit", evidence_row(dr="", cr="1.234")),
+    ("hdfc", "three-decimal balance", evidence_row(bal="900.001")),
+):
+    refusal = evidence_refusal_for(row, bank_name)
+    check(
+        f"{bank_name} {label} refuses with non-sensitive row context",
+        refusal is not None and refusal.category == "row_alignment_invalid"
+        and refusal.bank == bank_name and refusal.row_index == 0,
+        str(refusal),
+    )
+
+try:
+    m._validate_parser_evidence(
+        _EvidenceParser, _EvidenceBank,
+        [evidence_row(bal="-900.00")], [evidence_row(bal="-900.00")], "sbi",
+    )
+except m.EvidenceRefusal as refusal:
+    check("signed balance remains valid importer evidence", False, str(refusal))
+else:
+    check("signed balance remains valid importer evidence", True)
+
+
+class _EquivalentDateBank(_EvidenceBank):
+    @staticmethod
+    def parse_date(value):
+        return datetime.datetime.strptime(value, "%d %b %Y").date()
+
+
+# "1 Aug" and "01 Aug" designate one date. If each display string becomes a
+# separate partition key, the sanitizer could emit rows whose typed identities
+# differ from the captured statement. Fail closed before writing output.
+try:
+    m._validate_parser_evidence(
+        _EvidenceParser, _EquivalentDateBank,
+        [evidence_row(date="1 Aug 2026"), evidence_row(date="01 Aug 2026")],
+        [evidence_row(date="01 Aug 2026"), evidence_row(date="02 Aug 2026")], "sbi",
+    )
+except m.EvidenceRefusal as refusal:
+    check(
+        "equivalent source dates cannot split typed date evidence",
+        refusal.category == "party_partition_split" and refusal.bank == "sbi"
+        and refusal.row_index == 1,
+        str(refusal),
+    )
+else:
+    check("equivalent source dates cannot split typed date evidence", False)
+
 for fixture in sorted(pathlib.Path(__file__).with_name("fixtures").glob("*-bbox-capture.xml")):
     bodies = WORD_BODY.findall(fixture.read_text(encoding="utf-8"))
     assert bodies, f"{fixture.name}: no words matched — this check is checking nothing"
@@ -627,7 +795,8 @@ for fixture in sorted(pathlib.Path(__file__).with_name("fixtures").glob("*-bbox-
         pages = fixture.read_text(encoding="utf-8").split("<page ")[1:]
         if page >= len(pages):
             continue
-        keep = [(page, [(0.0, 10_000.0)])]
+        region = (200.0, 330.0) if fixture.name.startswith("hdfc-") and page == 1 else (0.0, 10_000.0)
+        keep = [(page, [region])]
         consumed = identifying_tokens(
             fresh,
             [body for _, words in fresh._kept_words(pages, keep) for *_, body in words],
@@ -636,12 +805,25 @@ for fixture in sorted(pathlib.Path(__file__).with_name("fixtures").glob("*-bbox-
             destination = str(pathlib.Path(directory, "out.xml"))
             try:
                 with contextlib.redirect_stdout(io.StringIO()):
-                    fresh.main(str(fixture), destination, keep, "regression")
+                    bank = "sbi" if fixture.name.startswith("sbi-") else "hdfc"
+                    fresh.main(str(fixture), destination, keep, bank)
             except SystemExit as stop:
-                check(f"{fixture.name} page {page} re-sanitises", False, str(stop))
-                continue
-            produced = identifying_tokens(
-                fresh, WORD_BODY.findall(pathlib.Path(destination).read_text()))
+                expected_refusal = fixture.name.startswith("hdfc-") and page == 0
+                check(f"{fixture.name} page {page} expected refusal" if expected_refusal
+                      else f"{fixture.name} page {page} re-sanitises",
+                      expected_refusal and type(stop).__name__ == "EvidenceRefusal"
+                      and stop.category == "party_evidence_underdetermined", str(stop))
+                if expected_refusal:
+                    check(f"{fixture.name} page {page} refusal emits no destination",
+                          not pathlib.Path(destination).exists())
+                    # Keep exercising the same reservation and scrub pipeline even
+                    # when the new parser gate correctly refuses emission.
+                    produced = identifying_tokens(fresh, [fresh.scrub(body) for _, words in fresh._kept_words(pages, keep) for *_, body in words])
+                else:
+                    produced = set()
+            else:
+                produced = identifying_tokens(
+                    fresh, WORD_BODY.findall(pathlib.Path(destination).read_text()))
         # A comparison against an empty input set proves nothing.
         check(
             f"{fixture.name} page {page} has identifying tokens to check",
