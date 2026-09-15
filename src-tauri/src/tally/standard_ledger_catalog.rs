@@ -46,6 +46,10 @@ impl From<StandardLedgerCatalogError> for StandardLedgerCatalogReadError {
     fn from(error: StandardLedgerCatalogError) -> Self {
         match error {
             StandardLedgerCatalogError::MalformedResponse => Self::MalformedResponse,
+            // No new outward code: callers still refuse identically. The value
+            // is that a log or a debugger now names the half of the system at
+            // fault instead of pointing every reader at the transport.
+            StandardLedgerCatalogError::LedgerNameUnusable => Self::MalformedResponse,
             StandardLedgerCatalogError::CompanyIdentityMismatch => Self::CompanyIdentityMismatch,
             StandardLedgerCatalogError::DuplicateIdentity => Self::DuplicateIdentity,
             StandardLedgerCatalogError::BoundsViolation => Self::BoundsViolation,
