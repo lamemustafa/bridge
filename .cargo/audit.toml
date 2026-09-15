@@ -46,19 +46,6 @@
 # (or remove it) between reviews.
 [advisories]
 ignore = [
-  # --- RUSTSEC-2022-0034 -- pkcs11 0.5.0, unsound ---------------------------
-  # Direct dependency of the `bridge` crate itself (src-tauri/Cargo.toml),
-  # used in src-tauri/src/dsc.rs for PKCS#11 hardware-token DSC signing.
-  # Reachable on every shipped target (`cargo tree -i pkcs11` resolves on
-  # both aarch64-apple-darwin and x86_64-pc-windows-msvc) -- this is real
-  # attack surface, not dead weight, and is the entry in this file most
-  # worth re-checking rather than renewing on autopilot. No actively
-  # maintained PKCS#11 crate at this API surface exists yet; `cryptoki`
-  # (already a dependency, see src-tauri/Cargo.toml) is the eventual
-  # replacement candidate and DSC signing should migrate to it fully rather
-  # than carry both. Review-by: 2026-11-15 (60 days) -- re-check whether the
-  # `cryptoki` migration can drop `pkcs11` entirely before renewing.
-  "RUSTSEC-2022-0034",
 
   # --- RUSTSEC-2024-0429 -- glib 0.18.5, unsound (VariantStrIter) ----------
   # Transitive only through Tauri's Linux webview backend:

@@ -27,7 +27,6 @@ Public code, asset, and licensing boundaries are recorded in
 - Frontend and Rust compile checks pass.
 - Desktop development and package builds run from an arbitrary clone path.
 - Native Windows and macOS builds are both validated.
-- Vendor PKCS#11 dependencies are documented and selected per host.
 - Governance templates, review controls, and private vulnerability reporting
   are configured in the managed repository.
 - Tracked content and publication history contain no secrets or personal or
