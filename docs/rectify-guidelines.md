@@ -6,7 +6,6 @@ Every production-affecting bug or behavior regression should enter a tracked rec
 
 - A merged change causes an unintended functional regression in:
   - Tally sync reliability
-  - DSC token/certificate extraction
   - Document scan/upload behavior
   - Local persistence or migration integrity
 - A user reports behavior that violates an existing acceptance criterion from
@@ -27,7 +26,7 @@ record only after maintainers determine disclosure is safe.
    - pointer to commit/PR that introduced the regression
    - synthetic reproduction data with personal/customer data and machine paths removed.
 2. Tag the owning area:
-   - `area:tally`, `area:dsc`, `area:documents`, `area:infra`, or
+   - `area:tally`, `area:documents`, `area:infra`, or
      `area:security`
 3. Open a dedicated fix branch:
    - format: `rectify/<area>/<short-slug>`

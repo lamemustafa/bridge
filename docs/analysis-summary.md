@@ -11,7 +11,6 @@ Public code, asset, and licensing boundaries are recorded in
 
 - React and TypeScript frontend workflow wiring
 - Rust command handlers for Tally session and data operations
-- DSC token probing and certificate-summary extraction
 - Document scanning and upload orchestration
 - Local schema, sync, and Tauri capability structure
 
@@ -28,7 +27,6 @@ Public code, asset, and licensing boundaries are recorded in
 - Frontend and Rust compile checks pass.
 - Desktop development and package builds run from an arbitrary clone path.
 - Native Windows and macOS builds are both validated.
-- Vendor PKCS#11 dependencies are documented and selected per host.
 - Governance templates, review controls, and private vulnerability reporting
   are configured in the managed repository.
 - Tracked content and publication history contain no secrets or personal or

@@ -3,8 +3,7 @@
 Bridge is an open-source local connector for AXAL and Tally workflows. The
 repository contains a Tauri desktop application and the MCPB packaging path for
 Claude Desktop, with React/TypeScript and Rust components for Tally,
-digital-signature certificate (DSC), document, sync, and local database
-operations.
+document, sync, and local database operations.
 
 The repository is self-contained: build and development commands resolve files
 relative to the clone, not to a developer-specific directory.
@@ -59,10 +58,8 @@ complete Perl distribution such as Strawberry Perl. If another incomplete
 `perl.exe` appears first on `PATH`, set `OPENSSL_SRC_PERL` to the complete Perl
 executable. Install LLVM as well; if `libclang.dll` is not discoverable, set
 `LIBCLANG_PATH` to its directory (commonly `C:\Program Files\LLVM\bin`). On
-macOS, install Xcode Command Line Tools. DSC workflows
-also require a vendor PKCS#11 library compatible with the host operating
-system; never commit a private key, PIN, certificate dump, or locally installed
-vendor library. Bridge's macOS bundles require macOS 12.4 or later.
+macOS, install Xcode Command Line Tools. Bridge's macOS bundles require macOS
+12.4 or later.
 
 ## Contributor quick start
 
@@ -100,7 +97,7 @@ corepack pnpm run cargo:check
 corepack pnpm run tauri:build
 ```
 
-Also manually exercise the affected Tally, DSC, document, and sync workflows.
+Also manually exercise the affected Tally, document, and sync workflows.
 Vendor integrations may require host-specific software even though repository
 paths and project commands are portable.
 
@@ -121,9 +118,6 @@ compromised:
   Presigned uploads are limited to `https://complyeaze.com` by default; set
   `BRIDGE_DOCUMENT_UPLOAD_ALLOWED_ORIGINS` to the exact comma-separated HTTPS
   storage origins used by your AXAL deployment.
-- A custom PKCS#11 module can be selected by the administrator-controlled
-  `BRIDGE_DSC_PKCS11_LIBRARY` environment variable before launch. Do not point
-  it at an untrusted library.
 
 These environment variables are process configuration, not checkout paths;
 the same policy applies on Windows and macOS. Restart Bridge after changing

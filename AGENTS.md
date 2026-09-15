@@ -5,7 +5,7 @@ This document defines agent-level expectations and review responsibilities for t
 ## Agents and responsibilities
 
 - **Core implementation agent**: owns Rust/Tauri and React implementation and module-level code health.
-- **Security agent**: owns DSC credential handling, endpoint validation, and data-leak prevention checks.
+- **Security agent**: owns credential handling, endpoint validation, and data-leak prevention checks.
 - **Release agent**: owns CI, packaging, changelog/release prep, branch policy,
   dependency-license inventory, and proof that license/NOTICE resources ship
   in supported installers.
@@ -19,7 +19,7 @@ This document defines agent-level expectations and review responsibilities for t
   - Functional summary
   - Test or reproduction command
   - Migration impact notes if changing sync behavior
-  - Security impact notes for DSC/Tally/credential changes
+  - Security impact notes for Tally/credential changes
 - Each PR must link to one line in [review-checklist.md](./review-checklist.md) as completed before merge.
 
 ## Rectification expectations
@@ -31,7 +31,7 @@ This document defines agent-level expectations and review responsibilities for t
   supersedes public issue/PR creation until coordinated disclosure is safe.
 - PRs that touch existing workflows must include rollback notes and migration compatibility.
 - Keep issue triage actionable:
-  - assign exactly one area label (`area:tally`, `area:dsc`,
+  - assign exactly one area label (`area:tally`,
     `area:documents`, `area:infra`, or `area:security`)
   - set one bug severity label (`severity:p1` urgent / `severity:p2`
     production impact / `severity:p3` medium / `severity:p4` cleanup)
@@ -191,7 +191,7 @@ behaviour, the comment cites the reference section rather than restating it.
 - Never commit hardcoded secrets, tokens, API keys, or raw certificate output.
 - Never commit personal or customer data, local usernames, home directories, or
   developer-specific absolute paths; use synthetic examples and repository-relative paths.
-- Any DSC or credential path changes require a security-focused reviewer comment.
+- Any credential path changes require a security-focused reviewer comment.
 - Any platform-sensitive change must be validated on affected Windows and macOS hosts,
   or the missing platform evidence must be called out explicitly in the PR.
 - Never merge a PR that introduces destructive DB migrations without rollback notes.

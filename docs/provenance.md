@@ -64,8 +64,6 @@ fixtures.
   The Rust report may conservatively over-include a small number of crates
   because cargo-about evaluates configured target conditions as a union; the
   check names those entries in CI output.
-- Required PKCS#11 attribution is preserved in `NOTICE` with an upstream source
-  reference.
 
 The Rust report is generated from the locked dependency graph for Windows x64
 and macOS x64/Apple Silicon. Install the pinned generator and regenerate it
@@ -81,9 +79,8 @@ corepack pnpm run license:all
 configuration. Changes to that file or to either generated report require
 review.
 
-Proprietary vendor PKCS#11 libraries, private keys, PINs, certificate dumps,
-customer files, and machine-specific configuration are not part of the public
-repository or distributable bundle.
+Private keys, PINs, certificate dumps, customer files, and machine-specific
+configuration are not part of the public repository or distributable bundle.
 
 ## macOS test crash evidence
 

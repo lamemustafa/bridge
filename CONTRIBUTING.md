@@ -70,13 +70,13 @@ details, PINs, tokens, usernames, and absolute local paths.
 ## Issue and triage requirements
 
 - Use the bug or feature template in `.github/ISSUE_TEMPLATE`.
-- Assign exactly one area label: `area:tally`, `area:dsc`, `area:documents`,
+- Assign exactly one area label: `area:tally`, `area:documents`,
   `area:infra`, or `area:security`.
 - Assign a severity label for bugs: `severity:p1` through `severity:p4`.
 - Use `type:rectify` for a regression introduced by a merged change and link
   the introducing pull request.
 - Include the operating system and Bridge version for workflow bugs. Add Tally
-  and DSC vendor versions only when relevant and safe to disclose.
+  vendor versions only when relevant and safe to disclose.
 
 Use synthetic reproduction data. Do not attach customer files, certificate
 output, secrets, or machine-specific paths.

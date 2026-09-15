@@ -13,9 +13,9 @@ What concrete user or maintainer workflow changes, and why now?
 - Migration/sync compatibility and rollback procedure (required when an
   existing workflow changes):
 - Destructive database migration: <!-- No, or explain safeguards and rollback -->
-- Security impact for DSC, Tally, credentials, endpoints, or customer data:
+- Security impact for Tally, credentials, endpoints, or customer data:
   <!-- None, or describe the change -->
-- Security-focused reviewer comment: <!-- Required for DSC or credential-path changes -->
+- Security-focused reviewer comment: <!-- Required for credential-path changes -->
 
 ## Validation and evidence
 
@@ -32,7 +32,7 @@ What concrete user or maintainer workflow changes, and why now?
 
 ## Checklist
 
-- [ ] Security implications reviewed (especially DSC, Tally, and credential flows)
+- [ ] Security implications reviewed (especially Tally and credential flows)
 - [ ] Migration compatibility and rollback impact documented
 - [ ] Error handling paths still return actionable errors
 - [ ] No leftover debug logs with sensitive values
