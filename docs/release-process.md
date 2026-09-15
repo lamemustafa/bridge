@@ -6,7 +6,7 @@ and macOS. A smoke bundle is not a production release.
 ## Supported build baseline
 
 - Source release line: `0.2.x` under Apache-2.0
-- Node.js: supported 22 or 24 releases; CI uses `.node-version`
+- Node.js: supported 24.x releases (>=24.15.0); CI uses `.node-version`
 - pnpm: the exact `packageManager` version in `package.json`
 - Rust: the exact channel and components in `rust-toolchain.toml`
 - Hosts: current GitHub-hosted Windows and macOS runners plus native maintainer
@@ -272,6 +272,98 @@ measured to produce UTF-16LE. The output-path procedure is reasoned from the
 tool's byte writer, not host-verified; before relying on it on a Windows host,
 confirm the result with `Format-Hex` and require no UTF-8 BOM (`EF BB BF`).
 
+#### `scripts/reseal.sh` (wrapper)
+
+`scripts/reseal.sh` wraps the three (or, for a pin-list change, four) commands
+above into one call, on Unix hosts. It exists because the ordering constraint
+above is a footgun a maintainer can get wrong silently -- running it by hand
+out of order does not fail loudly, it produces a valid-looking digest over
+stale content (see above). The wrapper enforces the order in code instead of
+in a maintainer's memory, and prints the tool's own changed-entry count so a
+reseal that changed nothing (a no-op run) is visible as exactly that.
+
+```sh
+scripts/reseal.sh                  # ordinary reseal: pinned file CONTENTS changed
+scripts/reseal.sh --pins-changed   # the pin LIST changed (see "Adding or
+                                    # removing a pin" above) -- runs the
+                                    # documented inverted order
+scripts/reseal.sh --verify         # reseals into a scratch copy and fails if
+                                    # it differs from the committed files;
+                                    # never mutates the working tree. For CI --
+                                    # not wired into any workflow yet, since
+                                    # this repository's automation may not
+                                    # touch `.github/` here; see
+                                    # docs/proposed-dependency-policy.md for
+                                    # the proposed step.
+```
+
+It resolves the pinned toolchain itself (the same `rustc --version` shadowing
+hazard described above), and always runs from the repository root regardless
+of the caller's current directory. It has no PowerShell equivalent; run the
+four raw commands by hand on Windows.
+
+#### Merge driver (local only)
+
+Two PRs that each reseal after touching DIFFERENT already-pinned files always
+conflict, on exactly two lines, even though the actual pin lists underneath
+merge cleanly. This was diagnosed, then **proven** with an actual two-branch
+merge experiment: two throwaway branches, each touching a different ADR file
+and resealing, produced a merge with conflict markers on precisely
+`manifest_sha256` (in the surface) and `compatibility_surface_sha256` (in the
+matrix) -- nothing else. All 212 pinned-file entries merged without a single
+conflicting line.
+
+A git merge driver at `scripts/reseal-merge-driver.mjs`, wired via
+`.gitattributes`, resolves the common case of that automatically: it
+reconciles the surface's pin list and the matrix's claim list with a real
+three-way merge (independent additions and removals from either side are
+both kept/honored automatically; the SAME entry changed on both sides to
+DIFFERENT content is refused, not guessed at, and falls back to git's
+ordinary conflict markers for manual resolution exactly as described above),
+then reseals. Every pinned file's post-merge hash is computed from git refs
+(`git diff --name-only`/`git show` against the merge base, "ours" and
+"theirs"), never from the working tree -- an earlier version of this driver
+read the working tree instead and a real merge experiment caught it sealing
+a wrong hash, because git does not guarantee every other path has already
+been checked out to its final post-merge content by the time this driver
+runs for the compatibility files specifically. See the extensive comments in
+`scripts/reseal-merge-driver.mjs` for the exact mechanics, including why
+`.git/MERGE_HEAD` -- the seemingly obvious way to learn "ours"/"theirs" from
+inside a running merge driver -- does not work (it is not written until
+*after* the whole tree-level merge finishes, i.e. after every driver
+invocation, and in a linked git worktree `.git` is a redirect file rather
+than a directory besides) and the gitattributes placeholders (`%S`/`%X`/`%Y`)
+used instead.
+
+**This is a LOCAL-ONLY convenience.** A `.gitattributes` `merge=` driver
+requires local git configuration to activate (below) and runs only when
+*your own* `git merge`/`git rebase` executes on *your* machine. **GitHub's
+server-side merge -- the "Merge pull request" button, and the mergeability
+check GitHub computes for an open PR -- does not run repository merge
+drivers at all; GitHub has no mechanism to execute arbitrary repository code
+as part of that merge.** So this reduces the pain of a maintainer juggling
+several compatibility-surface branches locally; it does **not** change what
+a PR shows as conflicting on GitHub, and does not touch anything under
+`.github/`. A PR that would conflict on GitHub still needs a rebase/merge
+performed locally (with this configured) to resolve automatically, then
+pushed.
+
+One-time setup per local checkout (not committed -- `.gitattributes` names
+the driver, but the driver's actual command has to come from local git
+config, by design: git will not execute arbitrary commands named in a
+version-controlled file without an explicit local opt-in):
+
+```sh
+git config merge.bridge-compat-reseal.name "Bridge compatibility-surface reseal driver"
+git config merge.bridge-compat-reseal.driver "node scripts/reseal-merge-driver.mjs %O %A %B %P %S %X %Y"
+```
+
+When it declines to resolve (a genuine conflict on the pin/claim list, or on
+a pinned file's own content, or an operation other than an ordinary `git
+merge`), it falls back to git's plain three-way text merge and prints why --
+resolve the conflict markers by hand following the procedure above, then run
+`scripts/reseal.sh` yourself.
+
 Before cutting a candidate, regenerate and verify the Rust third-party notice
 with the pinned generator:
 
@@ -293,7 +385,7 @@ corepack pnpm run license:all
    app, and mounted DMG inspections for `LICENSE`, `NOTICE`,
    `THIRD_PARTY_LICENSES.txt`, and `THIRD_PARTY_LICENSES_RUST.txt`; manually
    inspect signed candidates again before publication.
-6. Exercise Tally, DSC, documents, sync, and persistence using synthetic data;
+6. Exercise Tally, documents, sync, and persistence using synthetic data;
    attach redacted evidence to the release PR.
    Keep repository-synthetic parser qualification receipts separate from the
    live Tally compatibility matrix: they cannot establish a product release,

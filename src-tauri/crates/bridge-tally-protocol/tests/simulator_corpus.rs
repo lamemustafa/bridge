@@ -56,6 +56,43 @@ fn export_status_rejects_duplicate_misplaced_and_active_xml_constructs() {
 }
 
 #[test]
+fn export_status_reads_bank_allocation_status_as_data_not_protocol() {
+    // Tally names a bank-allocation field STATUS. Judged by name rather than by
+    // position it looked like a second, misplaced protocol status, and the read
+    // of every Payment, Receipt and Contra voucher carrying a bank allocation
+    // was refused. See the fixture's PROVENANCE record for the observation.
+    let bytes = include_bytes!("fixtures/agent/native-bank-allocation-status.utf16le.xml");
+    let captured = String::from_utf16(
+        &bytes[2..]
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .expect("fixture decodes as UTF-16LE");
+    assert!(
+        captured.contains("<BANKALLOCATIONS.LIST>"),
+        "fixture must carry the observed nesting"
+    );
+    assert_eq!(
+        export_status(&captured).unwrap(),
+        TallyExportStatus::Success
+    );
+
+    // The relaxation stops at the envelope's own frame: a STATUS placed directly
+    // under BODY is still refused, and so is one outside HEADER entirely.
+    for xml in [
+        "<ENVELOPE><HEADER><VERSION>1</VERSION></HEADER><BODY><STATUS>1</STATUS></BODY></ENVELOPE>",
+        "<ENVELOPE><HEADER><VERSION>1</VERSION></HEADER><STATUS>1</STATUS><BODY/></ENVELOPE>",
+    ] {
+        assert!(export_status(xml).is_err(), "must still reject {xml}");
+    }
+
+    // A data element may shadow any protocol name, including with attributes.
+    let shadowed = "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><ALLLEDGERENTRIES.LIST><BANKALLOCATIONS.LIST><STATUS TYPE=\"Number\">0</STATUS><VERSION>2</VERSION><HEADER>x</HEADER></BANKALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
+    assert_eq!(export_status(shadowed).unwrap(), TallyExportStatus::Success);
+}
+
+#[test]
 fn primary_rows_and_company_context_must_use_supported_export_parents() {
     let nested_ledger = format!(
         r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYCONTEXT SCHEMA="{}" OBJECTTYPE="LEDGER" NAME="BRIDGE SYNTHETIC BOOK" GUID="company-guid" RECORDCOUNT="1"/><UNEXPECTED><LEDGER NAME="BRIDGE LEDGER" GUID="ledger-guid"><PARENT>Primary</PARENT></LEDGER></UNEXPECTED></BODY></ENVELOPE>"#,
@@ -1138,4 +1175,64 @@ fn incomplete_or_invalid_imports_are_rejected() {
     assert!(parse_import_result("<RESPONSE><CREATED>1</CREATED></RESPONSE>").is_err());
     assert!(parse_import_result("<RESPONSE><CREATED>1</CREATED>").is_err());
     assert!(parse_import_result("<RESPONSE><CREATED>-1</CREATED><ALTERED>0</ALTERED><IGNORED>0</IGNORED><ERRORS>0</ERRORS><EXCEPTIONS>0</EXCEPTIONS></RESPONSE>").is_err());
+}
+
+/// A real book holds ledger names with an embedded newline -- someone pastes an
+/// address into the name field and Tally stores it. Rejecting the name failed
+/// the *whole* catalog, so one such master denied every read that needs it:
+/// presence, a ledger-scoped voucher window, and import validation alike.
+///
+/// The name is an identity value here, not a display string. It is matched
+/// against proposals by exact codepoint and echoed back as `exact_live_spelling`
+/// for import, both of which require the bytes Tally returned. So the catalog
+/// keeps the row verbatim and display safety belongs to whatever renders it.
+#[test]
+fn a_ledger_name_holding_a_newline_keeps_its_row_rather_than_failing_the_catalog() {
+    let bytes = include_bytes!("fixtures/agent/native-ledger-catalogue.utf16le.xml");
+    let original = String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .expect("captured catalog is UTF-16LE");
+
+    let baseline = parse_standard_ledger_catalog_with_identities(
+        &original,
+        "WR2 Unicode Lab",
+        "61c6de69-1748-461c-ad3f-162cb949df9f",
+    )
+    .expect("captured catalog is valid for its captured company")
+    .names()
+    .count();
+
+    // Rename one ledger to a synthetic two-line name. The newline has to go on
+    // the wire as a character reference, not as raw bytes: XML attribute-value
+    // normalization folds a literal CR LF in an attribute down to one space, so
+    // raw bytes could never reach the parser and would not reproduce anything.
+    // A reference survives normalization, which is exactly how a real two-line
+    // ledger name arrives.
+    let chosen = "Bridge Nested Debtor WR4";
+    let renamed = "Synthetic Two Line\r\nLedger Name";
+    assert!(original.contains(chosen), "fixture holds the chosen ledger");
+    let document = original.replace(chosen, "Synthetic Two Line&#13;&#10;Ledger Name");
+
+    let catalog = parse_standard_ledger_catalog_with_identities(
+        &document,
+        "WR2 Unicode Lab",
+        "61c6de69-1748-461c-ad3f-162cb949df9f",
+    )
+    .expect("a newline in one ledger name must not fail the whole catalog");
+
+    let names = catalog.names().collect::<Vec<_>>();
+    assert_eq!(
+        names.len(),
+        baseline,
+        "the row is kept, not dropped -- a malformed name must never remove a real master"
+    );
+    assert!(
+        names.contains(&renamed),
+        "the name is carried verbatim, because it is matched by exact codepoint \
+         and round-trips back to Tally as the import spelling"
+    );
 }

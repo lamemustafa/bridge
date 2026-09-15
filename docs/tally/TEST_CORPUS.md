@@ -457,8 +457,9 @@ names**.
 | `Zeta Nowhere Traders` | `missing`, `listing: "none"` | an absence stated as an absence, not as an empty list |
 | `MB PARTY BETA` | `near_miss`, 4 candidates | a prefix family surfaced whole |
 
-**`exact_live_spelling` appeared on bound rows only** — `exact`, `identifier`, `normalized` —
-and on no refusal. The same ten names sent to the **previously installed** server, same company
+**`exact_live_spelling` appeared on bound rows only** — `exact`, `identifier`, and the
+historical `normalized` result — and on no refusal. `normalized` is superseded as a generic
+binding state: a current scope-free catalog keeps that result candidate-only. The same ten names sent to the **previously installed** server, same company
 and instance minutes earlier, returned `exact_live_spelling` alongside `match_state: "near_miss"`
 for two of them. That field on a refusal is a guess wearing the shape of an answer, and it is
 what this change deletes; the two runs are the before and after on one real instance.
@@ -471,9 +472,9 @@ the MCP consumer; the desktop consumer shares the crate but was not driven.
 **Superseded in part, 2026-09-12.** The separator row below was read as a defect and drove a
 narrowing of the resolving fold. `TALLY_PROTOCOL_REFERENCE.md` §9.4d then measured that same
 equivalence directly on **licensed** TallyPrime 7.1 and found Tally does accept it — along with
-leading whitespace, collapsed runs and a slash — so the fold was widened back to what the gateway
-actually does. Read the paragraph below as the history it is: the row's `normalized` result was
-right, and the reasoning that called it wrong was working from §9.4b's Educational scope.
+leading whitespace, collapsed runs and a slash — so the capture retained the result as a scoped observation. Read the paragraph below as history:
+the row records what that one gateway accepted, but it does not license a generic catalog to
+resolve a folded name without an operator's selected target and exact revalidation.
 
 **It found a defect, which is the reason to run these.** On the first run the third row *bound*
 `MB-PILOT-ALPHA-(5550001001)` to a master carrying spaces. That is the **reverse** of the

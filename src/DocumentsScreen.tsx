@@ -45,7 +45,7 @@ type SelectedDocumentPath = {
   displayName: string;
 };
 
-type AxalIntegration = "tally" | "documents" | "dsc";
+type AxalIntegration = "tally" | "documents";
 
 type DocumentsWorkspaceState = {
   documentPaths: SelectedDocumentPath[];
@@ -83,7 +83,7 @@ function formatPreviewCount(total: number, label = "loaded"): string {
 type Props = {
   busy: boolean;
   setBusy: (busy: boolean) => void;
-  // Owned by App() and shared with the AXAL and DSC views -- read here,
+  // Owned by App() and shared with the AXAL view -- read here,
   // never duplicated locally.
   axalConnection: { workspace: { id: string; name: string } } | null;
   axalSession: { id: string; integration: AxalIntegration } | null;
