@@ -16,7 +16,7 @@ import zipfile
 RESOURCES = ("LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.txt", "THIRD_PARTY_LICENSES_RUST.txt")
 DEFAULT_TOOLS = {
     "tally_status", "list_companies", "voucher_schema", "validate_masters", "outstandings",
-    "ledger_masters", "ledger_movement", "trial_balance", "vouchers", "read_evidence", "egress_log", "verify_import",
+    "ledger_masters", "ledger_movement", "trial_balance", "vouchers", "voucher_presence", "read_evidence", "egress_log", "verify_import",
 }
 MAX_BUNDLE_BYTES = 128 * 1024 * 1024
 MAX_OUTPUT_BYTES = 512 * 1024

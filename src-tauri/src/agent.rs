@@ -41,6 +41,8 @@ mod changes;
 mod ledgers;
 #[path = "agent_outstandings.rs"]
 mod outstandings;
+#[path = "agent_presence.rs"]
+mod presence;
 #[path = "agent_vouchers.rs"]
 mod vouchers;
 #[cfg(test)]
@@ -688,6 +690,7 @@ impl Server {
             "verify_import" => self.verify_import(args).await,
             "ledger_masters" => self.ledger_masters(args).await,
             "vouchers" => self.vouchers(args).await,
+            "voucher_presence" => self.voucher_presence(args).await,
             "changed_since" => self.changed_since(args).await,
             "outstandings" => self.outstandings(args).await,
             "ledger_movement" => self.ledger_movement(args).await,
@@ -961,7 +964,10 @@ fn corroborate_empty_voucher_window(
         return Err("window_contradicted".to_string());
     }
     if !widened_rows.is_empty() {
-        return Ok((false, None));
+        // Boundary-day rows only prove that this wider read returned *some*
+        // data. They provide no independent cardinality for the nonempty
+        // response, so they cannot promote the original empty window.
+        return Ok((true, Some("nonempty_uncorroborated")));
     }
     match company_high_water {
         Some(0) => Ok((false, Some("company_has_no_vouchers"))),
