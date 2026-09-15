@@ -348,7 +348,7 @@ else
   diff_stats="$tmpdir/diff-stats.tsv"
   added_payload="$tmpdir/added-payload"
   parsed_diff_status=0
-  parsed_diff=$(python3 scripts/merge_gate_diff.py <<<"$diff") || parsed_diff_status=$?
+  parsed_diff=$(python3 "$script_dir/merge_gate_diff.py" <<<"$diff") || parsed_diff_status=$?
   if [ "$parsed_diff_status" -ne 0 ] || ! jq -e '
     type == "object" and
     (.records | type == "array" and all(.[]; type == "object" and
