@@ -665,6 +665,78 @@ mod tests {
         build_core_window(&context(), groups(), ledgers, voucher_types(), vouchers).unwrap()
     }
 
+    /// A voucher whose second entry carries `ISDEEMEDPOSITIVE=Yes` against a
+    /// positive amount -- the shape a rounding entry takes, where Tally's
+    /// column flag and the arithmetic sign legitimately disagree. It still
+    /// balances, so nothing else about the voucher is wrong.
+    fn voucher_with_a_flag_that_disagrees_with_its_amount(
+    ) -> ParsedExport<ParsedSourceRecord<TallyVoucher>> {
+        parse_voucher_source_records_with_evidence(&format!(
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYCONTEXT SCHEMA="{}" OBJECTTYPE="VOUCHER" NAME="BRIDGE SYNTHETIC BOOK" GUID="synthetic-company-guid" RECORDCOUNT="1"/><VOUCHER GUID="voucher-guid" REMOTEID="voucher-remote" MASTERID="9" ALTERID="10"><DATE>20260714</DATE><VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME><VOUCHERNUMBER>SYN-1</VOUCHERNUMBER><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><LEDGERENTRYCOUNT>2</LEDGERENTRYCOUNT><LEDGERENTRIES><LEDGERENTRY><ENTRYINDEX>1</ENTRYINDEX><LEDGERNAME>Cash</LEDGERNAME><AMOUNT>-100.00</AMOUNT><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE></LEDGERENTRY><LEDGERENTRY><ENTRYINDEX>2</ENTRYINDEX><LEDGERNAME>Sales</LEDGERNAME><AMOUNT>100.00</AMOUNT><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE></LEDGERENTRY></LEDGERENTRIES></VOUCHER></BODY></ENVELOPE>"#,
+            BRIDGE_VOUCHER_EXPORT_SCHEMA
+        ))
+        .unwrap()
+    }
+
+    /// Issue #392 asked whether this path silently persists a wrong polarity,
+    /// and said the defect was inferred from the code rather than observed end
+    /// to end here. This is that observation, and the answer is that the
+    /// disagreement is preserved and reported rather than swallowed.
+    ///
+    /// `polarity` is the **observed** column flag, not a derived sign. Deriving
+    /// it from the amount instead would make
+    /// `bridge_tally_core`'s `entry_polarity_matches_amount` tautological --
+    /// that check exists precisely to compare the flag against the sign -- and
+    /// the only signal that a rounding entry disagrees would disappear.
+    ///
+    /// Nothing consumes `polarity` arithmetically: its readers are that check,
+    /// a label in `transport_qualification`, and `pack_models`' field named
+    /// `observed_polarity`. So "wrong polarity persisted" is better read as
+    /// "the flag Tally recorded, kept verbatim so the disagreement survives to
+    /// be reported".
+    #[test]
+    fn a_flag_disagreeing_with_its_amount_is_preserved_and_reported_not_corrected() {
+        let (ledgers, _) = ledgers_and_vouchers("Cash", "Cash");
+        let window = build_core_window(
+            &context(),
+            groups(),
+            ledgers,
+            voucher_types(),
+            voucher_with_a_flag_that_disagrees_with_its_amount(),
+        )
+        .expect("a disagreeing flag is observed data, not a parse failure");
+        let PackBatch::CoreAccounting(batch) = &window.batch else {
+            panic!("wrong pack")
+        };
+
+        // Preserved verbatim: the flag said Yes, so the record says Debit, even
+        // though the amount is positive. Deriving from the sign would say
+        // Credit here and lose the disagreement.
+        assert_eq!(
+            batch.ledger_entries[1].polarity,
+            LedgerEntryPolarity::Debit,
+            "the observed flag must survive into the record"
+        );
+        assert_eq!(batch.ledger_entries[1].amount.as_str(), "100.00");
+
+        // And reported: the disagreement reaches the accounting assessment
+        // rather than being absorbed at the boundary.
+        let assessment = bridge_tally_core::reconciliation::assess_core_accounting(batch);
+        assert_eq!(
+            assessment.checks.voucher_entry_polarity,
+            bridge_tally_core::reconciliation::CheckState::Mismatch,
+            "a flag/sign disagreement must surface as a mismatch"
+        );
+        assert!(
+            assessment
+                .issues
+                .iter()
+                .any(|issue| issue.safe_reason_code == "voucher_entry_polarity_mismatch"),
+            "the mismatch must name its code: {:?}",
+            assessment.issues
+        );
+    }
+
     #[test]
     fn marker_carrying_parent_policy_fails_closed_for_unobserved_non_root_references() {
         let group_ids_by_name = BTreeMap::from([("Assets".to_string(), "group-guid".to_string())]);

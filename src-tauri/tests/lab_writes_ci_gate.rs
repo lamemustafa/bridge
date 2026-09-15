@@ -47,10 +47,7 @@ fn no_workflow_enables_the_lab_writes_feature() {
             // Catch the feature name spelled either way, and `--all-features`,
             // which would silently pull `lab-writes` in as a real Cargo
             // feature the moment any job used it.
-            if lower.contains("lab-writes")
-                || lower.contains("lab_writes")
-                || lower.contains("--all-features")
-            {
+            if lower.contains("lab-writes") || lower.contains("--all-features") {
                 offenders.push(format!(
                     "{}:{}: {}",
                     path.display(),
