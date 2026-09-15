@@ -1651,6 +1651,23 @@ pub struct SnapshotRunResult {
     pub receipt: StoredCommitReceipt,
 }
 
+/// What a phase of the snapshot run decided: carry on with the durable state, or
+/// stop with a terminal result.
+/// `large_enum_variant` fires here and its remedy would be a regression.
+/// `Continue` is large because it carries the durable state itself, which `run`
+/// already moved by value before these phases existed; boxing it would add an
+/// allocation on every phase to shrink an enum that is never stored, only
+/// returned and immediately destructured. The rare variant is boxed instead,
+/// which is the half that actually costs nothing.
+#[allow(clippy::large_enum_variant)]
+enum PhaseOutcome {
+    Continue(DurableSnapshotState),
+    /// Boxed so the common path stops paying for the rare one: `Continue` is
+    /// moved on every phase, `Finished` happens at most once per run and only
+    /// alongside I/O that dwarfs an allocation.
+    Finished(Box<SnapshotRunResult>),
+}
+
 pub struct FullSnapshotEngine<'a, S, C> {
     mirror: &'a TallyMirrorRepository,
     state_store: &'a S,
@@ -2050,111 +2067,17 @@ where
                 .await;
         }
 
-        state.set_phase(SnapshotPhase::CapabilityCheck, None);
-        self.state_store.save(&mut state).await?;
-        let probe = match self
-            .await_connector(&state, cancellation, self.connector.probe())
+        let state = match self.check_capability(plan, state, cancellation).await? {
+            PhaseOutcome::Finished(result) => return Ok(*result),
+            PhaseOutcome::Continue(state) => state,
+        };
+        let mut state = match self
+            .check_company_identity(plan, state, cancellation)
             .await?
         {
-            ConnectorAwait::Completed(result) => result,
-            ConnectorAwait::Cancelled => {
-                return self
-                    .finish_terminal(plan, state, TerminalKind::Cancelled, "run_cancelled")
-                    .await;
-            }
+            PhaseOutcome::Finished(result) => return Ok(*result),
+            PhaseOutcome::Continue(state) => state,
         };
-        match probe {
-            Ok(probe) => {
-                let pack_supported = probe.reachable
-                    && probe.profile.packs.get(&plan.pack).is_some_and(|evidence| {
-                        snapshot_pack_start_authorized(plan.pack, evidence)
-                    })
-                    && probe
-                        .profile
-                        .transports
-                        .get(&TransportId::XmlHttp)
-                        .is_some_and(|evidence| {
-                            evidence.state == CapabilityState::Supported
-                                && evidence.confidence == EvidenceConfidence::Observed
-                        });
-                if !pack_supported {
-                    return self
-                        .finish_terminal(
-                            plan,
-                            state,
-                            TerminalKind::Failed,
-                            "capability_not_verified",
-                        )
-                        .await;
-                }
-                if probe.profile.profile_version != plan.capability_profile_version
-                    || capability_profile_sha256(&probe.profile)? != plan.capability_profile_sha256
-                    || probe.profile.product != plan.source_product
-                    || probe.profile.release != plan.source_release
-                    || probe.profile.mode != plan.source_mode
-                {
-                    return self
-                        .finish_terminal(
-                            plan,
-                            state,
-                            TerminalKind::Failed,
-                            "capability_profile_changed",
-                        )
-                        .await;
-                }
-            }
-            Err(error) => {
-                let code = tally_error_code(&error);
-                return self
-                    .finish_terminal(plan, state, terminal_kind(&error), code)
-                    .await;
-            }
-        }
-
-        state.set_phase(SnapshotPhase::CompanyIdentityCheck, None);
-        self.state_store.save(&mut state).await?;
-        let companies = match self
-            .await_connector(&state, cancellation, self.connector.discover_companies())
-            .await?
-        {
-            ConnectorAwait::Completed(result) => result,
-            ConnectorAwait::Cancelled => {
-                return self
-                    .finish_terminal(plan, state, TerminalKind::Cancelled, "run_cancelled")
-                    .await;
-            }
-        };
-        match companies {
-            Ok(companies) => {
-                // Setup rejects ambiguous case-insensitive GUID matches. Preserve that invariant
-                // at execution time: after setup, Tally may load another company that resolves to
-                // the same canonical identity, and selecting either by display name would no
-                // longer establish which company supplied the proof-bound records.
-                let matching_identities = companies
-                    .iter()
-                    .filter(|company| company.identity == plan.company.identity)
-                    .take(2)
-                    .count();
-                if matching_identities == 1 {
-                    // Exactly one live company remains bound to the reviewed identity.
-                } else {
-                    let reason = if matching_identities == 0 {
-                        "company_identity_not_found"
-                    } else {
-                        "company_identity_ambiguous"
-                    };
-                    return self
-                        .finish_terminal(plan, state, TerminalKind::Failed, reason)
-                        .await;
-                }
-            }
-            Err(error) => {
-                let code = tally_error_code(&error);
-                return self
-                    .finish_terminal(plan, state, terminal_kind(&error), code)
-                    .await;
-            }
-        }
 
         state.set_phase(SnapshotPhase::PlanWindows, None);
         self.state_store.save(&mut state).await?;
@@ -2773,6 +2696,144 @@ where
         self.state_store.heartbeat(&state).await?;
         self.commit_decision(plan, state, decision, PendingDecisionKind::Reconciled, None)
             .await
+    }
+
+    /// One step of `run`'s phase machine. `Continue` hands the durable state to
+    /// the next phase; `Finished` is a terminal outcome `run` returns as-is.
+    ///
+    /// The outcome is a type rather than a convention because `finish_terminal`
+    /// consumes the state: a phase that ends the run cannot also give it back,
+    /// so the two cases genuinely differ in what they own.
+    async fn check_capability(
+        &self,
+        plan: &SnapshotPlan,
+        mut state: DurableSnapshotState,
+        cancellation: &dyn CancellationSignal,
+    ) -> Result<PhaseOutcome, SnapshotError> {
+        state.set_phase(SnapshotPhase::CapabilityCheck, None);
+        self.state_store.save(&mut state).await?;
+        let probe = match self
+            .await_connector(&state, cancellation, self.connector.probe())
+            .await?
+        {
+            ConnectorAwait::Completed(result) => result,
+            ConnectorAwait::Cancelled => {
+                return Ok(PhaseOutcome::Finished(Box::new(
+                    self.finish_terminal(plan, state, TerminalKind::Cancelled, "run_cancelled")
+                        .await?,
+                )));
+            }
+        };
+        match probe {
+            Ok(probe) => {
+                let pack_supported = probe.reachable
+                    && probe.profile.packs.get(&plan.pack).is_some_and(|evidence| {
+                        snapshot_pack_start_authorized(plan.pack, evidence)
+                    })
+                    && probe
+                        .profile
+                        .transports
+                        .get(&TransportId::XmlHttp)
+                        .is_some_and(|evidence| {
+                            evidence.state == CapabilityState::Supported
+                                && evidence.confidence == EvidenceConfidence::Observed
+                        });
+                if !pack_supported {
+                    return Ok(PhaseOutcome::Finished(Box::new(
+                        self.finish_terminal(
+                            plan,
+                            state,
+                            TerminalKind::Failed,
+                            "capability_not_verified",
+                        )
+                        .await?,
+                    )));
+                }
+                if probe.profile.profile_version != plan.capability_profile_version
+                    || capability_profile_sha256(&probe.profile)? != plan.capability_profile_sha256
+                    || probe.profile.product != plan.source_product
+                    || probe.profile.release != plan.source_release
+                    || probe.profile.mode != plan.source_mode
+                {
+                    return Ok(PhaseOutcome::Finished(Box::new(
+                        self.finish_terminal(
+                            plan,
+                            state,
+                            TerminalKind::Failed,
+                            "capability_profile_changed",
+                        )
+                        .await?,
+                    )));
+                }
+            }
+            Err(error) => {
+                let code = tally_error_code(&error);
+                return Ok(PhaseOutcome::Finished(Box::new(
+                    self.finish_terminal(plan, state, terminal_kind(&error), code)
+                        .await?,
+                )));
+            }
+        }
+        Ok(PhaseOutcome::Continue(state))
+    }
+
+    /// The identity half of the same gate: a run may only proceed against the
+    /// company it was planned for.
+    async fn check_company_identity(
+        &self,
+        plan: &SnapshotPlan,
+        mut state: DurableSnapshotState,
+        cancellation: &dyn CancellationSignal,
+    ) -> Result<PhaseOutcome, SnapshotError> {
+        state.set_phase(SnapshotPhase::CompanyIdentityCheck, None);
+        self.state_store.save(&mut state).await?;
+        let companies = match self
+            .await_connector(&state, cancellation, self.connector.discover_companies())
+            .await?
+        {
+            ConnectorAwait::Completed(result) => result,
+            ConnectorAwait::Cancelled => {
+                return Ok(PhaseOutcome::Finished(Box::new(
+                    self.finish_terminal(plan, state, TerminalKind::Cancelled, "run_cancelled")
+                        .await?,
+                )));
+            }
+        };
+        match companies {
+            Ok(companies) => {
+                // Setup rejects ambiguous case-insensitive GUID matches. Preserve that invariant
+                // at execution time: after setup, Tally may load another company that resolves to
+                // the same canonical identity, and selecting either by display name would no
+                // longer establish which company supplied the proof-bound records.
+                let matching_identities = companies
+                    .iter()
+                    .filter(|company| company.identity == plan.company.identity)
+                    .take(2)
+                    .count();
+                if matching_identities == 1 {
+                    // Exactly one live company remains bound to the reviewed identity.
+                } else {
+                    let reason = if matching_identities == 0 {
+                        "company_identity_not_found"
+                    } else {
+                        "company_identity_ambiguous"
+                    };
+                    return Ok(PhaseOutcome::Finished(Box::new(
+                        self.finish_terminal(plan, state, TerminalKind::Failed, reason)
+                            .await?,
+                    )));
+                }
+            }
+            Err(error) => {
+                let code = tally_error_code(&error);
+                return Ok(PhaseOutcome::Finished(Box::new(
+                    self.finish_terminal(plan, state, terminal_kind(&error), code)
+                        .await?,
+                )));
+            }
+        }
+
+        Ok(PhaseOutcome::Continue(state))
     }
 
     async fn finish_terminal(
