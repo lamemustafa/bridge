@@ -30,6 +30,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+          # The differential step below resolves a merge base against the pull
+          # request's own base branch. The default shallow clone has no merge
+          # base to find, and fetching only the PR ref would not bring the base
+          # branch with it.
+          fetch-depth: 0
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
@@ -42,3 +47,22 @@ jobs:
           fallback: none
       - name: Audit locked Rust dependencies
         run: cargo audit --file src-tauri/Cargo.lock
+      # Deliberately additional, not a replacement. The step above answers "does
+      # this lockfile contain an accepted-severity advisory" and must keep
+      # failing when it does, whoever introduced it. This one answers the
+      # different question "did THIS pull request introduce one", which is the
+      # question a pull request's author can actually act on.
+      #
+      # On 2026-09-15 `RUSTSEC-2026-0285` was published against `rustls`, and
+      # the step above went red on an unchanged master, turning all nine then
+      # open pull requests red at once -- including ones touching neither
+      # rustls nor reqwest. Keeping both steps means that event still blocks
+      # master, while a pull request that introduced nothing is told so by name.
+      #
+      # Pull requests only: a `push: master` run has no other side to diff
+      # against. The script resolves its base from GITHUB_BASE_REF first, so a
+      # pull request stacked on a non-master branch diffs against that branch
+      # rather than against master.
+      - name: Fail only on advisories this pull request introduces
+        if: github.event_name == 'pull_request'
+        run: node scripts/check-advisory-delta.mjs
