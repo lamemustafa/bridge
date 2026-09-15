@@ -84,7 +84,7 @@ impl Server {
                         .map_err(|_| "voucher_amount_invalid".to_string())?
                         .as_str()
                         .to_string();
-                    if entry.is_deemed_positive {
+                    if movement_entry_is_debit(&amount, entry.is_deemed_positive) {
                         record.2 = add_decimal(&record.2, &format!("-{magnitude}"))?;
                     } else {
                         record.3 = add_decimal(&record.3, &magnitude)?;
@@ -208,6 +208,27 @@ impl Server {
         }
         .await;
         result.map_err(|failure| failure.with_prior_evidence(evidence))
+    }
+}
+
+/// Which column a ledger entry moves, taken from `AMOUNT`'s own sign.
+///
+/// Never from `ISDEEMEDPOSITIVE`. That flag records the column the entry was made
+/// in, and on a rounding ledger it legitimately disagrees with the sign. Discarding
+/// the sign and re-deriving it from the flag moved a real book's rounding ledger to
+/// -3.42 against Tally's own -2.06; a movement that does not tie to the trial
+/// balance is worse than one that refuses to answer.
+///
+/// A zero amount carries no direction to read, so it stays on the side the flag
+/// observed rather than having one invented for it.
+fn movement_entry_is_debit(
+    amount: &bridge_tally_core::ExactDecimal,
+    is_deemed_positive: bool,
+) -> bool {
+    if amount.is_zero() {
+        is_deemed_positive
+    } else {
+        amount.is_negative()
     }
 }
 

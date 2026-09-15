@@ -359,15 +359,15 @@
     },
     {
       "path": "src-tauri/src/agent_voucher_parse.rs",
-      "sha256": "8ef03c90ff96be3e637203fcfcac702039c85a96e82432f6a3c45f1cc0924e29"
+      "sha256": "c3dced60925238d8721f1a5f5130f0ab01b7feda58f1e4c1d3c9af78066c4abc"
     },
     {
       "path": "src-tauri/src/agent_voucher_parse_tests.rs",
-      "sha256": "0dfd85832d775a91e0f82d10244a4e8e34ced87dbb6dd1e889b5a6fc3f478e46"
+      "sha256": "58209e929c0643bd54767193f6561a89bdfa9626680c80829ca043e0d9c54bf6"
     },
     {
       "path": "src-tauri/src/agent_voucher_scalars.rs",
-      "sha256": "67b45395f3a90ade873524a3839a6d66735e170f7a7aeb8b86c51d4111805ad8"
+      "sha256": "464226a1eff411777c6a6f775e83ade3e2f8c38ed9489056c671b1516a3e77e8"
     },
     {
       "path": "src-tauri/src/agent_vouchers.rs",
@@ -703,7 +703,7 @@
     },
     {
       "path": "src/LedgerEntriesScreen.tsx",
-      "sha256": "9fe95889c7ec216e0783f5d1e2f8e472333de392eae59520f6c93730327f0f1d"
+      "sha256": "b9d3aa7028a6f3b5278ab30d6cffa4939e28f047f7c32323f921b1d37caa6a95"
     },
     {
       "path": "src/MirrorProofScreen.tsx",
@@ -850,5 +850,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "a977c0285c14820e3c9c81aaeb50fc40563db6426eb88717f94c25750946e707"
+  "manifest_sha256": "06f0e25d83df819cdb47f70fce57f64daec6c4d0a888052fd76393649d10ce54"
 }

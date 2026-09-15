@@ -260,3 +260,29 @@ async fn movement_read_preserves_observed_count_after_accounting_exclusions() {
         assert_eq!(simulator.finish().unwrap().len(), 6);
     }
 }
+
+#[test]
+fn movement_direction_comes_from_the_amount_sign_not_the_polarity_flag() {
+    let amount = |value: &str| bridge_tally_core::ExactDecimal::parse(value.to_string()).unwrap();
+
+    // Where the two observations agree, either source gives the same answer.
+    assert!(movement_entry_is_debit(&amount("-10.00"), true));
+    assert!(!movement_entry_is_debit(&amount("10.00"), false));
+
+    // Where they disagree -- the rounding-ledger case on a real book -- the amount
+    // wins. Reading the flag here is what moved a ledger off its trial balance.
+    assert!(
+        !movement_entry_is_debit(&amount("0.50"), true),
+        "a positive amount is a credit even when the entry was made on the debit side"
+    );
+    assert!(
+        movement_entry_is_debit(&amount("-0.50"), false),
+        "a negative amount is a debit even when the entry was made on the credit side"
+    );
+
+    // Zero has no sign to read, so the observed flag decides rather than a guess.
+    for zero in ["0", "0.00", "-0.000"] {
+        assert!(movement_entry_is_debit(&amount(zero), true));
+        assert!(!movement_entry_is_debit(&amount(zero), false));
+    }
+}
