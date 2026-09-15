@@ -65,6 +65,10 @@ fn a_duplicate_master_name_refuses_the_catalog() {
     );
 }
 
+/// The control-character case moved from the catalog to the source side rather
+/// than being dropped: it is still refused at a boundary, just not at the one
+/// that reports what the book contains. See
+/// `a_catalog_keeps_a_control_character_name_that_a_proposal_may_not_carry`.
 #[test]
 fn unusable_names_are_refused_at_the_boundary() {
     assert_eq!(
@@ -72,7 +76,7 @@ fn unusable_names_are_refused_at_the_boundary() {
         Err(MasterBindingError::NameBlank)
     );
     assert_eq!(
-        MasterCatalog::new(MasterClass::Ledger, ["Alpha\u{7}Traders"]),
+        SourceEntity::new(0, "Alpha\u{7}Traders"),
         Err(MasterBindingError::NameUnsafe)
     );
     let long = "A".repeat(MAX_NAME_CHARS + 1);
@@ -3003,5 +3007,42 @@ fn a_long_repeated_name_is_still_cached() {
     assert_eq!(
         searches, 1,
         "a long repeated name was searched {searches} times"
+    );
+}
+
+/// The catalog is a record of what the book holds; a proposal is input. A real
+/// ledger name can carry a newline, and refusing it removed every other master
+/// with it. A proposed name carrying one is still refused, so the asymmetry is
+/// the point rather than a relaxation.
+#[test]
+fn a_catalog_keeps_a_control_character_name_that_a_proposal_may_not_carry() {
+    let two_line = "Synthetic Two Line\r\nLedger Name";
+
+    let catalog = MasterCatalog::new(MasterClass::Ledger, ["Alpha Traders", two_line])
+        .expect("a newline in one catalog name must not fail the whole catalog");
+    assert_eq!(
+        catalog.master_count(),
+        2,
+        "the master is present and counted, not dropped"
+    );
+
+    assert_eq!(
+        SourceEntity::new(0, two_line)
+            .unwrap_err()
+            .safe_reason_code(),
+        "master_name_unsafe",
+        "a caller-supplied name carrying a control character is still refused"
+    );
+
+    // The unbindable master does not disturb the one beside it.
+    assert_eq!(
+        catalog.exact("Alpha Traders"),
+        Some("Alpha Traders"),
+        "a neighbouring master still resolves exactly"
+    );
+    // And the two-line name is in the catalog, verbatim.
+    assert!(
+        catalog.names().any(|name| name == two_line),
+        "the observed spelling is carried through unchanged"
     );
 }
