@@ -139,7 +139,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-core/src/book_presence.rs",
-      "sha256": "652f57e441b05f4bdb25c8e53e9bcd9000641491e2fb8479c0a6344764b2b54c"
+      "sha256": "46061242d2502a140905c7acbb235d56e3912dd9362930e64c32cfa37083ef53"
     },
     {
       "path": "src-tauri/crates/bridge-tally-core/src/lib.rs",
@@ -331,7 +331,7 @@
     },
     {
       "path": "src-tauri/src/agent_catalog.rs",
-      "sha256": "242c00ddead06e2cebf46970703dc8c8f5831c096b0afd006bd844d9fb7e77f5"
+      "sha256": "17bb10038de049e17dc640b670169c251070ee261634b551c7f80a19b748709b"
     },
     {
       "path": "src-tauri/src/agent_desktop_journal.rs",
@@ -339,7 +339,11 @@
     },
     {
       "path": "src-tauri/src/agent_import.rs",
-      "sha256": "8bebc2497498c905f5eee783251b40b7083695ab958a82b17094159330a8e983"
+      "sha256": "550650306ce7669ec8f11093b1d6e04e6af6af4afbc7489087f59f3ac3188421"
+    },
+    {
+      "path": "src-tauri/src/agent_import_identity.rs",
+      "sha256": "124fbf3d2d255523ce9fc9dbf32502eb3c8dd013c9dd2a7b206eafd966611d89"
     },
     {
       "path": "src-tauri/src/agent_ledgers.rs",
@@ -347,11 +351,11 @@
     },
     {
       "path": "src-tauri/src/agent_presence.rs",
-      "sha256": "040ea6c18ddd73856298d5862b6bac3f8bc805a748d0a404e76543d39fe2f30d"
+      "sha256": "b0fe93b1fc1fee3e24007f3e33ff1325a26ce5f82c2a268361f9b1a5b5b4a11e"
     },
     {
       "path": "src-tauri/src/agent_presence_tests.rs",
-      "sha256": "176d9e0fe32b597b786cf207afa2f864bdfcb0a3d22e9fd80e7c3cf90c05bca7"
+      "sha256": "35ee604a4fd2b85a2804d0d6c54699150cabeb18adce9425c4122cb39e7ff3ee"
     },
     {
       "path": "src-tauri/src/agent_read_profiles.rs",
@@ -831,7 +835,7 @@
     },
     {
       "path": "tools/bridge-tally-compatibility/src/lib.rs",
-      "sha256": "993dfd51072f81d9f8b115d666de0d7830a10eec3a077d7fb690f6f206773b25"
+      "sha256": "c724f92da514be474400792e17997396fc70a7eb14b4404e51a554ae5be1633c"
     },
     {
       "path": "tools/bridge-tally-compatibility/src/main.rs",
@@ -866,5 +870,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "5900ba5282a7771c0cc7f5e894877a43a979d86e8b52045df9cc2a3787b4877d"
+  "manifest_sha256": "db5f21ffc545879bc08501fd9ec37ae13599e9fa0582482de30027a1b6ec81ec"
 }
