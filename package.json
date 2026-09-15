@@ -38,7 +38,9 @@
     "license:check": "node scripts/check-license-metadata.mjs && node scripts/check-dependency-inventory.mjs --frontend",
     "license:rust": "node scripts/check-dependency-inventory.mjs --rust",
     "license:all": "node scripts/check-license-metadata.mjs && node scripts/check-dependency-inventory.mjs",
-    "license:generate:rust": "node scripts/generate-rust-licenses.mjs"
+    "license:generate:rust": "node scripts/generate-rust-licenses.mjs",
+    "license:generate:frontend": "node scripts/generate-frontend-licenses.mjs",
+    "license:generate": "node scripts/generate-rust-licenses.mjs && node scripts/generate-frontend-licenses.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",
