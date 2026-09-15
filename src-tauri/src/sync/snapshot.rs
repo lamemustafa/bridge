@@ -2071,7 +2071,7 @@ where
             PhaseOutcome::Finished(result) => return Ok(*result),
             PhaseOutcome::Continue(state) => state,
         };
-        let mut state = match self
+        let state = match self
             .check_company_identity(plan, state, cancellation)
             .await?
         {
@@ -2079,482 +2079,13 @@ where
             PhaseOutcome::Continue(state) => state,
         };
 
-        state.set_phase(SnapshotPhase::PlanWindows, None);
-        self.state_store.save(&mut state).await?;
-        let mut attempted_leaf_ids = BTreeSet::new();
-        while let Some(planned_owned) = state.executable_leaves().into_iter().find(|planned| {
-            !attempted_leaf_ids.contains(&planned.id)
-                && !state.windows.get(&planned.id).is_some_and(|window| {
-                    window.phase == WindowPhase::Complete
-                        && (plan.pack != CapabilityPackId::CoreAccounting
-                            || window
-                                .evidence
-                                .as_ref()
-                                .and_then(|evidence| evidence.report_tie_out.as_ref())
-                                .is_some())
-                })
-        }) {
-            attempted_leaf_ids.insert(planned_owned.id.clone());
-            let planned = &planned_owned;
-            let completed_with_required_evidence =
-                state.windows.get(&planned.id).is_some_and(|window| {
-                    window.phase == WindowPhase::Complete
-                        && (plan.pack != CapabilityPackId::CoreAccounting
-                            || window
-                                .evidence
-                                .as_ref()
-                                .and_then(|evidence| evidence.report_tie_out.as_ref())
-                                .is_some())
-                });
-            if completed_with_required_evidence {
-                continue;
-            }
-            if let Some(progress) = state.windows.get_mut(&planned.id) {
-                if progress.phase == WindowPhase::Complete {
-                    if plan.pack != CapabilityPackId::CoreAccounting
-                        || progress
-                            .evidence
-                            .as_ref()
-                            .and_then(|evidence| evidence.report_tie_out.as_ref())
-                            .is_some()
-                    {
-                        return Err(SnapshotError::StateInvariant(
-                            "completed_window_report_retry",
-                        ));
-                    }
-                    // Reopen the evidence-gathering path. Normalized mirror
-                    // membership remains immutable and the next completed
-                    // attempt must observe every prior identity again.
-                    progress.phase = WindowPhase::Pending;
-                    progress.stage_receipt = None;
-                    progress.evidence = None;
-                    state.set_phase(SnapshotPhase::PlanWindows, Some(planned.id.clone()));
-                    self.state_store.save(&mut state).await?;
-                }
-            }
-            if cancellation.is_cancelled() {
-                return self
-                    .finish_terminal(plan, state, TerminalKind::Cancelled, "run_cancelled")
-                    .await;
-            }
-
-            set_window_phase(
-                &mut state,
-                planned,
-                WindowPhase::Extracting,
-                SnapshotPhase::Extract,
-            )?;
-            self.state_store.save(&mut state).await?;
-            let context = RequestContext {
-                run_id: plan.run_id.clone(),
-                company: plan.company.clone(),
-                pack: plan.pack,
-                schema_version: plan.pack_schema_version,
-                window: planned.range.clone(),
-                query_profile: planned.query_profile.clone(),
-                filters_sha256: planned.filters_sha256.clone(),
-            };
-            let source_result = match self
-                .await_connector(
-                    &state,
-                    cancellation,
-                    self.connector.read_pack_window(&context),
-                )
-                .await?
-            {
-                ConnectorAwait::Completed(result) => result,
-                ConnectorAwait::Cancelled => {
-                    return self
-                        .finish_terminal(plan, state, TerminalKind::Cancelled, "run_cancelled")
-                        .await;
-                }
-            };
-            let source_window = match source_result {
-                Ok(source_window) => source_window,
-                Err(TallyError::ReadResponseTooLarge {
-                    scope: ReadResponseScope::VoucherWindow,
-                }) => match split_leaf(&mut state, plan, &planned.id)? {
-                    SplitLeafResult::Created => {
-                        // The exact child graph is generation-CAS persisted
-                        // before any child request may be dispatched.
-                        self.state_store.save(&mut state).await?;
-                        if cancellation.is_cancelled() {
-                            return self
-                                .finish_terminal(
-                                    plan,
-                                    state,
-                                    TerminalKind::Cancelled,
-                                    "run_cancelled",
-                                )
-                                .await;
-                        }
-                        continue;
-                    }
-                    SplitLeafResult::MinimumReached => {
-                        return self
-                            .finish_terminal(
-                                plan,
-                                state,
-                                TerminalKind::Failed,
-                                "minimum_window_response_too_large",
-                            )
-                            .await;
-                    }
-                    SplitLeafResult::LeafLimitReached => {
-                        return self
-                            .finish_terminal(
-                                plan,
-                                state,
-                                TerminalKind::Failed,
-                                "adaptive_window_limit_reached",
-                            )
-                            .await;
-                    }
-                },
-                Err(error) => {
-                    let code = tally_error_code(&error);
-                    return self
-                        .finish_terminal(plan, state, terminal_kind(&error), code)
-                        .await;
-                }
-            };
-
-            set_window_phase(
-                &mut state,
-                planned,
-                WindowPhase::Normalizing,
-                SnapshotPhase::Normalize,
-            )?;
-            self.state_store.save(&mut state).await?;
-            let mut canonical = match canonicalize_window(
-                &CanonicalWindowContext {
-                    requested_pack: plan.pack,
-                    schema_version: plan.pack_schema_version,
-                    source_identity: &plan.company.identity,
-                    query_profile: &planned.query_profile,
-                    filters_sha256: &planned.filters_sha256,
-                    external_references: &plan.external_references,
-                    window_id: &planned.id,
-                    requested_window: &planned.range,
-                },
-                &source_window,
-            ) {
-                Ok(canonical) => canonical,
-                Err(error) => {
-                    let code = match error {
-                        ReconciliationError::PackMismatch => "response_pack_mismatch",
-                        ReconciliationError::Serialization => "response_parse_failed",
-                        ReconciliationError::InvalidTypedPack => "typed_pack_validation_failed",
-                        ReconciliationError::InvalidSourceCountEvidence => {
-                            "source_count_evidence_invalid"
-                        }
-                        ReconciliationError::SourceCountScopeMismatch => {
-                            "source_count_scope_mismatch"
-                        }
-                        ReconciliationError::RecordEvidenceMismatch => "record_evidence_mismatch",
-                        ReconciliationError::RecordProvenanceUnavailable => {
-                            "record_provenance_unavailable"
-                        }
-                        ReconciliationError::InvalidInput(_) => "response_validation_failed",
-                    };
-                    return self
-                        .finish_terminal(plan, state, TerminalKind::Failed, code)
-                        .await;
-                }
-            };
-            let mut attempt_warning_codes = BTreeSet::new();
-            if let PackBatch::CoreAccounting(core) = &source_window.batch {
-                if core.has_foreign_master_text_diagnostics() {
-                    attempt_warning_codes.insert(WarningCode::ForeignMasterTextRenderingDegraded);
-                }
-                let report_result = match self
-                    .await_connector(
-                        &state,
-                        cancellation,
-                        self.connector.read_core_period_balance_report(&context),
-                    )
-                    .await?
-                {
-                    ConnectorAwait::Completed(result) => result,
-                    ConnectorAwait::Cancelled => {
-                        return self
-                            .finish_terminal(plan, state, TerminalKind::Cancelled, "run_cancelled")
-                            .await;
-                    }
-                };
-                match report_result {
-                    Ok(report) => {
-                        state.gap_codes.remove("report_tie_out_unavailable");
-                        state.gap_codes.remove("report_tie_out_evidence_invalid");
-                        let report_sha256 = sha256_json(&report)?;
-                        match assess_core_period_report(
-                            core,
-                            &plan.company.identity,
-                            &planned.range,
-                            &report,
-                        ) {
-                            Ok(assessment) => {
-                                canonical.evidence.report_tie_out_scope =
-                                    if assessment.state == TieOutState::Passed {
-                                        crate::sync::reconciliation::ComparisonScope::Window
-                                    } else {
-                                        crate::sync::reconciliation::ComparisonScope::Unavailable
-                                    };
-                                canonical.evidence.report_tie_out = Some(ReportTieOutEvidence {
-                                    source_identity: plan.company.identity.clone(),
-                                    pack: plan.pack,
-                                    pack_schema_version: plan.pack_schema_version,
-                                    query_profile: planned.query_profile.clone(),
-                                    filters_sha256: planned.filters_sha256.clone(),
-                                    from_yyyymmdd: planned.range.from_yyyymmdd.clone(),
-                                    to_yyyymmdd: planned.range.to_yyyymmdd.clone(),
-                                    report_sha256,
-                                    state: assessment.state,
-                                    compared_ledger_count: assessment.compared_ledger_count,
-                                    source_reported_count: report.source_reported_count,
-                                    core_ledger_count: core.ledgers.len() as u64,
-                                });
-                                match assessment.state {
-                                    TieOutState::Passed => {}
-                                    TieOutState::Unavailable => {
-                                        state
-                                            .gap_codes
-                                            .insert("period_report_profile_unobserved".to_string());
-                                    }
-                                    TieOutState::Mismatch => {
-                                        let mut source_ids = assessment
-                                            .mismatched_ledger_source_ids
-                                            .iter()
-                                            .map(|source_id| {
-                                                scoped_mismatch_record_alias(
-                                                    &plan.company.identity.observed_fingerprint,
-                                                    &plan.run_id,
-                                                    &planned.id,
-                                                    source_id,
-                                                )
-                                            })
-                                            .collect::<Vec<_>>();
-                                        source_ids.sort();
-                                        source_ids.dedup();
-                                        source_ids.truncate(20);
-                                        for code in assessment.safe_reason_codes {
-                                            canonical.evidence.mismatches.push(
-                                                ReconciliationMismatch {
-                                                    safe_reason_code: code.to_string(),
-                                                    safe_record_ids: source_ids.clone(),
-                                                },
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                            Err(_) => {
-                                state
-                                    .gap_codes
-                                    .insert("report_tie_out_evidence_invalid".to_string());
-                            }
-                        }
-                    }
-                    Err(_) => {
-                        // Leave evidence absent so a resumed run retries this
-                        // corroborating read before commit. The durable gap
-                        // keeps a one-shot failure truthful if the run proceeds.
-                        state
-                            .gap_codes
-                            .insert("report_tie_out_unavailable".to_string());
-                    }
-                }
-            }
-            set_window_phase(
-                &mut state,
-                planned,
-                WindowPhase::Validating,
-                SnapshotPhase::Validate,
-            )?;
-            self.state_store.save(&mut state).await?;
-            let batch_id = state
-                .batch_id
-                .clone()
-                .ok_or(SnapshotError::StateInvariant("batch_id"))?;
-            let begin = self
-                .mirror
-                .begin_snapshot_window_attempt(BeginSnapshotWindowAttemptInput {
-                    batch_id: batch_id.clone(),
-                    window_id: planned.id.clone(),
-                    started_at_unix_ms: Utc::now().timestamp_millis(),
-                })
-                .await?;
-            if let Some(abandonment) = begin.prior_abandonment {
-                Self::record_attempt_abandonment(&mut state, abandonment);
-            }
-            let attempt = begin.attempt;
-            set_window_phase(
-                &mut state,
-                planned,
-                WindowPhase::Staging,
-                SnapshotPhase::Stage,
-            )?;
-            state
-                .windows
-                .get_mut(&planned.id)
-                .ok_or(SnapshotError::StateInvariant("window"))?
-                .stage_attempt = Some(WindowStageAttempt {
-                warning_codes: attempt_warning_codes,
-                ..WindowStageAttempt::from(&attempt)
-            });
-            self.state_store.save(&mut state).await?;
-
-            let observed_at_unix_ms = Utc::now().timestamp_millis();
-            let mut memberships = Vec::with_capacity(MAX_WINDOW_STAGE_CHUNK);
-            for observation in canonical.observations {
-                let record_key = format!("{}\0{}", observation.object_type, observation.source_id);
-                let membership = match observation.mirror_input(&batch_id, observed_at_unix_ms) {
-                    Ok(input) => SnapshotWindowMembershipInput::Observed {
-                        record_key,
-                        observation: Box::new(input),
-                    },
-                    Err(ReconciliationError::RecordProvenanceUnavailable) => {
-                        // Preserve canonical truth without inventing raw provenance.
-                        state
-                            .gap_codes
-                            .insert("record_provenance_unavailable".to_string());
-                        SnapshotWindowMembershipInput::ProvenanceUnavailable {
-                            record_key,
-                            canonical_sha256: observation.canonical_sha256,
-                            canonical_payload: observation.canonical_payload,
-                            exact_decimals: observation.exact_decimals,
-                            safe_reason_code: "record_provenance_unavailable".to_string(),
-                        }
-                    }
-                    Err(error) => return Err(error.into()),
-                };
-                memberships.push(membership);
-                if memberships.len() == MAX_WINDOW_STAGE_CHUNK {
-                    if cancellation.is_cancelled() {
-                        return self
-                            .finish_terminal(plan, state, TerminalKind::Cancelled, "run_cancelled")
-                            .await;
-                    }
-                    self.state_store.heartbeat(&state).await?;
-                    let chunk = std::mem::replace(
-                        &mut memberships,
-                        Vec::with_capacity(MAX_WINDOW_STAGE_CHUNK),
-                    );
-                    match self
-                        .mirror
-                        .stage_snapshot_window_memberships(&attempt, chunk)
-                        .await
-                    {
-                        Ok(_) => {}
-                        Err(
-                            MirrorError::ObservationConflict
-                            | MirrorError::WindowMembershipConflict,
-                        ) => {
-                            return self
-                                .finish_terminal(
-                                    plan,
-                                    state,
-                                    TerminalKind::Failed,
-                                    "window_membership_replay_conflict",
-                                )
-                                .await;
-                        }
-                        Err(error) => return Err(error.into()),
-                    }
-                }
-            }
-            if !memberships.is_empty() {
-                if cancellation.is_cancelled() {
-                    return self
-                        .finish_terminal(plan, state, TerminalKind::Cancelled, "run_cancelled")
-                        .await;
-                }
-                self.state_store.heartbeat(&state).await?;
-                match self
-                    .mirror
-                    .stage_snapshot_window_memberships(&attempt, memberships)
-                    .await
-                {
-                    Ok(_) => {}
-                    Err(
-                        MirrorError::ObservationConflict | MirrorError::WindowMembershipConflict,
-                    ) => {
-                        return self
-                            .finish_terminal(
-                                plan,
-                                state,
-                                TerminalKind::Failed,
-                                "window_membership_replay_conflict",
-                            )
-                            .await;
-                    }
-                    Err(error) => return Err(error.into()),
-                }
-            }
-            if cancellation.is_cancelled() {
-                return self
-                    .finish_terminal(plan, state, TerminalKind::Cancelled, "run_cancelled")
-                    .await;
-            }
-            let completion = match self
-                .mirror
-                .complete_snapshot_window_attempt(
-                    &attempt,
-                    Utc::now().timestamp_millis(),
-                    serde_json::to_value(&canonical.evidence)
-                        .map_err(|_| SnapshotError::Serialization)?,
-                )
-                .await
-            {
-                Ok(completion) => completion,
-                Err(MirrorError::WindowMembershipDisappeared) => {
-                    state
-                        .gap_codes
-                        .insert("source_changed_during_resume".to_string());
-                    return self
-                        .finish_terminal(
-                            plan,
-                            state,
-                            TerminalKind::Failed,
-                            "source_changed_during_resume",
-                        )
-                        .await;
-                }
-                Err(error) => return Err(error.into()),
-            };
-            Self::record_local_clock_rollback(&mut state, completion.local_clock_moved_backwards);
-            let receipt = completion.receipt;
-            canonical.evidence.record_set_sha256 = Some(receipt.membership_sha256.clone());
-            let progress = state
-                .windows
-                .get_mut(&planned.id)
-                .ok_or(SnapshotError::StateInvariant("window"))?;
-            let attempt_warning_codes = progress
-                .stage_attempt
-                .take()
-                .filter(|staged| {
-                    staged.attempt_id == attempt.attempt_id
-                        && staged.attempt_ordinal == attempt.attempt_ordinal
-                })
-                .ok_or(SnapshotError::StateInvariant("window_attempt"))?
-                .warning_codes;
-            progress.stage_receipt = Some(WindowStageReceipt::from(&receipt));
-            progress.evidence = Some(canonical.evidence);
-            progress.phase = WindowPhase::Complete;
-            state.warning_codes.extend(attempt_warning_codes);
-            state.set_phase(SnapshotPhase::Stage, Some(planned.id.clone()));
-            self.state_store.save(&mut state).await?;
-            if reconciliation_record_budget_exceeded(&state)? {
-                return self
-                    .finish_terminal(
-                        plan,
-                        state,
-                        TerminalKind::Failed,
-                        RECONCILIATION_RECORD_BUDGET_CODE,
-                    )
-                    .await;
-            }
-        }
+        let mut state = match self
+            .plan_and_execute_windows(plan, state, cancellation)
+            .await?
+        {
+            PhaseOutcome::Finished(result) => return Ok(*result),
+            PhaseOutcome::Continue(state) => state,
+        };
 
         if cancellation.is_cancelled() {
             return self
@@ -2829,6 +2360,525 @@ where
                 return Ok(PhaseOutcome::Finished(Box::new(
                     self.finish_terminal(plan, state, terminal_kind(&error), code)
                         .await?,
+                )));
+            }
+        }
+
+        Ok(PhaseOutcome::Continue(state))
+    }
+
+    /// The window phase: plan the executable leaves, then read, canonicalize and
+    /// commit each one until none is left.
+    ///
+    /// This is the largest phase by a wide margin and the only one that loops.
+    /// It is lifted whole rather than split further because its steps share a
+    /// dozen locals per iteration; cutting between them would mean threading
+    /// those through signatures, which trades one long function for several
+    /// coupled ones.
+    async fn plan_and_execute_windows(
+        &self,
+        plan: &SnapshotPlan,
+        mut state: DurableSnapshotState,
+        cancellation: &dyn CancellationSignal,
+    ) -> Result<PhaseOutcome, SnapshotError> {
+        state.set_phase(SnapshotPhase::PlanWindows, None);
+        self.state_store.save(&mut state).await?;
+        let mut attempted_leaf_ids = BTreeSet::new();
+        while let Some(planned_owned) = state.executable_leaves().into_iter().find(|planned| {
+            !attempted_leaf_ids.contains(&planned.id)
+                && !state.windows.get(&planned.id).is_some_and(|window| {
+                    window.phase == WindowPhase::Complete
+                        && (plan.pack != CapabilityPackId::CoreAccounting
+                            || window
+                                .evidence
+                                .as_ref()
+                                .and_then(|evidence| evidence.report_tie_out.as_ref())
+                                .is_some())
+                })
+        }) {
+            attempted_leaf_ids.insert(planned_owned.id.clone());
+            let planned = &planned_owned;
+            let completed_with_required_evidence =
+                state.windows.get(&planned.id).is_some_and(|window| {
+                    window.phase == WindowPhase::Complete
+                        && (plan.pack != CapabilityPackId::CoreAccounting
+                            || window
+                                .evidence
+                                .as_ref()
+                                .and_then(|evidence| evidence.report_tie_out.as_ref())
+                                .is_some())
+                });
+            if completed_with_required_evidence {
+                continue;
+            }
+            if let Some(progress) = state.windows.get_mut(&planned.id) {
+                if progress.phase == WindowPhase::Complete {
+                    if plan.pack != CapabilityPackId::CoreAccounting
+                        || progress
+                            .evidence
+                            .as_ref()
+                            .and_then(|evidence| evidence.report_tie_out.as_ref())
+                            .is_some()
+                    {
+                        return Err(SnapshotError::StateInvariant(
+                            "completed_window_report_retry",
+                        ));
+                    }
+                    // Reopen the evidence-gathering path. Normalized mirror
+                    // membership remains immutable and the next completed
+                    // attempt must observe every prior identity again.
+                    progress.phase = WindowPhase::Pending;
+                    progress.stage_receipt = None;
+                    progress.evidence = None;
+                    state.set_phase(SnapshotPhase::PlanWindows, Some(planned.id.clone()));
+                    self.state_store.save(&mut state).await?;
+                }
+            }
+            if cancellation.is_cancelled() {
+                return Ok(PhaseOutcome::Finished(Box::new(
+                    self.finish_terminal(plan, state, TerminalKind::Cancelled, "run_cancelled")
+                        .await?,
+                )));
+            }
+
+            set_window_phase(
+                &mut state,
+                planned,
+                WindowPhase::Extracting,
+                SnapshotPhase::Extract,
+            )?;
+            self.state_store.save(&mut state).await?;
+            let context = RequestContext {
+                run_id: plan.run_id.clone(),
+                company: plan.company.clone(),
+                pack: plan.pack,
+                schema_version: plan.pack_schema_version,
+                window: planned.range.clone(),
+                query_profile: planned.query_profile.clone(),
+                filters_sha256: planned.filters_sha256.clone(),
+            };
+            let source_result = match self
+                .await_connector(
+                    &state,
+                    cancellation,
+                    self.connector.read_pack_window(&context),
+                )
+                .await?
+            {
+                ConnectorAwait::Completed(result) => result,
+                ConnectorAwait::Cancelled => {
+                    return Ok(PhaseOutcome::Finished(Box::new(
+                        self.finish_terminal(plan, state, TerminalKind::Cancelled, "run_cancelled")
+                            .await?,
+                    )));
+                }
+            };
+            let source_window = match source_result {
+                Ok(source_window) => source_window,
+                Err(TallyError::ReadResponseTooLarge {
+                    scope: ReadResponseScope::VoucherWindow,
+                }) => match split_leaf(&mut state, plan, &planned.id)? {
+                    SplitLeafResult::Created => {
+                        // The exact child graph is generation-CAS persisted
+                        // before any child request may be dispatched.
+                        self.state_store.save(&mut state).await?;
+                        if cancellation.is_cancelled() {
+                            return Ok(PhaseOutcome::Finished(Box::new(
+                                self.finish_terminal(
+                                    plan,
+                                    state,
+                                    TerminalKind::Cancelled,
+                                    "run_cancelled",
+                                )
+                                .await?,
+                            )));
+                        }
+                        continue;
+                    }
+                    SplitLeafResult::MinimumReached => {
+                        return Ok(PhaseOutcome::Finished(Box::new(
+                            self.finish_terminal(
+                                plan,
+                                state,
+                                TerminalKind::Failed,
+                                "minimum_window_response_too_large",
+                            )
+                            .await?,
+                        )));
+                    }
+                    SplitLeafResult::LeafLimitReached => {
+                        return Ok(PhaseOutcome::Finished(Box::new(
+                            self.finish_terminal(
+                                plan,
+                                state,
+                                TerminalKind::Failed,
+                                "adaptive_window_limit_reached",
+                            )
+                            .await?,
+                        )));
+                    }
+                },
+                Err(error) => {
+                    let code = tally_error_code(&error);
+                    return Ok(PhaseOutcome::Finished(Box::new(
+                        self.finish_terminal(plan, state, terminal_kind(&error), code)
+                            .await?,
+                    )));
+                }
+            };
+
+            set_window_phase(
+                &mut state,
+                planned,
+                WindowPhase::Normalizing,
+                SnapshotPhase::Normalize,
+            )?;
+            self.state_store.save(&mut state).await?;
+            let mut canonical = match canonicalize_window(
+                &CanonicalWindowContext {
+                    requested_pack: plan.pack,
+                    schema_version: plan.pack_schema_version,
+                    source_identity: &plan.company.identity,
+                    query_profile: &planned.query_profile,
+                    filters_sha256: &planned.filters_sha256,
+                    external_references: &plan.external_references,
+                    window_id: &planned.id,
+                    requested_window: &planned.range,
+                },
+                &source_window,
+            ) {
+                Ok(canonical) => canonical,
+                Err(error) => {
+                    let code = match error {
+                        ReconciliationError::PackMismatch => "response_pack_mismatch",
+                        ReconciliationError::Serialization => "response_parse_failed",
+                        ReconciliationError::InvalidTypedPack => "typed_pack_validation_failed",
+                        ReconciliationError::InvalidSourceCountEvidence => {
+                            "source_count_evidence_invalid"
+                        }
+                        ReconciliationError::SourceCountScopeMismatch => {
+                            "source_count_scope_mismatch"
+                        }
+                        ReconciliationError::RecordEvidenceMismatch => "record_evidence_mismatch",
+                        ReconciliationError::RecordProvenanceUnavailable => {
+                            "record_provenance_unavailable"
+                        }
+                        ReconciliationError::InvalidInput(_) => "response_validation_failed",
+                    };
+                    return Ok(PhaseOutcome::Finished(Box::new(
+                        self.finish_terminal(plan, state, TerminalKind::Failed, code)
+                            .await?,
+                    )));
+                }
+            };
+            let mut attempt_warning_codes = BTreeSet::new();
+            if let PackBatch::CoreAccounting(core) = &source_window.batch {
+                if core.has_foreign_master_text_diagnostics() {
+                    attempt_warning_codes.insert(WarningCode::ForeignMasterTextRenderingDegraded);
+                }
+                let report_result = match self
+                    .await_connector(
+                        &state,
+                        cancellation,
+                        self.connector.read_core_period_balance_report(&context),
+                    )
+                    .await?
+                {
+                    ConnectorAwait::Completed(result) => result,
+                    ConnectorAwait::Cancelled => {
+                        return Ok(PhaseOutcome::Finished(Box::new(
+                            self.finish_terminal(
+                                plan,
+                                state,
+                                TerminalKind::Cancelled,
+                                "run_cancelled",
+                            )
+                            .await?,
+                        )));
+                    }
+                };
+                match report_result {
+                    Ok(report) => {
+                        state.gap_codes.remove("report_tie_out_unavailable");
+                        state.gap_codes.remove("report_tie_out_evidence_invalid");
+                        let report_sha256 = sha256_json(&report)?;
+                        match assess_core_period_report(
+                            core,
+                            &plan.company.identity,
+                            &planned.range,
+                            &report,
+                        ) {
+                            Ok(assessment) => {
+                                canonical.evidence.report_tie_out_scope =
+                                    if assessment.state == TieOutState::Passed {
+                                        crate::sync::reconciliation::ComparisonScope::Window
+                                    } else {
+                                        crate::sync::reconciliation::ComparisonScope::Unavailable
+                                    };
+                                canonical.evidence.report_tie_out = Some(ReportTieOutEvidence {
+                                    source_identity: plan.company.identity.clone(),
+                                    pack: plan.pack,
+                                    pack_schema_version: plan.pack_schema_version,
+                                    query_profile: planned.query_profile.clone(),
+                                    filters_sha256: planned.filters_sha256.clone(),
+                                    from_yyyymmdd: planned.range.from_yyyymmdd.clone(),
+                                    to_yyyymmdd: planned.range.to_yyyymmdd.clone(),
+                                    report_sha256,
+                                    state: assessment.state,
+                                    compared_ledger_count: assessment.compared_ledger_count,
+                                    source_reported_count: report.source_reported_count,
+                                    core_ledger_count: core.ledgers.len() as u64,
+                                });
+                                match assessment.state {
+                                    TieOutState::Passed => {}
+                                    TieOutState::Unavailable => {
+                                        state
+                                            .gap_codes
+                                            .insert("period_report_profile_unobserved".to_string());
+                                    }
+                                    TieOutState::Mismatch => {
+                                        let mut source_ids = assessment
+                                            .mismatched_ledger_source_ids
+                                            .iter()
+                                            .map(|source_id| {
+                                                scoped_mismatch_record_alias(
+                                                    &plan.company.identity.observed_fingerprint,
+                                                    &plan.run_id,
+                                                    &planned.id,
+                                                    source_id,
+                                                )
+                                            })
+                                            .collect::<Vec<_>>();
+                                        source_ids.sort();
+                                        source_ids.dedup();
+                                        source_ids.truncate(20);
+                                        for code in assessment.safe_reason_codes {
+                                            canonical.evidence.mismatches.push(
+                                                ReconciliationMismatch {
+                                                    safe_reason_code: code.to_string(),
+                                                    safe_record_ids: source_ids.clone(),
+                                                },
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                state
+                                    .gap_codes
+                                    .insert("report_tie_out_evidence_invalid".to_string());
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        // Leave evidence absent so a resumed run retries this
+                        // corroborating read before commit. The durable gap
+                        // keeps a one-shot failure truthful if the run proceeds.
+                        state
+                            .gap_codes
+                            .insert("report_tie_out_unavailable".to_string());
+                    }
+                }
+            }
+            set_window_phase(
+                &mut state,
+                planned,
+                WindowPhase::Validating,
+                SnapshotPhase::Validate,
+            )?;
+            self.state_store.save(&mut state).await?;
+            let batch_id = state
+                .batch_id
+                .clone()
+                .ok_or(SnapshotError::StateInvariant("batch_id"))?;
+            let begin = self
+                .mirror
+                .begin_snapshot_window_attempt(BeginSnapshotWindowAttemptInput {
+                    batch_id: batch_id.clone(),
+                    window_id: planned.id.clone(),
+                    started_at_unix_ms: Utc::now().timestamp_millis(),
+                })
+                .await?;
+            if let Some(abandonment) = begin.prior_abandonment {
+                Self::record_attempt_abandonment(&mut state, abandonment);
+            }
+            let attempt = begin.attempt;
+            set_window_phase(
+                &mut state,
+                planned,
+                WindowPhase::Staging,
+                SnapshotPhase::Stage,
+            )?;
+            state
+                .windows
+                .get_mut(&planned.id)
+                .ok_or(SnapshotError::StateInvariant("window"))?
+                .stage_attempt = Some(WindowStageAttempt {
+                warning_codes: attempt_warning_codes,
+                ..WindowStageAttempt::from(&attempt)
+            });
+            self.state_store.save(&mut state).await?;
+
+            let observed_at_unix_ms = Utc::now().timestamp_millis();
+            let mut memberships = Vec::with_capacity(MAX_WINDOW_STAGE_CHUNK);
+            for observation in canonical.observations {
+                let record_key = format!("{}\0{}", observation.object_type, observation.source_id);
+                let membership = match observation.mirror_input(&batch_id, observed_at_unix_ms) {
+                    Ok(input) => SnapshotWindowMembershipInput::Observed {
+                        record_key,
+                        observation: Box::new(input),
+                    },
+                    Err(ReconciliationError::RecordProvenanceUnavailable) => {
+                        // Preserve canonical truth without inventing raw provenance.
+                        state
+                            .gap_codes
+                            .insert("record_provenance_unavailable".to_string());
+                        SnapshotWindowMembershipInput::ProvenanceUnavailable {
+                            record_key,
+                            canonical_sha256: observation.canonical_sha256,
+                            canonical_payload: observation.canonical_payload,
+                            exact_decimals: observation.exact_decimals,
+                            safe_reason_code: "record_provenance_unavailable".to_string(),
+                        }
+                    }
+                    Err(error) => return Err(error.into()),
+                };
+                memberships.push(membership);
+                if memberships.len() == MAX_WINDOW_STAGE_CHUNK {
+                    if cancellation.is_cancelled() {
+                        return Ok(PhaseOutcome::Finished(Box::new(
+                            self.finish_terminal(
+                                plan,
+                                state,
+                                TerminalKind::Cancelled,
+                                "run_cancelled",
+                            )
+                            .await?,
+                        )));
+                    }
+                    self.state_store.heartbeat(&state).await?;
+                    let chunk = std::mem::replace(
+                        &mut memberships,
+                        Vec::with_capacity(MAX_WINDOW_STAGE_CHUNK),
+                    );
+                    match self
+                        .mirror
+                        .stage_snapshot_window_memberships(&attempt, chunk)
+                        .await
+                    {
+                        Ok(_) => {}
+                        Err(
+                            MirrorError::ObservationConflict
+                            | MirrorError::WindowMembershipConflict,
+                        ) => {
+                            return Ok(PhaseOutcome::Finished(Box::new(
+                                self.finish_terminal(
+                                    plan,
+                                    state,
+                                    TerminalKind::Failed,
+                                    "window_membership_replay_conflict",
+                                )
+                                .await?,
+                            )));
+                        }
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+            }
+            if !memberships.is_empty() {
+                if cancellation.is_cancelled() {
+                    return Ok(PhaseOutcome::Finished(Box::new(
+                        self.finish_terminal(plan, state, TerminalKind::Cancelled, "run_cancelled")
+                            .await?,
+                    )));
+                }
+                self.state_store.heartbeat(&state).await?;
+                match self
+                    .mirror
+                    .stage_snapshot_window_memberships(&attempt, memberships)
+                    .await
+                {
+                    Ok(_) => {}
+                    Err(
+                        MirrorError::ObservationConflict | MirrorError::WindowMembershipConflict,
+                    ) => {
+                        return Ok(PhaseOutcome::Finished(Box::new(
+                            self.finish_terminal(
+                                plan,
+                                state,
+                                TerminalKind::Failed,
+                                "window_membership_replay_conflict",
+                            )
+                            .await?,
+                        )));
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            if cancellation.is_cancelled() {
+                return Ok(PhaseOutcome::Finished(Box::new(
+                    self.finish_terminal(plan, state, TerminalKind::Cancelled, "run_cancelled")
+                        .await?,
+                )));
+            }
+            let completion = match self
+                .mirror
+                .complete_snapshot_window_attempt(
+                    &attempt,
+                    Utc::now().timestamp_millis(),
+                    serde_json::to_value(&canonical.evidence)
+                        .map_err(|_| SnapshotError::Serialization)?,
+                )
+                .await
+            {
+                Ok(completion) => completion,
+                Err(MirrorError::WindowMembershipDisappeared) => {
+                    state
+                        .gap_codes
+                        .insert("source_changed_during_resume".to_string());
+                    return Ok(PhaseOutcome::Finished(Box::new(
+                        self.finish_terminal(
+                            plan,
+                            state,
+                            TerminalKind::Failed,
+                            "source_changed_during_resume",
+                        )
+                        .await?,
+                    )));
+                }
+                Err(error) => return Err(error.into()),
+            };
+            Self::record_local_clock_rollback(&mut state, completion.local_clock_moved_backwards);
+            let receipt = completion.receipt;
+            canonical.evidence.record_set_sha256 = Some(receipt.membership_sha256.clone());
+            let progress = state
+                .windows
+                .get_mut(&planned.id)
+                .ok_or(SnapshotError::StateInvariant("window"))?;
+            let attempt_warning_codes = progress
+                .stage_attempt
+                .take()
+                .filter(|staged| {
+                    staged.attempt_id == attempt.attempt_id
+                        && staged.attempt_ordinal == attempt.attempt_ordinal
+                })
+                .ok_or(SnapshotError::StateInvariant("window_attempt"))?
+                .warning_codes;
+            progress.stage_receipt = Some(WindowStageReceipt::from(&receipt));
+            progress.evidence = Some(canonical.evidence);
+            progress.phase = WindowPhase::Complete;
+            state.warning_codes.extend(attempt_warning_codes);
+            state.set_phase(SnapshotPhase::Stage, Some(planned.id.clone()));
+            self.state_store.save(&mut state).await?;
+            if reconciliation_record_budget_exceeded(&state)? {
+                return Ok(PhaseOutcome::Finished(Box::new(
+                    self.finish_terminal(
+                        plan,
+                        state,
+                        TerminalKind::Failed,
+                        RECONCILIATION_RECORD_BUDGET_CODE,
+                    )
+                    .await?,
                 )));
             }
         }
