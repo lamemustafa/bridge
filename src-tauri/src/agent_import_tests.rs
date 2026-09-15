@@ -278,15 +278,15 @@ fn schema_balance_matcher_rendering_and_ledger_append_are_fail_closed() {
         validate_payload(&unbalanced),
         Err("voucher_not_balanced".to_string())
     );
-    // ASCII case and one trailing space are transformations
-    // `TALLY_PROTOCOL_REFERENCE.md` §9.4b measured Tally performing, so they
-    // name the same live ledger: they bind and report its exact spelling. Only
-    // byte equality is `exact`, which is what build_import_xml admits.
+    // The generic agent catalogue carries no scope-qualified fold authority.
+    // It may offer the observed spelling, but only byte equality is `exact`.
     for wanted in ["bank ", "bank", "BANK"] {
         let matched = one_master_match(wanted, &["Bank"]);
-        assert_eq!(matched["match_state"], "normalized");
+        assert_eq!(matched["match_state"], "near_miss");
+        assert_eq!(matched["reason"], "master_binding_near_miss");
+        assert!(matched.get("exact_live_spelling").is_none());
         assert_eq!(
-            matched["exact_live_spelling"][super::super::PARTY_NAME_MARKER],
+            matched["candidates"][0]["name"][super::super::PARTY_NAME_MARKER],
             "Bank"
         );
     }
@@ -1532,6 +1532,9 @@ fn master_match_bounds_suggestions_before_copying_names_and_preserves_ambiguity(
         "master_binding_no_discriminating_candidate"
     );
     assert_eq!(matched["candidate_count"], 100);
+    // The prefix family was fully materialized even though its names are
+    // deliberately withheld from the listing, so this is an exact union.
+    assert_eq!(matched["candidate_count_is_lower_bound"], false);
     assert_eq!(matched["candidates_truncated"], true);
     assert!(matched["candidates"].as_array().unwrap().is_empty());
     // A family inside the bound is still listed in full.
@@ -1551,6 +1554,10 @@ fn master_match_bounds_suggestions_before_copying_names_and_preserves_ambiguity(
     let limited = one_master_match("Large", &[huge.as_str()]);
     assert_eq!(limited["match_state"], "near_miss");
     assert_eq!(limited["candidate_count"], 1);
+    // The agent's own byte cap can shorten a complete core listing, while
+    // the core count remains exact; this field describes count uncertainty,
+    // not whether this consumer copied every candidate name.
+    assert_eq!(limited["candidate_count_is_lower_bound"], false);
     assert_eq!(limited["candidates_truncated"], true);
     assert!(limited["candidates"].as_array().unwrap().is_empty());
     assert!(!limited.to_string().contains(&huge));
@@ -1593,6 +1600,7 @@ fn a_near_miss_never_names_a_live_spelling_and_retains_its_identity() {
     assert_eq!(matched["reason"], "master_binding_identifier_conflict");
     assert!(matched.get("exact_live_spelling").is_none());
     assert_eq!(matched["candidate_count"], 2);
+    assert_eq!(matched["candidate_count_is_lower_bound"], false);
     assert_eq!(
         matched["unresolved_identity"][0]["value"][super::super::PARTY_NAME_MARKER],
         "5550000001"
@@ -1605,6 +1613,23 @@ fn nothing_defensible_is_reported_missing_with_no_candidate() {
     assert_eq!(matched["match_state"], "missing");
     assert_eq!(matched["reason"], "master_binding_no_candidate");
     assert!(matched["candidates"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn import_recovery_guidance_names_the_state_and_next_safe_read() {
+    let identifier = one_master_match("GAMMA 5550000001", &["GAMMA (5550000001)"]);
+    assert_eq!(identifier["match_state"], "identifier");
+    assert!(identifier.get("reason").is_none());
+    let guidance = master_recovery_guidance(&[
+        identifier,
+        serde_json::json!({"match_state":"missing"}),
+        serde_json::json!({"match_state":"near_miss"}),
+    ]);
+    assert!(guidance.contains("exact_live_spelling"));
+    assert!(guidance.contains("legitimate ledger externally"));
+    assert!(guidance.contains("explicitly select"));
+    assert!(guidance.contains("update the payload to each confirmed exact live spelling"));
+    assert!(guidance.contains("validate_masters again before building"));
 }
 
 #[tokio::test]
@@ -2172,4 +2197,30 @@ async fn current_dispatch_persists_its_reconciliation_verdict_before_returning_t
         simulator.finish().expect("captured plan requests").len(),
         50
     );
+}
+
+#[test]
+fn master_match_byte_cap_retains_narrow_fold_candidate() {
+    let suffix = "α".repeat(880);
+    let source = format!("αβγδεζ/{suffix}");
+    let narrow = format!("αβγδεζ {suffix}");
+    let upper = ['Α', 'Β', 'Γ', 'Δ', 'Ε', 'Ζ'];
+    let lower = ['α', 'β', 'γ', 'δ', 'ε', 'ζ'];
+    let mut names = vec![narrow.clone()];
+    for mask in 1..=10 {
+        let prefix = upper
+            .iter()
+            .zip(lower)
+            .enumerate()
+            .map(|(bit, (u, l))| if mask & (1 << bit) == 0 { *u } else { l })
+            .collect::<String>();
+        names.push(format!("{prefix}/{suffix}"));
+    }
+    assert!(names.iter().map(String::len).sum::<usize>() > 8192);
+    let borrowed = names.iter().map(String::as_str).collect::<Vec<_>>();
+    let rendered = one_master_match(&source, &borrowed);
+    let listed = rendered["candidates"].as_array().unwrap();
+    assert_eq!(listed[0]["name"][super::super::PARTY_NAME_MARKER], narrow);
+    assert!(listed.iter().all(|v| v["rule"] == "normalized_equal"));
+    assert_eq!(rendered["candidates_truncated"], true);
 }

@@ -90,36 +90,25 @@ fn the_measured_transformations_compose() {
     // does on every comparison. Two reviewers raised that independently, so
     // §9.4d measured it rather than arguing it: eight composed variants, all
     // matched, all confirmed by day-book readback against the intended master.
-    let catalog = ledgers(&[
-        "MB PILOT ALPHA (5550001001)",
-        "MB-PROBE-LEDGER-A",
-        "Beta Supply",
-    ]);
+    let catalog = ledgers(&["MB PILOT ALPHA", "MB-PROBE-LEDGER-A", "Beta Supply"]);
     for (supplied, expected) in [
-        (
-            "  mb pilot alpha (5550001001)  ",
-            "MB PILOT ALPHA (5550001001)",
-        ),
-        ("mb-pilot-alpha-(5550001001)", "MB PILOT ALPHA (5550001001)"),
-        (
-            "  mb-pilot-alpha-(5550001001)  ",
-            "MB PILOT ALPHA (5550001001)",
-        ),
-        (
-            "MB/PILOT  ALPHA (5550001001)",
-            "MB PILOT ALPHA (5550001001)",
-        ),
-        ("mb-pilot alpha/(5550001001)", "MB PILOT ALPHA (5550001001)"),
-        (
-            "  mb-pilot/alpha  (5550001001) ",
-            "MB PILOT ALPHA (5550001001)",
-        ),
+        ("  mb pilot alpha  ", "MB PILOT ALPHA"),
+        ("mb-pilot-alpha", "MB PILOT ALPHA"),
+        ("  mb-pilot-alpha  ", "MB PILOT ALPHA"),
+        ("MB/PILOT  ALPHA", "MB PILOT ALPHA"),
+        ("mb-pilot alpha", "MB PILOT ALPHA"),
+        ("  mb-pilot/alpha  ", "MB PILOT ALPHA"),
         ("  mb probe  ledger a ", "MB-PROBE-LEDGER-A"),
     ] {
+        let binding = bind_one_name(&catalog, supplied);
         assert_eq!(
-            bind_one_name(&catalog, supplied).bound_name(),
-            Some(expected),
-            "{supplied:?} did not compose to {expected:?}"
+            binding.bound_name(),
+            None,
+            "{supplied:?} selected {expected:?}"
+        );
+        assert!(
+            candidate_names(&binding).contains(&expected),
+            "{supplied:?} did not offer {expected:?}"
         );
     }
 
@@ -134,9 +123,9 @@ fn the_measured_transformations_compose() {
 }
 
 #[test]
-fn surrounding_and_repeated_whitespace_is_folded_on_both_sides() {
-    // §9.4d: leading whitespace, one trailing space and a collapsed internal
-    // run all matched on licensed 7.1, in both directions.
+fn surrounding_and_repeated_whitespace_is_offered_on_both_sides() {
+    // The historical index can find these spellings, but the unscoped catalog
+    // cannot select them.
     for (master, source) in [
         ("Alpha Traders", "Alpha Traders "),
         ("Alpha Traders ", "Alpha Traders"),
@@ -146,18 +135,17 @@ fn surrounding_and_repeated_whitespace_is_folded_on_both_sides() {
         ("Alpha  Traders", "Alpha Traders"),
     ] {
         let catalog = ledgers(&[master, "Beta Supply"]);
-        assert_eq!(
-            bind_one_name(&catalog, source).bound_name(),
-            Some(master),
-            "{source:?} did not reach {master:?}"
-        );
+        let binding = bind_one_name(&catalog, source);
+        assert_eq!(binding.bound_name(), None, "{source:?} selected {master:?}");
+        assert!(candidate_names(&binding).contains(&master));
     }
 
     // An observed name is still retained byte for byte: a caller writes it back.
     let catalog = ledgers(&["Alpha Traders ", "Beta Supply"]);
     assert_eq!(catalog.names().next(), Some("Alpha Traders "));
     let binding = bind_one_name(&catalog, "Alpha Traders");
-    assert_eq!(binding.bound_name(), Some("Alpha Traders "));
+    assert_eq!(binding.bound_name(), None);
+    assert_eq!(candidate_names(&binding), ["Alpha Traders "]);
     assert_eq!(
         binding.source_name, "Alpha Traders",
         "a source name is recorded as the document wrote it"
@@ -250,16 +238,14 @@ fn an_exact_name_binds() {
 }
 
 #[test]
-fn case_binds_but_an_unverified_fold_only_suggests() {
-    // ASCII case folding is measured, so it resolves.
+fn every_fold_is_a_candidate_in_an_unscoped_catalog() {
+    // ASCII case folding was observed at one gateway, but the generic catalog
+    // cannot turn that observation into authority.
     let cased = ledgers(&["Alpha Traders", "Beta Supply"]);
-    assert_eq!(
-        bind_one_name(&cased, "ALPHA traders").status,
-        BindingStatus::Bound {
-            catalog_name: "Alpha Traders".to_string(),
-            basis: BindingBasis::NormalizedName,
-        }
-    );
+    let folded = bind_one_name(&cased, "ALPHA traders");
+    assert_eq!(folded.bound_name(), None);
+    assert_eq!(reason(&folded), UnboundReason::NearMiss);
+    assert_eq!(candidate_names(&folded), ["Alpha Traders"]);
 
     // An en dash, a collapsed whitespace run and leading whitespace are all on
     // §9.4b's unverified list. The wide fold still reaches the master, so it is
@@ -396,6 +382,57 @@ fn a_single_candidate_still_does_not_bind() {
 }
 
 #[test]
+fn a_narrow_fold_candidate_survives_a_wide_fold_cap() {
+    // `comparison_key` folds Unicode case while the historical candidate index
+    // intentionally does not. Twenty-five slash spellings therefore share the
+    // wide key, while the space spelling is the only narrow-fold candidate.
+    // The report must retain the latter before applying the listing cap.
+    let upper = ['Α', 'Β', 'Γ', 'Δ', 'Ε', 'Ζ'];
+    let lower = ['α', 'β', 'γ', 'δ', 'ε', 'ζ'];
+    let mut names = vec!["ΑΒΓΔΕ Ζ".to_string()];
+    for mask in 1..=MAX_CANDIDATES_PER_ENTITY {
+        let spelling = upper
+            .iter()
+            .zip(lower)
+            .enumerate()
+            .map(|(bit, (upper, lower))| {
+                if mask & (1 << bit) == 0 {
+                    *upper
+                } else {
+                    lower
+                }
+            })
+            .collect::<String>();
+        names.push(format!(
+            "{}{}",
+            &spelling[..spelling.len() - 'Ζ'.len_utf8()],
+            "/ζ"
+        ));
+    }
+    names.extend([
+        "Identifier Alpha (5550001234)".to_string(),
+        "Identifier Beta (5550001234)".to_string(),
+    ]);
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid catalog");
+    let source =
+        SourceEntity::with_identifier_hints(0, "ΑΒΓΔΕ/Ζ", ["5550001234"]).expect("valid source");
+    let binding = bound(&catalog, &[source]).entities()[0].clone();
+    let candidates = binding
+        .unresolved()
+        .expect("candidate-only fold")
+        .candidates
+        .listed();
+    assert_eq!(candidates.len(), MAX_CANDIDATES_PER_ENTITY);
+    assert_eq!(candidates[0].catalog_name, "Identifier Alpha (5550001234)");
+    assert_eq!(candidates[1].catalog_name, "Identifier Beta (5550001234)");
+    assert!(candidates[..2]
+        .iter()
+        .all(|candidate| candidate.rule == CandidateRule::SharedIdentifier));
+    assert_eq!(candidates[2].catalog_name, "ΑΒΓΔΕ Ζ");
+    assert_eq!(candidates[2].rule, CandidateRule::NormalizedEqual);
+}
+
+#[test]
 fn a_truncated_source_name_surfaces_the_longer_master() {
     let catalog = ledgers(&["DELTA WHOLESALE PLACEHOLDER", "Beta Supply"]);
     let binding = bind_one_name(&catalog, "DELTA WHOLESALE PL");
@@ -529,11 +566,9 @@ fn a_decisive_identifier_pointing_elsewhere_still_outranks_a_byte_exact_name() {
 }
 
 #[test]
-fn space_hyphen_and_slash_are_one_separator_in_both_directions() {
-    // `TALLY_PROTOCOL_REFERENCE.md` §9.4d, measured on licensed TallyPrime 7.1
-    // by naming each spelling in a voucher and reading the day book back to see
-    // which master it reached. Both hyphen directions matched, and so did a
-    // slash — so this fold is symmetric, and one key per side is enough.
+fn historical_separator_index_offers_candidates_in_both_directions() {
+    // The symmetric index is candidate discovery only. Its qualified Silver
+    // observation did not establish a generic reverse-direction rule.
     for (master, source) in [
         ("BRIDGE-PROBE-LEDGER-A", "BRIDGE PROBE LEDGER A"),
         ("BRIDGE PROBE LEDGER A", "BRIDGE-PROBE-LEDGER-A"),
@@ -541,20 +576,16 @@ fn space_hyphen_and_slash_are_one_separator_in_both_directions() {
         ("BRIDGE/PROBE/LEDGER/A", "BRIDGE-PROBE-LEDGER-A"),
     ] {
         let catalog = ledgers(&[master, "Beta Supply"]);
-        assert_eq!(
-            bind_one_name(&catalog, source).bound_name(),
-            Some(master),
-            "{source} did not reach {master}"
-        );
+        let binding = bind_one_name(&catalog, source);
+        assert_eq!(binding.bound_name(), None, "{source} selected {master}");
+        assert!(candidate_names(&binding).contains(&master));
     }
 
-    // `X - Y` is a common ledger convention, and it needs the separator step
-    // and the whitespace-run step together. Both are measured, so it resolves.
+    // `X - Y` still appears as a candidate when those transformations compose.
     let spaced_hyphen = ledgers(&["Bank - HDFC Current", "Beta Supply"]);
-    assert_eq!(
-        bind_one_name(&spaced_hyphen, "Bank HDFC Current").bound_name(),
-        Some("Bank - HDFC Current")
-    );
+    let binding = bind_one_name(&spaced_hyphen, "Bank HDFC Current");
+    assert_eq!(binding.bound_name(), None);
+    assert_eq!(candidate_names(&binding), ["Bank - HDFC Current"]);
 
     // An en dash and an underscore were **sent and rejected**. They are not
     // separators to Tally, however much they look like them, so they may only
@@ -644,17 +675,13 @@ fn the_master_fold_stops_where_tally_stops() {
 #[test]
 fn a_trailing_space_never_claims_byte_equality() {
     // `Bank ` against live `Bank` must not report exact: the import file would
-    // still carry the trailing space. Normalized is the correct, loud outcome —
-    // the write gate refuses it.
+    // still carry the trailing space. The generic catalog has no fold authority,
+    // so the observed spelling is offered for an operator to select.
     let catalog = ledgers(&["Bank"]);
     let binding = bind_one_name(&catalog, "Bank ");
-    assert_eq!(
-        binding.status,
-        BindingStatus::Bound {
-            catalog_name: "Bank".to_string(),
-            basis: BindingBasis::NormalizedName,
-        }
-    );
+    assert_eq!(binding.bound_name(), None);
+    assert_eq!(reason(&binding), UnboundReason::NearMiss);
+    assert_eq!(candidate_names(&binding), ["Bank"]);
     assert_eq!(
         binding.source_name, "Bank ",
         "the requested value is echoed verbatim"
@@ -907,8 +934,8 @@ fn a_catalog_is_bounded_by_total_bytes_and_not_only_by_count() {
 fn repeating_one_source_name_does_not_repeat_the_search_or_change_the_answer() {
     // A draft may name one ledger on every row, and the candidate search is not
     // cheap when the name reaches a family. Remembering it must not change what
-    // the report says — the memo is keyed on the source key and the masters its
-    // identifiers reached, which is all `collect_candidates` reads.
+    // the report says — the memo is keyed on both source folds and the masters
+    // its identifiers reached, which are all `collect_candidates` reads.
     let names = (0..60)
         .map(|index| format!("Acme Branch {index:05}"))
         .collect::<Vec<_>>();
@@ -950,8 +977,12 @@ fn repeating_one_source_name_does_not_repeat_the_search_or_change_the_answer() {
     assert_eq!(report.entities()[0].bound_name(), Some("Acme Branch 00007"));
     assert_eq!(
         report.entities()[1].bound_name(),
-        Some("Acme Branch 00007"),
-        "a normalized hit is still a hit"
+        None,
+        "a folded hit must remain a candidate"
+    );
+    assert_eq!(
+        candidate_names(&report.entities()[1]),
+        ["Acme Branch 00007"]
     );
 
     // Same source *name*, different identifier hints. The key is identical, so
@@ -977,6 +1008,37 @@ fn repeating_one_source_name_does_not_repeat_the_search_or_change_the_answer() {
         candidate_names(&report.entities()[1]),
         ["Party Delta (5550001007)", "Party Gamma (5550001007)"],
         "the memo handed one entity another's candidates"
+    );
+}
+
+#[test]
+fn distinct_resolving_folds_never_share_a_candidate_memo_entry() {
+    // `comparison_key` normalizes the en dash to a hyphen, so both source
+    // spellings have one wide key. The resolving fold keeps the en dash as
+    // content, though: only the ASCII-hyphen spelling collides with both
+    // observed catalog names. Different unmatched hints still derive an empty
+    // identifier match set, which made the old `(wide_key, matches)` memo key
+    // hand the first candidate list to the second source.
+    let catalog = ledgers(&["AB/CD", "AB CD", "Beta Supply"]);
+    let entities = vec![
+        SourceEntity::with_identifier_hints(0, "AB-CD", ["5550001001"]).expect("valid"),
+        SourceEntity::with_identifier_hints(1, "AB–CD", ["5550001002"]).expect("valid"),
+    ];
+
+    super::CANDIDATE_SEARCHES.with(|count| count.set(0));
+    let report = bound(&catalog, &entities);
+    assert_eq!(
+        super::CANDIDATE_SEARCHES.with(std::cell::Cell::get),
+        2,
+        "spellings with different resolving folds must each run their own search"
+    );
+    assert_eq!(reason(&report.entities()[0]), UnboundReason::NameAmbiguous);
+    assert_eq!(candidate_names(&report.entities()[0]), ["AB CD", "AB/CD"]);
+    assert_eq!(reason(&report.entities()[1]), UnboundReason::NearMiss);
+    assert_eq!(
+        candidate_names(&report.entities()[1]),
+        ["AB CD"],
+        "the en-dash spelling must not inherit the ASCII-hyphen collision"
     );
 }
 
@@ -1127,16 +1189,13 @@ fn a_date_range_is_dates_even_after_its_separator_is_removed() {
 }
 
 #[test]
-fn a_stock_item_may_suggest_on_a_fold_but_not_resolve_on_one() {
-    // §9.4d measured **ledgers**. Whether stock items match by the same rule
-    // was never sent, so the same folded pair that resolves for a ledger may
-    // only be offered for a stock item.
+fn every_catalog_class_offers_a_fold_without_resolving_it() {
+    // A generic catalog has no scope-qualified authority for either class.
     let folded = ["Sales-Item", "Beta Supply"];
     let ledger = MasterCatalog::new(MasterClass::Ledger, folded).expect("valid");
-    assert_eq!(
-        bind_one_name(&ledger, "sales item").bound_name(),
-        Some("Sales-Item")
-    );
+    let ledger_binding = bind_one_name(&ledger, "sales item");
+    assert_eq!(ledger_binding.bound_name(), None);
+    assert_eq!(candidate_names(&ledger_binding), ["Sales-Item"]);
 
     let items = MasterCatalog::new(MasterClass::StockItem, folded).expect("valid");
     let source = SourceEntity::new(0, "sales item").expect("valid");
@@ -1248,6 +1307,82 @@ fn a_withheld_family_still_reports_how_many_share_the_identifier() {
         unresolved.candidates.is_incomplete(),
         "a count without a listing must say the listing is incomplete"
     );
+}
+
+#[test]
+fn only_withheld_identifier_holder_sets_receive_family_ids() {
+    let names = (0..MAX_CANDIDATES_PER_ENTITY + 1)
+        .map(|index| format!("Party {index:03} (5550007777) (4455{index:06})"))
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let shared_identifier = entity("Source (5550007777)")
+        .identifiers()
+        .first()
+        .cloned()
+        .expect("valid identifier");
+
+    assert!(catalog
+        .by_identifier
+        .values()
+        .any(|holders| holders.len() == 1));
+    assert_eq!(catalog.identifier_family_ids.len(), 1);
+    assert!(catalog
+        .identifier_family_ids
+        .contains_key(&shared_identifier));
+    assert!(catalog.identifier_family_ids.iter().all(|(identifier, _)| {
+        catalog.by_identifier[identifier].len() > MAX_CANDIDATES_PER_ENTITY
+    }));
+}
+
+#[test]
+fn nested_withheld_identifier_families_have_an_exact_union_count() {
+    let names = (0..MAX_CANDIDATES_PER_ENTITY + 1)
+        .map(|index| {
+            if index < MAX_CANDIDATES_PER_ENTITY {
+                format!("Party {index:03} (5550007777) (5550008888)")
+            } else {
+                format!("Party {index:03} (5550007777)")
+            }
+        })
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let source =
+        SourceEntity::with_identifier_hints(0, "Zeta Holdings", ["5550007777", "5550008888"])
+            .expect("valid");
+    let report = bound(&catalog, &[source]);
+    let candidates = &report.entities()[0]
+        .unresolved()
+        .expect("unbound")
+        .candidates;
+    assert_eq!(candidates.found(), MAX_CANDIDATES_PER_ENTITY + 1);
+    assert!(!candidates.count_is_lower_bound());
+}
+
+#[test]
+fn an_unprovable_large_nested_family_remains_a_lower_bound() {
+    let names = (0..300)
+        .map(|index| {
+            if index < 299 {
+                format!("Party {index:03} (5550007777) (5550008888)")
+            } else {
+                format!("Party {index:03} (5550007777)")
+            }
+        })
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let source =
+        SourceEntity::with_identifier_hints(0, "Zeta Holdings", ["5550007777", "5550008888"])
+            .expect("valid");
+    super::WITHHELD_FAMILY_PROBES.with(|count| count.set(0));
+    let report = bound(&catalog, &[source]);
+    let probes = super::WITHHELD_FAMILY_PROBES.with(std::cell::Cell::get);
+    let candidates = &report.entities()[0]
+        .unresolved()
+        .expect("unbound")
+        .candidates;
+    assert_eq!(candidates.found(), 300);
+    assert!(candidates.count_is_lower_bound());
+    assert_eq!(probes, 256, "nested-family proof exceeded its hard budget");
 }
 
 #[test]
@@ -1580,15 +1715,20 @@ fn the_listing_variant_says_what_an_absent_candidate_means() {
         .map(|index| format!("ALPHAGROUP UNIT {index:02}"))
         .collect::<Vec<_>>();
     let family = MasterCatalog::new(MasterClass::Ledger, &family).expect("valid");
+    let binding = bind_one_name(&family, "ALPHAGROUP");
+    let withheld = &binding.unresolved().expect("unbound").candidates;
     assert_eq!(
-        bind_one_name(&family, "ALPHAGROUP")
-            .unresolved()
-            .expect("unbound")
-            .candidates,
-        Candidates::Withheld {
-            found: MAX_PREFIX_FAMILY + 5
+        withheld,
+        &Candidates::Withheld {
+            found: MAX_PREFIX_FAMILY + 5,
+            count_is_lower_bound: false,
         },
         "many exist and none separates them"
+    );
+    assert!(withheld.is_incomplete());
+    assert!(
+        !withheld.count_is_lower_bound(),
+        "the prefix family was materialized, so its union is exact"
     );
 
     let listed = ledgers(&["ALPHA SALE", "ALPHA SALES", "SALES - ALPHA", "Beta Supply"]);
@@ -1604,15 +1744,50 @@ fn only_an_incomplete_listing_may_withhold_an_absence() {
     // present". `None` permits that conclusion; the other two forbid it.
     assert!(!Candidates::None.is_incomplete());
     assert!(!Candidates::Listed { listed: Vec::new() }.is_incomplete());
-    assert!(Candidates::Withheld { found: 30 }.is_incomplete());
-    assert!(Candidates::Truncated {
-        listed: Vec::new(),
-        found: 9
+    assert!(Candidates::Withheld {
+        found: 30,
+        count_is_lower_bound: false,
     }
     .is_incomplete());
+    assert!(Candidates::Truncated {
+        listed: Vec::new(),
+        found: 9,
+        count_is_lower_bound: false,
+    }
+    .is_incomplete());
+    assert!(!Candidates::None.count_is_lower_bound());
+    assert!(!Candidates::Listed { listed: Vec::new() }.count_is_lower_bound());
+    assert!(!Candidates::Withheld {
+        found: 30,
+        count_is_lower_bound: false,
+    }
+    .count_is_lower_bound());
+    assert!(!Candidates::Truncated {
+        listed: Vec::new(),
+        found: 9,
+        count_is_lower_bound: false,
+    }
+    .count_is_lower_bound());
+    assert!(Candidates::Withheld {
+        found: 30,
+        count_is_lower_bound: true,
+    }
+    .count_is_lower_bound());
     // `found` is the total, never the listed length, wherever it is known.
-    assert_eq!(Candidates::Withheld { found: 30 }.found(), 30);
-    assert!(Candidates::Withheld { found: 30 }.listed().is_empty());
+    assert_eq!(
+        Candidates::Withheld {
+            found: 30,
+            count_is_lower_bound: false,
+        }
+        .found(),
+        30
+    );
+    assert!(Candidates::Withheld {
+        found: 30,
+        count_is_lower_bound: false,
+    }
+    .listed()
+    .is_empty());
 }
 
 // --- candidate discipline --------------------------------------------------
@@ -1986,6 +2161,11 @@ fn a_bound_status_serializes_without_a_score_field() {
     assert!(json.get("confidence").is_none());
 }
 
+#[test]
+fn historical_normalized_basis_is_rejected_by_current_bindings() {
+    assert!(serde_json::from_str::<BindingBasis>("\"normalized_name\"").is_err());
+}
+
 // ---------------------------------------------------------------------------
 // Characterization against a realistically shaped book
 //
@@ -2073,18 +2253,21 @@ fn fabricated_document() -> Vec<(&'static str, Option<&'static str>, Expected)> 
         // Named exactly as the book spells it.
         ("Cash", None, Expected::Bound("Cash")),
         ("CGST OUTPUT 9%", None, Expected::Bound("CGST OUTPUT 9%")),
-        // Case noise alone resolves, and so does spacing noise: §9.4d measured
-        // leading whitespace and a collapsed run matching on licensed 7.1.
-        ("cgst output 9%", None, Expected::Bound("CGST OUTPUT 9%")),
+        // Folded spelling is shown for review; it is not a selected master.
+        (
+            "cgst output 9%",
+            None,
+            Expected::Unbound(UnboundReason::NearMiss),
+        ),
         (
             "  cgst   output 9%  ",
             None,
-            Expected::Bound("CGST OUTPUT 9%"),
+            Expected::Unbound(UnboundReason::NearMiss),
         ),
         (
             "beta placeholder trading co",
             None,
-            Expected::Bound("BETA PLACEHOLDER TRADING CO"),
+            Expected::Unbound(UnboundReason::NearMiss),
         ),
         // The engagement case: the source names the party its own way and
         // carries the number in a separate column. Name matching would offer
@@ -2174,8 +2357,8 @@ fn a_document_against_a_realistic_book_binds_only_where_a_human_would() {
     // The shape of the answer, pinned so a loosened threshold moves a number.
     let totals = report.totals();
     assert_eq!(totals.requested, 13);
-    assert_eq!(totals.bound, 8);
-    assert_eq!(totals.ambiguous, 3);
+    assert_eq!(totals.bound, 5);
+    assert_eq!(totals.ambiguous, 6);
     assert_eq!(totals.unmatched, 2);
     assert_eq!(totals.requested, totals.bound + totals.unbound);
 }
@@ -2301,22 +2484,12 @@ fn no_mutation_of_a_master_name_ever_binds_to_a_different_master() {
         checked > 900,
         "the sweep must actually cover the book: {checked}"
     );
-    // Most of this book's mutations are spacing and separator noise, and §9.4d
-    // measured Tally folding all of it on the SKU this writes to — so most of
-    // them resolve again. The per-case invariant above still holds and is the
-    // point: anything the wide fold reaches is bound or shown, never hidden.
-    //
-    // On this book the two folds now agree on every mutation, so the sweep does
-    // **not** exercise the gap between them. The cases that still separate them
-    // — an en dash, an underscore, an NFD spelling — are covered by
-    // `space_hyphen_and_slash_are_one_separator_in_both_directions` and
-    // `two_encodings_of_one_name_are_two_masters_to_tally_and_so_to_this`
-    // instead, and this comment exists so nobody reads a green sweep as
-    // evidence about them.
+    // Exact spellings bind; historical-index mutations remain candidates. The
+    // invariant is that a mutation never reaches another master and any name
+    // the index finds is still shown.
     assert!(
-        self_bound * 2 > checked,
-        "most mutations should resolve once the fold matches the gateway: \
-         {self_bound} bound of {checked}"
+        self_bound > 0,
+        "the sweep must retain byte-exact bindings: {self_bound} bound of {checked}"
     );
     assert!(
         self_bound + self_offered > checked * 2 / 3,
@@ -2427,6 +2600,176 @@ fn a_withheld_family_counts_the_masters_the_other_identifier_listed_too() {
         family + 1 > MAX_CANDIDATES_PER_ENTITY,
         "this fixture no longer exercises the skip"
     );
+    assert!(
+        !unresolved.candidates.count_is_lower_bound(),
+        "one skipped family plus fully materialized matches has an exact union"
+    );
+}
+
+#[test]
+fn a_single_withheld_identifier_family_has_an_exact_count() {
+    let names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Shared Party {index:03} (5550007777)"))
+        .collect::<Vec<_>>();
+    let family = names.len();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let entity =
+        SourceEntity::with_identifier_hints(0, "Unrelated Source", ["5550007777"]).expect("valid");
+
+    let binding = bound(&catalog, &[entity])
+        .entities()
+        .first()
+        .cloned()
+        .expect("one entity in, one binding out");
+    let unresolved = binding.unresolved().expect("identifier conflict");
+    assert_eq!(reason(&binding), UnboundReason::IdentifierConflict);
+    assert_eq!(unresolved.candidates.listing(), "withheld");
+    assert_eq!(unresolved.candidates.found(), family);
+    assert!(!unresolved.candidates.count_is_lower_bound());
+}
+
+#[test]
+fn a_single_withheld_family_counts_an_outside_name_candidate_exactly() {
+    let mut names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Shared Party {index:03} (5550007777)"))
+        .collect::<Vec<_>>();
+    names.push("Zeta Supplier".to_string());
+    let family = MAX_CANDIDATES_PER_ENTITY + 5;
+    let catalog = MasterCatalog::new(MasterClass::StockItem, &names).expect("valid");
+    let entity = SourceEntity::with_identifier_hints(0, "Zeta", ["5550007777"]).expect("valid");
+
+    let binding = bound(&catalog, &[entity])
+        .entities()
+        .first()
+        .cloned()
+        .expect("one entity in, one binding out");
+    let unresolved = binding.unresolved().expect("identifier conflict");
+    assert_eq!(unresolved.candidates.found(), family + 1);
+    assert!(!unresolved.candidates.count_is_lower_bound());
+}
+
+#[test]
+fn a_name_candidate_inside_one_withheld_family_is_not_double_counted() {
+    let names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Shared Party {index:03} (5550007777)"))
+        .collect::<Vec<_>>();
+    let family = names.len();
+    let catalog = MasterCatalog::new(MasterClass::StockItem, &names).expect("valid");
+    let entity =
+        SourceEntity::with_identifier_hints(0, "shared party 00 (5550007777)", []).expect("valid");
+
+    let binding = bound(&catalog, &[entity])
+        .entities()
+        .first()
+        .cloned()
+        .expect("one entity in, one binding out");
+    let unresolved = binding.unresolved().expect("near miss");
+    assert_eq!(unresolved.candidates.found(), family);
+    assert!(!unresolved.candidates.count_is_lower_bound());
+}
+
+#[test]
+fn an_unlisted_name_family_keeps_a_withheld_count_as_a_lower_bound() {
+    let mut names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Shared Party {index:03} (5550007777)"))
+        .collect::<Vec<_>>();
+    names.extend(
+        (0..MAX_CANDIDATES_PER_ENTITY + 5).map(|index| format!("Zeta Supplier {index:02}")),
+    );
+    let catalog = MasterCatalog::new(MasterClass::StockItem, &names).expect("valid");
+    let entity =
+        SourceEntity::with_identifier_hints(0, "Zeta Supplier", ["5550007777"]).expect("valid");
+
+    let binding = bound(&catalog, &[entity])
+        .entities()
+        .first()
+        .cloned()
+        .expect("one entity in, one binding out");
+    let unresolved = binding.unresolved().expect("identifier conflict");
+    assert_eq!(unresolved.candidates.listing(), "withheld");
+    assert!(unresolved.candidates.count_is_lower_bound());
+}
+
+#[test]
+fn disjoint_withheld_identifier_families_are_marked_as_a_lower_bound() {
+    let mut names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Alpha Party {index:03} (5550007777)"))
+        .collect::<Vec<_>>();
+    names.extend(
+        (0..MAX_CANDIDATES_PER_ENTITY + 5)
+            .map(|index| format!("Beta Party {index:03} (5550008888)")),
+    );
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let entity =
+        SourceEntity::with_identifier_hints(0, "Unrelated Source", ["5550007777", "5550008888"])
+            .expect("valid");
+
+    let binding = bound(&catalog, &[entity])
+        .entities()
+        .first()
+        .cloned()
+        .expect("one entity in, one binding out");
+    let unresolved = binding.unresolved().expect("identifier conflict");
+    assert_eq!(unresolved.candidates.listing(), "withheld");
+    assert_eq!(
+        unresolved.candidates.found(),
+        MAX_CANDIDATES_PER_ENTITY + 5,
+        "the conservative count remains the larger known family"
+    );
+    assert!(unresolved.candidates.count_is_lower_bound());
+}
+
+#[test]
+fn identical_withheld_identifier_families_are_counted_once() {
+    let names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+        .map(|index| format!("Twinned Party {index:03} (5550007777) (5550008888)"))
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let entity =
+        SourceEntity::with_identifier_hints(0, "Zeta Holdings", ["5550007777", "5550008888"])
+            .expect("valid");
+
+    let binding = bound(&catalog, &[entity])
+        .entities()
+        .first()
+        .cloned()
+        .expect("one entity in, one binding out");
+    let unresolved = binding.unresolved().expect("identifier conflict");
+    assert_eq!(
+        unresolved.candidates.found(),
+        MAX_CANDIDATES_PER_ENTITY + 5,
+        "identical holder sets are one family"
+    );
+    assert!(!unresolved.candidates.count_is_lower_bound());
+}
+
+#[test]
+fn unmatched_hint_variants_share_one_memo_key_and_compute_once() {
+    let names = (0..60)
+        .map(|index| format!("Acme Branch {index:05}"))
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    // Every raw hint differs, but none reaches a catalog identifier. The memo
+    // key is therefore the same `(acme branch, {})` for every entity.
+    let entities = (0..MAX_CANDIDATE_MEMO_ENTRIES + 4)
+        .map(|index| {
+            SourceEntity::with_identifier_hints(
+                index,
+                "Acme Branch",
+                [format!("5550{index:06}").as_str()],
+            )
+            .expect("valid")
+        })
+        .collect::<Vec<_>>();
+
+    super::CANDIDATE_SEARCHES.with(|count| count.set(0));
+    let report = bound(&catalog, &entities);
+    assert_eq!(report.totals().requested, MAX_CANDIDATE_MEMO_ENTRIES + 4);
+    assert_eq!(
+        super::CANDIDATE_SEARCHES.with(std::cell::Cell::get),
+        1,
+        "different unmatched hints must share their one derived memo key"
+    );
 }
 
 #[test]
@@ -2437,12 +2780,17 @@ fn hint_variants_of_one_name_do_not_crowd_out_a_key_that_repeats() {
     // nothing asks for twice, and the pair that genuinely repeated behind them
     // could no longer be inserted — the same stall as the source-order defect,
     // through a different door.
-    let names = (0..60)
-        .map(|index| format!("Acme Branch {index:05}"))
-        .collect::<Vec<_>>();
+    let mut names = vec!["Acme Branch".to_string()];
+    names.extend(
+        (0..MAX_CANDIDATE_MEMO_ENTRIES)
+            .map(|index| format!("Hint Target {index:05} (5550{index:06})")),
+    );
+    names.push("Repeated Hint Target (5559999999)".to_string());
     let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
 
-    // Distinct hints, one name: same key, different memo key, each asked once.
+    // Distinct hints, one name: each reaches a different master, so each has a
+    // different memo key and is asked only once. The exact source name keeps
+    // all of them on the unresolved candidate path.
     let mut entities = (0..MAX_CANDIDATE_MEMO_ENTRIES)
         .map(|index| {
             SourceEntity::with_identifier_hints(
@@ -2602,5 +2950,58 @@ fn an_ambiguity_lists_every_master_that_caused_it() {
         binding.unresolved().expect("unbound").candidates.found(),
         2,
         "the count agreed with the short list rather than with the collision"
+    );
+}
+
+#[test]
+fn the_listing_word_is_the_one_the_wire_carries() {
+    // `listing()` exists so a projection need not reconstruct the state from
+    // an empty list and a count. If it drifted from the serde tag, a consumer
+    // reading the DTO and a consumer reading the JSON would disagree about the
+    // same binding — so they are asserted against each other, not assumed.
+    let candidate = Candidate {
+        catalog_name: "Alpha Supply".to_string(),
+        rule: CandidateRule::ExactName,
+    };
+    for candidates in [
+        Candidates::None,
+        Candidates::Listed {
+            listed: vec![candidate.clone()],
+        },
+        Candidates::Truncated {
+            listed: vec![candidate],
+            found: 9,
+            count_is_lower_bound: false,
+        },
+        Candidates::Withheld {
+            found: 9,
+            count_is_lower_bound: true,
+        },
+    ] {
+        let json = serde_json::to_value(&candidates).expect("candidates serialize");
+        assert_eq!(
+            json.get("listing").and_then(serde_json::Value::as_str),
+            Some(candidates.listing()),
+            "the accessor and the wire tag disagree about {candidates:?}"
+        );
+    }
+}
+
+#[test]
+fn a_long_repeated_name_is_still_cached() {
+    let name = "Zeta Placeholder Holdings Alpha Branch";
+    assert!(name.len() > MAX_CANDIDATES_PER_ENTITY);
+    let catalog = ledgers(&["Omega Supply", "Beta Supply"]);
+    let entities = (0..6)
+        .map(|position| SourceEntity::new(position, name).expect("valid"))
+        .collect::<Vec<_>>();
+
+    super::CANDIDATE_SEARCHES.with(|count| count.set(0));
+    let report = bound(&catalog, &entities);
+    let searches = super::CANDIDATE_SEARCHES.with(std::cell::Cell::get);
+    assert_eq!(report.totals().requested, 6);
+    assert_eq!(
+        searches, 1,
+        "a long repeated name was searched {searches} times"
     );
 }
