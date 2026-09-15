@@ -309,6 +309,67 @@ fn render_lab_master_collection(company: &str, kind: LabMasterKind) -> Result<St
     ))
 }
 
+/// Accumulates the text of the element currently open so that a value is
+/// written only when that element closes with no child having intervened.
+///
+/// Both lab parsers previously kept a bare `current_tag` and appended every
+/// text event to it at a depth derived from `path`. Tally's real responses
+/// break that: they are CRLF-indented and carry hundreds of self-closing
+/// elements inside a single container -- 274 in one captured inventory entry --
+/// and `trim_text(false)` delivers the whitespace between every pair of
+/// children as its own `Text` event. A self-closing element arrives as
+/// `Event::Empty`, which never updated `current_tag`, so one stale tag absorbed
+/// a whole indentation run. That is bridge#379: an entry's `AMOUNT` read back
+/// as `"-8000.00\r\n      \r\n      ..."` with forty-odd fragments appended.
+///
+/// Buffering removes the ambiguity: text belongs to a field only if that field
+/// is still the innermost open element when it closes.
+#[derive(Default)]
+struct LabTextBuffer {
+    tag: String,
+    text: String,
+    live: bool,
+}
+
+impl LabTextBuffer {
+    /// An element opened. Whatever the enclosing element had accumulated was
+    /// the whitespace between its children, so it is dropped.
+    fn open(&mut self, tag: &str) {
+        self.tag.clear();
+        self.tag.push_str(tag);
+        self.text.clear();
+        self.live = true;
+    }
+
+    /// A self-closing element appeared. Like `open`, it proves the enclosing
+    /// element is a container, but it carries no text of its own.
+    fn abandon(&mut self) {
+        self.text.clear();
+        self.live = false;
+    }
+
+    fn push(&mut self, value: &str) {
+        if self.live {
+            self.text.push_str(value);
+        }
+    }
+
+    /// Yields the field name and value when `end` closes a leaf that actually
+    /// held text. An element with no text yields nothing rather than an empty
+    /// key, so an attribute-supplied value is not overwritten by its own empty
+    /// element.
+    fn close(&mut self, end: &str) -> Option<(String, String)> {
+        let field = if self.live && self.tag == end && !self.text.is_empty() {
+            Some((self.tag.clone(), std::mem::take(&mut self.text)))
+        } else {
+            None
+        };
+        self.text.clear();
+        self.live = false;
+        field
+    }
+}
+
 /// Parses a flat master collection (`<UNIT NAME="...">...</UNIT>` etc, one
 /// level under `COLLECTION`) into raw field maps. Deliberately conservative
 /// like the production parsers: an unexpected non-row child of `COLLECTION`
@@ -324,7 +385,13 @@ fn parse_lab_master_rows(
     let mut path: Vec<String> = Vec::new();
     let mut rows = Vec::new();
     let mut current: Option<BTreeMap<String, String>> = None;
-    let mut current_tag = String::new();
+    // The row's `NAME=` attribute, held aside rather than written straight into
+    // the row. Tally emits both the attribute and a `<NAME>` child element
+    // (`<UNIT NAME="KGS" ...><NAME>KGS</NAME>`), and appending the second onto
+    // the first is what read a unit back as `KGSKGS` -- the other half of
+    // bridge#379. The element is authoritative; the attribute is the fallback.
+    let mut attribute_name: Option<String> = None;
+    let mut buffer = LabTextBuffer::default();
     loop {
         match reader.read_event() {
             Ok(quick_xml::events::Event::Start(event)) => {
@@ -334,13 +401,12 @@ fn parse_lab_master_rows(
                     if tag != row_tag {
                         return Err("agent_read_protocol_invalid".to_string());
                     }
-                    let mut row = BTreeMap::new();
+                    attribute_name = None;
                     for attribute in event.attributes() {
                         let attribute =
                             attribute.map_err(|_| "agent_read_protocol_invalid".to_string())?;
                         if attribute.key.as_ref().eq_ignore_ascii_case(b"NAME") {
-                            row.insert(
-                                "NAME".to_string(),
+                            attribute_name = Some(
                                 attribute
                                     .decoded_and_normalized_value(
                                         quick_xml::XmlVersion::Implicit1_0,
@@ -351,47 +417,62 @@ fn parse_lab_master_rows(
                             );
                         }
                     }
-                    current = Some(row);
+                    current = Some(BTreeMap::new());
                 }
                 path.push(tag.clone());
-                current_tag = tag;
+                buffer.open(&tag);
             }
             Ok(quick_xml::events::Event::Text(text)) => {
-                // `path` includes the just-opened field tag (`current_tag`);
-                // a field belongs to the row if its parent chain is exactly
-                // COLLECTION_PREFIX + [row_tag].
-                let is_row_field = path.len() == 6
-                    && path[..4] == ["ENVELOPE", "BODY", "DATA", "COLLECTION"]
-                    && path[4] == row_tag;
-                if is_row_field {
-                    if let Some(row) = current.as_mut() {
-                        append_agent_text(row, &current_tag, decoded_agent_text(text)?);
-                    }
-                }
+                buffer.push(&decoded_agent_text(text)?);
             }
             // See the identical arm in `agent_lab_import.rs`'s
             // `parse_voucher_readback_nested`: quick_xml delivers an entity
             // reference (`&amp;`, ...) as its own `GeneralRef` event, not
             // inline within `Text`. Without this arm it is silently dropped
             // by the catch-all below -- the exact 2026-09-14 rehearsal bug
-            // that read "Duties & Taxes" back as "Duties  Taxes".
+            // that read "Duties & Taxes" back as "Duties  Taxes". Both event
+            // kinds feed one buffer, so a value split across them is rejoined.
             Ok(quick_xml::events::Event::GeneralRef(reference)) => {
-                let is_row_field = path.len() == 6
-                    && path[..4] == ["ENVELOPE", "BODY", "DATA", "COLLECTION"]
-                    && path[4] == row_tag;
-                if is_row_field {
-                    if let Some(row) = current.as_mut() {
-                        append_agent_text(row, &current_tag, decoded_agent_reference(reference)?);
-                    }
-                }
+                buffer.push(&decoded_agent_reference(reference)?);
             }
+            // Tally splits a scalar across CDATA too: the production parser's
+            // `scalar_content_preserves_cdata_and_rejects_nested_markup` pins
+            // `<AMOUNT><![CDATA[-101.01]]></AMOUNT>` and `-101<![CDATA[.]]>01`
+            // as having to read identically to the plain text. Dropped here,
+            // the first yields nothing and the second yields `-10101` -- a
+            // wrong number that still looks like one. Same buffer, so a value
+            // split across Text, GeneralRef and CDATA rejoins in order.
+            Ok(quick_xml::events::Event::CData(text)) => {
+                buffer.push(
+                    &text
+                        .decode()
+                        .map_err(|_| "agent_read_protocol_invalid".to_string())?,
+                );
+            }
+            Ok(quick_xml::events::Event::Empty(_)) => buffer.abandon(),
             Ok(quick_xml::events::Event::End(event)) => {
                 let end = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
+                // A field belongs to the row when its parent chain is exactly
+                // COLLECTION_PREFIX + [row_tag]; `path` still holds the closing
+                // element, so the parent chain is everything before it.
+                if let Some((field, value)) = buffer.close(&end) {
+                    let is_row_field = path.len() == 6
+                        && path[..4] == ["ENVELOPE", "BODY", "DATA", "COLLECTION"]
+                        && path[4] == row_tag;
+                    if is_row_field {
+                        if let Some(row) = current.as_mut() {
+                            append_agent_text(row, &field, value);
+                        }
+                    }
+                }
                 if path.last().map(String::as_str) == Some(end.as_str())
                     && end == row_tag
                     && path.len() == 5
                 {
-                    if let Some(row) = current.take() {
+                    if let Some(mut row) = current.take() {
+                        if let Some(name) = attribute_name.take() {
+                            row.entry("NAME".to_string()).or_insert(name);
+                        }
                         rows.push(row);
                     }
                 }
@@ -490,7 +571,7 @@ fn parse_lab_inventory_vouchers(xml: &str) -> Result<Vec<Value>, String> {
     let mut batch: Option<BTreeMap<String, String>> = None;
     let mut entries: Vec<Value> = Vec::new();
     let mut batches: Vec<Value> = Vec::new();
-    let mut current_tag = String::new();
+    let mut buffer = LabTextBuffer::default();
     loop {
         match reader.read_event() {
             Ok(quick_xml::events::Event::Start(event)) => {
@@ -509,45 +590,52 @@ fn parse_lab_inventory_vouchers(xml: &str) -> Result<Vec<Value>, String> {
                     batch = Some(BTreeMap::new());
                 }
                 path.push(tag.clone());
-                current_tag = tag;
+                buffer.open(&tag);
             }
             Ok(quick_xml::events::Event::Text(text)) => {
-                let value = decoded_agent_text(text)?;
-                // `path` here includes the just-opened `current_tag`, so a
-                // field at depth N+1 belongs to the container at depth N.
-                if path_is(&path[..path.len().saturating_sub(1)], &BATCH_PREFIX) {
-                    if let Some(row) = batch.as_mut() {
-                        append_agent_text(row, &current_tag, value);
-                    }
-                } else if path_is(&path[..path.len().saturating_sub(1)], &ENTRY_PREFIX) {
-                    if let Some(row) = entry.as_mut() {
-                        append_agent_text(row, &current_tag, value);
-                    }
-                } else if path_is(&path[..path.len().saturating_sub(1)], &VOUCHER_PREFIX) {
-                    if let Some(row) = voucher.as_mut() {
-                        append_agent_text(row, &current_tag, value);
-                    }
-                }
+                buffer.push(&decoded_agent_text(text)?);
             }
-            // Same entity-reference gap as `parse_lab_master_rows` above.
+            // Same entity-reference gap as `parse_lab_master_rows` above; both
+            // event kinds feed one buffer so a value split across them rejoins.
             Ok(quick_xml::events::Event::GeneralRef(reference)) => {
-                let value = decoded_agent_reference(reference)?;
-                if path_is(&path[..path.len().saturating_sub(1)], &BATCH_PREFIX) {
-                    if let Some(row) = batch.as_mut() {
-                        append_agent_text(row, &current_tag, value);
-                    }
-                } else if path_is(&path[..path.len().saturating_sub(1)], &ENTRY_PREFIX) {
-                    if let Some(row) = entry.as_mut() {
-                        append_agent_text(row, &current_tag, value);
-                    }
-                } else if path_is(&path[..path.len().saturating_sub(1)], &VOUCHER_PREFIX) {
-                    if let Some(row) = voucher.as_mut() {
-                        append_agent_text(row, &current_tag, value);
-                    }
-                }
+                buffer.push(&decoded_agent_reference(reference)?);
             }
+            // Tally splits a scalar across CDATA too: the production parser's
+            // `scalar_content_preserves_cdata_and_rejects_nested_markup` pins
+            // `<AMOUNT><![CDATA[-101.01]]></AMOUNT>` and `-101<![CDATA[.]]>01`
+            // as having to read identically to the plain text. Dropped here,
+            // the first yields nothing and the second yields `-10101` -- a
+            // wrong number that still looks like one. Same buffer, so a value
+            // split across Text, GeneralRef and CDATA rejoins in order.
+            Ok(quick_xml::events::Event::CData(text)) => {
+                buffer.push(
+                    &text
+                        .decode()
+                        .map_err(|_| "agent_read_protocol_invalid".to_string())?,
+                );
+            }
+            Ok(quick_xml::events::Event::Empty(_)) => buffer.abandon(),
             Ok(quick_xml::events::Event::End(event)) => {
                 let end = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
+                // `path` still holds the closing element, so its parent chain
+                // names the container the field belongs to. Resolving this at
+                // `End` rather than at each text event is what keeps a
+                // container's own indentation out of its siblings' values.
+                if let Some((field, value)) = buffer.close(&end) {
+                    let parent = &path[..path.len().saturating_sub(1)];
+                    let row = if path_is(parent, &BATCH_PREFIX) {
+                        batch.as_mut()
+                    } else if path_is(parent, &ENTRY_PREFIX) {
+                        entry.as_mut()
+                    } else if path_is(parent, &VOUCHER_PREFIX) {
+                        voucher.as_mut()
+                    } else {
+                        None
+                    };
+                    if let Some(row) = row {
+                        append_agent_text(row, &field, value);
+                    }
+                }
                 let closing_batch = end == "BATCHALLOCATIONS.LIST" && path_is(&path, &BATCH_PREFIX);
                 let closing_entry =
                     end == "ALLINVENTORYENTRIES.LIST" && path_is(&path, &ENTRY_PREFIX);
@@ -914,6 +1002,334 @@ mod tests {
             parse_lab_inventory_vouchers(xml),
             Err("agent_read_protocol_invalid".to_string())
         );
+    }
+
+    /// Builds one inventory response twice over. `separator` is what the
+    /// gateway puts between sibling elements: `""` for a compact response and a
+    /// CRLF indent for a pretty-printed one. Both are shapes the real gateway
+    /// returns -- the captured `units` collection is compact while the captured
+    /// inventory days are indented -- and bridge#379 only ever reproduced on the
+    /// indented one, which is why every fixture here predating it was compact.
+    ///
+    /// Synthetic throughout: the captured payloads that established this shape
+    /// are from the client book and stay out of the repository.
+    fn synthetic_inventory_vouchers(count: usize, separator: &str) -> String {
+        let mut parts: Vec<String> = [
+            "<ENVELOPE>",
+            "<HEADER>",
+            "<STATUS>1</STATUS>",
+            "</HEADER>",
+            "<BODY>",
+            "<DATA>",
+            "<COLLECTION>",
+        ]
+        .iter()
+        .map(|part| part.to_string())
+        .collect();
+        for index in 1..=count {
+            parts.extend([
+                "<VOUCHER>".to_string(),
+                format!("<DATE>2026040{index}</DATE>"),
+                // A self-closing element arrives as `Event::Empty`. It never
+                // updated the old `current_tag`, so the stale tag before it
+                // went on absorbing every indentation run that followed; one
+                // captured inventory entry holds 274 of these.
+                "<NARRATION/>".to_string(),
+                format!("<VOUCHERNUMBER>{index}</VOUCHERNUMBER>"),
+                "<VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>".to_string(),
+                // Entity reference: quick_xml splits this across Text and
+                // GeneralRef events, which must rejoin into one value.
+                "<PARTYLEDGERNAME>Fixture Supplies &amp; Co</PARTYLEDGERNAME>".to_string(),
+                format!("<GUID>fixture-guid-{index}</GUID>"),
+                "<ISCANCELLED>No</ISCANCELLED>".to_string(),
+                "<ALLINVENTORYENTRIES.LIST>".to_string(),
+                "<STOCKITEMNAME>Sodium Bicarbonate</STOCKITEMNAME>".to_string(),
+                "<ACTIVEFROM/>".to_string(),
+                "<ACTIVETO/>".to_string(),
+                "<RATE>80.00/Kgs</RATE>".to_string(),
+                "<AMOUNT>-8000.00</AMOUNT>".to_string(),
+                "<ACTUALQTY> 100.000 Kgs</ACTUALQTY>".to_string(),
+                "<BILLEDQTY> 100.000 Kgs</BILLEDQTY>".to_string(),
+                // The entry names a godown and so does each batch under it.
+                // That pair is what read back as "Main Location\r\n      ":
+                // the whitespace closing the batch landed on the entry's own
+                // field, because the tag that had just closed was still live.
+                "<GODOWNNAME>Main Location</GODOWNNAME>".to_string(),
+                "<BATCHALLOCATIONS.LIST>".to_string(),
+                "<BATCHNAME>Batch-01</BATCHNAME>".to_string(),
+                "<GODOWNNAME>Main Location</GODOWNNAME>".to_string(),
+                "<ACTUALQTY> 60.000 Kgs</ACTUALQTY>".to_string(),
+                "<BILLEDQTY> 60.000 Kgs</BILLEDQTY>".to_string(),
+                "<AMOUNT>-4800.00</AMOUNT>".to_string(),
+                // A third level of nesting, as real purchases carry. Nothing
+                // inside it may reach the batch or the entry.
+                "<ACCOUNTINGALLOCATIONS.LIST>".to_string(),
+                "<LEDGERNAME>Sales Account</LEDGERNAME>".to_string(),
+                "<AMOUNT>-4800.00</AMOUNT>".to_string(),
+                "</ACCOUNTINGALLOCATIONS.LIST>".to_string(),
+                "</BATCHALLOCATIONS.LIST>".to_string(),
+                // One stock item split across two batches in two godowns.
+                "<BATCHALLOCATIONS.LIST>".to_string(),
+                "<BATCHNAME>Batch-02</BATCHNAME>".to_string(),
+                "<GODOWNNAME>Second Location</GODOWNNAME>".to_string(),
+                "<ACTUALQTY> 40.000 Kgs</ACTUALQTY>".to_string(),
+                "<BILLEDQTY> 40.000 Kgs</BILLEDQTY>".to_string(),
+                "<AMOUNT>-3200.00</AMOUNT>".to_string(),
+                "</BATCHALLOCATIONS.LIST>".to_string(),
+                "</ALLINVENTORYENTRIES.LIST>".to_string(),
+                "</VOUCHER>".to_string(),
+            ]);
+        }
+        parts.extend(
+            ["</COLLECTION>", "</DATA>", "</BODY>", "</ENVELOPE>"]
+                .iter()
+                .map(|part| part.to_string()),
+        );
+        parts.join(separator)
+    }
+
+    const INDENT: &str = "\r\n      ";
+
+    /// Mirrors the captured `units` collection: Tally names the unit in the
+    /// row's `NAME=` attribute *and* repeats it in a `<NAME>` child element.
+    fn synthetic_unit_collection_with_name_elements(separator: &str) -> String {
+        let parts = [
+            "<ENVELOPE>",
+            "<HEADER>",
+            "<STATUS>1</STATUS>",
+            "</HEADER>",
+            "<BODY>",
+            "<DATA>",
+            "<COLLECTION>",
+            "<UNIT NAME=\"Kgs\" RESERVEDNAME=\"\">",
+            "<ACTIVEFROM/>",
+            "<ACTIVETO/>",
+            "<NAME>Kgs</NAME>",
+            "<ISSIMPLEUNIT>Yes</ISSIMPLEUNIT>",
+            "<DECIMALPLACES>3</DECIMALPLACES>",
+            // A nested container: its own indentation must not become a field
+            // of the unit, and neither must its children's values.
+            "<REPORTINGUQCDETAILS.LIST>",
+            "<APPLICABLEFROM>20250401</APPLICABLEFROM>",
+            "<REPORTINGUQCNAME>KGS</REPORTINGUQCNAME>",
+            "</REPORTINGUQCDETAILS.LIST>",
+            "</UNIT>",
+            // No `<NAME>` child at all: the attribute has to stand in for it.
+            "<UNIT NAME=\"Nos\" RESERVEDNAME=\"\">",
+            "<ISSIMPLEUNIT>Yes</ISSIMPLEUNIT>",
+            "<DECIMALPLACES>0</DECIMALPLACES>",
+            "</UNIT>",
+            "</COLLECTION>",
+            "</DATA>",
+            "</BODY>",
+            "</ENVELOPE>",
+        ];
+        parts.join(separator)
+    }
+
+    #[test]
+    fn a_unit_name_element_does_not_double_the_name_attribute() {
+        // bridge#379: `<UNIT NAME="Kgs"><NAME>Kgs</NAME>` seeded the row from
+        // the attribute and then appended the element onto it, reading back as
+        // "KgsKgs". The element is authoritative; the attribute is a fallback.
+        for separator in ["", INDENT] {
+            let xml = synthetic_unit_collection_with_name_elements(separator);
+            let rows = parse_lab_master_rows(&xml, "Unit").unwrap();
+            assert_eq!(rows.len(), 2, "separator {separator:?}");
+            assert_eq!(rows[0].get("NAME").map(String::as_str), Some("Kgs"));
+            assert_eq!(rows[0].get("DECIMALPLACES").map(String::as_str), Some("3"));
+            // The attribute still stands in where no element supplies a name.
+            assert_eq!(rows[1].get("NAME").map(String::as_str), Some("Nos"));
+            assert_eq!(
+                lab_master_json(LabMasterKind::Unit, &rows[0])["name"],
+                json!(party_name("Kgs"))
+            );
+            assert_eq!(
+                lab_master_json(LabMasterKind::Unit, &rows[1])["name"],
+                json!(party_name("Nos"))
+            );
+        }
+    }
+
+    #[test]
+    fn an_indented_master_row_keeps_nested_containers_out_of_its_fields() {
+        let xml = synthetic_unit_collection_with_name_elements(INDENT);
+        let rows = parse_lab_master_rows(&xml, "Unit").unwrap();
+        for (key, value) in &rows[0] {
+            assert!(
+                !value.contains('\r') && !value.contains('\n'),
+                "{key} carries an indentation fragment: {value:?}"
+            );
+            assert!(
+                !value.trim().is_empty(),
+                "{key} is a phantom whitespace-only field"
+            );
+        }
+        // The nested list is a container, never a field of the unit, and its
+        // children belong to it rather than to the row above.
+        assert!(!rows[0].contains_key("REPORTINGUQCDETAILS.LIST"));
+        assert!(!rows[0].contains_key("APPLICABLEFROM"));
+        assert!(!rows[0].contains_key("REPORTINGUQCNAME"));
+    }
+
+    #[test]
+    fn an_indented_inventory_response_parses_exactly_like_a_compact_one() {
+        // The acceptance condition on bridge#379: both shapes are real, and
+        // they must agree field for field.
+        let indented = parse_lab_inventory_vouchers(&synthetic_inventory_vouchers(2, INDENT))
+            .expect("indented response parses");
+        let compact = parse_lab_inventory_vouchers(&synthetic_inventory_vouchers(2, ""))
+            .expect("compact response parses");
+        assert_eq!(indented, compact);
+    }
+
+    #[test]
+    fn indented_inventory_fields_equal_the_fixture_values_exactly() {
+        let rows = parse_lab_inventory_vouchers(&synthetic_inventory_vouchers(1, INDENT)).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["date"], "20260401");
+        assert_eq!(rows[0]["voucher_number"], "1");
+        assert_eq!(rows[0]["party"], json!(party_name("Fixture Supplies & Co")));
+
+        let entries = rows[0]["inventory_entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry["stock_item"], "Sodium Bicarbonate");
+        assert_eq!(entry["rate"], "80.00/Kgs");
+        assert_eq!(entry["amount"], "-8000.00");
+        // The leading space is Tally's own and must survive intact; only
+        // the indentation that followed the value was ever spurious.
+        assert_eq!(entry["actual_qty"], " 100.000 Kgs");
+        assert_eq!(entry["billed_qty"], " 100.000 Kgs");
+        // The reported symptom, verbatim: this came back "Main Location\r\n      ".
+        assert_eq!(entry["godown"], "Main Location");
+
+        let batches = entry["batch_allocations"].as_array().unwrap();
+        assert_eq!(batches.len(), 2);
+        assert_eq!(batches[0]["batch"], "Batch-01");
+        assert_eq!(batches[0]["godown"], "Main Location");
+        assert_eq!(batches[0]["actual_qty"], " 60.000 Kgs");
+        assert_eq!(batches[0]["amount"], "-4800.00");
+        assert_eq!(batches[1]["batch"], "Batch-02");
+        assert_eq!(batches[1]["godown"], "Second Location");
+        assert_eq!(batches[1]["billed_qty"], " 40.000 Kgs");
+
+        // Nothing anywhere in the tree carries a whitespace tail.
+        assert_no_accumulation(&rows[0]);
+    }
+
+    /// Walks every string in the parsed tree and fails on the accumulation
+    /// signature: a line break inside a value, or a trailing whitespace run.
+    ///
+    /// Deliberately not a blanket `trim` check. Tally left-pads a quantity
+    /// with one real space, holding the sign position: every `ACTUALQTY` and
+    /// `BILLEDQTY` across the captured inventory days carries it. Trimming
+    /// values in the parser would corrupt correct output while appearing to fix
+    /// bridge#379, so the fixtures below carry that shape and assert it exactly.
+    fn assert_no_accumulation(value: &Value) {
+        match value {
+            Value::String(text) => {
+                assert!(
+                    !text.contains('\r') && !text.contains('\n'),
+                    "value carries a line break: {text:?}"
+                );
+                assert_eq!(
+                    text.trim_end(),
+                    text,
+                    "value carries a trailing indentation run: {text:?}"
+                );
+            }
+            Value::Array(items) => items.iter().for_each(assert_no_accumulation),
+            Value::Object(fields) => fields.values().for_each(assert_no_accumulation),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn parsed_size_scales_with_voucher_count_rather_than_with_indentation() {
+        // The accumulation inflated a parsed window in proportion to how many
+        // elements followed each field, which is what pushed a full month past
+        // `agent_response_too_large`. The control is that the same vouchers,
+        // sent indented and compact, parse to the same number of bytes: on the
+        // pre-fix parser the indented form was the wider of the two.
+        let width = |count: usize, separator: &str| {
+            parse_lab_inventory_vouchers(&synthetic_inventory_vouchers(count, separator))
+                .unwrap()
+                .iter()
+                .map(|row| serde_json::to_string(row).unwrap().len())
+                .sum::<usize>()
+        };
+        for count in [1, 4] {
+            assert_eq!(
+                width(count, INDENT),
+                width(count, ""),
+                "{count} indented vouchers parse wider than the same compact ones"
+            );
+        }
+        // And what is left grows with the voucher count alone. GUIDs and dates
+        // differ by a character or two between vouchers, so allow a small
+        // constant rather than demanding an exact multiple.
+        assert!(
+            width(4, INDENT).abs_diff(width(1, INDENT) * 4) < 16,
+            "parsed width {} is not four times {}",
+            width(4, INDENT),
+            width(1, INDENT)
+        );
+    }
+
+    #[test]
+    fn nested_accounting_allocations_stay_out_of_the_batch_and_the_entry() {
+        let rows = parse_lab_inventory_vouchers(&synthetic_inventory_vouchers(1, INDENT)).unwrap();
+        let entries = rows[0]["inventory_entries"].as_array().unwrap();
+        let batches = entries[0]["batch_allocations"].as_array().unwrap();
+        // The accounting allocation under Batch-01 also carries an AMOUNT.
+        // It must not overwrite or extend the batch's own, nor the entry's.
+        assert_eq!(batches[0]["amount"], "-4800.00");
+        assert_eq!(entries[0]["amount"], "-8000.00");
+    }
+
+    #[test]
+    fn a_scalar_split_across_cdata_rejoins_in_both_parsers() {
+        // The production parser pins this shape in
+        // `scalar_content_preserves_cdata_and_rejects_nested_markup`: a value
+        // carried in or split by a CDATA section must read identically to the
+        // same value as plain text. `Event::CData` is its own event, so a
+        // parser without an arm for it drops the fragment silently -- and for
+        // an AMOUNT that yields a wrong number that still looks like one.
+        let voucher = |amount: &str| {
+            format!(
+                "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+<VOUCHER><DATE>20260401</DATE><VOUCHERNUMBER>1</VOUCHERNUMBER>\
+<VOUCHERTYPENAME>Sales</VOUCHERTYPENAME><GUID>fixture-guid-1</GUID>\
+<ISCANCELLED>No</ISCANCELLED>\
+<ALLINVENTORYENTRIES.LIST><STOCKITEMNAME>Sodium Bicarbonate</STOCKITEMNAME>\
+<AMOUNT>{amount}</AMOUNT></ALLINVENTORYENTRIES.LIST>\
+</VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"
+            )
+        };
+        let plain = parse_lab_inventory_vouchers(&voucher("-101.01")).unwrap();
+        for split in [
+            "-101<![CDATA[.]]>01",
+            "<![CDATA[-101.01]]>",
+            "-101<![CDATA[.01]]>",
+        ] {
+            let got = parse_lab_inventory_vouchers(&voucher(split)).unwrap();
+            assert_eq!(got, plain, "inventory parser lost the CDATA in {split:?}");
+        }
+
+        // The same for a master row's scalar.
+        let unit = |places: &str| {
+            format!(
+                "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+<UNIT NAME=\"Kgs\"><NAME>Kgs</NAME><DECIMALPLACES>{places}</DECIMALPLACES></UNIT>\
+</COLLECTION></DATA></BODY></ENVELOPE>"
+            )
+        };
+        let plain = parse_lab_master_rows(&unit("3"), "Unit").unwrap();
+        for split in ["<![CDATA[3]]>", "<![CDATA[]]>3"] {
+            let got = parse_lab_master_rows(&unit(split), "Unit").unwrap();
+            assert_eq!(got, plain, "master parser lost the CDATA in {split:?}");
+        }
     }
 
     #[test]

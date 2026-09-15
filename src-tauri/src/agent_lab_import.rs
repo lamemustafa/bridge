@@ -1932,7 +1932,12 @@ fn parse_voucher_readback_nested(xml: &str) -> Result<Vec<ObservedVoucher>, Stri
     let mut voucher: Option<BTreeMap<String, String>> = None;
     let mut entry: Option<BTreeMap<String, String>> = None;
     let mut entries: Vec<(String, String, String)> = Vec::new();
-    let mut current_tag = String::new();
+    // Same discipline as the two parsers in `agent_lab.rs`, and for the same
+    // reason (bridge#379): a real Tally response is CRLF-indented and dense
+    // with self-closing elements, so tracking the last-opened tag lets one
+    // stale tag absorb a whole indentation run. Here that corrupted `AMOUNT`
+    // on a read-back entry, which is what the import mismatch report compares.
+    let mut buffer = LabTextBuffer::default();
     const VOUCHER_PREFIX: [&str; 5] = ["ENVELOPE", "BODY", "DATA", "COLLECTION", "VOUCHER"];
     const ENTRY_PREFIX: [&str; 6] = [
         "ENVELOPE",
@@ -1956,20 +1961,10 @@ fn parse_voucher_readback_nested(xml: &str) -> Result<Vec<ObservedVoucher>, Stri
                     entry = Some(BTreeMap::new());
                 }
                 path.push(tag.clone());
-                current_tag = tag;
+                buffer.open(&tag);
             }
             Ok(quick_xml::events::Event::Text(text)) => {
-                let value = decoded_agent_text(text)?;
-                let parent = &path[..path.len().saturating_sub(1)];
-                if parent == ENTRY_PREFIX {
-                    if let Some(row) = entry.as_mut() {
-                        append_agent_text(row, &current_tag, value);
-                    }
-                } else if parent == VOUCHER_PREFIX {
-                    if let Some(row) = voucher.as_mut() {
-                        append_agent_text(row, &current_tag, value);
-                    }
-                }
+                buffer.push(&decoded_agent_text(text)?);
             }
             // quick_xml delivers a general entity/character reference
             // (`&amp;`, `&#4;`, ...) as its own `GeneralRef` event, separate
@@ -1984,20 +1979,34 @@ fn parse_voucher_readback_nested(xml: &str) -> Result<Vec<ObservedVoucher>, Stri
             // agent_company_checkpoint.rs, source_draft_xml.rs) already
             // handles this event; the lab read-back path did not.
             Ok(quick_xml::events::Event::GeneralRef(reference)) => {
-                let value = decoded_agent_reference(reference)?;
-                let parent = &path[..path.len().saturating_sub(1)];
-                if parent == ENTRY_PREFIX {
-                    if let Some(row) = entry.as_mut() {
-                        append_agent_text(row, &current_tag, value);
-                    }
-                } else if parent == VOUCHER_PREFIX {
-                    if let Some(row) = voucher.as_mut() {
-                        append_agent_text(row, &current_tag, value);
-                    }
-                }
+                buffer.push(&decoded_agent_reference(reference)?);
             }
+            // And the same CDATA gap: a scalar split across a CDATA section
+            // read back short, silently. All three event kinds feed one buffer.
+            Ok(quick_xml::events::Event::CData(text)) => {
+                buffer.push(
+                    &text
+                        .decode()
+                        .map_err(|_| "agent_read_protocol_invalid".to_string())?,
+                );
+            }
+            Ok(quick_xml::events::Event::Empty(_)) => buffer.abandon(),
             Ok(quick_xml::events::Event::End(event)) => {
                 let end = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
+                // `path` still holds the closing element, so its parent chain
+                // names the row the field belongs to.
+                if let Some((field, value)) = buffer.close(&end) {
+                    let parent = &path[..path.len().saturating_sub(1)];
+                    if parent == ENTRY_PREFIX {
+                        if let Some(row) = entry.as_mut() {
+                            append_agent_text(row, &field, value);
+                        }
+                    } else if parent == VOUCHER_PREFIX {
+                        if let Some(row) = voucher.as_mut() {
+                            append_agent_text(row, &field, value);
+                        }
+                    }
+                }
                 if end == "ALLLEDGERENTRIES.LIST" && path.as_slice() == ENTRY_PREFIX {
                     if let Some(row) = entry.take() {
                         entries.push((
