@@ -233,18 +233,22 @@ fn reason(entry: &VoucherPresence) -> UndecidedReason {
 
 // --- the window is a claim about a window ------------------------------
 
+/// A window's completeness gate moved from construction to verdict
+/// production (see `PresenceStatus::Absent`'s doc comment and `decide`): a
+/// `Partial` read is still a legal `BookWindow`, and it retains its own
+/// `read()` rather than having it checked once and discarded, because
+/// `decide` needs it every time it would otherwise settle `Absent`.
 #[test]
-fn a_partial_read_can_never_become_a_window() {
-    let error = BookWindow::observed(
+fn a_partial_read_can_become_a_window_that_remembers_it_was_partial() {
+    let window = BookWindow::observed(
         "20260801",
         "20260831",
         WindowRead::Partial,
         RemoteIdEvidence::Observed,
         Vec::new(),
     )
-    .expect_err("a partial read is not a window");
-    assert_eq!(error, PresenceError::WindowIncomplete);
-    assert_eq!(error.safe_reason_code(), "presence_window_incomplete");
+    .expect("a partial read is still a window");
+    assert_eq!(window.read(), WindowRead::Partial);
 }
 
 #[test]
@@ -1814,7 +1818,6 @@ fn a_window_bounds_aggregate_ledger_key_bytes_before_indexing() {
 #[test]
 fn every_error_carries_a_distinct_stable_reason_code() {
     let codes = [
-        PresenceError::WindowIncomplete,
         PresenceError::WindowRangeInvalid,
         PresenceError::WindowTooLarge,
         PresenceError::WindowLedgerMembershipsTooMany,
@@ -1837,7 +1840,7 @@ fn every_error_carries_a_distinct_stable_reason_code() {
     .iter()
     .map(PresenceError::safe_reason_code)
     .collect::<BTreeSet<_>>();
-    assert_eq!(codes.len(), 19);
+    assert_eq!(codes.len(), 18);
     assert!(codes.iter().all(|code| code.starts_with("presence_")));
 }
 
@@ -2288,6 +2291,71 @@ fn the_same_proposal_is_absent_when_the_window_did_read_remote_ids() {
         .build()];
     let report = run(
         &window,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    assert!(only(&report).is_absent());
+}
+
+// --- a window not proven complete is not a window that found nothing ----
+//
+// This is the safety invariant the construction-time refusal used to buy:
+// `PresenceStatus::Absent` must be unreachable from a window whose `read` is
+// `Partial`. The gate moved to `decide` (see `PresenceStatus::Absent`'s doc
+// comment), so it is proven here instead of by the type system refusing to
+// build the window at all.
+
+#[test]
+fn a_partial_window_withholds_absent_even_when_nothing_resembles_the_proposal() {
+    let partial = BookWindow::observed(
+        "20260801",
+        "20260831",
+        WindowRead::Partial,
+        RemoteIdEvidence::Observed,
+        vec![BookRow::new("book-1", "20260819", "AA0130")
+            .party("Bravo Industries")
+            .build()],
+    )
+    .expect("a partial read is still a window");
+    let proposals = [ProposalRow::new(0, "20260812", "AA0777")
+        .party("Charlie Minerals")
+        .rows(vec![
+            ["Charlie Minerals", "-55.00"],
+            ["Sales Account", "55.00"],
+        ])
+        .build()];
+    let report = run(
+        &partial,
+        &catalog(),
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+    let entry = only(&report);
+    assert!(
+        !entry.is_absent(),
+        "the window's own read never covered its whole declared range"
+    );
+    assert_eq!(reason(entry), UndecidedReason::WindowNotProvenComplete);
+}
+
+/// The mirror of the test above: identical window contents and an identical
+/// proposal, differing only in `WindowRead`. Without this pair, the first
+/// test could pass for the wrong reason -- because `Absent` had broken
+/// generally, not because `Partial` specifically withholds it.
+#[test]
+fn the_same_proposal_is_absent_against_the_same_contents_read_completely() {
+    let complete =
+        window(&[BookRow::new("book-1", "20260819", "AA0130").party("Bravo Industries")]);
+    let proposals = [ProposalRow::new(0, "20260812", "AA0777")
+        .party("Charlie Minerals")
+        .rows(vec![
+            ["Charlie Minerals", "-55.00"],
+            ["Sales Account", "55.00"],
+        ])
+        .build()];
+    let report = run(
+        &complete,
         &catalog(),
         &numbering(NumberingMethod::Manual),
         &proposals,
