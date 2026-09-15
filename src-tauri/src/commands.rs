@@ -58,9 +58,6 @@ use bridge_tally_core::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager, State};
-use zeroize::Zeroizing;
-
-const MAX_DSC_PIN_BYTES: usize = 128;
 
 #[path = "commands_trial_balance.rs"]
 pub(crate) mod trial_balance;
@@ -2890,47 +2887,6 @@ pub async fn prepare_gst_return_draft(request: GstDraftRequest) -> Result<GstRet
     Err("GST return drafting is not implemented; Bridge did not produce a GST result".to_string())
 }
 
-async fn run_dsc_probe(
-    detect_only: bool,
-    pins: Option<Zeroizing<Vec<String>>>,
-) -> Result<crate::dsc::ProbeReport, String> {
-    tokio::task::spawn_blocking(move || {
-        let pins = pins.map(|mut pins| std::mem::take(&mut *pins));
-        crate::dsc::run_probe_isolated(detect_only, None, pins, true)
-            .map_err(|error| error.to_string())
-    })
-    .await
-    .map_err(|error| format!("DSC probe task failed: {error}"))?
-}
-
-#[tauri::command]
-pub async fn detect_dsc_token() -> Result<crate::dsc::ProbeReport, String> {
-    run_dsc_probe(true, None).await
-}
-
-#[tauri::command]
-pub async fn extract_dsc_certificates(
-    pins: Option<Vec<String>>,
-) -> Result<crate::dsc::ProbeReport, String> {
-    let pins = Zeroizing::new(
-        pins.ok_or_else(|| "PIN is required to extract DSC certificates".to_string())?,
-    );
-    validate_dsc_pins(&pins)?;
-    run_dsc_probe(false, Some(pins)).await
-}
-
-fn validate_dsc_pins(pins: &[String]) -> Result<(), String> {
-    if pins.len() != 1 || pins[0].is_empty() {
-        return Err("Provide exactly one non-empty PIN".to_string());
-    }
-    if pins[0].len() > MAX_DSC_PIN_BYTES || pins[0].chars().any(char::is_control) {
-        return Err(
-            "DSC PIN must be at most 128 bytes and contain no control characters".to_string(),
-        );
-    }
-    Ok(())
-}
-
 #[tauri::command]
 pub async fn validate_axal_credentials(
     credentials: crate::axal::AxalCredentials,
@@ -2952,15 +2908,6 @@ pub async fn check_axal_connection_status(
 #[tauri::command]
 pub fn revoke_axal_credential_session(credential_session_id: String) -> Result<(), String> {
     crate::axal::revoke_credential_session(&credential_session_id)
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub async fn sync_dsc_certificates_to_axal(
-    request: crate::axal::DscSyncRequest,
-) -> Result<crate::axal::DscSyncResponse, String> {
-    crate::axal::sync_dsc_certificates(request)
-        .await
         .map_err(|error| error.to_string())
 }
 
@@ -3095,7 +3042,7 @@ mod tests {
         party_ledger_master_currency_admission_error, party_ledger_master_runtime_command_error,
         portable_export_file_name, prepare_client_group_label_migration_from_labels,
         reconcile_review_cleanup, reviewed_probe_commitment_sha256, selected_read_observation,
-        tally_command_error, tally_runtime_command_error, validate_dsc_pins,
+        tally_command_error, tally_runtime_command_error,
         verify_observed_company_tuple_from_companies, write_unique_download,
         ClientGroupLabelMigrationPreparationError, CompanySweepFailure, OutstandingsRequest,
         PersistedTallyCompany, SavedTallySetup, SelectedCompanyIdentity, VerifiedCompanyIdentity,
@@ -3264,15 +3211,6 @@ mod tests {
             "must not silently substitute a replacement character: {error}"
         );
         assert!(error.to_lowercase().contains("unicode"));
-    }
-
-    #[test]
-    fn dsc_pin_input_is_strictly_bounded() {
-        assert!(validate_dsc_pins(&["1234".to_string()]).is_ok());
-        assert!(validate_dsc_pins(&["".to_string()]).is_err());
-        assert!(validate_dsc_pins(&["1\n2".to_string()]).is_err());
-        assert!(validate_dsc_pins(&["x".repeat(129)]).is_err());
-        assert!(validate_dsc_pins(&["1".to_string(), "2".to_string()]).is_err());
     }
 
     #[test]

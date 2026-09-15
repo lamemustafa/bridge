@@ -385,7 +385,7 @@ corepack pnpm run license:all
    app, and mounted DMG inspections for `LICENSE`, `NOTICE`,
    `THIRD_PARTY_LICENSES.txt`, and `THIRD_PARTY_LICENSES_RUST.txt`; manually
    inspect signed candidates again before publication.
-6. Exercise Tally, DSC, documents, sync, and persistence using synthetic data;
+6. Exercise Tally, documents, sync, and persistence using synthetic data;
    attach redacted evidence to the release PR.
    Keep repository-synthetic parser qualification receipts separate from the
    live Tally compatibility matrix: they cannot establish a product release,
