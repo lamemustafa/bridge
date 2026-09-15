@@ -6195,6 +6195,63 @@ def test_pre_replacement_backup_pin_fstat_failure_is_a_typed_path_change(m):
         assert not list(pathlib.Path(directory).glob("*.bak"))
 
 
+def test_final_loop_backup_pin_fstat_failure_is_a_typed_path_change(m):
+    """The control #353 asks for: let **every swap succeed**, then fail the
+    *backup* pin inspection in the final validation loop.
+
+    Two conditions have to hold together, and getting either wrong makes the
+    test vacuous. My first attempt failed the next `fstat` after a swap and
+    passed against the unfixed code, because it was being caught by
+    `_require_single_owned_link`'s wrapper -- which already converted it -- and
+    never reached the handler under test.
+
+    So the failure is armed only after `os.replace` has run *and* is applied
+    only to a descriptor known to be a backup pin. The existing backup-pin
+    regression injects before replacement and exits through the per-swap
+    handler; this one cannot.
+    """
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "out.xml"
+        destination.write_text("old bytes")
+        real_copy, real_replace, real_fstat = (
+            m._copy_private_backup, m.os.replace, m.os.fstat)
+        backup_pins, swapped = set(), []
+
+        def record_backup(source_path, identity, backup_handle):
+            result = real_copy(source_path, identity, backup_handle)
+            backup_pins.add(backup_handle)
+            return result
+
+        def arm_after_swap(source, target):
+            result = real_replace(source, target)
+            swapped.append(target)
+            m.os.fstat = fail_backup_pin_only
+            return result
+
+        def fail_backup_pin_only(handle):
+            if handle in backup_pins:
+                m.os.fstat = real_fstat
+                raise OSError("controlled final-loop backup pin fstat failure")
+            return real_fstat(handle)
+
+        m._copy_private_backup = record_backup
+        m.os.replace = arm_after_swap
+        try:
+            refusal = refuses(m, "output_path_changed", m.write_outputs,
+                              [(str(destination), "new bytes")])
+        finally:
+            m._copy_private_backup = real_copy
+            m.os.replace = real_replace
+            m.os.fstat = real_fstat
+
+        assert swapped, "the control must reach the final loop, not fail earlier"
+        assert "rollback copy ownership could not be verified before commit" in str(
+            refusal.code), f"expected the final-loop refusal, got: {refusal.code}"
+        assert not list(pathlib.Path(directory).glob("*.part"))
+
+
 def test_pre_replacement_original_pin_fstat_failure_is_a_typed_path_change(m):
     """An original descriptor inspection error cannot escape as an OSError."""
     if os.name == "nt":
