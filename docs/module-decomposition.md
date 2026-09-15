@@ -1,6 +1,6 @@
 # Decomposing a large module
 
-Bridge has fourteen production files over 2,000 lines and five over 3,500. They are
+Bridge has fourteen production files over 2,000 lines and six over 3,500. They are
 hard to read, hard to review, and hard to hold in mind. This is how to split one,
 and — more importantly — what will go wrong if you split it the obvious way.
 
@@ -13,8 +13,16 @@ disagree in one place that matters.
 pinned file silently removes the extracted code from it.**
 
 The parent's hash changes, `scripts/reseal.sh` succeeds, `reseal.sh --verify`
-passes, and CI is green. Nothing reports that the sealed set now covers less code
-than it did. The seal shrank by exactly what you moved.
+passes, and CI is green. The seal shrank by exactly what you moved.
+
+There is one net, and it is worth stating precisely because it is narrow:
+`validate_required_directory_coverage` fails closed for two directories
+(`src-tauri/src/db/migrations`, `src-tauri/src/reports`) and for four named
+`REQUIRED_SURFACE_FILES` — `agent_catalog.rs`, `agent_desktop_journal.rs`,
+`agent_ledgers.rs`, `source_draft/lifecycle.rs`. Outside those six rules nothing is
+examined at all: `validate_files` and `rehash_files` iterate the manifest's own
+list, so a file that ought to be pinned and is not is not a check that fails — it
+is a check nobody asked.
 
 So:
 
@@ -26,11 +34,25 @@ anything:
 > **A pinned file's collaborators are pinned or explicitly exempted.**
 
 Nothing asserts this today, and the boundary shows it. `agent_import.rs` is
-pinned; **every one of its six direct child modules is not** — 1,336 lines,
-including `agent_import_post.rs` (641 lines, the posting path) and
-`agent_import_cash_bank.rs` (402 lines, which decides which side the cash/bank
-leg sits on and guards a Contra from being filed into the Payment register, a
-mistake its own comment notes "Tally accepts without complaint").
+pinned and has **eight** non-test child modules. **One** is pinned —
+`agent_desktop_journal.rs`, and only because it sits on the hard-coded
+`REQUIRED_SURFACE_FILES` list, not because it is a child. The other seven are
+**1,859 lines outside the seal**:
+
+| lines | module |
+|---:|---|
+| 641 | `agent_import_post.rs` — the posting path |
+| 402 | `agent_import_cash_bank.rs` |
+| 310 | `agent_import_ledger.rs` |
+| 213 | `agent_desktop_journal_review.rs` |
+| 187 | `agent_import_persistence.rs` |
+| 71 | `agent_import_schema.rs` |
+| 35 | `agent_import_identity.rs` |
+
+`agent_import_cash_bank.rs` is the sharpest: it holds `LegRequirement` and the
+rules deciding which side the cash/bank ledger sits on for Payment versus Receipt
+versus Contra, including the guard against a Contra being filed into the Payment
+register — a mistake its own comment notes Tally "accepts without complaint".
 
 So the module that *renders* the qualified write shape is sealed and the module
 that *decides* it is not. Some of those exclusions may be deliberate. The
@@ -72,22 +94,41 @@ enormous function, and that is a different defect with a different fix.
 Measure both. Per file, take each function's span and compare the longest to the
 median:
 
+Every figure below is **brace-matched** — the span from a function's opening brace
+to its matching close — not inferred from where the next `fn` starts. The two
+disagree, and inferring gave me wrong numbers the first time.
+
 | ratio | lines | fns | median | longest | file :: function |
 |---:|---:|---:|---:|---:|---|
-| 49x | 443 | 19 | 6 | 296 | `agent_voucher_parse.rs :: parse_agent_rows_with_accounting_state` |
-| 37x | 3669 | 83 | 22 | **811** | `sync/snapshot.rs :: run` |
-| 26x | 1568 | 69 | 13 | 333 | `bridge-tally-transport/src/lib.rs :: execute_with_transport` |
-| 21x | 6486 | 169 | 19 | 396 | `bridge-tally-protocol/src/lib.rs :: parse_native_ledger_collection_row_with_master_fields` |
+| 67x | 1231 | 61 | 3 | 202 | `bridge-tally-protocol/src/bills_payments_observation.rs :: parse_unbound_party_outstanding_observation` |
+| 59x | 1028 | 56 | 3 | 178 | `bridge-tally-protocol/src/india_tax_observation.rs :: parse_unbound_india_tax_observation` |
+| 49x | 443 | 19 | 6 | 295 | `agent_voucher_parse.rs :: parse_agent_rows_with_accounting_state` |
+| 45x | 3669 | 83 | 18 | **811** | `sync/snapshot.rs :: run` |
+| 34x | 2278 | 66 | 9 | 307 | `bridge-tally-core/src/book_presence.rs :: decide` |
 
-`snapshot.rs::run` is **811 lines in one function** (brace-matched, not inferred
-from the next `fn`) and its file ranks only eighth by size — a size-ranked list
-never surfaces it. `agent_voucher_parse.rs` is 443 lines and would never be
-looked at at all.
+`snapshot.rs::run` is **811 lines in one function** and its file ranks only eighth
+by size — a size-ranked list never surfaces it. `agent_voucher_parse.rs` is 443
+lines and would never be looked at at all. Both top entries are 1,000-line parser
+files nobody would call large.
 
-The converse also holds here, and is why size stays on the list: the biggest files
-are 11-21x with medians of 19-32 and 112-171 functions each. They are not one
-giant function wearing a file as a coat; they are many cohesive small things in
-one place. That is a module problem, and the ratio says nothing about it.
+The converse also holds, and is why size stays on the list. The biggest files:
+
+| ratio | lines | fns | median | file |
+|---:|---:|---:|---:|---|
+| 28.8x | 6508 | 169 | 13 | `bridge-tally-protocol/src/lib.rs` |
+| 20.9x | 5441 | 171 | 18 | `tally/runtime.rs` |
+| 19.3x | 4684 | 147 | 15 | `commands.rs` |
+| 17.7x | 5919 | 112 | 21 | `db/tally_mirror.rs` |
+
+Their medians are 13-21 — the functions are small. They are not one giant function
+wearing a file as a coat; they are 112-171 cohesive small things in one place.
+That is a module problem, and the ratio does not distinguish it from the
+single-huge-function case: `lib.rs` at 28.8x scores *worse* than `snapshot.rs`
+would on median alone, for an entirely different reason.
+
+**So the ratio is a detector, not a ranking.** Use it to find files a size list
+misses; use the file size and function count to tell which of the two defects you
+are looking at.
 
 **So run both triggers and treat them as naming different defects.** One 800-line
 function is extracted into named steps within its module. A 6,000-line module of
@@ -109,9 +150,13 @@ already scheduled for removal is work thrown away twice.
 subject — ledger, voucher, company, group — puts one file on the path of a change
 to one Tally collection, which is how changes actually arrive here.
 
-Measure before choosing. Clustering `bridge-tally-protocol/src/lib.rs`'s 209 items
-by subject gives ledger 2,246 lines, shared XML 969, company 657, voucher 647 —
-seams that were already there, not ones a design imposed.
+Measure before choosing. Clustering `bridge-tally-protocol/src/lib.rs`'s items by
+subject puts roughly a third of the file on ledger handling, with shared XML,
+company and voucher each several hundred lines behind it — seams that were already
+there, not ones a design imposed. Treat that as a direction to look, not a
+specification: the clustering is keyword-based and a second pass with different
+keywords moved every figure, so it says which groups exist and not how big they
+are to the line.
 
 **Do not reach for a new crate.** Crate boundaries cost compile time and dependency
 management and are worth it only when they enforce a boundary that must not be
@@ -132,7 +177,8 @@ easiest to narrow, because you are already touching every reference.
 
 ## Tests
 
-The established pattern here, used in 95 places:
+The established pattern here — `#[path]` appears 101 times in all, 63 of them
+pointing at a `*_tests.rs` file and 20 in exactly this `mod tests;` form:
 
 ```rust
 #[cfg(test)]
@@ -168,8 +214,9 @@ has cost a CI round at least once.
 
 A pure move should be provably pure:
 
-- **Test count before and after must match exactly.** `#395` moved 14,400 lines and
-  held 919 tests on both sides; that number is the evidence, not the diff.
+- **Test count before and after must match exactly.** #395 moved **8,465 lines**
+  into two new test files and held **919 tests** on both sides; that count is the
+  evidence, not the diff.
 - `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings
   -A clippy::pedantic`, and the full suite on **both** workspaces (`src-tauri/` and
   `tools/` — a `--workspace` run in one does not touch the other).
