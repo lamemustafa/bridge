@@ -1236,3 +1236,67 @@ fn a_ledger_name_holding_a_newline_keeps_its_row_rather_than_failing_the_catalog
          and round-trips back to Tally as the import spelling"
     );
 }
+
+/// The protocol crate carries its own copy of the deceptive-character set, and
+/// it is the one on the real read path: `observed_standard_ledger_name` runs on
+/// every name a book returns. A Devanagari ledger spelled with ZWNJ must survive
+/// it, or one such master fails the whole catalog -- the same shape as the
+/// two-line name, on a book type Indian practice is full of.
+#[test]
+fn a_devanagari_ledger_spelled_with_a_joiner_keeps_its_catalog() {
+    let bytes = include_bytes!("fixtures/agent/native-ledger-catalogue.utf16le.xml");
+    let original = String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .expect("captured catalog is UTF-16LE");
+
+    let baseline = parse_standard_ledger_catalog_with_identities(
+        &original,
+        "WR2 Unicode Lab",
+        "61c6de69-1748-461c-ad3f-162cb949df9f",
+    )
+    .expect("captured catalog parses")
+    .names()
+    .count();
+
+    // `क` + virama + ZWNJ + `ष` -- the joiner suppresses the conjunct, which is
+    // ordinary spelling rather than anything hidden.
+    let indic = "\u{915}\u{94d}\u{200c}\u{937} \u{92c}\u{93f}\u{932}";
+    let document = original.replace("Bridge Nested Debtor WR4", indic);
+
+    let catalog = parse_standard_ledger_catalog_with_identities(
+        &document,
+        "WR2 Unicode Lab",
+        "61c6de69-1748-461c-ad3f-162cb949df9f",
+    )
+    .expect("a ZWNJ in one ledger name must not fail the whole catalog");
+
+    let names = catalog.names().collect::<Vec<_>>();
+    assert_eq!(names.len(), baseline, "the master is kept, not dropped");
+    assert!(
+        names.contains(&indic),
+        "and its spelling is carried through verbatim, joiner included"
+    );
+
+    // The neighbours in the same span are still refused, so this narrowed the
+    // set rather than abandoning it.
+    for refused in ['\u{200B}', '\u{200E}', '\u{202E}'] {
+        let spoofed = original.replace(
+            "Bridge Nested Debtor WR4",
+            &format!("Bridge{refused}Nested Debtor WR4"),
+        );
+        assert!(
+            parse_standard_ledger_catalog_with_identities(
+                &spoofed,
+                "WR2 Unicode Lab",
+                "61c6de69-1748-461c-ad3f-162cb949df9f",
+            )
+            .is_err(),
+            "U+{:04X} carries no orthographic role and must stay refused",
+            refused as u32
+        );
+    }
+}
