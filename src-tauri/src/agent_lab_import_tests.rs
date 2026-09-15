@@ -897,14 +897,17 @@ fn voucher_readback_survives_an_indented_response_and_cdata() {
     // bridge#379 again, in the third parser of the same family: this one is
     // what the import mismatch report compares, so an AMOUNT that grows an
     // indentation tail reports a false mismatch against a target Tally has
-    // stored correctly. Real gateway responses are CRLF-indented and dense
+    // stored correctly. The nested allocation carries a `STATUS` element --
+    // Tally's own name for a bank data field, and the bridge#378 shape -- so
+    // this also holds the two fixes together: the envelope must be accepted
+    // (bridge#389) and the nested field must not reach the entry above it. Real gateway responses are CRLF-indented and dense
     // with self-closing elements, and `Event::Empty` never disturbed the
     // tag being accumulated into.
     let entry = |amount: &str| {
         format!(
             "<ALLLEDGERENTRIES.LIST>\r\n      <LEDGERNAME>Bank Account</LEDGERNAME>\r\n      \
 <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>\r\n      <AMOUNT>{amount}</AMOUNT>\r\n      \
-<BANKALLOCATIONS.LIST>\r\n      <BANKNAME>Fixture Bank</BANKNAME>\r\n      </BANKALLOCATIONS.LIST>\r\n      \
+<BANKALLOCATIONS.LIST>\r\n      <STATUS>No</STATUS>\r\n      </BANKALLOCATIONS.LIST>\r\n      \
 </ALLLEDGERENTRIES.LIST>"
         )
     };
