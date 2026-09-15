@@ -145,8 +145,8 @@ the gap rather than silently leaving it uncovered):
 `tests/fixtures/*/PROVENANCE.md` pattern (a per-fixture line naming where the
 bytes came from, and — for a fixture asserted as byte-exact captured evidence
 — its size and SHA-256) to every directory `check-fixture-byte-integrity.mjs`
-already covers. **Fails today**: 82 of 125 fixtures across the four covered
-directories have no provenance mention at all (59/100 in
+already covers. **Fails today**: 51 of 125 fixtures across the four covered
+directories have no provenance mention at all (28/101 in
 `bridge-tally-protocol/tests/fixtures`, all 20/20 in
 `tally-protocol-simulator/fixtures`, both 2/2 in
 `docs/tally/compatibility/fixtures`, 1/3 in `scripts/fixtures`) — hence
@@ -258,7 +258,7 @@ dependencies beyond Node and `git ls-files`.
 | rustfmt | `rustfmt.toml` (no new step; existing `rust-format` job covers it) | BLOCKING (already is) | 0 files would change |
 | clippy default groups | existing `-D warnings` steps, `-A clippy::pedantic` appended | BLOCKING (already is, unchanged) | 0 warnings (unchanged by this PR) |
 | clippy pedantic | `lint-pedantic-advisory` job (new) | REPORTING | 1,199 warnings (1,150 + 49) |
-| Fixture provenance | `check-fixture-provenance.mjs` | REPORTING | 82/125 fixtures undocumented |
+| Fixture provenance | `check-fixture-provenance.mjs` | REPORTING | 51/125 fixtures undocumented |
 | Unbounded reads | `check-unbounded-reads.mjs` | BLOCKING | 0 unbounded (3 reviewed exceptions) |
 | PII regex regression coverage | `check-pii-regex-regression-coverage.mjs` | BLOCKING | clean (0 regex edits in this diff) |
 | Parser accept/reject symmetry | `check-parser-test-symmetry.mjs` | BLOCKING | clean (0 parser files in this diff) |

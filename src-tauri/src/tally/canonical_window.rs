@@ -665,6 +665,87 @@ mod tests {
         build_core_window(&context(), groups(), ledgers, voucher_types(), vouchers).unwrap()
     }
 
+    /// A balanced two-entry Receipt whose entry flags are given by the caller,
+    /// so the two halves of the bridge#392 contract are built from one fixture
+    /// and can be read as a pair. `Cash -100.00` wants `Yes` and `Sales 100.00`
+    /// wants `No`; passing anything else inverts that leg.
+    use bridge_tally_core::reconciliation;
+
+    fn voucher_with_entry_flags(
+        cash_flag: &str,
+        sales_flag: &str,
+    ) -> ParsedExport<ParsedSourceRecord<TallyVoucher>> {
+        parse_voucher_source_records_with_evidence(&format!(
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYCONTEXT SCHEMA="{}" OBJECTTYPE="VOUCHER" NAME="BRIDGE SYNTHETIC BOOK" GUID="synthetic-company-guid" RECORDCOUNT="1"/><VOUCHER GUID="voucher-guid" REMOTEID="voucher-remote" MASTERID="9" ALTERID="10"><DATE>20260714</DATE><VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME><VOUCHERNUMBER>SYN-1</VOUCHERNUMBER><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><LEDGERENTRYCOUNT>2</LEDGERENTRYCOUNT><LEDGERENTRIES><LEDGERENTRY><ENTRYINDEX>1</ENTRYINDEX><LEDGERNAME>Cash</LEDGERNAME><AMOUNT>-100.00</AMOUNT><ISDEEMEDPOSITIVE>{}</ISDEEMEDPOSITIVE></LEDGERENTRY><LEDGERENTRY><ENTRYINDEX>2</ENTRYINDEX><LEDGERNAME>Sales</LEDGERNAME><AMOUNT>100.00</AMOUNT><ISDEEMEDPOSITIVE>{}</ISDEEMEDPOSITIVE></LEDGERENTRY></LEDGERENTRIES></VOUCHER></BODY></ENVELOPE>"#,
+            BRIDGE_VOUCHER_EXPORT_SCHEMA, cash_flag, sales_flag
+        ))
+        .unwrap()
+    }
+
+    fn assess_flags(
+        cash_flag: &str,
+        sales_flag: &str,
+    ) -> bridge_tally_core::reconciliation::CoreAccountingAssessment {
+        let (ledgers, _) = ledgers_and_vouchers("Cash", "Cash");
+        let window = build_core_window(
+            &context(),
+            groups(),
+            ledgers,
+            voucher_types(),
+            voucher_with_entry_flags(cash_flag, sales_flag),
+        )
+        .expect("a disagreeing flag is observed data, not a parse failure");
+        let PackBatch::CoreAccounting(batch) = &window.batch else {
+            panic!("expected a core accounting pack")
+        };
+        // The persisted polarity is still Tally's flag, not a value derived
+        // from the amount. bridge#392 turned on keeping it that way.
+        assert_eq!(batch.ledger_entries[1].amount.as_str(), "100.00");
+        bridge_tally_core::reconciliation::assess_core_accounting(batch)
+    }
+
+    #[test]
+    fn a_lone_disagreeing_leg_reaches_reconciliation_and_is_not_a_mismatch() {
+        // The rounding shape, driven the whole way: parse -> canonical window ->
+        // reconciliation. `Sales 100.00` carries `Yes`, so its flag disagrees
+        // with its sign while `Cash` agrees. One leg of two.
+        let assessment = assess_flags("Yes", "Yes");
+        assert_eq!(
+            assessment.checks.voucher_entry_balance,
+            reconciliation::CheckState::Passed,
+            "the voucher still sums to zero"
+        );
+        assert_eq!(
+            assessment.checks.voucher_entry_polarity,
+            reconciliation::CheckState::Passed
+        );
+        assert!(assessment
+            .issues
+            .iter()
+            .all(|issue| issue.safe_reason_code != "voucher_entry_polarity_mismatch"));
+    }
+
+    #[test]
+    fn a_wholly_inverted_voucher_reaches_reconciliation_and_is_reported() {
+        // Same builder, both legs inverted. Asserted beside the case above so
+        // the pair is visibly a pair: without this, the test above would keep
+        // passing if inversion detection broke generally.
+        let assessment = assess_flags("No", "Yes");
+        assert_eq!(
+            assessment.checks.voucher_entry_balance,
+            reconciliation::CheckState::Passed,
+            "a wholly inverted voucher still balances, which is why the balance check cannot see it"
+        );
+        assert_eq!(
+            assessment.checks.voucher_entry_polarity,
+            reconciliation::CheckState::Mismatch
+        );
+        assert!(assessment
+            .issues
+            .iter()
+            .any(|issue| issue.safe_reason_code == "voucher_entry_polarity_mismatch"));
+    }
+
     #[test]
     fn marker_carrying_parent_policy_fails_closed_for_unobserved_non_root_references() {
         let group_ids_by_name = BTreeMap::from([("Assets".to_string(), "group-guid".to_string())]);
