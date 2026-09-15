@@ -698,10 +698,12 @@ async fn a_nonempty_window_without_a_control_total_still_answers_but_never_issue
 /// The admission contract this tool enforces lives in `agent_catalog.rs`.
 ///
 /// This comment used to say that file was **not** in the compatibility
-/// surface, and that this test existed to cover it. That was true when it was
-/// written and is not any more: `agent_catalog.rs` has been pinned since the
-/// voucher-presence engine landed, taking the slot `MAX_SURFACE_FILES`'
-/// own comment had reserved for it by name.
+/// surface, and that this test existed to cover it. It is pinned:
+/// `agent_catalog.rs` entered the surface with the voucher-presence engine,
+/// taking the slot `MAX_SURFACE_FILES`' own comment had reserved for it by
+/// name. The claim and the pin landed in the same squash, so there is no point
+/// in master's history where it was true -- only, presumably, an earlier
+/// moment on the branch that the squash flattened away.
 ///
 /// The test is not redundant now, and the reason is worth being exact about,
 /// because "the file is pinned" sounds like it subsumes this. A pin detects
@@ -712,10 +714,14 @@ async fn a_nonempty_window_without_a_control_total_still_answers_but_never_issue
 ///
 /// So the two guard different things. The pin makes a change to this file
 /// *visible*, and impossible to land without the manifest moving with it.
-/// This test makes one specific class of change *fail*: dropping
-/// `additionalProperties`, widening the numbering enum, removing a required
-/// field. The numeric bounds need neither, since the schema references
-/// constants that live in pinned files.
+/// This test makes a change *fail*, by digesting the parsed schema structure:
+/// `reseal.sh` knows how to update a file hash and has no idea how to update
+/// this digest, which is exactly why the two diverge. Its sibling
+/// `the_admission_contract_cannot_be_loosened_without_failing_something`
+/// names the specific losses -- dropping `additionalProperties`, widening the
+/// numbering enum, removing a required field -- where this one is blunter and
+/// catches any structural change at all. The numeric bounds need neither,
+/// since the schema references constants that live in pinned files.
 ///
 /// Belt and braces, deliberately — not a leftover.
 #[test]
