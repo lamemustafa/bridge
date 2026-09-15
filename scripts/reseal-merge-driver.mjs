@@ -83,21 +83,42 @@ function repoRoot() {
   return result.stdout.trim();
 }
 
-// Reads one of the three merge stages for `path` directly from the index.
-// This is available precisely while a conflict on that path is unresolved --
-// the same window docs/release-process.md's manual procedure reads stages
-// in -- regardless of which of the two files THIS invocation's %P is for.
-// Reading both files' stages every time (rather than trusting only %O/%A/%B,
-// which describe just one file) is what lets a single invocation reconcile
-// both files consistently even though git invokes this driver once per path
-// in an unspecified order.
-function stage(root, index, path) {
-  const result = spawnSync("git", ["show", `:${index}:${path}`], {
+// Index stages 1/2/3 are NOT a reliable source here: git only populates them
+// for a path AFTER a configured merge driver has run and reported failure
+// (or after the whole merge otherwise leaves it conflicted) -- they are not
+// yet present while THIS process is running, which is exactly the case
+// docs/release-process.md's own stage-reading advice is written for a human
+// resolving a conflict *after* git has stopped, not for a driver running
+// *during* the merge. So this reads "ours" / "theirs" / "base" from refs
+// instead: HEAD, .git/MERGE_HEAD (present for the duration of an ordinary
+// `git merge`), and their merge-base. That works for a plain `git merge`
+// (the case this driver, and the merge-experiment it was proven against,
+// targets); a rebase's REBASE_HEAD or a cherry-pick's CHERRY_PICK_HEAD are
+// different plumbing this driver does not attempt to read, so
+// detectMergeRefs() returning null degrades to per-file-only handling (see
+// the two "*InputsUsable" checks below), never to a silent wrong answer.
+function detectMergeRefs(root) {
+  let theirs;
+  try {
+    theirs = readFileSync(join(root, ".git", "MERGE_HEAD"), "utf8").trim();
+  } catch {
+    return null; // not an ordinary `git merge` in progress
+  }
+  const headResult = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" });
+  if (headResult.status !== 0) return null;
+  const ours = headResult.stdout.trim();
+  const baseResult = spawnSync("git", ["merge-base", ours, theirs], { cwd: root, encoding: "utf8" });
+  if (baseResult.status !== 0) return null;
+  return { ours, theirs, base: baseResult.stdout.trim() };
+}
+
+function readAtRef(root, ref, path) {
+  const result = spawnSync("git", ["show", `${ref}:${path}`], {
     cwd: root,
     encoding: "utf8",
     maxBuffer: 16 * 1024 * 1024,
   });
-  return result.status === 0 ? result.stdout : null; // null: absent at this stage (e.g. no conflict pending on this path at all)
+  return result.status === 0 ? result.stdout : null; // null: absent at that ref (e.g. file added after base)
 }
 
 function parseJsonOrNull(text) {
@@ -198,33 +219,64 @@ function main() {
   }
 
   const root = repoRoot();
+  const refs = detectMergeRefs(root);
 
-  const surfaceBase = parseJsonOrNull(stage(root, 1, SURFACE_REL));
-  const surfaceOurs = parseJsonOrNull(stage(root, 2, SURFACE_REL));
-  const surfaceTheirs = parseJsonOrNull(stage(root, 3, SURFACE_REL));
-  const matrixBase = parseJsonOrNull(stage(root, 1, MATRIX_REL));
-  const matrixOurs = parseJsonOrNull(stage(root, 2, MATRIX_REL));
-  const matrixTheirs = parseJsonOrNull(stage(root, 3, MATRIX_REL));
+  // For the path THIS invocation is actually responsible for, read straight
+  // from the temp files git handed us -- %O/%A/%B are always correct,
+  // independent of which git operation (merge, rebase, ...) triggered this,
+  // and independent of whether detectMergeRefs() found an ordinary
+  // `git merge` in progress. For the OTHER file, there is no equivalent
+  // direct source, so it depends on refs being available.
+  function readTriple(filePath) {
+    if (filePath === path) {
+      return {
+        base: parseJsonOrNull(readFileSync(baseFile, "utf8")),
+        ours: parseJsonOrNull(readFileSync(oursFile, "utf8")),
+        theirs: parseJsonOrNull(readFileSync(theirsFile, "utf8")),
+      };
+    }
+    if (!refs) return null;
+    return {
+      base: parseJsonOrNull(readAtRef(root, refs.base, filePath)),
+      ours: parseJsonOrNull(readAtRef(root, refs.ours, filePath)),
+      theirs: parseJsonOrNull(readAtRef(root, refs.theirs, filePath)),
+    };
+  }
 
-  // If either file isn't even conflicted (only one of the two files
-  // actually differs between branches) its stage-2/3 reads return null.
-  // Nothing to reconcile for a file that isn't in conflict -- keep its
-  // current working-tree content as the reconciliation input for that half.
-  const surfaceInputsUsable =
-    surfaceOurs !== null && surfaceOurs !== undefined && surfaceTheirs !== null && surfaceTheirs !== undefined;
-  const matrixInputsUsable =
-    matrixOurs !== null && matrixOurs !== undefined && matrixTheirs !== null && matrixTheirs !== undefined;
+  const surfaceTriple = readTriple(SURFACE_REL);
+  const matrixTriple = readTriple(MATRIX_REL);
 
+  const usable = (triple) =>
+    !!triple &&
+    triple.ours !== null &&
+    triple.ours !== undefined &&
+    triple.theirs !== null &&
+    triple.theirs !== undefined;
+  const surfaceInputsUsable = usable(surfaceTriple);
+  const matrixInputsUsable = usable(matrixTriple);
+
+  // This can only fail for the invoked path itself if its own temp files
+  // were not valid JSON (git guarantees they exist); for the other path it
+  // means refs weren't available (not an ordinary `git merge`), which is
+  // fine -- that file is simply left for its own separate invocation, if
+  // any, to handle.
   if (path === SURFACE_REL && !surfaceInputsUsable) {
-    warn(`invoked for ${SURFACE_REL} but could not read its ours/theirs stages -- falling back`);
+    warn(`invoked for ${SURFACE_REL} but its own ours/theirs content did not parse as JSON -- falling back`);
     fallbackToPlainMerge(baseFile, oursFile, theirsFile);
     return;
   }
   if (path === MATRIX_REL && !matrixInputsUsable) {
-    warn(`invoked for ${MATRIX_REL} but could not read its ours/theirs stages -- falling back`);
+    warn(`invoked for ${MATRIX_REL} but its own ours/theirs content did not parse as JSON -- falling back`);
     fallbackToPlainMerge(baseFile, oursFile, theirsFile);
     return;
   }
+
+  const surfaceBase = surfaceTriple?.base;
+  const surfaceOurs = surfaceTriple?.ours;
+  const surfaceTheirs = surfaceTriple?.theirs;
+  const matrixBase = matrixTriple?.base;
+  const matrixOurs = matrixTriple?.ours;
+  const matrixTheirs = matrixTriple?.theirs;
 
   const conflicts = [];
   let reconciledSurfaceFiles = null;
