@@ -134,7 +134,10 @@ impl Server {
                     .unwrap_or_default()
                     .iter()
                     .filter_map(|entry| entry["ledger"].as_str());
-                for ledger in row["party"].as_str().into_iter().chain(entry_ledgers) {
+                for ledger in present_text(&row["party"])
+                    .into_iter()
+                    .chain(entry_ledgers.filter(|name| !name.trim().is_empty()))
+                {
                     if catalog.exact(ledger).is_none() {
                         return Err("ledger_catalogue_incomplete".to_string().into());
                     }
@@ -269,9 +272,9 @@ fn book_window(
             row["guid"].as_str().unwrap_or_default(),
             row["date"].as_str().unwrap_or_default(),
             row["voucher_type"].as_str().unwrap_or_default(),
-            row["voucher_number"].as_str(),
+            present_text(&row["voucher_number"]),
             None,
-            row["party"].as_str(),
+            present_text(&row["party"]),
             raw.iter().map(|entry| {
                 (
                     entry["ledger"].as_str().unwrap_or_default(),
@@ -301,14 +304,29 @@ fn book_window(
             key: row["guid"].as_str().unwrap_or_default(),
             date: row["date"].as_str().unwrap_or_default(),
             voucher_type: row["voucher_type"].as_str().unwrap_or_default(),
-            voucher_number: row["voucher_number"].as_str(),
+            voucher_number: present_text(&row["voucher_number"]),
             remote_id: None,
-            party: row["party"].as_str(),
+            party: present_text(&row["party"]),
             entries,
             cancelled: row["cancelled"].as_bool().unwrap_or_default(),
             optional: row["optional"].as_bool().unwrap_or_default(),
         });
     BookWindow::from_observations(from, to, read, RemoteIdEvidence::NotRead, observations)
+}
+
+/// Reads an optional text field the way the JSON above actually spells absence.
+///
+/// A voucher with no party carries `"party": ""`, not a missing key, so
+/// `as_str()` yields `Some("")` -- which claims the voucher *has* a party whose
+/// name is blank. Two separate guards then fired on a book that simply had a
+/// voucher naming nobody: a catalogue lookup reported the whole 864-master book
+/// incomplete, and `presence_text_blank` refused the window outright.
+///
+/// Only the **observed** side uses this. A blank on a caller's proposal is input
+/// the schema already refuses, and translating that to "absent" here would
+/// quietly accept what the schema rejects.
+fn present_text(value: &Value) -> Option<&str> {
+    value.as_str().filter(|text| !text.trim().is_empty())
 }
 
 fn parse_numbering(args: &Value) -> Result<NumberingDeclaration, String> {

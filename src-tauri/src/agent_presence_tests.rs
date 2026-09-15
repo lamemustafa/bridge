@@ -463,6 +463,42 @@ fn a_window_row_becomes_a_book_voucher_without_inventing_a_remote_id() {
     assert_eq!(voucher.party(), Some("Bridge Nested Debtor WR4"));
 }
 
+/// A voucher that names nobody reaches this adapter as `"party": ""`, because
+/// the window JSON spells an absent string that way rather than omitting the
+/// key. Read literally that says the voucher *has* a party whose name is blank,
+/// and two guards then fired on a book that merely had such a voucher: the
+/// catalogue check reported all 864 masters incomplete, and the presence engine
+/// refused the window with `presence_text_blank`.
+///
+/// Tally does send an empty party element -- it is a real shape, not our
+/// invention -- which is exactly why this has to mean "no party" rather than
+/// being refused.
+#[test]
+fn a_voucher_naming_nobody_has_no_party_rather_than_a_blank_one() {
+    let row = json!({
+        "guid": format!("{CAPTURED_GUID}-00000002"),
+        "date": "20260901",
+        "voucher_number": "JV-2",
+        "voucher_type": "Journal",
+        "party": "",
+        "cancelled": false,
+        "optional": false,
+        "amounts": [
+            {"ledger": "WR2 Purchases", "amount": "-12.50"},
+            {"ledger": "WR2 Sales", "amount": "12.50"},
+        ],
+    });
+    let window = book_window("20260901", "20260901", WindowRead::Complete, &[row])
+        .expect("a voucher with no party must not fail the window");
+    let voucher = &window.vouchers()[0];
+    assert_eq!(
+        voucher.party(),
+        None,
+        "an empty party is an absent party, not a party named the empty string"
+    );
+    assert_eq!(voucher.magnitude().as_str(), "12.5");
+}
+
 #[test]
 fn party_names_are_marked_for_egress_and_accounting_selectors_are_not() {
     let entry = json!({
@@ -1053,7 +1089,15 @@ async fn replay_the_twenty_invoice_engagement() {
         request["voucher_type"] = json!(kind);
     }
     let read = server.call_tool("vouchers", request).await;
-    assert_eq!(read["isError"], false, "the window read failed");
+    // Carry the refusal into the failure text. Asserting on `isError` alone
+    // reports that the read failed and withholds the one thing that says why,
+    // which cost a full diagnosis round the first time this fired.
+    assert_eq!(
+        read["isError"],
+        false,
+        "the window read failed: {}",
+        serde_json::to_string(&read).unwrap_or_default()
+    );
     let rows = read["structuredContent"]["result"]["items"]
         .as_array()
         .expect("items")
