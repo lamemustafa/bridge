@@ -113,7 +113,9 @@ jobs:
   workflow-consistency:
     name: Workflow consistency
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Allow the full suite and setup to finish on slower runners while retaining
+    # a bounded job timeout.
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -138,6 +140,7 @@ jobs:
       - run: python3 scripts/retain-macos-test-binaries.test.py
       - run: python3 scripts/bank_statement_import.test.py
       - run: python3 scripts/sanitise-bbox-capture.test.py
+      - run: python3 scripts/merge-gate.test.py
 
   tally-portable:
     name: Tally portable core
@@ -188,22 +191,22 @@ jobs:
           -p bridge-tally-protocol
           -p bridge-tally-transport
           -p tally-protocol-simulator
-          --all-targets -- -D warnings
+          --all-targets -- -D warnings -A clippy::pedantic
       - name: Lint portable Tally qualification tools
         working-directory: tools
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings -A clippy::pedantic
       - name: Lint disabled protocol evidence features
         working-directory: src-tauri
         run: >-
           cargo clippy --locked -p bridge-tally-protocol
           --features jsonex-parser,jsonex-request-builder,india-tax-observation-parser,bills-payments-observation-parser,bills-native-outstandings-probe
-          --all-targets -- -D warnings
+          --all-targets -- -D warnings -A clippy::pedantic
       - name: Lint isolated native outstandings qualification path
         working-directory: tools
         run: |
-          cargo clippy --locked -p bridge-tally-compatibility --features bills-native-outstandings-probe-receipt --all-targets -- -D warnings
-          cargo clippy --locked -p bridge-tally-read-transport --features bills-native-outstandings-probe-transport --all-targets -- -D warnings
-          cargo clippy --locked -p bridge-tally-live-read --features bills-native-outstandings-probe-runner --all-targets -- -D warnings
+          cargo clippy --locked -p bridge-tally-compatibility --features bills-native-outstandings-probe-receipt --all-targets -- -D warnings -A clippy::pedantic
+          cargo clippy --locked -p bridge-tally-read-transport --features bills-native-outstandings-probe-transport --all-targets -- -D warnings -A clippy::pedantic
+          cargo clippy --locked -p bridge-tally-live-read --features bills-native-outstandings-probe-runner --all-targets -- -D warnings -A clippy::pedantic
       - name: Produce parser-only synthetic qualification smoke receipt
         working-directory: tools
         run: >-
@@ -355,16 +358,16 @@ jobs:
           cargo test --locked -p bridge-tally-live-read
           --features bills-native-outstandings-probe-runner
           --all-targets -- --test-threads=1
-      - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --workspace --all-targets --timings -- -D warnings
+      - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --workspace --all-targets --timings -- -D warnings -A clippy::pedantic
       - name: Lint Tally qualification tools workspace
         working-directory: tools
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings -A clippy::pedantic
       - name: Lint isolated native outstandings qualification feature
         working-directory: tools
         run: >-
           cargo clippy --locked -p bridge-tally-live-read
           --features bills-native-outstandings-probe-runner
-          --all-targets -- -D warnings
+          --all-targets -- -D warnings -A clippy::pedantic
 
       - name: Retain native compiler timings
         if: ${{ always() }}

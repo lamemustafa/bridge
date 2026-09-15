@@ -8,6 +8,9 @@ publish = false
 edition = "2021"
 rust-version = "1.96"
 
+[lints]
+workspace = true
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
