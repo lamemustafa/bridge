@@ -1176,3 +1176,63 @@ fn incomplete_or_invalid_imports_are_rejected() {
     assert!(parse_import_result("<RESPONSE><CREATED>1</CREATED>").is_err());
     assert!(parse_import_result("<RESPONSE><CREATED>-1</CREATED><ALTERED>0</ALTERED><IGNORED>0</IGNORED><ERRORS>0</ERRORS><EXCEPTIONS>0</EXCEPTIONS></RESPONSE>").is_err());
 }
+
+/// A real book holds ledger names with an embedded newline -- someone pastes an
+/// address into the name field and Tally stores it. Rejecting the name failed
+/// the *whole* catalog, so one such master denied every read that needs it:
+/// presence, a ledger-scoped voucher window, and import validation alike.
+///
+/// The name is an identity value here, not a display string. It is matched
+/// against proposals by exact codepoint and echoed back as `exact_live_spelling`
+/// for import, both of which require the bytes Tally returned. So the catalog
+/// keeps the row verbatim and display safety belongs to whatever renders it.
+#[test]
+fn a_ledger_name_holding_a_newline_keeps_its_row_rather_than_failing_the_catalog() {
+    let bytes = include_bytes!("fixtures/agent/native-ledger-catalogue.utf16le.xml");
+    let original = String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .expect("captured catalog is UTF-16LE");
+
+    let baseline = parse_standard_ledger_catalog_with_identities(
+        &original,
+        "WR2 Unicode Lab",
+        "61c6de69-1748-461c-ad3f-162cb949df9f",
+    )
+    .expect("captured catalog is valid for its captured company")
+    .names()
+    .count();
+
+    // Rename one ledger to a synthetic two-line name. The newline has to go on
+    // the wire as a character reference, not as raw bytes: XML attribute-value
+    // normalization folds a literal CR LF in an attribute down to one space, so
+    // raw bytes could never reach the parser and would not reproduce anything.
+    // A reference survives normalization, which is exactly how a real two-line
+    // ledger name arrives.
+    let chosen = "Bridge Nested Debtor WR4";
+    let renamed = "Synthetic Two Line\r\nLedger Name";
+    assert!(original.contains(chosen), "fixture holds the chosen ledger");
+    let document = original.replace(chosen, "Synthetic Two Line&#13;&#10;Ledger Name");
+
+    let catalog = parse_standard_ledger_catalog_with_identities(
+        &document,
+        "WR2 Unicode Lab",
+        "61c6de69-1748-461c-ad3f-162cb949df9f",
+    )
+    .expect("a newline in one ledger name must not fail the whole catalog");
+
+    let names = catalog.names().collect::<Vec<_>>();
+    assert_eq!(
+        names.len(),
+        baseline,
+        "the row is kept, not dropped -- a malformed name must never remove a real master"
+    );
+    assert!(
+        names.contains(&renamed),
+        "the name is carried verbatim, because it is matched by exact codepoint \
+         and round-trips back to Tally as the import spelling"
+    );
+}
