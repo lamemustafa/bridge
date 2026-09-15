@@ -1,5 +1,11 @@
 # Bank-allocation STATUS field shape
 
+Covers `native-bank-allocation-status.utf16le.xml`.
+
+| File | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `native-bank-allocation-status.utf16le.xml` | 2374 | `6178d5290e4c2ffb05eb31e52bd483e9198f9587faa9043df8378e64d2443a5b` |
+
 Project-authored synthetic fixture. It carries reserved synthetic names and
 fabricated identifiers; no customer export is included or copied.
 
