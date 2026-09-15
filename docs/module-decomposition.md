@@ -168,6 +168,14 @@ The conclusion survives the correction — 104-166 small functions in one file i
 still a module problem — but it survives having been checked, which is the only
 way it was worth stating.
 
+**And the files that do not move are an argument for extracting tests at all.**
+`tally_mirror.rs` and `snapshot.rs` are identical on both counts, because #395
+extracted their test modules. Every later measurement of those files is honest by
+default: there is no inline test block for a counter to mistake for the module,
+so no one measuring them has to know about this trap. Extraction is usually
+argued for on readability; this is a second benefit, and it compounds — each
+extraction removes a way for every future measurement of that file to be wrong.
+
 **So the ratio is a detector, not a ranking.** Use it to find files a size list
 misses; use the file size and function count to tell which of the two defects you
 are looking at.
