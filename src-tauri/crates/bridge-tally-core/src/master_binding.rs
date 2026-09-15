@@ -1801,7 +1801,13 @@ fn validate_name_bounds(value: &str) -> Result<(), MasterBindingError> {
     if value.trim().is_empty() {
         return Err(MasterBindingError::NameBlank);
     }
-    if value.chars().any(char::is_control) {
+    // `char::is_control` is category Cc only. Bidi overrides and zero-width
+    // characters are Cf, so every one of them walked straight through this
+    // check -- U+202E, U+200B, U+061C and U+FEFF all answer `false`. The
+    // catalog side refuses them and this side did not, which is the wrong way
+    // round: a name a caller *supplies* is the one that can be chosen to
+    // deceive.
+    if value.chars().any(char::is_control) || value.chars().any(deceptive_name_character) {
         return Err(MasterBindingError::NameUnsafe);
     }
     if value.chars().count() > MAX_NAME_CHARS {
