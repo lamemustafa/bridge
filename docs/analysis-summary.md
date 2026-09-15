@@ -11,7 +11,6 @@ Public code, asset, and licensing boundaries are recorded in
 
 - React and TypeScript frontend workflow wiring
 - Rust command handlers for Tally session and data operations
-- DSC token probing and certificate-summary extraction
 - Document scanning and upload orchestration
 - Local schema, sync, and Tauri capability structure
 

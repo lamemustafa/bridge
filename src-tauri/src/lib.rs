@@ -6,7 +6,6 @@ pub mod client_groups;
 pub mod commands;
 pub mod db;
 pub mod documents;
-pub mod dsc;
 pub(crate) mod endpoint_coordination;
 pub mod gst;
 pub(crate) mod local_files;
@@ -170,12 +169,9 @@ pub fn run(make_context: fn() -> tauri::Context<tauri::Wry>) {
             commands::fetch_tally_outstandings,
             commands::fetch_selected_ledger_entries,
             commands::prepare_gst_return_draft,
-            commands::detect_dsc_token,
-            commands::extract_dsc_certificates,
             commands::validate_axal_credentials,
             commands::check_axal_connection_status,
             commands::revoke_axal_credential_session,
-            commands::sync_dsc_certificates_to_axal,
             commands::scan_document_paths,
             commands::sync_documents_to_axal,
             commands::revoke_document_authorizations,

@@ -31,7 +31,6 @@ import {
   refreshAutomaticOutstandingsAsOf,
 } from "./outstandings-as-of";
 import { GstScreen } from "./GstScreen";
-import { DscScreen } from "./DscScreen";
 import { createDocumentsWorkspaceState, DocumentsScreen } from "./DocumentsScreen";
 import { AxalScreen } from "./AxalScreen";
 import { MirrorProofScreen } from "./MirrorProofScreen";
@@ -269,7 +268,7 @@ export type GstReturnDraft = {
   missing_fields: string[];
 };
 
-type AxalIntegration = "tally" | "documents" | "dsc";
+type AxalIntegration = "tally" | "documents";
 
 type AxalConnectionStatus = {
   connected: boolean;
@@ -284,7 +283,7 @@ type AxalConnectionStatus = {
   };
 };
 
-type View = "dashboard" | "clients" | "outstandings" | "trial_balance" | "ledger_entries" | "companies" | "settings" | "journal" | "source_draft" | "gst" | "dsc" | "documents" | "axal";
+type View = "dashboard" | "clients" | "outstandings" | "trial_balance" | "ledger_entries" | "companies" | "settings" | "journal" | "source_draft" | "gst" | "documents" | "axal";
 type TallyAction = "probe" | "discover" | "bootstrap" | "save" | "fixture_enroll" | "fixture_revoke" | "evidence" | "explorer" | "start" | "resume" | "cancel";
 
 const TABLE_PREVIEW_LIMIT = 100;
@@ -304,7 +303,6 @@ const VIEW_TITLES: Record<View, string> = {
   journal: "Review Journal",
   source_draft: "Prepare file",
   gst: "GST return readiness",
-  dsc: "DSC token",
   documents: "Documents",
   axal: "AXAL backend",
 };
@@ -483,7 +481,7 @@ function App() {
   const [gstCompany, setGstCompany] = React.useState("");
   const [gstFinancialYear, setGstFinancialYear] = React.useState(currentFinancialYear.label);
   const [draft, setDraft] = React.useState<GstReturnDraft | null>(null);
-  // Owned by App() and shared with the DSC, Documents, and AXAL views --
+  // Owned by App() and shared with the Documents and AXAL views --
   // AxalScreen both reads and writes these two (see its Props comment).
   const [axalSession, setAxalSession] = React.useState<{ id: string; integration: AxalIntegration } | null>(null);
   const [axalConnection, setAxalConnection] = React.useState<AxalConnectionStatus | null>(null);
@@ -1956,7 +1954,6 @@ function App() {
               <span>
                 Accounting mirror evidence: {passportSnapshotId ? "capability observation stored; record-proof status not loaded" : "no capability observation or proof status loaded"}
               </span>
-              <span>DSC: token detection and certificate extraction</span>
             </section>
           </>
           </ErrorBoundary>
@@ -2415,12 +2412,6 @@ function App() {
             </div>,
             document.body,
           )
-        )}
-
-        {view === "dsc" && (
-          <ErrorBoundary key="dsc" label="DSC token">
-          <DscScreen busy={busy} setBusy={setBusy} axalConnection={axalConnection} axalSession={axalSession} />
-          </ErrorBoundary>
         )}
 
         {view === "documents" && (

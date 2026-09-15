@@ -15,7 +15,7 @@
 3. Make build assets and runtime discovery repository-relative or
    application-data-relative.
 4. Validate development and packaging on native Windows and macOS hosts.
-5. Add smoke and regression coverage for Tally, DSC, documents, sync, and local
+5. Add smoke and regression coverage for Tally, documents, sync, and local
    persistence.
 6. Record platform-specific vendor dependencies without committing proprietary
    libraries, private keys, PINs, or certificate dumps.
@@ -229,7 +229,7 @@ pending consented synthetic live qualification.
 - A fresh clone builds without paths outside the repository except standard
   toolchain and application-data locations.
 - Native Windows and macOS development and package builds have current evidence.
-- Tally, DSC, document, sync, and persistence workflows have regression checks.
+- Tally, document, sync, and persistence workflows have regression checks.
 - No public artifact contains secrets, personal/customer data, or contributor
   machine paths.
 - Governance and rectification controls are enforced in the managed repository.

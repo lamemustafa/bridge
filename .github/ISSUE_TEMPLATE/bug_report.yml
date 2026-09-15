@@ -33,7 +33,6 @@ body:
       description: Select exactly one owning area; maintainers apply the matching label.
       options:
         - area:tally
-        - area:dsc
         - area:documents
         - area:infra
         - area:security
@@ -85,7 +84,7 @@ body:
     id: versions
     attributes:
       label: Relevant versions
-      description: Bridge and safe-to-disclose Tally or DSC driver versions, if applicable.
+      description: Bridge and safe-to-disclose Tally driver versions, if applicable.
   - type: textarea
     id: evidence
     attributes:
