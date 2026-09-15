@@ -126,6 +126,32 @@ That is a module problem, and the ratio does not distinguish it from the
 single-huge-function case: `lib.rs` at 28.8x scores *worse* than `snapshot.rs`
 would on median alone, for an entirely different reason.
 
+### Count code, not the file
+
+Those totals include inline `#[cfg(test)] mod tests { … }` blocks, and for two of
+them that is most of the file:
+
+| code | total | inline tests | file |
+|---:|---:|---:|---|
+| 6,407 | 6,508 | 101 | `bridge-tally-protocol/src/lib.rs` |
+| 5,919 | 5,919 | 0 | `db/tally_mirror.rs` |
+| 3,571 | 4,684 | **1,113** | `commands.rs` |
+| **3,488** | 5,441 | **1,953** | `tally/runtime.rs` |
+
+`runtime.rs` ranks third by size and seventh by code. Sorting by `wc -l` aims the
+work at a file that is 36% test.
+
+Measuring this is harder than it looks and I got it wrong before I got it right.
+`runtime.rs` carries **fourteen** `#[cfg(test)]` markers: thirteen declare
+*already-extracted* modules (`#[path = "…"] mod x;`) and exactly one opens an
+inline block. A scan that treats the first marker as the start of the test block
+reports the file as ~64 lines of code; one that mishandles the extracted
+declarations reported 4,336 test lines to me, more than twice the truth. **Match
+the brace, and only for a `mod` whose declaration opens one.**
+
+The distinction and the corrected table are from a parallel measurement in
+`docs/proposed-rust-module-conventions.md` (#414), which reached it first.
+
 **So the ratio is a detector, not a ranking.** Use it to find files a size list
 misses; use the file size and function count to tell which of the two defects you
 are looking at.
