@@ -455,7 +455,7 @@ impl Server {
                     payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
                         "state":"refused", "reason":"masters_not_exact", "masters":report,
                         "catalogue_evidence_sha256":sha256_json(&catalogue),
-                        "next_step":"Use the exact live spelling from validate_masters, then build a new batch. No file was written."
+                        "next_step":master_recovery_guidance(&report)
                     }}),
                     evidence: accumulated.clone(),
                     company_guid: Some(payload.company_guid),
@@ -1644,7 +1644,6 @@ fn master_match_json(binding: &EntityBinding) -> Value {
             // nothing else.
             let match_state = match basis {
                 BindingBasis::ExactName => "exact",
-                BindingBasis::NormalizedName => "normalized",
                 BindingBasis::Identifier => "identifier",
             };
             json!({
@@ -1709,6 +1708,31 @@ fn master_match_json(binding: &EntityBinding) -> Value {
             })
         }
     }
+}
+
+fn master_recovery_guidance(report: &[Value]) -> String {
+    let mut guidance = Vec::new();
+    if report
+        .iter()
+        .any(|master| master["match_state"] == "identifier")
+    {
+        guidance
+            .push("For identifier-bound entries, copy exact_live_spelling from this fresh result.");
+    }
+    if report
+        .iter()
+        .any(|master| master["match_state"] == "missing")
+    {
+        guidance.push("For missing ledgers, correct the source spelling or have an operator create the legitimate ledger externally, then run validate_masters again.");
+    }
+    if report
+        .iter()
+        .any(|master| master["match_state"] == "near_miss")
+    {
+        guidance.push("For near-misses, have an operator explicitly select the intended ledger and run validate_masters again; do not copy a candidate automatically.");
+    }
+    guidance.push("After operator review, update the payload to each confirmed exact live spelling and run validate_masters again before building. No file was written.");
+    guidance.join(" ")
 }
 
 fn render_import_xml(company: &str, vouchers: &[ImportVoucher], batch_id: &str) -> String {
