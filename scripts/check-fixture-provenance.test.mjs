@@ -149,3 +149,34 @@ test("a byte-count-only mismatch (same filename, wrong declared size) still fail
 // this gate is proposed as REPORTING rather than BLOCKING; this suite
 // verifies behaviour on synthetic trees, not repository readiness.
 console.log("\nrunning check-fixture-provenance contract tests via node:test above");
+
+test("the failure names the true total, not the display cap", async () => {
+  // Thirty undocumented fixtures against a display cap of twenty-five. The gate
+  // used to cap COLLECTION at the same number, which made `failures.length`
+  // unable to exceed the cap and the "omitted" branch unreachable: it reported
+  // "25 problem(s)" whether the real figure was 25 or 250, so nobody could tell
+  // whether the backlog was shrinking. Thirty is deliberately just past the cap
+  // — the smallest tree that can tell a total from a ceiling.
+  const root = await makeTree();
+  const dir = join(root, FIXTURE_DIRS[0]);
+  for (let index = 0; index < 30; index += 1) {
+    await writeFile(join(dir, `undocumented-${index}.xml`), `<X>${index}</X>`);
+  }
+  const output = runGateExpectingFailure(root);
+
+  assert.match(
+    output,
+    /fixture provenance: 30 problem\(s\), 30 of 30 fixtures with no provenance record/,
+    "the count must be the real number of problems and carry its denominator",
+  );
+  assert.match(
+    output,
+    /showing the first 25, 5 omitted/,
+    "and must disclose how many it is not showing",
+  );
+  assert.equal(
+    (output.match(/undocumented-\d+\.xml: not named/g) ?? []).length,
+    25,
+    "while still printing only the capped number of lines",
+  );
+});

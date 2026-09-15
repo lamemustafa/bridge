@@ -62,7 +62,13 @@ const fixtureDirectories = [
 // Diagnostics are bounded for the same reason every other gate in this repo
 // bounds them: a tree with many undocumented fixtures must still produce
 // output a reviewer can read.
+// How many problems to PRINT. Every problem is still counted: capping the
+// collection instead of the display made `failures.length` unable to exceed this
+// number, so the "more omitted" branch below was unreachable and the message
+// reported a cap as though it were a total. A gate that cannot say how big the
+// problem is cannot be used to tell whether the problem is shrinking.
 const MAX_REPORTED = 25;
+let examined = 0;
 
 function classifyEntry(path, entry) {
   if (entry.isDirectory()) return "directory";
@@ -146,6 +152,7 @@ for (const fixtureDirectory of fixtureDirectories) {
     }
   }
 
+  examined += fixtureFiles.length;
   for (const fixturePath of fixtureFiles) {
     const relativePath = relative(repositoryRoot, fixturePath);
     const basename = relativePath.split("/").pop();
@@ -161,7 +168,7 @@ for (const fixtureDirectory of fixtureDirectories) {
     );
     if (!mentioned) {
       undocumented += 1;
-      if (failures.length < MAX_REPORTED) {
+      {
         failures.push(
           `${relativePath}: not named in any Markdown file under ` +
             `${fixtureDirectory} — add a provenance line saying where its bytes ` +
@@ -181,7 +188,7 @@ for (const fixtureDirectory of fixtureDirectories) {
       const bytesMatch = declaration.bytes === actualBytes.length;
       const hashMatch = declaration.sha256 === actualSha256;
       if (bytesMatch && hashMatch) continue;
-      if (failures.length < MAX_REPORTED) {
+      {
         failures.push(
           `${relativePath}: declared in ${declaration.sourceFile} as ` +
             `${declaration.bytes.toLocaleString("en-US")} bytes / ` +
@@ -200,9 +207,14 @@ for (const fixtureDirectory of fixtureDirectories) {
 if (failures.length) {
   const shown = failures.slice(0, MAX_REPORTED);
   throw new Error(
-    `fixture provenance (${shown.length} problem(s) shown` +
-      (failures.length > shown.length ? `, ${failures.length - shown.length} more omitted` : "") +
-      "):\n" +
+    `fixture provenance: ${failures.length} problem(s)` +
+      (undocumented
+        ? `, ${undocumented} of ${examined} fixtures with no provenance record`
+        : "") +
+      (failures.length > shown.length
+        ? ` — showing the first ${shown.length}, ${failures.length - shown.length} omitted`
+        : "") +
+      ":\n" +
       shown.map((line) => `  - ${line}`).join("\n"),
   );
 }
