@@ -27,7 +27,7 @@
     },
     {
       "path": "docs/step-by-step-roadmap.md",
-      "sha256": "32f57f362942613a39ffc837234e5339eac3cd27ceb8156a81c5b1d992ac15b7"
+      "sha256": "4417680a829847b99f18b2fcc176b8721a7348f164c08ed6bbf9c6221150aea3"
     },
     {
       "path": "docs/tally/TALLY_INTEGRATION_RESEARCH_AND_CODEX_PLAN.md",
@@ -123,11 +123,11 @@
     },
     {
       "path": "src-tauri/Cargo.lock",
-      "sha256": "57d7011ae7a7196259fefd30077a76a34ad0d7fd74fd695e7613f7f6865d7a9d"
+      "sha256": "e099a547e82382740f7f62e3f041c2523e83cb16cf0f598b92b5b07be3009f70"
     },
     {
       "path": "src-tauri/Cargo.toml",
-      "sha256": "ff11117e2fcfe5e4a1b6c72f7d2617ffaf474bfb884cfd364289829e0b3649a1"
+      "sha256": "d571f7a8ce0e40147bdb5a1b9d7757ada2536c22c040d408bf8ad6a668fe44a6"
     },
     {
       "path": "src-tauri/crates/bridge-tally-core/Cargo.toml",
@@ -375,7 +375,7 @@
     },
     {
       "path": "src-tauri/src/commands.rs",
-      "sha256": "c95d5d9ad52137f5808a2dbdbae5ed40e3cfc5365e0ba36fadb1f4ebd85bbbb7"
+      "sha256": "ab5e6dbaf387a239ac20fa7cdeec0785060ca7eb4dda9443c6c2e44c952dc5a7"
     },
     {
       "path": "src-tauri/src/commands_trial_balance.rs",
@@ -511,7 +511,7 @@
     },
     {
       "path": "src-tauri/src/lib.rs",
-      "sha256": "75443affdb1549bca959f154837662aecfa128b9d58b2ef329bb2fd43e0a4852"
+      "sha256": "e07a1dfa1af1577178ef87d2c5ff46464fb735e5118df26c2538984508bc2c6b"
     },
     {
       "path": "src-tauri/src/local_files/file.rs",
@@ -519,7 +519,7 @@
     },
     {
       "path": "src-tauri/src/main.rs",
-      "sha256": "f528581b2ba4e8d809ca5dcd5c782caaf3f6fa895fd984079fc4202f9430b813"
+      "sha256": "630fb66c617553eb0e3e7e6e6d6f077ebc2cb9036bf526aaac02e1d440c9708b"
     },
     {
       "path": "src-tauri/src/reports/bulk_party_statement.rs",
@@ -751,7 +751,7 @@
     },
     {
       "path": "src/main.tsx",
-      "sha256": "88c1c1234238f51feb0d63e6506d04523a36185f02d3f1e7e76c3006606e41de"
+      "sha256": "eaf9bdcb5ab317c6716f78cb5c68945fdc7c4197401cb8ab4cf6790898a252e1"
     },
     {
       "path": "src/outstandings-as-of.ts",
@@ -850,5 +850,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "9a7091fc46f40e0c64384d91a9eadc9a4db77de91623d24081dd27454d2bdc00"
+  "manifest_sha256": "b3fd0c9b0ac166f738ab3821b250f3d0c0a5147caa259efcff775adc08082bcf"
 }
