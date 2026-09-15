@@ -113,18 +113,68 @@ files nobody would call large.
 
 The converse also holds, and is why size stays on the list. The biggest files:
 
-| ratio | lines | fns | median | file |
-|---:|---:|---:|---:|---|
-| 28.8x | 6508 | 169 | 13 | `bridge-tally-protocol/src/lib.rs` |
-| 20.9x | 5441 | 171 | 18 | `tally/runtime.rs` |
-| 19.3x | 4684 | 147 | 15 | `commands.rs` |
-| 17.7x | 5919 | 112 | 21 | `db/tally_mirror.rs` |
+Counting only **code** functions — excluding those inside inline
+`#[cfg(test)] mod` blocks, which are otherwise measured as if they were the
+module's own:
 
-Their medians are 13-21 — the functions are small. They are not one giant function
-wearing a file as a coat; they are 112-171 cohesive small things in one place.
+| code lines | code fns | median | file |
+|---:|---:|---:|---|
+| 6,407 | 166 | 13 | `bridge-tally-protocol/src/lib.rs` |
+| 5,919 | 112 | 21 | `db/tally_mirror.rs` |
+| 3,571 | 104 | 12 | `commands.rs` |
+| 3,488 | 117 | 14 | `tally/runtime.rs` |
+
+Their medians are 12-21 — the functions are small. They are not one giant function
+wearing a file as a coat; they are 104-166 cohesive small things in one place.
 That is a module problem, and the ratio does not distinguish it from the
 single-huge-function case: `lib.rs` at 28.8x scores *worse* than `snapshot.rs`
 would on median alone, for an entirely different reason.
+
+### Count code, not the file
+
+Those totals include inline `#[cfg(test)] mod tests { … }` blocks, and for two of
+them that is most of the file:
+
+| code | total | inline tests | file |
+|---:|---:|---:|---|
+| 6,407 | 6,508 | 101 | `bridge-tally-protocol/src/lib.rs` |
+| 5,919 | 5,919 | 0 | `db/tally_mirror.rs` |
+| 3,571 | 4,684 | **1,113** | `commands.rs` |
+| **3,488** | 5,441 | **1,953** | `tally/runtime.rs` |
+
+`runtime.rs` ranks third by size and seventh by code. Sorting by `wc -l` aims the
+work at a file that is 36% test.
+
+Measuring this is harder than it looks and I got it wrong before I got it right.
+`runtime.rs` carries **fourteen** `#[cfg(test)]` markers: thirteen declare
+*already-extracted* modules (`#[path = "…"] mod x;`) and exactly one opens an
+inline block. A scan that treats the first marker as the start of the test block
+reports the file as ~64 lines of code; one that mishandles the extracted
+declarations reported 4,336 test lines to me, more than twice the truth. **Match
+the brace, and only for a `mod` whose declaration opens one.**
+
+The distinction and the corrected table are from a parallel measurement in
+`docs/proposed-rust-module-conventions.md` (#414), which reached it first.
+
+The same correction applies to the function counts and medians above, and it was
+worth checking rather than assuming: a counter that matches `fn name` picks up
+every `#[test] fn` too, so a file whose tests are inline has its module's shape
+measured through its tests' style. Excluding them moves `runtime.rs` from 171
+functions at median 18 to **117 at median 14**, and `commands.rs` from 147/15 to
+**104/12**. `lib.rs` barely moves and `tally_mirror.rs` not at all, because #395
+already extracted its tests.
+
+The conclusion survives the correction — 104-166 small functions in one file is
+still a module problem — but it survives having been checked, which is the only
+way it was worth stating.
+
+**And the files that do not move are an argument for extracting tests at all.**
+`tally_mirror.rs` and `snapshot.rs` are identical on both counts, because #395
+extracted their test modules. Every later measurement of those files is honest by
+default: there is no inline test block for a counter to mistake for the module,
+so no one measuring them has to know about this trap. Extraction is usually
+argued for on readability; this is a second benefit, and it compounds — each
+extraction removes a way for every future measurement of that file to be wrong.
 
 **So the ratio is a detector, not a ranking.** Use it to find files a size list
 misses; use the file size and function count to tell which of the two defects you
