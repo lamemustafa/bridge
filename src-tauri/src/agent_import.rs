@@ -455,7 +455,7 @@ impl Server {
                     payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
                         "state":"refused", "reason":"masters_not_exact", "masters":report,
                         "catalogue_evidence_sha256":sha256_json(&catalogue),
-                        "next_step":"Use the exact live spelling from validate_masters, then build a new batch. No file was written."
+                        "next_step":master_recovery_guidance(&report)
                     }}),
                     evidence: accumulated.clone(),
                     company_guid: Some(payload.company_guid),
@@ -1084,12 +1084,11 @@ fn build_import_guidance(
     // bills. Bridge cannot yet tell the two kinds of book apart — the ledger
     // catalogue it reads carries no bill-wise flag — so the limit is stated
     // rather than silently accepted on the operator's behalf.
-    // §9.8 qualified exact-file repeat on the Journal path only, and §9.13
-    // imported each bank file exactly once. A caller recovering an uncertain
-    // outcome must not reach for the same remedy on both.
-    let repeat_warning = bank_types.then_some(
-        "Do not re-import this file if the outcome is uncertain. Exact-file repeat is qualified for Journal only; for Payment, Receipt and Contra a second import may create a second set of vouchers. Call verify_import, which reads the window back without writing.",
-    );
+    // The controlled repeat observed in §9.8 does not establish unknown-outcome
+    // recovery. Every voucher type retains its original identity and uses
+    // read-only reconciliation; Journal is not an exception.
+    let repeat_warning =
+        "Do not re-import or rebuild this business event if the outcome is uncertain, including a Journal. Preserve the original batch and saved file, then call verify_import for read-only reconciliation. A controlled repeat observation does not qualify unknown-outcome recovery.";
     // agent_import_cash_bank.rs's module header documents this gap: the build
     // proves master stability across the build only, and says nothing about
     // afterwards, so a regroup between build and hand import is invisible to
@@ -1112,7 +1111,7 @@ fn build_import_guidance(
         json!(std::iter::once(first)
             .chain(std::iter::once(preflight_warning))
             .chain(std::iter::once(company_identity_warning))
-            .chain(repeat_warning)
+            .chain(std::iter::once(repeat_warning))
             .chain(stale_classification_warning)
             .chain(release_evidence_warning)
             .chain(allocation_warning)
@@ -1644,7 +1643,6 @@ fn master_match_json(binding: &EntityBinding) -> Value {
             // nothing else.
             let match_state = match basis {
                 BindingBasis::ExactName => "exact",
-                BindingBasis::NormalizedName => "normalized",
                 BindingBasis::Identifier => "identifier",
             };
             json!({
@@ -1709,6 +1707,31 @@ fn master_match_json(binding: &EntityBinding) -> Value {
             })
         }
     }
+}
+
+fn master_recovery_guidance(report: &[Value]) -> String {
+    let mut guidance = Vec::new();
+    if report
+        .iter()
+        .any(|master| master["match_state"] == "identifier")
+    {
+        guidance
+            .push("For identifier-bound entries, copy exact_live_spelling from this fresh result.");
+    }
+    if report
+        .iter()
+        .any(|master| master["match_state"] == "missing")
+    {
+        guidance.push("For missing ledgers, correct the source spelling or have an operator create the legitimate ledger externally, then run validate_masters again.");
+    }
+    if report
+        .iter()
+        .any(|master| master["match_state"] == "near_miss")
+    {
+        guidance.push("For near-misses, have an operator explicitly select the intended ledger and run validate_masters again; do not copy a candidate automatically.");
+    }
+    guidance.push("After operator review, update the payload to each confirmed exact live spelling and run validate_masters again before building. No file was written.");
+    guidance.join(" ")
 }
 
 fn render_import_xml(company: &str, vouchers: &[ImportVoucher], batch_id: &str) -> String {
