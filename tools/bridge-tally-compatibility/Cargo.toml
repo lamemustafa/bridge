@@ -12,6 +12,9 @@ rust-version = "1.96"
 default = []
 bills-native-outstandings-probe-receipt = []
 
+[lints]
+workspace = true
+
 [dependencies]
 ed25519-dalek = "3"
 hex = "0.4"

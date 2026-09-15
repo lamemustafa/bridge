@@ -46,7 +46,7 @@ on one operating system does not verify the other.
 
 Shared prerequisites:
 
-- Node.js 22 or 24 and Corepack (`.node-version` pins the CI baseline)
+- Node.js 24 (>=24.15.0) and Corepack (`.node-version` pins the CI baseline)
 - the Rust toolchain pinned by `rust-toolchain.toml`
 - Perl 5 with `Locale::Maketext::Simple` for the bundled SQLCipher/OpenSSL build
 - LLVM/libclang for SQLCipher binding generation (`LIBCLANG_PATH` may be required)
