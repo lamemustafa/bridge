@@ -1793,7 +1793,32 @@ fn validated_catalog_name(value: &str) -> Result<String, MasterBindingError> {
 fn deceptive_name_character(value: char) -> bool {
     matches!(
         value,
-        '\u{061C}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}' | '\u{2066}'..='\u{206F}' | '\u{FEFF}'
+        // Deliberately NOT a single `U+200B..=U+200F` range. That span holds
+        // ZWNJ (U+200C) and ZWJ (U+200D), which are **orthography**, not
+        // deception: Devanagari and other Indic scripts need them to control
+        // conjunct formation, and this repository's own fixtures are full of
+        // Indic ledger names. Refusing them would make a legitimately spelled
+        // Hindi or Marathi ledger fail the whole catalog -- the exact failure
+        // the newline fix existed to remove.
+        //
+        // The trade-off is real and worth stating: a codepoint filter cannot
+        // know that a ZWJ sits between two Devanagari consonants rather than
+        // injected into ASCII, so admitting them re-admits a narrow version of
+        // the deception this set exists to stop -- `Alpha<ZWJ> Traders` is
+        // byte-distinct from `Alpha Traders` and renders the same. It is
+        // bounded rather than closed: the fold and the token index keep the
+        // joiner verbatim, so such a name tends to fail exact and token
+        // matching instead of quietly aliasing a real master. That is a worse
+        // guarantee than refusal and a far better one than breaking every
+        // Indic book, which is what refusal actually cost.
+        '\u{061C}'
+            | '\u{200B}'
+            | '\u{200E}'
+            | '\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'
+            | '\u{2066}'..='\u{206F}'
+            | '\u{FEFF}'
     )
 }
 
@@ -1801,7 +1826,13 @@ fn validate_name_bounds(value: &str) -> Result<(), MasterBindingError> {
     if value.trim().is_empty() {
         return Err(MasterBindingError::NameBlank);
     }
-    if value.chars().any(char::is_control) {
+    // `char::is_control` is category Cc only. Bidi overrides and zero-width
+    // characters are Cf, so every one of them walked straight through this
+    // check -- U+202E, U+200B, U+061C and U+FEFF all answer `false`. The
+    // catalog side refuses them and this side did not, which is the wrong way
+    // round: a name a caller *supplies* is the one that can be chosen to
+    // deceive.
+    if value.chars().any(char::is_control) || value.chars().any(deceptive_name_character) {
         return Err(MasterBindingError::NameUnsafe);
     }
     if value.chars().count() > MAX_NAME_CHARS {
