@@ -680,6 +680,24 @@ fn presence_plans() -> Vec<ScenarioPlan> {
     plans(steps)
 }
 
+/// `presence_plans` with one marker written into JV-1's narration, the way an
+/// earlier Bridge import would have left it.
+fn marker_presence_plans(marker: &str) -> Vec<ScenarioPlan> {
+    let catalogue = catalogue_xml();
+    let window = window_xml().replace(
+        "<VOUCHERNUMBER>JV-1</VOUCHERNUMBER>",
+        &format!(
+            "<VOUCHERNUMBER>JV-1</VOUCHERNUMBER><NARRATION>{}</NARRATION>",
+            narration_with(marker)
+        ),
+    );
+    let mut steps = vec![Step::Company, Step::Status, Step::Company, Step::Status];
+    steps.extend(paired_read(&catalogue));
+    steps.extend(paired_read(&window));
+    steps.extend(paired_read(&catalogue));
+    plans(steps)
+}
+
 #[tokio::test]
 async fn a_nonempty_window_without_a_control_total_still_answers_but_never_issues_absent() {
     let simulator = SequenceSimulator::spawn(presence_plans()).expect("simulator");
@@ -741,6 +759,64 @@ async fn a_nonempty_window_without_a_control_total_still_answers_but_never_issue
     );
     let observed = simulator.finish().expect("requests");
     assert_eq!(observed.len(), 22);
+}
+
+/// The same window carrying a marker Bridge wrote, under `automatic` numbering.
+///
+/// This settles the reachability question ADR 0018's basis depends on. The
+/// nonempty-window short-circuit used to refuse before any verdict was built,
+/// so `PresenceBasis::NarrationMarker` could not be produced through this
+/// adapter whatever the narration held -- the basis was contract-complete and
+/// operationally dead. Numbering is `automatic` here deliberately: Tally
+/// discards a supplied number under it, so the number can decide nothing and
+/// the marker is the only basis left that can produce `present`. A `present`
+/// therefore proves the marker path carries it, rather than restating the
+/// voucher-number path the sibling test above already covers.
+#[tokio::test]
+async fn a_narration_marker_decides_a_present_from_a_nonempty_partial_window() {
+    let marker = agent_import::import_identity(BATCH, "txn-001").to_string();
+    let simulator = SequenceSimulator::spawn(marker_presence_plans(&marker)).expect("simulator");
+    let directory = tempfile::tempdir().expect("directory");
+    let server = Server::new(Settings {
+        endpoint: TallyEndpointConfig {
+            host: simulator.address().ip().to_string(),
+            port: simulator.address().port(),
+        },
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 500,
+        max_bytes: 200_000,
+        redaction: Redaction::None,
+        import_enabled: false,
+        writes_enabled: false,
+    });
+    let response = server
+        .call_tool(
+            "voucher_presence",
+            json!({
+                "company_guid": CAPTURED_GUID,
+                "from": "20260901",
+                "to": "20260930",
+                "numbering": [{"voucher_type":"Journal","numbering_method":"automatic"}],
+                "vouchers": [{
+                    "date": "20260901",
+                    "voucher_type": "Journal",
+                    "party": "Bridge Nested Debtor WR4",
+                    "batch_id": BATCH,
+                    "bridge_txn_id": "txn-001",
+                    "entries": [
+                        {"ledger":"Bridge Nested Debtor WR4","amount":"-12.50"},
+                        {"ledger":"WR2 Sales","amount":"12.50"},
+                    ],
+                }],
+            }),
+        )
+        .await;
+    assert_eq!(response["isError"], false, "{response}");
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(result["window"]["read"], "partial");
+    let items = result["items"].as_array().expect("items");
+    assert_eq!(items[0]["presence"], "present", "{items:?}");
+    assert_eq!(items[0]["basis"], "narration_marker", "{items:?}");
 }
 
 /// The admission contract this tool enforces lives in `agent_catalog.rs`, and
