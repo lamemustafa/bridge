@@ -2056,7 +2056,16 @@ mod tests {
         let PackBatch::CoreAccounting(core) = &mut batch else {
             unreachable!()
         };
+        // Invert the WHOLE voucher, not one entry of it. Since bridge#392 a
+        // single disagreeing entry is contextual polarity, not a mismatch --
+        // it is what an ordinary round-off leg looks like and it fired 111
+        // times on one real book's financial year. A voucher every entry of
+        // which is inverted cannot be explained that way, and that is the
+        // shape this test needs: it is asserting that such a mismatch
+        // propagates to Partial verification, not that one flipped entry is
+        // individually detectable.
         core.ledger_entries[0].polarity = LedgerEntryPolarity::Credit;
+        core.ledger_entries[1].polarity = LedgerEntryPolarity::Debit;
         let canonical = canonicalize_test(batch, None);
         assert!(canonical
             .evidence
