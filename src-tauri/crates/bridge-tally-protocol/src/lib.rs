@@ -61,6 +61,17 @@ pub const MAX_STANDARD_LEDGER_IDENTITY_ROWS: usize = 1_000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StandardLedgerCatalogError {
     MalformedResponse,
+    /// A row's ledger name was refused on its own merits -- blank, past the
+    /// length bound, or carrying a character that makes it read as a different
+    /// name. Split out from `MalformedResponse` because the two say different
+    /// things to whoever has to act: a malformed response is Tally or the
+    /// transport, and this is one master in an otherwise well-formed export.
+    ///
+    /// Diagnosing a real instance of this took four rounds of instrumentation
+    /// precisely because it arrived as `MalformedResponse` -- the response was
+    /// not malformed at all, and every hypothesis started from the wrong half
+    /// of the system.
+    LedgerNameUnusable,
     CompanyIdentityMismatch,
     DuplicateIdentity,
     BoundsViolation,
@@ -70,6 +81,7 @@ impl std::fmt::Display for StandardLedgerCatalogError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
             Self::MalformedResponse => "standard ledger catalog response was malformed",
+            Self::LedgerNameUnusable => "standard ledger catalog held an unusable ledger name",
             Self::CompanyIdentityMismatch => {
                 "standard ledger catalog did not confirm the selected company"
             }
@@ -1609,8 +1621,18 @@ fn parse_standard_ledger_catalog_rows(
                 if rows.len() >= MAX_STANDARD_LEDGER_IDENTITY_ROWS {
                     return Err(StandardLedgerCatalogError::BoundsViolation);
                 }
+                // The row parser reports through `anyhow`, so a class raised
+                // inside it arrives boxed. Recover it rather than flattening
+                // every failure to "malformed": a refused ledger name is not a
+                // malformed response, and saying so sent a previous diagnosis
+                // at the transport for three rounds.
                 let observed = parse_standard_ledger_identity_row(&mut reader, &element, true)
-                    .map_err(|_| StandardLedgerCatalogError::MalformedResponse)?;
+                    .map_err(|error| {
+                        error
+                            .downcast_ref::<StandardLedgerCatalogError>()
+                            .copied()
+                            .unwrap_or(StandardLedgerCatalogError::MalformedResponse)
+                    })?;
                 if observed.company_name != expected_company_name
                     || !observed
                         .company_guid
@@ -1893,7 +1915,7 @@ fn observed_standard_ledger_name(value: &str) -> Result<String, StandardLedgerCa
         || value.len() > 512
         || value.chars().any(deceptive_display_character)
     {
-        return Err(StandardLedgerCatalogError::MalformedResponse);
+        return Err(StandardLedgerCatalogError::LedgerNameUnusable);
     }
     Ok(value.to_string())
 }

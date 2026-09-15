@@ -1300,3 +1300,50 @@ fn a_devanagari_ledger_spelled_with_a_joiner_keeps_its_catalog() {
         );
     }
 }
+
+/// A refused ledger name and a malformed response are different failures with
+/// different owners: one is a master in an otherwise well-formed export, the
+/// other is Tally or the transport. Reporting both as `MalformedResponse` sent
+/// a real diagnosis at the wire for three rounds while the response was
+/// perfectly well-formed.
+#[test]
+fn a_refused_ledger_name_is_not_reported_as_a_malformed_response() {
+    let bytes = include_bytes!("fixtures/agent/native-ledger-catalogue.utf16le.xml");
+    let original = String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .expect("captured catalog is UTF-16LE");
+
+    // A name carrying a right-to-left override: well-formed XML, unusable name.
+    let refused = original.replace(
+        "Bridge Nested Debtor WR4",
+        "Bridge\u{202E}Nested Debtor WR4",
+    );
+    assert_eq!(
+        parse_standard_ledger_catalog_with_identities(
+            &refused,
+            "WR2 Unicode Lab",
+            "61c6de69-1748-461c-ad3f-162cb949df9f",
+        )
+        .unwrap_err(),
+        StandardLedgerCatalogError::LedgerNameUnusable,
+        "a name the catalog refuses must say so, not blame the response"
+    );
+
+    // Genuinely malformed XML still reports as malformed, so the split did not
+    // just relabel everything.
+    let truncated = &original[..original.len() / 2];
+    assert_eq!(
+        parse_standard_ledger_catalog_with_identities(
+            truncated,
+            "WR2 Unicode Lab",
+            "61c6de69-1748-461c-ad3f-162cb949df9f",
+        )
+        .unwrap_err(),
+        StandardLedgerCatalogError::MalformedResponse,
+        "a truncated body is still a malformed response"
+    );
+}
