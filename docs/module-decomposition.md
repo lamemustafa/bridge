@@ -50,6 +50,44 @@ jq -r '.files[].path' docs/tally/compatibility/compatibility-surface.json | grep
   && echo PINNED || echo unpinned
 ```
 
+## Which file to pick — size is not the only signal
+
+Size finds *module* incoherence. It says nothing about a file whose problem is one
+enormous function, and that is a different defect with a different fix.
+
+Measure both. Per file, take each function's span and compare the longest to the
+median:
+
+| ratio | lines | fns | median | longest | file :: function |
+|---:|---:|---:|---:|---:|---|
+| 49x | 443 | 19 | 6 | 296 | `agent_voucher_parse.rs :: parse_agent_rows_with_accounting_state` |
+| 37x | 3669 | 83 | 22 | **811** | `sync/snapshot.rs :: run` |
+| 26x | 1568 | 69 | 13 | 333 | `bridge-tally-transport/src/lib.rs :: execute_with_transport` |
+| 21x | 6486 | 169 | 19 | 396 | `bridge-tally-protocol/src/lib.rs :: parse_native_ledger_collection_row_with_master_fields` |
+
+`snapshot.rs::run` is **811 lines in one function** (brace-matched, not inferred
+from the next `fn`) and its file ranks only eighth by size — a size-ranked list
+never surfaces it. `agent_voucher_parse.rs` is 443 lines and would never be
+looked at at all.
+
+The converse also holds here, and is why size stays on the list: the biggest files
+are 11-21x with medians of 19-32 and 112-171 functions each. They are not one
+giant function wearing a file as a coat; they are many cohesive small things in
+one place. That is a module problem, and the ratio says nothing about it.
+
+**So run both triggers and treat them as naming different defects.** One 800-line
+function is extracted into named steps within its module. A 6,000-line module of
+small functions is split by subject into new modules.
+
+When counting function spans in Rust, match `fn` at any indent with optional
+`pub`/`async`/`const`/`unsafe`/`extern` — methods inside `impl` blocks are the
+ones you most want and the easiest to miss. (The equivalent mistake in a Go tree,
+missing method receivers, produced a wrong first measurement for the Axal session
+this trigger came from.)
+
+**Check for a deletion entry before planning a split.** Decomposing something
+already scheduled for removal is work thrown away twice.
+
 ## Where to cut
 
 **Cut where the code changes for the same reason, not by layer.** A `parse`,
@@ -145,3 +183,9 @@ General Rust guidance consulted, and where it needed adapting:
 
 None of them cover the compatibility surface, which is the constraint that actually
 governs decomposition in this repository.
+
+The longest-function-versus-median trigger came from a parallel measurement on the
+Axal tree (`docs/CODE-SHAPE.md` there), where a size rule would have split three
+healthy handler files and missed both files that actually had a defect. It does not
+transfer unchanged — see the section above for where this tree disagrees — but it
+finds targets a size ranking cannot.
