@@ -105,9 +105,26 @@ function repoRoot() {
 // detectMergeRefs() returning null degrades to per-file-only handling (see
 // the two "*InputsUsable" checks below), never to a silent wrong answer.
 function detectMergeRefs(root) {
+  // NOT necessarily `join(root, ".git", "MERGE_HEAD")`: in a linked git
+  // worktree (as opposed to the main checkout), `<root>/.git` is a plain
+  // text file pointing elsewhere (`gitdir: .../.git/worktrees/<name>`), not
+  // a directory -- MERGE_HEAD lives under that real git-dir, not under
+  // `<root>/.git`. `git rev-parse --git-path` resolves this correctly in
+  // both layouts; hardcoding `.git/MERGE_HEAD` silently never finds it in a
+  // worktree checkout, which is exactly how this was first written and
+  // first tested (a worktree) and always fell back without erroring.
+  const gitPathResult = spawnSync("git", ["rev-parse", "--git-path", "MERGE_HEAD"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  if (gitPathResult.status !== 0) return null;
+  const mergeHeadPath = gitPathResult.stdout.trim();
   let theirs;
   try {
-    theirs = readFileSync(join(root, ".git", "MERGE_HEAD"), "utf8").trim();
+    theirs = readFileSync(
+      mergeHeadPath.startsWith("/") ? mergeHeadPath : join(root, mergeHeadPath),
+      "utf8",
+    ).trim();
   } catch {
     return null; // not an ordinary `git merge` in progress
   }
