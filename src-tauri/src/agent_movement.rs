@@ -316,13 +316,21 @@ fn parse_movement_rows(rows: Vec<Value>, from: &str, to: &str) -> Result<Movemen
     {
         return Err("window_not_honoured".to_string());
     }
-    for voucher in vouchers
-        .iter()
-        .filter(|voucher| !voucher.cancelled && !voucher.optional)
-    {
-        if voucher.ledger_entries.is_empty() {
-            return Err("ledger_movement_entries_not_observed".to_string());
-        }
+    // A voucher with no accounting entries cannot move a ledger balance, so it
+    // is excluded the way a cancelled or optional one is rather than refusing
+    // the window. A Stock Journal legitimately carries none, and one anywhere in
+    // the range lost the whole range: seven monthly windows of a real book
+    // succeeded while five failed, and every full-year window failed.
+    //
+    // This does not weaken the read. An *empty* ALLLEDGERENTRIES.LIST is the
+    // only shape that reaches here as an empty list -- `agent_voucher_parse.rs`
+    // refuses a row carrying some of its three fields and not others, which is
+    // what a truncated response or a request-shape regression looks like, and
+    // that refusal stays loud. So by this point "no entries" can only mean
+    // Tally sent none, never that we failed to read them.
+    for voucher in vouchers.iter().filter(|voucher| {
+        !voucher.cancelled && !voucher.optional && !voucher.ledger_entries.is_empty()
+    }) {
         let total = voucher.ledger_entries.iter().try_fold(
             bridge_tally_core::ExactDecimal::zero(),
             |total, entry| {
@@ -338,7 +346,9 @@ fn parse_movement_rows(rows: Vec<Value>, from: &str, to: &str) -> Result<Movemen
     Ok(MovementPage {
         rows: vouchers
             .into_iter()
-            .filter(|voucher| !voucher.cancelled && !voucher.optional)
+            .filter(|voucher| {
+                !voucher.cancelled && !voucher.optional && !voucher.ledger_entries.is_empty()
+            })
             .collect(),
         observed_rows,
     })
