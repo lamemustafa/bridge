@@ -5,6 +5,7 @@ import "./source-draft.css";
 import {
   SourceDraft,
   SourceDraftAction,
+  SourceDraftCatalogBinding,
   SourceDraftCatalogTargets,
   SourceDraftCurrentCatalogBinding,
   SourceDraftProposedEntry,
@@ -100,6 +101,144 @@ function displayObserved(value: string | null, emptyLabel = "Empty field returne
 
 function displayCatalogTarget(target: string) {
   return target.replace(/(^ +| +$| {2,})/g, (spaces) => "␠".repeat(spaces.length));
+}
+
+function catalogBindingFor(catalog: SourceDraftCatalogTargets | null, rowPosition: number, entryPosition: number) {
+  return catalog?.bindings?.find((binding) => binding.row_position === rowPosition && binding.entry_position === entryPosition) ?? null;
+}
+
+/// The ledgers Bridge could defend for this source name, most defensible first.
+/// A bound target leads only because binding decided it; a candidate list is
+/// ordered by the rule that surfaced it and carries no ranking of its own.
+function narrowedTargets(binding: SourceDraftCatalogBinding | null) {
+  if (!binding) return [];
+  return binding.bound_target ? [binding.bound_target] : binding.candidates;
+}
+
+/// States what binding did, in the operator's terms. It never says "best",
+/// "recommended" or "suggested match": nothing here is chosen for anyone, and a
+/// listed ledger is a shortcut through the list, not an answer.
+///
+/// The refusal reason is read, not flattened. Every unbound result used to get
+/// the same near-miss sentence, which made an identifier conflict — where the
+/// name points at one ledger and the number inside it points at another — look
+/// like an ordinary weak match. That is the one case where the operator has
+/// real information to act on, and it was the case being hidden.
+function catalogBindingSummary(binding: SourceDraftCatalogBinding | null, total: number, selected: string | null) {
+  if (!binding) return null;
+  if (selected !== null) {
+    // The operator has chosen. Saying "nothing is chosen" beside their choice
+    // is simply false, and it contradicted the adjacent line telling them the
+    // target was re-read and bound.
+    //
+    // What a choice does *not* do is settle a disagreement. A binding that
+    // matched a different ledger is exactly the fact the operator would want to
+    // see beside their own selection, and taking a boolean here hid it: any
+    // bound target suppressed the summary, so choosing B where the capture
+    // defended A left nothing on screen saying so. The comparison is against
+    // the target, not against whether one exists.
+    if (binding.bound_target) {
+      return binding.bound_target === selected
+        ? null
+        : `Automatic binding matched ${displayCatalogTarget(binding.bound_target)} for this source line, not the ledger chosen here. Your choice stands; nothing has been changed for you.`;
+    }
+    // The *reason* still matters too, and is not hidden: an identifier and a
+    // name pointing at different ledgers is grounds to check a choice, not
+    // something that stops being true once one is made. So the refusal survives
+    // in the past tense, without the guidance that no longer applies.
+    return `Automatic binding did not resolve this line. ${catalogRefusalLead(binding.unbound_reason)}`;
+  }
+  if (binding.bound_target) {
+    // `identifier` covers both shapes the binder extracts — a numeric run and
+    // an alphanumeric code such as a registration or part number — and the DTO
+    // does not say which. So the wording does not claim a number.
+    const how = binding.bound_basis === "identifier"
+      ? "an identifier inside the ledger name"
+      : binding.bound_basis === "exact_name"
+        ? "the exact ledger name"
+        : "the same ledger name, differently written";
+    return `Listed first because ${how} matches this source line. Nothing is selected for you, and choosing it stays an unapproved proposal.`;
+  }
+  if (binding.candidate_count === 0) {
+    return `No existing ledger matched this source line. All ${total} are listed.`;
+  }
+  const count = binding.candidate_count_is_lower_bound
+    ? `at least ${binding.candidate_count}`
+    : `${binding.candidate_count}`;
+  const shown = binding.candidates.length;
+  if (shown === 0) {
+    // Two different facts arrive here with an empty list and a nonzero count,
+    // and they call for opposite actions. A **withheld** family is the binder
+    // refusing to print an arbitrary slice of ledgers this name cannot separate
+    // — slicing put the right one out of view about a third of the time across
+    // sixteen live catalogues: `TALLY_PROTOCOL_REFERENCE.md` §9.4c states the
+    // rule, `TEST_CORPUS.md` §9.1 carries the counts and their scope — and a
+    // fuller source name can fix that name-family case. An identifier conflict
+    // requires the complete observed catalogue and intended identity; rewriting
+    // the name alone cannot resolve it. A **truncated** listing is this report
+    // running out of room on earlier rows; the source name is fine and nothing
+    // the operator writes here would change it.
+    //
+    // Which one it is now arrives in the DTO. It used to be inferred from the
+    // refusal reason, which named only the one withheld shape this screen knew
+    // about; a family withheld under `identifier_conflict` reached the budget
+    // sentence and told the operator the report had run out of room when it
+    // had not.
+    switch (binding.candidate_listing) {
+      case "withheld": {
+        const action = isIdentifierConflict(binding.unbound_reason)
+          ? `Review this source line against the complete observed catalogue and confirm the intended identity before choosing from the full list of ${total}.`
+          : `Use a fuller source name, or choose from the full list of ${total}.`;
+        return `${catalogRefusalLead(binding.unbound_reason)} This source line matches ${count} existing ledgers and tells them apart from none of them, so none is listed. ${action}`;
+      }
+      case "truncated":
+        return `${catalogRefusalLead(binding.unbound_reason)} ${count} existing ledgers are involved, but this report ran out of room to list them. Choose from the full list of ${total}.`;
+      case "none":
+      case "listed":
+        return `${catalogRefusalLead(binding.unbound_reason)} Candidate details are unavailable. Choose from the full list of ${total}.`;
+      default: {
+        // Keep an unknown wire value safe at runtime, while a new typed state
+        // requires an explicit case here before the frontend can compile.
+        const unexpected: never = binding.candidate_listing;
+        void unexpected;
+        return `${catalogRefusalLead(binding.unbound_reason)} Candidate details are unavailable. Choose from the full list of ${total}.`;
+      }
+    }
+  }
+  const listed = binding.candidate_listing === "truncated" ? `${shown} of ${count}` : `${shown}`;
+  const lead = catalogRefusalLead(binding.unbound_reason);
+  return `${lead} Nothing is chosen; ${listed} possible ${shown === 1 ? "ledger is" : "ledgers are"} listed first, and the full list of ${total} follows.`;
+}
+
+function isIdentifierConflict(reason: string | null) {
+  return reason === "master_binding_identifier_conflict"
+    || reason === "master_binding_identifier_name_conflict";
+}
+
+/// Why binding refused, where the reason changes what the operator should look
+/// at. A conflict is not a weak match: both sides of it are strong, and they
+/// disagree.
+function catalogRefusalLead(reason: string | null) {
+  switch (reason) {
+    case "master_binding_identifier_name_conflict":
+      return "This source name matches one existing ledger exactly, while an identifier inside it matches a different one, and they disagree. Review the complete observed catalogue and confirm the intended identity before choosing.";
+    case "master_binding_identifier_conflict":
+      // Two different shapes reach this reason: one identifier carried by
+      // several ledgers, and several identifiers each reaching a different
+      // ledger. The operator must compare against the complete observed
+      // catalogue and confirm the intended identity; rewriting the name alone
+      // cannot resolve an identifier conflict.
+      return "The identifiers in this source line do not agree on one existing ledger. Review it against the complete observed catalogue and confirm the intended identity before choosing.";
+    case "master_binding_name_ambiguous":
+      // Not "separators": `TALLY_PROTOCOL_REFERENCE.md` §9.4d measured which
+      // ones fold on the release this writes to — space, hyphen and slash do,
+      // an en dash and an underscore do not. Naming the class would send an
+      // operator hunting for en-dash and underscore variants that played no
+      // part in the refusal, and it is the generalisation §9.4d exists to stop.
+      return "More than one existing ledger carries this name once upper and lower case, surrounding and repeated spaces, and spaces against hyphens or slashes are set aside, and nothing measured says which one Tally would pick.";
+    default:
+      return "No single ledger matched this source line.";
+  }
 }
 
 function hasStartedProposal(row: SourceDraftRow) {
@@ -513,7 +652,7 @@ export function SourceDraftScreen({
         <>
           <div className="source-draft-toolbar"><div><strong>{draft.source_filename}</strong><span>{draft.rows.length} source rows · {rowsWithoutProposal} rows without a proposal · revision {draft.revision}</span></div><div className="source-draft-actions"><button className="secondary-action" type="button" onClick={() => requestLoad("choose")} disabled={interactionDisabled}>{action === "choose" ? "Opening source…" : "Choose new source"}</button><button className="secondary-action" type="button" onClick={() => requestLoad("open")} disabled={interactionDisabled}>{action === "open" ? "Opening draft…" : "Open saved draft"}</button><button className="primary" type="button" onClick={() => void save()} disabled={interactionDisabled}><Save size={17} aria-hidden="true" />{action === "save" ? "Saving draft…" : "Save draft"}</button></div></div>
           <p className="source-draft-boundary">Source values are immutable observations. A target chosen from the current ledger list remains an unverified proposal; this preparation screen cannot approve or post anything to Tally.</p>
-          <div className="source-draft-actions"><button className="secondary-action" type="button" disabled={interactionDisabled || catalogInvalidating || !catalogScope} onClick={() => void loadExistingLedgerTargets()}>{action === "catalog_load" ? "Loading existing ledgers…" : catalog ? "Refresh existing ledgers" : "Load existing ledgers"}</button>{!catalogScope && <span className="source-draft-catalogue-state">Check Tally and select a current company before loading existing ledgers.</span>}{catalogInvalidating && <span className="source-draft-catalogue-state">Existing-ledger context is changing.</span>}{catalog && <span className="source-draft-catalogue-state">{catalog.targets.length} existing ledgers captured for this source. Choosing one remains unverified.</span>}</div>
+          <div className="source-draft-actions"><button className="secondary-action" type="button" disabled={interactionDisabled || catalogInvalidating || !catalogScope} onClick={() => void loadExistingLedgerTargets()}>{action === "catalog_load" ? "Loading existing ledgers…" : catalog ? "Refresh existing ledgers" : "Load existing ledgers"}</button>{!catalogScope && <span className="source-draft-catalogue-state">Check Tally and select a current company before loading existing ledgers.</span>}{catalogInvalidating && <span className="source-draft-catalogue-state">Existing-ledger context is changing.</span>}{catalog && <span className="source-draft-catalogue-state">{catalog.targets.length} existing ledgers captured for this source. Choosing one remains unverified.{catalog.bindings_state === "unavailable" ? " Bridge could not narrow this source's lines, so every row lists the full catalogue." : ""}</span>}</div>
           <details className="source-draft-file-evidence"><summary>Source file evidence</summary><dl><div><dt>Source file</dt><dd>{draft.source_filename}</dd></div><div><dt>Source SHA-256</dt><dd><code>{draft.source_sha256}</code></dd></div></dl></details>
           {((draft.source_notices ?? []).length > 0) && <details className="source-draft-notices"><summary>Source-level notices ({(draft.source_notices ?? []).length})</summary><ul>{(draft.source_notices ?? []).map((notice, index) => <li key={`${notice.kind}-${index}`}><strong>{notice.kind}</strong><span>{notice.count} retained records</span></li>)}</ul></details>}
           {savedPath && <p className="source-draft-saved" role="status">{savedPath}</p>}
@@ -558,17 +697,38 @@ function SourceDraftEditor({ row, disabled, catalog, catalogSelections, catalogI
         <div className="source-draft-entry-list">
           {proposal.entries.map((entry, index) => {
             const entryId = (name: string) => fieldId(`entry-${index}-${name}`);
+            const binding = catalogBindingFor(catalog, row.position, index + 1);
+            const narrowed = narrowedTargets(binding);
+            // One predicate for "the operator chose this against the capture in
+            // front of them", used by the control, its status line and the
+            // summary alike. A saved `entry.ledger` from an earlier session is
+            // not that: the `<select>` shows it as unchosen and the status line
+            // calls it unverified, so a summary keyed on `entry.ledger` alone
+            // said the operator had chosen while its neighbours said they had
+            // not — and hid the binding result they still needed.
+            const selectedKey = catalogSelectionKey(row.position, index + 1);
+            const selectedNow = catalogSelections[selectedKey] === entry.ledger;
+            const bindingSummary = catalog
+              ? catalogBindingSummary(binding, catalog.targets.length, selectedNow ? entry.ledger ?? null : null)
+              : null;
             return <div className="source-draft-entry" key={`${row.position}-${index}`}>
               <p><span>Source line {index + 1}</span>{sourceEntryLabel(row.entries[index] ?? { position: index, source_ledger: "", source_amount: "", source_polarity: "" })}</p>
               <div className="source-draft-field">
                 <label htmlFor={entryId("ledger")}>Existing target ledger</label>
                 {catalog ? <>
-                  <select id={entryId("ledger")} value={catalogSelections[catalogSelectionKey(row.position, index + 1)] === entry.ledger ? entry.ledger ?? "" : ""} onChange={(event) => event.target.value && onSelectExistingLedger(row.position, index + 1, event.target.value)} disabled={disabled}>
+                  <select id={entryId("ledger")} value={selectedNow ? entry.ledger ?? "" : ""} onChange={(event) => event.target.value && onSelectExistingLedger(row.position, index + 1, event.target.value)} disabled={disabled}>
                     <option value="">Choose existing ledger</option>
-                    {catalog.targets.map((target) => <option key={target} value={target}>{displayCatalogTarget(target)}</option>)}
+                    {narrowed.length > 0 && <optgroup label={binding?.bound_target ? "Matched to this source line" : "Possible for this source line"}>
+                      {narrowed.map((target) => <option key={`narrowed-${target}`} value={target}>{displayCatalogTarget(target)}</option>)}
+                    </optgroup>}
+                    {/* The whole catalogue always remains reachable. Narrowing is a shortcut through the list, never a restriction on it. */}
+                    <optgroup label={narrowed.length > 0 ? `All ${catalog.targets.length} existing ledgers` : "Existing ledgers"}>
+                      {catalog.targets.map((target) => <option key={target} value={target}>{displayCatalogTarget(target)}</option>)}
+                    </optgroup>
                   </select>
                   {entry.ledger && <button className="secondary-action source-draft-clear-target" type="button" onClick={() => onClearExistingLedger(row.position, index + 1)} disabled={disabled}>Clear target</button>}
-                  <p className="source-draft-catalogue-state">{catalogSelections[catalogSelectionKey(row.position, index + 1)] === entry.ledger ? "This current-session target was re-read and bound. It remains an unapproved proposal." : catalogInvalidatedSelections[catalogSelectionKey(row.position, index + 1)] === entry.ledger ? `Tally changed after this target was bound. Saved unverified target: ${entry.ledger}. Select it to check it against this current capture.` : entry.ledger ? `Saved unverified target: ${entry.ledger}. Select it to check it against this current capture.` : "Choose a current existing ledger to make an unapproved proposal."}</p>
+                  <p className="source-draft-catalogue-state">{selectedNow ? "This current-session target was re-read and bound. It remains an unapproved proposal." : catalogInvalidatedSelections[selectedKey] === entry.ledger ? `Tally changed after this target was bound. Saved unverified target: ${entry.ledger}. Select it to check it against this current capture.` : entry.ledger ? `Saved unverified target: ${entry.ledger}. Select it to check it against this current capture.` : "Choose a current existing ledger to make an unapproved proposal."}</p>
+                  {bindingSummary && <p className="source-draft-catalogue-state">{bindingSummary}</p>}
                 </> : <>
                   <input id={entryId("ledger")} placeholder="Unverified ledger name" value={entry.ledger ?? ""} onChange={(event) => onUpdateEntry(index, (current) => ({ ...current, ledger: emptyToNull(event.target.value) }))} disabled={disabled} />
                   <p className="source-draft-catalogue-state">{entry.ledger ? `Saved unverified target: ${entry.ledger}` : "Load existing ledgers to choose a target."}</p>

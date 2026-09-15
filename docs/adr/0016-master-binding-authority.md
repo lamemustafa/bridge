@@ -89,13 +89,13 @@ colliding pair surfaces in the unbound list where an operator can see it.
 Failing a whole read to report one collision would block all the work it was
 performed for.
 
-`MasterClass` is `Ledger` or `StockItem`. Both classes failed in practice and
-the identifier rules are identical for both, but **the name fold is not**:
-§9.4d measured ledgers, and whether a stock item matches by the same rule was
-never sent. So a folded stock-item name may *suggest* and may not resolve —
-byte equality is unaffected, since it needs no fold. The class is carried both
-so a report cannot be applied to the wrong catalog and because the evidence
-behind the two differs.
+`MasterClass` is `Ledger` or `StockItem`. The identifier rules are identical
+for both. Gateway measurements remain useful for candidate ordering, but a
+`MasterCatalog` has no product, release, tier, endpoint, or operator-approval
+scope. Therefore every folded name suggests candidates only, for either class;
+byte equality is unaffected because it needs no fold. The class is carried so
+a report cannot be applied to the wrong catalog and because the evidence behind
+the two still differs.
 
 ### 2. The identifier is the key; the name is a hint
 
@@ -207,26 +207,27 @@ signals disagree, and the disagreement is reported
 (`IdentifierNameConflict`) rather than silently settled in the identifier's
 favour.
 
-### 3. Name matching binds only on an exact or normalized-exact unique hit
+### 3. Name matching binds only on byte equality
 
-`Exact` is byte equality with the observed master name. `Normalized` is equality
-under **Tally's own rule for when two master names are the same**, and only when
-exactly one master shares it.
+`Exact` is byte equality with the observed master name. A folded name is a
+candidate even when exactly one observed master shares its key.
 
-**There are two folds, and which one may answer is the whole of this section.**
+**There are two folds, and neither answers in this generic catalog.**
 
-The resolving fold implements exactly the equivalences
-`TALLY_PROTOCOL_REFERENCE.md` §9.4d measured on **licensed TallyPrime 7.1** —
-the SKU this writes to — by naming each spelling in a voucher and reading the
-day book back to see which master it reached:
+The narrower fold is a **historical candidate index**, not a current statement
+of qualified gateway equivalence. It uses the transformations a previous
+implementation treated as equivalent: case, boundary and repeated spaces, and
+ASCII space, `-`, and `/`. That index may be broader than the qualified
+measurements, so it can only order candidate suggestions. The supporting
+observation was scoped to Silver; it measured a slash in the source reaching a
+space in the master, but did not measure the reverse direction. It does not
+establish a generic, symmetric separator rule.
 
-- ASCII case folds;
-- leading and trailing whitespace is ignored;
-- an internal run of spaces collapses;
-- **space, `-` and `/` are one separator**, in both directions.
-
-Everything else is exact on codepoints. The wide fold (`master_identity_key`)
-carries more than that and may only offer candidates.
+The wide fold (`master_identity_key`) carries more still and also only offers
+candidates. `MasterCatalog::new(class, names)` carries no product, release,
+tier, endpoint, or operator-approval scope that could authorize a caller to
+select a folded match. A write gate cannot repair a wrong selection once a
+caller has copied its returned name.
 
 **The two rules that matter are negative, and neither is guessable.** An **en
 dash** and an **underscore** were sent and *rejected*: they are not separators
@@ -245,12 +246,12 @@ authority. That was corrected by narrowing to the three §9.4b had measured,
 which cost 420 of 995 mutation binds and withdrew `X - Y`, a common ledger
 convention.
 
-Then the narrowing turned out to be over-strict, because §9.4b's scope is *Edit
-Log 7.0 Educational* and this project writes to licensed 7.1. Measuring that SKU
-directly (§9.4d) found the gateway wider: the reverse hyphen direction, leading
-whitespace, collapsed runs and slash all match. The fold is symmetric again, one
-key per side, and the asymmetric index the narrow version needed is gone. On the
-mutation book **600 of 995** now bind, against 420 under the narrow fold.
+Then a later historical interpretation treated the index as a wider licensed
+7.1 rule and bound **600 of 995** mutation names, against 420 under the narrow
+fold. That was a prior binding result, not a measured candidate count, and is
+withdrawn as authority: its scope and directional support were overstated. The
+index remains only to make the same possible masters visible to an operator; it
+does not bind in the generic catalog.
 
 The lesson is not "measure more". It is that **the scope line of an inherited
 measurement is part of the measurement**: §9.4b was accurate and its scope was
@@ -297,23 +298,54 @@ it records what was observed).
 suppression is measured from the catalog rather than from a built-in word list,
 which keeps it free of language and domain assumptions.
 
-Candidates are capped at `MAX_CANDIDATES_PER_ENTITY` (25) with the true
-`candidate_count` and an explicit `candidates_truncated` flag retained, so a
-truncated list is never mistaken for a short one.
+Candidates are capped at `MAX_CANDIDATES_PER_ENTITY` (25). The core retains
+`candidate_count`, listing state and `Candidates::count_is_lower_bound()`.
+The MCP and desktop projections expose `candidate_count_is_lower_bound`: true
+means the number is a conservative lower bound and must be shown as "at least N".
+The core sets it only when unmaterialized identifier families prevent an exact
+union count. A withheld prefix family or a core-truncated list can retain an
+exact union count; listing completeness and count precision are separate facts.
+A later consumer-only copy cap can likewise shorten a complete listing while
+retaining an exact count.
 
 ### 4a. An empty candidate list is three different facts, and the producer says which
 
 `candidates` can be empty for three unrelated reasons, and they mean opposite
 things to anyone deciding what to do next:
 
-| `reason` | what empty means |
-| --- | --- |
-| `NoCandidate` | no master resembles this name at all |
-| `NoDiscriminatingCandidate` | `candidate_count` masters resemble it and none is separable — **many exist**, none is worth showing |
-| any, with `candidates_truncated` | the list was cut, by the per-entity cap or by the report's aggregate byte budget |
+**Key the row on the listing state, not on the reason.** Withholding is not the
+property of one reason: a source identifier held by more than
+`MAX_CANDIDATES_PER_ENTITY` masters is withheld under `IdentifierConflict`, and a
+name reaching a family it cannot separate is withheld under
+`NoDiscriminatingCandidate`. A consumer that keys on the reason misses the first.
+
+**The state has three names, one per boundary.** The core enum is reachable as
+`Candidates::listing()`; the **MCP** result carries it as `listing`; the
+**desktop** DTO carries it as `candidate_listing`. The four words are identical
+everywhere — `none`, `listed`, `truncated`, `withheld` — so the table below is
+keyed on the word, and each consumer reads it from the field its own boundary
+emits. Naming one boundary's field as though it were universal is how the last
+version of this table sent a consumer looking for something that does not exist.
+
+| listing state | what empty means | which `reason` |
+| --- | --- | --- |
+| `none` | no master resembles this name at all | `NoCandidate` |
+| `withheld` | **many exist**, the binder declined to print an arbitrary slice, and `candidate_count` says how many | either `NoDiscriminatingCandidate` or `IdentifierConflict` |
+| `truncated` | the list was cut, by the per-entity cap or by the report's aggregate byte budget | any |
+
+`candidate_count` is exact unless `candidate_count_is_lower_bound` says
+otherwise. A skipped identifier family alone is a single set, and its size is
+its length. Multiple skipped families are also exact when the binder proves,
+within its 256 membership-probe budget, that every smaller family is contained
+in the largest. The count is a lower bound when that containment proof finds an
+outside member or exhausts its budget. Independently, a skipped identifier
+family beside name candidates is a lower bound only when unlisted name
+candidates leave their overlap unknown; when every name candidate is
+materialized, the binder counts the known members outside the family exactly.
 
 So `candidates.is_empty()` alone answers nothing. The disambiguators are
-`reason`, `candidate_count` and `candidates_truncated`, and a consumer that
+`reason`, `candidate_count`, `candidate_count_is_lower_bound` and the listing
+state under whichever of its three names the boundary emits, and a consumer that
 reads the empty vector as "nothing exists" is wrong in two cases out of three.
 
 This is stated here, in the producer's contract, rather than left to each
@@ -345,12 +377,16 @@ for it measured its own cost at about thirty lines and reported that the change
 made its code better rather than merely compatible — a hand-assembled
 disjunction became an exhaustive match.
 
-**The fix stops at the crate boundary, and says so.** The MCP result carries an
-explicit `listing` discriminator, because a model is precisely the caller that
-would read an empty array as "no such ledger exists". The desktop DTO stays
-flat: its screen already distinguishes the three cases and is tested on each, so
-flattening there is a projection with a tested consumer rather than an
-ambiguity. Neither boundary has the compiler behind it — this protects Rust
+**The fix stops at the crate boundary, and says so.** Both projections now carry
+an explicit discriminator — `listing` on the MCP result, `candidate_listing` on
+the desktop DTO — because a model is precisely the caller that would read an
+empty array as "no such ledger exists", and the preparation screen turned out to
+be another. The desktop DTO was flat until it was not: it carried a
+`candidates_truncated` boolean, which is `is_incomplete()` and so could not tell
+a withheld family from an exhausted budget. That flattening was defended here as
+"a projection with a tested consumer"; the tests were real and tested the wrong
+thing, because the DTO could not express the distinction they would have had to
+make. Neither boundary has the compiler behind it — this protects Rust
 consumers, and the projections are the two places where that protection ends.
 
 ### 5. Status vocabulary
@@ -359,7 +395,7 @@ Per entity, exactly one of:
 
 | status | meaning |
 | --- | --- |
-| `Bound { catalog_name, basis }` | one master, decided by `Identifier`, `ExactName`, or `NormalizedName` |
+| `Bound { catalog_name, basis }` | one master, decided by `Identifier` or `ExactName` |
 | `Ambiguous { candidates, .. }` | more than one master is defensible, including every identifier conflict |
 | `Unmatched { candidates, .. }` | no rule produced a candidate |
 
@@ -402,16 +438,16 @@ voucher, creates no master, and dispatches nothing.
 ## Consequences
 
 - `agent_import.rs::master_match` and its private `master_key` are deleted and
-  `validate_masters` is re-expressed over the crate. `match_state` gains
-  `normalized` and `identifier` alongside `exact`, `near_miss` and `missing`,
-  and `exact_live_spelling` now appears only on a bound row. A caller reading
-  that field on a near-miss was reading a guess.
-- The old implementation classified *every* normalized-equal name as a
-  near-miss, so a request differing from the live ledger only in case,
-  whitespace, or dash style produced a candidate list instead of an answer.
-  Those now bind and report the live spelling.
+  `validate_masters` is re-expressed over the crate. `match_state` reports
+  `exact`, `identifier`, `near_miss`, or `missing`; folded spellings remain
+  `near_miss` candidates and `exact_live_spelling` appears only on a bound row.
+- Current `BindingBasis` cannot construct or deserialize `NormalizedName`.
+  The core has no binding-report persistence reader; older captured report
+  JSON remains historical evidence, not a current binding input. Persisted
+  operator selections still use their existing separate catalogue-binding
+  representation and require a fresh exact catalogue check before use.
 - `build_import_xml` and the approved-post recheck still admit **`exact` only**.
-  The import file carries the name verbatim, so a normalized or identifier bind
+  The import file carries the name verbatim, so a folded candidate or identifier bind
   informs the operator without widening what may be written. This PR does not
   move the write gate.
 - The MCP result reports an unbound entity's `unresolved_identity` wrapped in
