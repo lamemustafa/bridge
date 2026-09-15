@@ -113,15 +113,19 @@ files nobody would call large.
 
 The converse also holds, and is why size stays on the list. The biggest files:
 
-| ratio | lines | fns | median | file |
-|---:|---:|---:|---:|---|
-| 28.8x | 6508 | 169 | 13 | `bridge-tally-protocol/src/lib.rs` |
-| 20.9x | 5441 | 171 | 18 | `tally/runtime.rs` |
-| 19.3x | 4684 | 147 | 15 | `commands.rs` |
-| 17.7x | 5919 | 112 | 21 | `db/tally_mirror.rs` |
+Counting only **code** functions — excluding those inside inline
+`#[cfg(test)] mod` blocks, which are otherwise measured as if they were the
+module's own:
 
-Their medians are 13-21 — the functions are small. They are not one giant function
-wearing a file as a coat; they are 112-171 cohesive small things in one place.
+| code lines | code fns | median | file |
+|---:|---:|---:|---|
+| 6,407 | 166 | 13 | `bridge-tally-protocol/src/lib.rs` |
+| 5,919 | 112 | 21 | `db/tally_mirror.rs` |
+| 3,571 | 104 | 12 | `commands.rs` |
+| 3,488 | 117 | 14 | `tally/runtime.rs` |
+
+Their medians are 12-21 — the functions are small. They are not one giant function
+wearing a file as a coat; they are 104-166 cohesive small things in one place.
 That is a module problem, and the ratio does not distinguish it from the
 single-huge-function case: `lib.rs` at 28.8x scores *worse* than `snapshot.rs`
 would on median alone, for an entirely different reason.
@@ -151,6 +155,18 @@ the brace, and only for a `mod` whose declaration opens one.**
 
 The distinction and the corrected table are from a parallel measurement in
 `docs/proposed-rust-module-conventions.md` (#414), which reached it first.
+
+The same correction applies to the function counts and medians above, and it was
+worth checking rather than assuming: a counter that matches `fn name` picks up
+every `#[test] fn` too, so a file whose tests are inline has its module's shape
+measured through its tests' style. Excluding them moves `runtime.rs` from 171
+functions at median 18 to **117 at median 14**, and `commands.rs` from 147/15 to
+**104/12**. `lib.rs` barely moves and `tally_mirror.rs` not at all, because #395
+already extracted its tests.
+
+The conclusion survives the correction — 104-166 small functions in one file is
+still a module problem — but it survives having been checked, which is the only
+way it was worth stating.
 
 **So the ratio is a detector, not a ranking.** Use it to find files a size list
 misses; use the file size and function count to tell which of the two defects you
