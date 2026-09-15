@@ -786,18 +786,22 @@ fn a_present_voucher_reports_a_party_the_book_disagrees_with() {
 
 #[test]
 fn a_party_difference_echoes_the_source_spelling_not_its_catalog_binding() {
+    // This test needs a party that binds decisively while being spelled
+    // differently from the master it binds to -- otherwise there is nothing to
+    // echo and the assertion is vacuous. A case fold used to serve, and since
+    // "Rectify unqualified folded ledger binding" it does not: a folded name
+    // suggests candidates and no longer resolves. An identifier embedded in the
+    // master name is the remaining basis that decides without byte equality,
+    // so the source spells the identifier its own way and binds anyway.
+    let catalog = catalog_of(&["Alpha Traders 9876543210"]);
     let window =
         window(&[BookRow::new("book-1", "20260812", "AA0118").party_field("Bravo Industries")]);
-    // The proposed spelling must bind, because only a bound party can disagree.
-    // Since #331 removed BindingBasis::NormalizedName, a case-folded spelling no
-    // longer binds, so this uses the catalogue's exact name -- the difference
-    // being asserted is proposed-vs-observed, not proposed-vs-its-own-binding.
     let proposals = [ProposalRow::new(0, "20260812", "AA0118")
-        .party("Alpha Traders")
+        .party("ALPHA 9876543210")
         .build()];
     let report = run(
         &window,
-        &catalog(),
+        &catalog,
         &numbering(NumberingMethod::Manual),
         &proposals,
     );
@@ -808,7 +812,7 @@ fn a_party_difference_echoes_the_source_spelling_not_its_catalog_binding() {
         .iter()
         .find(|difference| difference.field == DifferenceField::Party)
         .expect("party difference");
-    assert_eq!(party.proposed.as_deref(), Some("Alpha Traders"));
+    assert_eq!(party.proposed.as_deref(), Some("ALPHA 9876543210"));
     assert_eq!(party.observed.as_deref(), Some("Bravo Industries"));
 }
 
