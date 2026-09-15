@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Clippy configuration for the src-tauri workspace (the app crate plus the
+# bridge-tally-* library crates). Paired with the `[workspace.lints.clippy]`
+# table in Cargo.toml, which turns on the `pedantic` group at `warn` (never
+# `deny` — see that table's comment for why).
+#
+# too_many_lines defaults to 100 lines per function, which fires on a large
+# share of the parsing/reconciliation functions in this codebase even where
+# they are not otherwise a problem. 150 was chosen as a first, deliberately
+# loose bar: see docs/proposed-ci-gates.md for the measured warning count
+# this produced and the reasoning for keeping it at 150 rather than tightening
+# it further.
+too-many-lines-threshold = 150

@@ -2,7 +2,7 @@ import React from "react";
 import { Cloud, RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 
-type AxalIntegration = "tally" | "documents" | "dsc";
+type AxalIntegration = "tally" | "documents";
 
 type AxalValidationResponse = {
   valid: boolean;
@@ -43,7 +43,7 @@ function formatBytes(bytes: number): string {
 type Props = {
   busy: boolean;
   setBusy: (busy: boolean) => void;
-  // Owned by App() and shared with the DSC and Documents views -- read
+  // Owned by App() and shared with the Documents view -- read
   // here, never duplicated locally. This view still *writes* them because
   // validating credentials and checking connection status only ever
   // happens from here.
@@ -58,13 +58,13 @@ type Props = {
 // and the validate/check-status handlers.
 //
 // Deliberately does NOT own: `axalConnection` or `axalSession`. Those are
-// AXAL workspace-session state shared with the DSC and Documents views (both
+// AXAL workspace-session state shared with the Documents view (both
 // already extracted, both receive it as props from App()), so they stay in
 // App() and are passed down here rather than duplicated. `busy` is likewise
 // a cross-view flag owned by App().
 export function AxalScreen({ busy, setBusy, axalConnection, axalSession, setAxalSession, setAxalConnection }: Props) {
   const [axalBaseUrl, setAxalBaseUrl] = React.useState("https://complyeaze.com");
-  const [axalIntegration, setAxalIntegration] = React.useState<AxalIntegration>("dsc");
+  const [axalIntegration, setAxalIntegration] = React.useState<AxalIntegration>("tally");
   const [axalApiId, setAxalApiId] = React.useState("");
   const [axalApiKey, setAxalApiKey] = React.useState("");
   const [axalValidation, setAxalValidation] = React.useState<AxalValidationResponse | null>(null);
@@ -144,7 +144,6 @@ export function AxalScreen({ busy, setBusy, axalConnection, axalSession, setAxal
           <select value={axalIntegration} onChange={(event) => { setAxalIntegration(event.target.value as AxalIntegration); invalidateAxalSession(); }}>
             <option value="tally">Tally Prime</option>
             <option value="documents">Document Sync</option>
-            <option value="dsc">DSC Management</option>
           </select>
         </label>
       </section>

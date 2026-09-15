@@ -1869,8 +1869,30 @@ fn normalized_standard_value(value: &str, label: &str) -> anyhow::Result<String>
     Ok(value.to_string())
 }
 
+/// A ledger name is an **identity** value, not a display string: it is matched
+/// against proposals by exact codepoint, and echoed back as the import spelling
+/// that has to round-trip to Tally. So the only things it can be refused for are
+/// the two that make it unusable as an identity -- absent, or past the bound this
+/// parser is willing to hold.
+///
+/// It deliberately does **not** refuse control or bidi characters. Real books
+/// hold ledger names with an embedded newline, and books migrated from other
+/// software hold names with C1 bytes baked in by a double-encoding import. When
+/// this refused them, one such master failed the entire company's catalog and
+/// with it every read that needs one -- presence, a ledger-scoped voucher
+/// window, and import validation. A malformed name must not remove a real
+/// master, and must not be rewritten either: Tally matches by exact codepoint,
+/// so a cleaned-up spelling addresses a ledger that does not exist.
+///
+/// What it still refuses is the set that makes a name *lie about itself*:
+/// bidirectional overrides and zero-width characters, which can render one
+/// spelling as another. A newline is ugly in a terminal and the renderer's
+/// problem; a right-to-left override is a forged name and this parser's.
 fn observed_standard_ledger_name(value: &str) -> Result<String, StandardLedgerCatalogError> {
-    if value.trim().is_empty() || value.len() > 512 || value.chars().any(unsafe_display_character) {
+    if value.trim().is_empty()
+        || value.len() > 512
+        || value.chars().any(deceptive_display_character)
+    {
         return Err(StandardLedgerCatalogError::MalformedResponse);
     }
     Ok(value.to_string())
@@ -1904,11 +1926,22 @@ fn safe_standard_ledger_parent(value: &str) -> Option<String> {
 }
 
 fn unsafe_display_character(value: char) -> bool {
-    value.is_control()
-        || matches!(
-            value,
-            '\u{061C}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}' | '\u{2066}'..='\u{206F}' | '\u{FEFF}'
-        )
+    value.is_control() || deceptive_display_character(value)
+}
+
+/// The half of [`unsafe_display_character`] that is about *deception* rather
+/// than about rendering: characters that reorder or hide the text around them,
+/// so that the spelling shown is not the spelling stored.
+///
+/// Split out because the two halves earn different answers on an observed
+/// master name. A control character there is a real, if untidy, name a book
+/// genuinely holds; one of these is a name forged to read as another, and no
+/// book has a legitimate reason to hold one.
+fn deceptive_display_character(value: char) -> bool {
+    matches!(
+        value,
+        '\u{061C}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}' | '\u{2066}'..='\u{206F}' | '\u{FEFF}'
+    )
 }
 
 fn set_bootstrap_context_once(
@@ -4962,6 +4995,26 @@ fn domain_sha256(domain: &[u8], value: &[u8]) -> String {
     encoded
 }
 
+/// `ENVELOPE`, `HEADER`, `BODY`, `VERSION` and `STATUS` are protocol element names
+/// only in the envelope's own frame -- the root, its direct children, and the
+/// header's fields. Tally reuses the same spellings for ordinary data: a real
+/// trading book returns
+/// `VOUCHER/ALLLEDGERENTRIES.LIST/BANKALLOCATIONS.LIST/STATUS` on every Payment,
+/// Receipt and Contra voucher that carries a bank allocation, and reading that
+/// bank field as a second, misplaced protocol status refused the whole response.
+///
+/// `ENVELOPE/BODY` stays inside the frame deliberately. A `STATUS` placed there
+/// is still refused as misplaced, because Tally does not emit data at that depth
+/// and the existing guarantee is worth more than the extra permissiveness.
+/// Everything below it -- `DESC`, `DATA`, and their descendants -- is data, and
+/// is judged by position rather than by name.
+fn in_protocol_region(path: &[Vec<u8>]) -> bool {
+    path.is_empty()
+        || path_eq(path, &[b"ENVELOPE"])
+        || path_eq(path, &[b"ENVELOPE", b"HEADER"])
+        || path_eq(path, &[b"ENVELOPE", b"BODY"])
+}
+
 pub fn export_status(xml: &str) -> anyhow::Result<TallyExportStatus> {
     let mut reader = configured_reader(xml);
     let mut path = Vec::<Vec<u8>>::new();
@@ -4975,10 +5028,12 @@ pub fn export_status(xml: &str) -> anyhow::Result<TallyExportStatus> {
         match reader.read_event()? {
             Event::Start(element) => {
                 let name = element.name().as_ref().to_ascii_uppercase();
-                if matches!(
-                    name.as_slice(),
-                    b"ENVELOPE" | b"HEADER" | b"BODY" | b"VERSION" | b"STATUS"
-                ) {
+                if in_protocol_region(&path)
+                    && matches!(
+                        name.as_slice(),
+                        b"ENVELOPE" | b"HEADER" | b"BODY" | b"VERSION" | b"STATUS"
+                    )
+                {
                     validate_only_attributes(&element, &[]).map_err(|_| {
                         anyhow::anyhow!("Tally export response attributes were invalid")
                     })?;
@@ -5003,7 +5058,10 @@ pub fn export_status(xml: &str) -> anyhow::Result<TallyExportStatus> {
                         anyhow::bail!("Tally export response contained an extra ENVELOPE child");
                     }
                 }
-                if name.as_slice() == b"HEADER" {
+                if !in_protocol_region(&path) {
+                    // Body data. Record depth; judge nothing by element name.
+                    path.push(name);
+                } else if name.as_slice() == b"HEADER" {
                     if !path_eq(&path, &[b"ENVELOPE"]) || header_seen {
                         anyhow::bail!("Tally export response repeated or misplaced HEADER");
                     }
@@ -5039,10 +5097,12 @@ pub fn export_status(xml: &str) -> anyhow::Result<TallyExportStatus> {
             }
             Event::Empty(element) => {
                 let name = element.name().as_ref().to_ascii_uppercase();
-                if matches!(
-                    name.as_slice(),
-                    b"ENVELOPE" | b"HEADER" | b"BODY" | b"VERSION" | b"STATUS"
-                ) {
+                if in_protocol_region(&path)
+                    && matches!(
+                        name.as_slice(),
+                        b"ENVELOPE" | b"HEADER" | b"BODY" | b"VERSION" | b"STATUS"
+                    )
+                {
                     validate_only_attributes(&element, &[]).map_err(|_| {
                         anyhow::anyhow!("Tally export response attributes were invalid")
                     })?;
@@ -5060,7 +5120,9 @@ pub fn export_status(xml: &str) -> anyhow::Result<TallyExportStatus> {
                     body_seen = true;
                 } else if path_eq(&path, &[b"ENVELOPE"]) {
                     anyhow::bail!("Tally export response contained an unexpected ENVELOPE child");
-                } else if matches!(name.as_slice(), b"HEADER" | b"VERSION" | b"STATUS") {
+                } else if in_protocol_region(&path)
+                    && matches!(name.as_slice(), b"HEADER" | b"VERSION" | b"STATUS")
+                {
                     anyhow::bail!("Tally export response contained an empty critical header field");
                 }
             }

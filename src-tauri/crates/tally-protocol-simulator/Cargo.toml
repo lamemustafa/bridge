@@ -8,6 +8,9 @@ publish = false
 edition = "2021"
 rust-version = "1.96"
 
+[lints]
+workspace = true
+
 [dependencies]
 bridge-tally-core = { path = "../bridge-tally-core" }
 hex = "0.4"

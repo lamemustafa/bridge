@@ -3,7 +3,19 @@ import { Search } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 
 type Company = { name: string; guid: string; company_number: string; books_from_yyyymmdd: string; canonical_origin: string };
-type Entry = { ledger: string; amount: string; is_deemed_positive: "Yes" | "No" };
+type Entry = { ledger: string; amount: string; is_deemed_positive: "Yes" | "No"; polarity_disagrees_with_amount?: boolean };
+
+// The side comes from the amount's own sign, never from is_deemed_positive. That
+// flag records the column the entry was made in and legitimately disagrees with
+// the sign on a rounding ledger, so reading it as the side mislabels real entries.
+// A zero amount has no sign to read, so it keeps the side the flag observed.
+function entrySide(entry: Entry): "debit-side" | "credit-side" {
+  const amount = Number(entry.amount);
+  if (!Number.isFinite(amount) || amount === 0) {
+    return entry.is_deemed_positive === "Yes" ? "debit-side" : "credit-side";
+  }
+  return amount < 0 ? "debit-side" : "credit-side";
+}
 type Voucher = { date: string; voucher_number?: string | null; voucher_type: string; party?: string | null; narration?: string | null; guid?: string | null; alter_id?: number | null; master_id?: string | null; amounts: Entry[]; cancelled: boolean; optional: boolean };
 type ReadEvidence = { state: "complete" | "partial"; reason_code?: string | null; read_at?: string | null; duration_ms?: number | null; bytes: number };
 type Result = { state: "complete" | "partial"; reason?: string | null; items: Voucher[]; offset: number; total: number; profile: string };
@@ -69,7 +81,7 @@ export function LedgerEntriesScreen({ config, company, locked, onReadActivity }:
       <p className="ledger-investigation-provenance">Observed {formatObservedAt(response.read_at)} for {observationScope?.companyName}; requested ledger {observationScope?.ledger}, {formatDateInput(observationScope?.from)} to {formatDateInput(observationScope?.to)}.</p>
       <p className="ledger-investigation-scope" role="status">{result.total === 0 ? "This observation contained no matching vouchers; it does not establish source completeness." : `${result.total} matching voucher${result.total === 1 ? "" : "s"} observed in this response.`}{response?.evidence.state === "partial" ? ` Source evidence is partial${response.evidence.reason_code ? ` (${response.evidence.reason_code})` : ""}.` : ""}</p>
       {result.total > 0 && result.items.length === 0 && <p>This observation has no entries at this offset. Start again from the first entries.</p>}
-      {result.items.length > 0 && <div className="ledger-entry-list">{result.items.map((voucher, index) => <details key={voucher.guid ?? `${voucher.date}-${voucher.voucher_number ?? index}`}><summary><span>{formatDate(voucher.date)}</span><strong>{voucher.voucher_type}{voucher.voucher_number ? ` · ${voucher.voucher_number}` : ""}</strong><span>{voucher.party ?? "No party"}</span></summary><div className="ledger-entry-detail">{voucher.narration && <p>{voucher.narration}</p>}<p className="ledger-entry-lines-heading">Voucher entries and counterpart lines</p><dl>{voucher.amounts.map((entry, entryIndex) => <div key={`${entry.ledger}-${entryIndex}`}><dt>{entry.ledger}</dt><dd>{entry.amount} · {entry.is_deemed_positive === "Yes" ? "debit-side" : "credit-side"}</dd></div>)}</dl>{(voucher.cancelled || voucher.optional) && <p>Accounting state: {[voucher.cancelled && "cancelled", voucher.optional && "optional"].filter(Boolean).join(" and ")}.</p>}</div></details>)}</div>}
+      {result.items.length > 0 && <div className="ledger-entry-list">{result.items.map((voucher, index) => <details key={voucher.guid ?? `${voucher.date}-${voucher.voucher_number ?? index}`}><summary><span>{formatDate(voucher.date)}</span><strong>{voucher.voucher_type}{voucher.voucher_number ? ` · ${voucher.voucher_number}` : ""}</strong><span>{voucher.party ?? "No party"}</span></summary><div className="ledger-entry-detail">{voucher.narration && <p>{voucher.narration}</p>}<p className="ledger-entry-lines-heading">Voucher entries and counterpart lines</p><dl>{voucher.amounts.map((entry, entryIndex) => <div key={`${entry.ledger}-${entryIndex}`}><dt>{entry.ledger}</dt><dd>{entry.amount} · {entrySide(entry)}{entry.polarity_disagrees_with_amount && <span className="ledger-entry-note" title="Tally's ISDEEMEDPOSITIVE flag disagrees with the amount's sign on this entry. The amount is authoritative."> · flag disagrees</span>}</dd></div>)}</dl>{(voucher.cancelled || voucher.optional) && <p>Accounting state: {[voucher.cancelled && "cancelled", voucher.optional && "optional"].filter(Boolean).join(" and ")}.</p>}</div></details>)}</div>}
       {response?.truncated && <p className="ledger-investigation-scope">This observation is display-bounded. “Show next entries” makes a new read of the same selected window; Bridge does not combine pages from different observations.</p>}
       {result.total > 0 && result.items.length === 0 && <button type="button" className="secondary-action" disabled={loading || locked} onClick={() => void investigate()}>Show first entries</button>}
       {result.items.length > 0 && result.offset + result.items.length < result.total && <button type="button" className="secondary-action" disabled={loading || locked} onClick={() => void investigate(result.offset + result.items.length)}>Show next entries</button>}

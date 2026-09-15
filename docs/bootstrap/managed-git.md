@@ -47,7 +47,7 @@ personal information.
 
 ## Governance labels
 
-- Area: `area:tally`, `area:dsc`, `area:documents`, `area:infra`,
+- Area: `area:tally`, `area:documents`, `area:infra`,
   `area:security`
 - Severity: `severity:p1`, `severity:p2`, `severity:p3`, `severity:p4`
 - Type: `type:bug`, `type:feature`, `type:chore`, `type:rectify`

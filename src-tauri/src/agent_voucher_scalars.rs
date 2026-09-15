@@ -36,10 +36,23 @@ pub(in crate::agent) fn claim_agent_scalar(
     Ok(())
 }
 
-pub(in crate::agent) fn validate_tally_entry_polarity(
+/// Whether Tally's two direction observations for an entry agree.
+///
+/// `AMOUNT` carries the sign. `ISDEEMEDPOSITIVE` records the column the entry was
+/// made in, which is a different thing: a rounding ledger is flagged with the
+/// voucher's default side while the rounding itself goes either way, so the two
+/// legitimately disagree. Measured on a real trading book, every disagreement in a
+/// financial year was a rounding ledger, and summing `AMOUNT` alone reproduced
+/// Tally's own closing balance for it exactly while the flag-derived total did not.
+///
+/// So this reports, and callers record what it says. It must not be used to refuse
+/// a read: the entry's arithmetic is correct, and discarding the window loses every
+/// other voucher in it. Nor may the flag be used as a sign -- a caller that takes
+/// the magnitude and re-signs it from the flag produces a silently wrong balance.
+pub(in crate::agent) fn tally_entry_polarity_agrees(
     amount: &bridge_tally_core::ExactDecimal,
     is_deemed_positive: bool,
-) -> Result<(), String> {
+) -> bool {
     use bridge_tally_core::LedgerEntryPolarity;
     let polarity = if is_deemed_positive {
         LedgerEntryPolarity::Debit
@@ -48,16 +61,11 @@ pub(in crate::agent) fn validate_tally_entry_polarity(
     };
     // Core's polarity contract accepts zero with either observed flag: zero
     // cannot independently corroborate direction. Never invent a sign for it.
-    if amount.is_zero()
+    amount.is_zero()
         || matches!(
             (polarity, amount.is_negative()),
             (LedgerEntryPolarity::Debit, true) | (LedgerEntryPolarity::Credit, false)
         )
-    {
-        Ok(())
-    } else {
-        Err("voucher_entry_polarity_mismatch".into())
-    }
 }
 
 pub(in crate::agent) fn parse_optional_tally_alter_id(

@@ -27,7 +27,6 @@ static CREDENTIAL_SESSIONS: OnceLock<Mutex<HashMap<String, CredentialSession>>> 
 pub enum IntegrationKind {
     Tally,
     Documents,
-    Dsc,
 }
 
 impl IntegrationKind {
@@ -35,7 +34,6 @@ impl IntegrationKind {
         match self {
             Self::Tally => "TALLY_PRIME",
             Self::Documents => "DOCUMENT_SYNC",
-            Self::Dsc => "DSC_MANAGEMENT",
         }
     }
 }
@@ -89,60 +87,6 @@ pub struct ConnectionStatusResponse {
     #[serde(rename = "lastSyncedAt")]
     pub last_synced_at: Option<String>,
     pub workspace: WorkspaceInfo,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CertificateMetadata {
-    pub organization: Option<String>,
-    pub issuer: Option<String>,
-    pub fingerprint: Option<String>,
-    #[serde(rename = "tokenType")]
-    pub token_type: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CertificateData {
-    #[serde(rename = "holderName")]
-    pub holder_name: String,
-    pub provider: String,
-    #[serde(rename = "serialNumber")]
-    pub serial_number: String,
-    #[serde(rename = "tokenType")]
-    pub token_type: String,
-    #[serde(rename = "class")]
-    pub certificate_class: String,
-    pub purpose: String,
-    #[serde(rename = "issueDate")]
-    pub issue_date: String,
-    #[serde(rename = "expirationDate")]
-    pub expiration_date: String,
-    #[serde(rename = "clientName")]
-    pub client_name: String,
-    pub metadata: CertificateMetadata,
-}
-
-#[derive(Deserialize)]
-pub struct DscSyncRequest {
-    #[serde(rename = "credentialSessionId")]
-    pub credential_session_id: String,
-    #[serde(rename = "workspaceExternalId")]
-    pub workspace_external_id: String,
-    pub certificates: Vec<CertificateData>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DscSyncResults {
-    pub created: u64,
-    pub updated: u64,
-    pub skipped: u64,
-    pub errors: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DscSyncResponse {
-    pub success: bool,
-    pub message: String,
-    pub results: Option<DscSyncResults>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -223,38 +167,6 @@ pub async fn check_connection_status(
     let status = parse_response::<ConnectionStatusResponse>(response).await?;
     bind_workspace(credential_session_id, &status.workspace.id)?;
     Ok(status)
-}
-
-pub async fn sync_dsc_certificates(request: DscSyncRequest) -> anyhow::Result<DscSyncResponse> {
-    let credentials =
-        credentials_for_session(&request.credential_session_id, Some(IntegrationKind::Dsc))?;
-    validate_credentials_for(&credentials, IntegrationKind::Dsc)?;
-    if request.certificates.is_empty() {
-        anyhow::bail!("No certificate data provided for sync");
-    }
-    validate_identifier("workspace external ID", &request.workspace_external_id)?;
-    validate_workspace_binding(
-        &request.credential_session_id,
-        &request.workspace_external_id,
-    )?;
-
-    let client = api_client()?;
-    let payload = serde_json::json!({
-        "workspaceExternalId": request.workspace_external_id,
-        "certificates": request.certificates,
-        "syncTimestamp": chrono::Utc::now().to_rfc3339(),
-    });
-    let response = client
-        .post(endpoint(
-            credentials.base_url.as_deref(),
-            "/integrations/sync/dsc",
-        )?)
-        .headers(auth_headers(&credentials)?)
-        .json(&payload)
-        .send()
-        .await?;
-
-    parse_response::<DscSyncResponse>(response).await
 }
 
 pub fn endpoint(base_url: Option<&str>, path: &str) -> anyhow::Result<reqwest::Url> {
@@ -649,7 +561,7 @@ mod tests {
             );
 
         assert!(credentials_for_session(&session_id, Some(IntegrationKind::Documents)).is_ok());
-        assert!(credentials_for_session(&session_id, Some(IntegrationKind::Dsc)).is_err());
+        assert!(credentials_for_session(&session_id, Some(IntegrationKind::Tally)).is_err());
         bind_workspace(&session_id, "workspace-synthetic").expect("bind workspace");
         assert!(validate_workspace_binding(&session_id, "workspace-synthetic").is_ok());
         assert!(validate_workspace_binding(&session_id, "workspace-other").is_err());
