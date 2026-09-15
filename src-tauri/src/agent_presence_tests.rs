@@ -244,7 +244,11 @@ fn the_published_schema_names_the_three_numbering_methods_and_its_bounds() {
     assert!(tool.get("annotations").is_none());
     let description = tool["description"].as_str().expect("tool description");
     assert!(description.contains("manual"));
-    assert!(description.contains("presence_window_incomplete"));
+    // The spelling matters: `safe_reason_code` returns the `presence_`-prefixed
+    // form, but a caller reads the serde one off an item's `reason` field, and a
+    // description advertising the wrong one is a string no caller can ever match.
+    assert!(description.contains("reason `window_not_proven_complete`"));
+    assert!(!description.contains("presence_window_not_proven_complete"));
     assert!(!description.contains("REMOTEID"));
 }
 
@@ -341,7 +345,15 @@ fn a_caller_limited_presence_page_includes_its_resume_cursor() {
         PresenceRequest::new(&window, &catalog, &numbering, &proposals).expect("presence request");
     let report = book_presence::assess(&request);
 
-    let (result, truncated) = presence_result(&report, &catalogue, None, 0, 1, 200_000);
+    let (result, truncated) = presence_result(
+        &report,
+        &catalogue,
+        WindowRead::Complete,
+        None,
+        0,
+        1,
+        200_000,
+    );
     assert!(truncated);
     assert_eq!(result["offset"], 0);
     assert_eq!(result["total"], 2);
@@ -659,16 +671,17 @@ fn plans(steps: Vec<Step>) -> Vec<ScenarioPlan> {
 fn presence_plans() -> Vec<ScenarioPlan> {
     let catalogue = catalogue_xml();
     let mut steps = vec![Step::Company, Step::Status, Step::Company, Step::Status];
-    // Catalogue, then the voucher window. A nonempty window lacks a
-    // source-side cardinality control and is refused before a paired
-    // catalogue snapshot could contribute to a verdict.
+    // Catalogue, then the voucher window, then the paired-snapshot catalogue
+    // reread the nonempty (necessarily `Partial`) window path takes before it
+    // can still produce `present`/`possibly_present` verdicts.
     steps.extend(paired_read(&catalogue));
     steps.extend(paired_read(&window_xml()));
+    steps.extend(paired_read(&catalogue));
     plans(steps)
 }
 
 #[tokio::test]
-async fn a_nonempty_window_without_a_control_total_refuses_to_issue_absent() {
+async fn a_nonempty_window_without_a_control_total_still_answers_but_never_issues_absent() {
     let simulator = SequenceSimulator::spawn(presence_plans()).expect("simulator");
     let directory = tempfile::tempdir().expect("directory");
     let server = Server::new(Settings {
@@ -702,19 +715,32 @@ async fn a_nonempty_window_without_a_control_total_refuses_to_issue_absent() {
             }),
         )
         .await;
-    // A nonempty response has no source-side cardinality control. It therefore
-    // cannot issue the `Absent` verdict this fixture used to assert.
-    assert_eq!(response["isError"], true, "{response}");
+    // A nonempty response has no source-side cardinality control, so the
+    // window is `Partial` and can never license `Absent` -- but `Present` and
+    // `PossiblyPresent` need no completeness proof, so the tool still answers
+    // rather than refusing the whole request the way it used to.
+    assert_eq!(response["isError"], false, "{response}");
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(result["window"]["read"], "partial");
     assert_eq!(
-        response["structuredContent"]["result"]["error"]["code"],
-        "presence_window_incomplete"
+        result["totals"],
+        json!({"requested": 3, "present": 2, "possibly_present": 1, "absent": 0})
+    );
+    let items = result["items"].as_array().expect("items");
+    assert_eq!(items[0]["presence"], "present", "{items:?}");
+    assert_eq!(items[1]["presence"], "present", "{items:?}");
+    assert_eq!(items[2]["presence"], "possibly_present", "{items:?}");
+    assert_eq!(
+        items[2]["reason"], "window_not_proven_complete",
+        "nothing resembled JV-9, but the window that found nothing was never \
+         proven complete, so it must not be reported absent"
     );
     assert_eq!(
         response["structuredContent"]["evidence"]["state"],
         "partial"
     );
     let observed = simulator.finish().expect("requests");
-    assert_eq!(observed.len(), 16);
+    assert_eq!(observed.len(), 22);
 }
 
 /// The admission contract this tool enforces lives in `agent_catalog.rs`, and
@@ -1273,14 +1299,28 @@ async fn replay_the_twenty_invoice_engagement() {
                 "numbering": numbering, "vouchers": proposals}),
         )
         .await;
+    // A nonempty window still cannot be proven complete -- no source-side
+    // cardinality control exists -- but that now withholds exactly one verdict
+    // instead of refusing the request. The window answers; nothing in it may
+    // come back `absent`, because absence is the only claim that needs to have
+    // seen the whole range.
     assert_eq!(
-        response["isError"], true,
-        "the nonempty window must fail closed"
+        response["isError"], false,
+        "a nonempty window must answer rather than refuse: {response}"
     );
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(result["window"]["read"], "partial");
     assert_eq!(
-        response["structuredContent"]["result"]["error"]["code"],
-        "presence_window_incomplete"
+        result["totals"]["absent"], 0,
+        "no proposal may be reported absent from a window that was never \
+         proven complete: {result}"
     );
+    for item in result["items"].as_array().expect("items") {
+        assert_ne!(
+            item["presence"], "absent",
+            "absent requires a proven-complete window: {item}"
+        );
+    }
     assert_eq!(
         response["structuredContent"]["evidence"]["state"],
         "partial"

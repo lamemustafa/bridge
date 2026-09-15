@@ -44,9 +44,6 @@ for (const [source, destination] of Object.entries({
 if (!license.includes("Apache License") || !license.includes("Grant of Patent License")) {
   failures.push("complete Apache-2.0 LICENSE");
 }
-if (!notice.includes("Rust PKCS#11 Library") || !notice.includes("OASIS IPR Policy")) {
-  failures.push("required PKCS#11 NOTICE attribution");
-}
 if (
   !notice.includes("SQLCipher") ||
   !notice.includes("Copyright (c) 2008-2020 Zetetic LLC") ||
@@ -58,7 +55,7 @@ if (!readme.includes("Apache License, Version 2.0")) failures.push("README licen
 if (!frontendNotices.includes("lucide-react") || !/\breact \d+\.\d+\.\d+/.test(frontendNotices)) {
   failures.push("frontend third-party notices");
 }
-if (!rustNotices.includes("pkcs11 0.5.0") || !rustNotices.includes("Mozilla Public License 2.0")) {
+if (!rustNotices.includes("Mozilla Public License 2.0")) {
   failures.push("native third-party report");
 }
 

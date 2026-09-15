@@ -45,14 +45,13 @@ they are not private key material.
 
 ## Security review scope
 
-Changes to DSC, credentials, endpoints, Tally data, documents, or persistence
+Changes to credentials, endpoints, Tally data, documents, or persistence
 require review of:
 
 - secret lifetime and in-memory handling
 - error, tracing, and subprocess output
 - file-system and path boundaries
 - endpoint scheme, host, and redirect validation
-- PKCS#11 library discovery and loading
 - migration compatibility and rollback behavior
 - Windows and macOS differences
 

@@ -107,12 +107,6 @@ pub const MAX_TEXT_CHARS: usize = 16_384;
 /// before any comparison ran.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum PresenceError {
-    /// The window came from a read that was not complete. A window too dense
-    /// to read, or one whose emptiness was only partly corroborated, is not
-    /// "no match found" — and this is the confusion most likely to turn into a
-    /// duplicated invoice, so it is a type error rather than a flag.
-    #[error("book window was not read completely")]
-    WindowIncomplete,
     #[error("book window range was invalid")]
     WindowRangeInvalid,
     #[error("book window exceeded its bound")]
@@ -198,7 +192,6 @@ impl PresenceError {
     /// A stable code safe to surface to an operator or a tool result.
     pub fn safe_reason_code(&self) -> &'static str {
         match self {
-            Self::WindowIncomplete => "presence_window_incomplete",
             Self::WindowRangeInvalid => "presence_window_range_invalid",
             Self::WindowTooLarge => "presence_window_too_large",
             Self::WindowLedgerMembershipsTooMany => "presence_window_ledger_memberships_too_many",
@@ -257,9 +250,14 @@ pub enum ColumnEvidence {
     NotRead,
 }
 
-/// How completely the window's source read observed its range. Only a complete
-/// read may become a `BookWindow`; the other value exists so a caller must
-/// state which it has rather than omit the question.
+/// How completely the window's source read observed its range. Both values
+/// become a `BookWindow` — a caller must state which it has rather than omit
+/// the question — but only `Complete` may license `PresenceStatus::Absent`.
+/// A window too dense to read, or one whose emptiness was only partly
+/// corroborated, is not "no match found", and treating it as one is the
+/// confusion most likely to turn into a duplicated invoice: `decide` degrades
+/// a `Partial` window's would-be `Absent` to
+/// `UndecidedReason::WindowNotProvenComplete` instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WindowRead {
@@ -675,13 +673,15 @@ impl ProposedBatch {
     }
 }
 
-/// One observed window of a company's book. It can only be constructed from a
-/// read that observed its whole range, so "the window was too dense to read"
-/// can never reach a comparison as "nothing matched".
+/// One observed window of a company's book. A window whose read was only
+/// `Partial` is still admitted: `Present` and `PossiblyPresent` need no
+/// completeness proof, only `Absent` does, and that gate lives at verdict
+/// production (`assess`/`decide`), keyed off `read()`, rather than here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BookWindow {
     from: TallyDate,
     to: TallyDate,
+    read: WindowRead,
     remote_id_evidence: ColumnEvidence,
     narration_evidence: ColumnEvidence,
     vouchers: Vec<BookVoucher>,
@@ -858,9 +858,6 @@ impl BookWindow {
             narration_evidence,
             vouchers,
         } = input;
-        if read != WindowRead::Complete {
-            return Err(PresenceError::WindowIncomplete);
-        }
         let from = TallyDate::parse(from.to_string()).map_err(|_| PresenceError::DateInvalid)?;
         let to = TallyDate::parse(to.to_string()).map_err(|_| PresenceError::DateInvalid)?;
         if from.as_str() > to.as_str() {
@@ -935,6 +932,7 @@ impl BookWindow {
         Ok(Self {
             from,
             to,
+            read,
             remote_id_evidence,
             narration_evidence,
             vouchers,
@@ -951,6 +949,12 @@ impl BookWindow {
 
     pub fn vouchers(&self) -> &[BookVoucher] {
         &self.vouchers
+    }
+
+    /// Whether this window's source read observed its whole range. Only
+    /// `Complete` may license `PresenceStatus::Absent`; see `decide`.
+    pub fn read(&self) -> WindowRead {
+        self.read
     }
 
     pub fn remote_id_evidence(&self) -> ColumnEvidence {
@@ -1150,6 +1154,13 @@ pub enum UndecidedReason {
     /// strongest key available to this proposal was never compared. An
     /// `Absent` here would rest on evidence that was not gathered.
     RemoteIdEvidenceUnavailable,
+    /// Nothing resembled the proposal, and every other decisive key was
+    /// either absent or already compared — but the window's own read was
+    /// only `Partial`. `Absent` means "not anywhere in this window", and
+    /// that claim is unavailable from a window not proven to cover its whole
+    /// declared range: what looks like "no match found" may only be "no
+    /// match found in the part that was read".
+    WindowNotProvenComplete,
     /// One narration marker is carried by more than one voucher on either
     /// side. Bridge writes a distinct identity per imported voucher, so this
     /// is a book anomaly rather than an ordinary ambiguity -- and it is still
@@ -1179,6 +1190,7 @@ impl UndecidedReason {
             Self::BookVoucherClaimedTwice => "presence_book_voucher_claimed_twice",
             Self::IdentityConflict => "presence_identity_conflict",
             Self::RemoteIdEvidenceUnavailable => "presence_remote_id_evidence_unavailable",
+            Self::WindowNotProvenComplete => "presence_window_not_proven_complete",
             Self::NarrationMarkerCollision => "presence_narration_marker_collision",
             Self::MarkerEvidenceUnavailable => "presence_marker_evidence_unavailable",
         }
@@ -1242,8 +1254,11 @@ pub enum PresenceStatus {
     /// Something resembles it, or something prevented a decision. Authorises
     /// nothing.
     PossiblyPresent(Undecided),
-    /// No rule produced any candidate, in a window proven to cover it.
-    /// `Absent` is always relative to that window.
+    /// No rule produced any candidate, in a window proven to cover the
+    /// proposal's date **and** proven to have been read completely
+    /// (`WindowRead::Complete`). `Absent` is always relative to that window.
+    /// A window read only `Partial` degrades this to `PossiblyPresent(
+    /// UndecidedReason::WindowNotProvenComplete)` instead — see `decide`.
     Absent,
 }
 
@@ -2162,6 +2177,18 @@ fn decide(
             };
             return shell(
                 PresenceStatus::PossiblyPresent(undecided(reason, (Vec::new(), 0))),
+                BTreeSet::new(),
+            );
+        }
+        // Every other decisive key was either absent or already compared —
+        // but `Absent` claims "not anywhere in this window", and that claim
+        // is only sound when the window's own read covered its whole range.
+        if window.read() != WindowRead::Complete {
+            return shell(
+                PresenceStatus::PossiblyPresent(undecided(
+                    UndecidedReason::WindowNotProvenComplete,
+                    (Vec::new(), 0),
+                )),
                 BTreeSet::new(),
             );
         }

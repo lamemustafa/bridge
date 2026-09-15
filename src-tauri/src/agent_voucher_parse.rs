@@ -264,7 +264,17 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                     if allocation.is_some() {
                         return Err("agent_read_protocol_invalid".to_string());
                     }
-                    if let (Some(_), Some(entry_row)) = (current.as_mut(), entry.take()) {
+                    // A Stock Journal moves inventory and has no accounting effect, so
+                    // Tally returns an ALLLEDGERENTRIES.LIST with no children at all.
+                    // That is an empty entry list, not a malformed entry, and refusing
+                    // it lost the whole window over a voucher that is exactly right.
+                    // The same distinction is already drawn one level down for
+                    // BILLALLOCATIONS.LIST. A row carrying *some* of the three fields
+                    // stays refused below: that is what a truncated response or a
+                    // request-shape regression looks like, and it must stay loud.
+                    if let (Some(_), Some(entry_row)) =
+                        (current.as_mut(), entry.take().filter(|row| !row.is_empty()))
+                    {
                         let ledger = entry_row
                             .get("LEDGERNAME")
                             .filter(|value| !value.trim().is_empty())
@@ -280,13 +290,27 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                             .filter(|value| !value.trim().is_empty())
                             .ok_or_else(|| "agent_read_protocol_invalid".to_string())?;
                         let is_deemed_positive = required_tally_bool(Some(polarity))?;
-                        validate_tally_entry_polarity(&parsed_amount, is_deemed_positive)?;
-                        entries.push(json!({
+                        // AMOUNT carries the sign; ISDEEMEDPOSITIVE records the column the
+                        // entry was made in, and the two legitimately disagree. A rounding
+                        // ledger is flagged with the voucher's default side while the
+                        // rounding itself goes either way. Refusing the disagreement threw
+                        // away the whole window over entries whose arithmetic is right --
+                        // summing AMOUNT alone reproduces Tally's own closing balance for
+                        // the ledger, and honouring the flag does not.
+                        //
+                        // The disagreement is still worth saying out loud, so it is carried
+                        // on the entry rather than dropped. It is only present when the two
+                        // observations conflict, so an ordinary entry is unchanged.
+                        let mut parsed_entry = json!({
                             "ledger": ledger,
                             "amount": amount,
                             "is_deemed_positive": if is_deemed_positive { "Yes" } else { "No" },
                             "bill_allocations": std::mem::take(&mut allocations),
-                        }));
+                        });
+                        if !tally_entry_polarity_agrees(&parsed_amount, is_deemed_positive) {
+                            parsed_entry["polarity_disagrees_with_amount"] = Value::Bool(true);
+                        }
+                        entries.push(parsed_entry);
                     }
                 } else if scope.row("VOUCHER") {
                     if let Some(row) = current.take() {

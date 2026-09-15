@@ -16,6 +16,9 @@ default = []
 # and a raised cap nothing can reach is a widened attack surface for nothing.
 voucher-scan = ["bridge-tally-protocol/voucher-scan"]
 
+[lints]
+workspace = true
+
 [dependencies]
 bridge-tally-protocol = { path = "../bridge-tally-protocol" }
 reqwest = { version = "0.13", features = ["stream"] }

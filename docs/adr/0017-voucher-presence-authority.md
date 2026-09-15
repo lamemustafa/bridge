@@ -130,13 +130,18 @@ nothing, presented to an operator as a result. An empty candidate list means
 `master_binding` has to decide which of those it is reporting, and the two
 readings are one word apart in the output.
 
-### 2. A window is a *claim about a window*, and it must be complete
+One further withholding has a different shape from every condition above: it is
+about the window rather than the proposal or its binding, and §2 states it. A
+window not proven to have been read whole withholds `Absent` from every
+proposal in it, however complete that proposal's own evidence was.
+
+### 2. A window is a *claim about a window*, and only `Absent` needs it complete
 
 `BookWindow::observed` is a boundary parse. It refuses, rather than degrades,
 on:
 
 - **a `REMOTEID` column that was never read.** A window declares
-  `RemoteIdEvidence::Observed` or `NotRead`, because "no voucher carried one"
+  `ColumnEvidence::Observed` or `NotRead`, because "no voucher carried one"
   and "the profile never fetched it" are different facts and only the first is
   evidence. Where a proposal carries a `REMOTEID` and the window is `NotRead`,
   that proposal's strongest key was never compared, so it **cannot be
@@ -144,18 +149,52 @@ on:
   would not have done: a status field does not neutralise the per-voucher
   verdict printed beside it, which is the defect this contract cites elsewhere
   and had reproduced here.
-- **a read that was not complete** — `WindowIncomplete`. A window whose
-  emptiness was only partially corroborated is not "no match found". This is
-  the single most dangerous confusion available here, so it is a typed error
-  rather than a flag a caller may overlook. A window that could not be read at
-  all never reaches this constructor: the read fails, and the tool fails with
-  it. What this does **not** cover is named in the Consequences — a response
-  Tally answers short without saying so;
 - a window that does not **cover** every proposed date — `WindowDoesNotCover`.
   A voucher outside the window is invisible, so a verdict over it would be
   fiction;
 - a voucher dated outside the window's own range, a duplicate voucher key, an
   invalid range, or a window past its bound.
+
+**Completeness of the read is not one of those refusals. It is a gate on
+`Absent` alone, and it sits where `Absent` is produced.** A window declares the
+`WindowRead` its source read reported — `Complete` or `Partial` — and retains
+it; both construct, and `BookWindow::read()` carries the answer forward to
+`decide`. The asymmetry is the point. `Present` and `PossiblyPresent` are
+claims about rows that *were* read: an identity match names a row in hand, and
+a resemblance names rows in hand, and neither is made stronger or weaker by
+rows nobody saw. `Absent` is the only verdict that claims something about the
+rows nobody saw — "not anywhere in this window" — so it is the only one that
+needs the window read whole. A window whose emptiness was only partially
+corroborated is not "no match found"; it is "no match found in the part that
+was read", and conflating the two remains the single most dangerous confusion
+available here.
+
+So `decide` checks `read()` at the one place `PresenceStatus::Absent` is
+produced, and a `Partial` window degrades that verdict to
+`PossiblyPresent(WindowNotProvenComplete)` rather than issuing it. That reason
+has two spellings and they are not interchangeable: `safe_reason_code()`
+returns `presence_window_not_proven_complete`, while the tool's per-item
+`reason` field carries the serde spelling `window_not_proven_complete`.
+
+The check is **last** among the withholdings, after
+`RemoteIdEvidenceUnavailable`, `ManualNumberNotSupplied` and the party
+outcomes, so a proposal that already
+withheld evidence of its own is reported under that more specific reason;
+`WindowNotProvenComplete` is only ever reported when nothing else was missing
+and the window itself is the sole reason the absence cannot be claimed. A
+window that could not be read at all still never reaches the constructor: the
+read fails, and the tool fails with it. What the gate does **not** cover is
+named in the Consequences — a response Tally answers short without saying so.
+
+An earlier revision placed this gate at construction instead, refusing a
+`Partial` read as `PresenceError::WindowIncomplete`. That was right about the
+hazard and wrong about its blast radius: a construction-time refusal withholds
+`Present` and `PossiblyPresent` too, and since the only window this adapter can
+currently build over a nonempty range *is* `Partial` (see the Consequences),
+the tool emitted no verdicts at all over such a range where it was entitled to
+emit `present` and `possibly_present`. The rule did not change when the gate
+moved — only `Absent` ever needed completeness, and only `Absent` is now
+withheld for its absence.
 
 Every verdict is therefore explicitly scoped to the window the report carries.
 `Absent` means *absent from this window* — it never means "absent from the
@@ -210,7 +249,7 @@ Per proposed voucher, exactly one of:
 | --- | --- | --- |
 | `Present { book_key, basis, differences }` | An identity key matched, uniquely on both sides | excluding this voucher from the import |
 | `PossiblyPresent { reason, candidates, .. }` | Something resembles it, or something prevented a decision | **nothing** |
-| `Absent` | No rule produced any candidate, in a window proven to cover it | including this voucher in the import |
+| `Absent` | No rule produced any candidate, in a window proven to cover it **and** proven to have been read whole | including this voucher in the import |
 
 `PossiblyPresent` carries candidates labelled with the **rule that surfaced
 each** — `SharedRemoteId`, `SharedNarrationMarker`,
@@ -264,7 +303,7 @@ leaves open:
   rule that withholds `Absent` when a key was not compared applies with more
   force to `Present`, because `Present` carries the higher bar and its error is
   the silent one. So where a proposal supplies a `REMOTEID` and the window is
-  `RemoteIdEvidence::NotRead`, a unique number match returns
+  `ColumnEvidence::NotRead`, a unique number match returns
   `RemoteIdEvidenceUnavailable` rather than `Present`: the number is decisive
   on its own terms, but the evidence that could contradict it was skipped. A
   proposal carrying no `REMOTEID` skipped nothing and still settles. An earlier
@@ -446,9 +485,10 @@ human-approved batch — this ADR does not move.
 
 - `bridge_tally_core::book_presence` is new and is the only implementation. The
   MCP tool `voucher_presence` is its first consumer; it performs the existing
-  qualified ledger-catalogue and `vouchers` window reads, refuses to build a
-  window from a partial read, and shapes the report through the same party-name
-  marking and egress redaction as every other read result.
+  qualified ledger-catalogue and `vouchers` window reads, builds a window from
+  the read state it can actually prove — `Partial` over a nonempty range — and
+  shapes the report through the same party-name marking and egress redaction as
+  every other read result.
 - **Catalog coverage is byte-exact.** The typed boundary retains each observed
   ledger and party spelling separately from its folded resemblance key, and
   rejects a window whose exact spelling is absent from the catalog. A candidate
@@ -493,7 +533,7 @@ human-approved batch — this ADR does not move.
   the desktop consumes the same function once a draft row carries a number and
   a party.
 - **`RemoteId` is contract-complete and not reachable from the shipped read**,
-  so the adapter declares `RemoteIdEvidence::NotRead` and the tool's schema
+  so the adapter declares `ColumnEvidence::NotRead` and the tool's schema
   does not accept a `remote_id` at all. `render_agent_vouchers` does not
   `FETCH REMOTEID`; only the AlterID change feed does. Accepting an input that
   could only ever *withhold* a verdict would be worse than refusing it.
@@ -517,12 +557,19 @@ human-approved batch — this ADR does not move.
   and would not have had one regardless.
 - The adapter requests the whole window before any comparison; `vouchers`' own
   pagination bounds output, not Tally's work. That request is not evidence that
-  a nonempty response is complete, so the presence adapter refuses it pending
-  the source-side control total below. A window past `MAX_WINDOW_VOUCHERS` is
-  refused with a narrow-the-range error rather than silently truncated.
+  a nonempty response is complete, so the presence adapter records such a window
+  as `Partial` pending the source-side control total below, and no `Absent` can
+  issue from it. A window past `MAX_WINDOW_VOUCHERS` is refused with a
+  narrow-the-range error rather than silently truncated.
 - **Nonempty window qualification is unavailable until the read has a source-side
-  control total.** A nonempty response is therefore represented as `Partial`
-  and refused at the `BookWindow` boundary; it cannot issue `Absent`. Three
+  control total.** A nonempty response is therefore represented as `Partial`.
+  It is still a window, and it still answers: `present` and `possibly_present`
+  are produced from it exactly as from a complete one, because neither needs
+  completeness. What it cannot issue is `Absent` — a proposal nothing in the
+  window resembled comes back `possibly_present` with reason
+  `window_not_proven_complete` instead. An empty window is the narrow
+  case the existing emptiness control can still corroborate `Complete`, and it
+  is therefore the only shape from which `absent` is reachable today. Three
   other ways a window read can go wrong are closed: a transport or
   source-limit failure never produces a window because the read itself fails; a
   malformed or short body fails the strict parse; and the paired read refuses a
@@ -585,10 +632,13 @@ human-approved batch — this ADR does not move.
 - A prior owner-authorized, read-only replay exercised the decision rules using
   proposals built from observed rows. It did not establish source completeness,
   operational `Absent` capability, or a qualified nonempty window. The current
-  adapter therefore refuses a nonempty window as `presence_window_incomplete` before it
-  emits verdicts. The replay remains useful for controlled rule characterization
-  and for checking admissible perturbation seeds; it is not merge evidence for
-  a presence decision against a live company.
+  adapter therefore emits `present` and `possibly_present` verdicts from a
+  nonempty window but never `absent`: such a window is `Partial`, and the
+  verdict that would have been `absent` is reported as `possibly_present` with
+  reason `window_not_proven_complete`. The replay remains useful for
+  controlled rule characterization and for checking admissible perturbation
+  seeds; it is not merge evidence for a presence decision against a live
+  company.
 
 ## Alternatives rejected
 
