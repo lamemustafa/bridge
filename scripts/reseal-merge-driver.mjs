@@ -40,30 +40,37 @@
 //
 // So this driver does a real three-way reconciliation of the two AUTHORED
 // lists first (surface.files, keyed by path; matrix.claims, keyed by
-// claim_id) -- see reconcileKeyed() below -- using the same stage-1/2/3 read
-// the doc already recommends for manual resolution (`git show :1:/:2:/:3:`).
-// That correctly handles independent additions (both kept), independent
-// removals (both honored), and a change to only one side (that side's value
-// wins) entirely automatically. It deliberately refuses to guess only in the
-// one case a default cannot be right: the SAME entry changed on both sides
-// to DIFFERENT values (e.g. two branches each promote the same claim_id to a
-// different level, or edit the same pinned file's surface entry -- for a
-// surface entry this is actually always safe since only sha256 differs and
-// rehash-surface recomputes it from disk regardless, but the check is kept
-// uniform across both files for one auditable code path rather than two).
-// On that refusal, it falls back to plain `git merge-file` (git's own
+// claim_id) -- see reconcileKeyed() below. That correctly handles
+// independent additions (both kept), independent removals (both honored),
+// and a change to only one side (that side's value wins) entirely
+// automatically. It deliberately refuses to guess only in the one case a
+// default cannot be right: the SAME entry changed on both sides to
+// DIFFERENT values (e.g. two branches each promote the same claim_id to a
+// different level).
+//
+// Reconciling the pin LIST is not the whole job: each pinned file's own
+// CONTENT hash also has to be correct post-merge, and the first version of
+// this driver got that part wrong. It ran the tool's rehash-surface
+// subcommand against the working tree, and a real two-branch merge
+// experiment (see docs/release-process.md and the PR this shipped in) caught
+// it sealing a WRONG hash -- git does not guarantee every other path has
+// already been checked out to its final post-merge content by the time this
+// driver runs, so rehashing from disk mid-merge is a genuine race, not
+// merely inelegant. computeCorrectSurfaceFiles() below reads git refs
+// (base/ours/theirs) instead, which depends only on the commit objects
+// involved and cannot exhibit that race; a pinned file both sides changed to
+// DIFFERENT content is, like a claim conflict, refused rather than guessed.
+//
+// On any refusal, this falls back to plain `git merge-file` (git's own
 // default three-way text merge) for the one file this invocation is
 // responsible for, so the developer sees the ordinary conflict markers and
 // resolves it exactly as docs/release-process.md's manual procedure
 // describes -- this driver's fast path is additive, not a replacement.
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const here = dirname(fileURLToPath(import.meta.url));
-const RESEAL = join(here, "reseal.sh");
 
 const SURFACE_REL = "docs/tally/compatibility/compatibility-surface.json";
 const MATRIX_REL = "docs/tally/compatibility/compatibility-matrix.json";
@@ -119,6 +126,138 @@ function readAtRef(root, ref, path) {
     maxBuffer: 16 * 1024 * 1024,
   });
   return result.status === 0 ? result.stdout : null; // null: absent at that ref (e.g. file added after base)
+}
+
+// Same as readAtRef but returns raw bytes (no encoding option -> Buffer),
+// because this one feeds sha256Hex(): decoding through UTF-8 first and
+// re-encoding would corrupt a pinned file that isn't valid UTF-8, and would
+// silently produce a WRONG hash (not an error) for one that is, since
+// Node's UTF-8 decode/encode round-trip is not always byte-identical (e.g.
+// for lone surrogates or overlong sequences). sha256_file() in
+// tools/bridge-tally-compatibility/src/lib.rs hashes raw bytes; this must
+// match it exactly or a "correctly" resealed surface would still fail
+// validate_files's byte-for-byte check.
+function readAtRefBuffer(root, ref, path) {
+  const result = spawnSync("git", ["show", `${ref}:${path}`], {
+    cwd: root,
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  return result.status === 0 ? result.stdout : null;
+}
+
+function changedPathSet(root, fromRef, toRef) {
+  const result = spawnSync("git", ["diff", "--name-only", fromRef, toRef], {
+    cwd: root,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (result.status !== 0) return null;
+  return new Set(result.stdout.split("\n").filter(Boolean));
+}
+
+function sha256Hex(buffer) {
+  return createHash("sha256").update(buffer).digest("hex");
+}
+
+// Computes each pinned file's CORRECT post-merge sha256 directly from git
+// refs -- never from the working tree. This is not an optimization: an
+// earlier version of this driver ran the tool's own rehash-surface
+// subcommand against the working tree mid-merge, and a real two-branch
+// merge experiment caught it producing a WRONG hash for a pinned file that
+// only one side had touched. git does not guarantee that every other path's
+// final content has already been checked out to disk by the time this
+// driver runs for compatibility-surface.json -- alphabetical tree-walk order
+// is not a documented guarantee, and in that experiment the file being
+// hashed had not yet been updated to its post-merge content when
+// rehash-surface read it, so a stale hash got sealed into a manifest that
+// otherwise looked completely valid. Reading `git diff --name-only` and
+// `git show <ref>:<path>` instead depends only on the commit objects
+// involved, never on working-tree checkout timing, so it cannot exhibit that
+// race. For a path neither side touched, the previously-sealed hash is kept
+// as-is (nothing changed, nothing to recompute); for a path exactly one side
+// touched, that side's content is hashed; for a path BOTH sides touched,
+// their content is compared byte-for-byte -- identical changes are fine,
+// different ones are a genuine conflict on that pinned file's own content
+// (not on the surface list) and are refused rather than guessed at, exactly
+// like reconcileKeyed()'s refusal above.
+function computeCorrectSurfaceFiles(root, refs, files) {
+  const oursChanged = changedPathSet(root, refs.base, refs.ours);
+  const theirsChanged = changedPathSet(root, refs.base, refs.theirs);
+  if (!oursChanged || !theirsChanged) return null;
+
+  const finalFiles = [];
+  const conflicts = [];
+  for (const file of files) {
+    const inOurs = oursChanged.has(file.path);
+    const inTheirs = theirsChanged.has(file.path);
+
+    if (!inOurs && !inTheirs) {
+      finalFiles.push(file); // untouched by either side -- its recorded hash is still correct
+      continue;
+    }
+    if (inOurs && inTheirs) {
+      const oursBuf = readAtRefBuffer(root, refs.ours, file.path);
+      const theirsBuf = readAtRefBuffer(root, refs.theirs, file.path);
+      if (oursBuf === null || theirsBuf === null) {
+        conflicts.push({ key: file.path, reason: "pinned file missing at ours or theirs after both sides changed it" });
+        continue;
+      }
+      if (!oursBuf.equals(theirsBuf)) {
+        conflicts.push({ key: file.path, reason: "both sides changed this pinned file's actual content differently" });
+        continue;
+      }
+      finalFiles.push({ path: file.path, sha256: sha256Hex(oursBuf) });
+      continue;
+    }
+    const ref = inOurs ? refs.ours : refs.theirs;
+    const buf = readAtRefBuffer(root, ref, file.path);
+    if (buf === null) {
+      conflicts.push({
+        key: file.path,
+        reason: `pinned file missing at ${inOurs ? "ours" : "theirs"} after it changed there`,
+      });
+      continue;
+    }
+    finalFiles.push({ path: file.path, sha256: sha256Hex(buf) });
+  }
+  return { finalFiles, conflicts };
+}
+
+// Resolves the pinned toolchain the same way scripts/reseal.sh does (see its
+// own header): a Homebrew/system rustc earlier on PATH shadows rustup, so
+// the toolchain's own bin directory has to go in front of PATH, not just
+// RUSTC/RUSTDOC.
+function pinnedToolchainEnv(root) {
+  const tomlText = readFileSync(join(root, "rust-toolchain.toml"), "utf8");
+  const match = /^channel *= *"(.*)"/m.exec(tomlText);
+  if (!match) fail("could not read [toolchain].channel from rust-toolchain.toml");
+  const channel = match[1];
+  const which = (bin) => {
+    const result = spawnSync("rustup", ["which", "--toolchain", channel, bin], { encoding: "utf8" });
+    if (result.status !== 0) fail(`rustup could not resolve ${bin} for toolchain ${channel} -- is it installed?`);
+    return result.stdout.trim();
+  };
+  const rustc = which("rustc");
+  return {
+    ...process.env,
+    PATH: `${dirname(rustc)}:${process.env.PATH ?? ""}`,
+    RUSTC: rustc,
+    RUSTDOC: which("rustdoc"),
+  };
+}
+
+// Runs one bridge-tally-compatibility subcommand directly (seal-surface,
+// repoint-matrix) -- NOT via scripts/reseal.sh, and deliberately never
+// rehash-surface: rehash-surface reads pinned files from the *working tree*,
+// which is exactly what computeCorrectSurfaceFiles() above exists to avoid
+// depending on mid-merge.
+function runCompatTool(root, env, args) {
+  const result = spawnSync("cargo", ["run", "--locked", "-p", "bridge-tally-compatibility", "--", ...args], {
+    cwd: join(root, "tools"),
+    env,
+    stdio: "inherit",
+  });
+  return result.status === 0;
 }
 
 function parseJsonOrNull(text) {
@@ -221,62 +360,49 @@ function main() {
   const root = repoRoot();
   const refs = detectMergeRefs(root);
 
-  // For the path THIS invocation is actually responsible for, read straight
-  // from the temp files git handed us -- %O/%A/%B are always correct,
-  // independent of which git operation (merge, rebase, ...) triggered this,
-  // and independent of whether detectMergeRefs() found an ordinary
-  // `git merge` in progress. For the OTHER file, there is no equivalent
-  // direct source, so it depends on refs being available.
-  function readTriple(filePath) {
-    if (filePath === path) {
-      return {
-        base: parseJsonOrNull(readFileSync(baseFile, "utf8")),
-        ours: parseJsonOrNull(readFileSync(oursFile, "utf8")),
-        theirs: parseJsonOrNull(readFileSync(theirsFile, "utf8")),
-      };
-    }
-    if (!refs) return null;
-    return {
-      base: parseJsonOrNull(readAtRef(root, refs.base, filePath)),
-      ours: parseJsonOrNull(readAtRef(root, refs.ours, filePath)),
-      theirs: parseJsonOrNull(readAtRef(root, refs.theirs, filePath)),
-    };
+  // Everything below -- the cross-file reconciliation AND the ref-based
+  // hashing in computeCorrectSurfaceFiles() -- depends on knowing base/ours/
+  // theirs as commits, not just as this invocation's own three temp files.
+  // Without that (a rebase, cherry-pick, or anything else that doesn't leave
+  // .git/MERGE_HEAD), there is no safe fast path: fall straight back to a
+  // plain three-way text merge of the one file this invocation is
+  // responsible for.
+  if (!refs) {
+    warn(
+      "no .git/MERGE_HEAD (not an ordinary `git merge`) -- this driver only auto-resolves that case; falling back",
+    );
+    fallbackToPlainMerge(baseFile, oursFile, theirsFile);
+    return;
   }
+
+  const readTriple = (filePath) => ({
+    base: parseJsonOrNull(readAtRef(root, refs.base, filePath)),
+    ours: parseJsonOrNull(readAtRef(root, refs.ours, filePath)),
+    theirs: parseJsonOrNull(readAtRef(root, refs.theirs, filePath)),
+  });
 
   const surfaceTriple = readTriple(SURFACE_REL);
   const matrixTriple = readTriple(MATRIX_REL);
 
   const usable = (triple) =>
-    !!triple &&
-    triple.ours !== null &&
-    triple.ours !== undefined &&
-    triple.theirs !== null &&
-    triple.theirs !== undefined;
+    triple.ours !== null && triple.ours !== undefined && triple.theirs !== null && triple.theirs !== undefined;
   const surfaceInputsUsable = usable(surfaceTriple);
   const matrixInputsUsable = usable(matrixTriple);
 
-  // This can only fail for the invoked path itself if its own temp files
-  // were not valid JSON (git guarantees they exist); for the other path it
-  // means refs weren't available (not an ordinary `git merge`), which is
-  // fine -- that file is simply left for its own separate invocation, if
-  // any, to handle.
+  // The invoked path's own ours/theirs must be readable -- git guarantees
+  // the path exists at both HEAD and MERGE_HEAD when it invokes this driver
+  // for a content conflict on it, so this failing means something odd (a
+  // detached/unusual history); refuse rather than guess.
   if (path === SURFACE_REL && !surfaceInputsUsable) {
-    warn(`invoked for ${SURFACE_REL} but its own ours/theirs content did not parse as JSON -- falling back`);
+    warn(`invoked for ${SURFACE_REL} but could not read it at both refs -- falling back`);
     fallbackToPlainMerge(baseFile, oursFile, theirsFile);
     return;
   }
   if (path === MATRIX_REL && !matrixInputsUsable) {
-    warn(`invoked for ${MATRIX_REL} but its own ours/theirs content did not parse as JSON -- falling back`);
+    warn(`invoked for ${MATRIX_REL} but could not read it at both refs -- falling back`);
     fallbackToPlainMerge(baseFile, oursFile, theirsFile);
     return;
   }
-
-  const surfaceBase = surfaceTriple?.base;
-  const surfaceOurs = surfaceTriple?.ours;
-  const surfaceTheirs = surfaceTriple?.theirs;
-  const matrixBase = matrixTriple?.base;
-  const matrixOurs = matrixTriple?.ours;
-  const matrixTheirs = matrixTriple?.theirs;
 
   const conflicts = [];
   let reconciledSurfaceFiles = null;
@@ -284,19 +410,32 @@ function main() {
 
   if (surfaceInputsUsable) {
     const { result, conflicts: surfaceConflicts } = reconcileKeyed(
-      surfaceBase?.files,
-      surfaceOurs.files,
-      surfaceTheirs.files,
+      surfaceTriple.base?.files,
+      surfaceTriple.ours.files,
+      surfaceTriple.theirs.files,
       (file) => file.path,
     );
     reconciledSurfaceFiles = result;
-    conflicts.push(...surfaceConflicts.map((c) => `compatibility-surface.json: ${c.key} -- ${c.reason}`));
+    conflicts.push(...surfaceConflicts.map((c) => `compatibility-surface.json pin list: ${c.key} -- ${c.reason}`));
+
+    // The pin LIST reconciled cleanly above; separately, each pinned file's
+    // own CONTENT must also be reconciled -- see computeCorrectSurfaceFiles's
+    // header for why this reads git refs and never the working tree.
+    if (!conflicts.length) {
+      const hashed = computeCorrectSurfaceFiles(root, refs, reconciledSurfaceFiles);
+      if (!hashed) {
+        conflicts.push("compatibility-surface.json: could not diff base..ours/theirs to hash pinned files");
+      } else {
+        reconciledSurfaceFiles = hashed.finalFiles;
+        conflicts.push(...hashed.conflicts.map((c) => `compatibility-surface.json content: ${c.key} -- ${c.reason}`));
+      }
+    }
   }
   if (matrixInputsUsable) {
     const { result, conflicts: matrixConflicts } = reconcileKeyed(
-      matrixBase?.claims,
-      matrixOurs.claims,
-      matrixTheirs.claims,
+      matrixTriple.base?.claims,
+      matrixTriple.ours.claims,
+      matrixTriple.theirs.claims,
       (claim) => claim.claim_id,
     );
     reconciledMatrixClaims = result;
@@ -305,9 +444,9 @@ function main() {
 
   if (conflicts.length) {
     process.stderr.write(
-      "reseal-merge-driver: refusing to auto-resolve -- the AUTHORED half of these files " +
-        "genuinely conflicts (this is exactly the case docs/release-process.md's manual " +
-        "reconciliation procedure exists for; a default here could silently drop an entry):\n" +
+      "reseal-merge-driver: refusing to auto-resolve -- a genuine conflict exists that a default " +
+        "could silently get wrong (this is exactly the case docs/release-process.md's manual " +
+        "reconciliation procedure exists for):\n" +
         conflicts.map((c) => `  - ${c}`).join("\n") +
         `\nFalling back to a plain three-way text merge of ${path} -- resolve the conflict ` +
         "markers by hand, following the procedure in docs/release-process.md, then re-run " +
@@ -317,51 +456,49 @@ function main() {
     return;
   }
 
-  // Both AUTHORED halves are now the same regardless of which side originally
-  // "won" -- write draft files (correct pin list / claim list, placeholder
-  // digests) to the real destinations and let scripts/reseal.sh compute the
-  // actual, correct digests from bytes on disk. bridge_commit_sha is a plain
-  // scalar reseal.sh does not touch and is not cross-validated against
-  // anything (only format-checked) -- "ours" is taken arbitrarily and
-  // harmlessly.
+  // Every pinned file's hash is now already CORRECT (computed from refs
+  // above, not from disk), so sealing is the only remaining step -- no
+  // rehash-surface, and so no dependency on working-tree checkout timing.
+  const env = pinnedToolchainEnv(root);
+  const surfacePath = join(root, SURFACE_REL);
+  const matrixPath = join(root, MATRIX_REL);
+
   if (reconciledSurfaceFiles) {
     reconciledSurfaceFiles.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
     const draft = {
-      schema_version: surfaceOurs.schema_version,
+      schema_version: surfaceTriple.ours.schema_version,
       files: reconciledSurfaceFiles,
       manifest_sha256: "",
     };
-    writeFileSync(join(root, SURFACE_REL), `${JSON.stringify(draft, null, 2)}\n`);
+    writeFileSync(surfacePath, `${JSON.stringify(draft, null, 2)}\n`);
+    if (!runCompatTool(root, env, ["seal-surface", surfacePath, "--output", surfacePath])) {
+      fail("seal-surface failed on the reconciled surface -- see output above");
+    }
   }
   if (reconciledMatrixClaims) {
     reconciledMatrixClaims.sort((a, b) => (a.claim_id < b.claim_id ? -1 : a.claim_id > b.claim_id ? 1 : 0));
+    // bridge_commit_sha is a plain scalar neither seal-surface, repoint-matrix
+    // nor reconcileKeyed touch or cross-validate (only format-checked) --
+    // "ours" is taken arbitrarily and harmlessly.
     const draft = {
-      schema_version: matrixOurs.schema_version,
-      bridge_commit_sha: matrixOurs.bridge_commit_sha,
-      compatibility_surface_sha256: "0".repeat(64), // repoint-matrix overwrites this
+      schema_version: matrixTriple.ours.schema_version,
+      bridge_commit_sha: matrixTriple.ours.bridge_commit_sha,
+      compatibility_surface_sha256: "0".repeat(64), // repoint-matrix overwrites this next
       claims: reconciledMatrixClaims,
     };
-    writeFileSync(join(root, MATRIX_REL), `${JSON.stringify(draft, null, 2)}\n`);
+    writeFileSync(matrixPath, `${JSON.stringify(draft, null, 2)}\n`);
   }
-
-  // The draft written above always starts with manifest_sha256 (and the
-  // matrix's placeholder compatibility_surface_sha256) empty -- reseal.sh's
-  // ordinary order requires an already-valid checksum to rehash from (see
-  // its own header), so an unsealed draft needs --pins-changed's inverted
-  // order (seal first to attest the reconciled list, then the ordinary
-  // three) every time this driver runs it, regardless of whether the pin
-  // *list* actually changed on either side.
-  const reseal = spawnSync("bash", [RESEAL, "--pins-changed"], {
-    cwd: root,
-    encoding: "utf8",
-    stdio: "inherit",
-  });
-  if (reseal.status !== 0) {
-    fail(
-      "the reconciled pin/claim list failed to reseal -- see scripts/reseal.sh's output above. " +
-        "The working tree now holds the reconciled-but-unsealed draft; fix the underlying problem " +
-        "(e.g. a pinned file genuinely missing) and re-run scripts/reseal.sh, or resolve manually.",
-    );
+  if (reconciledSurfaceFiles || reconciledMatrixClaims) {
+    // Repoint regardless of which of the two changed in THIS invocation: the
+    // real surface.json on disk is, by this point, always either what this
+    // invocation just wrote above or already the final correct content from
+    // this file's own separate invocation (or untouched, if genuinely
+    // unaffected) -- never a stale intermediate, because every invocation
+    // that reaches this point recomputes both files from refs rather than
+    // trusting whatever the OTHER invocation may or may not have written yet.
+    if (!runCompatTool(root, env, ["repoint-matrix", matrixPath, surfacePath, "--output", matrixPath])) {
+      fail("repoint-matrix failed -- see output above");
+    }
   }
 
   // Stage both real files explicitly: whichever of the two this invocation's
