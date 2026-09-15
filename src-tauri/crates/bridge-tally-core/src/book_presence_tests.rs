@@ -788,8 +788,12 @@ fn a_present_voucher_reports_a_party_the_book_disagrees_with() {
 fn a_party_difference_echoes_the_source_spelling_not_its_catalog_binding() {
     let window =
         window(&[BookRow::new("book-1", "20260812", "AA0118").party_field("Bravo Industries")]);
+    // The proposed spelling must bind, because only a bound party can disagree.
+    // Since #331 removed BindingBasis::NormalizedName, a case-folded spelling no
+    // longer binds, so this uses the catalogue's exact name -- the difference
+    // being asserted is proposed-vs-observed, not proposed-vs-its-own-binding.
     let proposals = [ProposalRow::new(0, "20260812", "AA0118")
-        .party("alpha traders")
+        .party("Alpha Traders")
         .build()];
     let report = run(
         &window,
@@ -804,7 +808,7 @@ fn a_party_difference_echoes_the_source_spelling_not_its_catalog_binding() {
         .iter()
         .find(|difference| difference.field == DifferenceField::Party)
         .expect("party difference");
-    assert_eq!(party.proposed.as_deref(), Some("alpha traders"));
+    assert_eq!(party.proposed.as_deref(), Some("Alpha Traders"));
     assert_eq!(party.observed.as_deref(), Some("Bravo Industries"));
 }
 
