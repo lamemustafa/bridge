@@ -22,6 +22,9 @@ bills-native-outstandings-probe = []
 # default feature: no shipped build takes this path today.
 voucher-scan = []
 
+[lints]
+workspace = true
+
 [dependencies]
 anyhow = "1"
 bridge-tally-primitives = { path = "../bridge-tally-primitives" }

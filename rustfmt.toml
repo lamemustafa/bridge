@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Formatting configuration for `cargo fmt`. This pins the edition rustfmt
+# formats against; every other option is left at rustfmt's own default so this
+# file cannot silently drift from what a plain `cargo fmt` already does.
+#
+# Adding this file is deliberately NOT combined with running `cargo fmt`
+# across the tree — see docs/proposed-ci-gates.md for the current
+# `cargo fmt --check` count against the unformatted tree. Reformatting is a
+# separate, reviewable change so it does not collide with in-flight PRs.
+edition = "2021"

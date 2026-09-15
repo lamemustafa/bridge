@@ -12,6 +12,9 @@ rust-version = "1.96"
 default = []
 bills-native-outstandings-probe-transport = ["bridge-tally-protocol/bills-native-outstandings-probe"]
 
+[lints]
+workspace = true
+
 [dependencies]
 bridge-tally-protocol = { path = "../../src-tauri/crates/bridge-tally-protocol" }
 bridge-tally-transport = { path = "../../src-tauri/crates/bridge-tally-transport" }
