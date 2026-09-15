@@ -900,14 +900,21 @@ fn voucher_readback_survives_an_indented_response_and_cdata() {
     // stored correctly. The nested allocation carries a `STATUS` element --
     // Tally's own name for a bank data field, and the bridge#378 shape -- so
     // this also holds the two fixes together: the envelope must be accepted
-    // (bridge#389) and the nested field must not reach the entry above it. Real gateway responses are CRLF-indented and dense
+    // (bridge#389) and the nested field must not reach the entry above it.
+    //
+    // It also carries its own `AMOUNT`, as a real bank allocation does, and
+    // that is the part that makes this a control rather than a description.
+    // The stale tag misroutes by exactly one nesting level, so it only
+    // corrupts a value when the nested child's name COLLIDES with a field the
+    // entry itself reads. With `STATUS` alone the leak lands on a key nothing
+    // reads and every assertion below passes against the broken parser. Real gateway responses are CRLF-indented and dense
     // with self-closing elements, and `Event::Empty` never disturbed the
     // tag being accumulated into.
     let entry = |amount: &str| {
         format!(
             "<ALLLEDGERENTRIES.LIST>\r\n      <LEDGERNAME>Bank Account</LEDGERNAME>\r\n      \
 <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>\r\n      <AMOUNT>{amount}</AMOUNT>\r\n      \
-<BANKALLOCATIONS.LIST>\r\n      <STATUS>No</STATUS>\r\n      </BANKALLOCATIONS.LIST>\r\n      \
+<BANKALLOCATIONS.LIST>\r\n      <STATUS>No</STATUS>\r\n      <AMOUNT>{amount}</AMOUNT>\r\n      </BANKALLOCATIONS.LIST>\r\n      \
 </ALLLEDGERENTRIES.LIST>"
         )
     };
