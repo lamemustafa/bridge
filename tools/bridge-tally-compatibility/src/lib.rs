@@ -31,22 +31,33 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// and manifest) but makes further unreviewed additions an explicit
 /// compatibility-surface decision.
 ///
-/// **Raised three times by branches that did not see each other.** 210 to 211
-/// on master for `src-tauri/src/agent_ledgers.rs`, 211 to 212 for
-/// `src-tauri/crates/bridge-tally-core/src/master_binding.rs`, and 212 to 215
-/// for the voucher-presence engine plus its adapter and admission-contract
-/// assertion. Each reason stands; a merge that keeps a raise but loses its pin
-/// would pass the gate with behavior silently outside the evidence boundary,
-/// which is the failure this constant exists to make loud.
+/// **Raised four times, the first three by branches that did not see each
+/// other.** 210 to 211 on master for `src-tauri/src/agent_ledgers.rs`, 211 to
+/// 212 for `src-tauri/crates/bridge-tally-core/src/master_binding.rs`, 212 to
+/// 215 for the voucher-presence engine plus its adapter and admission-contract
+/// assertion, and 216 to 217 for
+/// `.github/workflows/dependency-security-scheduled.yml`. Each reason stands; a
+/// merge that keeps a raise but loses its pin would pass the gate with behavior
+/// silently outside the evidence boundary, which is the failure this constant
+/// exists to make loud.
 ///
 /// `master_binding.rs` decides `validate_masters` results and, through them,
 /// import admission. Left unpinned, an edit confined to the matcher would leave
 /// the surface digest unchanged and let existing evidence attest behaviour it
 /// never covered. That is the deliberate decision the paragraph above requires,
 /// and it is one file for one named reason — not headroom.
-/// The next slot binds `agent_catalog.rs`: its recursively executed proposal
-/// schema changes presence admission, so existing receipts must cover its bytes.
-pub const MAX_SURFACE_FILES: usize = 216;
+///
+/// The slot this paragraph once reserved for `agent_catalog.rs` has been taken
+/// by it, as intended. The raise to 217 binds
+/// `dependency-security-scheduled.yml`, and the named reason is different in
+/// kind from the ones above: it is the only workflow that runs unattended on a
+/// schedule holding `issues: write`, and the only one of the five whose sibling
+/// is pinned while it is not. Left unpinned, an edit that widened its
+/// permissions or pointed its audit at a different lockfile would leave the
+/// surface digest unchanged. Every other raise here bound a file that decides
+/// what Bridge admits; this one binds a file that decides what Bridge is
+/// allowed to do to its own repository while nobody is watching.
+pub const MAX_SURFACE_FILES: usize = 217;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;

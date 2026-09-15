@@ -6,6 +6,10 @@
       "sha256": "c986297046d65dc1d218583410e693c9d017e1d72e3891d667012c8474db2ed1"
     },
     {
+      "path": ".github/workflows/dependency-security-scheduled.yml",
+      "sha256": "48b337dae3cf06d3cb6c3f9cef38dc1213608224626eb139cf6e12763aa9a543"
+    },
+    {
       "path": ".github/workflows/dependency-security.yml",
       "sha256": "fd70b9a317677100d6b760a369495f9e3c6a083d7cdbf8f1916267d97eaa250f"
     },
@@ -831,7 +835,7 @@
     },
     {
       "path": "tools/bridge-tally-compatibility/src/lib.rs",
-      "sha256": "993dfd51072f81d9f8b115d666de0d7830a10eec3a077d7fb690f6f206773b25"
+      "sha256": "e61a4815ce3d887fdb46481917546002f7d90d0ec913752aebaa68d232aa79e1"
     },
     {
       "path": "tools/bridge-tally-compatibility/src/main.rs",
@@ -866,5 +870,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "eaa41c1142c4c2652bd4fff1b748ed1ca7581fc7d5240c0478f5fc85f8baf4d8"
+  "manifest_sha256": "9e5603c499d565b9fd7ea40ce4cb321270bc6472ad9a590b0b37f550e99d1fbc"
 }
