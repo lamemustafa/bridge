@@ -59,18 +59,47 @@ fn movement_uses_observed_period_opening_without_inferring_account_classificatio
     }
 }
 
+/// Renamed rather than relabelled: this used to assert the window was refused.
+/// A Stock Journal legitimately carries no accounting entries, so refusing lost
+/// the whole window over a voucher that is exactly right -- five of twelve
+/// monthly windows on a real book, and every full-year window.
 #[test]
-fn active_entryless_movement_voucher_is_refused() {
+fn an_active_entryless_voucher_is_excluded_rather_than_refusing_the_window() {
+    let page = parse_movement_rows(
+        vec![
+            json!({"date":"20260901","cancelled":false,"optional":false,"amounts":[]}),
+            json!({"date":"20260901","cancelled":false,"optional":false,
+                "amounts":[{"ledger":"Cash","amount":"-1.00","is_deemed_positive":"Yes"},
+                           {"ledger":"Sales","amount":"1.00","is_deemed_positive":"No"}]}),
+        ],
+        "20260901",
+        "20260902",
+    )
+    .expect("an entryless voucher must not fail the window");
+
+    assert_eq!(
+        page.rows.len(),
+        1,
+        "it contributes no ledger movement, so it is excluded the way a cancelled voucher is"
+    );
+    assert_eq!(
+        page.observed_rows, 2,
+        "but it was still observed -- the exclusion is from the rows, not from what the read saw"
+    );
+}
+
+/// The other half of the contract, and the reason excluding the above is safe:
+/// an entryless voucher is not the same as an unbalanced one, and a voucher
+/// whose entries are present but do not sum to zero is still refused.
+#[test]
+fn an_unbalanced_voucher_is_still_refused() {
     let result = parse_movement_rows(
-        vec![json!({"date":"20260901", "cancelled":false,
-            "optional":false,"amounts":[]})],
+        vec![json!({"date":"20260901","cancelled":false,"optional":false,
+            "amounts":[{"ledger":"Cash","amount":"-1.00","is_deemed_positive":"Yes"}]})],
         "20260901",
         "20260902",
     );
-    assert_eq!(
-        result.err(),
-        Some("ledger_movement_entries_not_observed".into())
-    );
+    assert_eq!(result.err(), Some("voucher_entries_unbalanced".into()));
 }
 
 #[test]
