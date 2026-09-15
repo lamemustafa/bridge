@@ -3091,3 +3091,41 @@ fn a_proposed_name_cannot_carry_a_character_that_makes_it_read_as_another() {
     assert!(SourceEntity::new(0, "Alpha Traders").is_ok());
     assert!(MasterCatalog::new(MasterClass::Ledger, ["Two Line\r\nName"]).is_ok());
 }
+
+/// ZWNJ and ZWJ sit inside `U+200B..=U+200F`, so a single range over that span
+/// refuses them along with the genuinely deceptive characters. They are not
+/// deceptive -- they are **orthography**. Devanagari and other Indic scripts use
+/// them to force or prevent a conjunct, and this repository's own fixtures are
+/// full of Indic ledger names.
+///
+/// Refusing them would fail the whole catalog on a legitimately spelled Hindi or
+/// Marathi ledger, which is the exact failure the newline fix existed to remove.
+#[test]
+fn indic_orthography_is_not_treated_as_deception() {
+    // U+200C prevents a conjunct; U+200D forces one. Both are ordinary spelling.
+    for (label, name) in [
+        ("ZWNJ", "\u{915}\u{94d}\u{200c}\u{937} Traders"),
+        ("ZWJ", "\u{915}\u{94d}\u{200d}\u{937} Traders"),
+    ] {
+        assert!(
+            SourceEntity::new(0, name).is_ok(),
+            "a proposed Indic name using {label} must be admissible"
+        );
+        assert!(
+            MasterCatalog::new(MasterClass::Ledger, [name]).is_ok(),
+            "and a book holding one must not fail its whole catalog"
+        );
+    }
+
+    // The neighbours in that same span stay refused, so this narrowed the set
+    // rather than abandoning it.
+    for refused in ['\u{200B}', '\u{200E}', '\u{200F}'] {
+        let name = format!("Alpha{refused}Traders");
+        assert_eq!(
+            SourceEntity::new(0, &name).unwrap_err().safe_reason_code(),
+            "master_name_unsafe",
+            "U+{:04X} carries no orthographic role and stays refused",
+            refused as u32
+        );
+    }
+}

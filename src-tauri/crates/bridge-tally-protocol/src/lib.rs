@@ -1940,7 +1940,21 @@ fn unsafe_display_character(value: char) -> bool {
 fn deceptive_display_character(value: char) -> bool {
     matches!(
         value,
-        '\u{061C}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}' | '\u{2066}'..='\u{206F}' | '\u{FEFF}'
+        // Deliberately NOT a single `U+200B..=U+200F` range. That span holds
+        // ZWNJ (U+200C) and ZWJ (U+200D), which are **orthography**, not
+        // deception: Devanagari and other Indic scripts need them to control
+        // conjunct formation, and this repository's own fixtures are full of
+        // Indic ledger names. Refusing them would make a legitimately spelled
+        // Hindi or Marathi ledger fail the whole catalog -- the exact failure
+        // the newline fix existed to remove.
+        '\u{061C}'
+            | '\u{200B}'
+            | '\u{200E}'
+            | '\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'
+            | '\u{2066}'..='\u{206F}'
+            | '\u{FEFF}'
     )
 }
 
