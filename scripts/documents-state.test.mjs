@@ -26,11 +26,3 @@ test("prepared Documents state survives the AXAL navigation round trip", async (
   assert.match(documents, /documentAction: null/);
   assert.match(documents, /scanSessionId required for sync/);
 });
-
-test("DSC credentials remain intentionally scoped to the mounted DSC screen", async () => {
-  const dsc = await readFile(new URL("../src/DscScreen.tsx", import.meta.url), "utf8");
-
-  assert.match(dsc, /const \[dscPin, setDscPin\] = React\.useState\(""\);/);
-  assert.match(dsc, /DSC_METADATA_RETENTION_MS = 5 \* 60 \* 1000/);
-  assert.match(dsc, /React unmounting[\s\S]*discards it/);
-});

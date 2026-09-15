@@ -9,6 +9,15 @@ The next release line is `0.2.x`. This creates an unambiguous version boundary
 between the published MIT-licensed `v0.1.0` release and Apache-2.0 builds from
 current source.
 
+### Removed
+
+- DSC (digital-signature certificate) hardware-token detection, certificate
+  extraction, and their AXAL sync path have been withdrawn from Bridge's
+  scope, along with the `pkcs11` and `cryptoki` dependencies that reached the
+  PKCS#11 driver. `pkcs11` 0.5.0 was unsound (RUSTSEC-2022-0034) and
+  unmaintained; the capability may be rebuilt properly later if needed. AXAL's
+  Tally and Documents integrations are unaffected.
+
 ### Changed
 
 - `build_import_xml` now reports `live_evidence` as an array of

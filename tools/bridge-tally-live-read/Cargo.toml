@@ -21,6 +21,9 @@ name = "bridge-tally-native-outstandings-probe"
 path = "src/bin/native_outstandings_probe.rs"
 required-features = ["bills-native-outstandings-probe-runner"]
 
+[lints]
+workspace = true
+
 [dependencies]
 bridge-tally-compatibility = { path = "../bridge-tally-compatibility" }
 bridge-tally-protocol = { path = "../../src-tauri/crates/bridge-tally-protocol" }

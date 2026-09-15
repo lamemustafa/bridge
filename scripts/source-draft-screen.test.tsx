@@ -600,9 +600,9 @@ test("distinguishes the two other refusals that are not weak matches", async () 
 test("the picker groups a real captured catalogue, not a shape the test invented", async () => {
   // Every other test here writes both the catalogue and its bindings, so they
   // show the component agrees with an assumed response. This one reads
-  // `scripts/fixtures/source-draft-capture-bindings.json`, which is the DTO the
-  // **producer** emits from a `StandardLedgerCatalogV1` response captured on
-  // licensed TallyPrime 7.1 — nine real ledger names, including Devanagari, an
+  // `scripts/fixtures/source-draft-capture-bindings.json`, a DTO derived by the
+  // producer from a `StandardLedgerCatalogV1` response captured on licensed
+  // TallyPrime 7.1 and authored source XML — nine real ledger names, including Devanagari, an
   // `&` name, and an NFD ledger beside NFC ones.
   //
   // The Rust test `the_binder_meets_a_real_catalogue_through_the_production_parse`

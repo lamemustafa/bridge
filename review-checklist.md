@@ -9,7 +9,6 @@ item relevant to the change and mark non-applicable sections explicitly.
 - [ ] New or changed Tally calls use the serial queue path.
 - [ ] Errors are actionable without exposing sensitive values.
 - [ ] Database changes include migration compatibility and rollback notes.
-- [ ] DSC operations validate token and certificate data without disclosing it.
 - [ ] New or changed commands validate inputs and surface user-safe errors.
 - [ ] AXAL protocol changes include a contract-level regression command or test.
 
@@ -24,7 +23,7 @@ item relevant to the change and mark non-applicable sections explicitly.
 - [ ] File and library paths are repository-relative, app-data-relative, or
   user-selected; no path assumes a developer machine or operating system.
 - [ ] Security-sensitive changes include a security-focused reviewer sign-off.
-- [ ] DSC, Tally, credential, endpoint, and document changes include explicit
+- [ ] Tally, credential, endpoint, and document changes include explicit
   security impact notes.
 
 ## Cross-platform checks
