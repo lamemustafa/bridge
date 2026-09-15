@@ -1123,12 +1123,20 @@ async fn replay_the_twenty_invoice_engagement() {
         writes_enabled: false,
     });
 
-    let read = server
-        .call_tool(
-            "vouchers",
-            json!({"company_guid": guid, "from": from, "to": to}),
-        )
-        .await;
+    // Scope the read to a manually numbered type. Presence by voucher number is
+    // only meaningful under `Manual` -- under `Automatic` Tally discards the
+    // supplied number -- and a real book is overwhelmingly automatic: every
+    // month of the reference book holds ~150 automatic vouchers against ~50
+    // manual ones. Reading the whole window and taking the first rows therefore
+    // picks up automatic types and trips the manual-numbering precondition
+    // below, which is why this replay had never been runnable against a real
+    // book. One declared type per run keeps the selection honest.
+    let selected_type = std::env::var("BRIDGE_PRESENCE_LIVE_VOUCHER_TYPE").ok();
+    let mut request = json!({"company_guid": guid, "from": from, "to": to});
+    if let Some(kind) = selected_type.as_deref() {
+        request["voucher_type"] = json!(kind);
+    }
+    let read = server.call_tool("vouchers", request).await;
     assert_eq!(read["isError"], false, "the window read failed");
     let rows = read["structuredContent"]["result"]["items"]
         .as_array()
