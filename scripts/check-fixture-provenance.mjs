@@ -29,6 +29,24 @@
 // NOT established (Git-normalised on first commit) by naming them in prose
 // instead. That is a legitimate, weaker attestation this gate accepts: it
 // only escalates to a hash check where the document itself claims one.
+//
+// Markdown is not the only shape that paper trail takes here. The agent
+// fixtures carry a JSON sidecar per capture — `<stem>.json` beside
+// `<stem>.utf16le.xml` — recording `source`, `observed_date`, the source
+// response's own bytes and SHA-256, the fixture's bytes and SHA-256, the
+// `transformation` applied (empty for a byte-exact capture), a
+// `provenance_limit` saying what the fixture does not establish, and a
+// `sensitivity_review`. That is a stricter record than a Markdown table row,
+// and it was invisible to this gate: reading only Markdown reported 36
+// documented fixtures as undocumented, including the sidecars themselves,
+// which are provenance records being asked for provenance.
+//
+// So a JSON object carrying a `source` string is read as a provenance record
+// for itself and for the fixtures sharing its stem, on exactly the same terms
+// as Markdown: named-only is accepted, and a declared `fixture_sha256`
+// escalates to the same hash check. The effect is a stronger gate, not a
+// looser one — 28 hashes in that directory are now machine-checked that
+// previously were not read at all.
 
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
@@ -120,7 +138,28 @@ for (const fixtureDirectory of fixtureDirectories) {
   }
 
   const markdownFiles = allPaths.filter((path) => extname(path).toLowerCase() === ".md");
-  const fixtureFiles = allPaths.filter((path) => extname(path).toLowerCase() !== ".md");
+
+  // A JSON provenance record: an object carrying a `source` string. Anything
+  // else with a .json extension is an ordinary fixture and still needs its own
+  // paper trail, so this cannot be used to excuse a fixture by accident.
+  const provenanceRecords = new Map(); // absolute json path -> parsed object
+  for (const path of allPaths) {
+    if (extname(path).toLowerCase() !== ".json") continue;
+    let parsed;
+    try {
+      parsed = JSON.parse(readFileSync(path, "utf8"));
+    } catch {
+      continue; // Unparseable JSON is a fixture, not a record.
+    }
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed) &&
+        typeof parsed.source === "string" && parsed.source.trim()) {
+      provenanceRecords.set(path, parsed);
+    }
+  }
+
+  const fixtureFiles = allPaths.filter(
+    (path) => extname(path).toLowerCase() !== ".md" && !provenanceRecords.has(path),
+  );
   if (!fixtureFiles.length) continue;
 
   // Every filename this directory's own documentation names, plus every
@@ -146,6 +185,67 @@ for (const fixtureDirectory of fixtureDirectories) {
     }
   }
 
+  // `<stem>.PROVENANCE.md` documents `<stem>.*` by its own filename, which is
+  // how native-company-book-extents-with-number.PROVENANCE.md works: it
+  // records the source artifact's SHA-256 and what the capture does and does
+  // not establish, and never names the fixture file, because the pairing is
+  // the filename. Same convention as the JSON sidecar, in Markdown.
+  for (const markdownPath of markdownFiles) {
+    const name = markdownPath.split("/").pop();
+    if (!name.endsWith(".PROVENANCE.md") || name === "PROVENANCE.md") continue;
+    const stem = markdownPath.slice(0, -".PROVENANCE.md".length);
+    for (const path of allPaths) {
+      if (path !== markdownPath && path.startsWith(`${stem}.`)) {
+        documentationText += `\n${path.split("/").pop()}`;
+      }
+    }
+  }
+
+  // Same two terms as a Markdown row, from a sidecar: it names the fixtures
+  // sharing its stem, and where it declares a fixture hash that becomes a
+  // check. A sidecar with `source` but no `fixture_sha256` is the prose case.
+  for (const [recordPath, record] of provenanceRecords) {
+    const stem = recordPath.slice(0, -".json".length);
+    const named = allPaths.filter(
+      (path) => path !== recordPath && path.startsWith(`${stem}.`),
+    );
+    for (const path of named) {
+      documentationText += `\n${path.split("/").pop()}`;
+      // The sidecars are not schema-consistent: twelve record the hash as
+      // `fixture_sha256`, two as `sha256`, and one carries both. Reading only
+      // the first spelling silently exempted the two -- they passed as
+      // "named in prose, no hash declared" while their own record held the
+      // right hash, so a hand-authored substitute for either would have gone
+      // through. That is the defect class this gate exists to catch, so both
+      // spellings are read.
+      //
+      // `sha256` must mean *this fixture's own* hash. A source-response or
+      // request digest is spelled `source_response_sha256` / `request_sha256`
+      // in every sidecar that carries one, and all three bare-`sha256` records
+      // today hold the fixture's hash -- but there is no schema file for this
+      // shape, only precedent, so the convention is written here where it is
+      // read. A sidecar using bare `sha256` for anything else would make this
+      // gate compare a fixture against a hash that was never its own.
+      const declaredSha =
+        typeof record.fixture_sha256 === "string"
+          ? record.fixture_sha256
+          : typeof record.sha256 === "string"
+            ? record.sha256
+            : null;
+      if (!declaredSha) continue;
+      const name = path.split("/").pop();
+      if (!declaredHashes.has(name)) declaredHashes.set(name, []);
+      declaredHashes.get(name).push({
+        // Absent rather than inferred. Falling back to the file's own size
+        // compares it against itself, which can never fail -- a declared
+        // invariant degraded into a restatement of whatever is on disk.
+        bytes: typeof record.fixture_bytes === "number" ? record.fixture_bytes : null,
+        sha256: declaredSha.toLowerCase(),
+        sourceFile: relative(repositoryRoot, recordPath),
+      });
+    }
+  }
+
   for (const fixturePath of fixtureFiles) {
     const relativePath = relative(repositoryRoot, fixturePath);
     const basename = relativePath.split("/").pop();
@@ -163,9 +263,10 @@ for (const fixtureDirectory of fixtureDirectories) {
       undocumented += 1;
       if (failures.length < MAX_REPORTED) {
         failures.push(
-          `${relativePath}: not named in any Markdown file under ` +
-            `${fixtureDirectory} — add a provenance line saying where its bytes ` +
-            "came from (see tests/fixtures/*/PROVENANCE.md for the pattern)",
+          `${relativePath}: named in no provenance record under ` +
+            `${fixtureDirectory} — add a line saying where its bytes came from, ` +
+            "either in Markdown (see tests/fixtures/*/PROVENANCE.md) or as a " +
+            "JSON sidecar carrying `source` (see tests/fixtures/agent/*.json)",
         );
       }
       continue;
@@ -178,13 +279,16 @@ for (const fixtureDirectory of fixtureDirectories) {
     const actualSha256 = createHash("sha256").update(actualBytes).digest("hex");
     checkedHashes += 1;
     for (const declaration of declarations) {
-      const bytesMatch = declaration.bytes === actualBytes.length;
+      // A record that declares no byte count is checked on its hash alone,
+      // and says so, rather than being handed a count it cannot fail.
+      const bytesMatch =
+        declaration.bytes === null || declaration.bytes === actualBytes.length;
       const hashMatch = declaration.sha256 === actualSha256;
       if (bytesMatch && hashMatch) continue;
       if (failures.length < MAX_REPORTED) {
         failures.push(
           `${relativePath}: declared in ${declaration.sourceFile} as ` +
-            `${declaration.bytes.toLocaleString("en-US")} bytes / ` +
+            `${declaration.bytes === null ? "(no byte count)" : `${declaration.bytes.toLocaleString("en-US")} bytes`} / ` +
             `sha256:${short(declaration.sha256, 16)}…, but the file on disk is ` +
             `${actualBytes.length.toLocaleString("en-US")} bytes / ` +
             `sha256:${short(actualSha256, 16)}… — this is exactly the hand-authored-` +
@@ -200,8 +304,8 @@ for (const fixtureDirectory of fixtureDirectories) {
 if (failures.length) {
   const shown = failures.slice(0, MAX_REPORTED);
   throw new Error(
-    `fixture provenance (${shown.length} problem(s) shown` +
-      (failures.length > shown.length ? `, ${failures.length - shown.length} more omitted` : "") +
+    `fixture provenance (${shown.length} shown of ${undocumented} undocumented ` +
+      `fixture(s) and ${checkedHashes} hash(es) checked` +
       "):\n" +
       shown.map((line) => `  - ${line}`).join("\n"),
   );
