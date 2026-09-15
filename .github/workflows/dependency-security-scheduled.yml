@@ -1,0 +1,66 @@
+name: Dependency security (scheduled)
+
+# Section 2 of docs/proposed-dependency-policy.md.
+#
+# The pull-request audit in dependency-security.yml only ever looks at a branch
+# somebody pushed. An advisory published against unchanged code is nobody's
+# pull request, so nothing on that trigger can find it: on 2026-09-15
+# RUSTSEC-2026-0285 was published against `rustls` and went unnoticed until the
+# next person to open a pull request found the whole pipeline frozen. This job
+# looks at the default branch on a clock instead, and puts what it finds where
+# a person will see it.
+on:
+  schedule:
+    - cron: "17 6 * * *" # daily; off the hour, to dodge the scheduler pile-up
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write # the one permission beyond the pull-request audit's
+
+concurrency:
+  # Deliberately NOT cancel-in-progress, unlike the sibling audit workflow.
+  # That one only reads; this one writes to an issue, in two steps -- edit then
+  # comment, or close then comment. Cancelling between them leaves the tracking
+  # issue half-updated: a body naming a new finding with nothing saying so, or a
+  # closed issue with no explanation. The job is bounded by timeout-minutes and
+  # has only two triggers, so letting a second run queue costs little.
+  group: dependency-security-scheduled
+  cancel-in-progress: false
+
+jobs:
+  audit-master:
+    name: Audit master and track findings in one issue
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version-file: .node-version
+      - uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
+        with:
+          tool: cargo-audit@0.22.2
+          fallback: none
+      # `|| true` because cargo audit exits non-zero when it FINDS something,
+      # which here is the case we want to keep going for. It also swallows a
+      # genuine failure (no network, advisory db unreachable), so the next step
+      # exists to stop that being mistaken for a clean result.
+      - name: Audit the default branch
+        run: cargo audit --file src-tauri/Cargo.lock --json > audit-report.json || true
+      # Without this, an audit that failed to run writes an empty file, the
+      # tracker reads "no findings", and it CLOSES a standing advisory's
+      # tracking issue. Silence about a broken audit is the one outcome worse
+      # than a noisy one.
+      - name: Refuse to treat a failed audit as a clean one
+        run: |
+          if [ ! -s audit-report.json ]; then
+            echo "cargo audit produced no report -- treating as a failed run, not a clean one" >&2
+            exit 1
+          fi
+      - name: Open, update or close the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/audit-tracking-issue.mjs --report audit-report.json --apply
