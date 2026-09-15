@@ -89,10 +89,7 @@ fn export_status_reads_bank_allocation_status_as_data_not_protocol() {
 
     // A data element may shadow any protocol name, including with attributes.
     let shadowed = "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><ALLLEDGERENTRIES.LIST><BANKALLOCATIONS.LIST><STATUS TYPE=\"Number\">0</STATUS><VERSION>2</VERSION><HEADER>x</HEADER></BANKALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
-    assert_eq!(
-        export_status(shadowed).unwrap(),
-        TallyExportStatus::Success
-    );
+    assert_eq!(export_status(shadowed).unwrap(), TallyExportStatus::Success);
 }
 
 #[test]
