@@ -2853,7 +2853,17 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 # rollback copy is intact, so it is the same answer as one that
                 # changed: mark the rollback unavailable and refuse in the
                 # same typed shape as every neighbouring boundary.
-                _mark_rollback_unavailable(swap, cleanup_failures)
+                #
+                # `retain_named=True` for the same reason the digest handler
+                # below passes it: if the backup is still sitting at its own
+                # name, the operator is told where it is. A failed inspection
+                # usually means the re-inspection inside
+                # `_mark_rollback_unavailable` fails too and reports the copy
+                # uninspectable -- but a transient failure leaves an intact,
+                # still-named backup, and without this the one path that could
+                # name it stays silent.
+                _mark_rollback_unavailable(
+                    swap, cleanup_failures, retain_named=True)
                 raise Refusal(
                     "output_path_changed",
                     f"{swap['destination']} rollback copy ownership could not be "
