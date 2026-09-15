@@ -155,3 +155,53 @@ GitHub itself refuses to merge a PR that is behind, has an unresolved
 required context, or whose head has moved since a context last reported
 success. Required status checks, not this script, are the source of truth
 for "is everything else green."
+
+## Design constraint if this is applied: the gate becomes force-push sensitive
+
+Today `scripts/merge-gate.sh` is a manual command, and it reads review state
+**live against whatever `$head` currently is**. That is what keeps it immune to
+a hazard that has cost a sibling repository four pull requests.
+
+A GitHub force-push records `before_commit_id: null`. The discarded head is
+therefore not named anywhere in the pull request's record, and any state
+addressed by that commit SHA becomes permanently unreachable. In the sibling
+repository this stranded a scheduled gate's durable review state: the head it
+had recorded no longer existed, so the gate could not evaluate at all and
+failed closed, correctly but unrecoverably.
+
+The distinction that matters is **storage, not addressing**. Reading by SHA is
+safe; persisting state keyed to a SHA is not. This script reads by SHA
+throughout and persists nothing, so a force-push makes it refuse rather than
+strand:
+
+- the review-evidence check asks whether a review or comment names the
+  *current* head, so after a force-push it finds none and fails closed;
+- `--independent-review-sha` and `--binary-review-sha` are compared for
+  equality against the current `$head`, so a prior attestation stops matching
+  the moment the head moves.
+
+Both are the behaviour you want. Neither would survive being cached.
+
+**Applying this proposal changes that.** Once "Merge gate" is a required
+context, the gate stops being something an operator runs at a chosen moment
+and becomes something that must evaluate on every push, asynchronously, with a
+result recorded against a specific commit. Two consequences follow:
+
+1. **A force-push during evaluation opens a check-of-time / use-of-time
+   window.** The run was dispatched for head *A*; by the time it reports, the
+   PR's head may be *B*. A result recorded against *A* is not evidence about
+   *B*, and GitHub will not treat it as such for the required context — but the
+   gate must not report success in a way that could be read as covering *B*.
+   Re-read the head immediately before emitting a verdict and abort if it
+   moved, rather than reporting against the head the job started with.
+
+2. **Do not introduce a cache to make it cheaper.** The obvious optimisation —
+   remembering that head *A* passed so a later run can skip work — is exactly
+   the persistence that strands. If evaluation cost becomes a problem, shrink
+   what is evaluated; do not store verdicts keyed by SHA.
+
+Fail closed in both cases. A gate that cannot establish which commit it is
+talking about must refuse, not assume.
+
+Related: #317 records the failure from the other direction — checks read from a
+head that was not the one being merged.
