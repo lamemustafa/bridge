@@ -2843,6 +2843,23 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
                 if refusal.category == "output_path_changed":
                     _mark_rollback_unavailable(swap, cleanup_failures)
                 raise
+            except OSError:
+                # `_pinned_backup_still_has_one_link` inspects the pin with
+                # `os.fstat`, which can fail on its own. Catching only `Refusal`
+                # let that arrive as a raw OSError -- a traceback, at the one
+                # point in the run where every swap has already succeeded and
+                # the command is otherwise about to report success. An
+                # inspection that cannot be performed is not evidence that the
+                # rollback copy is intact, so it is the same answer as one that
+                # changed: mark the rollback unavailable and refuse in the
+                # same typed shape as every neighbouring boundary.
+                _mark_rollback_unavailable(swap, cleanup_failures)
+                raise Refusal(
+                    "output_path_changed",
+                    f"{swap['destination']} rollback copy ownership could not be "
+                    "verified before commit; this already replaced output could "
+                    "not be rolled back",
+                ) from None
             try:
                 digest_matches = (
                     _digest_pinned_bytes(backup["pin"]) == backup["digest"])
