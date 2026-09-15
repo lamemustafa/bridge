@@ -2,9 +2,15 @@ name: Dependency Security
 
 on:
   push:
+    # Only master, for the reason ci.yml gives: a branch worth auditing has a
+    # pull request, and that is what triggers below.
     branches: [master]
   pull_request:
-    branches: [master]
+    # Unfiltered by base branch, matching ci.yml. Filtering to `[master]` left
+    # a pull request stacked on another branch with no audit at all until its
+    # root merged -- and a PR with no audit still reports a green mergeable
+    # state, because nothing required failed. A dependency advisory is worth
+    # hearing about on the PR that introduces it, not several PRs later.
     types: [opened, reopened, synchronize, ready_for_review]
   workflow_dispatch:
 
