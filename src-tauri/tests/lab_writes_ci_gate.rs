@@ -129,6 +129,33 @@ fn the_scan_catches_every_spelling_it_claims_to() {
     }
 }
 
+/// The extension filter is a condition like any other, and it had no fixture.
+///
+/// Every real workflow in this repository is spelled `.yml`, so a regression
+/// that dropped `"yaml"` from the match arm would pass every other test here
+/// and keep passing until somebody added a `.yaml` workflow -- at which point
+/// the gate would silently stop reading it. Covered by fixture instead of by
+/// the accident of what the repository happens to contain today.
+#[test]
+fn the_scan_reads_both_workflow_extensions() {
+    for extension in ["yml", "yaml"] {
+        let dir = tempfile::tempdir().expect("temp dir for the tripwire fixture");
+        fs::write(
+            dir.path().join(format!("fake.{extension}")),
+            "jobs:\n  build:\n    steps:\n      - run: cargo build --features lab-writes\n",
+        )
+        .expect("write synthetic workflow fixture");
+        let (checked_files, offenders) = scan_workflows_for_lab_writes(dir.path());
+        assert_eq!(checked_files, 1, ".{extension} must count as a workflow");
+        assert_eq!(
+            offenders.len(),
+            1,
+            ".{extension} must be scanned -- a dropped extension silently stops the \
+            gate reading a whole class of workflow file"
+        );
+    }
+}
+
 /// The other half of the pair: the scan must stay silent on a workflow that
 /// does nothing wrong. Without this, a scan that flagged every line would pass
 /// the test above while making the gate useless.
