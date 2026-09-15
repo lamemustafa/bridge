@@ -2304,6 +2304,39 @@ impl TallyRuntime {
         .await
     }
 
+    /// LAB-ONLY (audit-sprint 2026-09-14, Phase 3.4/3.5). Posts already-built
+    /// import XML directly to the Tally XML gateway through the same
+    /// serialized session queue as every other operation, but without the
+    /// native-approval / durable-dispatch-ledger machinery
+    /// `post_approved_import` layers on top for the production Journal path.
+    /// That machinery *is* the production path's safety (one human-approved
+    /// Journal at a time); the lab writer's safety is its caller's
+    /// `admit_lab_target` re-check before every batch, not this method.
+    /// Compiled only behind `lab-writes`; never called from, and never
+    /// changes, `agent_import_post.rs` or `approved_import.rs`.
+    #[cfg(feature = "lab-writes")]
+    pub(crate) async fn post_lab_import(
+        &self,
+        config: TallyConfig,
+        xml: String,
+    ) -> anyhow::Result<(String, RuntimeReadEvidence)> {
+        let _lease = self.begin_ordinary_read(&config)?;
+        self.execute(
+            config,
+            ReadOperation::Import,
+            ReadRetryPolicy::SINGLE_ATTEMPT,
+            move |client| {
+                let xml = xml.clone();
+                async move {
+                    let mut evidence = RuntimeReadEvidence::empty();
+                    let body = client.post_probe_xml(xml, &mut evidence).await?;
+                    Ok((body, evidence))
+                }
+            },
+        )
+        .await
+    }
+
     /// Outstandings via Tally's own `TYPE=Data` bills reports plus one ledger
     /// snapshot.
     ///

@@ -25,6 +25,16 @@ voucher-scan = ["bridge-tally-protocol/voucher-scan", "bridge-tally-transport/vo
 # The harness is what actually drives a voucher scan, so it implies the scan
 # machinery it needs.
 live-calibration-harness = ["voucher-scan"]
+# LAB-ONLY additive surface for the audit-sprint 2026-09-14 local rebuild
+# workflow (Phase 3). Not default; never enable in a release or CI workflow
+# (`tests/lab_writes_ci_gate.rs` fails the build if any `.github/workflows/*`
+# file does). Every tool this compiles in additionally refuses at runtime
+# unless `BRIDGE_LAB_WRITES=1` is set, and further refuses unless
+# `BRIDGE_TALLY_PORT=9001`, `BRIDGE_LAB_TARGET_GUID` and
+# `BRIDGE_LAB_DENY_GUIDS` are all present and the observed loaded-company set
+# matches them. Production write guards (`agent_import_post.rs`,
+# `approved_import.rs`) are never touched by this feature; it is additive.
+lab-writes = []
 
 [workspace]
 members = [
@@ -115,7 +125,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
 zeroize = "1"
 pdf-writer = "0.15.0"
 

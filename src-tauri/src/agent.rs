@@ -10,6 +10,16 @@ mod agent_import;
 pub use crate::tally::approved_import::run_confirmation;
 pub(crate) use agent_import::desktop_journal_review as desktop_journal;
 
+// LAB-ONLY additive surface (audit-sprint 2026-09-14, Phase 3). Compiled only
+// behind the `lab-writes` Cargo feature (not default, never enabled in a
+// release/CI workflow -- see `tests/lab_writes_ci_gate.rs`) and every tool it
+// registers additionally refuses at runtime unless `BRIDGE_LAB_WRITES=1` and
+// the rest of the lab guard env is present. Never modifies the production
+// write guards (`agent_import.rs`/`agent_import_post.rs`/`approved_import.rs`).
+#[cfg(feature = "lab-writes")]
+#[path = "agent_lab.rs"]
+mod lab;
+
 #[path = "agent_catalog.rs"]
 mod catalog;
 #[cfg(test)]
@@ -639,6 +649,13 @@ impl Server {
         if name == "post_import" && !self.settings.writes_enabled {
             return Err("import_posting_disabled".to_string().into());
         }
+        #[cfg(feature = "lab-writes")]
+        if matches!(
+            name,
+            "lab_read_inventory" | "lab_import_masters" | "lab_import_vouchers"
+        ) {
+            lab::require_lab_writes_env()?;
+        }
         validate_tool_arguments(name, args)?;
         match name {
             "tally_status" => {
@@ -680,6 +697,12 @@ impl Server {
             "trial_balance" => self.trial_balance(args).await,
             "read_evidence" => self.read_evidence(args).map_err(Into::into),
             "egress_log" => self.egress_log(args).map_err(Into::into),
+            #[cfg(feature = "lab-writes")]
+            "lab_read_inventory" => lab::lab_read_inventory(self, args).await,
+            #[cfg(feature = "lab-writes")]
+            "lab_import_masters" => lab::lab_import_masters(self, args).await,
+            #[cfg(feature = "lab-writes")]
+            "lab_import_vouchers" => lab::lab_import_vouchers(self, args).await,
             _ => Err("tool_not_found".to_string().into()),
         }
     }
