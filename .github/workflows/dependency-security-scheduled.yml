@@ -19,8 +19,14 @@ permissions:
   issues: write # the one permission beyond the pull-request audit's
 
 concurrency:
+  # Deliberately NOT cancel-in-progress, unlike the sibling audit workflow.
+  # That one only reads; this one writes to an issue, in two steps -- edit then
+  # comment, or close then comment. Cancelling between them leaves the tracking
+  # issue half-updated: a body naming a new finding with nothing saying so, or a
+  # closed issue with no explanation. The job is bounded by timeout-minutes and
+  # has only two triggers, so letting a second run queue costs little.
   group: dependency-security-scheduled
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   audit-master:

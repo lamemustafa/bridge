@@ -124,3 +124,118 @@ test("a tracked issue whose ids cannot be read is treated as changed, not as cle
   const plan = planAction(findings, { number: 7, ids: [] });
   assert.equal(plan.action, "update", "an unreadable body must not silently look up to date");
 });
+
+// --- the GitHub-touching half -------------------------------------------
+//
+// This is where the invariant "exactly one open issue" actually lives, and
+// where every duplicate-issue path found in review lived. `run` is injected so
+// these need no token and no network; a fake records the argv it was handed.
+
+import { apply, findExisting } from "./audit-tracking-issue.mjs";
+
+const fakeRun = (issues) => {
+  const calls = [];
+  const run = (args) => {
+    calls.push(args);
+    if (args[0] === "issue" && args[1] === "list") return JSON.stringify(issues ?? []);
+    return "";
+  };
+  run.calls = calls;
+  return run;
+};
+
+const tracked = (number, ids) => ({
+  number,
+  body: `${MARKER}\nTracked advisory ids: ${JSON.stringify(ids)}`,
+});
+
+test("an advisory id containing a comma or a backtick still round-trips", () => {
+  const findings = [
+    { id: "RUSTSEC-2026-0001, and more", package: "p@1", summary: "s", kind: "vulnerability" },
+    { id: "has`backtick", package: "q@2", summary: "s", kind: "vulnerability" },
+  ];
+  assert.deepEqual(recordedIds(issueBody(findings)), ["RUSTSEC-2026-0001, and more", "has`backtick"]);
+});
+
+test("a malformed recorded-ids line reads as no ids rather than throwing", () => {
+  assert.deepEqual(recordedIds(`${MARKER}\nTracked advisory ids: {not json`), []);
+  assert.deepEqual(recordedIds(`${MARKER}\nTracked advisory ids: "a string"`), []);
+});
+
+test("findExisting returns null when no open issue carries the marker", () => {
+  assert.equal(findExisting(fakeRun([{ number: 1, body: "unrelated" }])), null);
+});
+
+test("findExisting reads the tracked ids off the matching issue", () => {
+  const existing = findExisting(fakeRun([{ number: 2, body: "no marker" }, tracked(9, ["B", "A"])]));
+  assert.deepEqual(existing, { number: 9, ids: ["A", "B"] });
+});
+
+// The contract is "exactly one". Quietly picking the first of several would
+// honour it wrongly: the rest are never updated and never closed.
+test("findExisting refuses rather than choosing between duplicate trackers", () => {
+  assert.throws(
+    () => findExisting(fakeRun([tracked(9, ["A"]), tracked(10, ["A"])])),
+    /2 open issues carry the tracker marker .*#9, #10/,
+  );
+});
+
+test("findExisting scopes its query to open issues carrying the label", () => {
+  const run = fakeRun([]);
+  findExisting(run);
+  const [args] = run.calls;
+  assert.deepEqual(args.slice(0, 2), ["issue", "list"]);
+  assert.ok(args.includes("--state") && args[args.indexOf("--state") + 1] === "open");
+  assert.ok(args.includes("--label"), "discovery is label-scoped, which the issue body warns about");
+  assert.ok(args.includes("--limit"), "an explicit limit, not gh's default");
+});
+
+// If the close fails, the wanted end state has not happened and the next run
+// recomputes the same plan. Commenting first would leave a 'Closing' comment on
+// a still-open issue, once per day, for as long as the failure lasts.
+test("close happens before the comment that announces it", () => {
+  const run = fakeRun([]);
+  apply({ action: "close", issue: 9 }, run);
+  assert.deepEqual(
+    run.calls.map((args) => args[1]),
+    ["close", "comment"],
+  );
+});
+
+test("a repair rewrites the body and says nothing", () => {
+  const run = fakeRun([]);
+  apply({ action: "repair", issue: 9, ids: ["A"], findings: [{ id: "A", package: "p@1", summary: "s", kind: "vulnerability" }] }, run);
+  assert.deepEqual(run.calls.map((args) => args[1]), ["edit"]);
+});
+
+test("an update edits the body and names what moved", () => {
+  const run = fakeRun([]);
+  apply(
+    {
+      action: "update",
+      issue: 9,
+      ids: ["A"],
+      findings: [{ id: "A", package: "p@1", summary: "s", kind: "vulnerability" }],
+      added: ["A"],
+      removed: ["B"],
+    },
+    run,
+  );
+  assert.deepEqual(run.calls.map((args) => args[1]), ["edit", "comment"]);
+  const comment = run.calls[1].at(-1);
+  assert.match(comment, /newly reported: A/);
+  assert.match(comment, /no longer reported: B/);
+});
+
+test("nothing to do means no gh calls at all", () => {
+  for (const action of ["none", "unchanged"]) {
+    const run = fakeRun([]);
+    apply({ action, issue: 9 }, run);
+    assert.equal(run.calls.length, 0, `${action} must be silent`);
+  }
+});
+
+test("a recorded line naming the same set twice repairs without announcing a change", () => {
+  const findings = [{ id: "A", package: "p@1", summary: "s", kind: "vulnerability" }];
+  assert.equal(planAction(findings, { number: 9, ids: ["A", "A"] }).action, "repair");
+});

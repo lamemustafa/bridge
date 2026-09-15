@@ -78,18 +78,28 @@ export function findingsFromReport(report) {
 // like a change in the findings.
 const RECORDED_PREFIX = "Tracked advisory ids:";
 
+// JSON rather than a comma-separated list. `advisory.id` is free text from the
+// community-run RustSec database, and an id containing a comma or a backtick
+// round-trips wrong through a hand-rolled encoding -- it reads back as two ids,
+// the set compares unequal forever, and the issue collects a "changed" comment
+// every single day. That is exactly the noise this script exists to prevent, so
+// the encoding may not be the thing that reintroduces it.
 export function recordedIds(body) {
   const line = (body ?? "")
     .split("\n")
     .map((entry) => entry.trim())
     .find((entry) => entry.startsWith(RECORDED_PREFIX));
   if (!line) return [];
-  return line
-    .slice(RECORDED_PREFIX.length)
-    .split(",")
-    .map((id) => id.trim().replace(/^`|`$/g, ""))
-    .filter(Boolean)
-    .sort();
+  try {
+    const parsed = JSON.parse(line.slice(RECORDED_PREFIX.length).trim());
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((id) => typeof id === "string").sort();
+  } catch {
+    // An unreadable line is reported as no ids, which `planAction` treats as a
+    // changed set. That rewrites the body and repairs the line, rather than
+    // silently believing the issue is up to date.
+    return [];
+  }
 }
 
 /// The whole contract, in one pure function.
@@ -107,14 +117,15 @@ export function planAction(findings, existing) {
   const recorded = [...(existing.ids ?? [])].sort();
   const same = recorded.length === ids.length && recorded.every((id, i) => id === ids[i]);
   if (same) return { action: "unchanged", issue: existing.number, ids };
-  return {
-    action: "update",
-    issue: existing.number,
-    ids,
-    findings,
-    added: ids.filter((id) => !recorded.includes(id)),
-    removed: recorded.filter((id) => !ids.includes(id)),
-  };
+  const added = ids.filter((id) => !recorded.includes(id));
+  const removed = recorded.filter((id) => !ids.includes(id));
+  // A recorded line that merely repeats an id differs as a list while naming
+  // the same set. Rewriting the body is right; announcing a change that moved
+  // nothing is not.
+  if (added.length === 0 && removed.length === 0) {
+    return { action: "repair", issue: existing.number, ids, findings };
+  }
+  return { action: "update", issue: existing.number, ids, findings, added, removed };
 }
 
 export function issueBody(findings) {
@@ -131,11 +142,15 @@ export function issueBody(findings) {
     "",
     "This issue is maintained by the scheduled dependency audit. It is updated",
     "when the set of findings changes and closed automatically when the",
-    "findings are gone -- edit the title or add comments freely, but leave the",
-    "marker and the recorded-ids line intact or the next run will open a",
-    "duplicate.",
+    "findings are gone. Edit the title or add comments freely.",
     "",
-    `${RECORDED_PREFIX} ${findings.map((finding) => `\`${finding.id}\``).join(", ")}`,
+    "Three things are load-bearing for finding this issue again: the marker",
+    `above, the recorded-ids line below, and the \`${LABEL}\` label -- the next`,
+    "run looks for the marker only among open issues carrying that label.",
+    "Remove any of the three and the next run opens a duplicate and leaves this",
+    "one orphaned.",
+    "",
+    `${RECORDED_PREFIX} ${JSON.stringify(findings.map((finding) => finding.id).sort())}`,
   ].join("\n");
 }
 
@@ -147,12 +162,17 @@ function gh(args) {
   return result.stdout;
 }
 
+// `run` is injected so the GitHub-touching half is testable without a token or
+// a network. It is the half the reconciliation invariant actually lives in, so
+// leaving it untestable would mean the tests cover the arithmetic and not the
+// thing that can file a duplicate issue.
+//
 // `gh issue list` rather than `gh api .../issues`: the repository's
 // `check-gh-api-pagination` gate exempts gh's own list subcommands because
 // their paging is gh-owned, and an explicit --limit says what this one expects.
-function findExisting() {
+export function findExisting(run = gh) {
   const issues = JSON.parse(
-    gh([
+    run([
       "issue",
       "list",
       "--state",
@@ -165,35 +185,59 @@ function findExisting() {
       "number,body",
     ]),
   );
-  const match = issues.find((issue) => (issue.body ?? "").includes(MARKER));
+  const matches = issues.filter((issue) => (issue.body ?? "").includes(MARKER));
+  // "Exactly one open issue" is this script's whole contract. Picking the first
+  // of several would honour it silently and wrongly: the others would never be
+  // updated and never closed, and nothing would ever say so. Refuse instead --
+  // a human duplicated something, and a human should decide which survives.
+  if (matches.length > 1) {
+    throw new Error(
+      `audit-tracking-issue: ${matches.length} open issues carry the tracker marker ` +
+        `(${matches.map((issue) => `#${issue.number}`).join(", ")}). ` +
+        "Close all but one, then re-run -- this script will not choose for you.",
+    );
+  }
+  const match = matches[0];
   return match ? { number: match.number, ids: recordedIds(match.body) } : null;
 }
 
-function apply(plan) {
+export function apply(plan, run = gh) {
   if (plan.action === "none" || plan.action === "unchanged") return;
   if (plan.action === "create") {
-    gh(["issue", "create", "--title", TITLE, "--label", LABEL, "--body", issueBody(plan.findings)]);
+    run(["issue", "create", "--title", TITLE, "--label", LABEL, "--body", issueBody(plan.findings)]);
+    return;
+  }
+  if (plan.action === "repair") {
+    // The set is the same; only the recorded line was malformed. Rewrite it
+    // and say nothing, so a cosmetic repair does not read as a new finding.
+    run(["issue", "edit", String(plan.issue), "--body", issueBody(plan.findings)]);
     return;
   }
   if (plan.action === "update") {
-    gh(["issue", "edit", String(plan.issue), "--body", issueBody(plan.findings)]);
+    run(["issue", "edit", String(plan.issue), "--body", issueBody(plan.findings)]);
     const changed = [
       plan.added.length ? `newly reported: ${plan.added.join(", ")}` : null,
       plan.removed.length ? `no longer reported: ${plan.removed.join(", ")}` : null,
     ]
       .filter(Boolean)
       .join("; ");
-    gh(["issue", "comment", String(plan.issue), "--body", `Scheduled audit update -- ${changed}.`]);
+    run(["issue", "comment", String(plan.issue), "--body", `Scheduled audit update -- ${changed}.`]);
     return;
   }
-  gh([
+  // Close first, then comment. The other order leaves a "Closing" comment on an
+  // issue that is still open if the close fails, and the next run recomputes
+  // the same plan and leaves another -- one redundant comment per day for as
+  // long as the failure lasts. Closing first means a failed comment leaves the
+  // issue in the state that was wanted, and the next run sees nothing open and
+  // does nothing.
+  run(["issue", "close", String(plan.issue)]);
+  run([
     "issue",
     "comment",
     String(plan.issue),
     "--body",
-    "Scheduled audit reports no findings on the default branch. Closing.",
+    "Scheduled audit reports no findings on the default branch. Closed automatically.",
   ]);
-  gh(["issue", "close", String(plan.issue)]);
 }
 
 function main() {
@@ -208,7 +252,10 @@ function main() {
   if (!reportPath) throw new Error("audit-tracking-issue: --report <path> is required");
 
   const findings = findingsFromReport(JSON.parse(readFileSync(reportPath, "utf8")));
-  const plan = planAction(findings, shouldApply ? findExisting() : null);
+  // Queried in both modes. A preview that assumed no issue existed could only
+  // ever print "create" or "none", which is not a preview of what --apply would
+  // do -- it is a different answer that happens to share a format.
+  const plan = planAction(findings, findExisting());
   process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
   if (shouldApply) apply(plan);
 }
