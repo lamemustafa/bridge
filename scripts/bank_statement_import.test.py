@@ -1459,6 +1459,53 @@ def test_an_interrupt_between_dup_and_fdopen_leaks_no_descriptor(m):
                 "the life of the process")
 
 
+def test_a_failed_handoff_does_not_close_the_descriptor_twice(m):
+    """The companion to the leak test, and the case that matters more.
+
+    `os.fdopen` is `io.open`, which builds a `FileIO` that owns the descriptor
+    *before* it builds the buffer and text layers. If a later layer raises, its
+    error path has already closed the descriptor -- so the real CPython failure
+    hands back a closed fd, not an open one. A guard that closes unconditionally
+    is then closing a descriptor it no longer owns, and the resulting `EBADF`
+    replaces the operator's actual failure.
+
+    The leak test's fake raises *without* touching the descriptor, which models
+    the half of the failure space that a late `io.open` failure never produces.
+    It therefore passes whether or not the double close exists. This fake closes
+    first, the way `io.open` does, so the assertion is on what the operator is
+    told: the `KeyboardInterrupt` must survive, not become `Bad file descriptor`.
+    """
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "out.xml"
+        real_fdopen = m.os.fdopen
+        handed = []
+
+        def close_then_interrupt(fd, *args, **kwargs):
+            # Exactly what `io.open` does when a layer above `FileIO` raises.
+            handed.append(fd)
+            os.close(fd)
+            raise KeyboardInterrupt("SIGINT inside io.open, after FileIO closed")
+
+        m.os.fdopen = close_then_interrupt
+        try:
+            raised = None
+            try:
+                m.write_outputs([(path, "<ENVELOPE/>")])
+            except BaseException as error:   # noqa: BLE001 - the class is the subject
+                raised = error
+        finally:
+            m.os.fdopen = real_fdopen
+
+        assert handed, "the handoff must have been reached"
+        assert not isinstance(raised, OSError) or raised.errno != errno.EBADF, (
+            "closing an already-closed descriptor replaced the operator's real "
+            f"failure with Bad file descriptor: {raised!r}")
+        assert isinstance(raised, KeyboardInterrupt), (
+            f"the interrupt must reach the operator unchanged, got: {raised!r}")
+
+
 def test_a_failed_run_does_not_destroy_the_previous_output(m):
     """The rollback must not be worse than the failure it cleans up after.
 

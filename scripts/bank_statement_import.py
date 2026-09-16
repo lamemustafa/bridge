@@ -2637,20 +2637,42 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             # in a variable the handler can see, and clear that variable only
             # once ownership has actually moved.
             #
-            # This does not make the handoff atomic and is not claimed to be.
-            # CPython can deliver a signal between the `os.dup` C call returning
-            # and the assignment that records its result, and no pure-Python
-            # arrangement can observe a descriptor it was never told about. What
-            # it removes is every window that a handler could have covered.
+            # `_defer_sigint_during_claim` is what makes this whole, the same
+            # way it does for the private-create handoff: with SIGINT blocked,
+            # a Ctrl-C cannot land between `os.dup` returning and the assignment
+            # that records its result, which is the one window no pure-Python
+            # handler could otherwise observe.
+            #
+            # The close below must tolerate `EBADF`. `os.fdopen` is `io.open`,
+            # which constructs a `FileIO` that owns the descriptor before it
+            # builds the buffer and text layers; if a later layer raises, its
+            # error path has already closed the descriptor. Closing again would
+            # replace the operator's real failure -- a `KeyboardInterrupt`, or
+            # the encoding error that actually fired -- with `Bad file
+            # descriptor`.
             handle = None
-            try:
-                handle = os.dup(record["pin"])
-                stream = os.fdopen(handle, "w", encoding="utf-8", newline="")
-                handle = None
-            except BaseException:
-                if handle is not None:
-                    os.close(handle)
-                raise
+            with _defer_sigint_during_claim():
+                try:
+                    handle = os.dup(record["pin"])
+                    stream = os.fdopen(handle, "w", encoding="utf-8", newline="")
+                    handle = None
+                except BaseException:
+                    active_error = sys.exc_info()[1]
+                    if handle is not None:
+                        try:
+                            os.close(handle)
+                        except OSError as close_error:
+                            if close_error.errno != errno.EBADF:
+                                # `EBADF` is the expected case -- `io.open`
+                                # closed it already. Any other close failure is
+                                # separately actionable, but must not replace
+                                # the failure being raised.
+                                _append_cleanup_detail(
+                                    active_error,
+                                    "duplicate descriptor close failed for: "
+                                    + str(record["path"]),
+                                )
+                    raise
             with stream:
                 stream.write(text)
             # Retain the exact UTF-8/no-translation payload digest. A later
