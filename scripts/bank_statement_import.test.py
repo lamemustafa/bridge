@@ -6537,14 +6537,19 @@ def test_pre_replacement_staged_digest_failure_is_a_typed_path_change(m):
         destination = pathlib.Path(directory) / "previous.xml"
         destination.write_text("old bytes")
         real_identity, real_digest = m._entry_identity, m._digest_pinned_bytes
+        armed, fired = [], []
 
         def fail_staged_digest_once(handle):
             m._digest_pinned_bytes = real_digest
+            fired.append(True)
             raise OSError("controlled staged pin digest failure")
 
         def arm_after_staged_identity(path):
             result = real_identity(path)
-            if str(path).endswith(".part"):
+            # Arm once. Cleanup inspects the `.part` name again on its way out,
+            # so without this guard the failure is re-installed after it fired.
+            if str(path).endswith(".part") and not armed:
+                armed.append(True)
                 m._digest_pinned_bytes = fail_staged_digest_once
             return result
 
@@ -6556,6 +6561,14 @@ def test_pre_replacement_staged_digest_failure_is_a_typed_path_change(m):
             m._entry_identity = real_identity
             m._digest_pinned_bytes = real_digest
 
+        # The message alone cannot pin this: the staged *path identity* check
+        # immediately above, and the post-backup staged recheck below, both
+        # raise the byte-identical string -- and `Refusal` declares its message
+        # free to change. What pins it to the digest boundary is that the
+        # injected failure was actually consumed.
+        assert fired, (
+            "the injected staged-pin digest failure never fired; this refusal "
+            "came from a different boundary that shares the message")
         assert "staged output changed before replacement" in str(refusal), (
             f"the staged-digest boundary must give its own typed message, got: {refusal}")
         assert destination.read_text() == "old bytes", (
