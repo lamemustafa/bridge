@@ -434,3 +434,167 @@ fn endpoint_on_port(port: u16) -> TallyEndpointConfig {
         port,
     }
 }
+
+fn simulated_server(directory: &std::path::Path, port: u16) -> Server {
+    Server::new(crate::agent::Settings {
+        endpoint: endpoint_on_port(port),
+        data_dir: directory.to_path_buf(),
+        max_rows: 10,
+        max_bytes: 200_000,
+        redaction: crate::agent::Redaction::None,
+        import_enabled: true,
+        writes_enabled: false,
+    })
+}
+
+/// The Journal build sequence, with the preflight read answered by `book`.
+fn build_plans_reading(book: Option<String>) -> Vec<ScenarioPlan> {
+    let mut plans = qualified_import_cycle_plans()[..32].to_vec();
+    if let Some(book) = book {
+        // probe (2) + first cycle (16) + repeated catalogue (6), then the
+        // preflight read whose responses sit at offsets 1 and 3.
+        for index in [25, 27] {
+            plans[index].fixture = Fixture::SyntheticXml(book.clone());
+            plans[index].encoding = WireEncoding::Utf16Le;
+        }
+    }
+    plans
+}
+
+fn book_holding(tag: &str, amount: &str) -> String {
+    format!(
+        "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+         <VOUCHER REMOTEID=\"{CAPTURED_GUID}-00000001\"><DATE>20260901</DATE><VOUCHERNUMBER>1</VOUCHERNUMBER>\
+         <VOUCHERTYPENAME>Journal</VOUCHERTYPENAME><GUID>{CAPTURED_GUID}-00000001</GUID><MASTERID>1</MASTERID>\
+         <ALTERID>12</ALTERID><NARRATION>Paid &amp; settled [BRIDGE:{tag}]</NARRATION>\
+         <ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL>\
+         <ALLLEDGERENTRIES.LIST><LEDGERNAME>Cash</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>{amount}</AMOUNT></ALLLEDGERENTRIES.LIST>\
+         <ALLLEDGERENTRIES.LIST><LEDGERNAME>Bridge Nested Debtor WR4</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-{amount}</AMOUNT></ALLLEDGERENTRIES.LIST>\
+         </VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"
+    )
+}
+
+/// Record the captured two-Journal batch as this server built it: same
+/// company tuple and endpoint, so only the book decides the amendment.
+fn seed_original(server: &Server) {
+    let mut vouchers = captured_catalogue_payload().vouchers;
+    for voucher in &mut vouchers {
+        voucher.date = normalized_date(&voucher.date).unwrap();
+    }
+    let line: ImportLedgerLine = serde_json::from_value(json!({
+        "batch_id":ORIGINAL, "identity_scheme":"batch_v1", "company_guid":CAPTURED_GUID,
+        "endpoint_origin":super::super::super::canonical_loopback_origin(&server.settings.endpoint).unwrap(),
+        "company":{"name":"WR2 Unicode Lab","guid":CAPTURED_GUID,"company_number":"1","books_from":"20260401"},
+        "txn_ids":["txn-001","txn-002"],"date_from":"20260901","date_to":"20260902",
+        "sha256":"a".repeat(64), "built_at":"2026-09-16T00:00:00Z", "status":"posted_verified",
+        "pre_import_mark":{"kind":"company_high_water","value":1,"master_value":1},
+        "vouchers":vouchers
+    }))
+    .unwrap();
+    server.append_import_ledger(&line).unwrap();
+}
+
+fn amendment_payload(original: &str, amount: &str) -> Value {
+    let mut input = captured_catalogue_payload();
+    input.vouchers.truncate(1);
+    for entry in &mut input.vouchers[0].entries {
+        entry.amount = amount.into();
+    }
+    input.amends_batch_id = Some(original.into());
+    serde_json::to_value(input).unwrap()
+}
+
+#[tokio::test]
+async fn an_amendment_built_against_an_unchanged_book_reuses_the_original_remote_id() {
+    let directory = tempfile::tempdir().unwrap();
+    let original = ORIGINAL.to_string();
+    let tag = import_identity(&original, "txn-001").to_string();
+    let simulator =
+        SequenceSimulator::spawn(build_plans_reading(Some(book_holding(&tag, "12.50")))).unwrap();
+    let server = simulated_server(directory.path(), simulator.address().port());
+    seed_original(&server);
+    let built = server
+        .build_import_xml(&amendment_payload(&original, "15.00"))
+        .await
+        .unwrap();
+    assert_eq!(simulator.finish().unwrap().len(), 32);
+    let result = &built.payload["result"];
+    let batch_id = result["batch_id"].as_str().unwrap();
+    assert_ne!(batch_id, original, "an amendment is its own build");
+    assert_eq!(result["amendment"]["identity_batch_id"], original.as_str());
+    assert_eq!(
+        result["amendment"]["vouchers"][0]["book_matches_batch_id"],
+        original.as_str()
+    );
+    assert!(result["warnings"][0]
+        .as_str()
+        .unwrap()
+        .starts_with("This file amends an earlier batch."));
+
+    let xml = std::fs::read_to_string(
+        directory
+            .path()
+            .join("imports")
+            .join(format!("{batch_id}.xml")),
+    )
+    .unwrap();
+    assert!(xml.contains(&format!("REMOTEID=\"{tag}\"")));
+    assert!(xml.contains("<AMOUNT>15.00</AMOUNT>"));
+
+    let recorded = server
+        .import_ledger()
+        .unwrap()
+        .into_iter()
+        .find(|line| line.batch_id == batch_id)
+        .unwrap();
+    assert_eq!(recorded.amends_batch_id.as_deref(), Some(original.as_str()));
+    assert_eq!(recorded.attribution_tag(&recorded.vouchers[0]), tag);
+}
+
+#[tokio::test]
+async fn an_amendment_of_a_voucher_edited_in_tally_writes_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let original = ORIGINAL.to_string();
+    let tag = import_identity(&original, "txn-001").to_string();
+    // Someone changed 12.50 to 13.00 in Tally after Bridge built it. The
+    // refusal follows the preflight read, before the closing mode probe.
+    let simulator = SequenceSimulator::spawn(
+        build_plans_reading(Some(book_holding(&tag, "13.00")))[..30].to_vec(),
+    )
+    .unwrap();
+    let server = simulated_server(directory.path(), simulator.address().port());
+    seed_original(&server);
+    let imports = server.imports_dir().unwrap();
+    let files_before = std::fs::read_dir(&imports).unwrap().count();
+    let batches_before = server.import_ledger().unwrap().len();
+    let refused = server
+        .build_import_xml(&amendment_payload(&original, "15.00"))
+        .await
+        .unwrap();
+    let result = &refused.payload["result"];
+    assert_eq!(result["state"], "refused");
+    assert_eq!(result["reason"], "amended_vouchers_not_as_built");
+    assert_eq!(
+        result["refused_vouchers"][0]["reason"],
+        "book_voucher_diverged"
+    );
+    assert_eq!(std::fs::read_dir(&imports).unwrap().count(), files_before);
+    assert_eq!(server.import_ledger().unwrap().len(), batches_before);
+    assert_eq!(simulator.finish().unwrap().len(), 30);
+}
+
+#[test]
+fn the_amendment_admission_module_stays_pinned() {
+    // The compatibility gate cannot see a pin dropped by a merge resolution.
+    // This module decides what an import file may overwrite; its reason sits
+    // beside MAX_SURFACE_FILES.
+    let surface: Value = serde_json::from_str(include_str!(
+        "../../docs/tally/compatibility/compatibility-surface.json"
+    ))
+    .unwrap();
+    assert!(surface["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|entry| entry["path"] == "src-tauri/src/agent_import_amend.rs"));
+}
