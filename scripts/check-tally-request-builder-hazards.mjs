@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, realpathSync } from "node:fs";
 import { basename, dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -21,12 +21,88 @@ export const expected = new Set([
   "function-argument-with-space|src-tauri/src/tally/tdl_engine.rs::ledger_period_balances_request|$$NumItems:BRIDGE Ledger Period Collection V1",
 ]);
 
-// The number of module files the scan skips as test code, pinned for the same
-// reason the violations are: a lexer regression that quarantines too much must
-// show up as a diff, not pass as a quieter gate. Adding or removing an
-// extracted test module changes it; confirm the new file is loaded only under
-// #[cfg(test)] before updating it.
-export const EXPECTED_TEST_MODULE_FILES = 74;
+// The module files the scan skips as test code, pinned exactly for the same
+// reason the violations are. The quarantine below decides which files are test
+// modules, but it lexes Rust and cannot see every way a file can be loaded; a
+// mistake there must surface as a named diff here, not as a quieter gate. When
+// you extract a test module, confirm the new file is loaded only under
+// #[cfg(test)] and add it; nothing else should ever be added.
+export const EXPECTED_TEST_MODULE_FILES = new Set([
+  "src-tauri/crates/bridge-tally-core/src/book_presence_tests.rs",
+  "src-tauri/crates/bridge-tally-core/src/master_binding_tests.rs",
+  "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/wire_currency_tests.rs",
+  "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/wire_group_tests.rs",
+  "src-tauri/crates/bridge-tally-protocol/src/native_trial_balance/tests.rs",
+  "src-tauri/src/agent_admission_tests.rs",
+  "src-tauri/src/agent_company_identity_tests.rs",
+  "src-tauri/src/agent_company_tuple_tests.rs",
+  "src-tauri/src/agent_delivery_tests.rs",
+  "src-tauri/src/agent_desktop_journal_tests.rs",
+  "src-tauri/src/agent_egress_tests.rs",
+  "src-tauri/src/agent_failure_tests.rs",
+  "src-tauri/src/agent_financial_profile_tests.rs",
+  "src-tauri/src/agent_import_amend_tests.rs",
+  "src-tauri/src/agent_import_bank_tests.rs",
+  "src-tauri/src/agent_import_boundary_tests.rs",
+  "src-tauri/src/agent_import_file_tests.rs",
+  "src-tauri/src/agent_import_identity_tests.rs",
+  "src-tauri/src/agent_import_index_tests.rs",
+  "src-tauri/src/agent_import_ledger_stream_tests.rs",
+  "src-tauri/src/agent_import_ledger_tests.rs",
+  "src-tauri/src/agent_import_mode_tests.rs",
+  "src-tauri/src/agent_import_multiplicity_tests.rs",
+  "src-tauri/src/agent_import_persistence_tests.rs",
+  "src-tauri/src/agent_import_post_tests.rs",
+  "src-tauri/src/agent_import_preflight_tests.rs",
+  "src-tauri/src/agent_import_qualification_tests.rs",
+  "src-tauri/src/agent_import_source_tests.rs",
+  "src-tauri/src/agent_import_tests.rs",
+  "src-tauri/src/agent_import_text_tests.rs",
+  "src-tauri/src/agent_import_verify_mode_tests.rs",
+  "src-tauri/src/agent_lab_import_tests.rs",
+  "src-tauri/src/agent_movement_snapshot_tests.rs",
+  "src-tauri/src/agent_movement_tests.rs",
+  "src-tauri/src/agent_outstandings_tests.rs",
+  "src-tauri/src/agent_post_cancellation_tests.rs",
+  "src-tauri/src/agent_post_recovery_tests.rs",
+  "src-tauri/src/agent_presence_tests.rs",
+  "src-tauri/src/agent_protocol_cap_tests.rs",
+  "src-tauri/src/agent_protocol_evidence_tests.rs",
+  "src-tauri/src/agent_protocol_redaction_tests.rs",
+  "src-tauri/src/agent_protocol_tests.rs",
+  "src-tauri/src/agent_receipt_fields_tests.rs",
+  "src-tauri/src/agent_recovery_tests.rs",
+  "src-tauri/src/agent_response_tests.rs",
+  "src-tauri/src/agent_status_identity_tests.rs",
+  "src-tauri/src/agent_status_tests.rs",
+  "src-tauri/src/agent_tests.rs",
+  "src-tauri/src/agent_voucher_parse_tests.rs",
+  "src-tauri/src/agent_voucher_selection_tests.rs",
+  "src-tauri/src/agent_wire_evidence_tests.rs",
+  "src-tauri/src/commands_native_ledger_tests.rs",
+  "src-tauri/src/commands_party_statement_export_tests.rs",
+  "src-tauri/src/commands_statement_export_tests.rs",
+  "src-tauri/src/commands_tests.rs",
+  "src-tauri/src/db/tally_capability_license_tests.rs",
+  "src-tauri/src/db/tally_mirror_tests.rs",
+  "src-tauri/src/db/tally_write_store_tests.rs",
+  "src-tauri/src/endpoint_coordination_macos_tests.rs",
+  "src-tauri/src/endpoint_coordination_tests.rs",
+  "src-tauri/src/local_files/paths_tests.rs",
+  "src-tauri/src/sync/coordinator_lease_tests.rs",
+  "src-tauri/src/sync/reconciliation_tests.rs",
+  "src-tauri/src/sync/snapshot_tests.rs",
+  "src-tauri/src/tally/connection_tests.rs",
+  "src-tauri/src/tally/runtime_agent_read_evidence_tests.rs",
+  "src-tauri/src/tally/runtime_failure_evidence_inventory_tests.rs",
+  "src-tauri/src/tally/runtime_financial_mode_tests.rs",
+  "src-tauri/src/tally/runtime_import_admission_tests.rs",
+  "src-tauri/src/tally/runtime_ledger_opening_tests.rs",
+  "src-tauri/src/tally/runtime_outstandings_currency_tests.rs",
+  "src-tauri/src/tally/runtime_party_evidence_tests.rs",
+  "src-tauri/src/tally/runtime_tests.rs",
+  "src-tauri/src/tally/runtime_trial_balance_tests.rs",
+]);
 
 export function collect(repositoryRoot) {
   const testModules = testOnlyModuleFiles(repositoryRoot);
@@ -64,12 +140,17 @@ function main() {
         "Use a native Collection export by default; a new exception requires a reviewed exact-set update.",
     );
   }
-  if (rootArgument === -1 && skipped.size !== EXPECTED_TEST_MODULE_FILES) {
-    throw new Error(
-      `test-module quarantine changed: ${skipped.size} files skipped, ` +
-        `${EXPECTED_TEST_MODULE_FILES} expected. Confirm every skipped file is loaded only under ` +
-        "#[cfg(test)] before updating EXPECTED_TEST_MODULE_FILES.",
-    );
+  if (rootArgument === -1) {
+    const newlySkipped = [...skipped].filter((file) => !EXPECTED_TEST_MODULE_FILES.has(file)).sort();
+    const noLongerSkipped = [...EXPECTED_TEST_MODULE_FILES].filter((file) => !skipped.has(file)).sort();
+    if (newlySkipped.length || noLongerSkipped.length) {
+      throw new Error(
+        "test-module quarantine changed:\n" +
+          (newlySkipped.length ? `newly skipped:\n${newlySkipped.map((value) => `- ${value}`).join("\n")}\n` : "") +
+          (noLongerSkipped.length ? `no longer skipped:\n${noLongerSkipped.map((value) => `- ${value}`).join("\n")}\n` : "") +
+          "Add a file only after confirming it is loaded solely under #[cfg(test)].",
+      );
+    }
   }
   console.log(
     `Tally request-builder hazards match the pinned set (${actual.size} violations; ` +
@@ -416,7 +497,9 @@ export function testOnlyModuleFiles(repositoryRoot) {
   const files = allFiles(repositoryRoot);
   const rust = files.filter((file) => file.endsWith(".rs"));
   const exists = new Set(files);
-  const lexed = new Map(rust.map((file) => [file, lexModules(readFileSync(resolve(repositoryRoot, file), "utf8"))]));
+  const sources = new Map(rust.map((file) => [file, readFileSync(resolve(repositoryRoot, file), "utf8")]));
+  for (const [file, source] of sources) refuseUnrecognisedLoaders(file, source);
+  const lexed = new Map([...sources].map(([file, source]) => [file, lexModules(source)]));
   const roots = crateRoots(repositoryRoot, files);
 
   let testOnly = new Map(); // file -> owns its directory
@@ -458,6 +541,33 @@ export function testOnlyModuleFiles(repositoryRoot) {
   throw new Error("test-module quarantine did not converge");
 }
 
+// Ways to load a module file that the lexer below does not model. Matched on raw
+// source, so text in comments or strings can trip it too: that fails the gate
+// loudly, which is the intended direction. Every pattern here is absent from the
+// repository today; if one is ever needed, teach the lexer about it first.
+const UNRECOGNISED_LOADERS = [
+  [/\bmod\s*\$/, "a macro declaring a module through a metavariable"],
+  [/\bmod\s+r#/, "a raw-identifier module name"],
+  [/\bmod\b\s*\/[*/]|\bmod\s+[A-Za-z_][A-Za-z0-9_]*\b\s*\/[*/]/, "a comment inside a module declaration"],
+  [/\bpath\s*=\s*\/[*/]/, "a comment inside a path attribute"],
+  [/\bpath\s*=\s*r?#*"[^"\n]*\\/, "a path attribute containing a backslash"],
+  [/\binclude\s+!|\binclude!\s*[[{]|\binclude!\s*\(\s*(?!r?#*")/, "include! without a literal argument"],
+  [/\binclude!\s*\(\s*r?#*"(?![^"]*\.rs")/, "include! of a file that is not .rs"],
+];
+
+function refuseUnrecognisedLoaders(file, source) {
+  for (const [pattern, description] of UNRECOGNISED_LOADERS) {
+    const match = pattern.exec(source);
+    if (match) {
+      const line = source.slice(0, match.index).split("\n").length;
+      throw new Error(
+        `test-module quarantine refuses ${file}:${line}: ${description}. ` +
+          "It cannot tell whether that loads a file as production code.",
+      );
+    }
+  }
+}
+
 function resolveDeclaration(file, declaration, parentOwnsDirectory, exists) {
   const directory = dirname(file);
   const explicit = declaration.attributes.map(pathAttribute).find((value) => value !== null);
@@ -486,6 +596,9 @@ function normalise(path) {
 }
 
 function impliesTest(attribute) {
+  // A comment or raw string inside the predicate is not parsed; treat it as not
+  // implying test, which keeps the module scanned.
+  if (/\/\*|\/\/|\br#*"/.test(attribute)) return false;
   const cfg = /^\s*cfg\s*\(([\s\S]*)\)\s*$/.exec(attribute);
   return cfg !== null && predicateImpliesTest(cfg[1].trim());
 }
@@ -568,8 +681,8 @@ export function lexModules(source) {
     }
     const literal = readLiteral(source, i);
     if (literal) {
-      const before = source.slice(Math.max(0, i - 48), i);
-      if (/(?:^|[^A-Za-z0-9_])path\s*=\s*$/.test(before) || /include(?:_str|_bytes)?!\s*\(\s*$/.test(before)) {
+      const before = source.slice(Math.max(0, i - 256), i).replace(/\s+$/, "");
+      if (/(?:^|[^A-Za-z0-9_])path\s*=$/.test(before) || /include(?:_str|_bytes)?!\s*\($/.test(before)) {
         looseReferences.push(literal.value);
       }
       i = literal.end;
@@ -587,7 +700,7 @@ export function lexModules(source) {
       }
       const item = /^(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;/.exec(source.slice(cursor, cursor + 160));
       if (item) {
-        const pathValues = attributes.flatMap((attribute) => attributeStrings(attribute, /(?:^|[^A-Za-z0-9_])path\s*=\s*$/));
+        const pathValues = attributes.flatMap((attribute) => attributeStrings(attribute, /(?:^|[^A-Za-z0-9_])path\s*=$/));
         declarations.push({ name: item[1], attributes, pathValues, depth });
         i = cursor + item[0].length;
         continue;
@@ -595,7 +708,7 @@ export function lexModules(source) {
       // Not a module declaration: record any path/include strings inside the
       // attributes as loose references, and carry on after the group.
       for (const attribute of attributes) {
-        looseReferences.push(...attributeStrings(attribute, /(?:^|[^A-Za-z0-9_])path\s*=\s*$|include(?:_str|_bytes)?!\s*\(\s*$/));
+        looseReferences.push(...attributeStrings(attribute, /(?:^|[^A-Za-z0-9_])path\s*=$|include(?:_str|_bytes)?!\s*\($/));
       }
       i = cursor;
       continue;
@@ -623,7 +736,7 @@ function attributeStrings(attribute, prefix) {
   while (i < attribute.length) {
     const literal = readLiteral(attribute, i);
     if (literal) {
-      if (prefix.test(attribute.slice(Math.max(0, i - 48), i))) values.push(literal.value);
+      if (prefix.test(attribute.slice(Math.max(0, i - 256), i).replace(/\s+$/, ""))) values.push(literal.value);
       i = literal.end;
     } else i += 1;
   }
@@ -668,7 +781,7 @@ function readBracket(source, start) {
 // Lifetimes (`'a`) are not literals.
 function readLiteral(source, i) {
   if (i > 0 && /[A-Za-z0-9_]/.test(source[i - 1]) && source[i] !== '"' && source[i] !== "'") return null;
-  const raw = /^b?r(#*)"/.exec(source.slice(i, i + 40));
+  const raw = /^[bc]?r(#*)"/.exec(source.slice(i, i + 40));
   if (raw) {
     const close = `"${raw[1]}`;
     const valueStart = i + raw[0].length;
@@ -676,7 +789,7 @@ function readLiteral(source, i) {
     const stop = end === -1 ? source.length : end;
     return { value: source.slice(valueStart, stop), end: end === -1 ? source.length : end + close.length };
   }
-  const quote = source[i] === '"' ? i : source[i] === "b" && source[i + 1] === '"' ? i + 1 : -1;
+  const quote = source[i] === '"' ? i : (source[i] === "b" || source[i] === "c") && source[i + 1] === '"' ? i + 1 : -1;
   if (quote !== -1) {
     let j = quote + 1;
     let value = "";
@@ -691,7 +804,7 @@ function readLiteral(source, i) {
     }
     return { value, end: Math.min(source.length, j + 1) };
   }
-  const char = /^b?'(?:\\(?:x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f]{1,6}\}|.)|[^\\'\n])'/.exec(source.slice(i, i + 16));
+  const char = /^b?'(?:\\(?:x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f]{1,6}\}|.)|[^\\'\n])'/u.exec(source.slice(i, i + 16));
   if (char) return { value: "", end: i + char[0].length };
   return null;
 }
@@ -699,8 +812,13 @@ function readLiteral(source, i) {
 function allFiles(repositoryRoot) {
   const files = [];
   const walk = (directory) => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      if ([".git", "target", "node_modules"].includes(entry.name)) continue;
+    const entries = readdirSync(directory, { withFileTypes: true });
+    const isCrate = entries.some((entry) => entry.isFile() && entry.name === "Cargo.toml");
+    for (const entry of entries) {
+      if ([".git", "node_modules"].includes(entry.name)) continue;
+      // Only a crate's (or the repository's) build directory is pruned; a source
+      // directory that happens to be named `target` is still read.
+      if (entry.name === "target" && (isCrate || directory === repositoryRoot)) continue;
       const path = resolve(directory, entry.name);
       if (entry.isDirectory()) walk(path);
       else if (entry.isFile()) files.push(relativePath(repositoryRoot, path));
@@ -726,11 +844,17 @@ function crateRoots(repositoryRoot, files) {
         roots.add(file);
       }
     }
-    for (const match of readFileSync(resolve(repositoryRoot, manifest), "utf8").matchAll(/^\s*path\s*=\s*"([^"]+\.rs)"/gm)) {
+    for (const match of readFileSync(resolve(repositoryRoot, manifest), "utf8").matchAll(/\b(?:path|build)\s*=\s*["']([^"']+\.rs)["']/g)) {
       roots.add(normalise(`${crate}/${match[1]}`));
     }
   }
   return roots;
 }
 
-if (import.meta.main) main();
+// `import.meta.main` needs Node 24.2+. The job that runs this gate does not pin
+// Node, so fall back to comparing real paths rather than silently doing nothing.
+const invokedDirectly =
+  import.meta.main ??
+  (process.argv[1] !== undefined &&
+    realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)));
+if (invokedDirectly) main();

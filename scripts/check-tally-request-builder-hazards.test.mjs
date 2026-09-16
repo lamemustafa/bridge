@@ -214,5 +214,143 @@ test("the gate itself runs, matches the pinned violations and pins the quarantin
     encoding: "utf8",
   });
   assert.equal(run.status, 0, run.stderr);
-  assert.match(run.stdout, new RegExp(`\\(10 violations; ${EXPECTED_TEST_MODULE_FILES} test-only module files skipped\\)`));
+  assert.match(run.stdout, new RegExp(`\\(10 violations; ${EXPECTED_TEST_MODULE_FILES.size} test-only module files skipped\\)`));
+});
+
+test("the pinned skip set is exactly what the quarantine finds, file by file", () => {
+  const { skipped } = collect(repositoryRoot);
+  assert.deepEqual([...skipped].sort(), [...EXPECTED_TEST_MODULE_FILES].sort());
+});
+
+// --- review of #443: loaders the lexer cannot model make the quarantine refuse ---
+
+test("an unrecognised way of loading a module refuses to skip anything, naming the file", () => {
+  const loaders = {
+    metavariable: "macro_rules! d { ($n:ident) => { mod $n; } }\n",
+    "raw identifier": "mod r#prod;\n",
+    "comment in declaration": "pub mod /* c */ prod;\n",
+    "comment after name": "mod prod // c\n;\n",
+    "comment in path": '#[path = /* c */ "prod.rs"]\nmod p;\n',
+    backslash: '#[path = "sub\\\\..\\\\prod.rs"]\nmod p;\n',
+    "concat include": 'include!(concat!("prod", ".rs"));\n',
+    "brace include": 'include! { "prod.rs" }\n',
+    "bracket include": 'include!["prod.rs"];\n',
+    "spaced include": 'include !("prod.rs");\n',
+    "commented include": 'include!(/* c */ "prod.rs");\n',
+    "non-rust include": 'include!("modules.in");\n',
+  };
+  for (const [label, loader] of Object.entries(loaders)) {
+    assert.throws(
+      () => fixture({ "src-tauri/src/lib.rs": loader, "src-tauri/src/prod.rs": HAZARD }),
+      /test-module quarantine refuses src-tauri\/src\/lib\.rs:\d+/,
+      label,
+    );
+  }
+});
+
+test("lexing gaps the review demonstrated no longer hide a production declaration", () => {
+  const cases = {
+    "c raw string": 'const X: &CStr = cr#"a"b"#;\nmod prod_c_tests;\n',
+    // Exactly the review's input: with no space, `','` is where a one-code-unit char regex goes wrong.
+    "non-BMP char": "const X: [char; 2] = ['\u{1F600}','\"'];\nmod prod_emoji_tests;\n\"\"; // \"\n",
+    "long whitespace before include_str! string": `const X: &str = include_str!(${" ".repeat(60)}"prod_space_tests.rs");\n`,
+  };
+  for (const [label, production] of Object.entries(cases)) {
+    const name = /mod (prod_[a-z]+_tests);|"(prod_[a-z]+_tests)\.rs"/.exec(production).slice(1).find(Boolean);
+    const result = fixture({
+      "src-tauri/src/lib.rs": `#[cfg(test)]\n#[path = "${name}.rs"]\nmod tests;\n`,
+      "src-tauri/src/other.rs": production,
+      [`src-tauri/src/${name}.rs`]: HAZARD,
+    });
+    assert.ok(!skipped(result, `${name}.rs`), `${label}: ${name}.rs must not be skipped`);
+  }
+});
+
+test("a source directory named target is still read for vetoes", () => {
+  const result = fixture({
+    "src-tauri/src/lib.rs": '#[cfg(test)]\n#[path = "hidden_tests.rs"]\nmod tests;\n',
+    "src-tauri/src/target/mod.rs": '#[path = "../hidden_tests.rs"]\nmod hidden;\n',
+    "src-tauri/src/hidden_tests.rs": HAZARD,
+  });
+  assertScanned(result, "hidden_tests.rs");
+});
+
+test("a comment or raw string inside cfg(all(...)) does not imply test", () => {
+  const result = fixture({
+    "src-tauri/src/lib.rs":
+      '#[cfg(all(feature = "live" /* , test, */))]\n#[path = "commented_cfg_tests.rs"]\nmod a;\n' +
+      '#[cfg(all(feature = r#"a", test, "#))]\n#[path = "raw_cfg_tests.rs"]\nmod b;\n' +
+      '#[cfg(all(not(test)))]\n#[path = "not_all_tests.rs"]\nmod c;\n' +
+      '#[cfg(all(feature = "x,test,y"))]\n#[path = "quoted_comma_tests.rs"]\nmod d;\n',
+    "src-tauri/src/commented_cfg_tests.rs": HAZARD,
+    "src-tauri/src/raw_cfg_tests.rs": HAZARD,
+    "src-tauri/src/not_all_tests.rs": HAZARD,
+    "src-tauri/src/quoted_comma_tests.rs": HAZARD,
+  });
+  for (const file of ["commented_cfg_tests.rs", "raw_cfg_tests.rs", "not_all_tests.rs", "quoted_comma_tests.rs"]) {
+    assertScanned(result, file);
+  }
+});
+
+test("Cargo roots in inline tables, single quotes, build = and default layouts veto the skip", () => {
+  const manifests = {
+    "inline table": 'bin = [{ name = "x", path = "src/root_tests.rs" }]\n',
+    "single quotes": "[[bin]]\nname = 'x'\npath = 'src/root_tests.rs'\n",
+    "build key": 'build = "src/root_tests.rs"\n',
+  };
+  for (const [label, manifest] of Object.entries(manifests)) {
+    const result = fixture({
+      "src-tauri/Cargo.toml": `[package]\nname = "fixture"\nversion = "0.0.0"\n${manifest}`,
+      "src-tauri/src/lib.rs": '#[cfg(test)]\n#[path = "root_tests.rs"]\nmod tests;\n',
+      "src-tauri/src/root_tests.rs": HAZARD,
+    });
+    assert.ok(!skipped(result, "root_tests.rs"), `${label}: a Cargo root must not be skipped`);
+  }
+  const defaults = fixture({
+    "src-tauri/src/lib.rs": '#[cfg(test)]\n#[path = "bin/tool.rs"]\nmod a;\n#[cfg(test)]\n#[path = "../build.rs"]\nmod b;\n',
+    "src-tauri/src/bin/tool.rs": HAZARD,
+    "src-tauri/build.rs": HAZARD,
+  });
+  assert.ok(!defaults.skipped.has("src-tauri/src/bin/tool.rs") && !defaults.skipped.has("src-tauri/build.rs"));
+});
+
+test("the remaining vetoes and health rules each keep a file scanned", () => {
+  const cases = {
+    "plain include!": ['const X: &str = include!("inc_tests.rs");\n', "inc_tests.rs"],
+    "path in an attribute on another item": ['#[doc(path = "attr_tests.rs")]\nfn f() {}\n', "attr_tests.rs"],
+  };
+  for (const [label, [veto, file]] of Object.entries(cases)) {
+    const result = fixture({
+      "src-tauri/src/lib.rs": `#[cfg(test)]\n#[path = "${file}"]\nmod tests;\n`,
+      "src-tauri/src/other.rs": veto,
+      [`src-tauri/src/${file}`]: HAZARD,
+    });
+    assert.ok(!skipped(result, file), `${label}: ${file} must not be skipped`);
+  }
+  const dirModule = fixture({
+    "src-tauri/src/lib.rs": '#[cfg(test)]\n#[path = "dirmod/mod.rs"]\nmod tests;\nmod dirmod;\n',
+    "src-tauri/src/dirmod/mod.rs": HAZARD,
+  });
+  assert.ok(!dirModule.skipped.has("src-tauri/src/dirmod/mod.rs"), "a bare `mod dirmod;` vetoes dirmod/mod.rs");
+  const unclosed = fixture({
+    "src-tauri/src/lib.rs": '#[cfg(test)]\n#[path = "unclosed_tests.rs"]\nmod tests;\nfn f() {\n',
+    "src-tauri/src/unclosed_tests.rs": HAZARD,
+  });
+  assertScanned(unclosed, "unclosed_tests.rs");
+  const nested = fixture({
+    "src-tauri/src/lib.rs": '/* outer /* inner */ #[cfg(test)] #[path = "nested_comment_tests.rs"] mod t; */\n',
+    "src-tauri/src/nested_comment_tests.rs": HAZARD,
+  });
+  assertScanned(nested, "nested_comment_tests.rs");
+  // A file targeted by a test edge but also loaded by production is not
+  // test-only, so what it declares is production too and must still veto.
+  const candidate = fixture({
+    "src-tauri/src/lib.rs":
+      '#[cfg(test)]\n#[path = "loaded_tests.rs"]\nmod a;\nmod loaded_tests;\n' +
+      '#[cfg(test)]\n#[path = "grandchild_tests.rs"]\nmod b;\n',
+    "src-tauri/src/loaded_tests.rs": '#[path = "grandchild_tests.rs"]\nmod grandchild;\n',
+    "src-tauri/src/grandchild_tests.rs": HAZARD,
+  });
+  assert.ok(!candidate.skipped.has("src-tauri/src/loaded_tests.rs"));
+  assertScanned(candidate, "grandchild_tests.rs");
 });
