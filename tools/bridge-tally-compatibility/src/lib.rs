@@ -256,6 +256,15 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 ///   ledger master read fails as a whole unless the response names the pinned
 ///   company GUID.
 ///
+/// The raise to 267 binds `src/persisted-company-profiles.ts`, which moved out
+/// of the pinned `src/main.tsx` with no change to its logic. It decides which
+/// saved-profile load may write App's company list: only the latest load merges
+/// its page, reports an error or ends loading. Merging overlays each profile's
+/// saved fields (mirror company id, correlation key, canonical endpoint) onto
+/// the matching company, so an older page landing after a newer one could put
+/// stale identity fields back on the company the client switcher and evidence
+/// drawer select. It is one file for one named reason -- not headroom.
+///
 /// Not pinned, and deliberately: files feature-gated out of every shipped build
 /// (`agent_lab.rs`, `jsonex*.rs`, `india_tax_observation.rs`), operator filing
 /// labels (`client_groups.rs`, `client_group_label_migration.rs` and the
@@ -274,7 +283,7 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// errors. The error notice's classification comes from the pinned
 /// `tally-error-copy.ts`. None of them decides which book a report or drawer is
 /// attributed to, or what Bridge posts or lets leave the machine.
-pub const MAX_SURFACE_FILES: usize = 266;
+pub const MAX_SURFACE_FILES: usize = 267;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
