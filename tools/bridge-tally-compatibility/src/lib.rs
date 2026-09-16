@@ -207,6 +207,11 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// Not pinned: `bbox.rs`, which reads `pdftotext` captures for tests and is
 /// on no production path, and `refusal.rs` and `lib.rs`, which hold no rule.
 ///
+/// Lowered to 249 when `db/migrations/mod.rs` and `tally/xml_builder.rs` were
+/// deleted. Neither was reachable from any binary, test or feature: the first
+/// ran a legacy schema no caller opened, the second named import actions no
+/// builder used.
+///
 /// Not pinned, and deliberately: files feature-gated out of every shipped build
 /// (`agent_lab.rs`, `jsonex*.rs`, `india_tax_observation.rs`), operator filing
 /// labels, dead or declaration-only modules, and `observability.rs`. Its count
@@ -223,7 +228,7 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// errors. The error notice's classification comes from the pinned
 /// `tally-error-copy.ts`. None of them decides which book a report or drawer is
 /// attributed to, or what Bridge posts or lets leave the machine.
-pub const MAX_SURFACE_FILES: usize = 251;
+pub const MAX_SURFACE_FILES: usize = 249;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
