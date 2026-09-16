@@ -97,6 +97,13 @@ capability from assumption, and a completed request from a verified snapshot.
   in `packaging/pdfium/pdfium.lock.json` before extracting), then run
   `BRIDGE_PDFIUM_LIBRARY=<dir>/libpdfium.dylib cargo test -p bridge-bank-statement -- --ignored`.
 
+  Before trusting PDFium on a real statement layout, compare it with `pdftotext` on the
+  operator's machine with `cargo run -p bridge-bank-statement --example compare_extraction`
+  (usage in its header). It prints counts only: pages, words, lines and rows from each reading,
+  identical rows, and which columns differ, never a value, so its output can go into an issue.
+  Producing the `pdftotext` input puts the password on a command line, visible to other local
+  users while it runs, and leaves the statement's full text in the XML; delete it afterwards.
+
 ### Statement-layout findings
 
 Behaviour of the **bank's PDF and of `pdftotext`**, not of Tally — so it is recorded here
