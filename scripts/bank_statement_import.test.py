@@ -1863,8 +1863,11 @@ def test_a_reclaimed_fresh_path_is_not_named_when_the_created_inode_is_gone(m):
             m._fd_identity = real_identity
 
         assert len(calls) >= 2, (
-            "the retry must have run, or this exercises the unproven branch "
-            "instead of the identity-proven one this issue is about")
+            "recovery must have been entered at all: a single call means the "
+            "first fstat succeeded and none of this branch ran. This does not "
+            "distinguish the identity-proven branch from the unproven one -- "
+            "the retry is unconditional, so both reach two calls. The `notes` "
+            "assertion below is what separates them")
         assert path.read_text() == "foreign writer bytes", (
             "the foreign file must not be removed")
         assert str(path) not in notes, (
