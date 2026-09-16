@@ -102,9 +102,18 @@ test("saved-profile shell selections stay in the open evidence drawer", async ()
 });
 
 test("structured Tally errors retain their backend remediation", async () => {
-  const frontend = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
+  const [notice, frontend, mirrorProof] = await Promise.all([
+    readFile(new URL("../src/tally-command-error.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/MirrorProofScreen.tsx", import.meta.url), "utf8"),
+  ]);
 
-  assert.match(frontend, /Next step: \{message\.remediation\}/);
+  assert.match(notice, /Next step: \{message\.remediation\}/);
+  // Both screens render the shared notice rather than a local copy that could drop remediation.
+  for (const screen of [frontend, mirrorProof]) {
+    assert.match(screen, /import \{[^}]*\bTallyErrorNotice\b[^}]*\} from "\.\/tally-command-error";/);
+    assert.doesNotMatch(screen, /function TallyErrorNotice\b/);
+  }
 });
 
 test("persisted-company load failures remain visible regardless of Tally connection state", async () => {

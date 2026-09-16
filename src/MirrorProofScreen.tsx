@@ -1,6 +1,20 @@
 import React from "react";
 import { CircleHelp, Database, FileText, Play, RefreshCw } from "lucide-react";
-import { classifyTallyError } from "./tally-error-copy";
+import { formatIdentifier, formatRuntimeTime } from "./display-format";
+import { type OperatorError, TallyErrorNotice } from "./tally-command-error";
+import { type CapabilityProfile, CapabilityRows, PACK_LABELS } from "./tally-capability-evidence";
+import {
+  type ConnectionStatus,
+  type MirrorExplorerPage,
+  type RedactedProofPreview,
+  type SnapshotJobStatus,
+  type TallyAction,
+  type TallyCompany,
+  type TallyConfig,
+  type TallyProofSummary,
+  type TallyRuntimeSnapshot,
+  type TallySyncEvidence,
+} from "./tally-mirror-contract";
 
 // Owns: the presentational markup of the Accounting mirror and proof view
 // (view === "mirror") -- the saved-company picker, the truth-state hero,
@@ -42,195 +56,6 @@ import { classifyTallyError } from "./tally-error-copy";
 // task's own fallback: presentational markup only, state and behaviour left
 // exactly where they were.
 
-type TallyConfig = {
-  host: string;
-  port: number;
-};
-
-type ConnectionStatus = {
-  reachable: boolean;
-  compatible: boolean;
-  server_text: string;
-  product: "TallyPrime" | "Tally ERP 9" | "Unknown";
-  error?: string;
-};
-
-type TallyCompany = {
-  name: string;
-  guid?: string;
-  company_number?: string;
-  books_from_yyyymmdd?: string;
-  guid_observed?: boolean;
-  mirror_company_id?: string;
-  correlation_key?: string;
-};
-
-type TallyCommandErrorEnvelope = {
-  code: string;
-  category: string;
-  message: string;
-  retry: "safe" | "after_change" | "not_recommended";
-  local_state_changed: boolean;
-  tally_state_may_have_changed: boolean;
-  remediation: string;
-};
-
-type OperatorError = string | TallyCommandErrorEnvelope;
-
-type CapabilityEvidence = {
-  state: "supported" | "unsupported" | "unknown" | "not_configured";
-  confidence: "documented" | "observed" | "inferred" | "unknown";
-  safe_reason_code?: string;
-};
-
-type CapabilityProfile = {
-  profile_version: number;
-  product: string;
-  release?: string;
-  mode?: string;
-  transports: Record<string, CapabilityEvidence>;
-  features: Record<string, CapabilityEvidence>;
-  packs: Record<string, CapabilityEvidence>;
-};
-
-type TallyProofSummary = {
-  integrity_state: "entry_hash_valid";
-  run_id: string;
-  selection_token: string;
-  proof_sha256: string;
-  pack_id: string;
-  outcome: "completed" | "failed" | "cancelled" | "outcome_unknown";
-  verification_state: "verified" | "partial" | "unverified";
-  started_at_unix_ms: number;
-  completed_at_unix_ms?: number;
-  accepted_records: number;
-  rejected_records: number;
-  provenance_unavailable_records: number;
-  gap_codes: string[];
-  warning_codes: string[];
-};
-
-type TallySyncEvidence = {
-  latest_proofs: TallyProofSummary[];
-  latest_reconciliation_mismatches: Array<{
-    reason_code: string;
-    record_aliases: string[];
-  }>;
-  incremental: {
-    execution_enabled: boolean;
-    establishment_receipts: number;
-    active_checkpoint_heads: number;
-    state: string;
-  };
-  core_accounting_freshness: {
-    state: "fresh" | "stale" | "never_verified";
-    verified_at_unix_ms?: number;
-    checkpoint_present: boolean;
-    proof_present: boolean;
-  };
-};
-
-type RedactedProofPreview = {
-  json: string;
-  payload_sha256: string;
-};
-
-type MirrorExplorerPage = {
-  offset: number;
-  limit: number;
-  total_records: number;
-  records: Array<{
-    local_alias: string;
-    object_type: string;
-    identity_confidence: string;
-    last_batch_state: string;
-    tombstoned: boolean;
-  }>;
-};
-
-type SnapshotPhase = "prepare" | "capability_check" | "company_identity_check" | "plan_windows" | "extract" | "normalize" | "validate" | "stage" | "reconcile" | "commit_pending" | "emit_proof" | "completed" | "partial" | "failed" | "cancelled";
-
-type SnapshotJobStatus = {
-  run_id: string;
-  mirror_company_id: string | null;
-  pack_id: string | null;
-  requested_from_yyyymmdd: string | null;
-  requested_to_yyyymmdd: string | null;
-  phase: SnapshotPhase;
-  active_window_id: string | null;
-  completed_windows: number;
-  total_windows: number;
-  verification: "verified" | "partial" | "unverified" | null;
-  proof_id: string | null;
-  proof_sha256: string | null;
-  gap_codes: string[];
-  warning_codes: string[];
-  failure_code: string | null;
-  requires_resume: boolean;
-  resume_available: boolean;
-};
-
-type TallyRuntimeSnapshot = {
-  session_id: string;
-  canonical_endpoint: string;
-  issued_requests: number;
-  active_requests: number;
-  active_request_ids: string[];
-  consecutive_failures: number;
-  circuit_state: "closed" | "open" | "half_open";
-  circuit_retry_after_unix_ms?: number;
-  last_success_unix_ms?: number;
-  last_failure_unix_ms?: number;
-  cached_capability_observed_at_unix_ms?: number;
-};
-
-type TallyAction = "probe" | "discover" | "bootstrap" | "save" | "fixture_enroll" | "fixture_revoke" | "evidence" | "explorer" | "start" | "resume" | "cancel";
-
-const PACK_LABELS: Record<string, string> = {
-  core_accounting: "Core accounting",
-  india_tax: "India tax",
-  bills_and_payments: "Bills and payments",
-  inventory: "Inventory",
-};
-
-const CAPABILITY_REASON_LABELS: Record<string, string> = {
-  xml_export_probe_failed: "The safe XML export probe did not complete.",
-  tally_status_not_recognized: "The endpoint response was not recognized as a compatible Tally status.",
-  release_not_observed: "The Tally release was not observed, so this transport was not tested.",
-  configuration_not_observed: "Bridge did not inspect this optional transport's configuration.",
-  company_identity_invalid: "The company result contained an invalid or unsafe identity field.",
-  company_identity_ambiguous: "Two or more returned companies shared the same complete observed identity.",
-  company_identity_display_scope_ambiguous: "Two same-GUID books differ only by name casing or surrounding whitespace, so Tally cannot safely scope the selected book. Rename one book, then probe again.",
-  direct_company_report_untrusted: "Tally returned a direct company report without the normal success wrapper. Its names remain unverified until separately checked.",
-  standard_ledger_identity_profile_observed: "A strict, scoped standard ledger collection observed one local company identity. It does not establish completeness, sync eligibility, or write support.",
-  scoped_standard_identity_observed: "A strict, scoped local company identity was observed. Responder authenticity and accounting completeness remain unestablished.",
-  practical_limit_not_measured: "No live workload has established a practical response limit for this endpoint.",
-  selected_read_probe_not_run: "This selected read was not run by the connection probe.",
-  selected_ledger_read_empty_observed: "The exact selected ledger profile returned a valid empty response; source emptiness is not claimed.",
-  selected_ledger_read_non_empty_observed: "The exact selected ledger profile returned validated identified rows, which were discarded.",
-  selected_voucher_window_empty_observed: "The exact request-bound voucher window returned a valid empty response; source completeness is not claimed.",
-  selected_voucher_window_non_empty_observed: "The exact request-bound voucher window returned validated identified rows, which were discarded.",
-  qualification_prerequisite_failed: "Voucher qualification was skipped because the ledger prerequisite did not pass.",
-  selected_voucher_date_outside_window: "A returned voucher fell outside the exact reviewed date window.",
-  selected_read_identity_unavailable: "The selected response did not prove stable unique row identity.",
-  selected_read_schema_rejected: "The selected response did not match the exact reviewed schema and structure.",
-  selected_read_transport_or_validation_failed: "The selected read failed transport, decoding, or strict validation and remains unknown.",
-  write_probe_not_run: "No write probe was run. Bridge never infers write support from read access.",
-  verified_snapshot_not_run: "No profile-scoped capability run has established this pack's declared contract.",
-};
-
-function formatIdentifier(value: string): string {
-  const words = value.replace(/_/g, " ");
-  return words.charAt(0).toUpperCase() + words.slice(1);
-}
-
-function formatRuntimeTime(value?: number): string {
-  if (value === undefined || !Number.isFinite(value)) {
-    return "Not observed";
-  }
-  return new Date(value).toLocaleString();
-}
-
 function formatDuration(startedAt: number, completedAt?: number): string {
   if (!Number.isFinite(startedAt) || completedAt === undefined || completedAt < startedAt) return "Duration unavailable";
   const seconds = Math.round((completedAt - startedAt) / 1000);
@@ -243,104 +68,6 @@ function formatTallyDate(value?: string): string {
   }
 
   return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`;
-}
-
-function formatCapabilityState(state: CapabilityEvidence["state"]): string {
-  switch (state) {
-    case "supported":
-      return "Supported";
-    case "unsupported":
-      return "Unsupported";
-    case "not_configured":
-      return "Not configured";
-    default:
-      return "Unknown";
-  }
-}
-
-function formatConfidence(confidence: CapabilityEvidence["confidence"]): string {
-  switch (confidence) {
-    case "documented":
-      return "Documented evidence";
-    case "observed":
-      return "Observed by this probe";
-    case "inferred":
-      return "Inferred, not directly observed";
-    default:
-      return "Evidence confidence unknown";
-  }
-}
-
-function formatCapabilityReason(reason?: string): string {
-  if (!reason) {
-    return "No reason code was returned.";
-  }
-
-  return CAPABILITY_REASON_LABELS[reason] || `Reason: ${formatIdentifier(reason)}.`;
-}
-
-function CapabilityBadge({ evidence }: { evidence?: CapabilityEvidence }) {
-  if (!evidence) {
-    return <span className="capability-badge state-unobserved">Not observed</span>;
-  }
-
-  return (
-    <span className={`capability-badge state-${evidence.state}`}>
-      {formatCapabilityState(evidence.state)}
-    </span>
-  );
-}
-
-function CapabilityRows({
-  capabilities,
-  labels,
-}: {
-  capabilities?: Record<string, CapabilityEvidence>;
-  labels: Record<string, string>;
-}) {
-  const keys = Array.from(new Set([...Object.keys(labels), ...Object.keys(capabilities || {})]));
-
-  return (
-    <div className="capability-list">
-      {keys.map((key) => {
-        const evidence = capabilities?.[key];
-        return (
-          <div className="capability-row" key={key}>
-            <div>
-              <strong>{labels[key] || formatIdentifier(key)}</strong>
-              <span>
-                {evidence
-                  ? `${formatConfidence(evidence.confidence)}. ${formatCapabilityReason(evidence.safe_reason_code)}`
-                  : "This endpoint has not been probed in the current configuration."}
-              </span>
-            </div>
-            <CapabilityBadge evidence={evidence} />
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function TallyErrorNotice({ message }: { message: OperatorError }) {
-  const guidance = classifyTallyError(typeof message === "string" ? { message } : message);
-  const displayMessage = typeof message === "string" ? message : message.message;
-  return (
-    <div className="error-banner" role="alert">
-      <strong>{guidance.category}</strong>
-      <span>{guidance.action}</span>
-      <details>
-        <summary>{typeof message === "string" ? "Details" : "Technical details"}</summary>
-        {typeof message !== "string" && (
-          <>
-            <small>Code <code>{message.code}</code> · Retry {formatIdentifier(message.retry)} · Local state {message.local_state_changed ? "changed" : "unchanged"} · Tally state {message.tally_state_may_have_changed ? "may have changed" : "unchanged by this read-only action"}</small>
-            <small>Next step: {message.remediation}</small>
-          </>
-        )}
-        <small>{displayMessage}</small>
-      </details>
-    </div>
-  );
 }
 
 function CopyTokenButton({ value, label }: { value: string; label: string }) {

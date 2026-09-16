@@ -115,7 +115,7 @@
     },
     {
       "path": "scripts/tally-setup-safety.test.mjs",
-      "sha256": "03090c6a21a956082339765faac968fe562e0308e50a845f2c40a0c84a3eadf3"
+      "sha256": "ebe899cdb9121d4f6d3ddc799afa3704e8875a8e740ebb761c9a3588284a099a"
     },
     {
       "path": "scripts/trial-balance-screen.test.tsx",
@@ -863,7 +863,7 @@
     },
     {
       "path": "src/MirrorProofScreen.tsx",
-      "sha256": "090ce413b9d2b4876c17128db419d814d2e5eeee95007cb0070b7d1eca771379"
+      "sha256": "5455abd8d37df3baaf26f22a70f9bda14b250384229de63cf64dec3917c4ede0"
     },
     {
       "path": "src/NativeLifecycleController.tsx",
@@ -907,7 +907,7 @@
     },
     {
       "path": "src/main.tsx",
-      "sha256": "eaf9bdcb5ab317c6716f78cb5c68945fdc7c4197401cb8ab4cf6790898a252e1"
+      "sha256": "a9cabe3bb8e7a5b12c89e193de143b9deb2f2f694325ab9c48fce2754eac6ff6"
     },
     {
       "path": "src/outstandings-as-of.ts",
@@ -971,7 +971,7 @@
     },
     {
       "path": "tools/bridge-tally-compatibility/src/lib.rs",
-      "sha256": "c5b39cbdcfb4cb672e0168ddc8282e781b363f2184475410ae72b3005e16aa58"
+      "sha256": "246c9efd1f71f6d4f94dafb3dbfcf7a9da6392d71865b350cc251673c2a1a9b9"
     },
     {
       "path": "tools/bridge-tally-compatibility/src/main.rs",
@@ -1006,5 +1006,5 @@
       "sha256": "0ab5bfbe6d81b1e10530744c338fb91efa57fe5a66fb4bc0cfd382495eaf02a4"
     }
   ],
-  "manifest_sha256": "e605f344add1a20236fcd7641c0658e153c83634da72fa783f0f3fbaa25f6cd8"
+  "manifest_sha256": "7ea71226cc61df24ef813efc690a9d2c700f2b81c9ac5dda8929a8835bf48ccc"
 }
