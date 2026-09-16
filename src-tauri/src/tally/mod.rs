@@ -12,7 +12,6 @@ mod runtime_control;
 pub mod serial_queue;
 pub mod tdl_engine;
 pub mod validators;
-pub mod xml_builder;
 pub mod xml_parser;
 // Crate-internal only: `tally::connector` and `tally::connection` are the sole consumers.
 mod canonical_window;
