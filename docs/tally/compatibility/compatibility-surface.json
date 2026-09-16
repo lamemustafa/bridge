@@ -667,7 +667,11 @@
     },
     {
       "path": "src-tauri/src/reports/bulk_party_statement.rs",
-      "sha256": "9eb188545a68d1463ec73a165dc70abef1faba8d4afc66e5a8f744f971223b9b"
+      "sha256": "ba590802ffff0a6f67db95bbb7093232aeffc59b813ff1706ee1c3526c2e600d"
+    },
+    {
+      "path": "src-tauri/src/reports/bulk_party_statement_tests.rs",
+      "sha256": "d3120a6d4bf13ef9748a33bbab3d08bf67980e59827aff78732262103da90656"
     },
     {
       "path": "src-tauri/src/reports/mod.rs",
@@ -675,51 +679,99 @@
     },
     {
       "path": "src-tauri/src/reports/outstandings_working_paper.rs",
-      "sha256": "29e942c4bf19cfa5d8f2b5f01deeb72cb781c33dae07688a5e1b78752a48d05c"
+      "sha256": "b1fd89fbc011bb65d89b6bbf5690a14645b5aaef1c14215352c9a72164f00f0b"
     },
     {
       "path": "src-tauri/src/reports/outstandings_working_paper_store.rs",
-      "sha256": "f4ce474669101c966085c87b0d600d7e7b19d6f91429969d94230bcb5e7c67a4"
+      "sha256": "1d20c00809202219ab93c1cbf870d4de84dc8503c73eb2f0172efe7bdfa31500"
+    },
+    {
+      "path": "src-tauri/src/reports/outstandings_working_paper_store_tests.rs",
+      "sha256": "483208368bb59c68d3e52404c49e47b6a495f193a66ca7271688ab02ab825111"
+    },
+    {
+      "path": "src-tauri/src/reports/outstandings_working_paper_tests.rs",
+      "sha256": "8ef24fe3fedcd700c586c8bdd4580ed7bbca583afa849a07e0b1b3a934e26a3f"
     },
     {
       "path": "src-tauri/src/reports/outstandings_working_paper_xlsx.rs",
-      "sha256": "a2608c4aed75de517e6948f90f29ccd2886ae2c1e5243c0eae0074a8836aee5b"
+      "sha256": "20b360e7ad38ea6e54a5e4c7367adb59fa0cef54aa3ad090d71c11eac22e473f"
+    },
+    {
+      "path": "src-tauri/src/reports/outstandings_working_paper_xlsx_tests.rs",
+      "sha256": "9afa5b24dd9f7b7989f35f613a8f1e2dd3a817970282188eabc0cfa1857291e1"
     },
     {
       "path": "src-tauri/src/reports/party_ledger_master.rs",
-      "sha256": "4cf39b7c71a34222b6497ee2b511e29462a18dc4b01bb1248ee1c94fb37d8b40"
+      "sha256": "c6d10d170eb908394ebab9a8d1c90746eabdc041d9184c1c70441848739fd729"
+    },
+    {
+      "path": "src-tauri/src/reports/party_ledger_master_tests.rs",
+      "sha256": "ab90949f1a8b67fa741f810cbac0f057da534e5f4c9890f6b83cff988ea43ab4"
     },
     {
       "path": "src-tauri/src/reports/party_ledger_master_xlsx.rs",
-      "sha256": "e9aa5c706aa7bbccf83612b7e9aaba851a26c82e92ea1176842ad12e8fd7d05e"
+      "sha256": "358d4684f7b0dca9c0537fb7668e36e10b5326a73b933714702d155907a6fed1"
+    },
+    {
+      "path": "src-tauri/src/reports/party_ledger_master_xlsx_tests.rs",
+      "sha256": "2e5d575c10263cc1f4c4c7542ae86c89b5828d1fafc69e6b9d777aa1a2f3c634"
     },
     {
       "path": "src-tauri/src/reports/party_statement.rs",
-      "sha256": "c51129735af57681cea163f1331593139f0b9620080f7a50965503032513e4a3"
+      "sha256": "dac8758864cc7348eac2e763a904d68b3c58e6b93dae09b640e61aaadbe9e933"
     },
     {
       "path": "src-tauri/src/reports/party_statement_pdf.rs",
-      "sha256": "4c9a7fe14297ba2f9a55b3e9d20eb05943756eda9e9586894ecc143472fbda49"
+      "sha256": "d5057dd06a29b887d4cfae3ac57dd8fa5064cd93d7d756fb7aef8fde5e446e60"
+    },
+    {
+      "path": "src-tauri/src/reports/party_statement_pdf_tests.rs",
+      "sha256": "8d4c532d6cb2faf3cc59e7275329e8bbd318877cad3f7776b314e80b7d3cc0b9"
+    },
+    {
+      "path": "src-tauri/src/reports/party_statement_tests.rs",
+      "sha256": "5b3d506f5e145a3c7f3fafb7f68696cbb4ce8c24c11453a4f73ed35fd549dff7"
     },
     {
       "path": "src-tauri/src/reports/party_statement_xlsx.rs",
-      "sha256": "703a28f572a2abfa640b7d1fa1d8b4e418f2e6dfde43c1b8f6efbf25bfe8c038"
+      "sha256": "1b1073e3d6a866fe09f76e3e866571bba24b1ac6b34a06e87404812d4d7e60ef"
+    },
+    {
+      "path": "src-tauri/src/reports/party_statement_xlsx_tests.rs",
+      "sha256": "4b4fdcb7ed53a14513343ae16e48373a603665fb6862cf031d7c8194df245bbb"
     },
     {
       "path": "src-tauri/src/reports/schedule_iii.rs",
-      "sha256": "1aa9f30b0bc54b87714379845d736460da9ecc3eaaf341e1dc910e901b52b0e4"
+      "sha256": "b26b87f4fc05425c24eff2a59dc0076cca064b483bfc34a5fc362909dfb4b7c4"
+    },
+    {
+      "path": "src-tauri/src/reports/schedule_iii_tests.rs",
+      "sha256": "d018bfd36efcd91660a3414f92f749d08412d48bc4dd2fb3995780f0de696fa4"
     },
     {
       "path": "src-tauri/src/reports/trial_balance.rs",
-      "sha256": "3e8cb3a591a518fc0147ffaa2d2344b67327a904e447b8706ff38665d7cefee7"
+      "sha256": "5cbb6a166aa9a93cc1ccd5dc1fa9201d8308d785bf5f3714a759b71f14be1393"
     },
     {
       "path": "src-tauri/src/reports/trial_balance_store.rs",
-      "sha256": "234b4cc8abd2d2ec994ec2b2c3fcd5da504c867024da390e6827a666f666781d"
+      "sha256": "256b6913cabf29faf5185867ee8caa5688b8b37fbd27e6948051bc5150b67c38"
+    },
+    {
+      "path": "src-tauri/src/reports/trial_balance_store_tests.rs",
+      "sha256": "01111820a9dcc24593e76f6ba17cfc9a2fcf9b3377f7d702a7e5d84821bbd444"
+    },
+    {
+      "path": "src-tauri/src/reports/trial_balance_tests.rs",
+      "sha256": "64106ef6dfcc4d65ac02df709c9b4497c66a09bbfd4662f501aaf0f1968bb246"
     },
     {
       "path": "src-tauri/src/reports/trial_balance_xlsx.rs",
-      "sha256": "51033f4dd9cf6e2d9f9da00eb86974ce6558ec394ddb6d5b046743131ac0b984"
+      "sha256": "b4cd64e462b6243a69b0731523d1e131511b557bcdf6f20b04f22b19f5cc035c"
+    },
+    {
+      "path": "src-tauri/src/reports/trial_balance_xlsx_tests.rs",
+      "sha256": "e25f8360a03053878ea2a3066ca597b59bde5ed287045b73c6eb01f032dda764"
     },
     {
       "path": "src-tauri/src/source_draft.rs",
@@ -963,7 +1015,7 @@
     },
     {
       "path": "tools/bridge-tally-compatibility/src/lib.rs",
-      "sha256": "1de0a8bd71f1c23fe49b51ca79d8c670af3f58123e43876dfb5b1a748e7a578e"
+      "sha256": "3b4bc870d88f40a0ca9d5d66bd632f548f2febc19f2d4354466e190a7384245a"
     },
     {
       "path": "tools/bridge-tally-compatibility/src/main.rs",
@@ -998,5 +1050,5 @@
       "sha256": "0ab5bfbe6d81b1e10530744c338fb91efa57fe5a66fb4bc0cfd382495eaf02a4"
     }
   ],
-  "manifest_sha256": "2c56ffc33c5f95de18fa7e7d876468e513727371a03330def9061885c3964980"
+  "manifest_sha256": "dbce3078abdb29ec8b870baa80a68081db384830eda872038e4c3c276262b300"
 }

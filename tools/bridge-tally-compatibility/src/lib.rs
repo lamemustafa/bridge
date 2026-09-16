@@ -31,7 +31,7 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// and manifest) but makes further unreviewed additions an explicit
 /// compatibility-surface decision.
 ///
-/// **Raised nine times, the first three by branches that did not see each
+/// **Raised ten times, the first three by branches that did not see each
 /// other.** 210 to 211 on master for `src-tauri/src/agent_ledgers.rs`, 211 to
 /// 212 for `src-tauri/crates/bridge-tally-core/src/master_binding.rs`, 212 to
 /// 216 in a single commit for the voucher-presence engine, its adapter, its
@@ -41,8 +41,10 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// `.github/workflows/dependency-security-scheduled.yml`, 217 to 218 for
 /// `src-tauri/src/agent_import_identity.rs`, 218 to 232 for fourteen files
 /// named individually below, 232 to 238 for six more, and 238 to 239 for
-/// `src-tauri/src/agent_import_amend.rs`, and 239 to 251 for the
-/// bank-statement parser's twelve files. Each reason stands; a
+/// `src-tauri/src/agent_import_amend.rs`, 239 to 251 for the
+/// bank-statement parser's twelve files, and, after the lowering to 249
+/// described below, 249 to 262 for the thirteen test modules of
+/// `src-tauri/src/reports`. Each reason stands; a
 /// merge that
 /// keeps a raise but loses its pin would pass the gate with behavior silently
 /// outside the evidence boundary, which is the failure this constant exists to
@@ -212,6 +214,26 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// ran a legacy schema no caller opened, the second named import actions no
 /// builder used.
 ///
+/// The raise to 262 binds thirteen test files because a directory rule requires
+/// it, not because of what they decide. Each `src-tauri/src/reports`
+/// file kept its tests in an inline `#[cfg(test)]` module, so editing a test
+/// re-hashed a production report. Those modules now live beside their parents
+/// as `<stem>_tests.rs`, and `REQUIRED_SURFACE_DIRECTORIES` requires every file
+/// under that directory to be pinned, test files included. The test files the
+/// same extraction moved out of pinned parents in other directories were left
+/// unpinned, following bridge#416. Here the directory rule outranks that, and
+/// exempting `_tests.rs` from the rule would
+/// change what the gate can miss, not merely what it reports. Nothing else is
+/// bound by this raise:
+/// - `bulk_party_statement_tests.rs`, `outstandings_working_paper_tests.rs`,
+///   `outstandings_working_paper_store_tests.rs`,
+///   `outstandings_working_paper_xlsx_tests.rs`, `party_ledger_master_tests.rs`,
+///   `party_ledger_master_xlsx_tests.rs`, `party_statement_tests.rs`,
+///   `party_statement_pdf_tests.rs`, `party_statement_xlsx_tests.rs`,
+///   `schedule_iii_tests.rs`, `trial_balance_tests.rs`,
+///   `trial_balance_store_tests.rs` and `trial_balance_xlsx_tests.rs` -- the
+///   tests formerly inline in the report file of the same stem.
+///
 /// Not pinned, and deliberately: files feature-gated out of every shipped build
 /// (`agent_lab.rs`, `jsonex*.rs`, `india_tax_observation.rs`), operator filing
 /// labels, dead or declaration-only modules, and `observability.rs`. Its count
@@ -228,7 +250,7 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// errors. The error notice's classification comes from the pinned
 /// `tally-error-copy.ts`. None of them decides which book a report or drawer is
 /// attributed to, or what Bridge posts or lets leave the machine.
-pub const MAX_SURFACE_FILES: usize = 249;
+pub const MAX_SURFACE_FILES: usize = 262;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
