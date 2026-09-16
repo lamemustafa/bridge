@@ -1504,6 +1504,69 @@ def test_a_failed_handoff_does_not_close_the_descriptor_twice(m):
             f"failure with Bad file descriptor: {raised!r}")
         assert isinstance(raised, KeyboardInterrupt), (
             f"the interrupt must reach the operator unchanged, got: {raised!r}")
+        assert getattr(raised, "__notes__", None) is None, (
+            "an already-closed descriptor is the expected case and must be "
+            "silent; a note here means the EBADF discrimination was lost and "
+            f"every ordinary late fdopen failure now carries noise: {raised.__notes__}")
+
+
+def test_the_handoff_defers_sigint_but_the_payload_write_does_not(m):
+    """Pins `_defer_sigint_during_claim()` around the handoff, which nothing
+    else does: neutralising that wrapper leaves every other test in this file
+    green, so the main claim of this revision was asserted rather than proved.
+
+    Both halves matter. Blocked across `os.dup` -> `os.fdopen` is what closes
+    the window no pure-Python handler could observe. *Not* blocked across
+    `stream.write` is what keeps an arbitrarily long payload interruptible --
+    a defer that leaked into the write would trade a one-bytecode race for an
+    unkillable process.
+    """
+    if os.name == "nt" or not hasattr(signal, "pthread_sigmask"):
+        return
+
+    def sigint_blocked():
+        # Querying with an empty set reports the mask without changing it.
+        return signal.SIGINT in signal.pthread_sigmask(signal.SIG_BLOCK, [])
+
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "out.xml"
+        real_fdopen = m.os.fdopen
+        seen = {}
+
+        class RecordingStream:
+            def __init__(self, inner):
+                self._inner = inner
+
+            def write(self, text):
+                seen["write"] = sigint_blocked()
+                return self._inner.write(text)
+
+            def __enter__(self):
+                self._inner.__enter__()
+                return self
+
+            def __exit__(self, *details):
+                return self._inner.__exit__(*details)
+
+        def recording_fdopen(handle, *args, **kwargs):
+            seen.setdefault("handoff", sigint_blocked())
+            return RecordingStream(real_fdopen(handle, *args, **kwargs))
+
+        m.os.fdopen = recording_fdopen
+        try:
+            m.write_outputs([(path, "<ENVELOPE/>")])
+        finally:
+            m.os.fdopen = real_fdopen
+
+        assert seen.get("handoff") is True, (
+            "SIGINT must be blocked across the dup/fdopen handoff; got "
+            f"{seen.get('handoff')!r}")
+        assert seen.get("write") is False, (
+            "SIGINT must NOT be blocked while the payload is written, or a "
+            f"long write becomes uninterruptible; got {seen.get('write')!r}")
+        assert not sigint_blocked(), (
+            "the mask must be restored once write_outputs returns")
+        assert path.read_text() == "<ENVELOPE/>"
 
 
 def test_a_failed_run_does_not_destroy_the_previous_output(m):
