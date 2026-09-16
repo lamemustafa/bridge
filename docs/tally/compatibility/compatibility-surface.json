@@ -342,6 +342,14 @@
       "sha256": "55632c680704c2784545e422cf6847b81d2423191d651a0119d45188d9bf2671"
     },
     {
+      "path": "src-tauri/src/agent_change_parse.rs",
+      "sha256": "1459a3a732ed5f4e51c0b83481683ebbf26adb86b6c3cc10da8604ac03bd3823"
+    },
+    {
+      "path": "src-tauri/src/agent_changes.rs",
+      "sha256": "ce8c0ca98c2194f8ce42493a39f3a034f80418bcf4c6aa3d9fc9df30a6161f71"
+    },
+    {
       "path": "src-tauri/src/agent_company.rs",
       "sha256": "c719ff31cb8e14959dcaecd851156356cc7e38fe50a07aaf0dd339cfd78641dc"
     },
@@ -386,6 +394,18 @@
       "sha256": "a891e4ac51addc9dc17ae28ce4634bd2cfeb8f3f0df78e072290771d29a3131b"
     },
     {
+      "path": "src-tauri/src/agent_movement.rs",
+      "sha256": "a1ca27209a17a23db26b72d190122b8be49a930b55151ecea59913126b599185"
+    },
+    {
+      "path": "src-tauri/src/agent_movement_math.rs",
+      "sha256": "5047954d7f0e5c7adfc31241bab4108a734f1f815102e95f78f080a66228bdf9"
+    },
+    {
+      "path": "src-tauri/src/agent_outstandings.rs",
+      "sha256": "93538acb8e43a1a02891d0cc5b9e8615daf10d4493eebe18cc431cc3425c7fc3"
+    },
+    {
       "path": "src-tauri/src/agent_presence.rs",
       "sha256": "0bfeb05248b0d371e6a87b4b004c9c3815b5590017c6bd3231277db12b030c8d"
     },
@@ -404,6 +424,10 @@
     {
       "path": "src-tauri/src/agent_read_validation.rs",
       "sha256": "7c1bf2bc330b9703e0b2ae791ae7d777b6c64449395ff79b7ef855ee0dafdfeb"
+    },
+    {
+      "path": "src-tauri/src/agent_receipt_fields.rs",
+      "sha256": "cbdd09b7916fe5b96c7be4cecab9e0bdf2f0cdb018148c106a83e026a9128ada"
     },
     {
       "path": "src-tauri/src/agent_responses.rs",
@@ -895,7 +919,7 @@
     },
     {
       "path": "tools/bridge-tally-compatibility/src/lib.rs",
-      "sha256": "8f9840b107e3c14290e66a7e9eeafce09930fb7d17286a35c9475d1af87b6062"
+      "sha256": "cc70895f6c6fd2357949dc55abd3c8c7302584ca58ba65dc87f27a82e7f23348"
     },
     {
       "path": "tools/bridge-tally-compatibility/src/main.rs",
@@ -930,5 +954,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "4dc0c7118372a4bc4a6b3b58346b0b113ce4b6bb07a154f208546f6cd43757a8"
+  "manifest_sha256": "84f4b0b441ebbcfe795adce5279212da0d6b69e15213b7bf01ddd2af269f30c4"
 }
