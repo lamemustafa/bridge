@@ -55,26 +55,25 @@ use std::collections::BTreeMap;
 /// **Admission needs a captured ledger sitting under a captured group** — the
 /// whole edge the gate walks, not just its far end. A group row alone proves
 /// the identity exists; it does not show a ledger's `PARENT` resolving to it,
-/// which is what classification actually reads. Both admitted entries below
-/// have such a row in `ledgers_native_aarav.utf16le.xml`.
+/// which is what classification actually reads. `Bank Accounts` and
+/// `Cash-in-Hand` have such a row in `ledgers_native_aarav.utf16le.xml`;
+/// `Bank OD A/c` has one in `native-shape-lab-ledger-catalogue.utf16le.xml`
+/// (`HDFC CC`), read with the same request the build sends.
 ///
-/// The unadmitted entries hold money all the same, and saying otherwise on the
+/// The unadmitted entry holds money all the same, and saying otherwise on the
 /// counterparty side would wave through the bank-to-bank Payment that rule
 /// exists to catch. So a voucher touching one is refused on either side: the
 /// money leg for want of an observed edge, the counterparty leg because it is
 /// money. Both refusals are the same ignorance pointed in the safe direction.
 ///
-/// - `Bank OD A/c` — group captured in both companies, but no captured ledger
-///   beneath it. One `List of Ledgers` read against a book with an overdraft
-///   or cash-credit account promotes it.
-/// - `Bank OCC A/c` — documented by Tally, in neither captured group set.
+/// - `Bank OCC A/c` — documented by Tally, in no captured group set.
 ///
 /// Held in Tally's own spelling and normalized at comparison time, so the
 /// matched entry is directly reportable.
 const MONEY_RESERVED_GROUPS: &[(&str, Admission)] = &[
     ("Bank Accounts", Admission::Admitted),
     ("Cash-in-Hand", Admission::Admitted),
-    ("Bank OD A/c", Admission::NoCapturedLedger),
+    ("Bank OD A/c", Admission::Admitted),
     ("Bank OCC A/c", Admission::NoCapturedGroup),
 ];
 
@@ -85,7 +84,8 @@ const MONEY_RESERVED_GROUPS: &[(&str, Admission)] = &[
 /// group taxonomy: each entry is one of the 28 `RESERVEDNAME` values the two
 /// captured `List of Groups` responses actually exhibit
 /// (`group_snapshot_aarav.xml`, `group_snapshot_wr2.xml`), minus the three
-/// money identities already in [`MONEY_RESERVED_GROUPS`]. An identity that
+/// money identities already in [`MONEY_RESERVED_GROUPS`] that those captures
+/// contain. An identity that
 /// appears in neither table is not thereby non-money — it is unknown, and
 /// unknown is exactly what a captured predefined-group domain cannot rule
 /// out. `Bank OCC A/c` is the standing proof of that: it is a real Tally
@@ -143,8 +143,6 @@ const NON_MONEY_RESERVED_GROUPS: &[&str] = &[
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Admission {
     Admitted,
-    /// The group was captured; no captured ledger sits under it.
-    NoCapturedLedger,
     /// The identity has never appeared in a captured group set at all.
     NoCapturedGroup,
 }
@@ -153,7 +151,6 @@ impl Admission {
     fn gap(self) -> &'static str {
         match self {
             Self::Admitted => "",
-            Self::NoCapturedLedger => "that group is captured, but no captured ledger sits under it, and the ledger-to-parent edge is what this classification reads",
             Self::NoCapturedGroup => "that identity has never appeared in a captured group set",
         }
     }

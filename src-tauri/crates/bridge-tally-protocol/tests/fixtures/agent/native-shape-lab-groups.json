@@ -1,0 +1,15 @@
+{
+  "source": "Live licensed TallyPrime 7.1 Silver synthetic-company native List of Groups read, request rendered by render_native_group_snapshot_request(\"BRIDGE SHAPE LAB\")",
+  "observed_date": "2026-09-17",
+  "source_response_bytes": 62926,
+  "source_response_sha256": "a72e22a740fcbb606a3ec801b7c613542c9ddd895e8c1c2a8ed3a3a43399b2ba",
+  "source_request_bytes": 1066,
+  "source_request_sha256": "1a635c8b200ede795af39ad1abfa9ce3041c1341c561975bc623470d9db2dd0a",
+  "fixture_bytes": 62926,
+  "fixture_sha256": "a72e22a740fcbb606a3ec801b7c613542c9ddd895e8c1c2a8ed3a3a43399b2ba",
+  "encoding": "UTF-16LE without BOM",
+  "rows": 33,
+  "transformation": [],
+  "provenance_limit": "Byte-exact live response, read twice with byte-identical results. It carries the reserved Bank OD A/c group row that the paired ledger catalogue's HDFC CC ledger names as its parent. One company on one licensed release; it does not establish Bank OCC A/c or any other Tally release.",
+  "sensitivity_review": "Operator-created synthetic lab company. Predefined Tally groups plus synthetic user groups; no GSTIN, PAN, email, phone, address, URL, credentials or machine paths."
+}
