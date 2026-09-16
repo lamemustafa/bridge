@@ -21,12 +21,12 @@ them, through an AI assistant such as Claude Desktop.
   statement or an invoice and it reports which exist in the book and which are
   near-misses needing your decision. Reading the ledger list first is the single
   biggest cause of an import being rejected wholesale when it is skipped.
-- **Records what it did.** Every call Bridge makes — read or write — appends a
-  receipt to a log on your own machine, naming the company it touched and
-  fingerprinting what was asked and what came back. Reads keep those
-  fingerprints as evidence alongside; import batches additionally record which
-  Tally endpoint they spoke to. A reviewer can read the log rather than take a
-  summary on trust.
+- **Records what it did.** Every tool call Bridge runs — read or write, and
+  whether it succeeds or is refused — appends a receipt to a log on your own
+  machine, naming the company it touched and fingerprinting what was asked and
+  what came back. Reads keep those fingerprints as evidence alongside; import
+  batches additionally record which Tally endpoint they spoke to. A reviewer can
+  read the log rather than take a summary on trust.
 
 **Writing is off until you turn it on.** Everything above is reading. The write
 tools do not merely refuse when disabled — they are **absent from the tool list
