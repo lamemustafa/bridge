@@ -31,15 +31,18 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// and manifest) but makes further unreviewed additions an explicit
 /// compatibility-surface decision.
 ///
-/// **Raised four times, the first three by branches that did not see each
+/// **Raised five times, the first three by branches that did not see each
 /// other.** 210 to 211 on master for `src-tauri/src/agent_ledgers.rs`, 211 to
 /// 212 for `src-tauri/crates/bridge-tally-core/src/master_binding.rs`, 212 to
-/// 215 for the voucher-presence engine plus its adapter and admission-contract
-/// assertion, and 216 to 217 for
-/// `.github/workflows/dependency-security-scheduled.yml`. Each reason stands; a
-/// merge that keeps a raise but loses its pin would pass the gate with behavior
-/// silently outside the evidence boundary, which is the failure this constant
-/// exists to make loud.
+/// 216 in a single commit for the voucher-presence engine, its adapter, its
+/// admission-contract assertion, and `agent_catalog.rs` -- the last of those
+/// taking the slot a paragraph below had already reserved for it by name, which
+/// is why the four pins arrive as one raise and not two -- 216 to 217 for
+/// `.github/workflows/dependency-security-scheduled.yml`, and 217 to 218 for
+/// `src-tauri/src/agent_import_identity.rs`. Each reason stands; a merge that
+/// keeps a raise but loses its pin would pass the gate with behavior silently
+/// outside the evidence boundary, which is the failure this constant exists to
+/// make loud.
 ///
 /// `master_binding.rs` decides `validate_masters` results and, through them,
 /// import admission. Left unpinned, an edit confined to the matcher would leave
@@ -57,7 +60,15 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// surface digest unchanged. Every other raise here bound a file that decides
 /// what Bridge admits; this one binds a file that decides what Bridge is
 /// allowed to do to its own repository while nobody is watching.
-pub const MAX_SURFACE_FILES: usize = 217;
+///
+/// The raise to 218 binds `agent_import_identity.rs`. The marker derivation it
+/// holds is shared by the import writer and the presence reader: the writer
+/// stamps a marker into a voucher's narration, and the reader identifies that
+/// voucher by it. Left unpinned, an edit to that one derivation would change
+/// both halves at once and leave the surface digest unchanged, so a receipt
+/// would attest an identity rule the evidence never covered. It is one file for
+/// one named reason — not headroom.
+pub const MAX_SURFACE_FILES: usize = 218;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;

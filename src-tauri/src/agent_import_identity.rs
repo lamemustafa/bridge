@@ -13,7 +13,7 @@ pub(super) enum ImportIdentityScheme {
 /// The random, persisted batch UUID separates independent file generations.
 /// Domain separation and tuple encoding keep identities deterministic without
 /// treating a caller's commonly reused transaction label as a Tally upsert key.
-pub(super) fn import_identity(batch_id: &str, txn_id: &str) -> Uuid {
+pub(in crate::agent) fn import_identity(batch_id: &str, txn_id: &str) -> Uuid {
     let input = serde_json::to_vec(&("bridge.mcp.import.v1", batch_id, txn_id))
         .expect("string tuple serializes");
     let digest = Sha256::digest(input);

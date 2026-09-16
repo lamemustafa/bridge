@@ -141,7 +141,7 @@ proposal in it, however complete that proposal's own evidence was.
 on:
 
 - **a `REMOTEID` column that was never read.** A window declares
-  `RemoteIdEvidence::Observed` or `NotRead`, because "no voucher carried one"
+  `ColumnEvidence::Observed` or `NotRead`, because "no voucher carried one"
   and "the profile never fetched it" are different facts and only the first is
   evidence. Where a proposal carries a `REMOTEID` and the window is `NotRead`,
   that proposal's strongest key was never compared, so it **cannot be
@@ -216,6 +216,12 @@ work units, is refused as `ComparisonWorkTooLarge`. The second limit counts
 posting-list walks and party-key checks, so it still applies when the pair count
 is below one million but one party resolves to many candidate keys.
 
+Ambiguous narration evidence is bounded separately: at most 64 raw marker
+occurrences per voucher, 100,000 retained marker memberships, and 4 MiB of
+marker-key bytes per window are admitted before the marker index is built. The
+typed refusals preserve the same rule as the comparison bounds: no evidence is
+silently truncated into an `Absent` or `Present` verdict.
+
 ### 3. The numbering method is declared, and its absence is an error
 
 The decisive power of a voucher number depends entirely on the voucher type's
@@ -246,9 +252,9 @@ Per proposed voucher, exactly one of:
 | `Absent` | No rule produced any candidate, in a window proven to cover it **and** proven to have been read whole | including this voucher in the import |
 
 `PossiblyPresent` carries candidates labelled with the **rule that surfaced
-each** — `SharedRemoteId`, `SharedVoucherNumber`,
-`SameDatePartyAmount`, `SamePartyAmount`, `SameDateAmount`, `SameDateParty` —
-ordered by rule and then by the book
+each** — `SharedRemoteId`, `SharedNarrationMarker`,
+`SharedVoucherNumber`, `SameDatePartyAmount`, `SamePartyAmount`, `SameDateAmount`,
+`SameDateParty` — ordered by rule and then by the book
 voucher's own ordering. **No candidate is marked best, likely or preferred, and
 no score is emitted anywhere.**
 
@@ -297,7 +303,7 @@ leaves open:
   rule that withholds `Absent` when a key was not compared applies with more
   force to `Present`, because `Present` carries the higher bar and its error is
   the silent one. So where a proposal supplies a `REMOTEID` and the window is
-  `RemoteIdEvidence::NotRead`, a unique number match returns
+  `ColumnEvidence::NotRead`, a unique number match returns
   `RemoteIdEvidenceUnavailable` rather than `Present`: the number is decisive
   on its own terms, but the evidence that could contradict it was skipped. A
   proposal carrying no `REMOTEID` skipped nothing and still settles. An earlier
@@ -527,7 +533,7 @@ human-approved batch — this ADR does not move.
   the desktop consumes the same function once a draft row carries a number and
   a party.
 - **`RemoteId` is contract-complete and not reachable from the shipped read**,
-  so the adapter declares `RemoteIdEvidence::NotRead` and the tool's schema
+  so the adapter declares `ColumnEvidence::NotRead` and the tool's schema
   does not accept a `remote_id` at all. `render_agent_vouchers` does not
   `FETCH REMOTEID`; only the AlterID change feed does. Accepting an input that
   could only ever *withhold* a verdict would be worse than refusing it.
