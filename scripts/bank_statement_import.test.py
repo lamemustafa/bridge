@@ -1410,6 +1410,55 @@ def test_no_output_is_written_unless_every_destination_was_claimed(m):
         assert stat.S_IMODE(first.stat().st_mode) == 0o600
 
 
+def test_an_interrupt_between_dup_and_fdopen_leaks_no_descriptor(m):
+    """`os.fdopen` is what takes ownership of the duplicate, so between `os.dup`
+    returning and that call the descriptor belongs to nobody. A SIGINT there --
+    or an `fdopen` that raises for any other reason -- leaked it for the life of
+    the process, while cleanup went on to unlink the output the operator was
+    told had failed.
+
+    Deterministic rather than timing-dependent: `os.fdopen` is replaced with one
+    that records the descriptor it was handed and then raises
+    `KeyboardInterrupt`, which is what a SIGINT arriving at that instant
+    produces. The assertion is on the descriptor itself -- `os.fstat` must
+    report EBADF -- not on a count, because fd numbers are reused and a count
+    can come out right while the wrong descriptor is open.
+    """
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "out.xml"
+        real_fdopen = m.os.fdopen
+        handed = []
+
+        def interrupt_at_handoff(fd, *args, **kwargs):
+            handed.append(fd)
+            raise KeyboardInterrupt("SIGINT between dup and fdopen")
+
+        m.os.fdopen = interrupt_at_handoff
+        try:
+            raised = None
+            try:
+                m.write_outputs([(path, "<ENVELOPE/>")])
+            except BaseException as error:   # noqa: BLE001 - the class is the subject
+                raised = error
+        finally:
+            m.os.fdopen = real_fdopen
+
+        assert isinstance(raised, KeyboardInterrupt), (
+            f"the interrupt must propagate, got: {raised!r}")
+        assert handed, "the handoff must have been reached"
+        for fd in handed:
+            closed = False
+            try:
+                os.fstat(fd)
+            except OSError as error:
+                closed = error.errno == errno.EBADF
+            assert closed, (
+                f"descriptor {fd} was duplicated and never closed; it leaks for "
+                "the life of the process")
+
+
 def test_a_failed_run_does_not_destroy_the_previous_output(m):
     """The rollback must not be worse than the failure it cleans up after.
 

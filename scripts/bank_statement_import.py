@@ -2629,8 +2629,29 @@ def write_outputs(targets, accept_inherited=False, after_claim=None):
             where = record["path"]
             # The record already owns the opened descriptor, so a duplicate
             # failure here can still close it and unlink the created path.
-            handle = os.dup(record["pin"])
-            with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
+            #
+            # `os.fdopen` is what takes ownership of the duplicate, so between
+            # `os.dup` returning and that call the descriptor belongs to nobody:
+            # a SIGINT there, or an `fdopen` that raises, leaked it for the life
+            # of the process while cleanup went on to unlink the output. Hold it
+            # in a variable the handler can see, and clear that variable only
+            # once ownership has actually moved.
+            #
+            # This does not make the handoff atomic and is not claimed to be.
+            # CPython can deliver a signal between the `os.dup` C call returning
+            # and the assignment that records its result, and no pure-Python
+            # arrangement can observe a descriptor it was never told about. What
+            # it removes is every window that a handler could have covered.
+            handle = None
+            try:
+                handle = os.dup(record["pin"])
+                stream = os.fdopen(handle, "w", encoding="utf-8", newline="")
+                handle = None
+            except BaseException:
+                if handle is not None:
+                    os.close(handle)
+                raise
+            with stream:
                 stream.write(text)
             # Retain the exact UTF-8/no-translation payload digest. A later
             # in-place edit preserves the entry identity and link count, so
