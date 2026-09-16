@@ -187,6 +187,11 @@ shared items:
 
 `commands_trial_balance.rs` already shows the per-feature pattern as `commands::trial_balance`.
 
+**First split done:** the six All Clients commands (filing labels, their migration plan, the sort
+preference) moved to `commands/all_clients.rs` (#472). They shared no item with any other command,
+the new file sits under the existing unpinned "operator filing labels" exemption, and test names
+were identical before and after.
+
 **Delete-first finding (a decision, not a refactor).** Four declared commands are deliberately
 unregistered: `qualify_selected_tally_reads`, `fetch_tally_ledgers`,
 `fetch_standard_tally_ledger_catalog` and `fetch_tally_vouchers`.
@@ -206,10 +211,42 @@ per-iteration locals, so cutting between them would trade one long function for 
 ones. That is the "deep module over shallow modules" judgement applied to a function. Revisit it
 only if the locals can become one named per-iteration state type.
 
+### `src/db/tally_mirror.rs` (~5,900 lines, pinned)
+
+**Shape.** About 3,660 lines are one `impl TallyMirrorRepository`, plus about 1,170 lines of free
+helpers and 800 lines of types.
+
+**Families.** Grouping the repository's methods by name gives this rough split. It is keyword-based
+and indicative only, so read the methods before drawing a boundary:
+
+| Family | Lines | Methods |
+|---|---:|---:|
+| Snapshot, commit and batch | ~1,480 | 21 |
+| Write canary and fixture enrolment (ADR 0004) | ~800 | 12 |
+| Proofs, explorer and reconciliation | ~490 | 7 |
+| Migrations and connection pool | ~380 | 3 |
+| Company, profile and setup | ~370 | 7 |
+
+The item graph can't help here: it roots on free `pub fn`, and finds only 2 roots in this file.
+A method-aware root set is needed before measuring closures.
+
+### `crates/bridge-tally-core` (pinned files)
+
+- **`bills_reconciliation.rs::assess_party_outstanding`** is 416 of the file's 688 item lines, 26
+  times the median: the crate's clearest one-huge-function case. Its body reads as six phases, from
+  scope admission to on-account handling. Extracting those steps in place is claimed tonight by a
+  separate lane.
+- **`master_binding.rs`** is one pipeline under `bind`, not a module of many things. Its one clean
+  seam is identifier extraction: 18 items and 442 lines behind `extract_identifiers` and the
+  `Identifier` types. That would be a deep module. It is also the most scrutinised code here
+  (ADR 0016), so splitting it needs the master-binding owner's agreement.
+- **`book_presence.rs::decide`** is 393 lines, 12 times the file's median. Step extraction in place
+  is claimed by a separate lane.
+
 ### Not yet measured
 
-`db/tally_mirror.rs` (~5,900 code lines, median function 21 lines) and `tally/runtime.rs`
-(~3,500) may each be one large cohesive responsibility. Read them before assuming otherwise.
+`tally/runtime.rs` (~3,500 code lines) may be one large cohesive responsibility. Read it before
+assuming otherwise.
 
 ## Sources
 
