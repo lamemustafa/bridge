@@ -31,15 +31,16 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// and manifest) but makes further unreviewed additions an explicit
 /// compatibility-surface decision.
 ///
-/// **Raised five times, the first three by branches that did not see each
+/// **Raised six times, the first three by branches that did not see each
 /// other.** 210 to 211 on master for `src-tauri/src/agent_ledgers.rs`, 211 to
 /// 212 for `src-tauri/crates/bridge-tally-core/src/master_binding.rs`, 212 to
 /// 216 in a single commit for the voucher-presence engine, its adapter, its
 /// admission-contract assertion, and `agent_catalog.rs` -- the last of those
 /// taking the slot a paragraph below had already reserved for it by name, which
 /// is why the four pins arrive as one raise and not two -- 216 to 217 for
-/// `.github/workflows/dependency-security-scheduled.yml`, and 217 to 218 for
-/// `src-tauri/src/agent_import_identity.rs`. Each reason stands; a merge that
+/// `.github/workflows/dependency-security-scheduled.yml`, 217 to 218 for
+/// `src-tauri/src/agent_import_identity.rs`, and 218 to 232 for fourteen files
+/// named individually below. Each reason stands; a merge that
 /// keeps a raise but loses its pin would pass the gate with behavior silently
 /// outside the evidence boundary, which is the failure this constant exists to
 /// make loud.
@@ -68,7 +69,65 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// both halves at once and leave the surface digest unchanged, so a receipt
 /// would attest an identity rule the evidence never covered. It is one file for
 /// one named reason — not headroom.
-pub const MAX_SURFACE_FILES: usize = 218;
+///
+/// The raise to 232 binds fourteen files at once, which reads like headroom and
+/// is not: each is named here with its own reason, and none was chosen to fill
+/// space. They were found together (bridge#416) by looking for unpinned
+/// production modules declared by pinned ones, then keeping only those whose
+/// own body holds a rule about what Bridge posts or prepares for posting, or
+/// what may leave the machine. An edit confined to any of them would leave the
+/// surface digest unchanged. Each reason says what the file holds, not that it
+/// holds all of a guarantee: several guarantees here are shared with pinned
+/// files, and a reason that claimed the whole of one would be false.
+///
+/// What Bridge posts, or prepares for posting:
+/// - `tally/approved_import.rs` -- the operator approval dialog, and which
+///   choice counts as consent (the named post button, or Yes on Windows).
+/// - `agent_import_post.rs` -- the MCP post handler, which admits only a
+///   single saved Journal batch, and its part of the refusal to post one batch
+///   twice; `agent_import.rs` holds the admission lock and journal append.
+/// - `agent_import_ledger.rs` -- the import journal replay: whether a batch was
+///   dispatched, derived from its dispatch-intent records, and the refusal of a
+///   second dispatch intent for one batch.
+/// - `agent_company.rs` -- finding the loaded company whose GUID matches the
+///   request and refusing when none or several do; import admission and the
+///   company-scoped MCP read tools call it.
+/// - `agent_import_cash_bank.rs` -- the reserved-group tables deciding which
+///   ledgers may sit on the cash/bank side of a Payment, Receipt or Contra in
+///   an import file Bridge builds.
+/// - `bridge-tally-protocol/src/group_ancestry.rs` -- the ancestry walk under
+///   those tables; its other callers were already pinned and it was not.
+/// - `agent_import_persistence.rs` -- whether an earlier import publication has
+///   settled, checked every time the import admission lock is taken.
+/// - `tally/runtime_control.rs` -- the read retry loop: the attempt limits,
+///   including the single-attempt policy, and which failures may repeat a
+///   request.
+/// - `endpoint_coordination.rs` -- the advisory per-user, per-port lease the
+///   shipped post path takes before dispatch, so two of one OS user's Bridge
+///   processes cannot both hold it while posting to one Tally port.
+///
+/// What leaves the machine, and the record of it:
+/// - `documents.rs` -- which storage URLs customer documents may be uploaded
+///   to, and the file checks made before an upload.
+/// - `axal.rs` -- which AXAL API origins may receive credentialed requests,
+///   and that its API client follows no redirects.
+/// - `agent_protocol.rs` -- the MCP response loop, which records an egress
+///   receipt for a tool response before writing it and decides what is sent
+///   when recording fails.
+/// - `agent_egress.rs` -- the egress log: a failed append is truncated back, or
+///   reported as `egress_record_rollback_failed` when that fails, and a torn
+///   final row is refused rather than read as evidence.
+/// - `agent_delivery.rs` -- the egress receipt record: the fields it carries,
+///   the response hash it commits to, and that only a persisted preparation
+///   yields a write-completion token.
+///
+/// Not pinned, and deliberately: files feature-gated out of every shipped build
+/// (`agent_lab.rs`, `jsonex*.rs`, `india_tax_observation.rs`), operator filing
+/// labels, dead or declaration-only modules, and the read-path files that
+/// compute reported figures or decide when a change cursor may advance. Those
+/// decide what a read says, not what is admitted or where data may go; they are
+/// the next candidates if the boundary widens, and bridge#416 records why.
+pub const MAX_SURFACE_FILES: usize = 232;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
