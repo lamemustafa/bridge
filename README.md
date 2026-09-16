@@ -1,12 +1,88 @@
-# Bridge
+# ComplyEaze Bridge
 
-Bridge is an open-source local connector for AXAL and Tally workflows. The
-repository contains a Tauri desktop application and the MCPB packaging path for
-Claude Desktop, with React/TypeScript and Rust components for Tally,
-document, sync, and local database operations.
+ComplyEaze Bridge lets an AI assistant read from, and write to, the TallyPrime
+running on your own computer — without your books leaving it.
 
-The repository is self-contained: build and development commands resolve files
-relative to the clone, not to a developer-specific directory.
+It connects to Tally over Tally's own local XML gateway, on `localhost` only. A
+remote Tally host is refused outright rather than supported, so there is no
+configuration in which Bridge reaches a book across the internet.
+
+## Is this for you
+
+It is aimed at a practising accountant or a CA firm that already keeps client
+books in TallyPrime and wants to ask questions of them, or post entries into
+them, through an AI assistant such as Claude Desktop.
+
+**What it does today**
+
+- **Reads** the loaded companies, ledger masters, trial balance, vouchers in a
+  date window, outstanding receivables and payables, and ledger movement.
+- **Checks ledger names before you post.** Give it the names from a bank
+  statement or an invoice and it reports which exist in the book and which are
+  near-misses needing your decision. Reading the ledger list first is the single
+  biggest cause of an import being rejected wholesale when it is skipped.
+- **Records what it did.** Every tool call Bridge runs — read or write, and
+  whether it succeeds or is refused — appends a receipt to a log on your own
+  machine, naming the company it touched and fingerprinting what was asked and
+  what came back. Reads keep those fingerprints as evidence alongside; import
+  batches additionally record which Tally endpoint they spoke to. A reviewer can
+  read the log rather than take a summary on trust.
+
+**Writing is off until you turn it on.** Everything above is reading. The write
+tools do not merely refuse when disabled — they are **absent from the tool list
+entirely**, so an assistant cannot see that they exist. Preparing a file needs
+`BRIDGE_AGENT_ENABLE_IMPORT`; posting additionally needs
+`BRIDGE_AGENT_ENABLE_WRITES`, which grants both. Both default to off, so a fresh
+install cannot write to your books even by mistake. With them on:
+
+- **Prepares vouchers as a local file** — Journal, Payment, Receipt and
+  Contra. Bridge writes the file; it does not send it.
+- **Posts a single Journal**, and only after you approve that exact voucher in
+  a dialog on your own machine. The assistant cannot approve it. Payment,
+  Receipt and Contra are prepared but not posted: you import those through
+  Tally yourself, and Bridge then reads them back so you can see what actually
+  landed.
+
+**What it does not do**
+
+- **Your Tally data is never uploaded.** Bridge reads it over a local
+  connection and hands it to the assistant you are talking to; nothing in the
+  Tally path sends it to a server of ours.
+- It will not post anything without a separate, explicit step after the file is
+  prepared.
+- It is not a Tally replacement, a reporting suite, or a filing tool.
+
+**One part of the app does upload, and it is not this one.** Bridge also
+contains a document feature that uploads files *you* choose to ComplyEaze cloud
+storage, and an AXAL sign-in. Those are separate and user-initiated, and share
+no code with the Tally path described here — but they ship in the same
+application, so you should know they exist before deciding what to run on a
+machine holding client books. Both are documented under *Integration trust
+boundaries* below.
+
+**One thing to understand before you use it.** When you ask an AI assistant for
+financial data through Bridge, the assistant's provider sees what it reads —
+company names, party names and amounts. That is a property of using a hosted
+assistant, not of Bridge. Bridge can mask party names or drop narration first
+(`BRIDGE_AGENT_REDACTION`), but **neither setting removes amounts** — figures
+always go with the answer. Decide this deliberately for client data.
+
+## Installing it
+
+**There is no installer yet.** No published release carries a downloadable
+package, so today the only route is a source build, described under
+*Contributor quick start* below. If you are not comfortable building from
+source, this is not yet ready for you — watch
+[Releases](https://github.com/lamemustafa/bridge/releases).
+
+---
+
+The rest of this file is for people working on Bridge. The repository is
+self-contained: build and development commands resolve files relative to the
+clone, not to a developer-specific directory. It holds a Tauri desktop
+application and the MCPB packaging path for Claude Desktop, with
+React/TypeScript and Rust components for Tally, document, sync, and local
+database operations.
 
 ## First useful result
 
