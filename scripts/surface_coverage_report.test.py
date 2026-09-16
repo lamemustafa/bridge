@@ -8,9 +8,8 @@ leaving HEAD at the base -- is what lets these tests tell the merge-base from
 HEAD or from the tip of `main`.
 
 The module graph itself was checked against rustc rather than asserted: on
-src-tauri's lib, bridge-tally-protocol and bridge-tally-core it reproduces the
-file counts rustc compiled under default, all-features, test and
-test-plus-all-features builds (bridge#416).
+every crate in this repository it reached exactly the file sets rustc compiled,
+across the build profiles compared in bridge#436's review.
 """
 from __future__ import annotations
 

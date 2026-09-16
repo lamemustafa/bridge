@@ -33,7 +33,8 @@ checked for bridge#436 it reached exactly the file sets rustc compiled for each
 crate in this repository, across the build profiles compared. It does
 not handle `#[cfg_attr(..., path = ...)]`, `mod r#name;`, `include!`,
 macro-generated modules, `#[path]` on an inline module, raw-string `#[path]`
-values or inner `#![cfg]`; none occurs here today. A `cfg` it cannot evaluate
+values, or inner `#![cfg]` on a file that declares modules; none of these
+occurs here today. A `cfg` it cannot evaluate
 leaves the module classified as production, which can add noise but does not
 hide a module.
 """
