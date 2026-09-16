@@ -153,8 +153,10 @@ The earlier draft's open questions now have measured answers:
   closure (18 items, 904 lines) is disjoint from the standard ledger path, apart from the base
   layers and shared output types.
 - **The ten "ledger data" functions are at least four responsibilities,** each with its own
-  closure: standard ledger catalogue, native ledger collection, period balance report, write
-  read-back.
+  closure: standard ledger source records (`parse_ledger_source_records_with_evidence` and its
+  wrappers), native ledger collection, period balance report, write read-back. The standard ledger
+  catalogue and identity (`parse_standard_ledger_catalog*`, 622 lines) is a separate family beside
+  them.
 - **Text encoding is the first safe split.** It is 22 items and 586 lines, with no coupling to the
   rest of `lib.rs` in either direction.
 
@@ -163,6 +165,11 @@ primitives), then the base layers as `pub(crate)` modules, then the ledger famil
 This work is owned by a separate lane and waits for #456's test extraction.
 
 ### `src/commands.rs` (~3,350 item lines, pinned)
+
+"Item lines" sum the spans of top-level items, so they exclude the `use` block and the blank lines
+between items. They run below the code-line totals in
+[`module-decomposition.md`](./module-decomposition.md) (3,571 for this file). Both are correct for
+what they count.
 
 **Shape.** 55 `#[tauri::command]` functions sit on a shared base of about 716 lines. The largest
 shared items:
@@ -210,7 +217,8 @@ only if the locals can become one named per-iteration state type.
   and [the Reference on visibility](https://doc.rust-lang.org/reference/visibility-and-privacy.html)
 - [Effective Rust, Item 22: minimize visibility](https://www.lurklurk.org/effective-rust/visibility.html)
 - [matklad, Large Rust Workspaces](https://matklad.github.io/2021/08/22/large-rust-workspaces.html),
-  for when a crate boundary pays for itself (one experience report)
+  for layout once a workspace already has several crates (one experience report; it does not argue
+  when to add a crate)
 - [Cargo feature unification pitfall](https://nickb.dev/blog/cargo-workspace-and-the-feature-unification-pitfall/)
 - [Tauri 2: calling Rust from the frontend](https://v2.tauri.app/develop/calling-rust/) and
   [`generate_handler!`](https://docs.rs/tauri/latest/tauri/macro.generate_handler.html)
