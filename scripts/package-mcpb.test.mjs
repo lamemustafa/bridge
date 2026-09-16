@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 
-import { mcpbHostTarget, packageMcpbArguments, releaseMcpbBinaryPath, stageHostManifest, verifyMcpbStage } from "./package-mcpb.mjs";
+import { mcpbHostTarget, packageMcpbArguments, pdfiumNotice, releaseMcpbBinaryPath, stageHostManifest, stagePdfium, verifyMcpbStage } from "./package-mcpb.mjs";
 
 const resources = [
   "LICENSE",
@@ -22,6 +22,9 @@ async function temporaryStage(t) {
 async function writeBinary(stage, entryPoint) {
   await mkdir(dirname(join(stage, entryPoint)), { recursive: true });
   await writeFile(join(stage, entryPoint), "packaging fixture");
+  const library = entryPoint.endsWith(".exe") ? "pdfium.dll" : "libpdfium.dylib";
+  await writeFile(join(dirname(join(stage, entryPoint)), library), "packaging fixture");
+  await writeFile(join(stage, pdfiumNotice), "packaging fixture");
 }
 
 test("MCPB stage verifier requires every license and inventory resource", async (t) => {
@@ -41,12 +44,44 @@ test("MCPB packaging reads the release binary", () => {
 });
 
 test("MCPB packaging can stage a reviewed prebuilt binary without rebuilding Rust", () => {
-  assert.deepEqual(packageMcpbArguments([]), { binaryPath: undefined });
-  assert.deepEqual(packageMcpbArguments(["--binary", "/fixture/bridge_mcp"]), {
-    binaryPath: "/fixture/bridge_mcp",
+  assert.deepEqual(packageMcpbArguments(["--pdfium", "/fixture/pdfium"]), {
+    binaryPath: undefined,
+    pdfiumDirectory: resolve("/fixture/pdfium"),
+  });
+  assert.deepEqual(packageMcpbArguments(["--binary", "/fixture/bridge_mcp", "--pdfium", "/fixture/pdfium"]), {
+    binaryPath: resolve("/fixture/bridge_mcp"),
+    pdfiumDirectory: resolve("/fixture/pdfium"),
   });
   assert.throws(() => packageMcpbArguments(["--binary"]), /usage:/);
   assert.throws(() => packageMcpbArguments(["--other", "/fixture/bridge_mcp"]), /usage:/);
+  assert.throws(() => packageMcpbArguments(["--pdfium", "/a", "--pdfium", "/b"]), /usage:/);
+});
+
+test("MCPB packaging refuses a bundle without PDFium", () => {
+  assert.throws(() => packageMcpbArguments([]), /--pdfium/);
+  assert.throws(() => packageMcpbArguments(["--binary", "/fixture/bridge_mcp"]), /--pdfium/);
+});
+
+test("PDFium is staged beside the binary with its notice at the root, and the verifier requires both", async (t) => {
+  for (const [platform, arch, library] of [["darwin", "arm64", "libpdfium.dylib"], ["win32", "x64", "pdfium.dll"]]) {
+    const stage = await temporaryStage(t);
+    const source = await temporaryStage(t);
+    const host = mcpbHostTarget(platform, arch);
+    await writeFile(join(source, library), "pdfium fixture");
+    await writeFile(join(source, pdfiumNotice), "notice fixture");
+    for (const resource of resources) await writeFile(join(stage, resource), "packaging fixture");
+    const entryPoint = await stageHostManifest(stage, undefined, host);
+    await mkdir(dirname(join(stage, entryPoint)), { recursive: true });
+    await writeFile(join(stage, entryPoint), "packaging fixture");
+    await assert.rejects(() => verifyMcpbStage(stage), /PDFium library/);
+    const staged = await stagePdfium(stage, source, host);
+    assert.equal(staged, `bin/${host.target}/${library}`);
+    assert.equal(await readFile(join(stage, staged), "utf8"), "pdfium fixture");
+    assert.equal(await readFile(join(stage, pdfiumNotice), "utf8"), "notice fixture");
+    await verifyMcpbStage(stage);
+    await rm(join(stage, pdfiumNotice));
+    await assert.rejects(() => verifyMcpbStage(stage), /licence notice/);
+  }
 });
 
 test("every host manifest launches its bundled binary and maps user settings to environment", async (t) => {

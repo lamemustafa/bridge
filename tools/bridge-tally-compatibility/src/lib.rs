@@ -31,7 +31,7 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// and manifest) but makes further unreviewed additions an explicit
 /// compatibility-surface decision.
 ///
-/// **Raised eight times, the first three by branches that did not see each
+/// **Raised nine times, the first three by branches that did not see each
 /// other.** 210 to 211 on master for `src-tauri/src/agent_ledgers.rs`, 211 to
 /// 212 for `src-tauri/crates/bridge-tally-core/src/master_binding.rs`, 212 to
 /// 216 in a single commit for the voucher-presence engine, its adapter, its
@@ -41,7 +41,8 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// `.github/workflows/dependency-security-scheduled.yml`, 217 to 218 for
 /// `src-tauri/src/agent_import_identity.rs`, 218 to 232 for fourteen files
 /// named individually below, 232 to 238 for six more, and 238 to 239 for
-/// `src-tauri/src/agent_import_amend.rs`. Each reason stands; a
+/// `src-tauri/src/agent_import_amend.rs`, and 239 to 251 for the
+/// bank-statement parser's twelve files. Each reason stands; a
 /// merge that
 /// keeps a raise but loses its pin would pass the gate with behavior silently
 /// outside the evidence boundary, which is the failure this constant exists to
@@ -163,6 +164,49 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// would leave the surface digest unchanged while changing what Bridge prepares
 /// to overwrite. It is one file for one named reason — not headroom.
 ///
+/// The raise to 251 binds twelve files for the bank-statement parser
+/// (`parse_bank_statement`), found by the same rule: each holds a rule about
+/// what Bridge prepares for posting, or what may leave the machine.
+///
+/// What may leave the machine:
+/// - `agent_bank_statement.rs` -- the tool keeps every statement row in a
+///   private local file and returns only a counterparty summary with every name
+///   marked for `mask_parties`; it reads the PDF password from an owner-only
+///   file and never returns or writes it. It also decides which local file
+///   `build_import_xml` may build from by `proposals_id`: one this tool
+///   published, unchanged since, by digest.
+/// - `bridge-bank-statement/src/pdf.rs` -- the refusal of a password PDFium
+///   cannot carry, without which `pdfium-render` panics with the password's
+///   bytes in the message; and the refusal of a rotated page.
+///
+/// What Bridge prepares for posting:
+/// - `bridge-bank-statement/Cargo.toml` -- binds the PDFium API version the
+///   parser loads (`pdfium_7881`), beside the pinned manifests of the other
+///   crates.
+/// - `bridge-bank-statement/src/pipeline.rs` -- no proposal exists until the
+///   statement binds to the account and its balance chain and totals reproduce.
+/// - `bridge-bank-statement/src/money.rs` -- the balance replay and control
+///   totals that decide whether a statement is proven at all.
+/// - `bridge-bank-statement/src/parse.rs` -- which account a statement belongs
+///   to, and which printed lines become rows.
+/// - `bridge-bank-statement/src/bank.rs` -- which counterparty a row names,
+///   and so which mapping row, and ledger, it reaches.
+/// - `bridge-bank-statement/src/geometry.rs` -- the wrap rule that keeps a
+///   12-digit bank reference intact in the narration.
+/// - `bridge-bank-statement/src/text.rs` -- the mapping key that decides which
+///   statement spellings reach one ledger, and the loose fold behind the
+///   suspense flag and the self-cancelling-voucher refusal.
+/// - `bridge-bank-statement/src/mapping.rs` -- the refusal of an ambiguous
+///   mapping, a sentinel party, and a Contra without a ledger.
+/// - `bridge-bank-statement/src/date.rs` -- the voucher date read from the
+///   statement, refusing an impossible one.
+/// - `bridge-bank-statement/src/proposals.rs` -- each proposal's voucher type,
+///   legs and sides, the suspense fallback, and the refusal of a row Bridge's
+///   builder could not accept.
+///
+/// Not pinned: `bbox.rs`, which reads `pdftotext` captures for tests and is
+/// on no production path, and `refusal.rs` and `lib.rs`, which hold no rule.
+///
 /// Not pinned, and deliberately: files feature-gated out of every shipped build
 /// (`agent_lab.rs`, `jsonex*.rs`, `india_tax_observation.rs`), operator filing
 /// labels, dead or declaration-only modules, and `observability.rs`. Its count
@@ -170,7 +214,7 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// command returns what it builds, but nothing in the frontend calls that
 /// command and nothing sends its result off the machine. It becomes a candidate
 /// when something does. bridge#416 records the reasoning for the rest.
-pub const MAX_SURFACE_FILES: usize = 239;
+pub const MAX_SURFACE_FILES: usize = 251;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;

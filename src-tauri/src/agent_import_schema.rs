@@ -58,17 +58,25 @@ pub(in crate::agent) fn voucher_input_schema() -> Value {
     });
     json!({
         "type":"object", "additionalProperties":false,
-        "required":["company_guid","vouchers"],
+        "required":["company_guid"],
         "properties":{
             "company_guid":{"type":"string","minLength":1},
             "amends_batch_id":{
                 "type":"string",
-                "pattern":"^bridge-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                "pattern":crate::agent::catalog::BRIDGE_BATCH_ID_PATTERN,
                 "description":"Correct vouchers of a batch this Bridge built, in place. Name that batch (or an earlier amendment of it); every bridge_txn_id must be one that batch or one of its amendments built, with the same voucher_type and voucher_number. The file reuses that batch's REMOTEIDs, so a file import alters the vouchers instead of duplicating them. Refused if any build of that batch was posted natively, and refused unless each named voucher is still in the book exactly as a build of that batch wrote it — checked during this build only, not at import."
+            },
+            "proposals_id":{
+                "type":"string", "minLength":46, "maxLength":46,
+                "description":"Build from a proposals file parse_bank_statement wrote, instead of `vouchers`. Its vouchers are admitted exactly as inline ones would be. Requires proposals_sha256."
+            },
+            "proposals_sha256":{
+                "type":"string", "minLength":64, "maxLength":64,
+                "description":"The sha256 parse_bank_statement returned for that proposals file; the build is refused if the file no longer has it."
             },
             "vouchers":{
                 "type":"array", "minItems":1, "maxItems":MAX_VOUCHERS,
-                "description":"At most 100 distinct ledger names across the batch; repeated ledgers do not reduce the 1000-voucher limit.",
+                "description":"Exactly one of vouchers or proposals_id. At most 100 distinct ledger names across the batch; repeated ledgers do not reduce the 1000-voucher limit.",
                 "items":voucher
             }
         }

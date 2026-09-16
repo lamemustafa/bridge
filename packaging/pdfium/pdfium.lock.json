@@ -1,0 +1,38 @@
+{
+  "source": "https://github.com/bblanchon/pdfium-binaries",
+  "release": "chromium/7881",
+  "pdfium_render_feature": "pdfium_7881",
+  "note": "Archive digests recorded from the GitHub release API on 2026-09-16 and re-checked against the downloaded archives; library and notice digests computed from those verified archives by scripts/fetch-pdfium.py's own notice builder. V8 and XFA are disabled in these builds (args.gn: pdf_enable_v8 = false, pdf_enable_xfa = false).",
+  "platforms": {
+    "macos-arm64": {
+      "asset": "pdfium-mac-arm64.tgz",
+      "bytes": 3533019,
+      "sha256": "52e94ca5aa8847934330daf3f8150c190682c5ca93831468794f8b90d4392e40",
+      "library": "lib/libpdfium.dylib",
+      "library_bytes": 7732336,
+      "library_sha256": "1bc45b15466b34cef96641ce25c77a876e70010c6b114f909dda2f5325fc5bd7",
+      "notice_bytes": 108108,
+      "notice_sha256": "810abcb3f285bdf00a3e20ec1216c7db644888725ab5e44670a02d0174b1587f"
+    },
+    "windows-x64": {
+      "asset": "pdfium-win-x64.tgz",
+      "bytes": 3733154,
+      "sha256": "73cc0de638ac2095e7445bf56a38200a5b7c7ca0e9f4ba144598f2457377ac08",
+      "library": "bin/pdfium.dll",
+      "library_bytes": 7211520,
+      "library_sha256": "79d4676b656cfb1abcea88f9ade3b4b0826c5200382db5f4ec72a636c598c118",
+      "notice_bytes": 109658,
+      "notice_sha256": "3a3865683d8f72f6a90f52150fffb91b97f7c51d61a917653b37fd09e5f720ea"
+    },
+    "linux-x64": {
+      "asset": "pdfium-linux-x64.tgz",
+      "bytes": 3644759,
+      "sha256": "1470e21b8b4a3b4ad7f85684e2da11d94f3b69a86d81dee11b9b6709d927ac1d",
+      "library": "lib/libpdfium.so",
+      "library_bytes": 7645184,
+      "library_sha256": "f728930966f503652b92acc89b9374a2eeca00ce42e26dccd3e4b5c5161b2d64",
+      "notice_bytes": 108030,
+      "notice_sha256": "833133b490eded201f0837322cea0f6c8d1f92a34aa2abfc5b28dd0f2373dc23"
+    }
+  }
+}

@@ -1240,3 +1240,303 @@ async fn a_bank_batch_verifies_through_the_rewrites_tally_makes_to_it() {
         assert_ne!(verification_status(&result, 1), "posted_verified");
     }
 }
+
+/// Publish `payload`'s vouchers as a parse_bank_statement proposals file,
+/// returning its id and digest as that tool would.
+fn published_proposals(directory: &std::path::Path, payload: &ImportPayload) -> (String, String) {
+    let proposals_id = format!("statement-{}", uuid::Uuid::new_v4());
+    let document = json!({
+        "schema": "bridge.bank_statement.proposals.v1",
+        "proposals_id": proposals_id,
+        "vouchers": payload.vouchers,
+    });
+    let bytes = serde_json::to_vec_pretty(&document).unwrap();
+    let statements = directory.join("bank-statements");
+    std::fs::create_dir_all(&statements).unwrap();
+    std::fs::write(statements.join(format!("{proposals_id}.json")), &bytes).unwrap();
+    (proposals_id, sha256_hex(&bytes))
+}
+
+/// The import file without the parts every build draws afresh: its REMOTEIDs
+/// and the batch marker in each narration.
+fn without_batch_identity(xml: &str) -> String {
+    let mut out = xml.to_string();
+    for (open, close) in [("REMOTEID=\"", "\""), ("[BRIDGE:", "]")] {
+        let mut kept = String::new();
+        let mut rest = out.as_str();
+        while let Some(start) = rest.find(open) {
+            let after = &rest[start + open.len()..];
+            let end = after.find(close).expect("closed identity");
+            kept.push_str(&rest[..start + open.len()]);
+            rest = &after[end..];
+        }
+        kept.push_str(rest);
+        out = kept;
+    }
+    out
+}
+
+#[tokio::test]
+async fn a_proposals_file_builds_through_tools_call_exactly_as_its_inline_vouchers_do() {
+    let payload = captured_bank_payload();
+
+    let inline_simulator = SequenceSimulator::spawn(bank_build_plans()).expect("inline plan");
+    let inline_directory = tempfile::tempdir().unwrap();
+    let inline = bank_server(inline_directory.path(), inline_simulator.address().port())
+        .call_tool_response("build_import_xml", serde_json::to_value(&payload).unwrap())
+        .await
+        .value;
+    let inline_result = &inline["structuredContent"]["result"];
+    assert_eq!(inline_result["voucher_count"], 2, "{inline}");
+
+    let simulator = SequenceSimulator::spawn(bank_build_plans()).expect("proposals plan");
+    let directory = tempfile::tempdir().unwrap();
+    let (proposals_id, digest) = published_proposals(directory.path(), &payload);
+    let response = bank_server(directory.path(), simulator.address().port())
+        .call_tool_response(
+            "build_import_xml",
+            json!({"company_guid": CAPTURED_GUID, "proposals_id": proposals_id, "proposals_sha256": digest}),
+        )
+        .await
+        .value;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(result["voucher_count"], 2, "{response}");
+    // the same request sequence was consumed, so the same admission ran
+    assert_eq!(simulator.finish().expect("requests").len(), 44);
+    assert_eq!(inline_simulator.finish().expect("requests").len(), 44);
+
+    let read = |directory: &std::path::Path, result: &Value| {
+        std::fs::read_to_string(
+            directory
+                .join("imports")
+                .join(format!("{}.xml", result["batch_id"].as_str().unwrap())),
+        )
+        .unwrap()
+    };
+    let from_proposals = read(directory.path(), result);
+    assert_ne!(result["batch_id"], inline_result["batch_id"]);
+    assert_eq!(
+        without_batch_identity(&from_proposals),
+        without_batch_identity(&read(inline_directory.path(), inline_result))
+    );
+    assert!(from_proposals.contains("<PARTYLEDGERNAME>Bridge Nested Debtor WR4</PARTYLEDGERNAME>"));
+}
+
+#[tokio::test]
+async fn a_proposals_file_changed_since_its_parse_is_refused_before_any_tally_read() {
+    let directory = tempfile::tempdir().unwrap();
+    // port 9: any Tally read would fail differently from the refusals below
+    let server = bank_server(directory.path(), 9);
+    let payload = captured_bank_payload();
+    let (proposals_id, digest) = published_proposals(directory.path(), &payload);
+    let path = directory
+        .path()
+        .join("bank-statements")
+        .join(format!("{proposals_id}.json"));
+    let code = |response: Value| {
+        response["structuredContent"]["result"]["error"]["code"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string()
+    };
+
+    let mut edited = std::fs::read(&path).unwrap();
+    let at = edited
+        .windows(5)
+        .position(|window| window == b"12.50")
+        .unwrap();
+    edited[at..at + 5].copy_from_slice(b"99.50");
+    std::fs::write(&path, &edited).unwrap();
+    let args = json!({"company_guid": CAPTURED_GUID, "proposals_id": proposals_id, "proposals_sha256": digest});
+    assert_eq!(
+        code(
+            server
+                .call_tool_response("build_import_xml", args.clone())
+                .await
+                .value
+        ),
+        "proposals_changed"
+    );
+
+    for (arguments, expected) in [
+        (
+            json!({"company_guid": CAPTURED_GUID, "proposals_id": proposals_id}),
+            "proposals_sha256_required",
+        ),
+        (
+            json!({"company_guid": CAPTURED_GUID, "proposals_sha256": digest}),
+            "proposals_id_required",
+        ),
+        (json!({"company_guid": CAPTURED_GUID}), "vouchers_required"),
+        (
+            json!({"company_guid": CAPTURED_GUID, "proposals_id": proposals_id, "proposals_sha256": digest,
+                "vouchers": serde_json::to_value(&payload).unwrap()["vouchers"]}),
+            "proposals_id_with_vouchers",
+        ),
+        (
+            json!({"company_guid": CAPTURED_GUID, "proposals_id": format!("statement-{}", uuid::Uuid::new_v4()),
+                "proposals_sha256": digest}),
+            "proposals_not_found",
+        ),
+        // exactly the published length, so only the resolver's own check can refuse it
+        (
+            json!({"company_guid": CAPTURED_GUID, "proposals_id": "statement-../../../imports/0000000000000000000",
+                "proposals_sha256": digest}),
+            "argument_invalid:proposals_id",
+        ),
+        (
+            json!({"company_guid": CAPTURED_GUID, "proposals_id": proposals_id,
+                "proposals_sha256": digest.to_uppercase()}),
+            "argument_invalid:proposals_sha256",
+        ),
+    ] {
+        assert_eq!(
+            code(
+                server
+                    .call_tool_response("build_import_xml", arguments)
+                    .await
+                    .value
+            ),
+            expected
+        );
+    }
+
+    // a file with the right digest but not this tool's schema or id
+    let foreign = json!({"schema": "something.else", "proposals_id": proposals_id, "vouchers": []});
+    let bytes = serde_json::to_vec(&foreign).unwrap();
+    std::fs::write(&path, &bytes).unwrap();
+    let args = json!({"company_guid": CAPTURED_GUID, "proposals_id": proposals_id, "proposals_sha256": sha256_hex(&bytes)});
+    assert_eq!(
+        code(
+            server
+                .call_tool_response("build_import_xml", args)
+                .await
+                .value
+        ),
+        "proposals_file_invalid"
+    );
+
+    // a link to a file elsewhere is not a file this tool published
+    #[cfg(unix)]
+    {
+        let elsewhere = directory.path().join("elsewhere.json");
+        std::fs::write(&elsewhere, &edited).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &path).unwrap();
+        let args = json!({"company_guid": CAPTURED_GUID, "proposals_id": proposals_id,
+                          "proposals_sha256": sha256_hex(&edited)});
+        assert_eq!(
+            code(
+                server
+                    .call_tool_response("build_import_xml", args)
+                    .await
+                    .value
+            ),
+            "proposals_file_unreadable"
+        );
+    }
+}
+
+#[test]
+fn an_amendment_is_admitted_through_tools_call_argument_validation() {
+    let batch = format!("bridge-{}", uuid::Uuid::new_v4());
+    let args = |amends: &str| {
+        json!({"company_guid": CAPTURED_GUID, "amends_batch_id": amends,
+               "vouchers": serde_json::to_value(captured_bank_payload()).unwrap()["vouchers"]})
+    };
+    // this was argument_invalid:amends_batch_id for every value before the
+    // validator knew the pattern the schema publishes
+    assert_eq!(
+        crate::agent::catalog::validate_tool_arguments("build_import_xml", &args(&batch)),
+        Ok(())
+    );
+    for malformed in [
+        batch.to_uppercase(),
+        format!("bridge-{}", uuid::Uuid::nil()),
+        batch.replace("bridge-", "batch-"),
+        format!("{batch}0"),
+    ] {
+        assert_eq!(
+            crate::agent::catalog::validate_tool_arguments("build_import_xml", &args(&malformed)),
+            Err("argument_invalid:amends_batch_id".to_string()),
+            "{malformed}"
+        );
+    }
+}
+
+/// Statement PDF → `parse_bank_statement` → `build_import_xml` by
+/// `proposals_id`, both through tool dispatch. The synthetic statement is
+/// mapped onto ledgers the captured catalogue holds: `Cash` as the bank and a
+/// captured debtor as suspense, so every row is admitted by the same
+/// cash/bank rules a real statement meets.
+#[tokio::test]
+#[ignore = "needs PDFium: set BRIDGE_PDFIUM_LIBRARY and run with --ignored"]
+async fn a_parsed_statement_builds_an_import_file_by_proposals_id() {
+    assert!(std::env::var_os("BRIDGE_PDFIUM_LIBRARY").is_some());
+    let directory = tempfile::tempdir().unwrap();
+    let statement = directory.path().join("statement.pdf");
+    std::fs::copy(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("crates/bridge-bank-statement/tests/fixtures/hdfc-synthetic.pdf"),
+        &statement,
+    )
+    .unwrap();
+    let password = directory.path().join("statement.password");
+    std::fs::write(&password, "synthetic-user-4321\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&password, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let data = directory.path().join("agent");
+    std::fs::create_dir_all(&data).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let simulator = SequenceSimulator::spawn(bank_build_plans()).expect("bank build plan");
+    let server = bank_server(&data, simulator.address().port());
+
+    let parsed = server
+        .call_tool_response(
+            "parse_bank_statement",
+            json!({
+                "statement_path": statement.to_str().unwrap(),
+                "password_file": password.to_str().unwrap(),
+                "bank": "hdfc", "account_label": "Synthetic CA xx4321",
+                "opening_balance": "1,000.00", "closing_balance": "1,02,200.00",
+                "total_debits": "8,800.00", "total_credits": "1,10,000.00",
+                "bank_ledger": "Cash", "suspense_ledger": "Bridge Nested Debtor WR4"
+            }),
+        )
+        .await
+        .value;
+    let summary = &parsed["structuredContent"]["result"];
+    assert_eq!(summary["vouchers"], 6, "{parsed}");
+
+    let built = server
+        .call_tool_response(
+            "build_import_xml",
+            json!({"company_guid": CAPTURED_GUID,
+                   "proposals_id": summary["proposals_id"],
+                   "proposals_sha256": summary["sha256"]}),
+        )
+        .await
+        .value;
+    let result = &built["structuredContent"]["result"];
+    assert_eq!(result["voucher_count"], 6, "{built}");
+    let xml = std::fs::read_to_string(
+        data.join("imports")
+            .join(format!("{}.xml", result["batch_id"].as_str().unwrap())),
+    )
+    .unwrap();
+    assert_eq!(xml.matches("VCHTYPE=\"Payment\"").count(), 4);
+    assert_eq!(xml.matches("VCHTYPE=\"Receipt\"").count(), 2);
+    // the 12-digit reference a cell wrap split in the PDF reaches the narration whole
+    assert!(
+        xml.contains("UPI 612345678901 from NORTHWIND TRADERS"),
+        "{xml}"
+    );
+    assert_eq!(simulator.finish().expect("requests").len(), 44);
+}

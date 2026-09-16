@@ -42,10 +42,66 @@ class BundleSmokeTests(unittest.TestCase):
                 for resource in smoke.RESOURCES:
                     bundle.writestr(resource, "packaging fixture")
                 bundle.writestr("bin/bridge_mcp", "packaging fixture")
+                bundle.writestr("bin/libpdfium.dylib", "packaging fixture")
+                bundle.writestr(smoke.PDFIUM_NOTICE, "packaging fixture")
             with self.assertRaisesRegex(smoke.SmokeError, "invalid_archive_member_path"):
                 smoke.unpack_bundle(archive, root / "unpacked", root)
             self.assertFalse((root / "outside").exists())
             self.assertFalse((root / "unpacked").exists())
+
+    def pdfium_bundle(self, root, library_bytes=None, notice_bytes=None, include_library=True):
+        """A bundle that passes every check before the PDFium ones, against a
+        repository holding the real lock file."""
+        repository = root / "repository"
+        (repository / "packaging" / "pdfium").mkdir(parents=True)
+        real = Path(__file__).resolve().parents[1]
+        lock = (real / "packaging" / "pdfium" / "pdfium.lock.json").read_bytes()
+        (repository / "packaging" / "pdfium" / "pdfium.lock.json").write_bytes(lock)
+        for resource in smoke.RESOURCES:
+            (repository / resource).write_text("packaging fixture")
+        entry = "bin/host/bridge_mcp"
+        library = "bin/host/" + smoke.PDFIUM_LIBRARIES[sys.platform]
+        manifest = {"server": {"type": "binary", "entry_point": entry,
+                               "mcp_config": {"command": "${__dirname}/" + entry}},
+                    "compatibility": {"platforms": [sys.platform]}}
+        archive = root / "bundle.mcpb"
+        with zipfile.ZipFile(archive, "w") as bundle:
+            bundle.writestr("manifest.json", json.dumps(manifest))
+            for resource in smoke.RESOURCES:
+                bundle.writestr(resource, "packaging fixture")
+            info = zipfile.ZipInfo(entry)
+            info.external_attr = 0o100755 << 16
+            bundle.writestr(info, "binary fixture")
+            bundle.writestr(library if include_library else "bin/host/other", library_bytes or b"wrong")
+            bundle.writestr(smoke.PDFIUM_NOTICE, notice_bytes or b"wrong")
+        return archive, repository
+
+    @unittest.skipUnless(sys.platform in smoke.PDFIUM_LIBRARIES, "PDFium is bundled for macOS and Windows only")
+    def test_bundled_pdfium_must_match_the_lock(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive, repository = self.pdfium_bundle(root)
+            try:
+                smoke.pdfium_pin(repository)
+            except smoke.SmokeError:
+                self.skipTest("this host architecture has no pinned PDFium")
+            with self.assertRaisesRegex(smoke.SmokeError, "pdfium_library_not_pinned"):
+                smoke.unpack_bundle(archive, root / "unpacked", repository)
+
+    @unittest.skipUnless(sys.platform in smoke.PDFIUM_LIBRARIES, "PDFium is bundled for macOS and Windows only")
+    def test_bundle_without_the_library_beside_the_binary_is_refused(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive, repository = self.pdfium_bundle(root, include_library=False)
+            with self.assertRaisesRegex(smoke.SmokeError, "unexpected_archive_members"):
+                smoke.unpack_bundle(archive, root / "unpacked", repository)
+
+    def test_an_unpinned_host_is_refused(self):
+        repository = Path(__file__).resolve().parents[1]
+        with self.assertRaisesRegex(smoke.SmokeError, "pdfium_platform_not_pinned"):
+            smoke.pdfium_pin(repository, ("linux", "x86_64"))
+        self.assertEqual(len(smoke.pdfium_pin(repository, ("darwin", "arm64"))["library_sha256"]), 64)
+        self.assertEqual(len(smoke.pdfium_pin(repository, ("win32", "amd64"))["library_sha256"]), 64)
 
     def test_unsafe_member_names_are_rejected(self):
         for name in ("../outside", "/outside", "bin/../../outside", "bin\\outside", "bin/file:stream", "bin/\0file"):

@@ -71,6 +71,7 @@ const repositoryRoot = rootArgument === -1 ? scriptRoot : resolve(process.argv[r
 // directories independently) means this gate can never drift to cover a
 // directory that gate does not, or vice versa.
 const fixtureDirectories = [
+  "src-tauri/crates/bridge-bank-statement/tests/fixtures",
   "src-tauri/crates/bridge-tally-protocol/tests/fixtures",
   "src-tauri/crates/tally-protocol-simulator/fixtures",
   "docs/tally/compatibility/fixtures",

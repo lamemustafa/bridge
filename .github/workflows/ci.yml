@@ -70,7 +70,7 @@ jobs:
           fi
 
           # tools/ is deliberately excluded: it is not shipped in the bundle, which validates the artifact and its resources.
-          if printf '%s\n' "$changed_files" | grep -Eq '^(\.github/workflows/ci\.yml|\.github/actions/setup-windows-native/|packaging/mcpb/|package\.json|pnpm-lock\.yaml|\.node-version|vite\.config\.ts|tsconfig\.json|postcss\.config\.js|index\.html|src/|src-tauri/(src/|crates/|Cargo\.lock|Cargo\.toml|.*/Cargo\.toml|tauri\.conf\.json|build\.rs|icons/)|LICENSE$|NOTICE$|THIRD_PARTY_LICENSES\.txt$|THIRD_PARTY_LICENSES_RUST\.txt$|scripts/(capture-package-log(\.test)?\.py|check-mcpb-bundle(\.test)?\.py|package-mcpb\.mjs|check-license-metadata\.mjs|check-dependency-inventory\.mjs|check-windows-bundle-resources\.ps1|check-macos-bundle-resources(\.mutation)?\.mjs)$)'; then
+          if printf '%s\n' "$changed_files" | grep -Eq '^(\.github/workflows/ci\.yml|\.github/actions/setup-windows-native/|packaging/mcpb/|package\.json|pnpm-lock\.yaml|\.node-version|vite\.config\.ts|tsconfig\.json|postcss\.config\.js|index\.html|src/|src-tauri/(src/|crates/|Cargo\.lock|Cargo\.toml|.*/Cargo\.toml|tauri\.conf\.json|build\.rs|icons/)|LICENSE$|NOTICE$|THIRD_PARTY_LICENSES\.txt$|THIRD_PARTY_LICENSES_RUST\.txt$|packaging/pdfium/|scripts/(fetch-pdfium(\.test)?\.py|capture-package-log(\.test)?\.py|check-mcpb-bundle(\.test)?\.py|package-mcpb\.mjs|check-license-metadata\.mjs|check-dependency-inventory\.mjs|check-windows-bundle-resources\.ps1|check-macos-bundle-resources(\.mutation)?\.mjs)$)'; then
             echo 'bundle=true' >> "$GITHUB_OUTPUT"
           else
             echo 'bundle=false' >> "$GITHUB_OUTPUT"
@@ -146,6 +146,9 @@ jobs:
       - run: python3 scripts/collect-macos-test-crashes.test.py
       - run: python3 scripts/retain-macos-test-binaries.test.py
       - run: python3 scripts/bank_statement_import.test.py
+      - run: python3 scripts/fetch-pdfium.test.py
+      # the committed statement PDFs are this generator's output, byte for byte
+      - run: python3 scripts/generate-bank-statement-fixtures.py src-tauri/crates/bridge-bank-statement/tests/fixtures --check
       - run: python3 scripts/sanitise-bbox-capture.test.py
       - run: python3 scripts/merge-gate.test.py
       - run: python3 scripts/surface_coverage_report.test.py
@@ -366,6 +369,21 @@ jobs:
           path: ${{ runner.temp }}/bridge-native-binaries
           if-no-files-found: error
           retention-days: 7
+      # The statement parser loads PDFium, a native library. Its PDF tests are
+      # #[ignore]d in the default run so a machine without the library still
+      # passes; here the pinned build is fetched, verified against the SHA-256
+      # in packaging/pdfium/pdfium.lock.json before extraction, and the ignored
+      # tests are run on their own. Without the variable they fail, not skip.
+      - name: Fetch pinned PDFium
+        shell: bash
+        run: >-
+          "$(command -v python3 || command -v python)" scripts/fetch-pdfium.py
+          --platform ${{ runner.os == 'Windows' && 'windows-x64' || 'macos-arm64' }}
+          --dest "$RUNNER_TEMP/pdfium" --github-env "$GITHUB_ENV"
+      - name: Test PDF extraction through PDFium
+        run: |
+          cargo test --locked --manifest-path src-tauri/Cargo.toml -p bridge-bank-statement --no-fail-fast -- --ignored
+          cargo test --locked --manifest-path src-tauri/Cargo.toml -p bridge --lib --no-fail-fast -- --ignored bank_statement a_parsed_statement_builds_an_import_file_by_proposals_id
       # Nextest does not execute doctests. Keep these as a separate required step.
       - name: Test native workspace doctests
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml --workspace --doc --no-fail-fast
@@ -552,11 +570,24 @@ jobs:
         run: |
           node scripts/check-macos-bundle-resources.mjs
           node scripts/check-macos-bundle-resources.mutation.mjs
+      # parse_bank_statement loads PDFium from beside bridge_mcp, so the bundle
+      # carries the pinned build. fetch-pdfium.py verifies the archive, the
+      # library and the licence notice it writes against the lock before use.
+      - name: Fetch pinned PDFium for the MCPB
+        shell: bash
+        run: >-
+          "$(command -v python3 || command -v python)" scripts/fetch-pdfium.py
+          --platform ${{ runner.os == 'Windows' && 'windows-x64' || 'macos-arm64' }}
+          --dest "$RUNNER_TEMP/mcpb-pdfium"
       # tauri build uses --bins, including the auto-discovered bridge_mcp.
       # Stage that fresh release binary instead of rebuilding without Tauri's
       # custom-protocol feature and native build environment.
-      - name: Stage host MCPB binary and legal resources
-        run: node scripts/package-mcpb.mjs --binary src-tauri/target/release/bridge_mcp${{ runner.os == 'Windows' && '.exe' || '' }}
+      - name: Stage host MCPB binary, PDFium and legal resources
+        shell: bash
+        run: >-
+          node scripts/package-mcpb.mjs
+          --binary src-tauri/target/release/bridge_mcp${{ runner.os == 'Windows' && '.exe' || '' }}
+          --pdfium "$RUNNER_TEMP/mcpb-pdfium"
       - name: Validate and pack MCPB with the official schema
         run: |
           npx --yes @anthropic-ai/mcpb@2.1.2 validate packaging/mcpb/stage/manifest.json

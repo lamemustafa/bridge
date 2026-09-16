@@ -84,8 +84,20 @@ jobs:
       - run: corepack pnpm run license:all
       - name: Build the host Bridge MCP binary
         run: cargo build --locked --release --manifest-path src-tauri/Cargo.toml --bin bridge_mcp
-      - name: Stage the reviewed release binary and legal resources
-        run: node scripts/package-mcpb.mjs --binary src-tauri/target/release/${{ matrix.binary }}
+      - name: Fetch the pinned PDFium build
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Windows" ]]; then python_command=python; else python_command=python3; fi
+          "$python_command" scripts/fetch-pdfium.py --platform "$PLATFORM" --dest "$RUNNER_TEMP/mcpb-pdfium"
+      - name: Stage the reviewed release binary, PDFium and legal resources
+        shell: bash
+        run: >-
+          node scripts/package-mcpb.mjs
+          --binary src-tauri/target/release/${{ matrix.binary }}
+          --pdfium "$RUNNER_TEMP/mcpb-pdfium"
       - name: Validate, archive, and exercise the real MCPB
         shell: bash
         env:

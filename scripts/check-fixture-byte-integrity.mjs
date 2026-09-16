@@ -7,6 +7,7 @@ import { join, relative } from "node:path";
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const fixtureDirectories = [
+  "src-tauri/crates/bridge-bank-statement/tests/fixtures",
   "src-tauri/crates/bridge-tally-protocol/tests/fixtures",
   "src-tauri/crates/tally-protocol-simulator/fixtures",
   "docs/tally/compatibility/fixtures",

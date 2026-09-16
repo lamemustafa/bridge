@@ -20,6 +20,8 @@ pub(crate) use agent_import::desktop_journal_review as desktop_journal;
 #[path = "agent_lab.rs"]
 mod lab;
 
+#[path = "agent_bank_statement.rs"]
+mod bank_statement;
 #[path = "agent_catalog.rs"]
 mod catalog;
 #[cfg(test)]
@@ -643,7 +645,7 @@ impl Server {
         if name == "changed_since" {
             return Err("changed_since_unqualified".to_string().into());
         }
-        if name == "build_import_xml" {
+        if matches!(name, "build_import_xml" | "parse_bank_statement") {
             self.import_enabled()?;
         }
         if name == "post_import" && !self.settings.writes_enabled {
@@ -688,6 +690,10 @@ impl Server {
                 self.build_import_xml(args).await
             }
             "verify_import" => self.verify_import(args).await,
+            "parse_bank_statement" => {
+                self.import_enabled()?;
+                self.parse_bank_statement(args).await
+            }
             "ledger_masters" => self.ledger_masters(args).await,
             "vouchers" => self.vouchers(args).await,
             "voucher_presence" => self.voucher_presence(args).await,

@@ -434,7 +434,10 @@ corepack pnpm run license:all
    upload `.bridge-live/` automatically or substitute the parser-only CI
    receipt for reviewed live evidence.
 7. Confirm the release commit and tag contain no PII, machine paths, secrets,
-   or unsigned third-party assets.
+   or unsigned third-party assets. The MCPB's PDFium library is fetched at build
+   time, never committed, and admitted only against the SHA-256 digests in
+   `packaging/pdfium/pdfium.lock.json`; it ships unsigned inside the preview
+   archive, which the preview release notes state.
 8. Confirm the `Dependency security` workflow passes and GitHub reports no open
    Dependabot or secret-scanning alerts.
 

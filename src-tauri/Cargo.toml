@@ -39,6 +39,7 @@ lab-writes = []
 [workspace]
 members = [
   ".",
+  "crates/bridge-bank-statement",
   "crates/bridge-tally-core",
   "crates/bridge-tally-primitives",
   "crates/bridge-tally-protocol",
@@ -102,6 +103,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 anyhow = "1"
 async-trait = "0.1"
+bridge-bank-statement = { path = "crates/bridge-bank-statement" }
 bridge-tally-core = { path = "crates/bridge-tally-core" }
 bridge-tally-protocol = { path = "crates/bridge-tally-protocol" }
 bridge-tally-transport = { path = "crates/bridge-tally-transport" }
