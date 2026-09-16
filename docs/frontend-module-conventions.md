@@ -101,7 +101,7 @@ statements of `App()` and which of them name which others. Matching is by identi
 same-named local would add a false edge. Outside `App()`, #468 removes 28 shared items (the file
 becomes 2,290 lines).
 
-`App()` spans lines 428–2449 and holds 162 top-level statements:
+`App()` spans lines 428–2447 and holds 162 top-level statements:
 
 | kind | count |
 |---|---|
