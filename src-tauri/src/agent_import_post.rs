@@ -109,6 +109,7 @@ impl Server {
             let payload = ImportPayload {
                 company_guid: line.company_guid.clone(),
                 vouchers: line.vouchers.clone(),
+                amends_batch_id: None,
             };
             let voucher_date = bridge_tally_core::TallyDate::parse(line.vouchers[0].date.clone())
                 .map_err(|_| "voucher_date_invalid".to_string())?;
@@ -119,7 +120,7 @@ impl Server {
                     .ok_or_else(|| "import_post_company_missing".to_string())?
                     .name,
                 &line.vouchers[0],
-                &line.batch_id,
+                line.identity_batch_id(),
             );
             let request_sha256 = sha256_hex(
                 &bridge_tally_protocol::encode_tally_xml_request_utf16le(&xml),
@@ -528,6 +529,11 @@ pub(super) fn admit_saved_journal_integrity(
     {
         return Err("import_post_requires_one_journal".into());
     }
+    // A native post uses a fresh private REMOTEID, so it can only create. An
+    // amendment exists to alter a voucher already in the book in place.
+    if line.amends_batch_id.is_some() {
+        return Err("import_post_amendment_requires_file_import".into());
+    }
     let origin =
         super::super::canonical_loopback_origin(endpoint).map_err(|_| "host_setting_invalid")?;
     if line.endpoint_origin.as_deref() != Some(origin.as_str()) {
@@ -537,10 +543,11 @@ pub(super) fn admit_saved_journal_integrity(
     let payload = ImportPayload {
         company_guid: line.company_guid.clone(),
         vouchers: line.vouchers.clone(),
+        amends_batch_id: None,
     };
     validate_payload(&payload)?;
     totals(&line.vouchers)?;
-    let xml = render_import_xml(&company.name, &line.vouchers, &line.batch_id);
+    let xml = render_import_xml(&company.name, &line.vouchers, line.identity_batch_id());
     if sha256_hex(xml.as_bytes()) != line.sha256 {
         return Err("import_batch_changed".into());
     }

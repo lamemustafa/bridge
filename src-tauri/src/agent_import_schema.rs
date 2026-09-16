@@ -61,6 +61,11 @@ pub(in crate::agent) fn voucher_input_schema() -> Value {
         "required":["company_guid","vouchers"],
         "properties":{
             "company_guid":{"type":"string","minLength":1},
+            "amends_batch_id":{
+                "type":"string",
+                "pattern":"^bridge-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                "description":"Correct vouchers of a batch this Bridge built, in place. Name that batch (or an earlier amendment of it); every bridge_txn_id must be one that batch or one of its amendments built, with the same voucher_type and voucher_number. The file reuses that batch's REMOTEIDs, so a file import alters the vouchers instead of duplicating them. Refused if any build of that batch was posted natively, and refused unless each named voucher is still in the book exactly as a build of that batch wrote it — checked during this build only, not at import."
+            },
             "vouchers":{
                 "type":"array", "minItems":1, "maxItems":MAX_VOUCHERS,
                 "description":"At most 100 distinct ledger names across the batch; repeated ledgers do not reduce the 1000-voucher limit.",

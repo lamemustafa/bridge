@@ -133,6 +133,49 @@ pub(super) fn read_snapshot(
     Ok(selected)
 }
 
+/// Validate the entire journal, retaining every build that carries one wire
+/// identity: the original batch and each amendment of it, in journal order.
+pub(super) fn read_lineage(
+    reader: impl BufRead,
+    identity_batch_id: &str,
+) -> Result<Vec<BatchSnapshot>, String> {
+    let mut builds: Vec<BatchSnapshot> = Vec::new();
+    let mut latest: BTreeMap<String, usize> = BTreeMap::new();
+    scan_records(reader, |record, generation| match record {
+        Record::Batch(batch) if batch.identity_batch_id() == identity_batch_id => {
+            // A repeated full record replaces its earlier snapshot, keeping
+            // any dispatch already recorded against that batch.
+            let prior = latest.get(&batch.batch_id).map(|index| &builds[*index]);
+            let snapshot = BatchSnapshot {
+                response: prior.and_then(|snapshot| snapshot.response.clone()),
+                dispatched: prior.is_some_and(|snapshot| snapshot.dispatched),
+                batch: *batch,
+                generation,
+            };
+            match latest.get(&snapshot.batch.batch_id) {
+                Some(index) => builds[*index] = snapshot,
+                None => {
+                    latest.insert(snapshot.batch.batch_id.clone(), builds.len());
+                    builds.push(snapshot);
+                }
+            }
+        }
+        Record::Status(update) => {
+            if let Some(index) = latest.get(&update.batch_id) {
+                let snapshot = &mut builds[*index];
+                if let Some(response) = update.response {
+                    snapshot.response = Some(response);
+                }
+                snapshot.dispatched |= matches!(update.record_type, StatusKind::DispatchIntent);
+                snapshot.batch.status = update.status;
+                snapshot.generation = generation;
+            }
+        }
+        _ => {}
+    })?;
+    Ok(builds)
+}
+
 /// Finds the sole batch identity bound to a persisted XML digest.  The caller
 /// still reads that batch's snapshot afterwards, so status updates remain part
 /// of the normal snapshot admission path.

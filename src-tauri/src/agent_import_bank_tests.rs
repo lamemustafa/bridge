@@ -1107,6 +1107,7 @@ async fn a_bank_voucher_carrying_a_reference_is_refused_before_any_read() {
         validate_payload(&ImportPayload {
             company_guid: GUID.into(),
             vouchers: vec![journal],
+            amends_batch_id: None,
         }),
         Ok(())
     );
@@ -1182,6 +1183,7 @@ async fn a_bank_batch_verifies_through_the_rewrites_tally_makes_to_it() {
         let line = ImportLedgerLine {
             endpoint_origin: None,
             identity_scheme: None,
+            amends_batch_id: None,
             batch_id: "batch-bank".into(),
             company_guid: GUID.into(),
             company: None,

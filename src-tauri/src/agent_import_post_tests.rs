@@ -629,6 +629,7 @@ fn post_date_refusal_retains_the_completed_profile_probe_evidence() {
     let payload = ImportPayload {
         company_guid: line.company_guid.clone(),
         vouchers: line.vouchers,
+        amends_batch_id: None,
     };
     let profile_evidence = Evidence {
         request_sha256: "profile-request".into(),
@@ -792,6 +793,7 @@ fn queued_absence_recheck_distinguishes_an_attributed_journal_from_a_new_candida
     .bind_selected(requested_ledger_names(&ImportPayload {
         company_guid: company_guid.into(),
         vouchers: line.vouchers.clone(),
+        amends_batch_id: None,
     }))
     .unwrap();
     let error = recheck_import_admission(

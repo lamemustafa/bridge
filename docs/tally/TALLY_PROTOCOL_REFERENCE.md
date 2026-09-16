@@ -975,6 +975,41 @@ what §9.8 required of the Journal evidence: a captured response showing `CREATE
 with every failure counter zero, plus a readback proving it is the **same object** (unchanged GUID
 and master ID), and only then record the type as qualified.
 
+> **Scoped correction, 2026-09-16 — changed payloads were measured over the gateway, and they
+> replace.** The paragraph below was right that nothing had measured them; it no longer describes
+> the licensed gateway path. On **licensed TallyPrime 7.1 Silver**, over the XML gateway, into a
+> synthetic company, using hand-built XML that copies the envelope and voucher element shape
+> `render_import_xml` produces. None of it was sent through Bridge's own binary:
+>
+> | Voucher | Sent again under the same `REMOTEID` | Response | Readback |
+> |---|---|---|---|
+> | Journal, 3 entries | amounts changed | `CREATED=0 ALTERED=1` | new amounts |
+> | Journal | one entry removed | `CREATED=0 ALTERED=1` | **2 entries; the removed one gone** |
+> | Journal | an entry added back | `CREATED=0 ALTERED=1` | 3 entries |
+> | Payment, 3 entries | amounts changed, then one entry removed | `CREATED=0 ALTERED=1` each | as sent |
+> | Payment | date moved a day | `CREATED=0 ALTERED=1` | new date |
+> | Payment, bare lowercase UUID `REMOTEID` | amount and date changed | `CREATED=0 ALTERED=1` | as sent, GUID unchanged |
+> | Receipt | amount changed, then counterparty ledger changed | `CREATED=0 ALTERED=1` each | as sent |
+> | Contra | amount changed | `CREATED=0 ALTERED=1` | as sent |
+> | Payment | re-sent as a **Receipt** | `CREATED=0 ALTERED=1` | **now a Receipt** |
+>
+> The Journal amount and entry-removal rows and the three-entry Payment row are bridge#429; the rest
+> are a follow-up the same day, in which every other counter was zero, including `EXCEPTIONS`. Date
+> and voucher-type replacement were each observed on a Payment only. Exactly one voucher carried each marker
+> afterwards and `ALTERID` advanced on every alteration. **Same object:** each voucher kept the GUID
+> it was created with, and creations interleaved with the alterations took the next GUIDs, so no
+> alteration allocated a new object.
+>
+> So the entry set is **replaced, not merged**, and so are date and even voucher type — which is
+> itself a hazard: an upsert will silently turn a Payment into a Receipt. Bridge's amendment path
+> (`src-tauri/src/agent_import_amend.rs`) relies on the replacement and refuses type changes.
+>
+> **Still not measured:** a file imported through Tally's own Import menu rather than the gateway;
+> Gold, Education or any other release; bill allocations, inventory or tax entries; a voucher that
+> is cancelled or optional; and an alteration made in Tally's UI between the two imports. The
+> `REMOTEID` attribute on readback returned Tally's own `<company GUID>-<id>`, as recorded above,
+> so the voucher is still located by its narration marker.
+
 **Changed payloads are a separate, untested case.** Everything above is a *byte-identical* repeat.
 `IMPLEMENTATION_GUIDE.md` §3.3a's own untested list includes "when the payload differs from the
 original (partial update semantics)". So a corrected voucher re-sent under the same `REMOTEID` may

@@ -150,6 +150,7 @@ async fn verification_qualifies_absence_without_hiding_positive_historical_rows(
         let line = ImportLedgerLine {
             endpoint_origin: None,
             identity_scheme: None,
+            amends_batch_id: None,
             batch_id: "mode-history".into(),
             company_guid: CAPTURED_GUID.into(),
             company: Some(import_company_tuple(&company).unwrap()),

@@ -612,6 +612,12 @@ proof-of-post claim must account for that — carry your own marker in a field T
 or when the payload differs from the original (partial update semantics). Also untested on
 licensed or standard TallyPrime.
 
+> **Scoped correction, 2026-09-16:** a changed payload is now measured on licensed TallyPrime 7.1
+> Silver over the gateway, with hand-built XML in Bridge's shape. It **replaces** the voucher's entry
+> set in place (`CREATED=0 ALTERED=1`, same GUID) for Journal, Payment, Receipt and Contra; date and
+> voucher-type replacement were observed on a Payment only. See TALLY_PROTOCOL_REFERENCE §9.3 for
+> the row-by-row table and what remains unmeasured.
+
 ### 3.3b Master-name matching: directional alternatives, otherwise exact
 
 **VERIFIED 2026-07-30**, against a ledger named `BRIDGE-PROBE-LEDGER-A` and one named

@@ -173,6 +173,7 @@ fn a_journal_keeps_every_shape_freedom_a_bank_voucher_gives_up() {
         validate_payload(&ImportPayload {
             company_guid: GUID.into(),
             vouchers: vec![voucher],
+            amends_batch_id: None,
         }),
         Ok(())
     );

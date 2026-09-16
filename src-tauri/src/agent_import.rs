@@ -43,6 +43,8 @@ pub(crate) mod desktop_journal_review;
 mod desktop_journal_tests;
 use crate::endpoint_coordination as dispatch_lease;
 use crate::local_files::file::lock_error as import_admission_lock_error;
+#[path = "agent_import_amend.rs"]
+mod amend;
 #[path = "agent_import_ledger.rs"]
 pub(super) mod ledger;
 #[path = "agent_import_persistence.rs"]
@@ -88,6 +90,9 @@ const MAX_TEXT_CHARS: usize = 2_000;
 struct ImportPayload {
     company_guid: String,
     vouchers: Vec<ImportVoucher>,
+    /// A batch this Bridge built whose vouchers this build corrects in place.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    amends_batch_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -214,6 +219,10 @@ pub(super) struct ImportLedgerLine {
     batch_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     identity_scheme: Option<ImportIdentityScheme>,
+    /// The original batch whose wire identity this build reuses. Absent on
+    /// every build that is not an amendment, including all older records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    amends_batch_id: Option<String>,
     company_guid: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     endpoint_origin: Option<String>,
@@ -436,6 +445,12 @@ impl Server {
         let (debit, credit) = totals(&payload.vouchers)?;
         refuse_unqualified_types(&payload.vouchers, LIVE_QUALIFIED_VOUCHER_TYPES)?;
         normalize_payload_dates(&mut payload)?;
+        // Refuse an amendment Bridge could never admit before reading Tally.
+        // Admission is repeated under the exclusive lock before publication.
+        if payload.amends_batch_id.is_some() {
+            let _admission_lock = self.lock_import_admission_shared()?;
+            self.amendment_lineage_while_admitted(&payload)?;
+        }
         let opening_profile = self.qualified_import_profile().await?;
         validate_import_dates_for_profile(&payload, &opening_profile).map_err(|code| {
             ToolFailure::from(code).with_prior_evidence(opening_profile.evidence.clone())
@@ -496,6 +511,10 @@ impl Server {
             // Admit the journal before publication; labels in older batches do not
             // collide with this build's independently generated wire identities.
             self.import_snapshot_while_admitted(None)?;
+            let lineage = match payload.amends_batch_id {
+                Some(_) => Some(self.amendment_lineage_while_admitted(&payload)?),
+                None => None,
+            };
             let (mark, mark_evidence) = self.pre_import_mark(&company, &identity).await?;
             accumulated = combine_evidence(accumulated.clone(), mark_evidence.clone());
             let (_, repeated_catalogue_evidence) =
@@ -517,18 +536,25 @@ impl Server {
                     return Err("import_groups_changed".to_string().into());
                 }
             }
-            let date_from = payload
-                .vouchers
-                .iter()
-                .map(|voucher| voucher.date.clone())
-                .min()
-                .unwrap_or_default();
-            let date_to = payload
-                .vouchers
-                .iter()
-                .map(|voucher| voucher.date.clone())
-                .max()
-                .unwrap_or_default();
+            let (date_from, date_to) = match &lineage {
+                // The window must hold each voucher where it is now as well as
+                // where the amendment moves it, or both checks miss it.
+                Some(lineage) => lineage.window(&payload.vouchers),
+                None => (
+                    payload
+                        .vouchers
+                        .iter()
+                        .map(|voucher| voucher.date.clone())
+                        .min()
+                        .unwrap_or_default(),
+                    payload
+                        .vouchers
+                        .iter()
+                        .map(|voucher| voucher.date.clone())
+                        .max()
+                        .unwrap_or_default(),
+                ),
+            };
             // Exercise the exact future readback projection before publishing a file.
             // This observes today's source, not a bound on later Tally mutations.
             let (preflight_xml, preflight_evidence) = self
@@ -540,6 +566,32 @@ impl Server {
             accumulated = combine_evidence(accumulated.clone(), preflight_evidence.clone());
             let preflight = parse_import_vouchers(&preflight_xml, identity.company_guid())?;
             verification_window_identities(&preflight, &date_from, &date_to)?;
+            let amendment = match &lineage {
+                Some(lineage) => match lineage.compare_and_swap(&payload.vouchers, &preflight)? {
+                    Ok(vouchers) => Some(json!({
+                        "amends_batch_id": payload.amends_batch_id,
+                        "identity_batch_id": lineage.identity_batch_id,
+                        "vouchers": vouchers,
+                    })),
+                    Err(refused) => {
+                        return Ok(ToolOutcome {
+                            payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
+                                "state":"refused", "reason":"amended_vouchers_not_as_built",
+                                "amends_batch_id": payload.amends_batch_id,
+                                "identity_batch_id": lineage.identity_batch_id,
+                                "refused_vouchers": refused,
+                                "window": {"from": date_from, "to": date_to},
+                                "response_sha256": preflight_evidence.response_sha256,
+                                "next_step": AMENDMENT_REFUSED_NEXT_STEP
+                            }}),
+                            evidence: accumulated.clone(),
+                            company_guid: Some(payload.company_guid),
+                            truncated: false,
+                        });
+                    }
+                },
+                None => None,
+            };
             let verification_preflight = json!({
                 "state":"current_window_readable", "from":date_from, "to":date_to,
                 "source_rows":preflight.rows.len(),
@@ -552,11 +604,19 @@ impl Server {
                 return Err("import_mode_changed_during_build".to_string().into());
             }
             let batch_id = format!("bridge-{}", Uuid::new_v4());
-            let xml = render_import_xml(&company.name, &payload.vouchers, &batch_id);
+            let amends_batch_id = lineage
+                .as_ref()
+                .map(|lineage| lineage.identity_batch_id.clone());
+            let xml = render_import_xml(
+                &company.name,
+                &payload.vouchers,
+                amends_batch_id.as_deref().unwrap_or(&batch_id),
+            );
             let sha256 = sha256_hex(xml.as_bytes());
             let line = ImportLedgerLine {
                 batch_id: batch_id.clone(),
                 identity_scheme: Some(ImportIdentityScheme::BatchV1),
+                amends_batch_id,
                 company_guid: canonical_batch_guid(&payload.company_guid),
                 endpoint_origin: Some(super::canonical_loopback_origin(&self.settings.endpoint).map_err(|_| "host_setting_invalid".to_string())?),
                 company: Some(import_company_tuple(&company)?),
@@ -595,7 +655,7 @@ impl Server {
             // successful build.
             let native_post_eligible = self.settings.writes_enabled
                 && post::admit_saved_journal(&line, &self.settings.endpoint).is_ok();
-            let (warnings, next_step) = build_import_guidance(
+            let (mut warnings, next_step) = build_import_guidance(
                 self.settings.writes_enabled,
                 native_post_eligible,
                 renders_bank_shape(&line.vouchers),
@@ -606,9 +666,19 @@ impl Server {
                         .is_some_and(|shape| shape.party_side().is_some())
                 }),
             );
+            let next_step = match &amendment {
+                Some(_) => {
+                    if let Some(list) = warnings.as_array_mut() {
+                        list.insert(0, json!(AMENDMENT_WARNING));
+                    }
+                    AMENDMENT_NEXT_STEP
+                }
+                None => next_step,
+            };
             Ok(ToolOutcome {
                 payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
                     "batch_id": batch_id, "path": path, "sha256": sha256,
+                    "amendment": amendment,
                     "voucher_count": line.vouchers.len(), "total_debit": debit.as_str(), "total_credit": credit.as_str(),
                     "live_evidence": live_evidence(&line.vouchers),
                     "verification_preflight": verification_preflight,
@@ -947,6 +1017,39 @@ impl Server {
         append_private_import_ledger(&path, encoded.as_bytes(), set_private_file)
     }
 }
+
+impl Server {
+    /// Resolve and admit the lineage a payload amends, under an admission lock
+    /// the caller holds, and check the proposal against it.
+    fn amendment_lineage_while_admitted(
+        &self,
+        payload: &ImportPayload,
+    ) -> Result<amend::Lineage, String> {
+        let named_id = payload
+            .amends_batch_id
+            .as_deref()
+            .filter(|id| valid_batch_id(id))
+            .ok_or_else(|| "import_amend_batch_id_invalid".to_string())?;
+        let named = self
+            .import_snapshot_while_admitted(Some(named_id))?
+            .ok_or_else(|| "import_amend_batch_not_found".to_string())?;
+        let builds = match self.import_journal_while_admitted()? {
+            Some(reader) => ledger::read_lineage(reader, named.batch.identity_batch_id())?,
+            None => Vec::new(),
+        };
+        let origin = super::canonical_loopback_origin(&self.settings.endpoint)
+            .map_err(|_| "host_setting_invalid".to_string())?;
+        let lineage = amend::admit_lineage(&named, builds, &payload.company_guid, &origin)?;
+        lineage.admit_proposal(&payload.vouchers)?;
+        Ok(lineage)
+    }
+}
+
+const AMENDMENT_WARNING: &str = "This file amends an earlier batch. Each voucher carries that batch's REMOTEID, so importing it alters the vouchers already in the book in place instead of creating new ones: Tally should report them as altered, not created. Bridge compared those vouchers with what it built only as the book stood during this build. An edit made in Tally between now and the import is overwritten without warning, so import promptly, and build the amendment again if anyone may have changed these vouchers. A Journal's reference is not compared, so an edit to it in Tally is overwritten. In-place alteration with changed content was measured over the XML gateway on licensed TallyPrime 7.1 Silver for Journal, Payment, Receipt and Contra; an import through Tally's own Import menu was not measured.";
+
+const AMENDMENT_NEXT_STEP: &str = "Confirm the loaded company matches this batch, import the file in Tally (Gateway of Tally → Import → Vouchers) and check that it reports altered vouchers and none created, then call verify_import with this batch_id. If any voucher was created, do not import again: call verify_import and reconcile the duplicate by hand.";
+
+const AMENDMENT_REFUSED_NEXT_STEP: &str = "No file was written. An amendment alters vouchers in place, so it is admitted only while each one is still in the book exactly as a build of this batch wrote it. not_in_book means no voucher in the window carries this batch's marker: it was never imported, was deleted, or had its narration edited, so reconcile with verify_import instead. book_voucher_diverged means the voucher changed after Bridge built it, and an amendment would overwrite that change, so a person must decide what the voucher should hold. voucher_cancelled_or_optional is refused because importing over such a voucher was not measured.";
 
 /// A native-dispatched batch is tied to the Tally endpoint used for its saved
 /// admission. Older manual imports retain their original verification path.

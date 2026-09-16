@@ -42,6 +42,7 @@ fn captured_derived_large_verification_preserves_tag_and_fallback_multiplicity()
     let line = ImportLedgerLine {
         endpoint_origin: None,
         identity_scheme: None,
+        amends_batch_id: None,
         batch_id: "scale-batch".into(),
         company_guid: GUID.into(),
         company: None,

@@ -31,7 +31,7 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// and manifest) but makes further unreviewed additions an explicit
 /// compatibility-surface decision.
 ///
-/// **Raised seven times, the first three by branches that did not see each
+/// **Raised eight times, the first three by branches that did not see each
 /// other.** 210 to 211 on master for `src-tauri/src/agent_ledgers.rs`, 211 to
 /// 212 for `src-tauri/crates/bridge-tally-core/src/master_binding.rs`, 212 to
 /// 216 in a single commit for the voucher-presence engine, its adapter, its
@@ -40,7 +40,8 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// is why the four pins arrive as one raise and not two -- 216 to 217 for
 /// `.github/workflows/dependency-security-scheduled.yml`, 217 to 218 for
 /// `src-tauri/src/agent_import_identity.rs`, 218 to 232 for fourteen files
-/// named individually below, and 232 to 238 for six more. Each reason stands; a
+/// named individually below, 232 to 238 for six more, and 238 to 239 for
+/// `src-tauri/src/agent_import_amend.rs`. Each reason stands; a
 /// merge that
 /// keeps a raise but loses its pin would pass the gate with behavior silently
 /// outside the evidence boundary, which is the failure this constant exists to
@@ -153,6 +154,15 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 ///   `agent_delivery.rs` uses to describe a released tool response by its JSON
 ///   key paths rather than its values.
 ///
+/// The raise to 239 binds `agent_import_amend.rs`. It decides whether a build
+/// may reuse an earlier batch's wire identity, which turns an import file from
+/// one Tally creates into one Tally applies over vouchers already in the book:
+/// the refusal when any build of that batch was posted natively, and the
+/// compare-and-swap that admits an amendment only while each voucher is still
+/// as a build of that batch wrote it. Left unpinned, an edit confined to it
+/// would leave the surface digest unchanged while changing what Bridge prepares
+/// to overwrite. It is one file for one named reason — not headroom.
+///
 /// Not pinned, and deliberately: files feature-gated out of every shipped build
 /// (`agent_lab.rs`, `jsonex*.rs`, `india_tax_observation.rs`), operator filing
 /// labels, dead or declaration-only modules, and `observability.rs`. Its count
@@ -160,7 +170,7 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// command returns what it builds, but nothing in the frontend calls that
 /// command and nothing sends its result off the machine. It becomes a candidate
 /// when something does. bridge#416 records the reasoning for the rest.
-pub const MAX_SURFACE_FILES: usize = 238;
+pub const MAX_SURFACE_FILES: usize = 239;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;

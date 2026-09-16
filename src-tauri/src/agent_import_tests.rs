@@ -186,6 +186,7 @@ fn concurrent_verifications_replace_both_proofs_and_status_under_one_admission()
     let initial = ImportLedgerLine {
         endpoint_origin: None,
         identity_scheme: None,
+        amends_batch_id: None,
         batch_id: "batch-proof".into(),
         company_guid: GUID.into(),
         company: None,
@@ -352,6 +353,7 @@ fn schema_balance_matcher_rendering_and_ledger_append_are_fail_closed() {
     let line = ImportLedgerLine {
         endpoint_origin: None,
         identity_scheme: None,
+        amends_batch_id: None,
         batch_id: "batch-a".to_string(),
         company_guid: GUID.to_string(),
         company: None,
@@ -451,6 +453,7 @@ fn verification_masks_entry_diffs_and_duplicate_fingerprints_before_release() {
     let line = ImportLedgerLine {
         endpoint_origin: None,
         identity_scheme: None,
+        amends_batch_id: None,
         batch_id: "synthetic-redaction-batch".into(),
         company_guid: GUID.into(),
         company: None,
@@ -536,6 +539,7 @@ fn verification_reports_absence_divergence_and_duplicate_fingerprints() {
     let line = ImportLedgerLine {
         endpoint_origin: None,
         identity_scheme: None,
+        amends_batch_id: None,
         batch_id: "batch-b".to_string(),
         company_guid: GUID.to_string(),
         company: None,
@@ -703,6 +707,7 @@ fn unwritable_ledger_path_removes_the_written_import_file() {
     let line = ImportLedgerLine {
         endpoint_origin: None,
         identity_scheme: None,
+        amends_batch_id: None,
         batch_id: "batch-unwritable".to_string(),
         company_guid: GUID.to_string(),
         company: None,
@@ -735,6 +740,7 @@ fn unrelated_window_duplicates_do_not_block_a_verified_batch() {
     let line = ImportLedgerLine {
         endpoint_origin: None,
         identity_scheme: None,
+        amends_batch_id: None,
         batch_id: "batch-unrelated".to_string(),
         company_guid: GUID.to_string(),
         company: None,
@@ -816,6 +822,7 @@ fn fingerprint_only_verification_requires_a_post_mark_voucher() {
     let line = ImportLedgerLine {
         endpoint_origin: None,
         identity_scheme: None,
+        amends_batch_id: None,
         batch_id: "batch-mark".to_string(),
         company_guid: GUID.to_string(),
         company: None,
@@ -878,6 +885,7 @@ fn fingerprint_fallback_consumes_an_observed_voucher_once_per_batch() {
     let line = ImportLedgerLine {
         endpoint_origin: None,
         identity_scheme: None,
+        amends_batch_id: None,
         batch_id: "batch-fingerprint-once".to_string(),
         company_guid: GUID.to_string(),
         company: None,
@@ -938,6 +946,7 @@ fn tagged_matches_are_reserved_and_consumed_independently_of_batch_order() {
     let mut line = ImportLedgerLine {
         endpoint_origin: None,
         identity_scheme: None,
+        amends_batch_id: None,
         batch_id: "batch-fingerprint-once".to_string(),
         company_guid: GUID.to_string(),
         company: None,
@@ -1005,6 +1014,7 @@ fn narration_tag_verification_requires_a_post_mark_voucher() {
     let line = ImportLedgerLine {
         endpoint_origin: None,
         identity_scheme: None,
+        amends_batch_id: None,
         batch_id: "batch-tag-mark".to_string(),
         company_guid: GUID.to_string(),
         company: None,
@@ -1068,6 +1078,7 @@ fn verification_compares_amounts_numerically_and_preserves_real_divergence() {
     let line = ImportLedgerLine {
         endpoint_origin: None,
         identity_scheme: None,
+        amends_batch_id: None,
         batch_id: "batch-tag-mark".to_string(),
         company_guid: GUID.to_string(),
         company: None,
@@ -1124,6 +1135,7 @@ fn verified_import_vouchers_require_observed_effective_accounting_flags() {
     let line = ImportLedgerLine {
         endpoint_origin: None,
         identity_scheme: None,
+        amends_batch_id: None,
         batch_id: "batch-accounting-state".to_string(),
         company_guid: GUID.to_string(),
         company: None,
@@ -1993,6 +2005,9 @@ mod verify_mode_tests;
 #[path = "agent_import_identity_tests.rs"]
 mod identity_tests;
 
+#[path = "agent_import_amend_tests.rs"]
+mod amend_tests;
+
 #[path = "agent_import_text_tests.rs"]
 mod text_tests;
 
@@ -2019,6 +2034,7 @@ async fn dispatched_verification_requires_its_saved_endpoint_before_tally_reads(
     let line = ImportLedgerLine {
         batch_id: "batch-dispatched-endpoint".into(),
         identity_scheme: Some(ImportIdentityScheme::BatchV1),
+        amends_batch_id: None,
         company_guid: GUID.into(),
         endpoint_origin: Some("http://127.0.0.1:9002".into()),
         company: None,
