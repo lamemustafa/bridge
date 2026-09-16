@@ -26,54 +26,50 @@ is a check nobody asked.
 
 So:
 
-> **Splitting a pinned file means pinning every file it splits into.**
+> **Splitting a pinned file means pinning every part that decides what Bridge
+> posts or lets leave the machine** -- each with its own named reason beside
+> `MAX_SURFACE_FILES`.
 
 And the companion rule, because the same hazard arrives without anyone splitting
 anything:
 
 > **A pinned file's collaborators are pinned or explicitly exempted.**
 
-Nothing asserts this today, and the boundary shows it. `agent_import.rs` is
-pinned and has **eight** non-test child modules. **One** is pinned —
-`agent_desktop_journal.rs`, and only because it sits on the hard-coded
-`REQUIRED_SURFACE_FILES` list, not because it is a child. The other seven are
-**1,859 lines outside the seal**:
+Before bridge#416 nothing recorded either, and the boundary showed it.
+`agent_import.rs` was pinned while `agent_import_post.rs` (the posting path),
+`agent_import_ledger.rs` (whether a batch was dispatched),
+`agent_import_cash_bank.rs` (which ledgers may sit on a Payment, Receipt or
+Contra's cash/bank side) and `agent_import_persistence.rs` were not -- so the
+module that *renders* the qualified write shape was sealed and the modules that
+*decide* it were not. #434 pinned those, together with the other admission and
+egress files found the same way, and recorded beside `MAX_SURFACE_FILES` both
+the reason for each pin and which kinds of file were left out on purpose. That
+paragraph is the exemption record; add to it rather than leaving a collaborator
+silently unpinned.
 
-| lines | module |
-|---:|---|
-| 641 | `agent_import_post.rs` — the posting path |
-| 402 | `agent_import_cash_bank.rs` |
-| 310 | `agent_import_ledger.rs` |
-| 213 | `agent_desktop_journal_review.rs` |
-| 187 | `agent_import_persistence.rs` |
-| 71 | `agent_import_schema.rs` |
-| 35 | `agent_import_identity.rs` |
+Two production collaborators of `agent_import.rs` remain unpinned, both
+deliberately: `agent_import_schema.rs` is the argument schema for
+`build_import_xml`, and loosening it cannot widen what is admitted, because
+the pinned `agent_import.rs` re-checks those bounds (see #416);
+`agent_desktop_journal_review.rs` is the desktop file picker, a 5 MB
+selection cap and the refusal-to-message mapping, delegating review, post and
+reconcile to the pinned `agent_desktop_journal.rs`.
 
-`agent_import_cash_bank.rs` is the sharpest: it holds `LegRequirement` and the
-rules deciding which side the cash/bank ledger sits on for Payment versus Receipt
-versus Contra, including the guard against a Contra being filed into the Payment
-register — a mistake its own comment notes Tally "accepts without complaint".
+**The gate will not tell you when a split leaves code unsealed.** A moved
+module's parent changes hash, the reseal succeeds, and the extracted file is
+outside the seal with every check green. Check the new files against the rule
+above yourself.
 
-So the module that *renders* the qualified write shape is sealed and the module
-that *decides* it is not. Some of those exclusions may be deliberate. The
-manifest cannot tell you which, because it records paths and not reasons — and
-that is the actual problem: the seal's boundary is currently an accident of
-history rather than a decision anyone can review.
-
-That needs capacity in `MAX_SURFACE_FILES`, and there is none by design — 218 of
-218.
-
-**Do not read that as a shortage to be fixed.** `RESERVED_SURFACE_FILES` is
-documented as capacity for *"one small cohesive surface change"*, and the cap's
-own rationale says it *"makes further unreviewed additions an explicit
-compatibility-surface decision"*, closing with *"one file for one named reason —
-not headroom."* The cap has been raised five times, each reason recorded in the
-comment, and three of those raises came from branches that could not see each
-other. The friction is the control.
-
-So a decomposition of a pinned file **travels with its own cap raise**, in its own
-PR, naming its own reason and pinning what it adds — the pattern #406 followed.
-Use `scripts/reseal.sh --pins-changed`, the documented inversion for when the pin
+**Capacity is not free, and that is deliberate.** `MAX_SURFACE_FILES` is set to
+the exact pin count, so any branch adding a pin raises
+it in the same PR. Setting the cap to the exact count has been the convention
+since #260, and recording a named reason beside the constant for each raise
+since #278; neither is how the reserve was first designed. `RESERVED_SURFACE_FILES`
+(15) was introduced in #223 with the cap at exactly count + 15, and in that
+slack period #246 added eight pins without touching the cap. With no slack, a
+new pin cannot land without an edit to the constant, which is where its reason
+now goes. Use
+`scripts/reseal.sh --pins-changed`, the documented inversion for when the pin
 *list* changes rather than only the hashes.
 
 Budget for that when planning. Splitting a 6,000-line module four ways is four
