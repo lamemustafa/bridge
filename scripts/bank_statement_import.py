@@ -1711,7 +1711,25 @@ def _owned_path(path, handle, *, created, owned_records=None):
                     elif state == "uninspectable":
                         _record_uninspectable_cleanup(path, failures)
                 else:
+                    # The pin can still say whether this run's inode survives.
+                    # Zero links means the pathname is not ours in any sense:
+                    # there is no private copy left for the operator to find, so
+                    # the reason `_unlink_for_cleanup` gives for naming a
+                    # reclaimed path -- "a chance to find the private copy" --
+                    # is known to be false here, and the name it would print
+                    # belongs to whatever another writer has since created.
+                    #
+                    # Same shape as `_cleanup_owned_output`'s
+                    # `suppress_reclaimed_name` handling: record the mark,
+                    # let the helper run unchanged, and drop the name it added.
+                    try:
+                        created_links = os.fstat(handle).st_nlink
+                    except OSError:
+                        created_links = None
+                    failure_start = len(failures)
                     outcome = _unlink_for_cleanup(path, identity, failures)
+                    if outcome == "reclaimed" and created_links == 0:
+                        del failures[failure_start:]
                     _reconcile_owned_pin_after_cleanup(
                         {"path": path, "identity": identity, "pin": handle},
                         outcome,
