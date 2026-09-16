@@ -1851,14 +1851,14 @@ fn decide(
         },
         touched,
     };
-    let skipped_evidence = skipped_evidence(proposal, window);
+    let skipped_evidence = unread_evidence_reason(proposal, window);
 
     // Both identity lookups are resolved *before* either settles, so that a
     // `REMOTEID` selecting one voucher while the number selects another can be
     // reported as a disagreement instead of decided by whichever ran first.
     // That is why the number lookup sits above rule one rather than under
     // rule two, where it is used.
-    let number_matches = number_matches(proposal, index, type_observed);
+    let number_matches = find_number_matches(proposal, index, type_observed);
 
     // A verdict decided before rule three — an identity match as much as a
     // collision — still *reached* whatever it resembles, and the observations
@@ -1975,7 +1975,10 @@ fn decide(
 /// silently skipped. That cannot license an absence, and it cannot license
 /// a `Present` on some *other* basis either: the evidence that could have
 /// contradicted the other basis is the evidence that was not gathered.
-fn skipped_evidence(proposal: &ProposedVoucher, window: &BookWindow) -> Option<UndecidedReason> {
+fn unread_evidence_reason(
+    proposal: &ProposedVoucher,
+    window: &BookWindow,
+) -> Option<UndecidedReason> {
     if proposal.remote_id.is_some() && window.remote_id_evidence() == ColumnEvidence::NotRead {
         Some(UndecidedReason::RemoteIdEvidenceUnavailable)
     } else if proposal.narration_marker.is_some()
@@ -1989,7 +1992,7 @@ fn skipped_evidence(proposal: &ProposedVoucher, window: &BookWindow) -> Option<U
 
 /// Book vouchers carrying the proposal's voucher number, within its type when
 /// the type was observed.
-fn number_matches(
+fn find_number_matches(
     proposal: &ProposedVoucher,
     index: &WindowIndex<'_>,
     type_observed: bool,
@@ -2032,7 +2035,7 @@ impl IdentityMatches {
         let marker = lookup(proposal.narration_marker.as_deref(), &index.by_marker);
         // A voucher counted here is still carrying this marker even though it
         // could not identify anything on its own (`by_ambiguous_marker`). Checking
-        // uniqueness against `marker_matches` alone let one such voucher hide
+        // uniqueness against `marker` alone let one such voucher hide
         // behind an unrelated identifying one: the identifying voucher looked
         // unique, and `Present` went out for it while the marker actually named
         // two book vouchers -- exactly the middle case ambiguous-marker handling
@@ -2064,7 +2067,7 @@ struct CollisionEvidence {
 impl CollisionEvidence {
     /// A collision on one identity cannot erase an already observed match on
     /// another. Retain every resolved identity basis in the operator-facing
-    /// candidates and the full touched set before returning the collision.
+    /// candidates and the full touched set that a collision verdict reports.
     /// Otherwise a duplicated source REMOTEID could hide the distinct narration
     /// markers that identify each source row, and the book rows would be
     /// misreported as unmatched.
@@ -2219,8 +2222,8 @@ fn identity_selections(
     selections
 }
 
-/// The verdict once at least one identity selected a book voucher; `first` is
-/// the strongest selection.
+/// The verdict once at least one identity selected a book voucher;
+/// `(basis, position)` is the caller's strongest selection.
 fn selected_status(
     proposal: &ProposedVoucher,
     party: &PartyResolution,
