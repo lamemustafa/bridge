@@ -64,6 +64,73 @@ fn published_pattern_inventory_preserves_the_admitted_wire_shapes() {
     );
 }
 
+#[test]
+fn every_pattern_admission_reads_is_one_it_recognizes() {
+    // validate_string_bounds refuses any pattern outside the recognized
+    // vocabulary, so a published pattern missing from it refuses every value.
+    // amends_batch_id shipped that way: the schema admitted it and every MCP
+    // call was refused as argument_invalid before the build could run.
+    let definitions = registered_tool_definitions(true, true);
+    let mut checked = 0;
+    for tool in definitions.as_array().unwrap() {
+        let properties = tool["inputSchema"]["properties"].as_object();
+        for (key, property) in properties.into_iter().flatten() {
+            for fragment in [property, &property["items"]] {
+                if fragment["type"] != "string" {
+                    continue;
+                }
+                if let Some(pattern) = fragment["pattern"].as_str() {
+                    assert!(
+                        published_pattern_matcher(pattern).is_some(),
+                        "{}.{key} publishes an unrecognized pattern {pattern}",
+                        tool["name"]
+                    );
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert!(checked > 0);
+}
+
+#[test]
+fn the_batch_id_pattern_admits_exactly_what_the_build_admits() {
+    // Two spellings of one rule live in this crate: the build's
+    // `valid_batch_id`, which admission now applies, and the byte rule
+    // `is_uuid_v4_lowercase` that `proposals_id` uses. They must agree.
+    let valid = "bridge-2b1c9f4e-9d3a-4f71-8c2e-5a6b7c8d9e01";
+    assert!(published_pattern_matches(BRIDGE_BATCH_ID_PATTERN, valid));
+    let refused = [
+        "bridge-2B1C9F4E-9D3A-4F71-8C2E-5A6B7C8D9E01",
+        "2b1c9f4e-9d3a-4f71-8c2e-5a6b7c8d9e01",
+        "bridge-2b1c9f4e-9d3a-1f71-8c2e-5a6b7c8d9e01",
+        "bridge-2b1c9f4e-9d3a-4f71-cc2e-5a6b7c8d9e01",
+        "bridge-2b1c9f4e9d3a4f718c2e5a6b7c8d9e01",
+        "bridge-{2b1c9f4e-9d3a-4f71-8c2e-5a6b7c8d9e01}",
+        "bridge-urn:uuid:2b1c9f4e-9d3a-4f71-8c2e-5a6b7c8d9e01",
+        "bridge-00000000-0000-0000-0000-000000000000",
+        "bridge-2b1c9f4e-9d3a-4f71-8c2e-5a6b7c8d9e01\n",
+        "bridge-2b1c9f4e-9d3a-4f71-8c2e-5a6b7c8d9e0\u{e9}",
+    ];
+    for text in refused {
+        assert!(
+            !published_pattern_matches(BRIDGE_BATCH_ID_PATTERN, text),
+            "{text}"
+        );
+    }
+    for text in std::iter::once(valid.to_string())
+        .chain(refused.iter().map(|text| (*text).to_string()))
+        .chain((0..256).map(|_| format!("bridge-{}", uuid::Uuid::new_v4())))
+    {
+        assert_eq!(
+            agent_import::valid_batch_id(&text),
+            text.strip_prefix("bridge-")
+                .is_some_and(is_uuid_v4_lowercase),
+            "{text}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn voucher_type_selector_is_bounded_before_any_tally_read() {
     let directory = tempfile::tempdir().unwrap();

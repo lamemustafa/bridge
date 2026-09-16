@@ -216,38 +216,47 @@ pub(super) fn is_uuid_v4_lowercase(text: &str) -> bool {
 /// and reviewed here. Calendar validity stays with `normalized_date` at the
 /// typed boundary; this only preserves the published lexical shape.
 fn published_pattern_matches(pattern: &str, text: &str) -> bool {
+    published_pattern_matcher(pattern).is_some_and(|matches| matches(text))
+}
+
+/// The matcher for one recognized pattern, or `None` for a pattern admission
+/// does not implement, which refuses every value published under it. That is
+/// how `amends_batch_id` came to refuse every value; a test walks every
+/// published pattern through this lookup so another cannot.
+fn published_pattern_matcher(pattern: &str) -> Option<fn(&str) -> bool> {
     match pattern {
-        NONBLANK_PATTERN => text.chars().any(|character| !character.is_whitespace()),
-        DATE_WIRE_PATTERN => {
-            let bytes = text.as_bytes();
-            let Some((year, remainder)) = bytes.split_at_checked(4) else {
-                return false;
-            };
-            if !year.iter().all(u8::is_ascii_digit) {
-                return false;
-            }
-            let remainder = remainder.strip_prefix(b"-").unwrap_or(remainder);
-            let Some((month, remainder)) = remainder.split_at_checked(2) else {
-                return false;
-            };
-            if !month.iter().all(u8::is_ascii_digit) {
-                return false;
-            }
-            let remainder = remainder.strip_prefix(b"-").unwrap_or(remainder);
-            remainder.len() == 2 && remainder.iter().all(u8::is_ascii_digit)
-        }
-        BRIDGE_BATCH_ID_PATTERN => text
-            .strip_prefix("bridge-")
-            .is_some_and(is_uuid_v4_lowercase),
-        BRIDGE_TRANSACTION_ID_PATTERN => {
+        NONBLANK_PATTERN => Some(|text| text.chars().any(|character| !character.is_whitespace())),
+        DATE_WIRE_PATTERN => Some(date_wire_matches),
+        // Admission applies the build's own rule, which the published pattern restates.
+        BRIDGE_BATCH_ID_PATTERN => Some(agent_import::valid_batch_id),
+        BRIDGE_TRANSACTION_ID_PATTERN => Some(|text| {
             !text.is_empty()
                 && text
                     .as_bytes()
                     .iter()
                     .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-        }
-        _ => false,
+        }),
+        _ => None,
     }
+}
+
+fn date_wire_matches(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let Some((year, remainder)) = bytes.split_at_checked(4) else {
+        return false;
+    };
+    if !year.iter().all(u8::is_ascii_digit) {
+        return false;
+    }
+    let remainder = remainder.strip_prefix(b"-").unwrap_or(remainder);
+    let Some((month, remainder)) = remainder.split_at_checked(2) else {
+        return false;
+    };
+    if !month.iter().all(u8::is_ascii_digit) {
+        return false;
+    }
+    let remainder = remainder.strip_prefix(b"-").unwrap_or(remainder);
+    remainder.len() == 2 && remainder.iter().all(u8::is_ascii_digit)
 }
 
 /// One proposed voucher's admission contract, lifted out of the tool literal.
