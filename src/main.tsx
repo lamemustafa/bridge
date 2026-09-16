@@ -42,6 +42,7 @@ import { TrialBalanceScreen } from "./TrialBalanceScreen";
 import { LedgerEntriesScreen } from "./LedgerEntriesScreen";
 import { createDrawerFocusLifecycle, ensureDrawerFocus, shouldFocusMainContentAfterViewTransition, trapDrawerTabKeydown } from "./evidence-drawer-focus";
 import { loadEndpointReconnectHint, saveEndpointReconnectHint } from "./tally-endpoint-reconnect-hint";
+import { usePersistedCompanyProfiles } from "./persisted-company-profiles";
 import { useTallyRuntimeSessions } from "./tally-runtime-sessions";
 import { formatIdentifier, formatRuntimeTime } from "./display-format";
 import { type OperatorError, TallyErrorNotice, toErrorMessage, toOperatorError } from "./tally-command-error";
@@ -61,13 +62,6 @@ import "./styles.css";
 
 type UntrustedCompanyCandidate = {
   name: string;
-};
-
-type PersistedCompanyProfilePage = {
-  profiles: TallyCompany[];
-  total_profiles: number;
-  limit: number;
-  truncated: boolean;
 };
 
 type TallyProbeResult = {
@@ -216,14 +210,20 @@ function App() {
   // company verifies -- clearing that list is what made the other open books
   // disappear from the UI the moment one was chosen.
   const [openCompanyNames, setOpenCompanyNames] = React.useState<string[]>([]);
-  const [persistedCompanyProfileTotal, setPersistedCompanyProfileTotal] = React.useState(0);
-  const [persistedCompanyProfilesLoaded, setPersistedCompanyProfilesLoaded] = React.useState(0);
-  const [persistedCompanyProfilesTruncated, setPersistedCompanyProfilesTruncated] = React.useState(false);
-  const [persistedCompanyProfilesLoading, setPersistedCompanyProfilesLoading] = React.useState(false);
+  const mergePersistedCompanyProfiles = React.useCallback((profiles: TallyCompany[]) => {
+    setCompanies((current) => mergeTallyCompanies(profiles, current));
+  }, []);
+  const {
+    persistedCompanyProfileTotal,
+    persistedCompanyProfilesLoaded,
+    persistedCompanyProfilesTruncated,
+    persistedCompanyProfilesLoading,
+    persistedCompanyProfileError,
+    refreshPersistedCompanyProfiles,
+  } = usePersistedCompanyProfiles(mergePersistedCompanyProfiles);
   const [voucherFrom, setVoucherFrom] = React.useState(currentFinancialYear.from);
   const [voucherTo, setVoucherTo] = React.useState(currentFinancialYear.to);
   const [companyError, setCompanyError] = React.useState<OperatorError | null>(null);
-  const [persistedCompanyProfileError, setPersistedCompanyProfileError] = React.useState<OperatorError | null>(null);
   const [childTallyReadCount, setChildTallyReadCount] = React.useState(0);
   const [outstandingsExportNotice, setOutstandingsExportNotice] = React.useState<OutstandingsExportNoticeState | null>(null);
   const [fixtureStatus, setFixtureStatus] = React.useState<TallyWriteFixtureEnrollmentStatus | null>(null);
@@ -289,7 +289,6 @@ function App() {
     inspectNativeLifecyclePending,
   }), [inspectNativeLifecyclePending]);
   const tallyResultsVersion = React.useRef(0);
-  const persistedCompanyProfileLoadVersion = React.useRef(0);
   const proofPreviewRequestVersion = React.useRef(0);
   const snapshotSelectionVersion = React.useRef(0);
   const mainContentRef = React.useRef<HTMLElement>(null);
@@ -324,30 +323,6 @@ function App() {
       return null;
     }
   }, [snapshotOutcomeUnknownRunId]);
-
-  const refreshPersistedCompanyProfiles = React.useCallback(async () => {
-    const loadVersion = persistedCompanyProfileLoadVersion.current + 1;
-    persistedCompanyProfileLoadVersion.current = loadVersion;
-    setPersistedCompanyProfilesLoading(true);
-    setPersistedCompanyProfileError(null);
-    try {
-      const page = await invoke<PersistedCompanyProfilePage>("tally_persisted_company_profiles");
-      if (loadVersion !== persistedCompanyProfileLoadVersion.current) return;
-      setCompanies((current) => mergeTallyCompanies(page.profiles, current));
-      setPersistedCompanyProfileTotal(page.total_profiles);
-      setPersistedCompanyProfilesLoaded(page.profiles.length);
-      setPersistedCompanyProfilesTruncated(page.truncated);
-      setPersistedCompanyProfileError(null);
-    } catch (error) {
-      if (loadVersion !== persistedCompanyProfileLoadVersion.current) return;
-      const operatorError = toOperatorError(error);
-      setPersistedCompanyProfileError(operatorError);
-    } finally {
-      if (loadVersion === persistedCompanyProfileLoadVersion.current) {
-        setPersistedCompanyProfilesLoading(false);
-      }
-    }
-  }, []);
 
   const changeChildTallyReadActivity = React.useCallback((delta: 1 | -1) => {
     setChildTallyReadCount((current) => Math.max(0, current + delta));

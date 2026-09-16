@@ -117,11 +117,14 @@ test("structured Tally errors retain their backend remediation", async () => {
 });
 
 test("persisted-company load failures remain visible regardless of Tally connection state", async () => {
-  const frontend = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
-  const profileLoad = frontend.slice(
-    frontend.indexOf("const refreshPersistedCompanyProfiles"),
-    frontend.indexOf("// Both of these are backed by the encrypted mirror"),
-  );
+  const [frontend, persistedProfiles] = await Promise.all([
+    readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/persisted-company-profiles.ts", import.meta.url), "utf8"),
+  ]);
+  const loadStart = persistedProfiles.indexOf("const refreshPersistedCompanyProfiles");
+  const loadEnd = persistedProfiles.indexOf("  return {", loadStart);
+  assert.ok(loadStart >= 0 && loadEnd > loadStart, "the persisted-profile load must be found before its body is checked");
+  const profileLoad = persistedProfiles.slice(loadStart, loadEnd);
 
   assert.match(profileLoad, /setPersistedCompanyProfileError\(operatorError\);/);
   assert.match(profileLoad, /setPersistedCompanyProfilesTruncated\(page\.truncated\);\s*setPersistedCompanyProfileError\(null\);/s);

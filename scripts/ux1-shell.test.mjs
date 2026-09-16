@@ -6,12 +6,13 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("UI keeps client selection searchable and exposes only source-backed shell destinations", async () => {
-  const [app, switcher, outstandings, allClients, endpointHint] = await Promise.all([
+  const [app, switcher, outstandings, allClients, endpointHint, persistedProfiles] = await Promise.all([
     readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/ClientSwitcher.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/AllClientsScreen.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/tally-endpoint-reconnect-hint.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/persisted-company-profiles.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(app, /type View = .*"settings"/);
@@ -33,9 +34,10 @@ test("UI keeps client selection searchable and exposes only source-backed shell 
   assert.match(app, /setOpenCompanyNames\(\[\]\);\s*setUntrustedDiscoveredCompanies\(\[\]\);/);
   assert.match(app, /correlation_key: company\.correlation_key/);
   assert.match(app, /onOpen=\{\(\) => void refreshPersistedCompanyProfiles\(\)\}/);
-  assert.match(app, /const \[persistedCompanyProfilesLoading, setPersistedCompanyProfilesLoading\] = React\.useState\(false\);/);
-  assert.match(app, /const persistedCompanyProfileLoadVersion = React\.useRef\(0\);/);
-  assert.match(app, /setPersistedCompanyProfilesLoading\(true\);[\s\S]*?if \(loadVersion !== persistedCompanyProfileLoadVersion\.current\) return;/);
+  assert.match(app, /import \{ usePersistedCompanyProfiles \} from "\.\/persisted-company-profiles";/);
+  assert.match(persistedProfiles, /const \[persistedCompanyProfilesLoading, setPersistedCompanyProfilesLoading\] = React\.useState\(false\);/);
+  assert.match(persistedProfiles, /const persistedCompanyProfileLoadVersion = React\.useRef\(0\);/);
+  assert.match(persistedProfiles, /setPersistedCompanyProfilesLoading\(true\);[\s\S]*?if \(loadVersion !== persistedCompanyProfileLoadVersion\.current\) return;/);
   assert.match(app, /profilesLoading=\{persistedCompanyProfilesLoading\}/);
   assert.match(app, /activeView=\{view\}/);
   assert.match(app, /loadError=\{persistedCompanyProfileError \? toErrorMessage\(persistedCompanyProfileError\) : null\}/);
