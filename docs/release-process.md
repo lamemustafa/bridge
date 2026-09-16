@@ -112,6 +112,29 @@ new digest was computed from disk, and the `rehash-surface` that follows
 re-reads every pin, including the new one, before the second seal. Never stop
 after that first seal.
 
+#### What the reseal reports after it succeeds
+
+A successful `scripts/reseal.sh` (not `--verify`) prints a surface coverage
+report from `scripts/surface_coverage_report.py`. It never fails the reseal.
+Against the merge-base with `origin/master` (override with
+`SURFACE_REPORT_BASE`) it lists two things the gate cannot see: a pin that was
+dropped, and a module declared directly by a pinned module and newly left
+unpinned. Modules left unpinned before the branch are not reprinted, test-only
+modules are only counted, and feature-gated ones are labelled.
+
+**A clean report is not evidence that nothing left the seal.** It does not see
+code moved between files that already existed; a new module declared by an
+*unpinned* module, even one carved out of a pinned file (a new file under an
+unpinned `db/mod.rs`, say); deeper descendants of a pinned module; a pinned
+file that stops being compiled; a test-only or feature-gated module becoming
+production; or a new crate root. The script's docstring keeps the full list.
+The merge driver (`scripts/reseal-merge-driver.mjs`) calls the tool directly and
+does not print the report; run `scripts/reseal.sh` after resolving.
+
+Read it, then pin each listed file that decides what Bridge posts or lets leave
+the machine, and leave the rest; see the comment on `MAX_SURFACE_FILES` for the
+rule and bridge#416 for the reasoning.
+
 #### When the surface itself conflicts in a merge or rebase
 
 The surface and the matrix are **generated artifacts**. Never hand-merge them.

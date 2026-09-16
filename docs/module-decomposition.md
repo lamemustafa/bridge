@@ -57,8 +57,10 @@ reconcile to the pinned `agent_desktop_journal.rs`.
 
 **The gate will not tell you when a split leaves code unsealed.** A moved
 module's parent changes hash, the reseal succeeds, and the extracted file is
-outside the seal with every check green. Check the new files against the rule
-above yourself.
+outside the seal with every check green. `scripts/reseal.sh` prints a report
+that catches the common case -- a new module declared directly by a pinned one
+-- but not a new module under an unpinned parent or deeper descendants, so check
+the new files against the rule above yourself.
 
 **Capacity is not free, and that is deliberate.** `MAX_SURFACE_FILES` is set to
 the exact pin count, so any branch adding a pin raises
