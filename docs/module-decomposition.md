@@ -61,7 +61,7 @@ outside the seal with every check green. Check the new files against the rule
 above yourself.
 
 **Capacity is not free, and that is deliberate.** `MAX_SURFACE_FILES` is set to
-the exact pin count (232 of 232 after #434), so any branch adding a pin raises
+the exact pin count, so any branch adding a pin raises
 it in the same PR. Setting the cap to the exact count has been the convention
 since #260, and recording a named reason beside the constant for each raise
 since #278; neither is how the reserve was first designed. `RESERVED_SURFACE_FILES`
