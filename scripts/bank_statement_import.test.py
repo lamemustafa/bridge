@@ -289,7 +289,16 @@ def test_parse_real_hdfc_capture(m):
     assert not rows[-1]["narr"].endswith(" "), rows[-1]["narr"]
     assert m.parse_pages(pages[:2], bank) == rows, "page 3 must contribute nothing"
 
-    # the account number is bound from the header block, not from the table
+    # the account number is bound from the header block, not from the table.
+    #
+    # This positive check does NOT by itself prove which header line was read:
+    # the sanitised Cust ID and IFSC values also end 1111. What discriminates
+    # is `test_real_hdfc_capture_binds_the_account_no_geometry_only`, which
+    # pins the selected label geometry and repoints `account_anchors` at each
+    # neighbouring header line in turn. Production also refuses
+    # `ambiguous_account_match` when a tail matches two numbers on the chosen
+    # line. Verified all three by regressing the anchors to Cust ID, IFSC and
+    # MICR: every one turns this file red.
     m.require_account_match(pages, bank, "HDFC CA xx1111")
     # 1112 is the captured MICR tail, not an account-number value. 1113-1115
     # occur in captured transaction-table references, a separate negative
