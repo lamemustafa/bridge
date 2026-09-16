@@ -95,20 +95,16 @@ ignore = [
   "RUSTSEC-2025-0098",
   "RUSTSEC-2025-0100",
 ]
-# `chacha20 0.10.1` (yanked, no RUSTSEC id -- cargo-audit reports yanked
-# crates separately from `ignore`-able advisory ids) is deliberately NOT
-# listed here because it can't be: `--ignore` takes an advisory id and a
-# yanked-crate warning has none. It is also, on inspection, not a real
-# ignore decision to make: `cargo tree --locked -i chacha20 --target all`
-# and `cargo tree --locked -i "rand@0.10.2" --target all` (chacha20's only
-# dependent in this lockfile) both print nothing against src-tauri's actual
-# workspace members on 2026-09-15 -- it is an orphaned Cargo.lock entry, not
-# reachable from any target of any workspace crate. The fix is a lockfile
-# cleanup (a `cargo update`/dependency bump that drops the stale resolution),
-# not an accepted-risk entry; see docs/proposed-dependency-policy.md.
+# A yanked crate (no RUSTSEC id -- cargo-audit reports yanked crates
+# separately from `ignore`-able advisory ids) can't be listed here:
+# `--ignore` takes an advisory id and a yanked-crate warning has none. The
+# fix is a lockfile update to an unyanked release, not an accepted-risk
+# entry. `chacha20 0.10.1` was one: `cargo tree --locked -i chacha20
+# --target all` printed nothing against src-tauri's workspace members, so it
+# was an unreachable lockfile entry, and bridge#445 moved both lockfiles to
+# the unyanked 0.10.2.
 
 [yanked]
 # Keep yanked-crate checking on (the tool default) -- it is what caught
-# chacha20 above -- but see the note in docs/proposed-dependency-policy.md
-# about that specific finding.
+# chacha20 (see the note above).
 enabled = true
