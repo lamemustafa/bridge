@@ -39,7 +39,7 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// taking the slot a paragraph below had already reserved for it by name, which
 /// is why the four pins arrive as one raise and not two -- 216 to 217 for
 /// `.github/workflows/dependency-security-scheduled.yml`, 217 to 218 for
-/// `src-tauri/src/agent_import_identity.rs`, and 218 to 231 for thirteen files
+/// `src-tauri/src/agent_import_identity.rs`, and 218 to 232 for fourteen files
 /// named individually below. Each reason stands; a merge that
 /// keeps a raise but loses its pin would pass the gate with behavior silently
 /// outside the evidence boundary, which is the failure this constant exists to
@@ -70,7 +70,7 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// would attest an identity rule the evidence never covered. It is one file for
 /// one named reason — not headroom.
 ///
-/// The raise to 231 binds thirteen files at once, which reads like headroom and
+/// The raise to 232 binds fourteen files at once, which reads like headroom and
 /// is not: each is named here with its own reason, and none was chosen to fill
 /// space. They were found together (bridge#416) by looking for unpinned
 /// production modules declared by pinned ones, then keeping only those whose
@@ -84,11 +84,14 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// - `tally/approved_import.rs` -- the operator approval dialog, and which
 ///   choice counts as consent (the named post button, or Yes on Windows).
 /// - `agent_import_post.rs` -- the MCP post handler, which admits only a
-///   single saved Journal batch, and its half of the refusal to post one batch
-///   twice; the other half is in `agent_import.rs`.
+///   single saved Journal batch, and its part of the refusal to post one batch
+///   twice; `agent_import.rs` holds the admission lock and journal append.
+/// - `agent_import_ledger.rs` -- the import journal replay: whether a batch was
+///   dispatched, derived from its dispatch-intent records, and the refusal of a
+///   second dispatch intent for one batch.
 /// - `agent_company.rs` -- finding the loaded company whose GUID matches the
 ///   request and refusing when none or several do; import admission and the
-///   MCP read tools call it.
+///   company-scoped MCP read tools call it.
 /// - `agent_import_cash_bank.rs` -- the reserved-group tables deciding which
 ///   ledgers may sit on the cash/bank side of a Payment, Receipt or Contra in
 ///   an import file Bridge builds.
@@ -100,8 +103,8 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 ///   including the single-attempt policy, and which failures may repeat a
 ///   request.
 /// - `endpoint_coordination.rs` -- the advisory per-user, per-port lease the
-///   shipped post path takes before dispatch, so two Bridge processes do not
-///   post to one Tally listener at once.
+///   shipped post path takes before dispatch, so two of one OS user's Bridge
+///   processes cannot both hold it while posting to one Tally port.
 ///
 /// What leaves the machine, and the record of it:
 /// - `documents.rs` -- which storage URLs customer documents may be uploaded
@@ -111,10 +114,12 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// - `agent_protocol.rs` -- the MCP response loop, which records an egress
 ///   receipt for a tool response before writing it and decides what is sent
 ///   when recording fails.
-/// - `agent_egress.rs` -- the egress log: a failed append is rolled back, and a
-///   torn final row is refused rather than read as evidence.
-/// - `agent_delivery.rs` -- what an egress receipt hashes, which is what it
-///   attests.
+/// - `agent_egress.rs` -- the egress log: a failed append is truncated back, or
+///   reported as `egress_record_rollback_failed` when that fails, and a torn
+///   final row is refused rather than read as evidence.
+/// - `agent_delivery.rs` -- the egress receipt record: the fields it carries,
+///   the response hash it commits to, and that only a persisted preparation
+///   yields a write-completion token.
 ///
 /// Not pinned, and deliberately: files feature-gated out of every shipped build
 /// (`agent_lab.rs`, `jsonex*.rs`, `india_tax_observation.rs`), operator filing
@@ -122,7 +127,7 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// compute reported figures or decide when a change cursor may advance. Those
 /// decide what a read says, not what is admitted or where data may go; they are
 /// the next candidates if the boundary widens, and bridge#416 records why.
-pub const MAX_SURFACE_FILES: usize = 231;
+pub const MAX_SURFACE_FILES: usize = 232;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;

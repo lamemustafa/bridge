@@ -1,11 +1,11 @@
-//! The thirteen files pinned by the raise to 231 (bridge#416) must stay pinned.
+//! The fourteen files pinned by the raise to 232 (bridge#416) must stay pinned.
 //!
 //! The compatibility gate cannot notice a pin disappearing. `rehash-surface`
 //! updates hashes and never adds paths. `docs/release-process.md` requires the
 //! pin list to be merged rather than resolved by taking one side; a resolution
 //! that takes the base side anyway drops every entry a branch added while
 //! keeping the raised `MAX_SURFACE_FILES`, and the gate passes. So does the cap
-//! assertion, which bounds headroom and would pass with all thirteen dropped.
+//! assertion, which bounds headroom and would pass with all fourteen dropped.
 //! `book_presence_tests.rs` guards its own contract's pins the same way.
 //!
 //! This file is deliberately not pinned itself: a guard that lived in the
@@ -14,16 +14,17 @@ use std::collections::BTreeSet;
 
 const SURFACE: &str = include_str!("../../docs/tally/compatibility/compatibility-surface.json");
 
-/// Each path is the unpinned half of a pair whose other half was already
-/// pinned. The reason for each is recorded beside `MAX_SURFACE_FILES` in
+/// Each path was unpinned while a module that declares it was pinned
+/// (bridge#416). The reason for each is recorded beside `MAX_SURFACE_FILES` in
 /// `tools/bridge-tally-compatibility/src/lib.rs`; it is not repeated here, so
 /// the two cannot drift apart.
-const ADMISSION_AND_EGRESS: [&str; 13] = [
+const ADMISSION_AND_EGRESS: [&str; 14] = [
     "src-tauri/crates/bridge-tally-protocol/src/group_ancestry.rs",
     "src-tauri/src/agent_company.rs",
     "src-tauri/src/agent_delivery.rs",
     "src-tauri/src/agent_egress.rs",
     "src-tauri/src/agent_import_cash_bank.rs",
+    "src-tauri/src/agent_import_ledger.rs",
     "src-tauri/src/agent_import_persistence.rs",
     "src-tauri/src/agent_import_post.rs",
     "src-tauri/src/agent_protocol.rs",
