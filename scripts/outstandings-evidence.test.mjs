@@ -9,10 +9,12 @@ import { reportEvidenceDrawerEntry } from "../src/evidence-drawer-entry.ts";
 import { readProvenance } from "../src/outstandings-provenance.ts";
 
 test("native provenance labels its receivable-only count while native rows include both directions", async () => {
-  const [screen, panel, runtime] = await Promise.all([
+  const [screen, panel, runtime, runtimeTests] = await Promise.all([
     readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/OutstandingsEvidencePanel.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src-tauri/src/tally/runtime.rs", import.meta.url), "utf8"),
+    // The runtime's unit tests live beside it, not inline.
+    readFile(new URL("../src-tauri/src/tally/runtime_tests.rs", import.meta.url), "utf8"),
   ]);
 
   assert.equal(readProvenance({ read_strategy: "native_bills", source_voucher_count: 0, open_receivable_bill_count: 1 }), "1 open receivable bill read from Tally");
@@ -28,7 +30,7 @@ test("native provenance labels its receivable-only count while native rows inclu
     /all_open_bill_rows\(\s*&receivable_rows,\s*&payable_rows,\s*ageing_anchor,\s*&as_of,?\s*\)/.test(runtime),
     "native statement rows must consume both receivable and payable sources",
   );
-  assert.match(runtime, /assert_eq!\(statement_open_bills\.len\(\), 6\);/);
+  assert.match(runtimeTests, /assert_eq!\(statement_open_bills\.len\(\), 6\);/);
   assert.match(panel, /readProvenance\(evidence\.readProvenance\)/);
   assert.doesNotMatch(panel, /sourceVoucherCount/);
 });
