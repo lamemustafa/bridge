@@ -1410,6 +1410,165 @@ def test_no_output_is_written_unless_every_destination_was_claimed(m):
         assert stat.S_IMODE(first.stat().st_mode) == 0o600
 
 
+def test_an_interrupt_between_dup_and_fdopen_leaks_no_descriptor(m):
+    """`os.fdopen` is what takes ownership of the duplicate, so between `os.dup`
+    returning and that call the descriptor belongs to nobody. A SIGINT there --
+    or an `fdopen` that raises for any other reason -- leaked it for the life of
+    the process, while cleanup went on to unlink the output the operator was
+    told had failed.
+
+    Deterministic rather than timing-dependent: `os.fdopen` is replaced with one
+    that records the descriptor it was handed and then raises
+    `KeyboardInterrupt`, which is what a SIGINT arriving at that instant
+    produces. The assertion is on the descriptor itself -- `os.fstat` must
+    report EBADF -- not on a count, because fd numbers are reused and a count
+    can come out right while the wrong descriptor is open.
+    """
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "out.xml"
+        real_fdopen = m.os.fdopen
+        handed = []
+
+        def interrupt_at_handoff(fd, *args, **kwargs):
+            handed.append(fd)
+            raise KeyboardInterrupt("SIGINT between dup and fdopen")
+
+        m.os.fdopen = interrupt_at_handoff
+        try:
+            raised = None
+            try:
+                m.write_outputs([(path, "<ENVELOPE/>")])
+            except BaseException as error:   # noqa: BLE001 - the class is the subject
+                raised = error
+        finally:
+            m.os.fdopen = real_fdopen
+
+        assert isinstance(raised, KeyboardInterrupt), (
+            f"the interrupt must propagate, got: {raised!r}")
+        assert handed, "the handoff must have been reached"
+        for fd in handed:
+            closed = False
+            try:
+                os.fstat(fd)
+            except OSError as error:
+                closed = error.errno == errno.EBADF
+            assert closed, (
+                f"descriptor {fd} was duplicated and never closed; it leaks for "
+                "the life of the process")
+
+
+def test_a_failed_handoff_does_not_close_the_descriptor_twice(m):
+    """The companion to the leak test, and the case that matters more.
+
+    `os.fdopen` is `io.open`, which builds a `FileIO` that owns the descriptor
+    *before* it builds the buffer and text layers. If a later layer raises, its
+    error path has already closed the descriptor -- so the real CPython failure
+    hands back a closed fd, not an open one. A guard that closes unconditionally
+    is then closing a descriptor it no longer owns, and the resulting `EBADF`
+    replaces the operator's actual failure.
+
+    The leak test's fake raises *without* touching the descriptor, which models
+    the half of the failure space that a late `io.open` failure never produces.
+    It therefore passes whether or not the double close exists. This fake closes
+    first, the way `io.open` does, so the assertion is on what the operator is
+    told: the `KeyboardInterrupt` must survive, not become `Bad file descriptor`.
+    """
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "out.xml"
+        real_fdopen = m.os.fdopen
+        handed = []
+
+        def close_then_interrupt(fd, *args, **kwargs):
+            # Exactly what `io.open` does when a layer above `FileIO` raises.
+            handed.append(fd)
+            os.close(fd)
+            raise KeyboardInterrupt("SIGINT inside io.open, after FileIO closed")
+
+        m.os.fdopen = close_then_interrupt
+        try:
+            raised = None
+            try:
+                m.write_outputs([(path, "<ENVELOPE/>")])
+            except BaseException as error:   # noqa: BLE001 - the class is the subject
+                raised = error
+        finally:
+            m.os.fdopen = real_fdopen
+
+        assert handed, "the handoff must have been reached"
+        assert not isinstance(raised, OSError) or raised.errno != errno.EBADF, (
+            "closing an already-closed descriptor replaced the operator's real "
+            f"failure with Bad file descriptor: {raised!r}")
+        assert isinstance(raised, KeyboardInterrupt), (
+            f"the interrupt must reach the operator unchanged, got: {raised!r}")
+        assert getattr(raised, "__notes__", None) is None, (
+            "an already-closed descriptor is the expected case and must be "
+            "silent; a note here means the EBADF discrimination was lost and "
+            f"every ordinary late fdopen failure now carries noise: {raised.__notes__}")
+
+
+def test_the_handoff_defers_sigint_but_the_payload_write_does_not(m):
+    """Pins `_defer_sigint_during_claim()` around the handoff, which nothing
+    else does: neutralising that wrapper leaves every other test in this file
+    green, so the main claim of this revision was asserted rather than proved.
+
+    Both halves matter. Blocked across `os.dup` -> `os.fdopen` is what closes
+    the window no pure-Python handler could observe. *Not* blocked across
+    `stream.write` is what keeps an arbitrarily long payload interruptible --
+    a defer that leaked into the write would trade a one-bytecode race for an
+    unkillable process.
+    """
+    if os.name == "nt" or not hasattr(signal, "pthread_sigmask"):
+        return
+
+    def sigint_blocked():
+        # Querying with an empty set reports the mask without changing it.
+        return signal.SIGINT in signal.pthread_sigmask(signal.SIG_BLOCK, [])
+
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "out.xml"
+        real_fdopen = m.os.fdopen
+        seen = {}
+
+        class RecordingStream:
+            def __init__(self, inner):
+                self._inner = inner
+
+            def write(self, text):
+                seen["write"] = sigint_blocked()
+                return self._inner.write(text)
+
+            def __enter__(self):
+                self._inner.__enter__()
+                return self
+
+            def __exit__(self, *details):
+                return self._inner.__exit__(*details)
+
+        def recording_fdopen(handle, *args, **kwargs):
+            seen.setdefault("handoff", sigint_blocked())
+            return RecordingStream(real_fdopen(handle, *args, **kwargs))
+
+        m.os.fdopen = recording_fdopen
+        try:
+            m.write_outputs([(path, "<ENVELOPE/>")])
+        finally:
+            m.os.fdopen = real_fdopen
+
+        assert seen.get("handoff") is True, (
+            "SIGINT must be blocked across the dup/fdopen handoff; got "
+            f"{seen.get('handoff')!r}")
+        assert seen.get("write") is False, (
+            "SIGINT must NOT be blocked while the payload is written, or a "
+            f"long write becomes uninterruptible; got {seen.get('write')!r}")
+        assert not sigint_blocked(), (
+            "the mask must be restored once write_outputs returns")
+        assert path.read_text() == "<ENVELOPE/>"
+
+
 def test_a_failed_run_does_not_destroy_the_previous_output(m):
     """The rollback must not be worse than the failure it cleans up after.
 
