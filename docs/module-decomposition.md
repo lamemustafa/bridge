@@ -48,8 +48,9 @@ paragraph is the exemption record; add to it rather than leaving a collaborator
 silently unpinned.
 
 Two production collaborators of `agent_import.rs` remain unpinned, both
-deliberately: `agent_import_schema.rs` states the contract Bridge *publishes* to
-the model rather than deciding what it admits (see #416);
+deliberately: `agent_import_schema.rs` is the argument schema for
+`build_import_xml`, and loosening it cannot widen what is admitted, because
+the pinned `agent_import.rs` re-checks those bounds (see #416);
 `agent_desktop_journal_review.rs` is the desktop file picker, a 5 MB
 selection cap and the refusal-to-message mapping, delegating review, post and
 reconcile to the pinned `agent_desktop_journal.rs`.
@@ -61,11 +62,13 @@ above yourself.
 
 **Capacity is not free, and that is deliberate.** `MAX_SURFACE_FILES` is set to
 the exact pin count (232 of 232 after #434), so any branch adding a pin raises
-it, in the same PR, with a named reason. That has been the convention since
-#260; it is not how the reserve was first designed. `RESERVED_SURFACE_FILES`
+it in the same PR. Setting the cap to the exact count has been the convention
+since #260, and recording a named reason beside the constant for each raise
+since #278; neither is how the reserve was first designed. `RESERVED_SURFACE_FILES`
 (15) was introduced in #223 with the cap at exactly count + 15, and in that
-slack period #246 added eight pins without touching the cap. The exact-count
-convention is what now puts a reason beside the constant for every pin. Use
+slack period #246 added eight pins without touching the cap. With no slack, a
+new pin cannot land without an edit to the constant, which is where its reason
+now goes. Use
 `scripts/reseal.sh --pins-changed`, the documented inversion for when the pin
 *list* changes rather than only the hashes.
 
