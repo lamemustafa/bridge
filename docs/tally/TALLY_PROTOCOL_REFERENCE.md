@@ -992,9 +992,16 @@ and master ID), and only then record the type as qualified.
 > | Receipt | amount changed, then counterparty ledger changed | `CREATED=0 ALTERED=1` each | as sent |
 > | Contra | amount changed | `CREATED=0 ALTERED=1` | as sent |
 > | Payment | re-sent as a **Receipt** | `CREATED=0 ALTERED=1` | **now a Receipt** |
+> | Receipt, 2 entries | a party entry added, then removed again | `CREATED=0 ALTERED=1` each | 3 entries, then **2; the removed one gone** |
+> | Contra, 2 entries | an entry added, then one removed | `CREATED=0 ALTERED=1` each | 3 entries, then **2; the removed one gone** |
+> | Payment, 2 entries | an expense entry added | `CREATED=0 ALTERED=1` | 3 entries, date kept |
 >
 > The Journal amount and entry-removal rows and the three-entry Payment row are bridge#429; the rest
-> are a follow-up the same day, in which every other counter was zero, including `EXCEPTIONS`. Date
+> are follow-ups the same day, in which every other counter was zero, including `EXCEPTIONS`. The
+> last three rows came from a second follow-up, which re-ran the unknown-ledger canary first; it still
+> failed closed. **Contra's added entry was a second entry on a ledger the voucher already carried**,
+> because the synthetic company holds only two bank ledgers absent from the client book loaded beside it. Adding
+> an entry on a *different* ledger is observed for Journal, Receipt and Payment only. Date
 > and voucher-type replacement were each observed on a Payment only. Exactly one voucher carried each marker
 > afterwards and `ALTERID` advanced on every alteration. **Same object:** each voucher kept the GUID
 > it was created with, and creations interleaved with the alterations took the next GUIDs, so no
