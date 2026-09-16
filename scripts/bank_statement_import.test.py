@@ -289,7 +289,35 @@ def test_parse_real_hdfc_capture(m):
     assert not rows[-1]["narr"].endswith(" "), rows[-1]["narr"]
     assert m.parse_pages(pages[:2], bank) == rows, "page 3 must contribute nothing"
 
-    # the account number is bound from the header block, not from the table
+    # the account number is bound from the header block, not from the table.
+    #
+    # This positive check does NOT by itself prove which header line was read.
+    # Five other `_lines` bands in this capture carry a digit run ending 1111:
+    # the City postcode (111111); the phone number (11111111); the Cust ID
+    # band, which also carries the address-block postcode from the opposite
+    # column (111111111 and 111111); the shared IFSC/MICR band (1111111); and
+    # `ZZZZZZQ(1111)` on the Account Type band, whose run is 1111 exactly.
+    # That last one is why `account_anchors` is a two-word anchor: production
+    # records at the HDFC definition that `Account Status` and `Account Type`
+    # print the same first word as `Account No`. (`_matches` tests whole-band
+    # membership, not word position -- that band actually begins `Nomination`.)
+    #
+    # What discriminates, measured by regressing the production anchors:
+    #
+    #   Cust ID -> this file fails on `ambiguous_account_match`, but only
+    #              incidentally: `_lines` groups a y-band across the whole
+    #              page, so the left-column address postcode shares that band.
+    #   IFSC    -> this file fails in the five-tail negative loop below, not
+    #   MICR       on the positive check, which still succeeds.
+    #   any     -> `test_real_hdfc_capture_binds_the_account_no_geometry_only`
+    #              fails its label-geometry assertion. That test repoints
+    #              `account_anchors` at three distinct bands (IFSC and MICR are
+    #              one band); the City postcode and Account Type bands are not
+    #              covered.
+    #
+    # Note `account_number_runs` unions runs from every anchor-matching line on
+    # the page, so `ambiguous_account_match` is not a per-line guard despite
+    # what its message says.
     m.require_account_match(pages, bank, "HDFC CA xx1111")
     # 1112 is the captured MICR tail, not an account-number value. 1113-1115
     # occur in captured transaction-table references, a separate negative
