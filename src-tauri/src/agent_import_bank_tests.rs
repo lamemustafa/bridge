@@ -1270,12 +1270,44 @@ async fn a_bank_batch_verifies_through_the_rewrites_tally_makes_to_it() {
             voucher_number: Some("463".into()),
             cancelled: Some(false),
             optional: Some(false),
+            effective_date: None,
             entries,
         }];
         let result = verify_observed_batch(&line, &observed).unwrap();
         assert_eq!(result["counts"]["posted_verified"], 1);
         assert_eq!(verification_status(&result, 1), "posted_verified");
         assert_eq!(result["duplicates"], json!([]));
+        // A response without EFFECTIVEDATE still verifies, but says the written
+        // effective date was not compared.
+        assert_eq!(
+            result["vouchers"][0]["not_observed"],
+            json!(["effective_date"])
+        );
+        // Returned equal to DATE, as measured on 7.1 (§9.8 scoped correction).
+        let mut returned = observed.clone();
+        returned[0].effective_date = returned[0].date.clone();
+        let result = verify_observed_batch(&line, &returned).unwrap();
+        assert_eq!(verification_status(&result, 1), "posted_verified");
+        assert!(result["vouchers"][0].get("not_observed").is_none());
+        // Returned and different: Tally rewrote it or someone edited it.
+        let mut rewritten = observed.clone();
+        rewritten[0].effective_date = Some("20260902".into());
+        let result = verify_observed_batch(&line, &rewritten).unwrap();
+        assert_eq!(result["vouchers"][0]["status"], "posted_divergent");
+        assert_eq!(result["vouchers"][0]["diffs"], json!(["effective_date"]));
+        assert!(result["vouchers"][0].get("not_observed").is_none());
+
+        // A Journal is written without EFFECTIVEDATE, so it is neither compared
+        // nor reported missing.
+        let mut journal_line = line.clone();
+        journal_line.vouchers[0].voucher_type = VoucherType::Journal;
+        let mut journal = rewritten.clone();
+        journal[0].voucher_type = Some("Journal".into());
+        let result = verify_observed_batch(&journal_line, &journal).unwrap();
+        assert_eq!(verification_status(&result, 1), "posted_verified");
+        journal[0].effective_date = None;
+        let result = verify_observed_batch(&journal_line, &journal).unwrap();
+        assert!(result["vouchers"][0].get("not_observed").is_none());
         // A readback that disagrees on the type is a different voucher, and
         // says so rather than passing on matching amounts alone.
         let mut mistyped = observed.clone();
@@ -1584,4 +1616,19 @@ async fn a_parsed_statement_builds_an_import_file_by_proposals_id() {
         "{xml}"
     );
     assert_eq!(simulator.finish().expect("requests").len(), 44);
+}
+
+#[test]
+fn the_verification_read_fetches_the_effective_date_and_not_the_party() {
+    let request = render_import_verification_read("Synthetic Book", "20260901", "20260901");
+    let fetch = request
+        .split_once("<FETCH>")
+        .and_then(|(_, rest)| rest.split_once("</FETCH>"))
+        .map(|(fetch, _)| fetch.split(',').collect::<Vec<_>>())
+        .unwrap();
+    assert!(fetch.contains(&"EFFECTIVEDATE"));
+    // Read back on 7.1, PARTYLEDGERNAME held a bank ledger rather than the
+    // written counterparty (§9.8 scoped correction): comparing it would refuse
+    // every legitimate bank voucher.
+    assert!(!fetch.contains(&"PARTYLEDGERNAME"));
 }

@@ -88,9 +88,27 @@ pub(super) fn parse_agent_changed_rows(
     parse_agent_rows_with_accounting_state(xml, true, company_guid)
 }
 
+/// Changed rows plus `effective_date`, which only import verification reads.
+/// The public voucher tools do not fetch it and their rows do not carry it.
+pub(super) fn parse_import_verification_rows(
+    xml: &str,
+    company_guid: &str,
+) -> Result<Vec<Value>, String> {
+    parse_voucher_rows(xml, true, true, company_guid)
+}
+
 pub(super) fn parse_agent_rows_with_accounting_state(
     xml: &str,
     require_change_identity: bool,
+    company_guid: &str,
+) -> Result<Vec<Value>, String> {
+    parse_voucher_rows(xml, require_change_identity, false, company_guid)
+}
+
+fn parse_voucher_rows(
+    xml: &str,
+    require_change_identity: bool,
+    include_effective_date: bool,
     company_guid: &str,
 ) -> Result<Vec<Value>, String> {
     // Tally's collection XML varies by release; use a deliberately conservative
@@ -343,6 +361,20 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                         let mut parsed = json!({"date": row.get("DATE"), "voucher_number": row.get("VOUCHERNUMBER"), "voucher_type": row.get("VOUCHERTYPENAME"), "party": row.get("PARTYLEDGERNAME"), "narration": row.get("NARRATION"), "guid": row.get("GUID"), "alter_id": parse_optional_tally_alter_id(row.get("ALTERID").map(String::as_str))?, "master_id": row.get("MASTERID"), "amounts": amounts});
                         if require_change_identity {
                             parsed["remote_id"] = json!(row.get("REMOTEID"));
+                        }
+                        if include_effective_date {
+                            // An empty element is treated like an absent one: not observed.
+                            // A present value must be a date, as DATE must: a malformed
+                            // one refuses the read rather than passing as unobserved.
+                            if let Some(effective) = row
+                                .get("EFFECTIVEDATE")
+                                .map(|value| value.trim())
+                                .filter(|value| !value.is_empty())
+                            {
+                                bridge_tally_core::TallyDate::parse(effective.to_string())
+                                    .map_err(|_| "voucher_effective_date_invalid".to_string())?;
+                                parsed["effective_date"] = json!(effective);
+                            }
                         }
                         parsed["cancelled"] =
                             Value::Bool(required_tally_bool(row.get("ISCANCELLED"))?);

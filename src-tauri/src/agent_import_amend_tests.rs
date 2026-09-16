@@ -80,6 +80,7 @@ fn book_row(line: &ImportLedgerLine) -> ReadVoucher {
         voucher_number: Some("7".into()),
         cancelled: Some(false),
         optional: Some(false),
+        effective_date: None,
         // Tally does not promise the order it was sent (§12a.4).
         entries: voucher
             .entries
@@ -310,6 +311,32 @@ fn an_edited_missing_or_cancelled_voucher_refuses_the_amendment() {
     let mut redated = book_row(&original);
     redated.date = Some("20260905".into());
     assert_eq!(reason(vec![redated]), "book_voucher_diverged");
+    // an edited effective date is a change the amendment would overwrite
+    let mut effective_redated = book_row(&original);
+    effective_redated.effective_date = Some("20260905".into());
+    let refused = lineage
+        .compare_and_swap(&proposal, &book(vec![effective_redated]))
+        .unwrap()
+        .expect_err("refused");
+    assert_eq!(refused[0]["reason"], "book_voucher_diverged");
+    assert_eq!(
+        refused[0]["diffs_from_latest_build"],
+        json!(["effective_date"])
+    );
+    // one that came back unchanged is admitted without a caveat; one that did
+    // not come back is admitted with it
+    let mut effective_kept = book_row(&original);
+    effective_kept.effective_date = effective_kept.date.clone();
+    let admitted = lineage
+        .compare_and_swap(&proposal, &book(vec![effective_kept]))
+        .unwrap()
+        .unwrap();
+    assert!(admitted[0].get("not_observed").is_none());
+    let admitted = lineage
+        .compare_and_swap(&proposal, &book(vec![book_row(&original)]))
+        .unwrap()
+        .unwrap();
+    assert_eq!(admitted[0]["not_observed"], json!(["effective_date"]));
 
     assert_eq!(reason(vec![]), "not_in_book");
     // A voucher carrying another batch's marker is not this one.

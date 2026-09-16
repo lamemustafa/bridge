@@ -273,6 +273,9 @@ struct ReadVoucher {
     master_id: Option<String>,
     cancelled: Option<bool>,
     optional: Option<bool>,
+    /// Absent when the response carried no `EFFECTIVEDATE` (or an empty one).
+    #[serde(default)]
+    effective_date: Option<String>,
     #[serde(rename = "amounts")]
     entries: Vec<ReadEntry>,
 }
@@ -2004,7 +2007,7 @@ fn render_voucher_xml(voucher: &ImportVoucher, remote_id: Uuid, attribution_id: 
 }
 
 fn render_import_verification_read(company: &str, from: &str, to: &str) -> String {
-    format!("<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Import Verification</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeImportWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"</SYSTEM><COLLECTION NAME=\"Bridge Agent Import Verification\" ISMODIFY=\"No\"><TYPE>Voucher</TYPE><FETCH>DATE,VOUCHERNUMBER,VOUCHERTYPENAME,REMOTEID,GUID,MASTERID,ALTERID,NARRATION,ISCANCELLED,ISOPTIONAL,ALLLEDGERENTRIES.LEDGERNAME,ALLLEDGERENTRIES.AMOUNT,ALLLEDGERENTRIES.ISDEEMEDPOSITIVE</FETCH><FILTERS>BridgeImportWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>", xml_escape(company))
+    format!("<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Import Verification</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeImportWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"</SYSTEM><COLLECTION NAME=\"Bridge Agent Import Verification\" ISMODIFY=\"No\"><TYPE>Voucher</TYPE><FETCH>DATE,VOUCHERNUMBER,VOUCHERTYPENAME,REMOTEID,GUID,MASTERID,ALTERID,NARRATION,ISCANCELLED,ISOPTIONAL,ALLLEDGERENTRIES.LEDGERNAME,ALLLEDGERENTRIES.AMOUNT,ALLLEDGERENTRIES.ISDEEMEDPOSITIVE,EFFECTIVEDATE</FETCH><FILTERS>BridgeImportWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>", xml_escape(company))
 }
 
 fn xml_escape(value: &str) -> String {
@@ -2017,7 +2020,7 @@ fn xml_escape(value: &str) -> String {
 }
 
 fn parse_import_vouchers(xml: &str, company_guid: &str) -> Result<ImportReadSource, String> {
-    let parsed = super::parse_agent_changed_rows(xml, company_guid).map_err(|code| {
+    let parsed = super::parse_import_verification_rows(xml, company_guid).map_err(|code| {
         match code.as_str() {
             // Preserve the import error contract while sharing scalar admission.
             "agent_read_protocol_invalid" if super::validate_agent_envelope(xml).is_err() => {
@@ -2026,6 +2029,7 @@ fn parse_import_vouchers(xml: &str, company_guid: &str) -> Result<ImportReadSour
             "agent_read_protocol_invalid"
             | "change_row_core_field_invalid"
             | "voucher_date_invalid"
+            | "voucher_effective_date_invalid"
             | "voucher_accounting_state_not_observed" => "import_verification_export_invalid",
             "change_row_identity_invalid"
             | "voucher_source_identity_invalid"
@@ -2276,12 +2280,13 @@ fn verify_batch(line: &ImportLedgerLine, observed: &ImportReadSource) -> Result<
                 group.consume(matched_index);
             }
             let matched = &observed[matched_index];
+            let effective_date_unobserved = effective_date_not_observed(expected, matched);
             let diffs = voucher_diffs(
                 expected,
                 matched,
                 expected_key.2 == observed_fingerprints[matched_index].2,
             );
-            if fingerprint_fallback {
+            let mut matched_value = if fingerprint_fallback {
                 counts
                     .entry("matching_content_observed")
                     .and_modify(|count| *count += 1);
@@ -2302,7 +2307,11 @@ fn verify_batch(line: &ImportLedgerLine, observed: &ImportReadSource) -> Result<
                     .entry("posted_divergent")
                     .and_modify(|count| *count += 1);
                 json!({"bridge_txn_id":expected.bridge_txn_id,"status":"posted_divergent","marker":marker,"diffs":diffs,"voucher_number":matched.voucher_number,"guid":matched.guid,"master_id":matched.master_id})
+            };
+            if effective_date_unobserved {
+                matched_value["not_observed"] = json!(["effective_date"]);
             }
+            matched_value
         };
         if fingerprint_fallback && fingerprint_ambiguous_within_batch {
             value["ambiguous_within_batch"] = Value::Bool(true);
@@ -2403,14 +2412,33 @@ fn batch_duplicate_sets(
     )
 }
 
+/// A bank voucher whose readback carried no `EFFECTIVEDATE`: its effective
+/// date was written but could not be compared, which a clean status must not hide.
+fn effective_date_not_observed(expected: &ImportVoucher, actual: &ReadVoucher) -> bool {
+    expected.voucher_type != VoucherType::Journal && actual.effective_date.is_none()
+}
+
 fn voucher_diffs(
     expected: &ImportVoucher,
     actual: &ReadVoucher,
     entries_match: bool,
 ) -> Vec<Value> {
     let mut diffs = Vec::new();
-    if actual.date.as_deref() != normalized_date(&expected.date).ok().as_deref() {
+    let expected_date = normalized_date(&expected.date).ok();
+    if actual.date.as_deref() != expected_date.as_deref() {
         diffs.push(json!("date"));
+    }
+    // A bank voucher is written with EFFECTIVEDATE equal to DATE (§9.13), and
+    // the verification read returns it (§9.8 scoped correction). Only a value
+    // that came back and differs is a diff: a response without the element
+    // is reported as not observed, never refused.
+    if expected.voucher_type != VoucherType::Journal
+        && actual
+            .effective_date
+            .as_deref()
+            .is_some_and(|observed| Some(observed) != expected_date.as_deref())
+    {
+        diffs.push(json!("effective_date"));
     }
     if actual.voucher_type.as_deref() != Some(expected.voucher_type.as_str()) {
         diffs.push(json!("voucher_type"));

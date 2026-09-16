@@ -898,3 +898,56 @@ fn captured_voucher_guids_must_bind_every_row_to_the_selected_company() {
         );
     }
 }
+
+/// The captured three-voucher response with the first voucher's EFFECTIVEDATE
+/// element replaced by `element`.
+fn with_effective_date(element: &str) -> String {
+    captured_native_vouchers().replacen(
+        "<EFFECTIVEDATE TYPE=\"Date\">20260801</EFFECTIVEDATE>",
+        element,
+        1,
+    )
+}
+
+#[test]
+fn effective_date_is_read_for_import_verification_only() {
+    // The capture returns EFFECTIVEDATE on its first two vouchers and not on the third.
+    let captured = captured_native_vouchers();
+    let rows = parse_import_verification_rows(&captured, CAPTURED_VOUCHER_COMPANY_GUID).unwrap();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0]["effective_date"], "20260801");
+    assert_eq!(rows[1]["effective_date"], "20260801");
+    // not returned for a voucher is not invented for it
+    assert!(rows[2].get("effective_date").is_none());
+    // the public voucher tools do not surface it
+    for public in [
+        parse_agent_changed_rows(&captured, CAPTURED_VOUCHER_COMPANY_GUID).unwrap(),
+        parse_agent_rows(&captured, CAPTURED_VOUCHER_COMPANY_GUID).unwrap(),
+    ] {
+        assert!(public.iter().all(|row| row.get("effective_date").is_none()));
+    }
+
+    // an empty element is not observed, like an absent one
+    let empty = with_effective_date("<EFFECTIVEDATE TYPE=\"Date\"></EFFECTIVEDATE>");
+    let rows = parse_import_verification_rows(&empty, CAPTURED_VOUCHER_COMPANY_GUID).unwrap();
+    assert!(rows[0].get("effective_date").is_none());
+
+    // surrounding whitespace is not part of the date
+    let padded = with_effective_date("<EFFECTIVEDATE TYPE=\"Date\"> 20260802\n</EFFECTIVEDATE>");
+    let rows = parse_import_verification_rows(&padded, CAPTURED_VOUCHER_COMPANY_GUID).unwrap();
+    assert_eq!(rows[0]["effective_date"], "20260802");
+
+    let invalid = with_effective_date("<EFFECTIVEDATE TYPE=\"Date\">20261345</EFFECTIVEDATE>");
+    assert_eq!(
+        parse_import_verification_rows(&invalid, CAPTURED_VOUCHER_COMPANY_GUID),
+        Err("voucher_effective_date_invalid".to_string())
+    );
+    // two effective dates on one voucher cannot be compared with one written value
+    let repeated = with_effective_date(
+        "<EFFECTIVEDATE TYPE=\"Date\">20260801</EFFECTIVEDATE><EFFECTIVEDATE TYPE=\"Date\">20260802</EFFECTIVEDATE>",
+    );
+    assert_eq!(
+        parse_import_verification_rows(&repeated, CAPTURED_VOUCHER_COMPANY_GUID),
+        Err("agent_read_protocol_invalid".to_string())
+    );
+}

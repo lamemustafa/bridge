@@ -84,3 +84,25 @@ fn import_boundary_rejects_malformed_accounting_scalars_in_captured_vouchers() {
         );
     }
 }
+
+#[test]
+fn import_verification_carries_the_captured_effective_date() {
+    // The capture returns EFFECTIVEDATE on its first two vouchers only.
+    let rows = parse_import_vouchers(&captured_vouchers(), CAPTURED_GUID)
+        .unwrap()
+        .rows;
+    let effective: Vec<Option<&str>> = rows
+        .iter()
+        .map(|row| row.effective_date.as_deref())
+        .collect();
+    assert_eq!(effective, [Some("20260801"), Some("20260801"), None]);
+    let invalid = captured_vouchers().replacen(
+        "<EFFECTIVEDATE TYPE=\"Date\">20260801</EFFECTIVEDATE>",
+        "<EFFECTIVEDATE TYPE=\"Date\">20261345</EFFECTIVEDATE>",
+        1,
+    );
+    assert_eq!(
+        parse_import_vouchers(&invalid, CAPTURED_GUID),
+        Err("import_verification_export_invalid".to_string())
+    );
+}

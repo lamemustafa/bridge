@@ -5,6 +5,7 @@ pub(in crate::agent) fn is_voucher_scalar(field: &str) -> bool {
     matches!(
         field,
         "DATE"
+            | "EFFECTIVEDATE"
             | "VOUCHERTYPENAME"
             | "VOUCHERNUMBER"
             | "PARTYLEDGERNAME"
