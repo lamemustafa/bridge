@@ -28,12 +28,21 @@ them, through an AI assistant such as Claude Desktop.
   batches additionally record which Tally endpoint they spoke to. A reviewer can
   read the log rather than take a summary on trust.
 
-**Writing is off until you turn it on.** Everything above is reading. The write
-tools do not merely refuse when disabled — they are **absent from the tool list
-entirely**, so an assistant cannot see that they exist. Preparing a file needs
-`BRIDGE_AGENT_ENABLE_IMPORT`; posting additionally needs
-`BRIDGE_AGENT_ENABLE_WRITES`, which grants both. Both default to off, so a fresh
-install cannot write to your books even by mistake. With them on:
+**Whether writing is on depends on how you installed it.** Everything above is
+reading. When writing is off, the write tools do not merely refuse — they are
+**absent from the tool list entirely**, so an assistant cannot see that they
+exist.
+
+- **The Claude Desktop extension turns Journal posting on by default.** It shows
+  in the extension settings as **Allow Journal posting**. Every posting still
+  waits for your approval in a separate Bridge dialog, and the assistant cannot
+  approve it — but the tools are there from the moment you install. Turn that
+  setting off if you want a read-only connector.
+- **A source build turns writing off by default.** Preparing a file needs
+  `BRIDGE_AGENT_ENABLE_IMPORT`; posting additionally needs
+  `BRIDGE_AGENT_ENABLE_WRITES`, which grants both.
+
+With writing on:
 
 - **Prepares vouchers as a local file** — Journal, Payment, Receipt and
   Contra. Bridge writes the file; it does not send it.
@@ -69,11 +78,30 @@ always go with the answer. Decide this deliberately for client data.
 
 ## Installing it
 
-**There is no installer yet.** No published release carries a downloadable
-package, so today the only route is a source build, described under
-*Contributor quick start* below. If you are not comfortable building from
-source, this is not yet ready for you — watch
-[Releases](https://github.com/lamemustafa/bridge/releases).
+An **unsigned evaluation preview** of the Claude Desktop extension is published
+as [`mcp-preview-0.2.0`](https://github.com/lamemustafa/bridge/releases/tag/mcp-preview-0.2.0).
+Follow the [installation guide](./docs/agent/INSTALL.md) to install and configure
+it. Before you do, know what it is and is not:
+
+- **It is a preview for evaluation, not a production release.** It is not
+  code-signed or notarized, so your operating system may warn before opening it.
+  Each package has a `.sha256` file and a provenance record so you can confirm
+  exactly which bytes and which source commit you downloaded.
+- **Checked only as far as launching.** The release build confirms the package
+  starts and lists its tools. It does **not** establish that it works against
+  your Tally, or in conversation inside Claude Desktop. Validation against Tally
+  on Windows is still outstanding.
+- **Windows x64 and Apple Silicon Macs only.** Intel Macs are not supported.
+- **On a Mac, Tally must run on that same Mac**, in a local Windows virtual
+  machine or through approved local forwarding. Bridge only talks to Tally on
+  your own computer, so a separate PC or a Tally elsewhere on your network
+  cannot be reached by typing its address.
+- **It does not update itself.** To upgrade, install a newer release from
+  Claude Desktop's Extensions settings.
+
+The Bridge **desktop application** is a separate program and has no published
+installer; building it from source is described under *Contributor quick start*
+below.
 
 ---
 
@@ -86,12 +114,11 @@ database operations.
 
 ## First useful result
 
-As of 8 September 2026, no installer is published: the public `v0.1.0`
-release has no downloadable assets. Check [GitHub Releases](https://github.com/lamemustafa/bridge/releases)
-for future packages. For source use, the contributor quick start below builds
-the desktop app; to run the MCP server, follow the [source MCP setup](./docs/agent/README.md).
-When a release asset is published, use the [installation guide](./docs/agent/INSTALL.md)
-for its package-specific steps.
+An unsigned evaluation preview of the Claude Desktop extension is published as
+[`mcp-preview-0.2.0`](https://github.com/lamemustafa/bridge/releases/tag/mcp-preview-0.2.0);
+install it with the [installation guide](./docs/agent/INSTALL.md). For source
+use, the contributor quick start below builds the desktop app; to run the MCP
+server from source, follow the [source MCP setup](./docs/agent/README.md).
 
 Before requesting financial data through an MCP client, the client may send the selected
 Tally result to its AI provider, including company
