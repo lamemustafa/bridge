@@ -967,7 +967,7 @@
     },
     {
       "path": "tools/bridge-tally-compatibility/src/bills_native_outstandings_probe_receipt.rs",
-      "sha256": "93a939dcf04d4b0b64feca20f2399ff6494fede9e6aa35fdb5ecffd896bf5978"
+      "sha256": "8a56083ebc0a46148716a712a6b98c587bbf8a4e4a4ee3a4b4a5dd4cb911bcec"
     },
     {
       "path": "tools/bridge-tally-compatibility/src/lib.rs",
@@ -975,7 +975,7 @@
     },
     {
       "path": "tools/bridge-tally-compatibility/src/main.rs",
-      "sha256": "5e90dbb6f0f121503eaf72ef1d9770ec88dd6e7b5b8ee99a5087a5981b3f39d8"
+      "sha256": "c1fe539ab0c261f9729c4ad890ae6651fe7a3d27a7d238a640d81dcf1b4447c1"
     },
     {
       "path": "tools/bridge-tally-live-read/Cargo.toml",
@@ -987,7 +987,7 @@
     },
     {
       "path": "tools/bridge-tally-live-read/src/lib.rs",
-      "sha256": "cc901be1b5cfc0f2e1f24895fa29e42e955d07b8065b87a8592a874b73438eef"
+      "sha256": "f2c1f5d4cd6109fc039f310d290f2d975b97c32d0a9ed2813fbebaaa90d106a2"
     },
     {
       "path": "tools/bridge-tally-live-read/src/main.rs",
@@ -1003,8 +1003,8 @@
     },
     {
       "path": "tools/bridge-tally-read-transport/src/lib.rs",
-      "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
+      "sha256": "0ab5bfbe6d81b1e10530744c338fb91efa57fe5a66fb4bc0cfd382495eaf02a4"
     }
   ],
-  "manifest_sha256": "23fd892cbd234d9a88179e1e84728a6d33754572e4ef190fc11dd9a8925050d5"
+  "manifest_sha256": "e605f344add1a20236fcd7641c0658e153c83634da72fa783f0f3fbaa25f6cd8"
 }
