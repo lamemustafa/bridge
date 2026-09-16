@@ -87,9 +87,14 @@ non-idiomatic Rust. Treat them as questions only.
 7. **One named group per PR.** Keep diffs small enough that `git diff --color-moved` and a reader
    can jointly confirm purity, and keep moves free of edits so `git blame -C` and
    `git log --follow` still work.
-8. **Prove purity with test names, not counts.** Diff `cargo test -- --list` output before and
-   after, on both workspaces (`src-tauri/`, `tools/`). A count can match while a test was dropped
-   and another added. Also: `cargo fmt --check`, clippy, and the reseal verification.
+8. **Prove purity with test names, not counts, then run the suite.** Diff `cargo test -- --list`
+   output before and after, on both workspaces (`src-tauri/`, `tools/`): a count can match while a
+   test was dropped and another added. But listing is not running.
+   - **Tests that read source as text still compile after a move and then fail.** Before moving, grep
+     for `include_str!` and script `readFile` calls naming the file. The first `commands.rs` split
+     (#472) broke a `lib.rs` test that sliced `include_str!("commands.rs")`; test names were
+     identical and CI caught it.
+   - **Also:** `cargo fmt --check`, clippy, and the reseal verification.
 9. **A pinned split carries its reasons.** Record one named reason per new pin beside
    `MAX_SURFACE_FILES`, and pin every new file that decides what Bridge posts or lets leave the
    machine ([`module-decomposition.md`](./module-decomposition.md)).
