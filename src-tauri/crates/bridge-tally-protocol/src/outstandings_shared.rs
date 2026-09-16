@@ -715,89 +715,9 @@ fn xml_escape(value: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn company_book_extent_template_has_only_the_verified_fetch_list() {
-        let xml = render_company_book_extent("Synthetic & Company");
-        assert!(xml.contains("<ID>BridgeCompanyBookExtentV1</ID>"));
-        assert!(xml.contains("ALTVCHID"));
-        assert!(xml.contains("ALTMSTID"));
-        assert!(xml.contains("Synthetic &amp; Company"));
-        assert!(!xml.contains("CompanyNumber"));
-        assert!(!xml.contains("<COMPUTE>"));
-        assert!(!xml.contains("$$NumItems"));
-
-        let v2 = render_company_book_extent_v2("Synthetic & Company");
-        assert!(v2.contains("<ID>BridgeCompanyBookExtentV2</ID>"));
-        assert!(v2.contains(
-            "<FETCH>Name, GUID, CompanyNumber, BooksFrom, LastVoucherDate, ALTVCHID, ALTMSTID</FETCH>"
-        ));
-        assert!(v2.contains("ISMODIFY=\"No\""));
-    }
-
-    fn synthetic_extent(
-        master_alter_id_high_water: Option<MasterAlterIdHighWater>,
-    ) -> CompanyBookExtent {
-        let company = PinnedCompany::verified(
-            ValidatedCompanyName::new("Synthetic Company".to_string())
-                .expect("synthetic name validates"),
-            "synthetic-guid".to_string(),
-        )
-        .expect("synthetic identity verifies");
-        CompanyBookExtent::new(
-            company,
-            TallyDate::parse("20240101".to_string()).expect("synthetic BooksFrom"),
-            TallyDate::parse("20260101".to_string()).expect("synthetic LastVoucherDate"),
-            Some(VoucherAlterIdHighWater::parse("1").expect("synthetic ALTVCHID")),
-            master_alter_id_high_water,
-        )
-    }
-
-    /// The production bracket's strict check, isolated from any particular
-    /// caller: an extent whose `ALTMSTID` witness is absent must be refused
-    /// with the typed `MasterWitnessAbsent` error, while a witness-bearing
-    /// extent passes through unchanged. `connector.rs` and `connection.rs`
-    /// each call this at the point where their own bracket forms/compares a
-    /// production extent -- see their `..._fails_closed_when_altmstid_is_absent`
-    /// tests for that end-to-end wiring.
-    #[test]
-    fn require_master_witness_fails_closed_only_when_the_witness_is_absent() {
-        assert_eq!(
-            require_master_witness(&synthetic_extent(None)),
-            Err(OutstandingsError::MasterWitnessAbsent)
-        );
-        assert_eq!(
-            require_master_witness(&synthetic_extent(Some(
-                MasterAlterIdHighWater::parse("1").expect("synthetic ALTMSTID")
-            ))),
-            Ok(())
-        );
-    }
-}
+#[path = "outstandings_shared_tests.rs"]
+mod tests;
 
 #[cfg(test)]
-mod bill_allocation_admission_tests {
-    use super::bill_allocation_without_type_is_placeholder;
-
-    #[test]
-    fn an_untyped_row_with_no_name_is_a_placeholder() {
-        for name in [None, Some(""), Some("   ")] {
-            assert!(
-                bill_allocation_without_type_is_placeholder(name),
-                "{name:?} carries no bill identity, so the row is a placeholder"
-            );
-        }
-    }
-
-    #[test]
-    fn an_untyped_row_that_names_a_bill_is_not_a_placeholder() {
-        for name in [Some("SET-INV-001"), Some("  SET-INV-001  ")] {
-            assert!(
-                !bill_allocation_without_type_is_placeholder(name),
-                "{name:?} names a bill, so the missing type is malformed input"
-            );
-        }
-    }
-}
+#[path = "outstandings_shared_bill_allocation_admission_tests.rs"]
+mod bill_allocation_admission_tests;
