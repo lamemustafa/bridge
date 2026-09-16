@@ -130,8 +130,17 @@ test("renders exact amounts and exports the captured report without another Tall
   expect(host.textContent).not.toContain("−₹1.25");
   expect(host.textContent).toContain("Difference in opening balances");
   expect(host.textContent).toContain("Closing total");
+  // A capture schedules parent discovery on a timer; let it settle so it cannot land after the export click.
+  await waitForParentDiscovery();
+  expect(mocks.invoke).toHaveBeenLastCalledWith("list_tally_trial_balance_capture_parents", {
+    request: { export_id: "export-1", search: "" },
+  });
   await act(async () => button(host, "Excel").click());
-  expect(mocks.invoke).toHaveBeenLastCalledWith("export_tally_trial_balance", { exportId: "export-1" });
+  expect(mocks.invoke.mock.calls).toEqual([
+    ["fetch_tally_trial_balance", expect.anything()],
+    ["list_tally_trial_balance_capture_parents", { request: { export_id: "export-1", search: "" } }],
+    ["export_tally_trial_balance", { exportId: "export-1" }],
+  ]);
   expect(host.textContent).toContain("/tmp/trial-balance.xlsx");
   root.unmount();
 });
