@@ -544,32 +544,11 @@ pub fn build_reconciliation(
     validate_reconciliation_input(&input)?;
 
     let mut gaps = input.explicit_gap_codes;
-    // The current XML transport reads multiple reports sequentially and does
-    // not yet bracket them with an independently observed source watermark.
-    // That remains a proof gap even when every internal invariant below and a
-    // fresh end-of-run capability-profile comparison pass.
-    match input.source_stability_check {
-        SourceStabilityCheck::Passed => {
-            // Full semantic reread equality is strong drift evidence, but
-            // Tally documents no cross-request snapshot-isolation contract.
-            gaps.insert("source_cut_atomicity_unavailable".to_string());
-        }
-        SourceStabilityCheck::Mismatch => {
-            gaps.insert("source_changed_during_run".to_string());
-        }
-        SourceStabilityCheck::Unavailable => {
-            gaps.insert("source_cut_consistency_unavailable".to_string());
-        }
-    }
-    match input.end_profile_check {
-        EndProfileCheck::Passed => {}
-        EndProfileCheck::Mismatch => {
-            gaps.insert("capability_profile_changed_during_run".to_string());
-        }
-        EndProfileCheck::Unavailable => {
-            gaps.insert("capability_profile_drift_check_unavailable".to_string());
-        }
-    }
+    insert_run_drift_gaps(
+        input.source_stability_check,
+        input.end_profile_check,
+        &mut gaps,
+    );
     let warnings = input.warning_codes;
     let mut mismatches = Vec::new();
     let completed_ids = input.completed_windows.keys().cloned().collect();
@@ -577,169 +556,28 @@ pub fn build_reconciliation(
         gaps.insert("missing_snapshot_window".to_string());
     }
 
-    let mut record_counts = BTreeMap::new();
-    let mut records_across_windows: BTreeMap<String, (String, ComparisonScope)> = BTreeMap::new();
-    let mut complete_source_counts = BTreeMap::new();
-    let mut unique_identities_by_object: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let mut expected_count_objects = BTreeSet::new();
-    let mut window_count_objects = BTreeSet::new();
+    let mut totals = SnapshotTotals::default();
     for evidence in input.completed_windows.values() {
-        if evidence.record_provenance_scope == ComparisonScope::Unavailable {
-            gaps.insert("record_provenance_unavailable".to_string());
-        }
-        if evidence.parsed_count != evidence.accepted_count + evidence.rejected_count {
-            gaps.insert("parse_accept_count_mismatch".to_string());
-        }
-        if evidence.accepted_count < evidence.deduped_count
-            || evidence
-                .accepted_count
-                .saturating_sub(evidence.deduped_count)
-                != evidence.duplicate_identity_count
-        {
-            gaps.insert("accept_dedupe_count_mismatch".to_string());
-        }
-        if evidence.rejected_count > 0 {
-            gaps.insert("rejected_snapshot_records".to_string());
-        }
-        if evidence.duplicate_identity_count > 0 {
-            gaps.insert("duplicate_source_identity".to_string());
-        }
-        if evidence.missing_identity_count > 0 {
-            gaps.insert("missing_source_identity".to_string());
-        }
-        if evidence.out_of_range_count > 0 {
-            gaps.insert("response_date_outside_window".to_string());
-        }
-        if evidence.accounting_scope == ComparisonScope::Unavailable {
-            gaps.insert("accounting_reconciliation_unavailable".to_string());
-        }
-        gaps.extend(evidence.accounting_gap_codes.iter().cloned());
-        match &evidence.report_tie_out {
-            Some(report)
-                if report.source_identity == input.source_identity
-                    && report.pack == input.pack
-                    && report.pack_schema_version == input.pack_schema_version
-                    && report.from_yyyymmdd == evidence.from_yyyymmdd
-                    && report.to_yyyymmdd == evidence.to_yyyymmdd
-                    && report.query_profile.as_str() == evidence.query_profile
-                    && report.filters_sha256.as_str() == evidence.filters_sha256
-                    && is_lower_sha256(&report.report_sha256)
-                    && report.state == TieOutState::Passed
-                    && report.compared_ledger_count == report.source_reported_count
-                    && report.compared_ledger_count == report.core_ledger_count => {}
-            Some(report) if report.state == TieOutState::Mismatch => {
-                gaps.insert("report_tie_out_mismatch".to_string());
-            }
-            Some(report) if report.state == TieOutState::Unavailable => {
-                gaps.insert("period_report_profile_unobserved".to_string());
-            }
-            Some(_) => {
-                gaps.insert("report_tie_out_evidence_invalid".to_string());
-            }
-            None => {
-                gaps.insert("report_tie_out_unavailable".to_string());
-            }
+        insert_window_count_gaps(evidence, &mut gaps);
+        if let Some(code) = report_tie_out_gap(
+            evidence,
+            &input.source_identity,
+            input.pack,
+            input.pack_schema_version,
+        ) {
+            gaps.insert(code.to_string());
         }
         if !evidence.mismatches.is_empty() {
             gaps.insert("reconciliation_mismatch".to_string());
             mismatches.extend(evidence.mismatches.clone());
         }
         for (record_type, count) in &evidence.record_counts {
-            *record_counts.entry(record_type.clone()).or_insert(0) += count;
+            *totals.record_counts.entry(record_type.clone()).or_insert(0) += count;
         }
-        for (object_type, count) in &evidence.object_counts {
-            expected_count_objects.insert(object_type.clone());
-            *record_counts
-                .entry(format!("{object_type}.parsed"))
-                .or_insert(0) += count.parsed_count;
-            *record_counts
-                .entry(format!("{object_type}.accepted"))
-                .or_insert(0) += count.accepted_count;
-            *record_counts
-                .entry(format!("{object_type}.deduped"))
-                .or_insert(0) += count.deduped_count;
-            match count.scope {
-                ComparisonScope::Unavailable => {}
-                ComparisonScope::Window => {
-                    window_count_objects.insert(object_type.clone());
-                    if count.source_reported_count != Some(count.deduped_count) {
-                        gaps.insert("window_source_accepted_count_mismatch".to_string());
-                    }
-                }
-                ComparisonScope::Complete => {
-                    let reported = count
-                        .source_reported_count
-                        .expect("complete evidence has a source count");
-                    match complete_source_counts.insert(object_type.clone(), reported) {
-                        Some(previous) if previous != reported => {
-                            gaps.insert("complete_source_count_disagreement".to_string());
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-        for (identity, content_sha256) in &evidence.canonical_records {
-            let identity_parts = identity.split_once('\0');
-            let object_scope = identity_parts
-                .and_then(|(object_type, _)| evidence.object_counts.get(object_type))
-                .map_or(ComparisonScope::Unavailable, |count| count.scope);
-            if let Some((object_type, source_id)) = identity_parts {
-                unique_identities_by_object
-                    .entry(object_type.to_string())
-                    .or_default()
-                    .insert(source_id.to_string());
-            }
-            match records_across_windows
-                .insert(identity.clone(), (content_sha256.clone(), object_scope))
-            {
-                Some((previous, previous_scope)) if previous == *content_sha256 => {
-                    if previous_scope != ComparisonScope::Complete
-                        || object_scope != ComparisonScope::Complete
-                        || !identity_parts
-                            .is_some_and(|(object_type, _)| repeatable_complete_master(object_type))
-                    {
-                        gaps.insert("duplicate_record_across_windows".to_string());
-                        if let Some((_, source_id)) = identity_parts {
-                            mismatches.push(safe_mismatch(
-                                "duplicate_record_across_windows",
-                                vec![source_id.to_string()],
-                            ));
-                        }
-                    }
-                }
-                Some(_) => {
-                    gaps.insert("source_changed_during_snapshot".to_string());
-                    if let Some((_, source_id)) = identity_parts {
-                        mismatches.push(safe_mismatch(
-                            "source_changed_during_snapshot",
-                            vec![source_id.to_string()],
-                        ));
-                    }
-                }
-                None => {}
-            }
-        }
+        totals.add_object_counts(evidence, &mut gaps);
+        totals.add_canonical_records(evidence, &mut gaps, &mut mismatches);
     }
-    for (object_type, count) in complete_source_counts {
-        let accepted_unique = unique_identities_by_object
-            .get(&object_type)
-            .map_or(0, |identities| identities.len() as u64);
-        if count != accepted_unique {
-            gaps.insert("source_accepted_count_mismatch".to_string());
-        }
-        record_counts.insert(format!("{object_type}.source_reported_complete"), count);
-        record_counts.insert(format!("{object_type}.accepted_unique"), accepted_unique);
-        expected_count_objects.remove(&object_type);
-        window_count_objects.remove(&object_type);
-    }
-    for object_type in expected_count_objects {
-        if window_count_objects.contains(&object_type) {
-            gaps.insert("source_count_window_only".to_string());
-        } else {
-            gaps.insert("source_count_unavailable".to_string());
-        }
-    }
+    let record_counts = totals.finish(&mut gaps);
 
     mismatches.sort_by(|left, right| {
         left.safe_reason_code
@@ -813,6 +651,247 @@ pub fn build_reconciliation(
         mirror_commit,
         safe_mismatches: mismatches,
     })
+}
+
+/// Gaps for anything that may have changed in the source or the capability
+/// profile while the run was reading it.
+fn insert_run_drift_gaps(
+    source_stability_check: SourceStabilityCheck,
+    end_profile_check: EndProfileCheck,
+    gaps: &mut BTreeSet<String>,
+) {
+    // The current XML transport reads multiple reports sequentially and does
+    // not yet bracket them with an independently observed source watermark.
+    // That remains a proof gap even when every internal invariant below and a
+    // fresh end-of-run capability-profile comparison pass.
+    match source_stability_check {
+        SourceStabilityCheck::Passed => {
+            // Full semantic reread equality is strong drift evidence, but
+            // Tally documents no cross-request snapshot-isolation contract.
+            gaps.insert("source_cut_atomicity_unavailable".to_string());
+        }
+        SourceStabilityCheck::Mismatch => {
+            gaps.insert("source_changed_during_run".to_string());
+        }
+        SourceStabilityCheck::Unavailable => {
+            gaps.insert("source_cut_consistency_unavailable".to_string());
+        }
+    }
+    match end_profile_check {
+        EndProfileCheck::Passed => {}
+        EndProfileCheck::Mismatch => {
+            gaps.insert("capability_profile_changed_during_run".to_string());
+        }
+        EndProfileCheck::Unavailable => {
+            gaps.insert("capability_profile_drift_check_unavailable".to_string());
+        }
+    }
+}
+
+/// Gaps a single window's own parse, accept, dedupe and accounting counters
+/// show, before anything is compared across windows.
+fn insert_window_count_gaps(evidence: &WindowEvidence, gaps: &mut BTreeSet<String>) {
+    if evidence.record_provenance_scope == ComparisonScope::Unavailable {
+        gaps.insert("record_provenance_unavailable".to_string());
+    }
+    if evidence.parsed_count != evidence.accepted_count + evidence.rejected_count {
+        gaps.insert("parse_accept_count_mismatch".to_string());
+    }
+    if evidence.accepted_count < evidence.deduped_count
+        || evidence
+            .accepted_count
+            .saturating_sub(evidence.deduped_count)
+            != evidence.duplicate_identity_count
+    {
+        gaps.insert("accept_dedupe_count_mismatch".to_string());
+    }
+    if evidence.rejected_count > 0 {
+        gaps.insert("rejected_snapshot_records".to_string());
+    }
+    if evidence.duplicate_identity_count > 0 {
+        gaps.insert("duplicate_source_identity".to_string());
+    }
+    if evidence.missing_identity_count > 0 {
+        gaps.insert("missing_source_identity".to_string());
+    }
+    if evidence.out_of_range_count > 0 {
+        gaps.insert("response_date_outside_window".to_string());
+    }
+    if evidence.accounting_scope == ComparisonScope::Unavailable {
+        gaps.insert("accounting_reconciliation_unavailable".to_string());
+    }
+    gaps.extend(evidence.accounting_gap_codes.iter().cloned());
+}
+
+/// The gap a window's report tie-out leaves, or `None` when it passed for this
+/// exact source, pack, period, query profile and filters.
+fn report_tie_out_gap(
+    evidence: &WindowEvidence,
+    source_identity: &SourceIdentity,
+    pack: CapabilityPackId,
+    pack_schema_version: PackSchemaVersion,
+) -> Option<&'static str> {
+    match &evidence.report_tie_out {
+        Some(report)
+            if report.source_identity == *source_identity
+                && report.pack == pack
+                && report.pack_schema_version == pack_schema_version
+                && report.from_yyyymmdd == evidence.from_yyyymmdd
+                && report.to_yyyymmdd == evidence.to_yyyymmdd
+                && report.query_profile.as_str() == evidence.query_profile
+                && report.filters_sha256.as_str() == evidence.filters_sha256
+                && is_lower_sha256(&report.report_sha256)
+                && report.state == TieOutState::Passed
+                && report.compared_ledger_count == report.source_reported_count
+                && report.compared_ledger_count == report.core_ledger_count =>
+        {
+            None
+        }
+        Some(report) if report.state == TieOutState::Mismatch => Some("report_tie_out_mismatch"),
+        Some(report) if report.state == TieOutState::Unavailable => {
+            Some("period_report_profile_unobserved")
+        }
+        Some(_) => Some("report_tie_out_evidence_invalid"),
+        None => Some("report_tie_out_unavailable"),
+    }
+}
+
+/// Counts and identities accumulated across every completed window, so that
+/// cross-window agreement can be judged once all windows are in.
+#[derive(Default)]
+struct SnapshotTotals {
+    record_counts: BTreeMap<String, u64>,
+    records_across_windows: BTreeMap<String, (String, ComparisonScope)>,
+    complete_source_counts: BTreeMap<String, u64>,
+    unique_identities_by_object: BTreeMap<String, BTreeSet<String>>,
+    expected_count_objects: BTreeSet<String>,
+    window_count_objects: BTreeSet<String>,
+}
+
+impl SnapshotTotals {
+    fn add_object_counts(&mut self, evidence: &WindowEvidence, gaps: &mut BTreeSet<String>) {
+        for (object_type, count) in &evidence.object_counts {
+            self.expected_count_objects.insert(object_type.clone());
+            *self
+                .record_counts
+                .entry(format!("{object_type}.parsed"))
+                .or_insert(0) += count.parsed_count;
+            *self
+                .record_counts
+                .entry(format!("{object_type}.accepted"))
+                .or_insert(0) += count.accepted_count;
+            *self
+                .record_counts
+                .entry(format!("{object_type}.deduped"))
+                .or_insert(0) += count.deduped_count;
+            match count.scope {
+                ComparisonScope::Unavailable => {}
+                ComparisonScope::Window => {
+                    self.window_count_objects.insert(object_type.clone());
+                    if count.source_reported_count != Some(count.deduped_count) {
+                        gaps.insert("window_source_accepted_count_mismatch".to_string());
+                    }
+                }
+                ComparisonScope::Complete => {
+                    let reported = count
+                        .source_reported_count
+                        .expect("complete evidence has a source count");
+                    match self
+                        .complete_source_counts
+                        .insert(object_type.clone(), reported)
+                    {
+                        Some(previous) if previous != reported => {
+                            gaps.insert("complete_source_count_disagreement".to_string());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    fn add_canonical_records(
+        &mut self,
+        evidence: &WindowEvidence,
+        gaps: &mut BTreeSet<String>,
+        mismatches: &mut Vec<ReconciliationMismatch>,
+    ) {
+        for (identity, content_sha256) in &evidence.canonical_records {
+            let identity_parts = identity.split_once('\0');
+            let object_scope = identity_parts
+                .and_then(|(object_type, _)| evidence.object_counts.get(object_type))
+                .map_or(ComparisonScope::Unavailable, |count| count.scope);
+            if let Some((object_type, source_id)) = identity_parts {
+                self.unique_identities_by_object
+                    .entry(object_type.to_string())
+                    .or_default()
+                    .insert(source_id.to_string());
+            }
+            match self
+                .records_across_windows
+                .insert(identity.clone(), (content_sha256.clone(), object_scope))
+            {
+                Some((previous, previous_scope)) if previous == *content_sha256 => {
+                    if previous_scope != ComparisonScope::Complete
+                        || object_scope != ComparisonScope::Complete
+                        || !identity_parts
+                            .is_some_and(|(object_type, _)| repeatable_complete_master(object_type))
+                    {
+                        gaps.insert("duplicate_record_across_windows".to_string());
+                        if let Some((_, source_id)) = identity_parts {
+                            mismatches.push(safe_mismatch(
+                                "duplicate_record_across_windows",
+                                vec![source_id.to_string()],
+                            ));
+                        }
+                    }
+                }
+                Some(_) => {
+                    gaps.insert("source_changed_during_snapshot".to_string());
+                    if let Some((_, source_id)) = identity_parts {
+                        mismatches.push(safe_mismatch(
+                            "source_changed_during_snapshot",
+                            vec![source_id.to_string()],
+                        ));
+                    }
+                }
+                None => {}
+            }
+        }
+    }
+
+    /// Compares complete source counts with the unique identities accepted,
+    /// records both, and returns the record counts for the proof.
+    fn finish(self, gaps: &mut BTreeSet<String>) -> BTreeMap<String, u64> {
+        let Self {
+            mut record_counts,
+            complete_source_counts,
+            unique_identities_by_object,
+            mut expected_count_objects,
+            mut window_count_objects,
+            records_across_windows: _,
+        } = self;
+        for (object_type, count) in complete_source_counts {
+            let accepted_unique = unique_identities_by_object
+                .get(&object_type)
+                .map_or(0, |identities| identities.len() as u64);
+            if count != accepted_unique {
+                gaps.insert("source_accepted_count_mismatch".to_string());
+            }
+            record_counts.insert(format!("{object_type}.source_reported_complete"), count);
+            record_counts.insert(format!("{object_type}.accepted_unique"), accepted_unique);
+            expected_count_objects.remove(&object_type);
+            window_count_objects.remove(&object_type);
+        }
+        for object_type in expected_count_objects {
+            if window_count_objects.contains(&object_type) {
+                gaps.insert("source_count_window_only".to_string());
+            } else {
+                gaps.insert("source_count_unavailable".to_string());
+            }
+        }
+        record_counts
+    }
 }
 
 fn repeatable_complete_master(object_type: &str) -> bool {
