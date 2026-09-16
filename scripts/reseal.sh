@@ -198,3 +198,8 @@ pins_changed="no"
 [ "$MODE" = "pins-changed" ] && pins_changed="yes"
 reseal_into "$SURFACE" "$MATRIX" "$pins_changed"
 echo "reseal.sh: compatibility surface and matrix resealed"
+
+# Report-only, never fails the reseal: pins this branch dropped, and modules
+# newly left unpinned directly under a pinned one, since origin/master -- two
+# things the gate cannot see. Much else is not checked; see the script (#416).
+python3 "$SCRIPT_DIR/surface_coverage_report.py" --root "$PIN_ROOT" --surface "$SURFACE" || true
