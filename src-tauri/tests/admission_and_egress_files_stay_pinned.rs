@@ -35,8 +35,9 @@ const ADMISSION_AND_EGRESS: [&str; 14] = [
     "src-tauri/src/tally/runtime_control.rs",
 ];
 
-/// The six read-path files pinned by the raise to 238, under the same rule.
-const READ_PATH: [&str; 6] = [
+/// The six files pinned by the raise to 238: five on the read path, and the
+/// egress receipt's field walker. Reasons live beside `MAX_SURFACE_FILES`.
+const READ_PATH_AND_RECEIPT: [&str; 6] = [
     "src-tauri/src/agent_change_parse.rs",
     "src-tauri/src/agent_changes.rs",
     "src-tauri/src/agent_movement.rs",
@@ -80,8 +81,8 @@ fn admission_and_egress_files_are_still_pinned() {
 }
 
 #[test]
-fn read_path_files_are_still_pinned() {
-    assert_still_pinned(&READ_PATH);
+fn read_path_and_receipt_files_are_still_pinned() {
+    assert_still_pinned(&READ_PATH_AND_RECEIPT);
 }
 
 /// The check above must be able to fail. Drive the same two functions over the
@@ -89,7 +90,7 @@ fn read_path_files_are_still_pinned() {
 /// would only prove `BTreeSet::contains` works.
 #[test]
 fn the_pin_check_reports_a_dropped_entry() {
-    for required in [&ADMISSION_AND_EGRESS[..], &READ_PATH[..]] {
+    for required in [&ADMISSION_AND_EGRESS[..], &READ_PATH_AND_RECEIPT[..]] {
         let dropped = required[0];
         let mut surface: serde_json::Value = serde_json::from_str(SURFACE).expect("surface json");
         surface["files"]

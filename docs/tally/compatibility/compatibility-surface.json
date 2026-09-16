@@ -919,7 +919,7 @@
     },
     {
       "path": "tools/bridge-tally-compatibility/src/lib.rs",
-      "sha256": "cc70895f6c6fd2357949dc55abd3c8c7302584ca58ba65dc87f27a82e7f23348"
+      "sha256": "8ad5d452bb3f76e3d1ee69c78c0a564af2263392ffb0c47f58ed49c837eb6692"
     },
     {
       "path": "tools/bridge-tally-compatibility/src/main.rs",
@@ -954,5 +954,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "84f4b0b441ebbcfe795adce5279212da0d6b69e15213b7bf01ddd2af269f30c4"
+  "manifest_sha256": "17dcd4722234ab278f55d130b00151b71ae797f6a1a7cf18246f08ab82f21915"
 }

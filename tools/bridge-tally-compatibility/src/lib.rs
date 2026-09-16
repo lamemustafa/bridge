@@ -122,10 +122,12 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 ///   the response hash it commits to, and that only a persisted preparation
 ///   yields a write-completion token.
 ///
-/// The raise to 238 binds six read-path files from the same bridge#416 search.
-/// The fourteen above decide what Bridge posts or lets leave the machine; these
-/// decide what a read tells a caller, or when a sync may move past rows. Same
-/// rule: each reason says what the file holds.
+/// The raise to 238 binds six more files from the same bridge#416 search. Five
+/// decide what a read tells a caller, or when a sync may move past rows. The
+/// sixth, `agent_receipt_fields.rs`, belongs with the egress record above:
+/// bridge#416 listed it as borderline rather than with the fourteen, and it
+/// describes the response of any tool, not only a read. Same rule: each reason
+/// says what the file holds.
 ///
 /// What a read reports, or lets a sync skip:
 /// - `agent_movement.rs` -- the ledger movement tool, and the voucher predicate
@@ -145,9 +147,11 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 ///   to vouchers and masters separately, reports `checkpoint_advanceable` only
 ///   when both hold, chooses each axis's next alter id from its own result, and
 ///   refuses a checkpoint past the company snapshot.
+///
+/// And the egress record:
 /// - `agent_receipt_fields.rs` -- `released_fields`, which the egress receipt in
-///   `agent_delivery.rs` uses to describe a released response by its JSON key
-///   paths rather than its values.
+///   `agent_delivery.rs` uses to describe a released tool response by its JSON
+///   key paths rather than its values.
 ///
 /// Not pinned, and deliberately: files feature-gated out of every shipped build
 /// (`agent_lab.rs`, `jsonex*.rs`, `india_tax_observation.rs`), operator filing
