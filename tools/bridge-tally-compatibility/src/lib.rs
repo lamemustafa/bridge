@@ -31,7 +31,7 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// and manifest) but makes further unreviewed additions an explicit
 /// compatibility-surface decision.
 ///
-/// **Raised six times, the first three by branches that did not see each
+/// **Raised seven times, the first three by branches that did not see each
 /// other.** 210 to 211 on master for `src-tauri/src/agent_ledgers.rs`, 211 to
 /// 212 for `src-tauri/crates/bridge-tally-core/src/master_binding.rs`, 212 to
 /// 216 in a single commit for the voucher-presence engine, its adapter, its
@@ -39,8 +39,9 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// taking the slot a paragraph below had already reserved for it by name, which
 /// is why the four pins arrive as one raise and not two -- 216 to 217 for
 /// `.github/workflows/dependency-security-scheduled.yml`, 217 to 218 for
-/// `src-tauri/src/agent_import_identity.rs`, and 218 to 232 for fourteen files
-/// named individually below. Each reason stands; a merge that
+/// `src-tauri/src/agent_import_identity.rs`, 218 to 232 for fourteen files
+/// named individually below, and 232 to 238 for six more. Each reason stands; a
+/// merge that
 /// keeps a raise but loses its pin would pass the gate with behavior silently
 /// outside the evidence boundary, which is the failure this constant exists to
 /// make loud.
@@ -121,13 +122,45 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 ///   the response hash it commits to, and that only a persisted preparation
 ///   yields a write-completion token.
 ///
+/// The raise to 238 binds six more files from the same bridge#416 search. Five
+/// decide what a read tells a caller, or when a sync may move past rows. The
+/// sixth, `agent_receipt_fields.rs`, belongs with the egress record above:
+/// bridge#416 listed it as borderline rather than with the fourteen, and it
+/// describes the response of any tool, not only a read. Same rule: each reason
+/// says what the file holds.
+///
+/// What a read reports, or lets a sync skip:
+/// - `agent_movement.rs` -- the ledger movement tool, and the voucher predicate
+///   it applies after checking the whole window: cancelled, optional and
+///   entryless vouchers are left out of the movement figures.
+/// - `agent_movement_math.rs` -- one ledger's movement row: when an opening was
+///   observed, closing is opening plus debit plus credit; when none was, closing
+///   is left empty and the row is marked `partial` with
+///   `opening_balance_not_observed`.
+/// - `agent_outstandings.rs` -- the outstandings tool's receivable and payable
+///   totals over open bills, and its ageing buckets (0-30, 31-60, 61-90, over 90
+///   days, and unaged).
+/// - `agent_change_parse.rs` -- `checkpoint_advanceable`: true when a page was
+///   not truncated and its highest returned alter id, or the requested
+///   checkpoint when it returned none, reaches the company's high-water mark.
+/// - `agent_changes.rs` -- the changed-since tool, which applies that predicate
+///   to vouchers and masters separately, reports `checkpoint_advanceable` only
+///   when both hold, chooses each axis's next alter id from its own result, and
+///   refuses a checkpoint past the company snapshot.
+///
+/// And the egress record:
+/// - `agent_receipt_fields.rs` -- `released_fields`, which the egress receipt in
+///   `agent_delivery.rs` uses to describe a released tool response by its JSON
+///   key paths rather than its values.
+///
 /// Not pinned, and deliberately: files feature-gated out of every shipped build
 /// (`agent_lab.rs`, `jsonex*.rs`, `india_tax_observation.rs`), operator filing
-/// labels, dead or declaration-only modules, and the read-path files that
-/// compute reported figures or decide when a change cursor may advance. Those
-/// decide what a read says, not what is admitted or where data may go; they are
-/// the next candidates if the boundary widens, and bridge#416 records why.
-pub const MAX_SURFACE_FILES: usize = 232;
+/// labels, dead or declaration-only modules, and `observability.rs`. Its count
+/// bucketing is a real privacy reduction, and the `tally_telemetry_preview`
+/// command returns what it builds, but nothing in the frontend calls that
+/// command and nothing sends its result off the machine. It becomes a candidate
+/// when something does. bridge#416 records the reasoning for the rest.
+pub const MAX_SURFACE_FILES: usize = 238;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
