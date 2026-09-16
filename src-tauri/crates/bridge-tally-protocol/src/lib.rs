@@ -1138,54 +1138,8 @@ pub fn decode_tally_xml_response_bytes_limited(
 }
 
 #[cfg(test)]
-mod tally_xml_response_contract_tests {
-    use super::*;
-
-    #[test]
-    fn missing_charset_defers_to_expected_encoding_without_weakening_byte_checks() {
-        const XML: &str = "<ENVELOPE />";
-
-        let utf8 = decode_tally_xml_response_bytes_limited(
-            XML.as_bytes(),
-            "text/xml",
-            ExpectedTallyTextEncoding::Utf8,
-            1024,
-        )
-        .expect("bare XML content type accepts expected UTF-8 bytes");
-        assert_eq!(utf8.text, XML);
-        assert_eq!(utf8.encoding, TallyTextEncoding::Utf8);
-
-        let utf16_bytes = encode_tally_xml_request_utf16le(XML);
-        let utf16 = decode_tally_xml_response_bytes_limited(
-            &utf16_bytes,
-            "text/xml",
-            ExpectedTallyTextEncoding::Utf16Le,
-            1024,
-        )
-        .expect("bare XML content type accepts expected UTF-16LE bytes");
-        assert_eq!(utf16.text, XML);
-        assert_eq!(utf16.encoding, TallyTextEncoding::Utf16LeBom);
-
-        assert_eq!(
-            decode_tally_xml_response_bytes_limited(
-                XML.as_bytes(),
-                "text/xml; charset=utf-16",
-                ExpectedTallyTextEncoding::Utf8,
-                1024,
-            ),
-            Err(TallyTextDecodeError::DeclaredEncodingMismatch),
-        );
-        assert_eq!(
-            decode_tally_xml_response_bytes_limited(
-                &utf16_bytes,
-                "text/xml",
-                ExpectedTallyTextEncoding::Utf8,
-                1024,
-            ),
-            Err(TallyTextDecodeError::ObservedEncodingMismatch),
-        );
-    }
-}
+#[path = "lib_tally_xml_response_contract_tests.rs"]
+mod tally_xml_response_contract_tests;
 
 fn encode_sha256(bytes: impl AsRef<[u8]>) -> String {
     let mut encoded = String::with_capacity(64);
@@ -2595,57 +2549,8 @@ struct NativeLedgerCollectionRow<T> {
 }
 
 #[cfg(test)]
-mod native_party_ledger_master_identity_tests {
-    use super::*;
-
-    const EXPECTED_COMPANY_GUID: &str = "11111111-1111-1111-1111-111111111111";
-
-    fn master_response(response_company_guid: Option<&str>) -> String {
-        let response_company_guid = response_company_guid
-            .map(|guid| format!("<BRIDGECOMPANYGUID>{guid}</BRIDGECOMPANYGUID>"))
-            .unwrap_or_default();
-        format!(
-            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
-            <LEDGER NAME=\"Imported selected ledger\"><GUID>{EXPECTED_COMPANY_GUID}-00000001</GUID>\
-            <MASTERID>1</MASTERID><ALTERID>1</ALTERID>{response_company_guid}\
-            <PARENT>Sundry Debtors</PARENT><OPENINGBALANCE>-100.00</OPENINGBALANCE></LEDGER>\
-            </COLLECTION></DATA></BODY></ENVELOPE>"
-        )
-    }
-
-    #[test]
-    fn party_ledger_master_requires_a_response_bound_company_guid() {
-        let wrong_company = parse_native_party_ledger_master_records_with_evidence(
-            &master_response(Some("22222222-2222-2222-2222-222222222222")),
-            EXPECTED_COMPANY_GUID,
-        );
-        assert!(
-            wrong_company.is_err(),
-            "an imported selected-prefix ledger cannot prove the responding company"
-        );
-
-        let missing_company = parse_native_party_ledger_master_records_with_evidence(
-            &master_response(None),
-            EXPECTED_COMPANY_GUID,
-        );
-        assert!(
-            missing_company.is_err(),
-            "the dedicated master response must carry Tally's computed company GUID"
-        );
-
-        assert_eq!(
-            parse_native_party_ledger_master_records_with_evidence(
-                &master_response(Some(EXPECTED_COMPANY_GUID)),
-                EXPECTED_COMPANY_GUID,
-            )
-            .unwrap()
-            .records
-            .len(),
-            1,
-            "a matching response-bound company GUID admits the master response"
-        );
-    }
-}
+#[path = "lib_native_party_ledger_master_identity_tests.rs"]
+mod native_party_ledger_master_identity_tests;
 
 /// Parses a native `List of VoucherTypes` collection. Like native ledgers,
 /// the collection has no envelope company context, so at least one row must
