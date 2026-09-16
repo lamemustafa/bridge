@@ -21,6 +21,18 @@ them, through an AI assistant such as Claude Desktop.
   statement or an invoice and it reports which exist in the book and which are
   near-misses needing your decision. Reading the ledger list first is the single
   biggest cause of an import being rejected wholesale when it is skipped.
+- **Records what it read.** Every read keeps the request and response hashes,
+  so a reviewer can confirm a claim came from a real exchange rather than take
+  a summary on trust. Import batches additionally record the endpoint they
+  spoke to and the company they named.
+
+**Writing is off until you turn it on.** Everything above is reading. The write
+tools do not merely refuse when disabled — they are **absent from the tool list
+entirely**, so an assistant cannot see that they exist. Preparing a file needs
+`BRIDGE_AGENT_ENABLE_IMPORT`; posting additionally needs
+`BRIDGE_AGENT_ENABLE_WRITES`, which grants both. Both default to off, so a fresh
+install cannot write to your books even by mistake. With them on:
+
 - **Prepares vouchers as a local file** — Journal, Payment, Receipt and
   Contra. Bridge writes the file; it does not send it.
 - **Posts a single Journal**, and only after you approve that exact voucher in
@@ -28,23 +40,30 @@ them, through an AI assistant such as Claude Desktop.
   Receipt and Contra are prepared but not posted: you import those through
   Tally yourself, and Bridge then reads them back so you can see what actually
   landed.
-- **Records what it did.** Every read and every import keeps the request and
-  response hashes, the endpoint it spoke to and the company it named, so a
-  reviewer can check what actually happened rather than take a summary on
-  trust.
 
 **What it does not do**
 
-- It does not upload your books anywhere, and it has no server of its own.
+- **Your Tally data is never uploaded.** Bridge reads it over a local
+  connection and hands it to the assistant you are talking to; nothing in the
+  Tally path sends it to a server of ours.
 - It will not post anything without a separate, explicit step after the file is
   prepared.
 - It is not a Tally replacement, a reporting suite, or a filing tool.
 
+**One part of the app does upload, and it is not this one.** Bridge also
+contains a document feature that uploads files *you* choose to ComplyEaze cloud
+storage, and an AXAL sign-in. Those are separate and user-initiated, and share
+no code with the Tally path described here — but they ship in the same
+application, so you should know they exist before deciding what to run on a
+machine holding client books. Both are documented under *Integration trust
+boundaries* below.
+
 **One thing to understand before you use it.** When you ask an AI assistant for
 financial data through Bridge, the assistant's provider sees what it reads —
 company names, party names and amounts. That is a property of using a hosted
-assistant, not of Bridge, and Bridge gives you settings to mask party names or
-drop narration before that happens. Decide this deliberately for client data.
+assistant, not of Bridge. Bridge can mask party names or drop narration first
+(`BRIDGE_AGENT_REDACTION`), but **neither setting removes amounts** — figures
+always go with the answer. Decide this deliberately for client data.
 
 ## Installing it
 
