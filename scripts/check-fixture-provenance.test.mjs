@@ -21,6 +21,7 @@ const here = fileURLToPath(new URL(".", import.meta.url));
 const GATE = join(here, "check-fixture-provenance.mjs");
 
 const FIXTURE_DIRS = [
+  "src-tauri/crates/bridge-bank-statement/tests/fixtures",
   "src-tauri/crates/bridge-tally-protocol/tests/fixtures",
   "src-tauri/crates/tally-protocol-simulator/fixtures",
   "docs/tally/compatibility/fixtures",

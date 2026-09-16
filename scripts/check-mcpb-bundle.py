@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Verify and launch a trusted, locally built MCPB archive without contacting Tally."""
 import argparse
+import platform
 import hashlib
 import json
 import os
@@ -18,6 +19,15 @@ DEFAULT_TOOLS = {
     "tally_status", "list_companies", "voucher_schema", "validate_masters", "outstandings",
     "ledger_masters", "ledger_movement", "trial_balance", "vouchers", "voucher_presence", "read_evidence", "egress_log", "verify_import",
 }
+# The bundled PDFium: beside the binary, where parse_bank_statement loads it,
+# with the licence notice scripts/fetch-pdfium.py generated at the root. Both are
+# checked against packaging/pdfium/pdfium.lock.json, not merely present.
+PDFIUM_NOTICE = "THIRD_PARTY_LICENSES_PDFIUM.txt"
+PDFIUM_LIBRARIES = {"darwin": "libpdfium.dylib", "win32": "pdfium.dll"}
+PDFIUM_PLATFORMS = {("darwin", "arm64"): "macos-arm64", ("win32", "amd64"): "windows-x64"}
+ARCHIVE_MEMBERS = len(RESOURCES) + 4  # manifest, binary, PDFium library, PDFium notice
+STATEMENT_FIXTURE = Path("src-tauri/crates/bridge-bank-statement/tests/fixtures/hdfc-synthetic.pdf")
+STATEMENT_PASSWORD = "synthetic-user-4321"
 MAX_BUNDLE_BYTES = 128 * 1024 * 1024
 MAX_OUTPUT_BYTES = 512 * 1024
 
@@ -44,7 +54,7 @@ def unpack_bundle(archive, destination, repository):
     require(archive.stat().st_size <= MAX_BUNDLE_BYTES, "archive_too_large")
     with zipfile.ZipFile(archive) as bundle:
         members = bundle.infolist()
-        require(len(members) == 6, "unexpected_archive_members")
+        require(len(members) == ARCHIVE_MEMBERS, "unexpected_archive_members")
         names = [item.filename for item in members]
         require(len(set(names)) == len(names), "duplicate_archive_member")
         require(sum(item.file_size for item in members) <= MAX_BUNDLE_BYTES,
@@ -59,7 +69,8 @@ def unpack_bundle(archive, destination, repository):
         require(isinstance(entry, str), "invalid_entry_point")
         member_path(entry)
         require(entry.startswith("bin/"), "invalid_entry_point")
-        require(set(names) == set(RESOURCES) | {"manifest.json", entry},
+        library = str(PurePosixPath(entry).parent / PDFIUM_LIBRARIES.get(sys.platform, ""))
+        require(set(names) == set(RESOURCES) | {"manifest.json", entry, library, PDFIUM_NOTICE},
                 "unexpected_archive_members")
         config = manifest["server"]["mcp_config"]
         require(manifest["server"]["type"] == "binary"
@@ -71,6 +82,12 @@ def unpack_bundle(archive, destination, repository):
         for resource in RESOURCES:
             require(bundle.read(resource) == (repository / resource).read_bytes(),
                     "legal_resource_bytes_differ")
+        pin = pdfium_pin(repository)
+        for member, prefix in ((library, "library"), (PDFIUM_NOTICE, "notice")):
+            data = bundle.read(member)
+            require(len(data) == pin[prefix + "_bytes"]
+                    and hashlib.sha256(data).hexdigest() == pin[prefix + "_sha256"],
+                    "pdfium_" + prefix + "_not_pinned")
         for item in members:
             target = destination.joinpath(*member_path(item.filename).parts)
             require(target.resolve().is_relative_to(destination.resolve()),
@@ -83,6 +100,55 @@ def unpack_bundle(archive, destination, repository):
             require(mode & stat.S_IXUSR, "binary_is_not_executable")
             binary.chmod(mode & 0o777)
     return manifest, binary
+
+
+def pdfium_pin(repository, host=None):
+    key = host or (sys.platform, platform.machine().lower())
+    lock = json.loads((repository / "packaging" / "pdfium" / "pdfium.lock.json").read_text(encoding="utf-8"))
+    name = PDFIUM_PLATFORMS.get(key)
+    require(name in lock["platforms"], "pdfium_platform_not_pinned")
+    return lock["platforms"][name]
+
+
+def statement_smoke(command, base_environment, temporary, repository):
+    """Parse the synthetic statement through the unpacked bundle, so the
+    bundled PDFium is proven to load from beside the binary."""
+    work = Path(temporary) / "statement"
+    work.mkdir()
+    statement = work / "statement.pdf"
+    statement.write_bytes((repository / STATEMENT_FIXTURE).read_bytes())
+    password_file = work / "statement.password"
+    descriptor = os.open(password_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(STATEMENT_PASSWORD + "\n")
+    environment = dict(base_environment, BRIDGE_AGENT_ENABLE_WRITES="true",
+                       BRIDGE_AGENT_DATA_DIR=str(work / "data"))
+    arguments = {
+        "statement_path": str(statement), "password_file": str(password_file), "bank": "hdfc",
+        "account_label": "Synthetic CA xx4321", "opening_balance": "1,000.00",
+        "closing_balance": "1,02,200.00", "total_debits": "8,800.00",
+        "total_credits": "1,10,000.00", "bank_ledger": "Synthetic Bank Ledger",
+        "suspense_ledger": "Suspense",
+    }
+    requests = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-06-18", "capabilities": {},
+            "clientInfo": {"name": "bridge-mcpb-smoke", "version": "1.0.0"}}},
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+            "name": "parse_bank_statement", "arguments": arguments}},
+    ]
+    payload = b"".join(json.dumps(request).encode() + b"\n" for request in requests)
+    output, diagnostics = run_bounded([command], payload, environment, timeout=60)
+    require(STATEMENT_PASSWORD.encode() not in output + diagnostics, "statement_password_echoed")
+    replies = [json.loads(line) for line in output.splitlines()]
+    require([reply.get("id") for reply in replies] == [1, 2], "statement_response_ids")
+    call = replies[1].get("result", {})
+    result = call.get("structuredContent", {}).get("result", {})
+    require(call.get("isError") is False and result.get("statement_rows") == 6
+            and result.get("vouchers") == 6 and isinstance(result.get("proposals_id"), str),
+            "statement_parse_failed:" + str(result.get("error", {}).get("code", "no_result")))
+    return result["vouchers"]
 
 
 def run_bounded(command, payload, environment, timeout=15):
@@ -174,7 +240,7 @@ def smoke(archive, repository):
         destination = Path(temporary) / "bundle"
         manifest, binary = unpack_bundle(archive, destination, repository)
         environment = {key: value for key, value in os.environ.items()
-                       if not key.startswith(("BRIDGE_AGENT_", "BRIDGE_TALLY_"))}
+                       if not key.startswith(("BRIDGE_AGENT_", "BRIDGE_TALLY_", "BRIDGE_PDFIUM_"))}
         environment.update(resolve_environment(manifest))
         environment["BRIDGE_AGENT_DATA_DIR"] = str(Path(temporary) / "data")
         requests = [
@@ -196,7 +262,7 @@ def smoke(archive, repository):
         require(replies[0]["result"]["protocolVersion"] == "2025-06-18", "protocol_mismatch")
         server_version = validate_server_version(replies[0], manifest)
         names = [tool["name"] for tool in replies[1]["result"]["tools"]]
-        expected_tools = DEFAULT_TOOLS | ({"build_import_xml", "post_import"}
+        expected_tools = DEFAULT_TOOLS | ({"build_import_xml", "parse_bank_statement", "post_import"}
                                           if environment["BRIDGE_AGENT_ENABLE_WRITES"] == "true" else set())
         require(len(names) == len(expected_tools) and set(names) == expected_tools,
                 "default_tools_mismatch")
@@ -219,10 +285,14 @@ def smoke(archive, repository):
             (Path(temporary) / "data" / "agent-egress.jsonl").read_bytes(),
             output.splitlines(keepends=True)[2],
         )
+        statement_vouchers = statement_smoke(command, environment, temporary, repository)
         return {
             "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
             "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
-            "platform": sys.platform, "archive_entries": 6, "legal_resources": len(RESOURCES),
+            "platform": sys.platform, "archive_entries": ARCHIVE_MEMBERS,
+            "legal_resources": len(RESOURCES) + 1,
+            "pdfium_library_sha256": pdfium_pin(repository)["library_sha256"],
+            "statement_vouchers": statement_vouchers,
             "server_version": server_version,
             "response_ids": [reply["id"] for reply in replies], "response_bytes": len(output),
             "default_tool_count": len(names), "opt_out_tool_count": len(disabled_names),

@@ -440,6 +440,9 @@ impl Server {
     }
 
     pub(super) async fn build_import_xml(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
+        // A proposals file supplies `vouchers`; everything after this line
+        // admits them exactly as it admits inline vouchers.
+        let args = &super::bank_statement::resolve_import_arguments(&self.settings.data_dir, args)?;
         let mut payload = parse_payload(args)?;
         validate_payload(&payload)?;
         let (debit, credit) = totals(&payload.vouchers)?;

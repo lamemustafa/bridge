@@ -58,6 +58,31 @@ capability from assumption, and a completed request from a verified snapshot.
   No statement, password, ledger name or account number lives in this repository — all are
   supplied at run time.
 
+  > **Scoped update, 2026-09-16.** The "still the case on master" paragraph above is stale:
+  > `LIVE_QUALIFIED_VOUCHER_TYPES` now carries Journal, Payment, Receipt and Contra, and a
+  > Bridge-built batch is corrected through `build_import_xml(..., amends_batch_id)`
+  > (`agent_import_amend.rs`), never by a rebuild.
+
+- `parse_bank_statement` (MCP tool, [`src-tauri/crates/bridge-bank-statement`](../../src-tauri/crates/bridge-bank-statement))
+  is the parsing half of the script above, ported to Rust. It reads the PDF through a bundled
+  PDFium rather than `pdftotext`, runs the same geometry, SBI/HDFC profiles, account binding,
+  balance replay and control totals, and proposes Payment / Receipt / Contra vouchers in
+  `build_import_xml`'s input shape. It mints no REMOTEID and writes no XML: Bridge's writer owns
+  identity and rendering. Listed only when imports are enabled.
+
+  Full proposals stay in a private file under the agent data directory; the tool result is a
+  counterparty summary (names marked for `mask_parties`), and the PDF password is read from an
+  owner-only local file named by `password_file`, never from an argument. `build_import_xml`
+  builds from that file when given `proposals_id` and the `proposals_sha256` the parse returned,
+  refusing a file changed since; its vouchers pass the same admission as inline ones. Correct an
+  imported batch by re-parsing with the fixed mapping and building with `amends_batch_id`. The MCPB carries the pinned PDFium beside
+  `bridge_mcp` (see [`packaging/mcpb/README.md`](../../packaging/mcpb/README.md)).
+
+  Its PDF tests need the PDFium library and are ignored by default: fetch the pinned build with
+  `python3 scripts/fetch-pdfium.py --platform macos-arm64 --dest <dir>` (it verifies the SHA-256
+  in `packaging/pdfium/pdfium.lock.json` before extracting), then run
+  `BRIDGE_PDFIUM_LIBRARY=<dir>/libpdfium.dylib cargo test -p bridge-bank-statement -- --ignored`.
+
 ### Statement-layout findings
 
 Behaviour of the **bank's PDF and of `pdftotext`**, not of Tally — so it is recorded here

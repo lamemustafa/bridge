@@ -4,6 +4,12 @@ use super::*;
 const NONBLANK_PATTERN: &str = r"\S";
 const DATE_WIRE_PATTERN: &str = "^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$";
 const BRIDGE_TRANSACTION_ID_PATTERN: &str = "^[A-Za-z0-9_-]+$";
+/// A Bridge batch identity, as `amends_batch_id` publishes it. Until this was
+/// in the vocabulary below, every `tools/call` naming `amends_batch_id` was
+/// refused `argument_invalid:amends_batch_id` before the handler ran: the
+/// amendment path was reachable only by calling the handler directly.
+pub(super) const BRIDGE_BATCH_ID_PATTERN: &str =
+    "^bridge-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$";
 
 pub(super) fn validate_tool_arguments(name: &str, args: &Value) -> Result<(), String> {
     let arguments = args
@@ -189,6 +195,19 @@ fn validate_string_bounds(text: &str, schema: &Value, key: &str) -> Result<(), S
     Ok(())
 }
 
+/// `[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}`, exactly.
+pub(super) fn is_uuid_v4_lowercase(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let hex = |byte: &u8| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte);
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => *byte == b'-',
+            14 => *byte == b'4',
+            19 => matches!(byte, b'8' | b'9' | b'a' | b'b'),
+            _ => hex(byte),
+        })
+}
+
 /// Recognize the finite pattern vocabulary in the published local-tool schema.
 ///
 /// Pattern text is schema authority, but accepting an arbitrary new expression
@@ -217,6 +236,9 @@ fn published_pattern_matches(pattern: &str, text: &str) -> bool {
             let remainder = remainder.strip_prefix(b"-").unwrap_or(remainder);
             remainder.len() == 2 && remainder.iter().all(u8::is_ascii_digit)
         }
+        BRIDGE_BATCH_ID_PATTERN => text
+            .strip_prefix("bridge-")
+            .is_some_and(is_uuid_v4_lowercase),
         BRIDGE_TRANSACTION_ID_PATTERN => {
             !text.is_empty()
                 && text
@@ -275,6 +297,7 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
         "voucher_schema",
         "validate_masters",
         "build_import_xml",
+        "parse_bank_statement",
         "verify_import",
         "post_import",
         "outstandings",
@@ -299,7 +322,11 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
             // Verification is a read-only recovery capability. Keep it
             // available when Journal generation/posting is disabled so an
             // uncertain saved batch can still be checked safely.
-            .filter(|name| import_enabled || *name != "build_import_xml")
+            // Parsing a statement only prepares an import, and its summary
+            // carries counterparty names, so it is opted into with imports.
+            .filter(|name| {
+                import_enabled || !matches!(*name, "build_import_xml" | "parse_bank_statement")
+            })
             .filter(|name| writes_enabled || *name != "post_import")
             // LAB-ONLY: registered only when the `lab-writes` feature is
             // compiled in AND `BRIDGE_LAB_WRITES=1` is set (checked fresh on
@@ -321,8 +348,12 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
                         json!({"type":"object", "additionalProperties":false, "required":["company_guid","ledgers"], "properties":{"company_guid":{"type":"string"},"ledgers":{"type":"array","minItems":1,"maxItems":agent_import::MAX_MASTER_NAMES,"items":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"}}}}),
                     ),
                     "build_import_xml" => (
-                        "Validate a Journal, Payment, Receipt or Contra batch and read its current verification window before writing a local import file. A Payment credits and a Receipt debits a cash/bank ledger against a counterparty established as holding no money, a Contra moves between two of them, and each takes exactly two entries with no voucher number or reference; a Journal is unconstrained. Every build creates a new batch identity, even for reused transaction labels, except an amendment: naming amends_batch_id re-renders vouchers of a batch Bridge built under that batch's identity, so importing the file alters them in place, and it is refused unless each is still in the book exactly as Bridge built it and none was posted natively. If any import outcome is uncertain, preserve the original batch and saved file, then reconcile with verify_import without writing; an amendment is not recovery, and is refused for a voucher not found in the book. Otherwise do not re-import or rebuild the same business event, including a Journal; a repeat observation does not qualify recovery after an unknown outcome. Later changes may exceed read limits. Other voucher types are unqualified. This never dispatches import XML to Tally.",
+                        "Validate a Journal, Payment, Receipt or Contra batch and read its current verification window before writing a local import file. Vouchers are given inline, or as a parse_bank_statement proposals file named by proposals_id with the proposals_sha256 that tool returned; a file changed since is refused, and its vouchers are admitted exactly as inline ones. A Payment credits and a Receipt debits a cash/bank ledger against a counterparty established as holding no money, a Contra moves between two of them, and each takes exactly two entries with no voucher number or reference; a Journal is unconstrained. Every build creates a new batch identity, even for reused transaction labels, except an amendment: naming amends_batch_id re-renders vouchers of a batch Bridge built under that batch's identity, so importing the file alters them in place, and it is refused unless each is still in the book exactly as Bridge built it and none was posted natively. If any import outcome is uncertain, preserve the original batch and saved file, then reconcile with verify_import without writing; an amendment is not recovery, and is refused for a voucher not found in the book. Otherwise do not re-import or rebuild the same business event, including a Journal; a repeat observation does not qualify recovery after an unknown outcome. Later changes may exceed read limits. Other voucher types are unqualified. This never dispatches import XML to Tally.",
                         agent_import::voucher_input_schema(),
+                    ),
+                    "parse_bank_statement" => (
+                        bank_statement::DESCRIPTION,
+                        bank_statement::input_schema(),
                     ),
                     "post_import" => (
                         "Ask the local user to review and approve ONE saved Journal in a native dialog, then attempt posting once and read it back. Requires opt-in. Repeating the original batch only reconciles; never rebuild the same event after a timeout. The model cannot approve it. No master creation, sales, purchase, tax, inventory, alteration or deletion.",
@@ -400,6 +431,9 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
                 let mut tool = json!({"name": name, "description": description, "inputSchema": input_schema});
                 if name == "post_import" {
                     tool["annotations"] = json!({"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true});
+                }
+                if name == "parse_bank_statement" {
+                    tool["annotations"] = json!({"readOnlyHint":true,"destructiveHint":false,"idempotentHint":false,"openWorldHint":false});
                 }
                 if name == "lab_read_inventory" {
                     tool["annotations"] = json!({"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":true});

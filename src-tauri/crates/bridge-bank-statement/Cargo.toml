@@ -1,0 +1,24 @@
+[package]
+name = "bridge-bank-statement"
+version = "0.1.0"
+description = "Turns a password-protected bank-statement PDF into Payment/Receipt/Contra voucher proposals for Bridge's import builder"
+license = "Apache-2.0"
+repository = "https://github.com/lamemustafa/bridge"
+publish = false
+edition = "2021"
+rust-version = "1.96"
+
+[lints]
+workspace = true
+
+[dependencies]
+bridge-tally-primitives = { path = "../bridge-tally-primitives" }
+csv = "1"
+pdfium-render = { version = "=0.9.4", default-features = false, features = ["pdfium_7881", "thread_safe"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.11"
+zeroize = "1"
+
+[dev-dependencies]
+serde_json = "1"
