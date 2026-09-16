@@ -152,7 +152,7 @@ declarations reported 4,336 test lines to me, more than twice the truth. **Match
 the brace, and only for a `mod` whose declaration opens one.**
 
 The distinction and the corrected table are from a parallel measurement in
-`docs/proposed-rust-module-conventions.md` (#414), which reached it first.
+[`rust-module-conventions.md`](./rust-module-conventions.md) (#414), which reached it first.
 
 The same correction applies to the function counts and medians above, and it was
 worth checking rather than assuming: a counter that matches `fn name` picks up
