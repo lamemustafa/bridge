@@ -72,6 +72,44 @@ export function findingsFromReport(report) {
   return [...findings.values()].sort((a, b) => a.id.localeCompare(b.id));
 }
 
+// Bridge has two Rust lockfiles, the app's (`src-tauri/Cargo.lock`) and the
+// tools workspace's (`tools/Cargo.lock`), and one tracking issue. RUSTSEC-2026-0285
+// is why both are audited: the app lockfile was moved to a patched `rustls`
+// while the tools lockfile stayed on a vulnerable one, and an audit of only the
+// first reported nothing. `cargo audit --json` does not name the lockfile it
+// read, so each report arrives paired with the lockfile it came from.
+//
+// Ids stay exactly what `findingsFromReport` produces. The same advisory in both
+// lockfiles is one finding naming both places, not two ids -- adding a lockfile
+// to the id would change the recorded set of an already-tracked advisory and
+// announce a change that moved nothing.
+export function findingsFromReports(entries) {
+  const merged = new Map();
+  for (const { lockfile, report } of entries) {
+    for (const finding of findingsFromReport(report)) {
+      const where = lockfile ? `${finding.package} in \`${lockfile}\`` : finding.package;
+      const current = merged.get(finding.id);
+      if (!current) merged.set(finding.id, { ...finding, package: where });
+      else if (!current.package.split(", ").includes(where)) current.package = `${current.package}, ${where}`;
+    }
+  }
+  return [...merged.values()].sort((a, b) => a.id.localeCompare(b.id));
+}
+
+// `--report <lockfile>=<report.json>` pairs a report with its lockfile; a bare
+// `--report <report.json>` is accepted unlabelled. Split on the first `=` only,
+// so the separator cannot be confused with anything later in the report path.
+export function parseReportArgument(value) {
+  const separator = value.indexOf("=");
+  if (separator === -1) return { lockfile: null, path: value };
+  const lockfile = value.slice(0, separator);
+  const path = value.slice(separator + 1);
+  if (!lockfile || !path) {
+    throw new Error(`audit-tracking-issue: --report expects <lockfile>=<report.json>, got: ${value}`);
+  }
+  return { lockfile, path };
+}
+
 // The recorded set is written into the issue body on its own line so a later
 // run can read back exactly what the last run saw. Comparing against the
 // rendered prose instead would make an editorial change to the issue look
@@ -135,8 +173,8 @@ export function issueBody(findings) {
   return [
     MARKER,
     "",
-    "`cargo audit` reports the following on the default branch, after",
-    "`.cargo/audit.toml`'s ignore list is applied.",
+    "`cargo audit` reports the following on the default branch's Rust",
+    "lockfiles, after `.cargo/audit.toml`'s ignore list is applied.",
     "",
     ...lines,
     "",
@@ -242,16 +280,20 @@ export function apply(plan, run = gh) {
 
 function main() {
   const argv = process.argv.slice(2);
-  let reportPath = null;
+  const reports = [];
   let shouldApply = false;
   for (let i = 0; i < argv.length; i += 1) {
-    if (argv[i] === "--report") reportPath = argv[++i];
-    else if (argv[i] === "--apply") shouldApply = true;
+    if (argv[i] === "--report") {
+      if (i + 1 >= argv.length) throw new Error("audit-tracking-issue: --report needs a value");
+      reports.push(parseReportArgument(argv[++i]));
+    } else if (argv[i] === "--apply") shouldApply = true;
     else throw new Error(`audit-tracking-issue: unknown argument: ${argv[i]}`);
   }
-  if (!reportPath) throw new Error("audit-tracking-issue: --report <path> is required");
+  if (reports.length === 0) throw new Error("audit-tracking-issue: at least one --report is required");
 
-  const findings = findingsFromReport(JSON.parse(readFileSync(reportPath, "utf8")));
+  const findings = findingsFromReports(
+    reports.map(({ lockfile, path }) => ({ lockfile, report: JSON.parse(readFileSync(path, "utf8")) })),
+  );
   // Queried in both modes. A preview that assumed no issue existed could only
   // ever print "create" or "none", which is not a preview of what --apply would
   // do -- it is a different answer that happens to share a format.

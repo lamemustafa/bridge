@@ -19,7 +19,9 @@ import test from "node:test";
 import {
   MARKER,
   findingsFromReport,
+  findingsFromReports,
   issueBody,
+  parseReportArgument,
   planAction,
   recordedIds,
 } from "./audit-tracking-issue.mjs";
@@ -61,6 +63,63 @@ test("a warning with no advisory still gets a stable synthetic id", () => {
 
 test("an empty report yields no findings", () => {
   assert.deepEqual(findingsFromReport({ vulnerabilities: { found: false, list: [] } }), []);
+});
+
+// Two lockfiles, one tracker. RUSTSEC-2026-0285 sat unreported in
+// tools/Cargo.lock because only src-tauri/Cargo.lock was audited.
+const TOOLS_ONLY_REPORT = {
+  vulnerabilities: { found: true, list: [vuln("RUSTSEC-2026-0285", "rustls", "0.23.43", "TLS 1.3 handshake messages")] },
+  warnings: { yanked: [{ package: { name: "chacha20", version: "0.10.1" } }] },
+};
+const APP_ONLY_REPORT = {
+  vulnerabilities: { found: false, list: [] },
+  warnings: { yanked: [{ package: { name: "chacha20", version: "0.10.1" } }] },
+};
+
+test("a finding present only in the second lockfile is still reported", () => {
+  const findings = findingsFromReports([
+    { lockfile: "src-tauri/Cargo.lock", report: APP_ONLY_REPORT },
+    { lockfile: "tools/Cargo.lock", report: TOOLS_ONLY_REPORT },
+  ]);
+  assert.deepEqual(findings.map((f) => f.id), ["RUSTSEC-2026-0285", "yanked:chacha20@0.10.1"]);
+  assert.equal(findings[0].package, "rustls@0.23.43 in `tools/Cargo.lock`");
+});
+
+test("the same advisory in both lockfiles is one finding naming both", () => {
+  const findings = findingsFromReports([
+    { lockfile: "src-tauri/Cargo.lock", report: APP_ONLY_REPORT },
+    { lockfile: "tools/Cargo.lock", report: TOOLS_ONLY_REPORT },
+  ]);
+  assert.equal(
+    findings.find((f) => f.id === "yanked:chacha20@0.10.1").package,
+    "chacha20@0.10.1 in `src-tauri/Cargo.lock`, chacha20@0.10.1 in `tools/Cargo.lock`",
+  );
+});
+
+test("auditing a second lockfile does not change the ids of an already-tracked finding", () => {
+  // The tracker was written from src-tauri alone. The chacha20 yank is in both
+  // lockfiles; if adding tools/Cargo.lock renamed its id, the next run would
+  // announce a change that moved nothing.
+  const tracked = recordedIds(issueBody(findingsFromReport(APP_ONLY_REPORT)));
+  const both = findingsFromReports([
+    { lockfile: "src-tauri/Cargo.lock", report: APP_ONLY_REPORT },
+    { lockfile: "tools/Cargo.lock", report: APP_ONLY_REPORT },
+  ]);
+  assert.equal(planAction(both, { number: 445, ids: tracked }).action, "unchanged");
+});
+
+test("an unlabelled report keeps the single-lockfile rendering", () => {
+  assert.deepEqual(findingsFromReports([{ lockfile: null, report: REPORT }]), findingsFromReport(REPORT));
+});
+
+test("--report pairs a lockfile with its report, or takes a bare path", () => {
+  assert.deepEqual(parseReportArgument("tools/Cargo.lock=tools-audit.json"), {
+    lockfile: "tools/Cargo.lock",
+    path: "tools-audit.json",
+  });
+  assert.deepEqual(parseReportArgument("audit-report.json"), { lockfile: null, path: "audit-report.json" });
+  assert.throws(() => parseReportArgument("=audit.json"), /<lockfile>=<report.json>/);
+  assert.throws(() => parseReportArgument("tools/Cargo.lock="), /<lockfile>=<report.json>/);
 });
 
 // The one that matters: a body this script wrote must be readable by the next

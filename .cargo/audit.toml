@@ -1,6 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# cargo-audit configuration for `cargo audit --file src-tauri/Cargo.lock`.
+# cargo-audit configuration for `cargo audit --file src-tauri/Cargo.lock` and
+# `cargo audit --file tools/Cargo.lock`. Both runs read this one file, so every
+# ignore below applies to both lockfiles. Each entry's reachability note was
+# checked against src-tauri/Cargo.lock; none of the ignored crates (glib,
+# proc-macro-error, unic-*) appears in tools/Cargo.lock as of 2026-09-17, so the
+# list currently suppresses nothing there. Re-check that before adding an entry.
 #
 # cargo-audit resolves this file at `./.cargo/audit.toml`, relative to the
 # process's CURRENT WORKING DIRECTORY -- not relative to `--file`'s lockfile,
