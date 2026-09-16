@@ -1851,43 +1851,14 @@ fn decide(
         },
         touched,
     };
-    // A proposal carrying a key the window never fetched has had that key
-    // silently skipped. That cannot license an absence, and it cannot license
-    // a `Present` on some *other* basis either: the evidence that could have
-    // contradicted the other basis is the evidence that was not gathered.
-    let skipped_evidence =
-        if proposal.remote_id.is_some() && window.remote_id_evidence() == ColumnEvidence::NotRead {
-            Some(UndecidedReason::RemoteIdEvidenceUnavailable)
-        } else if proposal.narration_marker.is_some()
-            && window.narration_evidence() == ColumnEvidence::NotRead
-        {
-            Some(UndecidedReason::MarkerEvidenceUnavailable)
-        } else {
-            None
-        };
+    let skipped_evidence = skipped_evidence(proposal, window);
 
     // Both identity lookups are resolved *before* either settles, so that a
     // `REMOTEID` selecting one voucher while the number selects another can be
     // reported as a disagreement instead of decided by whichever ran first.
     // That is why the number lookup sits above rule one rather than under
     // rule two, where it is used.
-    let number_matches: Vec<usize> = proposal
-        .number_key
-        .as_deref()
-        .map(|number_key| {
-            if type_observed {
-                index
-                    .by_type_and_number
-                    .get(&(proposal.type_key.as_str(), number_key))
-                    .cloned()
-                    .unwrap_or_default()
-            } else {
-                // The type name was never observed, so it discriminates
-                // nothing. Widen rather than manufacture an absence.
-                index.by_number.get(number_key).cloned().unwrap_or_default()
-            }
-        })
-        .unwrap_or_default();
+    let number_matches = number_matches(proposal, index, type_observed);
 
     // A verdict decided before rule three — an identity match as much as a
     // collision — still *reached* whatever it resembles, and the observations
@@ -1903,91 +1874,8 @@ fn decide(
     // itself wrote; only their survival differs (§3.3a, §9.8). Resolving them
     // together is what lets a disagreement be reported instead of decided by
     // whichever branch happened to run first.
-    let lookup = |key: Option<&str>, table: &BTreeMap<&str, Vec<usize>>| -> Vec<usize> {
-        key.and_then(|key| table.get(key))
-            .cloned()
-            .unwrap_or_default()
-    };
-    let remote_id_matches = lookup(proposal.remote_id.as_deref(), &index.by_remote_id);
-    let marker_matches = lookup(proposal.narration_marker.as_deref(), &index.by_marker);
-    // A voucher counted here is still carrying this marker even though it
-    // could not identify anything on its own (`by_ambiguous_marker`). Checking
-    // uniqueness against `marker_matches` alone let one such voucher hide
-    // behind an unrelated identifying one: the identifying voucher looked
-    // unique, and `Present` went out for it while the marker actually named
-    // two book vouchers -- exactly the middle case ambiguous-marker handling
-    // exists to preserve, undone by counting only half of it.
-    let ambiguous_marker_matches = lookup(
-        proposal.narration_marker.as_deref(),
-        &index.by_ambiguous_marker,
-    );
-    let marker_matches_with_ambiguous: Vec<usize> = marker_matches
-        .iter()
-        .copied()
-        .chain(ambiguous_marker_matches.iter().copied())
-        .collect();
-
-    // A collision on one identity cannot erase an already observed match on
-    // another. Retain every resolved identity basis in the operator-facing
-    // candidates and the full touched set before returning the collision.
-    // Otherwise a duplicated source REMOTEID could hide the distinct narration
-    // markers that identify each source row, and the book rows would be
-    // misreported as unmatched.
-    let mut collision_identities = BTreeMap::new();
-    for (positions, rule) in [
-        (&remote_id_matches, CandidateRule::SharedRemoteId),
-        (
-            &marker_matches_with_ambiguous,
-            CandidateRule::SharedNarrationMarker,
-        ),
-    ] {
-        for position in positions {
-            keep_strongest(&mut collision_identities, *position, rule);
-        }
-    }
-    if method == NumberingMethod::Manual {
-        for position in &number_matches {
-            keep_strongest(
-                &mut collision_identities,
-                *position,
-                CandidateRule::SharedVoucherNumber,
-            );
-        }
-    }
-    let collision_touched = collision_identities
-        .keys()
-        .copied()
-        .collect::<BTreeSet<_>>();
-    let mut collision_entries = collision_identities.into_iter().collect::<Vec<_>>();
-    let collision_candidates = candidates_ranked(window, &mut collision_entries);
-
-    // Uniqueness is required on *both* sides, and the proposal side is checked
-    // first: two source rows claiming one identity are undecidable whether or
-    // not the book holds it, and falling through would report both as safe to
-    // import. One loop, because a second basis copying this block by hand is
-    // how the two come to disagree about what a collision is.
-    for (key, counts, matches, reason) in [
-        (
-            proposal.remote_id.as_deref(),
-            proposal_remote_counts,
-            &remote_id_matches,
-            UndecidedReason::RemoteIdCollision,
-        ),
-        (
-            proposal.narration_marker.as_deref(),
-            proposal_marker_counts,
-            &marker_matches_with_ambiguous,
-            UndecidedReason::NarrationMarkerCollision,
-        ),
-    ] {
-        let Some(key) = key else { continue };
-        if counts.get(key).copied() != Some(1) || matches.len() > 1 {
-            return shell(
-                PresenceStatus::PossiblyPresent(undecided(reason, collision_candidates.clone())),
-                with_resemblances(collision_touched.clone()),
-            );
-        }
-    }
+    let identities = IdentityMatches::lookup(proposal, index);
+    let collision = CollisionEvidence::gather(window, &identities, &number_matches, method);
 
     // Rule two: a voucher number is identity only where the numbering method
     // preserves it (§9.8), and only when it is unique on both sides.
@@ -1996,152 +1884,56 @@ fn decide(
     // A number shared by two source rows does not make an unambiguous
     // `REMOTEID` or marker less decisive, and reporting the ambiguity instead
     // would answer a question the proposal had already answered.
-    let stronger_selected = remote_id_matches.len() == 1 || marker_matches.len() == 1;
-
-    // The proposal side comes first, because a collision between two proposals
-    // is a fact about the *source*: it does not become less true because the
-    // book has never seen this voucher type.
-    if !stronger_selected && method == NumberingMethod::Manual {
-        if let Some(number_key) = proposal.number_key.as_deref() {
-            let proposed_twice = proposal_number_counts
-                .get(&(proposal.type_key.as_str(), number_key))
-                .copied()
-                .unwrap_or_default()
-                > 1;
-            if proposed_twice {
-                return shell(
-                    PresenceStatus::PossiblyPresent(undecided(
-                        UndecidedReason::ProposalNumberCollision,
-                        collision_candidates.clone(),
-                    )),
-                    with_resemblances(collision_touched.clone()),
-                );
-            }
-        }
-    }
-
+    let stronger_selected = identities.remote_id.len() == 1 || identities.marker.len() == 1;
     // Manual numbering only decides *within* an observed voucher type: numbers
     // are a per-type series, so a cross-type match is a resemblance.
     let number_decides =
         method == NumberingMethod::Manual && type_observed && !number_matches.is_empty();
-    if !stronger_selected && number_decides && number_matches.len() > 1 {
+
+    if let Some(reason) = collision_reason(
+        proposal,
+        method,
+        &identities,
+        &number_matches,
+        stronger_selected,
+        number_decides,
+        ProposalCounts {
+            remote: proposal_remote_counts,
+            marker: proposal_marker_counts,
+            number: proposal_number_counts,
+        },
+    ) {
         return shell(
-            PresenceStatus::PossiblyPresent(undecided(
-                UndecidedReason::BookNumberCollision,
-                collision_candidates.clone(),
-            )),
-            with_resemblances(collision_touched.clone()),
+            PresenceStatus::PossiblyPresent(undecided(reason, collision.candidates)),
+            with_resemblances(collision.touched),
         );
     }
 
-    // A strong identity that uniquely selects a book voucher conflicts with a
-    // supplied manual number absent from that voucher series. Treat the two
-    // identities as contradictory rather than allowing the stronger key to
-    // settle a row whose number evidence disagrees.
-    if stronger_selected
-        && method == NumberingMethod::Manual
-        && proposal.number_key.is_some()
-        && number_matches.is_empty()
-    {
-        return shell(
-            PresenceStatus::PossiblyPresent(undecided(
-                UndecidedReason::IdentityConflict,
-                collision_candidates.clone(),
-            )),
-            with_resemblances(collision_touched.clone()),
-        );
-    }
-
-    // Everything that resolved to exactly one book voucher, strongest basis
-    // first. Nothing has settled yet, which is the whole point: a disagreement
-    // between any two of them is still reportable.
-    let mut selections: Vec<(PresenceBasis, usize)> = Vec::new();
-    if let [position] = remote_id_matches[..] {
-        selections.push((PresenceBasis::RemoteId, position));
-    }
-    if let [position] = marker_matches[..] {
-        selections.push((PresenceBasis::NarrationMarker, position));
-    }
-    // A proposal-side duplicate makes the number unusable as an identity
-    // basis. It must stay out of `selections` even when a stronger basis has
-    // already selected a voucher; otherwise the duplicate number can turn a
-    // sound identity match into a false cross-basis conflict.
-    let number_is_unique_in_proposal = proposal.number_key.as_deref().is_some_and(|number_key| {
-        proposal_number_counts
-            .get(&(proposal.type_key.as_str(), number_key))
-            .copied()
-            == Some(1)
-    });
-    if number_decides && number_is_unique_in_proposal && number_matches.len() == 1 {
-        selections.push((PresenceBasis::ManualVoucherNumber, number_matches[0]));
-    }
-
+    let selections = identity_selections(
+        proposal,
+        &identities,
+        &number_matches,
+        number_decides,
+        proposal_number_counts,
+    );
     if let Some(&(basis, position)) = selections.first() {
-        // An ambiguous narration never becomes an identity selection. It still
-        // contradicts any identity selecting a *different* voucher: the
-        // proposal's exact marker was observed on that other voucher, and
-        // settling would discard it. Keep that occurrence in the candidate and
-        // touched sets for the operator who must decide between the rows.
-        let ambiguous_marker_conflict = ambiguous_marker_matches
-            .iter()
-            .any(|other| *other != position);
         let touched = with_resemblances(
             selections
                 .iter()
                 .map(|(_, at)| *at)
-                .chain(ambiguous_marker_matches.iter().copied())
+                .chain(identities.ambiguous_marker.iter().copied())
                 .collect(),
         );
-        // Two selections can name the *same* book voucher by different rules
-        // (`REMOTEID` and the marker both landing on A while the number
-        // selects B): mapping every selection straight into a candidate would
-        // list A twice and report a `candidate_count` one higher than the
-        // number of book vouchers actually in play. Collapse by position to
-        // the strongest rule first, the same helper `resemblances` uses for
-        // the same reason.
-        let ranked = || {
-            let mut found: BTreeMap<usize, CandidateRule> = BTreeMap::new();
-            for &(basis, at) in &selections {
-                keep_strongest(&mut found, at, basis.candidate_rule());
-            }
-            if ambiguous_marker_conflict {
-                for &at in &ambiguous_marker_matches {
-                    keep_strongest(&mut found, at, CandidateRule::SharedNarrationMarker);
-                }
-            }
-            let mut entries = found.into_iter().collect::<Vec<_>>();
-            candidates_ranked(window, &mut entries)
-        };
-        // Evidence that was never gathered cannot settle a `Present` either.
-        // This withholding precedes conflict classification: an unread column
-        // cannot establish that a selected voucher omitted the supplied value.
-        if let Some(reason) = skipped_evidence {
-            return shell(
-                PresenceStatus::PossiblyPresent(undecided(reason, ranked())),
-                touched,
-            );
-        }
-        // Two identity signals that disagree are reported, never ranked — the
-        // same rule ADR 0016 applies when an identifier contradicts an exact
-        // name. They can disagree two ways: by selecting different vouchers,
-        // or by agreeing on one that names a different identity than the
-        // proposal does.
-        if ambiguous_marker_conflict
-            || selections.iter().any(|&(_, other)| other != position)
-            || contradicts(proposal, &window.vouchers[position])
-        {
-            return shell(
-                PresenceStatus::PossiblyPresent(undecided(
-                    UndecidedReason::IdentityConflict,
-                    ranked(),
-                )),
-                touched,
-            );
-        }
-        return shell(
-            settled(proposal, party, &window.vouchers[position], basis),
-            touched,
+        let status = selected_status(
+            proposal,
+            party,
+            window,
+            &identities,
+            &selections,
+            (basis, position),
+            skipped_evidence,
         );
+        return shell(status, touched);
     }
 
     // Rule three: everything else is resemblance, and resemblance decides
@@ -2149,50 +1941,10 @@ fn decide(
     let found = resemblances(proposal, party, window, index, &number_matches);
 
     if found.is_empty() {
-        // Nothing resembled it — but an absence is only evidence when every
-        // key this proposal carries was actually compared.
-        if let Some(reason) = skipped_evidence {
-            return shell(
-                PresenceStatus::PossiblyPresent(undecided(reason, (Vec::new(), 0))),
-                BTreeSet::new(),
-            );
-        }
-        // Under a Manual declaration the number is the deciding key. A
-        // proposal that supplies none has offered nothing decisive, so an
-        // absence would rest on date, party and amount — which this contract
-        // does not let decide.
-        if method == NumberingMethod::Manual && proposal.number_key.is_none() {
-            return shell(
-                PresenceStatus::PossiblyPresent(undecided(
-                    UndecidedReason::ManualNumberNotSupplied,
-                    (Vec::new(), 0),
-                )),
-                BTreeSet::new(),
-            );
-        }
-        if party.incomplete {
-            let reason = match party.outcome {
-                PartyOutcome::NotSupplied => UndecidedReason::PartyNotSupplied,
-                _ => UndecidedReason::PartyNotDecidable,
-            };
-            return shell(
-                PresenceStatus::PossiblyPresent(undecided(reason, (Vec::new(), 0))),
-                BTreeSet::new(),
-            );
-        }
-        // Every other decisive key was either absent or already compared —
-        // but `Absent` claims "not anywhere in this window", and that claim
-        // is only sound when the window's own read covered its whole range.
-        if window.read() != WindowRead::Complete {
-            return shell(
-                PresenceStatus::PossiblyPresent(undecided(
-                    UndecidedReason::WindowNotProvenComplete,
-                    (Vec::new(), 0),
-                )),
-                BTreeSet::new(),
-            );
-        }
-        return shell(PresenceStatus::Absent, BTreeSet::new());
+        return shell(
+            unresembled_status(proposal, party, window, method, skipped_evidence),
+            BTreeSet::new(),
+        );
     }
 
     let touched = found.keys().copied().collect::<BTreeSet<_>>();
@@ -2217,6 +1969,359 @@ fn decide(
         PresenceStatus::PossiblyPresent(undecided(reason, ranked)),
         touched,
     )
+}
+
+/// A proposal carrying a key the window never fetched has had that key
+/// silently skipped. That cannot license an absence, and it cannot license
+/// a `Present` on some *other* basis either: the evidence that could have
+/// contradicted the other basis is the evidence that was not gathered.
+fn skipped_evidence(proposal: &ProposedVoucher, window: &BookWindow) -> Option<UndecidedReason> {
+    if proposal.remote_id.is_some() && window.remote_id_evidence() == ColumnEvidence::NotRead {
+        Some(UndecidedReason::RemoteIdEvidenceUnavailable)
+    } else if proposal.narration_marker.is_some()
+        && window.narration_evidence() == ColumnEvidence::NotRead
+    {
+        Some(UndecidedReason::MarkerEvidenceUnavailable)
+    } else {
+        None
+    }
+}
+
+/// Book vouchers carrying the proposal's voucher number, within its type when
+/// the type was observed.
+fn number_matches(
+    proposal: &ProposedVoucher,
+    index: &WindowIndex<'_>,
+    type_observed: bool,
+) -> Vec<usize> {
+    proposal
+        .number_key
+        .as_deref()
+        .map(|number_key| {
+            if type_observed {
+                index
+                    .by_type_and_number
+                    .get(&(proposal.type_key.as_str(), number_key))
+                    .cloned()
+                    .unwrap_or_default()
+            } else {
+                // The type name was never observed, so it discriminates
+                // nothing. Widen rather than manufacture an absence.
+                index.by_number.get(number_key).cloned().unwrap_or_default()
+            }
+        })
+        .unwrap_or_default()
+}
+
+/// The book vouchers each of the proposal's own identity keys reaches.
+struct IdentityMatches {
+    remote_id: Vec<usize>,
+    marker: Vec<usize>,
+    ambiguous_marker: Vec<usize>,
+    marker_with_ambiguous: Vec<usize>,
+}
+
+impl IdentityMatches {
+    fn lookup(proposal: &ProposedVoucher, index: &WindowIndex<'_>) -> Self {
+        let lookup = |key: Option<&str>, table: &BTreeMap<&str, Vec<usize>>| -> Vec<usize> {
+            key.and_then(|key| table.get(key))
+                .cloned()
+                .unwrap_or_default()
+        };
+        let remote_id = lookup(proposal.remote_id.as_deref(), &index.by_remote_id);
+        let marker = lookup(proposal.narration_marker.as_deref(), &index.by_marker);
+        // A voucher counted here is still carrying this marker even though it
+        // could not identify anything on its own (`by_ambiguous_marker`). Checking
+        // uniqueness against `marker_matches` alone let one such voucher hide
+        // behind an unrelated identifying one: the identifying voucher looked
+        // unique, and `Present` went out for it while the marker actually named
+        // two book vouchers -- exactly the middle case ambiguous-marker handling
+        // exists to preserve, undone by counting only half of it.
+        let ambiguous_marker = lookup(
+            proposal.narration_marker.as_deref(),
+            &index.by_ambiguous_marker,
+        );
+        let marker_with_ambiguous: Vec<usize> = marker
+            .iter()
+            .copied()
+            .chain(ambiguous_marker.iter().copied())
+            .collect();
+        Self {
+            remote_id,
+            marker,
+            ambiguous_marker,
+            marker_with_ambiguous,
+        }
+    }
+}
+
+/// What an operator is shown when a collision leaves the proposal undecided.
+struct CollisionEvidence {
+    touched: BTreeSet<usize>,
+    candidates: (Vec<PresenceCandidate>, usize),
+}
+
+impl CollisionEvidence {
+    /// A collision on one identity cannot erase an already observed match on
+    /// another. Retain every resolved identity basis in the operator-facing
+    /// candidates and the full touched set before returning the collision.
+    /// Otherwise a duplicated source REMOTEID could hide the distinct narration
+    /// markers that identify each source row, and the book rows would be
+    /// misreported as unmatched.
+    fn gather(
+        window: &BookWindow,
+        identities: &IdentityMatches,
+        number_matches: &[usize],
+        method: NumberingMethod,
+    ) -> Self {
+        let mut collision_identities = BTreeMap::new();
+        for (positions, rule) in [
+            (&identities.remote_id, CandidateRule::SharedRemoteId),
+            (
+                &identities.marker_with_ambiguous,
+                CandidateRule::SharedNarrationMarker,
+            ),
+        ] {
+            for position in positions {
+                keep_strongest(&mut collision_identities, *position, rule);
+            }
+        }
+        if method == NumberingMethod::Manual {
+            for position in number_matches {
+                keep_strongest(
+                    &mut collision_identities,
+                    *position,
+                    CandidateRule::SharedVoucherNumber,
+                );
+            }
+        }
+        let touched = collision_identities
+            .keys()
+            .copied()
+            .collect::<BTreeSet<_>>();
+        let mut collision_entries = collision_identities.into_iter().collect::<Vec<_>>();
+        let candidates = candidates_ranked(window, &mut collision_entries);
+        Self {
+            touched,
+            candidates,
+        }
+    }
+}
+
+/// How many proposals in the request carry each identity key.
+struct ProposalCounts<'a, 'b> {
+    remote: &'a BTreeMap<&'b str, usize>,
+    marker: &'a BTreeMap<&'b str, usize>,
+    number: &'a BTreeMap<(&'b str, &'b str), usize>,
+}
+
+/// The collision, if any, that leaves the proposal undecided before any
+/// identity may settle it. The checks run in this order and the first wins.
+fn collision_reason(
+    proposal: &ProposedVoucher,
+    method: NumberingMethod,
+    identities: &IdentityMatches,
+    number_matches: &[usize],
+    stronger_selected: bool,
+    number_decides: bool,
+    counts: ProposalCounts<'_, '_>,
+) -> Option<UndecidedReason> {
+    // Uniqueness is required on *both* sides, and the proposal side is checked
+    // first: two source rows claiming one identity are undecidable whether or
+    // not the book holds it, and falling through would report both as safe to
+    // import. One loop, because a second basis copying this block by hand is
+    // how the two come to disagree about what a collision is.
+    for (key, key_counts, matches, reason) in [
+        (
+            proposal.remote_id.as_deref(),
+            counts.remote,
+            &identities.remote_id,
+            UndecidedReason::RemoteIdCollision,
+        ),
+        (
+            proposal.narration_marker.as_deref(),
+            counts.marker,
+            &identities.marker_with_ambiguous,
+            UndecidedReason::NarrationMarkerCollision,
+        ),
+    ] {
+        let Some(key) = key else { continue };
+        if key_counts.get(key).copied() != Some(1) || matches.len() > 1 {
+            return Some(reason);
+        }
+    }
+
+    // The proposal side comes first, because a collision between two proposals
+    // is a fact about the *source*: it does not become less true because the
+    // book has never seen this voucher type.
+    if !stronger_selected && method == NumberingMethod::Manual {
+        if let Some(number_key) = proposal.number_key.as_deref() {
+            let proposed_twice = counts
+                .number
+                .get(&(proposal.type_key.as_str(), number_key))
+                .copied()
+                .unwrap_or_default()
+                > 1;
+            if proposed_twice {
+                return Some(UndecidedReason::ProposalNumberCollision);
+            }
+        }
+    }
+
+    if !stronger_selected && number_decides && number_matches.len() > 1 {
+        return Some(UndecidedReason::BookNumberCollision);
+    }
+
+    // A strong identity that uniquely selects a book voucher conflicts with a
+    // supplied manual number absent from that voucher series. Treat the two
+    // identities as contradictory rather than allowing the stronger key to
+    // settle a row whose number evidence disagrees.
+    if stronger_selected
+        && method == NumberingMethod::Manual
+        && proposal.number_key.is_some()
+        && number_matches.is_empty()
+    {
+        return Some(UndecidedReason::IdentityConflict);
+    }
+    None
+}
+
+/// Everything that resolved to exactly one book voucher, strongest basis
+/// first. Nothing has settled yet, which is the whole point: a disagreement
+/// between any two of them is still reportable.
+fn identity_selections(
+    proposal: &ProposedVoucher,
+    identities: &IdentityMatches,
+    number_matches: &[usize],
+    number_decides: bool,
+    proposal_number_counts: &BTreeMap<(&str, &str), usize>,
+) -> Vec<(PresenceBasis, usize)> {
+    let mut selections: Vec<(PresenceBasis, usize)> = Vec::new();
+    if let [position] = identities.remote_id[..] {
+        selections.push((PresenceBasis::RemoteId, position));
+    }
+    if let [position] = identities.marker[..] {
+        selections.push((PresenceBasis::NarrationMarker, position));
+    }
+    // A proposal-side duplicate makes the number unusable as an identity
+    // basis. It must stay out of `selections` even when a stronger basis has
+    // already selected a voucher; otherwise the duplicate number can turn a
+    // sound identity match into a false cross-basis conflict.
+    let number_is_unique_in_proposal = proposal.number_key.as_deref().is_some_and(|number_key| {
+        proposal_number_counts
+            .get(&(proposal.type_key.as_str(), number_key))
+            .copied()
+            == Some(1)
+    });
+    if number_decides && number_is_unique_in_proposal && number_matches.len() == 1 {
+        selections.push((PresenceBasis::ManualVoucherNumber, number_matches[0]));
+    }
+    selections
+}
+
+/// The verdict once at least one identity selected a book voucher; `first` is
+/// the strongest selection.
+fn selected_status(
+    proposal: &ProposedVoucher,
+    party: &PartyResolution,
+    window: &BookWindow,
+    identities: &IdentityMatches,
+    selections: &[(PresenceBasis, usize)],
+    (basis, position): (PresenceBasis, usize),
+    skipped_evidence: Option<UndecidedReason>,
+) -> PresenceStatus {
+    // An ambiguous narration never becomes an identity selection. It still
+    // contradicts any identity selecting a *different* voucher: the
+    // proposal's exact marker was observed on that other voucher, and
+    // settling would discard it. Keep that occurrence in the candidate and
+    // touched sets for the operator who must decide between the rows.
+    let ambiguous_marker_conflict = identities
+        .ambiguous_marker
+        .iter()
+        .any(|other| *other != position);
+    // Two selections can name the *same* book voucher by different rules
+    // (`REMOTEID` and the marker both landing on A while the number
+    // selects B): mapping every selection straight into a candidate would
+    // list A twice and report a `candidate_count` one higher than the
+    // number of book vouchers actually in play. Collapse by position to
+    // the strongest rule first, the same helper `resemblances` uses for
+    // the same reason.
+    let ranked = || {
+        let mut found: BTreeMap<usize, CandidateRule> = BTreeMap::new();
+        for &(basis, at) in selections {
+            keep_strongest(&mut found, at, basis.candidate_rule());
+        }
+        if ambiguous_marker_conflict {
+            for &at in &identities.ambiguous_marker {
+                keep_strongest(&mut found, at, CandidateRule::SharedNarrationMarker);
+            }
+        }
+        let mut entries = found.into_iter().collect::<Vec<_>>();
+        candidates_ranked(window, &mut entries)
+    };
+    // Evidence that was never gathered cannot settle a `Present` either.
+    // This withholding precedes conflict classification: an unread column
+    // cannot establish that a selected voucher omitted the supplied value.
+    if let Some(reason) = skipped_evidence {
+        return PresenceStatus::PossiblyPresent(undecided(reason, ranked()));
+    }
+    // Two identity signals that disagree are reported, never ranked — the
+    // same rule ADR 0016 applies when an identifier contradicts an exact
+    // name. They can disagree two ways: by selecting different vouchers,
+    // or by agreeing on one that names a different identity than the
+    // proposal does.
+    if ambiguous_marker_conflict
+        || selections.iter().any(|&(_, other)| other != position)
+        || contradicts(proposal, &window.vouchers[position])
+    {
+        return PresenceStatus::PossiblyPresent(undecided(
+            UndecidedReason::IdentityConflict,
+            ranked(),
+        ));
+    }
+    settled(proposal, party, &window.vouchers[position], basis)
+}
+
+/// The verdict when nothing in the window resembles the proposal.
+fn unresembled_status(
+    proposal: &ProposedVoucher,
+    party: &PartyResolution,
+    window: &BookWindow,
+    method: NumberingMethod,
+    skipped_evidence: Option<UndecidedReason>,
+) -> PresenceStatus {
+    // Nothing resembled it — but an absence is only evidence when every
+    // key this proposal carries was actually compared.
+    if let Some(reason) = skipped_evidence {
+        return PresenceStatus::PossiblyPresent(undecided(reason, (Vec::new(), 0)));
+    }
+    // Under a Manual declaration the number is the deciding key. A
+    // proposal that supplies none has offered nothing decisive, so an
+    // absence would rest on date, party and amount — which this contract
+    // does not let decide.
+    if method == NumberingMethod::Manual && proposal.number_key.is_none() {
+        return PresenceStatus::PossiblyPresent(undecided(
+            UndecidedReason::ManualNumberNotSupplied,
+            (Vec::new(), 0),
+        ));
+    }
+    if party.incomplete {
+        let reason = match party.outcome {
+            PartyOutcome::NotSupplied => UndecidedReason::PartyNotSupplied,
+            _ => UndecidedReason::PartyNotDecidable,
+        };
+        return PresenceStatus::PossiblyPresent(undecided(reason, (Vec::new(), 0)));
+    }
+    // Every other decisive key was either absent or already compared —
+    // but `Absent` claims "not anywhere in this window", and that claim
+    // is only sound when the window's own read covered its whole range.
+    if window.read() != WindowRead::Complete {
+        return PresenceStatus::PossiblyPresent(undecided(
+            UndecidedReason::WindowNotProvenComplete,
+            (Vec::new(), 0),
+        ));
+    }
+    PresenceStatus::Absent
 }
 
 /// The selected voucher names a different identity than the proposal does.
