@@ -1816,6 +1816,62 @@ def test_ownership_registration_preserves_an_unproven_reclaimed_path(m):
         assert str(path) in notes
 
 
+def test_a_reclaimed_fresh_path_is_not_named_when_the_created_inode_is_gone(m):
+    """A foreign writer that reclaims the pathname must be neither removed nor
+    named as a retained owned output.
+
+    `_unlink_for_cleanup` names a reclaimed path on purpose -- its comment says
+    reporting it "gives the operator a chance to find the private copy if it
+    still exists". On this path that reason is known to be false: the created
+    pin proves zero links, so this run's inode is gone and there is no private
+    copy to find. What the name would point at is whatever the other writer put
+    there.
+
+    The race is real and constructed, not simulated: `os.replace` moves a
+    foreign file onto the claimed name, which unlinks the inode this run
+    created while its descriptor still pins it. The first `_fd_identity` fails
+    so the fallback is entered, and the retry succeeds so the *identity-proven*
+    branch is the one exercised -- the branch this issue names.
+    """
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        path = root / "fresh.xml"
+        foreign = root / "foreign.xml"
+        handle = m._open_private(path)
+        foreign.write_text("foreign writer bytes")
+        os.replace(foreign, path)          # unlinks our inode; pin survives
+
+        real_identity = m._fd_identity
+        calls = []
+
+        def fail_first_then_recover(h):
+            calls.append(h)
+            if len(calls) == 1:
+                raise OSError("transient fstat failure")
+            return real_identity(h)
+
+        m._fd_identity = fail_first_then_recover
+        try:
+            try:
+                m._owned_path(path, handle, created=True)
+                raise AssertionError("the registration failure must escape")
+            except OSError as error:
+                notes = "\n".join(getattr(error, "__notes__", []))
+        finally:
+            m._fd_identity = real_identity
+
+        assert len(calls) >= 2, (
+            "the retry must have run, or this exercises the unproven branch "
+            "instead of the identity-proven one this issue is about")
+        assert path.read_text() == "foreign writer bytes", (
+            "the foreign file must not be removed")
+        assert str(path) not in notes, (
+            "a reclaimed name must not be reported as a retained owned output "
+            f"once the created inode has no links; got: {notes}")
+
+
 def test_original_pin_registration_failure_preserves_existing_output(m):
     """A created=False pin failure re-raises the same error and closes its FD."""
     with tempfile.TemporaryDirectory() as directory:
