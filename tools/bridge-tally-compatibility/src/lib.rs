@@ -72,41 +72,49 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 ///
 /// The raise to 231 binds thirteen files at once, which reads like headroom and
 /// is not: each is named here with its own reason, and none was chosen to fill
-/// space. They were found together (bridge#416) because each is the unpinned
-/// half of a pair whose other half was already pinned -- the pinned module
-/// declares them, or the pinned caller depends on the rule they hold -- so the
-/// reasoning that pinned one half never reached the other. Each decides, in its
-/// own file, what Bridge admits into a book or lets leave the machine; an edit
-/// confined to it would leave the surface digest unchanged.
+/// space. They were found together (bridge#416) by looking for unpinned
+/// production modules declared by pinned ones, then keeping only those whose
+/// own body holds a rule about what Bridge posts or prepares for posting, or
+/// what may leave the machine. An edit confined to any of them would leave the
+/// surface digest unchanged. Each reason says what the file holds, not that it
+/// holds all of a guarantee: several guarantees here are shared with pinned
+/// files, and a reason that claimed the whole of one would be false.
 ///
-/// Admission into a book:
-/// - `tally/approved_import.rs` -- whether the operator's dialog counts as
-///   consent to post, and that only the explicit post button does.
-/// - `agent_import_post.rs` -- the only POST path, and the guard that stops one
-///   approved batch posting twice.
-/// - `agent_company.rs` -- that exactly one loaded company matches the
-///   requested identity; import admission and the company-scoped read tools
-///   rely on it.
+/// What Bridge posts, or prepares for posting:
+/// - `tally/approved_import.rs` -- the operator approval dialog, and which
+///   choice counts as consent (the named post button, or Yes on Windows).
+/// - `agent_import_post.rs` -- the MCP post handler, which admits only a
+///   single saved Journal batch, and its half of the refusal to post one batch
+///   twice; the other half is in `agent_import.rs`.
+/// - `agent_company.rs` -- finding the loaded company whose GUID matches the
+///   request and refusing when none or several do; import admission and the
+///   MCP read tools call it.
 /// - `agent_import_cash_bank.rs` -- the reserved-group tables deciding which
-///   ledgers may sit on the money leg of a Payment, Receipt or Contra.
+///   ledgers may sit on the cash/bank side of a Payment, Receipt or Contra in
+///   an import file Bridge builds.
 /// - `bridge-tally-protocol/src/group_ancestry.rs` -- the ancestry walk under
 ///   those tables; its other callers were already pinned and it was not.
-/// - `agent_import_persistence.rs` -- refuses a new import while an earlier
-///   publication is unsettled.
-/// - `tally/runtime_control.rs` -- which read failures are retryable; widening
-///   it re-sends a request `tally/runtime.rs` marked single-attempt.
-/// - `endpoint_coordination.rs` -- the exclusive per-listener lease taken
-///   before a post, so two processes cannot post to one Tally at once.
+/// - `agent_import_persistence.rs` -- whether an earlier import publication has
+///   settled, checked every time the import admission lock is taken.
+/// - `tally/runtime_control.rs` -- the read retry loop: the attempt limits,
+///   including the single-attempt policy, and which failures may repeat a
+///   request.
+/// - `endpoint_coordination.rs` -- the advisory per-user, per-port lease the
+///   shipped post path takes before dispatch, so two Bridge processes do not
+///   post to one Tally listener at once.
 ///
 /// What leaves the machine, and the record of it:
-/// - `documents.rs` -- the origin allowlist for uploading customer documents.
-/// - `axal.rs` -- where credentialed requests may go, and that a redirect never
-///   carries the credentials onward.
-/// - `agent_protocol.rs` -- that the egress receipt is persisted before the
-///   response is written.
-/// - `agent_egress.rs` -- the append-only egress log, and its refusal to read a
-///   torn final row as evidence.
-/// - `agent_delivery.rs` -- what a receipt hashes, which is what it attests.
+/// - `documents.rs` -- which storage URLs customer documents may be uploaded
+///   to, and the file checks made before an upload.
+/// - `axal.rs` -- which AXAL API origins may receive credentialed requests,
+///   and that its API client follows no redirects.
+/// - `agent_protocol.rs` -- the MCP response loop, which records an egress
+///   receipt for a tool response before writing it and decides what is sent
+///   when recording fails.
+/// - `agent_egress.rs` -- the egress log: a failed append is rolled back, and a
+///   torn final row is refused rather than read as evidence.
+/// - `agent_delivery.rs` -- what an egress receipt hashes, which is what it
+///   attests.
 ///
 /// Not pinned, and deliberately: files feature-gated out of every shipped build
 /// (`agent_lab.rs`, `jsonex*.rs`, `india_tax_observation.rs`), operator filing

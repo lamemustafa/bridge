@@ -1,12 +1,12 @@
 //! The thirteen files pinned by the raise to 231 (bridge#416) must stay pinned.
 //!
 //! The compatibility gate cannot notice a pin disappearing. `rehash-surface`
-//! updates hashes and never adds paths, and the only correct way to resolve a
-//! conflict in a generated artifact is to take one side and regenerate -- so a
-//! merge that takes the base side of `compatibility-surface.json` drops every
-//! entry a branch added while keeping the raised `MAX_SURFACE_FILES`, and the
-//! gate passes. `book_presence_tests.rs` guards its own contract's pins the same
-//! way, for the same reason.
+//! updates hashes and never adds paths. `docs/release-process.md` requires the
+//! pin list to be merged rather than resolved by taking one side; a resolution
+//! that takes the base side anyway drops every entry a branch added while
+//! keeping the raised `MAX_SURFACE_FILES`, and the gate passes. So does the cap
+//! assertion, which bounds headroom and would pass with all thirteen dropped.
+//! `book_presence_tests.rs` guards its own contract's pins the same way.
 //!
 //! This file is deliberately not pinned itself: a guard that lived in the
 //! surface would be resolved away by the same merge it exists to catch.
