@@ -978,7 +978,8 @@ and master ID), and only then record the type as qualified.
 > **Scoped correction, 2026-09-16 — changed payloads were measured over the gateway, and they
 > replace.** The paragraph below was right that nothing had measured them; it no longer describes
 > the licensed gateway path. On **licensed TallyPrime 7.1 Silver**, over the XML gateway, into a
-> synthetic company, using the envelope and voucher element shape `render_import_xml` produces:
+> synthetic company, using hand-built XML that copies the envelope and voucher element shape
+> `render_import_xml` produces. None of it was sent through Bridge's own binary:
 >
 > | Voucher | Sent again under the same `REMOTEID` | Response | Readback |
 > |---|---|---|---|
@@ -992,8 +993,9 @@ and master ID), and only then record the type as qualified.
 > | Contra | amount changed | `CREATED=0 ALTERED=1` | as sent |
 > | Payment | re-sent as a **Receipt** | `CREATED=0 ALTERED=1` | **now a Receipt** |
 >
-> The first two Journal and Payment rows are bridge#429; the rest are a follow-up the same day, in
-> which every other counter was zero, including `EXCEPTIONS`. Exactly one voucher carried each marker
+> The Journal amount and entry-removal rows and the three-entry Payment row are bridge#429; the rest
+> are a follow-up the same day, in which every other counter was zero, including `EXCEPTIONS`. Date
+> and voucher-type replacement were each observed on a Payment only. Exactly one voucher carried each marker
 > afterwards and `ALTERID` advanced on every alteration. **Same object:** each voucher kept the GUID
 > it was created with, and creations interleaved with the alterations took the next GUIDs, so no
 > alteration allocated a new object.

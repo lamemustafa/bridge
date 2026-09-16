@@ -300,6 +300,13 @@ fn an_edited_missing_or_cancelled_voucher_refuses_the_amendment() {
     edited.entries[0].amount = "13.00".into();
     edited.entries[1].amount = "-13.00".into();
     assert_eq!(reason(vec![edited]), "book_voucher_diverged");
+    // The import rewrites the narration as well, so an edit to it is a change.
+    let mut renarrated = book_row(&original);
+    renarrated.narration = Some(format!(
+        "Paid by cheque [BRIDGE:{}]",
+        original.attribution_tag(&original.vouchers[0])
+    ));
+    assert_eq!(reason(vec![renarrated]), "book_voucher_diverged");
     let mut redated = book_row(&original);
     redated.date = Some("20260905".into());
     assert_eq!(reason(vec![redated]), "book_voucher_diverged");

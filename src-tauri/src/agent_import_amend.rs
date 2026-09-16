@@ -17,6 +17,10 @@
 //! same batch-derived UUID. A natively posted batch carried that marker beside a
 //! random private REMOTEID, so an amendment of it would create a duplicate; any
 //! dispatch in the lineage refuses the amendment.
+//!
+//! The comparison covers date, type, entries and narration. It does not cover
+//! a Journal's `REFERENCE`, which the verification read does not fetch, so an
+//! edit made to that field in Tally is overwritten without being detected.
 use super::*;
 
 /// Every build that shares one wire identity, in journal order.
@@ -86,8 +90,9 @@ impl Lineage {
     /// Refuse a proposed amendment that changes what an in-place alteration
     /// was not established to change, before reading the book.
     ///
-    /// Tally was observed altering type and date in place (bridge#429's
-    /// follow-up), but a type change moves a voucher between numbering series
+    /// Tally was observed altering a Payment's type and date in place (the
+    /// follow-up to bridge#429; not measured on the other types), but a type
+    /// change moves a voucher between numbering series
     /// and cash/bank shapes, and is a different business event rather than a
     /// correction of this one. A supplied voucher number is ignored under
     /// automatic numbering (§9.8), so changing it is not a correction either.
@@ -165,7 +170,14 @@ impl Lineage {
                 let recorded = canonical_import_voucher(recorded)?;
                 let entries_match =
                     expected_entry_fingerprint(&recorded) == actual_entry_fingerprint(&row);
-                let diffs = voucher_diffs(&recorded, &row, entries_match);
+                let mut diffs = voucher_diffs(&recorded, &row, entries_match);
+                // The import rewrites the narration too, so an edit to it in
+                // Tally is a change the amendment would overwrite.
+                if row.narration.as_deref().map(str::trim)
+                    != Some(expected_narration(&recorded, &tag).as_str())
+                {
+                    diffs.push(json!("narration"));
+                }
                 if diffs.is_empty() {
                     matched = Some(batch_id);
                 }
@@ -187,6 +199,16 @@ impl Lineage {
             Err(refused)
         })
     }
+}
+
+/// The narration `render_voucher_xml` writes for this voucher under `tag`.
+fn expected_narration(voucher: &ImportVoucher, tag: &str) -> String {
+    format!(
+        "{} [BRIDGE:{tag}]",
+        voucher.narration.as_deref().unwrap_or("").trim()
+    )
+    .trim()
+    .to_string()
 }
 
 fn canonical_import_voucher(voucher: &ImportVoucher) -> Result<ImportVoucher, String> {
