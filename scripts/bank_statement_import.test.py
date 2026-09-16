@@ -333,8 +333,12 @@ def test_real_hdfc_capture_binds_the_account_no_geometry_only(m):
 
     Customer values are sanitised, so several header numbers intentionally end
     alike.  Its captured labels and coordinates still prove which field the
-    production selector reads.  A postcode label is not present in this
-    capture; this test makes no claim about an absent field.
+    production selector reads.  There is no field labelled "postcode": the
+    postcode values print unlabelled, one after the city name on the `City :`
+    band and one in the address block, which `_lines` bands together with
+    `Cust ID`.  The City one is bound by a control below; the address-block
+    one is not separately assertable, since on its shared band every tail it
+    ends with also matches the Cust ID.
     """
     bank = m.HDFC()
     pages = capture("hdfc-bbox-capture.xml")
@@ -353,11 +357,16 @@ def test_real_hdfc_capture_binds_the_account_no_geometry_only(m):
     account = m.require_account_match(pages, bank, "xx1111111")
     assert account == "1" * 14
 
-    # Mutation controls select existing captured header geometry.  They prove
-    # that the production Account/No selector excludes phone, customer-id,
-    # IFSC and MICR rows even where their sanitised numeric tails overlap.
+    # Mutation controls repoint the anchor at other captured header bands and
+    # show the bound value follows it.  With the geometry assertion above, that
+    # is what shows the production anchor reads the Account No band and no
+    # other.  Bands, not rows: IFSC and MICR print on one band, so that pair
+    # shows tail selection within a band rather than a second band.
     original = bank.account_anchors
     try:
+        bank.account_anchors = (("City",),)
+        assert m.require_account_match(pages, bank, "xx111111") == "111111"
+
         bank.account_anchors = (("Phone", "no."),)
         assert m.require_account_match(pages, bank, "xx1112") == "11111112"
 
@@ -369,6 +378,29 @@ def test_real_hdfc_capture_binds_the_account_no_geometry_only(m):
 
         bank.account_anchors = (("MICR",),)
         assert m.require_account_match(pages, bank, "xx1112") == "111111112"
+
+        # The production anchor is two words because `Account Status` and
+        # `Account Type` print the same first word as `Account No` (see the
+        # HDFC definition).  Account Type is the sharpest collision in this
+        # capture: its only run is `ZZZZZZQ(1111)`, so an anchor that landed
+        # there would bind a four-digit value for the tail `xx1111`.
+        bank.account_anchors = (("Account", "Type"),)
+        assert m.require_account_match(pages, bank, "xx1111") == "1111"
+
+        # Account Status and Account Branch print no digits, so landing on
+        # either refuses rather than binding a number.
+        for label in ("Status", "Branch"):
+            bank.account_anchors = (("Account", label),)
+            refuses(m, "no_account_number_line", m.require_account_match,
+                    pages, bank, "xx1111")
+
+        # `Account` alone matches all four of those bands.  In this capture
+        # that fails closed rather than binding wrong: the Account Type run
+        # `1111` is a suffix of the account number, so a four-digit tail
+        # matches both and refuses as ambiguous.
+        bank.account_anchors = (("Account",),)
+        refuses(m, "ambiguous_account_match", m.require_account_match,
+                pages, bank, "xx1111")
     finally:
         bank.account_anchors = original
 
