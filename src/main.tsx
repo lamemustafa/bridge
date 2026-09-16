@@ -42,6 +42,7 @@ import { TrialBalanceScreen } from "./TrialBalanceScreen";
 import { LedgerEntriesScreen } from "./LedgerEntriesScreen";
 import { createDrawerFocusLifecycle, ensureDrawerFocus, shouldFocusMainContentAfterViewTransition, trapDrawerTabKeydown } from "./evidence-drawer-focus";
 import { loadEndpointReconnectHint, saveEndpointReconnectHint } from "./tally-endpoint-reconnect-hint";
+import { useTallyRuntimeSessions } from "./tally-runtime-sessions";
 import { formatIdentifier, formatRuntimeTime } from "./display-format";
 import { type OperatorError, TallyErrorNotice, toErrorMessage, toOperatorError } from "./tally-command-error";
 import { type CapabilityProfile, CapabilityRows, PACK_LABELS } from "./tally-capability-evidence";
@@ -54,7 +55,6 @@ import {
   type TallyCompany,
   type TallyConfig,
   type TallyProofSummary,
-  type TallyRuntimeSnapshot,
   type TallySyncEvidence,
 } from "./tally-mirror-contract";
 import "./styles.css";
@@ -205,8 +205,7 @@ function App() {
   const [reviewCommitmentSha256, setReviewCommitmentSha256] = React.useState<string | null>(null);
   const [selectedReadScope, setSelectedReadScope] = React.useState<SelectedReadScope | null>(null);
   const [passportSnapshotId, setPassportSnapshotId] = React.useState<string | null>(null);
-  const [runtimeSessions, setRuntimeSessions] = React.useState<TallyRuntimeSnapshot[]>([]);
-  const [runtimeError, setRuntimeError] = React.useState<OperatorError | null>(null);
+  const { runtimeSessions, runtimeError, refreshRuntime, cancelTallyRequest } = useTallyRuntimeSessions();
   const [companies, setCompanies] = React.useState<TallyCompany[]>([]);
   const [untrustedDiscoveredCompanies, setUntrustedDiscoveredCompanies] = React.useState<UntrustedCompanyCandidate[]>([]);
   const [untrustedDiscoveryError, setUntrustedDiscoveryError] = React.useState<OperatorError | null>(null);
@@ -310,16 +309,6 @@ function App() {
     setEvidenceDrawerOpen(false);
     setEvidenceDrawerRestorePending(true);
   }, [snapshotTransitionPending]);
-
-  const refreshRuntime = React.useCallback(async () => {
-    try {
-      const snapshots = await invoke<TallyRuntimeSnapshot[]>("tally_runtime_snapshots");
-      setRuntimeSessions(snapshots);
-      setRuntimeError(null);
-    } catch (error) {
-      setRuntimeError(toOperatorError(error));
-    }
-  }, []);
 
   const refreshRecentSnapshots = React.useCallback(async (knownRunId: string | null = snapshotOutcomeUnknownRunId) => {
     const selectionVersion = snapshotSelectionVersion.current;
@@ -985,19 +974,6 @@ function App() {
       if (current?.mirror_company_id === mirrorCompanyId) {
         setFixtureStatusError("Bridge could not read the local fixture state. Retry before changing this local gate.");
       }
-    }
-  }
-
-  async function cancelTallyRequest(requestId: string) {
-    try {
-      const cancelled = await invoke<boolean>("cancel_tally_request", { requestId });
-      if (!cancelled) {
-        setRuntimeError("The request had already completed or was not found.");
-      }
-    } catch (error) {
-      setRuntimeError(toOperatorError(error));
-    } finally {
-      void refreshRuntime();
     }
   }
 
