@@ -1824,7 +1824,11 @@ the `FETCH` list and looks at what arrives.
 > **Scoped correction, 2026-09-17 — both were read back, and they differ.** The table above
 > predates this read. Licensed TallyPrime 7.1 Silver, synthetic `BRIDGE SHAPE LAB`: the §9.8
 > verification collection's request, with `EFFECTIVEDATE` and `PARTYLEDGERNAME` appended to its
-> `FETCH`, sent once over the window holding three vouchers. The Receipt and Payment were built by
+> `FETCH`, sent once over `20250422..20250423`. The window held six vouchers. Three were written by
+> earlier lab runs with narrations of their own (a Contra, a Journal and a Sales voucher). Their
+> written values were not recorded here, so they are not tabulated, but each also returned
+> `EFFECTIVEDATE` equal to `DATE`. The three Bridge-built vouchers, found by their `[BRIDGE:…]`
+> markers, are the rows below. The Receipt and Payment were built by
 > `bridge_mcp`, imported from its file and amended from a Bridge-built file; the Payment was last
 > re-imported from a copy of that file with only its amount edited. The Contra was built by
 > `bridge_mcp` and imported from its file. Every file wrote the `PARTYLEDGERNAME` and
@@ -1845,7 +1849,7 @@ the `FETCH` list and looks at what arrives.
 >   counterparty is still open. The entries comparison already requires the counterparty's ledger
 >   among the signed entries.
 >
-> One read, one company, one release, three vouchers dated within one window. It does not establish
+> One read, one company, one release, three Bridge-built vouchers in a six-voucher window. It does not establish
 > what a Tally UI edit to either field returns.
 
 ### 9.9 Bulk import throughput
