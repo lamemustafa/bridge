@@ -715,11 +715,11 @@
     },
     {
       "path": "src-tauri/src/tally/agent_read_request.rs",
-      "sha256": "ed02b13f739964808844e5aff0684326272963480702cc83b5b16b2e22bb5a77"
+      "sha256": "a2e02bb67bfd126f8a6629e8ce44a9a7858a1aa3c5b165db5f57be271012531f"
     },
     {
       "path": "src-tauri/src/tally/approved_import.rs",
-      "sha256": "1e47fa1220236102e88eeb2cc84ff281a236c3f66494e6854825feda9a0d26aa"
+      "sha256": "f8d2aa13f205f6a6443a21e3b5bdb127ca11ca024290c486edf675653e813aec"
     },
     {
       "path": "src-tauri/src/tally/canonical_window.rs",
@@ -727,7 +727,7 @@
     },
     {
       "path": "src-tauri/src/tally/capability_packs.rs",
-      "sha256": "92ba5d666a677ff164f95f140937705c238b967a9c8214f7e7101ed8ac2ebc7f"
+      "sha256": "1d0afe1848da700f29a919b8e40856956b22140f185ee34d739e7f3ad15ff935"
     },
     {
       "path": "src-tauri/src/tally/connection.rs",
@@ -743,7 +743,7 @@
     },
     {
       "path": "src-tauri/src/tally/outstandings_runtime.rs",
-      "sha256": "afe1f27c9696e5c13bd95afe81959946d6bc9002545b4a9fabed218f238b6a8b"
+      "sha256": "6e59fdbdcc4966686f65745d04ff53661524971960b9c9f408e17ac773e843ea"
     },
     {
       "path": "src-tauri/src/tally/runtime.rs",
@@ -763,11 +763,11 @@
     },
     {
       "path": "src-tauri/src/tally/serial_queue.rs",
-      "sha256": "cf0e9c3a1da9510de6cb756455a2f0150e0d4d9ae6750489839a079d95fbdd98"
+      "sha256": "80a7c7a8e85f36c3da7f509667182cdba27349050c121b0426105d8fcaa43d52"
     },
     {
       "path": "src-tauri/src/tally/standard_ledger_catalog.rs",
-      "sha256": "f06065069cd385f9af842238255c60d57fbaf6cc86ec3d9533b381a277d71392"
+      "sha256": "7b92d3130c006b9a3d468e06c1ee10effa35a431353da01f0aae562357ac0711"
     },
     {
       "path": "src-tauri/src/tally/tdl_engine.rs",
@@ -775,7 +775,7 @@
     },
     {
       "path": "src-tauri/src/tally/validators.rs",
-      "sha256": "51b0a6eaecb732525a69fc33c3bed7a495e5a5342f471a18dd0a888c02a7019d"
+      "sha256": "e027a255aa6d7175b8e6eb02921cbc39d1394f33136bf7c73ac8707ebcb4f814"
     },
     {
       "path": "src-tauri/src/tally/xml_builder.rs",
@@ -958,5 +958,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "3b29a2f31220f113a273bc25af18d781f464f66a6eb5238146a1f9feff5d09e7"
+  "manifest_sha256": "233bfa965a6c317796004fcfdceb4731b7020972d4fb74465075a4816eef7e86"
 }
