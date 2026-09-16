@@ -863,3 +863,90 @@ fn typed_packs_preserve_exact_values_and_enforce_reference_integrity() {
         .iter()
         .any(|mismatch| mismatch.safe_reason_code.contains("amount")));
 }
+
+fn passing_report_tie_out(evidence: &WindowEvidence) -> ReportTieOutEvidence {
+    ReportTieOutEvidence {
+        source_identity: source_identity(),
+        pack: CapabilityPackId::CoreAccounting,
+        pack_schema_version: PackSchemaVersion { major: 1, minor: 0 },
+        query_profile: query_profile(),
+        filters_sha256: filters_sha256(),
+        from_yyyymmdd: evidence.from_yyyymmdd.clone(),
+        to_yyyymmdd: evidence.to_yyyymmdd.clone(),
+        report_sha256: "b".repeat(64),
+        state: TieOutState::Passed,
+        compared_ledger_count: 2,
+        source_reported_count: 2,
+        core_ledger_count: 2,
+    }
+}
+
+#[test]
+fn report_tie_out_passes_only_for_the_run_pack() {
+    let canonical = canonicalize_test(balanced_batch(false), Some(complete_core_counts()));
+    let mut evidence = canonical.evidence;
+    evidence.report_tie_out = Some(passing_report_tie_out(&evidence));
+    let passed = build_reconciliation(input(evidence.clone())).unwrap();
+    let gaps = &passed.mirror_commit.parts().gap_codes;
+    assert!(
+        !gaps.iter().any(|code| code.starts_with("report_tie_out")),
+        "a tie-out for this exact run must leave no tie-out gap: {gaps:?}"
+    );
+
+    let mut other_pack = evidence;
+    if let Some(report) = other_pack.report_tie_out.as_mut() {
+        report.pack = CapabilityPackId::Inventory;
+    }
+    let decision = build_reconciliation(input(other_pack)).unwrap();
+    assert!(decision
+        .mirror_commit
+        .parts()
+        .gap_codes
+        .contains(&"report_tie_out_evidence_invalid".to_string()));
+    assert!(decision.mirror_commit.parts().checkpoint_after.is_none());
+}
+
+#[test]
+fn identical_record_in_two_windows_without_complete_scope_is_a_duplicate() {
+    let first = canonicalize_test(balanced_batch(false), None);
+    let mut second_evidence = first.evidence.clone();
+    second_evidence.window_id = "window-2".to_string();
+    second_evidence.from_yyyymmdd = "20260801".to_string();
+    second_evidence.to_yyyymmdd = "20260831".to_string();
+    let mut repeated = input(first.evidence);
+    repeated.planned_window_ids.insert("window-2".to_string());
+    repeated
+        .completed_windows
+        .insert("window-2".to_string(), second_evidence);
+    let decision = build_reconciliation(repeated).unwrap();
+    assert!(decision
+        .mirror_commit
+        .parts()
+        .gap_codes
+        .contains(&"duplicate_record_across_windows".to_string()));
+    assert!(decision
+        .safe_mismatches
+        .iter()
+        .any(|mismatch| mismatch.safe_reason_code == "duplicate_record_across_windows"));
+    assert!(decision.mirror_commit.parts().checkpoint_after.is_none());
+}
+
+#[test]
+fn complete_source_count_must_equal_the_unique_identities_accepted() {
+    let canonical = canonicalize_test(balanced_batch(false), Some(complete_core_counts()));
+    let mut evidence = canonical.evidence;
+    let dropped = evidence
+        .canonical_records
+        .keys()
+        .next()
+        .expect("at least one record")
+        .clone();
+    evidence.canonical_records.remove(&dropped);
+    let decision = build_reconciliation(input(evidence)).unwrap();
+    assert!(decision
+        .mirror_commit
+        .parts()
+        .gap_codes
+        .contains(&"source_accepted_count_mismatch".to_string()));
+    assert!(decision.mirror_commit.parts().checkpoint_after.is_none());
+}
