@@ -6356,6 +6356,55 @@ def test_pre_replacement_original_pin_fstat_failure_is_a_typed_path_change(m):
         assert not list(pathlib.Path(directory).glob("*.bak"))
 
 
+def test_pre_replacement_staged_digest_failure_is_a_typed_path_change(m):
+    """The staged *digest* pin is the one inspection of this family with no
+    control of its own.
+
+    Its two siblings -- the original pin and the staged path identity -- are
+    covered, and all three convert `OSError` to `output_path_changed`. This one
+    was left on the argument that it is three lines sharing a shape with tested
+    neighbours. That argument is exactly the one that failed on #353, where the
+    same family of helper was wrapped in `except Refusal` only and an `os.fstat`
+    failure escaped raw at a point where every swap had already committed.
+
+    Deterministic rather than timing-dependent: the staged path-identity check
+    runs immediately before the digest check, so observing it on a `.part` path
+    arms a one-shot failure that the very next `_digest_pinned_bytes` call --
+    the staged one -- receives.
+    """
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "previous.xml"
+        destination.write_text("old bytes")
+        real_identity, real_digest = m._entry_identity, m._digest_pinned_bytes
+
+        def fail_staged_digest_once(handle):
+            m._digest_pinned_bytes = real_digest
+            raise OSError("controlled staged pin digest failure")
+
+        def arm_after_staged_identity(path):
+            result = real_identity(path)
+            if str(path).endswith(".part"):
+                m._digest_pinned_bytes = fail_staged_digest_once
+            return result
+
+        m._entry_identity = arm_after_staged_identity
+        try:
+            refusal = refuses(m, "output_path_changed", m.write_outputs,
+                              [(str(destination), "new bytes")])
+        finally:
+            m._entry_identity = real_identity
+            m._digest_pinned_bytes = real_digest
+
+        assert "staged output changed before replacement" in str(refusal), (
+            f"the staged-digest boundary must give its own typed message, got: {refusal}")
+        assert destination.read_text() == "old bytes", (
+            "a refused replacement must leave the previous output intact")
+        assert not list(pathlib.Path(directory).glob("*.part"))
+        assert not list(pathlib.Path(directory).glob("*.bak"))
+
+
 def test_failed_restore_rechecks_destination_before_partial_report(m):
     """A foreign destination installed during failed restore is never overwritten."""
     if os.name == "nt":
