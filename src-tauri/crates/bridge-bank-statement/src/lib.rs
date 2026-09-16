@@ -4,11 +4,13 @@
 //! pipeline, every stage of which fails closed:
 //!
 //! 1. [`pdf::extract_pages`] — word boxes from the PDF, through PDFium.
-//! 2. [`parse::parse_pages`] — rows, by column geometry and the wrap heuristic.
+//! 2. [`parse::parse_statement`] — rows, by column geometry and the wrap
+//!    heuristic, or one line per row for a [`bank::Layout::SingleLine`] layout.
 //! 3. [`parse::require_account_match`] — the statement prints the expected account.
 //! 4. [`money::reconcile`] and [`money::verify_against_statement`] — every row's
-//!    running balance follows from the opening balance, lands on the printed
-//!    closing balance, and the printed debit and credit totals agree.
+//!    running balance follows from the opening balance, lands on the supplied
+//!    closing balance, and the printed debit and credit totals agree, for a
+//!    layout that prints them.
 //! 5. [`proposals::build`] — Payment / Receipt / Contra proposals in
 //!    `build_import_xml`'s input shape, with a suspense fallback.
 //!

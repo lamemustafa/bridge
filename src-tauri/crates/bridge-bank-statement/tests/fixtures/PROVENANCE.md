@@ -16,6 +16,7 @@ HDFC profiles were calibrated on, which is already public in
 | `hdfc-synthetic.pdf` | 4,810 | `3eb43c5376ca6588e492747ab64d1494c7f59a380f9ac3ad0d41a073adacfd0f` |
 | `sbi-owner-password-only.pdf` | 3,545 | `64bb53bf392ec9cc52aede9085390b29b7cac0ba7908d678ba933551414d14c0` |
 | `hdfc-rotated.pdf` | 2,921 | `655d670aa5513a6386d723611c61db19555196ea034e85e611846a8f6f904d21` |
+| `ubi-synthetic.pdf` | 3,413 | `6694b20b393c09b53cc7359226c69998adf90d9e731e1413fbfd310733d9098b` |
 
 - `hdfc-synthetic.pdf` — three pages, user password `synthetic-user-4321`. A
   12-digit UPI reference and an ACH reference broken mid-token at the 240pt
@@ -31,6 +32,13 @@ HDFC profiles were calibrated on, which is already public in
   year, the column header repeats on page 2 while page 1's last row is still
   open, and a 12-digit reference wraps mid-token.
 - `hdfc-rotated.pdf` — one page with `/Rotate 90`, refused before parsing.
+- `ubi-synthetic.pdf` — two pages, user password `synthetic-user-7788`, in the
+  Union Bank of India row shape: one line per row, the amount and balance glued
+  to `(Cr)`/`(Dr)`, an overdrawn `(Dr)` balance, a repeated column header, a
+  `Page N of M` footer on every page, and no printed totals. The header block
+  also prints a masked account line and a CIF ID; only `Account Number` binds.
+  The row *shapes* were described from one real statement without its values;
+  the x positions are invented, since the profile reads rows as text.
 
 **Limits.** Encryption is RC4 128-bit (standard security handler revision 3);
 real statements commonly use AES, which is not exercised here. The text is the

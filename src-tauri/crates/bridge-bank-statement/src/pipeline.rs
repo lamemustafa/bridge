@@ -9,8 +9,8 @@ use crate::bank::Bank;
 use crate::date::Date;
 use crate::geometry::Page;
 use crate::mapping::Mapping;
-use crate::money::{reconcile, verify_against_statement, Controls, Totals};
-use crate::parse::{parse_pages, require_account_match};
+use crate::money::{reconcile, statement_totals, verify_against_statement, Controls, Totals};
+use crate::parse::{parse_statement, require_account_match};
 use crate::proposals::{
     build, group_counterparties, selfcheck, Build, BuildOptions, CounterpartyGroup, Selfcheck,
 };
@@ -47,11 +47,23 @@ pub struct ParsedStatement {
 /// The balance and totals are proven over **every** row the statement prints;
 /// the date window only narrows which rows become proposals afterwards.
 pub fn prepare(pages: &[Page], request: &StatementRequest<'_>) -> Result<ParsedStatement, Refusal> {
-    let rows = parse_pages(pages, request.bank);
+    if request.bank.prints_totals() && request.controls.debits.is_none() {
+        return Err(Refusal::new(
+            "control_totals_required",
+            format!(
+                "a {} statement prints its debit and credit totals; supply both",
+                request.bank.name().to_uppercase()
+            ),
+        ));
+    }
+    let rows = parse_statement(pages, request.bank)?;
     let account_number = require_account_match(pages, request.bank, request.account_label)?;
     let closing = reconcile(&rows, &request.controls.opening, &request.controls.closing)?;
-    let totals =
-        verify_against_statement(&rows, &request.controls.debits, &request.controls.credits)?;
+    // `Controls` holds both totals or neither
+    let totals = match (&request.controls.debits, &request.controls.credits) {
+        (Some(debits), Some(credits)) => verify_against_statement(&rows, debits, credits)?,
+        _ => statement_totals(&rows)?,
+    };
     let build = build(
         &rows,
         request.bank,

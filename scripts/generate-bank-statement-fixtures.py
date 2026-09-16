@@ -5,7 +5,9 @@ No client data. Every name, account digit, reference and amount below is
 invented; what is carried over from real statements is only the *template*
 geometry the SBI and HDFC profiles in `scripts/bank_statement_import.py` were
 calibrated on (column bounds, anchors, the stacked SBI date), which is already
-public in that module.
+public in that module. The Union Bank statement carries only the row *shapes*
+recorded in the `Bank::Ubi` profile; its x positions are invented, because
+that profile reads each row as one line of text and has no column bounds.
 
 Standard library only, and deterministic: the same script writes the same
 bytes, so `--check` can prove the committed fixtures are this script's output
@@ -296,6 +298,58 @@ SBI_PAGE_2 = SBI_HEADER[3:] + (
 )
 
 
+# --------------------------------------------------------------------------- #
+# Union Bank-like statement                                                    #
+# --------------------------------------------------------------------------- #
+# One printed line per row: date, transaction id, remarks, then the amount and
+# the balance right-aligned, each glued to its (Cr)/(Dr) side.
+
+def right_aligned(edge, text):
+    return (edge - GLYPH * len(text), text)
+
+
+def ubi_row(top, date, txn, remarks, amount, balance):
+    return (top, [(20, date), (72, txn), (120, remarks),
+                  right_aligned(470, amount), right_aligned(575, balance)])
+
+
+def ubi_footer(number, count):
+    return (800, [(260, f"Page {number} of {count}")])
+
+
+UBI_HEADER_ROW = (140, [(20, "Date"), (72, "Transaction Id"), (120, "Remarks"),
+                        (430, "Amount( )"), (535, "Balance( )")])
+
+UBI_PAGE_1 = (
+    (40, [(20, "SYNTHETIC STATEMENT - NOT A REAL ACCOUNT")]),
+    (60, [(20, "Account Number"), (120, "000000000007788")]),
+    (72, [(20, "Savings Account No"), (120, "9**** *1234")]),
+    (84, [(20, "CIF ID"), (120, "000001234")]),
+    (96, [(20, "Statement Period"), (120, "01-08-2026 to 31-08-2026")]),
+    UBI_HEADER_ROW,
+    ubi_row(160, "01-08-2026", "A12345678",
+            "UPIAB/612345678901/CR/NORTHWIND TRADERS/ZZZZ/nw@okzz",
+            "1500.00(Cr)", "11500.00(Cr)"),
+    ubi_row(172, "02-08-2026", "A1234567", "NEFT:BLUE RIVER CO ZZZZN12345678901",
+            "250.50(Dr)", "11249.50(Cr)"),
+    ubi_row(184, "03-08-2026", "A123456", "BY CASH", "750.50(Cr)", "12000.00(Cr)"),
+    ubi_footer(1, 2),
+)
+
+UBI_PAGE_2 = (
+    (120, [(20, "Transaction Details")]),
+    UBI_HEADER_ROW,
+    ubi_row(160, "04-08-2026", "A12345",
+            "IMPSAB/712345678901/GREEN FIELD LTD/9000000001",
+            "13000.00(Dr)", "1000.00(Dr)"),
+    ubi_row(172, "05-08-2026", "A9AA99999", "MOBFT/SOME THREE WORDS/812345678901",
+            "1000.00(Cr)", "0.00(Cr)"),
+    ubi_row(184, "06-08-2026", "A1234",
+            "CLG/SILVER OAK MUTUAL", "500.00(Cr)", "500.00(Cr)"),
+    ubi_footer(2, 2),
+)
+
+
 FIXTURES = {
     # opened with the user password
     "hdfc-synthetic.pdf": dict(
@@ -311,6 +365,10 @@ FIXTURES = {
     "sbi-owner-password-only.pdf": dict(
         pages=[SBI_PAGE_1, SBI_PAGE_2], width=595, height=842,
         user="unknown-user-password-7788", owner="synthetic-owner-7788", seed="sbi"),
+    # one line per row, (Cr)/(Dr)-suffixed figures, no printed totals
+    "ubi-synthetic.pdf": dict(
+        pages=[UBI_PAGE_1, UBI_PAGE_2], width=595, height=842,
+        user="synthetic-user-7788", owner="synthetic-owner-unused-c", seed="ubi"),
 }
 
 

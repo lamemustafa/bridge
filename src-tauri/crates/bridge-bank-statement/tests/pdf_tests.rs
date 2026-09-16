@@ -18,7 +18,7 @@ use bridge_bank_statement::bbox::read_pages;
 use bridge_bank_statement::geometry::{lines, Page};
 use bridge_bank_statement::mapping::{Mapping, MappingRow};
 use bridge_bank_statement::money::{reconcile, verify_against_statement, Controls};
-use bridge_bank_statement::parse::{parse_pages, require_account_match, Row};
+use bridge_bank_statement::parse::{parse_pages, parse_statement, require_account_match, Row};
 use bridge_bank_statement::pdf::{engine, extract_pages, PdfEngine};
 use bridge_bank_statement::proposals::{build, selfcheck, BuildOptions, VoucherType};
 use common::*;
@@ -160,7 +160,12 @@ fn pdfium_reproduces_poppler_rows_on_the_synthetic_hdfc_statement() {
 
     let controls = Controls::parse("1,000.00", "1,02,200.00", "8,800.00", "1,10,000.00").unwrap();
     reconcile(&rows, &controls.opening, &controls.closing).unwrap();
-    verify_against_statement(&rows, &controls.debits, &controls.credits).unwrap();
+    verify_against_statement(
+        &rows,
+        controls.debits.as_ref().unwrap(),
+        controls.credits.as_ref().unwrap(),
+    )
+    .unwrap();
 
     let mapping = Mapping::from_rows(
         [
@@ -235,11 +240,94 @@ fn an_owner_password_only_statement_opens_with_its_owner_password() {
     );
     let controls = Controls::parse("50,000.00", "51,998.50", "1,250.75", "3,249.25").unwrap();
     reconcile(&rows, &controls.opening, &controls.closing).unwrap();
-    verify_against_statement(&rows, &controls.debits, &controls.credits).unwrap();
+    verify_against_statement(
+        &rows,
+        controls.debits.as_ref().unwrap(),
+        controls.credits.as_ref().unwrap(),
+    )
+    .unwrap();
 
     for wrong in ["", "wrong", "synthetic-owner-778"] {
         refuses(extract_pages(pdfium(), &bytes, wrong), "unreadable_pdf");
     }
+}
+
+#[test]
+#[ignore = "needs PDFium: set BRIDGE_PDFIUM_LIBRARY and run with --ignored"]
+fn a_union_bank_statement_reads_one_row_per_line() {
+    let bank = Bank::Ubi;
+    let pages = extract_pages(pdfium(), &pdf("ubi-synthetic.pdf"), "synthetic-user-7788").unwrap();
+    let rows = parse_statement(&pages, bank).unwrap();
+    let read: Vec<[&str; 6]> = rows
+        .iter()
+        .map(|row| {
+            [
+                row.get("date"),
+                row.get("ref"),
+                row.get("narr"),
+                row.get("dr"),
+                row.get("cr"),
+                row.get("bal"),
+            ]
+        })
+        .collect();
+    assert_eq!(
+        read,
+        [
+            [
+                "01-08-2026",
+                "A12345678",
+                "UPIAB/612345678901/CR/NORTHWIND TRADERS/ZZZZ/nw@okzz",
+                "",
+                "1500.00",
+                "11500.00"
+            ],
+            [
+                "02-08-2026",
+                "A1234567",
+                "NEFT:BLUE RIVER CO ZZZZN12345678901",
+                "250.50",
+                "",
+                "11249.50"
+            ],
+            ["03-08-2026", "A123456", "BY CASH", "", "750.50", "12000.00"],
+            [
+                "04-08-2026",
+                "A12345",
+                "IMPSAB/712345678901/GREEN FIELD LTD/9000000001",
+                "13000.00",
+                "",
+                "-1000.00"
+            ],
+            [
+                "05-08-2026",
+                "A9AA99999",
+                "MOBFT/SOME THREE WORDS/812345678901",
+                "",
+                "1000.00",
+                "0.00"
+            ],
+            [
+                "06-08-2026",
+                "A1234",
+                "CLG/SILVER OAK MUTUAL",
+                "",
+                "500.00",
+                "500.00"
+            ],
+        ]
+    );
+    // the masked line and the CIF ID also print digits; only the account line binds
+    assert_eq!(
+        require_account_match(&pages, bank, "UBI SB xx7788").unwrap(),
+        "000000000007788"
+    );
+    refuses(
+        require_account_match(&pages, bank, "UBI SB xx1234"),
+        "account_not_in_statement",
+    );
+    let controls = Controls::parse_optional("10,000.00", "500.00", None, None).unwrap();
+    reconcile(&rows, &controls.opening, &controls.closing).unwrap();
 }
 
 #[test]

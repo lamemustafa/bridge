@@ -70,6 +70,20 @@ capability from assumption, and a completed request from a verified snapshot.
   `build_import_xml`'s input shape. It mints no REMOTEID and writes no XML: Bridge's writer owns
   identity and rendering. Listed only when imports are enabled.
 
+  It also reads **Union Bank of India** statements (`bank: "ubi"`), which the script does not.
+  That layout prints one line per row with `(Cr)`/`(Dr)`-suffixed figures, so the profile reads
+  rows as text rather than by column bounds. It prints no debit or credit totals, so for `ubi`
+  both may be omitted. The proof is then weaker, and stated as such: the balance replay from the
+  operator's opening balance to their closing balance, plus a `Page N of M` footer on every page
+  in order, and refusal of any unrecognised line between rows. That last rule is strict on
+  purpose, since in a one-line-per-row table such a line is a wrapped cell or a misread row; the
+  cost is that a note printed between one page's last row and its footer refuses the whole
+  statement. None was seen on the statement the rules came from; widen the rule only on evidence. The summary reports
+  `totals_match_statement: false`. The rules come from the text layer of one real statement,
+  described by shape only; embedded fonts and real column geometry are unmeasured, so a first
+  real run should be compared row by row against `pdftotext`. `MOBFT` transfers go to suspense,
+  because the observed shape does not say which field names the counterparty.
+
   Full proposals stay in a private file under the agent data directory; the tool result is a
   counterparty summary (names marked for `mask_parties`), and the PDF password is read from an
   owner-only local file named by `password_file`, never from an argument. `build_import_xml`

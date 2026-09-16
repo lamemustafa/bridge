@@ -139,11 +139,11 @@
     },
     {
       "path": "src-tauri/crates/bridge-bank-statement/src/bank.rs",
-      "sha256": "b53e866694adc4dc6c989803dd0cd7a3f6e43166e6166e84c36c51106ebd8c09"
+      "sha256": "1505571f151d1832ecf6ae607c31150c0c7e1d479ce6fc90c4dd9389a682e0bc"
     },
     {
       "path": "src-tauri/crates/bridge-bank-statement/src/date.rs",
-      "sha256": "4be1ed8c71f164acfd27a701df070006bb807267197fc1ff5adc030e435dcb91"
+      "sha256": "27144b49aa2e55dc168c26b662112b1d30655358ddd177777e80e7cd7d2c0122"
     },
     {
       "path": "src-tauri/crates/bridge-bank-statement/src/geometry.rs",
@@ -155,11 +155,11 @@
     },
     {
       "path": "src-tauri/crates/bridge-bank-statement/src/money.rs",
-      "sha256": "4e62a25efcf6de9d908975301dadc73c5636679bc5352bb15a73d0d5f6d059b2"
+      "sha256": "d2e94d20d6eaf9bd1603fb5b18f0590c7f26177741ca6f05521388a65cba7cf2"
     },
     {
       "path": "src-tauri/crates/bridge-bank-statement/src/parse.rs",
-      "sha256": "466aeb9bb75c4de065b82dbc0cac64e30538ab6c0b7589961604f948023c1cea"
+      "sha256": "c673a7b4abf0354918c3439bcfa326e258ef79c611dd0b99a1949028d59fc16e"
     },
     {
       "path": "src-tauri/crates/bridge-bank-statement/src/pdf.rs",
@@ -167,7 +167,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-bank-statement/src/pipeline.rs",
-      "sha256": "74825c853f87d5a17b3998a2eb0684238019a21ec3f22a02c029e2fd540e020f"
+      "sha256": "a487f49f2320c9c15dfca065f51d0aac3e6074022cf2a32e16c51fa36b9e846e"
     },
     {
       "path": "src-tauri/crates/bridge-bank-statement/src/proposals.rs",
@@ -399,7 +399,7 @@
     },
     {
       "path": "src-tauri/src/agent_bank_statement.rs",
-      "sha256": "fbfb334cb6f0c563ab726f4c180111d035935cf9857f1c75daf6ffc0cda5ecf0"
+      "sha256": "10299641faecac0edd91458280120fb8245af53321ea21daab2a305072b88942"
     },
     {
       "path": "src-tauri/src/agent_catalog.rs",
@@ -1066,5 +1066,5 @@
       "sha256": "0ab5bfbe6d81b1e10530744c338fb91efa57fe5a66fb4bc0cfd382495eaf02a4"
     }
   ],
-  "manifest_sha256": "ddbf479c1059a4dfadff4c7dfb45cf589b847507f4e4832ee7f6ef31f29a3dd1"
+  "manifest_sha256": "565ba49981eb79df9759c7266f8354614f352de9e8a7b982ad2c36fb058afa68"
 }

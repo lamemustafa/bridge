@@ -49,19 +49,20 @@ const MAX_PROPOSALS_FILE_BYTES: u64 = 16 * 1024 * 1024;
 pub(super) fn input_schema() -> Value {
     let path = json!({"type":"string","minLength":1,"maxLength":MAX_PATH_CHARS,"pattern":r"\S"});
     let control = json!({"type":"string","minLength":1,"maxLength":64,"pattern":r"\S"});
+    let totals_control = json!({"type":"string","minLength":1,"maxLength":64,"pattern":r"\S","description":"Required for sbi and hdfc, whose statements print it. A ubi statement prints no totals: omit both, and every page must then print its Page N of M footer."});
     let ledger = json!({"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"});
     json!({
         "type":"object", "additionalProperties":false,
-        "required":["statement_path","password_file","bank","account_label","opening_balance","closing_balance","total_debits","total_credits","bank_ledger","suspense_ledger"],
+        "required":["statement_path","password_file","bank","account_label","opening_balance","closing_balance","bank_ledger","suspense_ledger"],
         "properties":{
             "statement_path": path,
             "password_file": path,
-            "bank":{"type":"string","enum":["sbi","hdfc"]},
+            "bank":{"type":"string","enum":["sbi","hdfc","ubi"],"description":"sbi (State Bank of India), hdfc (HDFC Bank) or ubi (Union Bank of India)."},
             "account_label":{"type":"string","minLength":4,"maxLength":64,"pattern":r"\S","description":"A short label carrying at least the last 4 digits of the account, e.g. 'HDFC CA xx4321'. Those digits must end a number on the statement's account-number line. The label is written into each narration."},
             "opening_balance": control,
             "closing_balance": control,
-            "total_debits": control,
-            "total_credits": control,
+            "total_debits": totals_control.clone(),
+            "total_credits": totals_control,
             "bank_ledger": ledger,
             "suspense_ledger": ledger,
             "from":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},
@@ -81,7 +82,7 @@ pub(super) fn input_schema() -> Value {
     })
 }
 
-pub(super) const DESCRIPTION: &str = "Read a local, password-protected SBI or HDFC bank-statement PDF and propose one Payment, Receipt or Contra per row, for build_import_xml's voucher shape. The whole run is refused unless the statement's account-number line ends with the digits in account_label, and every row's running balance, the closing balance, and the debit and credit totals reproduce the figures supplied from the printed statement exactly. The password is read from password_file, a local file only its owner can read, and is never returned. Full proposals stay in a private local file; the result is a counterparty summary (spelling as printed, row count, total, disposition, suspense) for writing `mapping`, and the ledger names to check with validate_masters. A party the mapping does not name, or the parser could not identify, goes to suspense_ledger; `skip` omits a transfer already carried by another account's Contra. An ambiguous mapping is refused, never guessed. Re-run with a corrected mapping: bridge_txn_id labels depend only on the statement row, so they do not change. To build, pass the returned proposals_id and sha256 to build_import_xml as proposals_id and proposals_sha256; to correct a batch already built from an earlier run, add amends_batch_id. Never contacts Tally.";
+pub(super) const DESCRIPTION: &str = "Read a local, password-protected SBI, HDFC or Union Bank of India bank-statement PDF and propose one Payment, Receipt or Contra per row, for build_import_xml's voucher shape. The whole run is refused unless the statement's account-number line ends with the digits in account_label, and every row's running balance, the closing balance, and (where the statement prints them) the debit and credit totals reproduce the figures supplied exactly. The password is read from password_file, a local file only its owner can read, and is never returned. Full proposals stay in a private local file; the result is a counterparty summary (spelling as printed, row count, total, disposition, suspense) for writing `mapping`, and the ledger names to check with validate_masters. A party the mapping does not name, or the parser could not identify, goes to suspense_ledger; `skip` omits a transfer already carried by another account's Contra. An ambiguous mapping is refused, never guessed. Re-run with a corrected mapping: bridge_txn_id labels depend only on the statement row, so they do not change. To build, pass the returned proposals_id and sha256 to build_import_xml as proposals_id and proposals_sha256; to correct a batch already built from an earlier run, add amends_batch_id. Never contacts Tally.";
 
 impl Server {
     pub(super) async fn parse_bank_statement(
@@ -164,13 +165,18 @@ impl OwnedRequest {
         }
         let bank = Bank::from_name(required_string(args, "bank")?)
             .ok_or_else(|| "argument_invalid:bank".to_string())?;
-        let controls = Controls::parse(
+        let total_debits = optional_string(args, "total_debits")?;
+        let total_credits = optional_string(args, "total_credits")?;
+        let controls = Controls::parse_optional(
             required_string(args, "opening_balance")?,
             required_string(args, "closing_balance")?,
-            required_string(args, "total_debits")?,
-            required_string(args, "total_credits")?,
+            total_debits.as_deref(),
+            total_credits.as_deref(),
         )
         .map_err(|refusal| refused(&refusal))?;
+        if bank.prints_totals() && controls.debits.is_none() {
+            return Err("statement_control_totals_required".into());
+        }
         let date_from = window_date(args, "from")?;
         let date_to = window_date(args, "to")?;
         if let (Some(from), Some(to)) = (date_from, date_to) {
@@ -342,8 +348,8 @@ fn persist(
         "controls": {
             "opening_balance": request.controls.opening.as_str(),
             "closing_balance": request.controls.closing.as_str(),
-            "total_debits": request.controls.debits.as_str(),
-            "total_credits": request.controls.credits.as_str(),
+            "total_debits": request.controls.debits.as_ref().map(|value| value.as_str()),
+            "total_credits": request.controls.credits.as_ref().map(|value| value.as_str()),
         },
         "vouchers": parsed.build.proposals,
         "records": parsed.build.records,
@@ -428,8 +434,10 @@ fn summary(
         "reconciled": {
             "running_balance_every_row": true,
             "closing_balance": parsed.closing.as_str(),
-            "total_debits": parsed.totals.debits.as_str(),
-            "total_credits": parsed.totals.credits.as_str(),
+            "total_debits": format_amount(&parsed.totals.debits),
+            "total_credits": format_amount(&parsed.totals.credits),
+            // false for a layout that prints no totals: they were summed, not checked
+            "totals_match_statement": request.controls.debits.is_some(),
         },
         "counterparties": counterparties,
         "ledgers_to_validate": ledgers.into_iter().map(|name| party_name(name.to_string())).collect::<Vec<_>>(),

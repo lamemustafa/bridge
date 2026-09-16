@@ -1,7 +1,7 @@
 //! Statement rows from word boxes, and the binding of a statement to its
 //! account.
 
-use crate::bank::Bank;
+use crate::bank::{page_footer, Bank, Layout, LineKind};
 use crate::geometry::{dewrap, lines, matches, Line, Page, Word, WRAP_TOLERANCE};
 use crate::refusal::Refusal;
 use crate::text::squash;
@@ -155,6 +155,91 @@ pub fn parse_pages(pages: &[Page], bank: Bank) -> Vec<Row> {
             row
         })
         .collect()
+}
+
+/// Statement rows for any layout, or the refusal a single-line table raises.
+///
+/// A column layout cannot tell a stray line from a wrapped cell, so it has no
+/// refusals of its own here; the balance replay is its proof.
+pub fn parse_statement(pages: &[Page], bank: Bank) -> Result<Vec<Row>, Refusal> {
+    match bank.layout() {
+        Layout::Columns => Ok(parse_pages(pages, bank)),
+        Layout::SingleLine => parse_single_line_pages(pages, bank),
+    }
+}
+
+/// Rows of a table that prints each transaction on one line.
+///
+/// Stricter than the column reader, because it can be: a line that opens with
+/// a date but is not a row refuses, and so does any unrecognised line followed
+/// by a later row, since in a one-line-per-row table that line can only be a
+/// wrapped cell or a row this rule misread. Unrecognised lines after the last
+/// row are allowed.
+///
+/// With no printed totals, a dropped whole page whose two sides cancel is what
+/// the balance replay cannot see, so every page must also print `Page N of M`
+/// with N its position and M the document's page count.
+fn parse_single_line_pages(pages: &[Page], bank: Bank) -> Result<Vec<Row>, Refusal> {
+    let mut rows = Vec::new();
+    let mut stray = false;
+    for (index, page) in pages.iter().enumerate() {
+        let page_lines = lines(page);
+        let texts: Vec<Vec<&str>> = page_lines
+            .iter()
+            .map(|line| line.words.iter().map(|word| word.text.as_str()).collect())
+            .collect();
+        // a row's remarks cannot stand in for the page's footer
+        if !texts.iter().any(|words| {
+            !matches!(bank.classify_line(words), LineKind::Row(_))
+                && page_footer(words) == Some((index + 1, pages.len()))
+        }) {
+            return Err(Refusal::new(
+                "page_sequence_unproven",
+                format!(
+                    "page {} does not print \"Page {} of {}\"; without printed totals, every page must be accounted for",
+                    index + 1,
+                    index + 1,
+                    pages.len()
+                ),
+            ));
+        }
+        let Some(top) = table_top(&page_lines, bank) else {
+            continue;
+        };
+        for (line, words) in page_lines.iter().zip(&texts) {
+            if line.y <= top {
+                continue;
+            }
+            let number = rows.len() + 1;
+            match bank.classify_line(words) {
+                LineKind::Row(row) => {
+                    if stray {
+                        return Err(Refusal::at_row(
+                            "unexpected_line_in_table",
+                            number,
+                            format!(
+                                "an unrecognised line precedes row {number}; in a one-line-per-row table it is a wrapped cell or a misread row"
+                            ),
+                        ));
+                    }
+                    rows.push(row);
+                }
+                LineKind::Furniture => {}
+                LineKind::MalformedRow => {
+                    return Err(Refusal::at_row(
+                        "malformed_row",
+                        number,
+                        format!(
+                            "row {number} opens with a date but is not the {} row shape",
+                            bank.name().to_uppercase()
+                        ),
+                    ));
+                }
+                LineKind::Other => stray = true,
+            }
+        }
+    }
+    Ok(rows)
 }
 
 static DIGIT_RUN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\d+").unwrap());
