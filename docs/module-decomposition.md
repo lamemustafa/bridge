@@ -60,14 +60,14 @@ manifest cannot tell you which, because it records paths and not reasons — and
 that is the actual problem: the seal's boundary is currently an accident of
 history rather than a decision anyone can review.
 
-That needs capacity in `MAX_SURFACE_FILES`, and there is none by design — 217 of
-217.
+That needs capacity in `MAX_SURFACE_FILES`, and there is none by design — 218 of
+218.
 
 **Do not read that as a shortage to be fixed.** `RESERVED_SURFACE_FILES` is
 documented as capacity for *"one small cohesive surface change"*, and the cap's
 own rationale says it *"makes further unreviewed additions an explicit
 compatibility-surface decision"*, closing with *"one file for one named reason —
-not headroom."* The cap has been raised four times, each reason recorded in the
+not headroom."* The cap has been raised five times, each reason recorded in the
 comment, and three of those raises came from branches that could not see each
 other. The friction is the control.
 
