@@ -1,21 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync, readdirSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { basename, dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-
-const scriptRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const rootArgument = process.argv.indexOf("--root");
-if (rootArgument !== -1 && !process.argv[rootArgument + 1]) {
-  throw new Error("--root requires a repository path");
-}
-const repositoryRoot = rootArgument === -1 ? scriptRoot : resolve(process.argv[rootArgument + 1]);
 
 // These are legacy, deliberately quarantined request profiles. The match is
 // exact: removing one does not create capacity for another, and adding either
 // hazard anywhere else fails this gate. New exceptions require reviewed edits
 // to this list and a distinct request-profile decision.
-const expected = new Set([
+export const expected = new Set([
   "custom-report|src-tauri/crates/bridge-tally-protocol/src/xml_read_profiles.rs::render_company_list|Company Report",
   "custom-report|src-tauri/crates/bridge-tally-protocol/src/xml_read_profiles.rs::render_ledgers|BRIDGE Ledger Export V1",
   "custom-report|src-tauri/crates/bridge-tally-protocol/src/xml_read_profiles.rs::render_vouchers|BRIDGE Voucher Export V2",
@@ -28,25 +21,65 @@ const expected = new Set([
   "function-argument-with-space|src-tauri/src/tally/tdl_engine.rs::ledger_period_balances_request|$$NumItems:BRIDGE Ledger Period Collection V1",
 ]);
 
-const actual = new Set();
-for (const sourceRoot of ["src-tauri", "tools"]) {
-  for (const path of rustFiles(resolve(repositoryRoot, sourceRoot))) {
-    scanRequestBuilderStrings(repositoryRoot, path, actual);
+// The number of module files the scan skips as test code, pinned for the same
+// reason the violations are: a lexer regression that quarantines too much must
+// show up as a diff, not pass as a quieter gate. Adding or removing an
+// extracted test module changes it; confirm the new file is loaded only under
+// #[cfg(test)] before updating it.
+export const EXPECTED_TEST_MODULE_FILES = 74;
+
+export function collect(repositoryRoot) {
+  const testModules = testOnlyModuleFiles(repositoryRoot);
+  const violations = new Set();
+  const skipped = new Set();
+  for (const sourceRoot of ["src-tauri", "tools"]) {
+    for (const path of rustFiles(resolve(repositoryRoot, sourceRoot))) {
+      const file = relativePath(repositoryRoot, path);
+      if (testModules.has(file)) {
+        skipped.add(file);
+        continue;
+      }
+      scanRequestBuilderStrings(repositoryRoot, path, violations);
+    }
   }
+  return { violations, skipped };
 }
 
-const unexpected = [...actual].filter((violation) => !expected.has(violation)).sort();
-const missing = [...expected].filter((violation) => !actual.has(violation)).sort();
-if (unexpected.length || missing.length) {
-  throw new Error(
-    "Tally request-builder hazard allowlist changed:\n" +
-      (unexpected.length ? `unexpected:\n${unexpected.map((value) => `- ${value}`).join("\n")}\n` : "") +
-      (missing.length ? `missing:\n${missing.map((value) => `- ${value}`).join("\n")}\n` : "") +
-      "Use a native Collection export by default; a new exception requires a reviewed exact-set update.",
+function main() {
+  const scriptRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const rootArgument = process.argv.indexOf("--root");
+  if (rootArgument !== -1 && !process.argv[rootArgument + 1]) {
+    throw new Error("--root requires a repository path");
+  }
+  const repositoryRoot = rootArgument === -1 ? scriptRoot : resolve(process.argv[rootArgument + 1]);
+  const { violations: actual, skipped } = collect(repositoryRoot);
+
+  const unexpected = [...actual].filter((violation) => !expected.has(violation)).sort();
+  const missing = [...expected].filter((violation) => !actual.has(violation)).sort();
+  if (unexpected.length || missing.length) {
+    throw new Error(
+      "Tally request-builder hazard allowlist changed:\n" +
+        (unexpected.length ? `unexpected:\n${unexpected.map((value) => `- ${value}`).join("\n")}\n` : "") +
+        (missing.length ? `missing:\n${missing.map((value) => `- ${value}`).join("\n")}\n` : "") +
+        "Use a native Collection export by default; a new exception requires a reviewed exact-set update.",
+    );
+  }
+  if (rootArgument === -1 && skipped.size !== EXPECTED_TEST_MODULE_FILES) {
+    throw new Error(
+      `test-module quarantine changed: ${skipped.size} files skipped, ` +
+        `${EXPECTED_TEST_MODULE_FILES} expected. Confirm every skipped file is loaded only under ` +
+        "#[cfg(test)] before updating EXPECTED_TEST_MODULE_FILES.",
+    );
+  }
+  console.log(
+    `Tally request-builder hazards match the pinned set (${actual.size} violations; ` +
+      `${skipped.size} test-only module files skipped).`,
   );
 }
 
-console.log(`Tally request-builder hazards match the pinned set (${actual.size} violations).`);
+function relativePath(repositoryRoot, path) {
+  return relative(repositoryRoot, path).replaceAll("\\", "/");
+}
 
 function rustFiles(directory) {
   const files = [];
@@ -78,7 +111,9 @@ function scanRequestBuilderStrings(repositoryRoot, path, violations) {
   // Test-quarantine strategy: strings are skipped when they fall inside a
   // #[cfg(test)] *module* body (specifically `#[cfg(test)] mod name { ... }`,
   // tracked via brace-depth) or inside a file under a tests/ directory
-  // (integration tests). This is deliberate, not incidental: unit tests such
+  // (integration tests). The same module moved to its own file and loaded by
+  // `#[cfg(test)] #[path = "..."] mod name;` is skipped whole by collect();
+  // see testOnlyModuleFiles() at the end of this file for how that is decided. This is deliberate, not incidental: unit tests such
   // as `exact_report_collection_is_shared_by_count_and_rows`, which live
   // inside `#[cfg(test)] mod tests { ... }`, assert against string literals
   // containing `<REPORT NAME="...">` or `$$NumItems:... With Spaces` as
@@ -340,3 +375,362 @@ function enclosingFunction(source, position) {
   const functions = [...prefix.matchAll(/(?:pub(?:\([^)]*\))?\s+)?fn\s+([A-Za-z0-9_]+)/g)];
   return functions.at(-1)?.[1] ?? "<module>";
 }
+
+// ---------------------------------------------------------------------------
+// Test-module quarantine for extracted test files.
+//
+// An inline `#[cfg(test)] mod tests { ... }` body is skipped by scanStrings().
+// The same module moved to its own file -- `#[cfg(test)] #[path = "x_tests.rs"]
+// mod tests;` -- would otherwise be scanned as production code. This finds the
+// files that are loaded only as test modules and lets collect() skip them.
+//
+// Every rule errs toward scanning: a wrong answer here may raise a false alarm,
+// but must never skip a production file. File names are never trusted.
+//
+// A file is test-only when a trusted edge reaches it and no veto names it:
+//
+//  Edges (only from files whose brace depth never underflows and ends at 0):
+//   - a brace-depth-0 out-of-line `mod name;` whose attribute group has a
+//     `cfg` implying `test` (`cfg(test)`, or `test` as an argument of
+//     `cfg(all(...))`), with `#[path]`, or bare in a crate root or mod.rs;
+//   - any brace-depth-0 out-of-line `mod name;` declared *by* a test-only file
+//     (it cannot compile unless its parent does), iterated to a fixed point.
+//   `#[path]` resolves beside the declaring file (Rust Reference, "The path
+//   attribute", for modules not inside an inline module); a bare `mod name;`
+//   resolves beside a file that owns its directory and under `<stem>/` otherwise.
+//
+//  Vetoes, collected from every .rs file in the repository except those already
+//  test-only, and matched by basename case-insensitively so they over-veto:
+//   - any `mod name;` at any depth that is not itself an edge (`name.rs`,
+//     `name/mod.rs`), including inside inline modules and macro bodies;
+//   - any string literal written as `path = "..."` or passed to `include!`,
+//     `include_str!` or `include_bytes!` that is not part of an edge, which
+//     covers `#[cfg_attr(..., path = "...")]`;
+//   - every Cargo crate root, by exact path.
+//
+// Not handled, all of which leave a file scanned: `cfg(any(...))` and other
+// cfg shapes, `#[path]` inside an inline module, `mod r#name;`.
+// ---------------------------------------------------------------------------
+
+export function testOnlyModuleFiles(repositoryRoot) {
+  const files = allFiles(repositoryRoot);
+  const rust = files.filter((file) => file.endsWith(".rs"));
+  const exists = new Set(files);
+  const lexed = new Map(rust.map((file) => [file, lexModules(readFileSync(resolve(repositoryRoot, file), "utf8"))]));
+  const roots = crateRoots(repositoryRoot, files);
+
+  let testOnly = new Map(); // file -> owns its directory
+  for (let round = 0; round < 64; round += 1) {
+    const vetoBase = new Set();
+    const vetoDirModule = new Set();
+    const candidates = new Map();
+    for (const [file, lex] of lexed) {
+      const parentIsTest = testOnly.has(file);
+      for (const declaration of lex.declarations) {
+        const edge =
+          lex.healthy &&
+          declaration.depth === 0 &&
+          (parentIsTest || declaration.attributes.some(impliesTest));
+        const target = edge ? resolveDeclaration(file, declaration, parentIsTest ? testOnly.get(file) : null, exists) : null;
+        if (target) {
+          if (!candidates.has(target.path)) candidates.set(target.path, target.ownsDirectory);
+          continue;
+        }
+        if (parentIsTest) continue;
+        vetoBase.add(`${declaration.name}.rs`.toLowerCase());
+        vetoDirModule.add(`${declaration.name}/mod.rs`.toLowerCase());
+        for (const value of declaration.pathValues) vetoBase.add(basename(value).toLowerCase());
+      }
+      if (parentIsTest) continue;
+      for (const reference of lex.looseReferences) vetoBase.add(basename(reference).toLowerCase());
+    }
+    const next = new Map();
+    for (const [path, ownsDirectory] of candidates) {
+      const base = basename(path).toLowerCase();
+      const dirModule = `${basename(dirname(path))}/${base}`.toLowerCase();
+      if (roots.has(path) || vetoBase.has(base) || (base === "mod.rs" && vetoDirModule.has(dirModule))) continue;
+      next.set(path, ownsDirectory);
+    }
+    const stable = next.size === testOnly.size && [...next.keys()].every((path) => testOnly.has(path));
+    testOnly = next;
+    if (stable) return new Set(testOnly.keys());
+  }
+  throw new Error("test-module quarantine did not converge");
+}
+
+function resolveDeclaration(file, declaration, parentOwnsDirectory, exists) {
+  const directory = dirname(file);
+  const explicit = declaration.attributes.map(pathAttribute).find((value) => value !== null);
+  if (explicit !== undefined) {
+    const path = normalise(`${directory}/${explicit}`);
+    return exists.has(path) ? { path, ownsDirectory: true } : null;
+  }
+  const ownsDirectory =
+    parentOwnsDirectory ?? ["lib.rs", "main.rs", "mod.rs"].includes(basename(file));
+  const base = ownsDirectory || basename(file) === "mod.rs" ? directory : `${directory}/${basename(file, ".rs")}`;
+  for (const candidate of [`${base}/${declaration.name}.rs`, `${base}/${declaration.name}/mod.rs`]) {
+    const path = normalise(candidate);
+    if (exists.has(path)) return { path, ownsDirectory: basename(path) === "mod.rs" };
+  }
+  return null;
+}
+
+function normalise(path) {
+  const parts = [];
+  for (const part of path.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") parts.pop();
+    else parts.push(part);
+  }
+  return parts.join("/");
+}
+
+function impliesTest(attribute) {
+  const cfg = /^\s*cfg\s*\(([\s\S]*)\)\s*$/.exec(attribute);
+  return cfg !== null && predicateImpliesTest(cfg[1].trim());
+}
+
+function predicateImpliesTest(predicate) {
+  if (predicate === "test") return true;
+  const all = /^all\s*\(([\s\S]*)\)$/.exec(predicate);
+  return all !== null && topLevelArguments(all[1]).some(predicateImpliesTest);
+}
+
+function topLevelArguments(text) {
+  const argumentsFound = [];
+  let depth = 0;
+  let quoted = false;
+  let current = "";
+  for (let index = 0; index < text.length; index += 1) {
+    const c = text[index];
+    if (quoted) {
+      current += c;
+      if (c === "\\") {
+        current += text[index + 1] ?? "";
+        index += 1;
+      } else if (c === '"') quoted = false;
+      continue;
+    }
+    if (c === '"') quoted = true;
+    else if (c === "(") depth += 1;
+    else if (c === ")") depth -= 1;
+    else if (c === "," && depth === 0) {
+      argumentsFound.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += c;
+  }
+  if (current.trim()) argumentsFound.push(current.trim());
+  return argumentsFound;
+}
+
+function pathAttribute(attribute) {
+  const path = /^\s*path\s*=\s*(?:r(#*)"([\s\S]*)"\1|"((?:\\.|[^"\\])*)")\s*$/.exec(attribute);
+  if (path === null) return null;
+  return path[2] ?? path[3];
+}
+
+// One forward pass that skips comments, string and char literals, and records:
+// out-of-line `mod name;` declarations with their full outer attribute group and
+// brace depth; string literals used as `path = "..."` or `include*!("...")`
+// outside such a group; and whether the file's braces balance.
+export function lexModules(source) {
+  const declarations = [];
+  const looseReferences = [];
+  const n = source.length;
+  let i = 0;
+  let depth = 0;
+  let healthy = true;
+  let group = null; // { start, attributes, pathValues } for the attribute group being read
+
+  const skipTrivia = (position) => {
+    for (;;) {
+      while (position < n && /\s/.test(source[position])) position += 1;
+      if (source.startsWith("//", position)) {
+        const end = source.indexOf("\n", position);
+        position = end === -1 ? n : end;
+      } else if (source.startsWith("/*", position)) {
+        position = skipBlockComment(source, position);
+      } else return position;
+    }
+  };
+
+  while (i < n) {
+    if (source.startsWith("//", i)) {
+      const end = source.indexOf("\n", i);
+      i = end === -1 ? n : end;
+      continue;
+    }
+    if (source.startsWith("/*", i)) {
+      i = skipBlockComment(source, i);
+      continue;
+    }
+    const literal = readLiteral(source, i);
+    if (literal) {
+      const before = source.slice(Math.max(0, i - 48), i);
+      if (/(?:^|[^A-Za-z0-9_])path\s*=\s*$/.test(before) || /include(?:_str|_bytes)?!\s*\(\s*$/.test(before)) {
+        looseReferences.push(literal.value);
+      }
+      i = literal.end;
+      continue;
+    }
+    if (source.startsWith("#[", i)) {
+      // Read the whole outer attribute group, then decide whether it attaches
+      // to an out-of-line module declaration.
+      const attributes = [];
+      let cursor = i;
+      while (source.startsWith("#[", cursor)) {
+        const end = readBracket(source, cursor + 1);
+        attributes.push(source.slice(cursor + 2, end - 1));
+        cursor = skipTrivia(end);
+      }
+      const item = /^(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;/.exec(source.slice(cursor, cursor + 160));
+      if (item) {
+        const pathValues = attributes.flatMap((attribute) => attributeStrings(attribute, /(?:^|[^A-Za-z0-9_])path\s*=\s*$/));
+        declarations.push({ name: item[1], attributes, pathValues, depth });
+        i = cursor + item[0].length;
+        continue;
+      }
+      // Not a module declaration: record any path/include strings inside the
+      // attributes as loose references, and carry on after the group.
+      for (const attribute of attributes) {
+        looseReferences.push(...attributeStrings(attribute, /(?:^|[^A-Za-z0-9_])path\s*=\s*$|include(?:_str|_bytes)?!\s*\(\s*$/));
+      }
+      i = cursor;
+      continue;
+    }
+    const bare = /^(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;/.exec(source.slice(i, i + 160));
+    if (bare && (i === 0 || !/[A-Za-z0-9_]/.test(source[i - 1]))) {
+      declarations.push({ name: bare[1], attributes: [], pathValues: [], depth });
+      i += bare[0].length;
+      continue;
+    }
+    if (source[i] === "{") depth += 1;
+    else if (source[i] === "}") {
+      if (depth === 0) healthy = false;
+      else depth -= 1;
+    }
+    const word = /^[A-Za-z_][A-Za-z0-9_]*/.exec(source.slice(i, i + 64));
+    i += word ? word[0].length : 1;
+  }
+  return { declarations, looseReferences, healthy: healthy && depth === 0 };
+}
+
+function attributeStrings(attribute, prefix) {
+  const values = [];
+  let i = 0;
+  while (i < attribute.length) {
+    const literal = readLiteral(attribute, i);
+    if (literal) {
+      if (prefix.test(attribute.slice(Math.max(0, i - 48), i))) values.push(literal.value);
+      i = literal.end;
+    } else i += 1;
+  }
+  return values;
+}
+
+function skipBlockComment(source, start) {
+  let depth = 1;
+  let i = start + 2;
+  while (i < source.length && depth > 0) {
+    if (source.startsWith("/*", i)) {
+      depth += 1;
+      i += 2;
+    } else if (source.startsWith("*/", i)) {
+      depth -= 1;
+      i += 2;
+    } else i += 1;
+  }
+  return i;
+}
+
+function readBracket(source, start) {
+  let depth = 0;
+  let i = start;
+  while (i < source.length) {
+    const literal = readLiteral(source, i);
+    if (literal) {
+      i = literal.end;
+      continue;
+    }
+    if (source[i] === "[") depth += 1;
+    else if (source[i] === "]") {
+      depth -= 1;
+      if (depth === 0) return i + 1;
+    }
+    i += 1;
+  }
+  return source.length;
+}
+
+// A string, raw string, byte string or char literal starting at `i`, if any.
+// Lifetimes (`'a`) are not literals.
+function readLiteral(source, i) {
+  if (i > 0 && /[A-Za-z0-9_]/.test(source[i - 1]) && source[i] !== '"' && source[i] !== "'") return null;
+  const raw = /^b?r(#*)"/.exec(source.slice(i, i + 40));
+  if (raw) {
+    const close = `"${raw[1]}`;
+    const valueStart = i + raw[0].length;
+    const end = source.indexOf(close, valueStart);
+    const stop = end === -1 ? source.length : end;
+    return { value: source.slice(valueStart, stop), end: end === -1 ? source.length : end + close.length };
+  }
+  const quote = source[i] === '"' ? i : source[i] === "b" && source[i + 1] === '"' ? i + 1 : -1;
+  if (quote !== -1) {
+    let j = quote + 1;
+    let value = "";
+    while (j < source.length && source[j] !== '"') {
+      if (source[j] === "\\" && j + 1 < source.length) {
+        value += source[j + 1];
+        j += 2;
+      } else {
+        value += source[j];
+        j += 1;
+      }
+    }
+    return { value, end: Math.min(source.length, j + 1) };
+  }
+  const char = /^b?'(?:\\(?:x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f]{1,6}\}|.)|[^\\'\n])'/.exec(source.slice(i, i + 16));
+  if (char) return { value: "", end: i + char[0].length };
+  return null;
+}
+
+function allFiles(repositoryRoot) {
+  const files = [];
+  const walk = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if ([".git", "target", "node_modules"].includes(entry.name)) continue;
+      const path = resolve(directory, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (entry.isFile()) files.push(relativePath(repositoryRoot, path));
+    }
+  };
+  walk(repositoryRoot);
+  return files;
+}
+
+function crateRoots(repositoryRoot, files) {
+  const roots = new Set();
+  for (const manifest of files.filter((file) => basename(file) === "Cargo.toml")) {
+    const crate = dirname(manifest);
+    const prefix = crate === "." ? "" : `${crate}/`;
+    for (const file of files) {
+      if (!file.startsWith(prefix) || !file.endsWith(".rs")) continue;
+      const rest = file.slice(prefix.length).split("/");
+      if (
+        ["src/lib.rs", "src/main.rs", "build.rs"].includes(rest.join("/")) ||
+        (rest[0] === "src" && rest[1] === "bin") ||
+        (["tests", "benches", "examples"].includes(rest[0]) && (rest.length === 2 || rest.at(-1) === "main.rs"))
+      ) {
+        roots.add(file);
+      }
+    }
+    for (const match of readFileSync(resolve(repositoryRoot, manifest), "utf8").matchAll(/^\s*path\s*=\s*"([^"]+\.rs)"/gm)) {
+      roots.add(normalise(`${crate}/${match[1]}`));
+    }
+  }
+  return roots;
+}
+
+if (import.meta.main) main();
