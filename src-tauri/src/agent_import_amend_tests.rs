@@ -1,0 +1,436 @@
+//! An amendment reuses a batch's wire identity, and only under compare-and-swap.
+use super::*;
+
+const ORIGINAL: &str = "bridge-2b1c9f4e-9d3a-4f71-8c2e-5a6b7c8d9e01";
+const AMENDMENT: &str = "bridge-7d4e0a1b-3c2f-4e5d-9a8b-1c2d3e4f5a6b";
+const UNRELATED: &str = "bridge-0f1e2d3c-4b5a-4968-8776-655443322110";
+
+fn endpoint() -> TallyEndpointConfig {
+    TallyEndpointConfig {
+        host: "127.0.0.1".into(),
+        port: 9001,
+    }
+}
+
+fn origin() -> String {
+    super::super::super::canonical_loopback_origin(&endpoint()).unwrap()
+}
+
+fn build(batch_id: &str, amends: Option<&str>, amount: &str, date: &str) -> ImportLedgerLine {
+    let mut line: ImportLedgerLine = serde_json::from_value(json!({
+        "batch_id":batch_id, "identity_scheme":"batch_v1", "company_guid":GUID,
+        "endpoint_origin":origin(),
+        "company":{"name":"Synthetic Accounts","guid":GUID,"company_number":"100001","books_from":"20260401"},
+        "txn_ids":["txn-001"],"date_from":date,"date_to":date,
+        "sha256":"", "built_at":"2026-09-16T00:00:00Z", "status":"built",
+        "pre_import_mark":{"kind":"company_high_water","value":1,"master_value":1},
+        "vouchers":[{"bridge_txn_id":"txn-001","date":date,"voucher_type":"Payment",
+            "entries":[{"ledger":"Expense","amount":amount,"side":"Dr"},
+                       {"ledger":"Bank","amount":amount,"side":"Cr"}]}]
+    }))
+    .unwrap();
+    line.amends_batch_id = amends.map(str::to_string);
+    line.sha256 = sha256_hex(
+        render_import_xml(
+            "Synthetic Accounts",
+            &line.vouchers,
+            line.identity_batch_id(),
+        )
+        .as_bytes(),
+    );
+    line
+}
+
+fn journal(records: &[&dyn erased::Record]) -> String {
+    records.iter().map(|record| record.line()).collect()
+}
+
+mod erased {
+    pub(super) trait Record {
+        fn line(&self) -> String;
+    }
+    impl<T: serde::Serialize> Record for T {
+        fn line(&self) -> String {
+            format!("{}\n", serde_json::to_string(self).unwrap())
+        }
+    }
+}
+
+fn lineage_of(text: &str, named: &str) -> Result<amend::Lineage, String> {
+    let named = ledger::read_snapshot(std::io::Cursor::new(text.as_bytes()), Some(named))?
+        .ok_or("import_amend_batch_not_found")?;
+    let builds = ledger::read_lineage(
+        std::io::Cursor::new(text.as_bytes()),
+        named.batch.identity_batch_id(),
+    )?;
+    amend::admit_lineage(&named, builds, GUID, &origin())
+}
+
+/// A book row as Tally returns it after importing `line`'s only voucher.
+fn book_row(line: &ImportLedgerLine) -> ReadVoucher {
+    let voucher = &line.vouchers[0];
+    ReadVoucher {
+        remote_id: Some(format!("{GUID}-00000005")),
+        guid: Some(format!("{GUID}-00000005")),
+        master_id: Some("5".into()),
+        alter_id: Some(40),
+        date: Some(voucher.date.clone()),
+        voucher_type: Some(voucher.voucher_type.as_str().into()),
+        narration: Some(format!("[BRIDGE:{}]", line.attribution_tag(voucher))),
+        voucher_number: Some("7".into()),
+        cancelled: Some(false),
+        optional: Some(false),
+        // Tally does not promise the order it was sent (§12a.4).
+        entries: voucher
+            .entries
+            .iter()
+            .rev()
+            .map(|entry| ReadEntry {
+                ledger: entry.ledger.clone(),
+                amount: match entry.side {
+                    EntrySide::Dr => format!("-{}", entry.amount),
+                    EntrySide::Cr => entry.amount.clone(),
+                },
+                is_deemed_positive: entry.side.tally_positive().into(),
+            })
+            .collect(),
+    }
+}
+
+fn book(rows: Vec<ReadVoucher>) -> ImportReadSource {
+    ImportReadSource::admit(rows).unwrap()
+}
+
+#[test]
+fn an_amendment_carries_the_original_batch_identity_and_nothing_else_does() {
+    let original = build(ORIGINAL, None, "12.50", "20260901");
+    let amendment = build(AMENDMENT, Some(ORIGINAL), "15.00", "20260901");
+    let unrelated = build(UNRELATED, None, "15.00", "20260901");
+    let tag = |line: &ImportLedgerLine| line.attribution_tag(&line.vouchers[0]);
+    assert_eq!(tag(&amendment), tag(&original));
+    assert_ne!(tag(&unrelated), tag(&original));
+    // The file itself carries the original REMOTEID, which is what makes a
+    // file import alter the voucher rather than create another.
+    let xml = render_import_xml(
+        "Synthetic Accounts",
+        &amendment.vouchers,
+        amendment.identity_batch_id(),
+    );
+    assert!(xml.contains(&format!("REMOTEID=\"{}\"", tag(&original))));
+    assert!(xml.contains(&format!("[BRIDGE:{}]", tag(&original))));
+}
+
+#[test]
+fn an_amendment_record_round_trips_and_an_older_record_reads_as_no_amendment() {
+    let amendment = build(AMENDMENT, Some(ORIGINAL), "15.00", "20260901");
+    let encoded = serde_json::to_value(&amendment).unwrap();
+    assert_eq!(encoded["amends_batch_id"], ORIGINAL);
+    let decoded: ImportLedgerLine = serde_json::from_value(encoded).unwrap();
+    assert_eq!(decoded.identity_batch_id(), ORIGINAL);
+
+    let original = build(ORIGINAL, None, "12.50", "20260901");
+    let encoded = serde_json::to_value(&original).unwrap();
+    assert!(encoded.get("amends_batch_id").is_none());
+    assert_eq!(
+        serde_json::from_value::<ImportLedgerLine>(encoded)
+            .unwrap()
+            .identity_batch_id(),
+        ORIGINAL
+    );
+}
+
+#[test]
+fn a_lineage_holds_the_original_and_its_amendments_and_no_other_batch() {
+    let original = build(ORIGINAL, None, "12.50", "20260901");
+    let first = build(AMENDMENT, Some(ORIGINAL), "15.00", "20260901");
+    let unrelated = build(UNRELATED, None, "15.00", "20260901");
+    let text = journal(&[&original, &unrelated, &first]);
+    // Naming the amendment resolves to the same lineage as naming the original.
+    for named in [ORIGINAL, AMENDMENT] {
+        let lineage = lineage_of(&text, named).unwrap();
+        assert_eq!(lineage.identity_batch_id, ORIGINAL);
+        assert_eq!(
+            lineage
+                .builds
+                .iter()
+                .map(|build| build.batch.batch_id.as_str())
+                .collect::<Vec<_>>(),
+            [ORIGINAL, AMENDMENT]
+        );
+    }
+}
+
+#[test]
+fn any_native_dispatch_in_the_lineage_refuses_the_amendment() {
+    // A native post carried the marker beside a random private REMOTEID, so an
+    // import under the batch identity would create a second voucher.
+    let original = build(ORIGINAL, None, "12.50", "20260901");
+    let first = build(AMENDMENT, Some(ORIGINAL), "15.00", "20260901");
+    let text = journal(&[
+        &original,
+        &ledger::StatusRecord::dispatch(&original),
+        &first,
+    ]);
+    assert_eq!(
+        lineage_of(&text, AMENDMENT).err().unwrap(),
+        "import_amend_natively_posted"
+    );
+    // Control: the same lineage without the dispatch is admitted.
+    assert!(lineage_of(&journal(&[&original, &first]), AMENDMENT).is_ok());
+}
+
+#[test]
+fn a_lineage_from_another_company_endpoint_or_identity_scheme_is_refused() {
+    let original = build(ORIGINAL, None, "12.50", "20260901");
+    let text = journal(&[&original]);
+    let named = ledger::read_snapshot(std::io::Cursor::new(text.as_bytes()), Some(ORIGINAL))
+        .unwrap()
+        .unwrap();
+    let builds = || ledger::read_lineage(std::io::Cursor::new(text.as_bytes()), ORIGINAL).unwrap();
+    assert_eq!(
+        amend::admit_lineage(
+            &named,
+            builds(),
+            "00000000-0000-4000-8000-000000000009",
+            &origin()
+        )
+        .err()
+        .unwrap(),
+        "import_batch_company_mismatch"
+    );
+    assert_eq!(
+        amend::admit_lineage(&named, builds(), GUID, "http://127.0.0.1:9000")
+            .err()
+            .unwrap(),
+        "import_amend_endpoint_mismatch"
+    );
+    let mut legacy = original.clone();
+    legacy.identity_scheme = None;
+    let text = journal(&[&legacy]);
+    assert_eq!(
+        lineage_of(&text, ORIGINAL).err().unwrap(),
+        "import_amend_identity_scheme_unsupported"
+    );
+    // An amendment whose original is not in this journal has no lineage root.
+    let orphan = build(AMENDMENT, Some(ORIGINAL), "15.00", "20260901");
+    assert_eq!(
+        lineage_of(&journal(&[&orphan]), AMENDMENT).err().unwrap(),
+        "import_amend_lineage_invalid"
+    );
+}
+
+#[test]
+fn a_proposal_may_correct_amounts_and_dates_but_not_type_number_or_membership() {
+    let original = build(ORIGINAL, None, "12.50", "20260901");
+    let lineage = lineage_of(&journal(&[&original]), ORIGINAL).unwrap();
+    let mut proposal = build(AMENDMENT, None, "20.00", "20260903").vouchers;
+    assert_eq!(lineage.admit_proposal(&proposal), Ok(()));
+
+    let mut retyped = proposal.clone();
+    retyped[0].voucher_type = VoucherType::Receipt;
+    assert_eq!(
+        lineage.admit_proposal(&retyped).err().unwrap(),
+        "import_amend_voucher_type_changed"
+    );
+    let mut renumbered = proposal.clone();
+    renumbered[0].voucher_number = Some("9".into());
+    assert_eq!(
+        lineage.admit_proposal(&renumbered).err().unwrap(),
+        "import_amend_voucher_number_changed"
+    );
+    proposal[0].bridge_txn_id = "txn-999".into();
+    assert_eq!(
+        lineage.admit_proposal(&proposal).err().unwrap(),
+        "import_amend_txn_not_in_batch"
+    );
+}
+
+#[test]
+fn the_window_holds_where_a_voucher_is_and_where_the_amendment_moves_it() {
+    let original = build(ORIGINAL, None, "12.50", "20260910");
+    let lineage = lineage_of(&journal(&[&original]), ORIGINAL).unwrap();
+    let earlier = build(AMENDMENT, None, "12.50", "20260902").vouchers;
+    assert_eq!(
+        lineage.window(&earlier),
+        ("20260902".into(), "20260910".into())
+    );
+    let later = build(AMENDMENT, None, "12.50", "20260920").vouchers;
+    assert_eq!(
+        lineage.window(&later),
+        ("20260910".into(), "20260920".into())
+    );
+}
+
+#[test]
+fn a_voucher_still_as_any_build_wrote_it_is_admitted() {
+    let original = build(ORIGINAL, None, "12.50", "20260901");
+    let first = build(AMENDMENT, Some(ORIGINAL), "15.00", "20260902");
+    let lineage = lineage_of(&journal(&[&original, &first]), ORIGINAL).unwrap();
+    let proposal = build(UNRELATED, None, "18.00", "20260903").vouchers;
+    // The book may hold the original (the first amendment was never imported)
+    // or the first amendment (it was): both are versions Bridge wrote.
+    for (row, expected) in [
+        (book_row(&original), ORIGINAL),
+        (book_row(&first), AMENDMENT),
+    ] {
+        let admitted = lineage
+            .compare_and_swap(&proposal, &book(vec![row]))
+            .unwrap()
+            .expect("book holds a version Bridge built");
+        assert_eq!(admitted[0]["book_matches_batch_id"], expected);
+    }
+}
+
+#[test]
+fn an_edited_missing_or_cancelled_voucher_refuses_the_amendment() {
+    let original = build(ORIGINAL, None, "12.50", "20260901");
+    let lineage = lineage_of(&journal(&[&original]), ORIGINAL).unwrap();
+    let proposal = build(AMENDMENT, None, "18.00", "20260901").vouchers;
+    let reason = |rows: Vec<ReadVoucher>| {
+        lineage
+            .compare_and_swap(&proposal, &book(rows))
+            .unwrap()
+            .expect_err("refused")[0]["reason"]
+            .clone()
+    };
+
+    // Someone changed the amount in Tally after Bridge built it: an amendment
+    // would silently overwrite that change.
+    let mut edited = book_row(&original);
+    edited.entries[0].amount = "13.00".into();
+    edited.entries[1].amount = "-13.00".into();
+    assert_eq!(reason(vec![edited]), "book_voucher_diverged");
+    let mut redated = book_row(&original);
+    redated.date = Some("20260905".into());
+    assert_eq!(reason(vec![redated]), "book_voucher_diverged");
+
+    assert_eq!(reason(vec![]), "not_in_book");
+    // A voucher carrying another batch's marker is not this one.
+    let unrelated = build(UNRELATED, None, "12.50", "20260901");
+    assert_eq!(reason(vec![book_row(&unrelated)]), "not_in_book");
+
+    let mut cancelled = book_row(&original);
+    cancelled.cancelled = Some(true);
+    assert_eq!(reason(vec![cancelled]), "voucher_cancelled_or_optional");
+
+    // Control: the unedited row is admitted by the same lineage and proposal.
+    assert!(lineage
+        .compare_and_swap(&proposal, &book(vec![book_row(&original)]))
+        .unwrap()
+        .is_ok());
+}
+
+#[test]
+fn one_diverged_voucher_refuses_the_whole_amendment() {
+    let mut original = build(ORIGINAL, None, "12.50", "20260901");
+    let mut second = original.vouchers[0].clone();
+    second.bridge_txn_id = "txn-002".into();
+    original.vouchers.push(second);
+    let lineage = lineage_of(&journal(&[&original]), ORIGINAL).unwrap();
+    let mut rows = vec![book_row(&original)];
+    let mut other = book_row(&original);
+    other.guid = Some(format!("{GUID}-00000006"));
+    other.master_id = Some("6".into());
+    other.narration = Some(format!(
+        "[BRIDGE:{}]",
+        original.attribution_tag(&original.vouchers[1])
+    ));
+    other.entries[0].amount = "99.00".into();
+    other.entries[1].amount = "-99.00".into();
+    rows.push(other);
+    let refused = lineage
+        .compare_and_swap(&original.vouchers, &book(rows))
+        .unwrap()
+        .expect_err("one divergence refuses the batch");
+    assert_eq!(refused.len(), 1);
+    assert_eq!(refused[0]["bridge_txn_id"], "txn-002");
+}
+
+#[test]
+fn an_amendment_is_never_eligible_for_native_posting() {
+    // Native posting renders a fresh private REMOTEID and can only create.
+    let mut line: ImportLedgerLine = serde_json::from_value(json!({
+        "batch_id":AMENDMENT, "identity_scheme":"batch_v1", "amends_batch_id":ORIGINAL,
+        "company_guid":GUID, "endpoint_origin":origin(),
+        "company":{"name":"Synthetic Accounts","guid":GUID,"company_number":"100001","books_from":"20260401"},
+        "txn_ids":["journal-test"],"date_from":"20260901","date_to":"20260901",
+        "sha256":"", "built_at":"2026-09-16T00:00:00Z", "status":"built",
+        "pre_import_mark":{"kind":"company_high_water","value":1,"master_value":1},
+        "vouchers":[{"bridge_txn_id":"journal-test","date":"20260901","voucher_type":"Journal",
+            "entries":[{"ledger":"Expense","amount":"12.50","side":"Dr"},
+                       {"ledger":"Cash","amount":"12.50","side":"Cr"}]}]
+    }))
+    .unwrap();
+    line.sha256 = sha256_hex(
+        render_import_xml(
+            "Synthetic Accounts",
+            &line.vouchers,
+            line.identity_batch_id(),
+        )
+        .as_bytes(),
+    );
+    assert_eq!(
+        post::admit_saved_journal_integrity(&line, &endpoint())
+            .err()
+            .unwrap(),
+        "import_post_amendment_requires_file_import"
+    );
+    // Control: the same Journal as an original batch is admitted.
+    line.amends_batch_id = None;
+    line.batch_id = ORIGINAL.into();
+    line.sha256 = sha256_hex(
+        render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id).as_bytes(),
+    );
+    assert!(post::admit_saved_journal_integrity(&line, &endpoint()).is_ok());
+}
+
+#[test]
+fn the_build_schema_admits_amends_batch_id_and_the_payload_parses_it() {
+    let schema = voucher_input_schema();
+    // The schema states the rule the server enforces with valid_batch_id: the
+    // lowercase hyphenated spelling of a random (version 4) UUID.
+    assert_eq!(
+        schema["properties"]["amends_batch_id"]["pattern"],
+        "^bridge-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    );
+    assert!(valid_batch_id(ORIGINAL));
+    assert!(!valid_batch_id(
+        "bridge-2B1C9F4E-9D3A-4F71-8C2E-5A6B7C8D9E01"
+    ));
+    let mut input = serde_json::to_value(payload()).unwrap();
+    input["amends_batch_id"] = json!(ORIGINAL);
+    assert_eq!(
+        parse_payload(&input).unwrap().amends_batch_id.as_deref(),
+        Some(ORIGINAL)
+    );
+}
+
+#[tokio::test]
+async fn an_unknown_amendment_target_is_refused_before_any_tally_read() {
+    let directory = tempfile::tempdir().unwrap();
+    // Port 9 is never answered; reaching Tally would fail differently.
+    let server = Server::new(crate::agent::Settings {
+        endpoint: endpoint_on_port(9),
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 10,
+        max_bytes: 200_000,
+        redaction: crate::agent::Redaction::None,
+        import_enabled: true,
+        writes_enabled: false,
+    });
+    let mut input = serde_json::to_value(payload()).unwrap();
+    input["amends_batch_id"] = json!(ORIGINAL);
+    let failure = server.build_import_xml(&input).await.err().unwrap();
+    assert_eq!(failure.code, "import_amend_batch_not_found");
+    assert!(failure.evidence.is_none());
+    input["amends_batch_id"] = json!("bridge-not-a-uuid");
+    let failure = server.build_import_xml(&input).await.err().unwrap();
+    assert_eq!(failure.code, "import_amend_batch_id_invalid");
+}
+
+fn endpoint_on_port(port: u16) -> TallyEndpointConfig {
+    TallyEndpointConfig {
+        host: "127.0.0.1".into(),
+        port,
+    }
+}

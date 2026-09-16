@@ -36,6 +36,7 @@ fn identical_batch() -> (ImportLedgerLine, Vec<ReadVoucher>) {
     let line = ImportLedgerLine {
         endpoint_origin: None,
         identity_scheme: None,
+        amends_batch_id: None,
         batch_id: "batch-identical".into(),
         company_guid: GUID.into(),
         company: None,

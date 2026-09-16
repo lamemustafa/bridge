@@ -23,10 +23,16 @@ pub(in crate::agent) fn import_identity(batch_id: &str, txn_id: &str) -> Uuid {
 }
 
 impl ImportLedgerLine {
+    /// The batch whose identity this build's vouchers carry: its own, or the
+    /// original batch of the lineage an amendment corrects in place.
+    pub(super) fn identity_batch_id(&self) -> &str {
+        self.amends_batch_id.as_deref().unwrap_or(&self.batch_id)
+    }
+
     pub(super) fn attribution_tag(&self, voucher: &ImportVoucher) -> String {
         match self.identity_scheme {
             Some(ImportIdentityScheme::BatchV1) => {
-                import_identity(&self.batch_id, &voucher.bridge_txn_id).to_string()
+                import_identity(self.identity_batch_id(), &voucher.bridge_txn_id).to_string()
             }
             // Retain old file and journal interpretation; never rewrite a saved file.
             None => voucher.bridge_txn_id.clone(),
