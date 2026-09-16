@@ -31,15 +31,16 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// and manifest) but makes further unreviewed additions an explicit
 /// compatibility-surface decision.
 ///
-/// **Raised five times, the first three by branches that did not see each
+/// **Raised six times, the first three by branches that did not see each
 /// other.** 210 to 211 on master for `src-tauri/src/agent_ledgers.rs`, 211 to
 /// 212 for `src-tauri/crates/bridge-tally-core/src/master_binding.rs`, 212 to
 /// 216 in a single commit for the voucher-presence engine, its adapter, its
 /// admission-contract assertion, and `agent_catalog.rs` -- the last of those
 /// taking the slot a paragraph below had already reserved for it by name, which
 /// is why the four pins arrive as one raise and not two -- 216 to 217 for
-/// `.github/workflows/dependency-security-scheduled.yml`, and 217 to 218 for
-/// `src-tauri/src/agent_import_identity.rs`. Each reason stands; a merge that
+/// `.github/workflows/dependency-security-scheduled.yml`, 217 to 218 for
+/// `src-tauri/src/agent_import_identity.rs`, and 218 to 231 for thirteen files
+/// named individually below. Each reason stands; a merge that
 /// keeps a raise but loses its pin would pass the gate with behavior silently
 /// outside the evidence boundary, which is the failure this constant exists to
 /// make loud.
@@ -68,7 +69,52 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// both halves at once and leave the surface digest unchanged, so a receipt
 /// would attest an identity rule the evidence never covered. It is one file for
 /// one named reason — not headroom.
-pub const MAX_SURFACE_FILES: usize = 218;
+///
+/// The raise to 231 binds thirteen files at once, which reads like headroom and
+/// is not: each is named here with its own reason, and none was chosen to fill
+/// space. They were found together (bridge#416) because each is the unpinned
+/// half of a pair whose other half was already pinned -- the pinned module
+/// declares them, or the pinned caller depends on the rule they hold -- so the
+/// reasoning that pinned one half never reached the other. Each decides, in its
+/// own file, what Bridge admits into a book or lets leave the machine; an edit
+/// confined to it would leave the surface digest unchanged.
+///
+/// Admission into a book:
+/// - `tally/approved_import.rs` -- whether the operator's dialog counts as
+///   consent to post, and that only the explicit post button does.
+/// - `agent_import_post.rs` -- the only POST path, and the guard that stops one
+///   approved batch posting twice.
+/// - `agent_company.rs` -- that exactly one loaded company matches the
+///   requested identity; import admission and the company-scoped read tools
+///   rely on it.
+/// - `agent_import_cash_bank.rs` -- the reserved-group tables deciding which
+///   ledgers may sit on the money leg of a Payment, Receipt or Contra.
+/// - `bridge-tally-protocol/src/group_ancestry.rs` -- the ancestry walk under
+///   those tables; its other callers were already pinned and it was not.
+/// - `agent_import_persistence.rs` -- refuses a new import while an earlier
+///   publication is unsettled.
+/// - `tally/runtime_control.rs` -- which read failures are retryable; widening
+///   it re-sends a request `tally/runtime.rs` marked single-attempt.
+/// - `endpoint_coordination.rs` -- the exclusive per-listener lease taken
+///   before a post, so two processes cannot post to one Tally at once.
+///
+/// What leaves the machine, and the record of it:
+/// - `documents.rs` -- the origin allowlist for uploading customer documents.
+/// - `axal.rs` -- where credentialed requests may go, and that a redirect never
+///   carries the credentials onward.
+/// - `agent_protocol.rs` -- that the egress receipt is persisted before the
+///   response is written.
+/// - `agent_egress.rs` -- the append-only egress log, and its refusal to read a
+///   torn final row as evidence.
+/// - `agent_delivery.rs` -- what a receipt hashes, which is what it attests.
+///
+/// Not pinned, and deliberately: files feature-gated out of every shipped build
+/// (`agent_lab.rs`, `jsonex*.rs`, `india_tax_observation.rs`), operator filing
+/// labels, dead or declaration-only modules, and the read-path files that
+/// compute reported figures or decide when a change cursor may advance. Those
+/// decide what a read says, not what is admitted or where data may go; they are
+/// the next candidates if the boundary widens, and bridge#416 records why.
+pub const MAX_SURFACE_FILES: usize = 231;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
