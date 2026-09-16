@@ -185,6 +185,13 @@ jobs:
         run: >-
           cargo test --locked -p bridge-tally-protocol --no-fail-fast
           --features jsonex-parser,jsonex-request-builder,india-tax-observation-parser,bills-payments-observation-parser,bills-native-outstandings-probe
+      # The legacy voucher-scan outstandings path is compiled out of shipped
+      # builds. Its tests exist only under the feature, so run them here.
+      - name: Test legacy voucher-scan outstandings path
+        working-directory: src-tauri
+        run: |
+          cargo test --locked -p bridge-tally-protocol --features voucher-scan --no-fail-fast
+          cargo test --locked -p bridge-tally-transport --features voucher-scan --no-fail-fast
       - name: Test isolated native outstandings qualification path
         working-directory: tools
         run: |
@@ -209,6 +216,11 @@ jobs:
           cargo clippy --locked -p bridge-tally-protocol
           --features jsonex-parser,jsonex-request-builder,india-tax-observation-parser,bills-payments-observation-parser,bills-native-outstandings-probe
           --all-targets -- -D warnings -A clippy::pedantic
+      - name: Lint legacy voucher-scan outstandings path
+        working-directory: src-tauri
+        run: |
+          cargo clippy --locked -p bridge-tally-protocol --features voucher-scan --all-targets -- -D warnings -A clippy::pedantic
+          cargo clippy --locked -p bridge-tally-transport --features voucher-scan --all-targets -- -D warnings -A clippy::pedantic
       - name: Lint isolated native outstandings qualification path
         working-directory: tools
         run: |
@@ -367,6 +379,36 @@ jobs:
           --features bills-native-outstandings-probe-runner
           --all-targets -- --test-threads=1
       - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --workspace --all-targets --timings -- -D warnings -A clippy::pedantic
+      # The legacy voucher-scan runtime and the manual Unit A calibration harness
+      # are non-default features, so the workspace steps above never compile
+      # them. Each feature set carries tests the other lacks: the default-width
+      # invariant exists only without the harness, and the harness constructor
+      # tests only with it. The code is platform-neutral, so macOS alone runs it.
+      # The test step runs only tally:: and unit_a_live, where every gated test
+      # lives; the rest of the suite already ran above. The guard fails if a cfg
+      # on either feature appears anywhere else, so a gated test added outside
+      # the filter cannot pass unrun. bulk_party_statement.rs only gates a
+      # compile_fail doctest, which nextest never runs.
+      - name: Guard legacy feature test filter scope
+        if: runner.os == 'macOS'
+        run: |
+          outside=$(git grep -l -E 'feature *= *"(voucher-scan|live-calibration-harness)"' -- src-tauri/src src-tauri/tests \
+            | grep -v -x -E 'src-tauri/src/tally/.*|src-tauri/tests/unit_a_live\.rs|src-tauri/src/reports/bulk_party_statement\.rs' || true)
+          if [ -n "$outside" ]; then
+            echo "Feature-gated code outside the nextest filter; widen the filter below:"
+            echo "$outside"
+            exit 1
+          fi
+      - name: Test legacy voucher-scan and calibration harness features
+        if: runner.os == 'macOS'
+        run: |
+          cargo nextest run --locked --manifest-path src-tauri/Cargo.toml -p bridge --features voucher-scan --no-fail-fast --retries 0 --test-threads num-cpus -E 'test(/^tally::/) | binary(unit_a_live)'
+          cargo nextest run --locked --manifest-path src-tauri/Cargo.toml -p bridge --features live-calibration-harness --no-fail-fast --retries 0 --test-threads num-cpus -E 'test(/^tally::/) | binary(unit_a_live)'
+      - name: Lint legacy voucher-scan and calibration harness features
+        if: runner.os == 'macOS'
+        run: |
+          cargo clippy --locked --manifest-path src-tauri/Cargo.toml -p bridge --features voucher-scan --all-targets -- -D warnings -A clippy::pedantic
+          cargo clippy --locked --manifest-path src-tauri/Cargo.toml -p bridge --features live-calibration-harness --all-targets -- -D warnings -A clippy::pedantic
       - name: Lint Tally qualification tools workspace
         working-directory: tools
         run: cargo clippy --locked --workspace --all-targets -- -D warnings -A clippy::pedantic
