@@ -662,8 +662,9 @@ fn insert_run_drift_gaps(
 ) {
     // The current XML transport reads multiple reports sequentially and does
     // not yet bracket them with an independently observed source watermark.
-    // That remains a proof gap even when every internal invariant below and a
-    // fresh end-of-run capability-profile comparison pass.
+    // That remains a proof gap even when every internal invariant checked in
+    // `build_reconciliation` and a fresh end-of-run capability-profile
+    // comparison pass.
     match source_stability_check {
         SourceStabilityCheck::Passed => {
             // Full semantic reread equality is strong drift evidence, but
@@ -769,6 +770,8 @@ struct SnapshotTotals {
 }
 
 impl SnapshotTotals {
+    /// Adds one window's per-object parse, accept and dedupe counts, and checks
+    /// its source-reported count against the window or the complete scope.
     fn add_object_counts(&mut self, evidence: &WindowEvidence, gaps: &mut BTreeSet<String>) {
         for (object_type, count) in &evidence.object_counts {
             self.expected_count_objects.insert(object_type.clone());
@@ -810,6 +813,9 @@ impl SnapshotTotals {
         }
     }
 
+    /// Records one window's canonical identities, flagging an identity seen in
+    /// an earlier window with the same content (a duplicate, unless a complete
+    /// repeatable master) or with different content (the source changed).
     fn add_canonical_records(
         &mut self,
         evidence: &WindowEvidence,
@@ -860,8 +866,9 @@ impl SnapshotTotals {
         }
     }
 
-    /// Compares complete source counts with the unique identities accepted,
-    /// records both, and returns the record counts for the proof.
+    /// Compares complete source counts with the unique identities accepted and
+    /// records both; then marks every object type whose count was only
+    /// window-scoped or never reported. Returns the record counts for the proof.
     fn finish(self, gaps: &mut BTreeSet<String>) -> BTreeMap<String, u64> {
         let Self {
             mut record_counts,
