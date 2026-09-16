@@ -14,10 +14,15 @@ function stripComments(source) {
 }
 
 // Index just past the `]` that closes the attribute whose `#[` starts at `start`, counting nested
-// brackets so an argument like `values = [1, 2]` cannot end the attribute early.
+// brackets and skipping string literals, so neither `values = [1, 2]` nor `doc = "]"` ends the
+// attribute early.
 function attributeEnd(source, start) {
   let depth = 0;
   for (let i = start + 1; i < source.length; i += 1) {
+    if (source[i] === '"') {
+      for (i += 1; i < source.length && source[i] !== '"'; i += 1) if (source[i] === "\\") i += 1;
+      continue;
+    }
     if (source[i] === "[") depth += 1;
     else if (source[i] === "]") {
       depth -= 1;
@@ -98,10 +103,13 @@ test("the extractor reads every fn form a command can take", () => {
     pub async unsafe fn epsilon() {}
     #[tauri::command]
     pub fn r#type() {}
+    #[tauri::command]
+    #[doc = "a ] and a \\" quote"]
+    pub fn zeta() {}
     // #[tauri::command] fn commented_out() {}
     fn not_a_command() {}
   `;
-  assert.deepEqual(declaredCommands(source), ["alpha", "beta", "gamma", "delta", "epsilon", "type"]);
+  assert.deepEqual(declaredCommands(source), ["alpha", "beta", "gamma", "delta", "epsilon", "type", "zeta"]);
 });
 
 test("a command attribute not followed by a readable fn fails instead of being skipped", () => {
