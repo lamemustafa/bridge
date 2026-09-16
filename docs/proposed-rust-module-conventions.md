@@ -89,7 +89,7 @@ argues for doing it where it helps and against treating it as risky.
 ## Where the general advice does not fit this repository
 
 This codebase has a constraint most advice does not consider: **files are
-pinned**. `docs/tally/compatibility/compatibility-surface.json` binds 217 paths
+pinned**. `docs/tally/compatibility/compatibility-surface.json` binds 218 paths
 by SHA-256, and the evidence receipts beneath it attest behaviour *of those
 bytes*. Splitting a pinned file is not a neutral move:
 
