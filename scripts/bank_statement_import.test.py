@@ -292,12 +292,15 @@ def test_parse_real_hdfc_capture(m):
     # the account number is bound from the header block, not from the table.
     #
     # This positive check does NOT by itself prove which header line was read.
-    # Six other header lines in this capture carry a digit run ending 1111:
-    # the City postcode and the address-block postcode (111111), the phone
-    # number (11111111), the Cust ID (111111111), the shared IFSC/MICR line
-    # (1111111), and `ZZZZZZQ(1111)` on the Account Type line -- whose run is
-    # 1111 exactly and whose first word is `Account`, which is why
-    # `account_anchors` is a two-word anchor.
+    # Five other `_lines` bands in this capture carry a digit run ending 1111:
+    # the City postcode (111111); the phone number (11111111); the Cust ID
+    # band, which also carries the address-block postcode from the opposite
+    # column (111111111 and 111111); the shared IFSC/MICR band (1111111); and
+    # `ZZZZZZQ(1111)` on the Account Type band, whose run is 1111 exactly.
+    # That last one is why `account_anchors` is a two-word anchor: production
+    # records at the HDFC definition that `Account Status` and `Account Type`
+    # print the same first word as `Account No`. (`_matches` tests whole-band
+    # membership, not word position -- that band actually begins `Nomination`.)
     #
     # What discriminates, measured by regressing the production anchors:
     #
@@ -308,8 +311,9 @@ def test_parse_real_hdfc_capture(m):
     #   MICR       on the positive check, which still succeeds.
     #   any     -> `test_real_hdfc_capture_binds_the_account_no_geometry_only`
     #              fails its label-geometry assertion. That test repoints
-    #              `account_anchors` at three distinct lines (IFSC and MICR are
-    #              one line); the postcode and Account Type lines are uncovered.
+    #              `account_anchors` at three distinct bands (IFSC and MICR are
+    #              one band); the City postcode and Account Type bands are not
+    #              covered.
     #
     # Note `account_number_runs` unions runs from every anchor-matching line on
     # the page, so `ambiguous_account_match` is not a per-line guard despite
