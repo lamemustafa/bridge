@@ -2846,8 +2846,6 @@ impl TallyRuntime {
                     let as_of = as_of.clone();
                     async move {
                         bracket_verified_company_identity(&client, &identity).await?;
-                        let company = identity.display_name();
-                        let expected_company_guid = identity.company_guid();
                         let extent = client
                             .fetch_company_book_extent(&identity)
                             .await?;
