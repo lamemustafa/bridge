@@ -1410,6 +1410,165 @@ def test_no_output_is_written_unless_every_destination_was_claimed(m):
         assert stat.S_IMODE(first.stat().st_mode) == 0o600
 
 
+def test_an_interrupt_between_dup_and_fdopen_leaks_no_descriptor(m):
+    """`os.fdopen` is what takes ownership of the duplicate, so between `os.dup`
+    returning and that call the descriptor belongs to nobody. A SIGINT there --
+    or an `fdopen` that raises for any other reason -- leaked it for the life of
+    the process, while cleanup went on to unlink the output the operator was
+    told had failed.
+
+    Deterministic rather than timing-dependent: `os.fdopen` is replaced with one
+    that records the descriptor it was handed and then raises
+    `KeyboardInterrupt`, which is what a SIGINT arriving at that instant
+    produces. The assertion is on the descriptor itself -- `os.fstat` must
+    report EBADF -- not on a count, because fd numbers are reused and a count
+    can come out right while the wrong descriptor is open.
+    """
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "out.xml"
+        real_fdopen = m.os.fdopen
+        handed = []
+
+        def interrupt_at_handoff(fd, *args, **kwargs):
+            handed.append(fd)
+            raise KeyboardInterrupt("SIGINT between dup and fdopen")
+
+        m.os.fdopen = interrupt_at_handoff
+        try:
+            raised = None
+            try:
+                m.write_outputs([(path, "<ENVELOPE/>")])
+            except BaseException as error:   # noqa: BLE001 - the class is the subject
+                raised = error
+        finally:
+            m.os.fdopen = real_fdopen
+
+        assert isinstance(raised, KeyboardInterrupt), (
+            f"the interrupt must propagate, got: {raised!r}")
+        assert handed, "the handoff must have been reached"
+        for fd in handed:
+            closed = False
+            try:
+                os.fstat(fd)
+            except OSError as error:
+                closed = error.errno == errno.EBADF
+            assert closed, (
+                f"descriptor {fd} was duplicated and never closed; it leaks for "
+                "the life of the process")
+
+
+def test_a_failed_handoff_does_not_close_the_descriptor_twice(m):
+    """The companion to the leak test, and the case that matters more.
+
+    `os.fdopen` is `io.open`, which builds a `FileIO` that owns the descriptor
+    *before* it builds the buffer and text layers. If a later layer raises, its
+    error path has already closed the descriptor -- so the real CPython failure
+    hands back a closed fd, not an open one. A guard that closes unconditionally
+    is then closing a descriptor it no longer owns, and the resulting `EBADF`
+    replaces the operator's actual failure.
+
+    The leak test's fake raises *without* touching the descriptor, which models
+    the half of the failure space that a late `io.open` failure never produces.
+    It therefore passes whether or not the double close exists. This fake closes
+    first, the way `io.open` does, so the assertion is on what the operator is
+    told: the `KeyboardInterrupt` must survive, not become `Bad file descriptor`.
+    """
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "out.xml"
+        real_fdopen = m.os.fdopen
+        handed = []
+
+        def close_then_interrupt(fd, *args, **kwargs):
+            # Exactly what `io.open` does when a layer above `FileIO` raises.
+            handed.append(fd)
+            os.close(fd)
+            raise KeyboardInterrupt("SIGINT inside io.open, after FileIO closed")
+
+        m.os.fdopen = close_then_interrupt
+        try:
+            raised = None
+            try:
+                m.write_outputs([(path, "<ENVELOPE/>")])
+            except BaseException as error:   # noqa: BLE001 - the class is the subject
+                raised = error
+        finally:
+            m.os.fdopen = real_fdopen
+
+        assert handed, "the handoff must have been reached"
+        assert not isinstance(raised, OSError) or raised.errno != errno.EBADF, (
+            "closing an already-closed descriptor replaced the operator's real "
+            f"failure with Bad file descriptor: {raised!r}")
+        assert isinstance(raised, KeyboardInterrupt), (
+            f"the interrupt must reach the operator unchanged, got: {raised!r}")
+        assert getattr(raised, "__notes__", None) is None, (
+            "an already-closed descriptor is the expected case and must be "
+            "silent; a note here means the EBADF discrimination was lost and "
+            f"every ordinary late fdopen failure now carries noise: {raised.__notes__}")
+
+
+def test_the_handoff_defers_sigint_but_the_payload_write_does_not(m):
+    """Pins `_defer_sigint_during_claim()` around the handoff, which nothing
+    else does: neutralising that wrapper leaves every other test in this file
+    green, so the main claim of this revision was asserted rather than proved.
+
+    Both halves matter. Blocked across `os.dup` -> `os.fdopen` is what closes
+    the window no pure-Python handler could observe. *Not* blocked across
+    `stream.write` is what keeps an arbitrarily long payload interruptible --
+    a defer that leaked into the write would trade a one-bytecode race for an
+    unkillable process.
+    """
+    if os.name == "nt" or not hasattr(signal, "pthread_sigmask"):
+        return
+
+    def sigint_blocked():
+        # Querying with an empty set reports the mask without changing it.
+        return signal.SIGINT in signal.pthread_sigmask(signal.SIG_BLOCK, [])
+
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "out.xml"
+        real_fdopen = m.os.fdopen
+        seen = {}
+
+        class RecordingStream:
+            def __init__(self, inner):
+                self._inner = inner
+
+            def write(self, text):
+                seen["write"] = sigint_blocked()
+                return self._inner.write(text)
+
+            def __enter__(self):
+                self._inner.__enter__()
+                return self
+
+            def __exit__(self, *details):
+                return self._inner.__exit__(*details)
+
+        def recording_fdopen(handle, *args, **kwargs):
+            seen.setdefault("handoff", sigint_blocked())
+            return RecordingStream(real_fdopen(handle, *args, **kwargs))
+
+        m.os.fdopen = recording_fdopen
+        try:
+            m.write_outputs([(path, "<ENVELOPE/>")])
+        finally:
+            m.os.fdopen = real_fdopen
+
+        assert seen.get("handoff") is True, (
+            "SIGINT must be blocked across the dup/fdopen handoff; got "
+            f"{seen.get('handoff')!r}")
+        assert seen.get("write") is False, (
+            "SIGINT must NOT be blocked while the payload is written, or a "
+            f"long write becomes uninterruptible; got {seen.get('write')!r}")
+        assert not sigint_blocked(), (
+            "the mask must be restored once write_outputs returns")
+        assert path.read_text() == "<ENVELOPE/>"
+
+
 def test_a_failed_run_does_not_destroy_the_previous_output(m):
     """The rollback must not be worse than the failure it cleans up after.
 
@@ -1814,6 +1973,65 @@ def test_ownership_registration_preserves_an_unproven_reclaimed_path(m):
 
         assert path.read_text() == "foreign writer bytes"
         assert str(path) in notes
+
+
+def test_a_reclaimed_fresh_path_is_not_named_when_the_created_inode_is_gone(m):
+    """A foreign writer that reclaims the pathname must be neither removed nor
+    named as a retained owned output.
+
+    `_unlink_for_cleanup` names a reclaimed path on purpose -- its comment says
+    reporting it "gives the operator a chance to find the private copy if it
+    still exists". On this path that reason is known to be false: the created
+    pin proves zero links, so this run's inode is gone and there is no private
+    copy to find. What the name would point at is whatever the other writer put
+    there.
+
+    The race is real and constructed, not simulated: `os.replace` moves a
+    foreign file onto the claimed name, which unlinks the inode this run
+    created while its descriptor still pins it. The first `_fd_identity` fails
+    so the fallback is entered, and the retry succeeds so the *identity-proven*
+    branch is the one exercised -- the branch this issue names.
+    """
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        path = root / "fresh.xml"
+        foreign = root / "foreign.xml"
+        handle = m._open_private(path)
+        foreign.write_text("foreign writer bytes")
+        os.replace(foreign, path)          # unlinks our inode; pin survives
+
+        real_identity = m._fd_identity
+        calls = []
+
+        def fail_first_then_recover(h):
+            calls.append(h)
+            if len(calls) == 1:
+                raise OSError("transient fstat failure")
+            return real_identity(h)
+
+        m._fd_identity = fail_first_then_recover
+        try:
+            try:
+                m._owned_path(path, handle, created=True)
+                raise AssertionError("the registration failure must escape")
+            except OSError as error:
+                notes = "\n".join(getattr(error, "__notes__", []))
+        finally:
+            m._fd_identity = real_identity
+
+        assert len(calls) >= 2, (
+            "recovery must have been entered at all: a single call means the "
+            "first fstat succeeded and none of this branch ran. This does not "
+            "distinguish the identity-proven branch from the unproven one -- "
+            "the retry is unconditional, so both reach two calls. The `notes` "
+            "assertion below is what separates them")
+        assert path.read_text() == "foreign writer bytes", (
+            "the foreign file must not be removed")
+        assert str(path) not in notes, (
+            "a reclaimed name must not be reported as a retained owned output "
+            f"once the created inode has no links; got: {notes}")
 
 
 def test_original_pin_registration_failure_preserves_existing_output(m):
@@ -6293,6 +6511,68 @@ def test_pre_replacement_original_pin_fstat_failure_is_a_typed_path_change(m):
 
         assert "original ownership could not be verified" in str(refusal.code)
         assert destination.read_text() == "old bytes"
+        assert not list(pathlib.Path(directory).glob("*.part"))
+        assert not list(pathlib.Path(directory).glob("*.bak"))
+
+
+def test_pre_replacement_staged_digest_failure_is_a_typed_path_change(m):
+    """The staged *digest* pin is the one inspection of this family with no
+    control of its own.
+
+    Its two siblings -- the original pin and the staged path identity -- are
+    covered, and all three convert `OSError` to `output_path_changed`. This one
+    was left on the argument that it is three lines sharing a shape with tested
+    neighbours. That argument is exactly the one that failed on #353, where the
+    same family of helper was wrapped in `except Refusal` only and an `os.fstat`
+    failure escaped raw at a point where every swap had already committed.
+
+    Deterministic rather than timing-dependent: the staged path-identity check
+    runs immediately before the digest check, so observing it on a `.part` path
+    arms a one-shot failure that the very next `_digest_pinned_bytes` call --
+    the staged one -- receives.
+    """
+    if os.name == "nt":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        destination = pathlib.Path(directory) / "previous.xml"
+        destination.write_text("old bytes")
+        real_identity, real_digest = m._entry_identity, m._digest_pinned_bytes
+        armed, fired = [], []
+
+        def fail_staged_digest_once(handle):
+            m._digest_pinned_bytes = real_digest
+            fired.append(True)
+            raise OSError("controlled staged pin digest failure")
+
+        def arm_after_staged_identity(path):
+            result = real_identity(path)
+            # Arm once. Cleanup inspects the `.part` name again on its way out,
+            # so without this guard the failure is re-installed after it fired.
+            if str(path).endswith(".part") and not armed:
+                armed.append(True)
+                m._digest_pinned_bytes = fail_staged_digest_once
+            return result
+
+        m._entry_identity = arm_after_staged_identity
+        try:
+            refusal = refuses(m, "output_path_changed", m.write_outputs,
+                              [(str(destination), "new bytes")])
+        finally:
+            m._entry_identity = real_identity
+            m._digest_pinned_bytes = real_digest
+
+        # The message alone cannot pin this: the staged *path identity* check
+        # immediately above, and the post-backup staged recheck below, both
+        # raise the byte-identical string -- and `Refusal` declares its message
+        # free to change. What pins it to the digest boundary is that the
+        # injected failure was actually consumed.
+        assert fired, (
+            "the injected staged-pin digest failure never fired; this refusal "
+            "came from a different boundary that shares the message")
+        assert "staged output changed before replacement" in str(refusal), (
+            f"the staged-digest boundary must give its own typed message, got: {refusal}")
+        assert destination.read_text() == "old bytes", (
+            "a refused replacement must leave the previous output intact")
         assert not list(pathlib.Path(directory).glob("*.part"))
         assert not list(pathlib.Path(directory).glob("*.bak"))
 
