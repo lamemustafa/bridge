@@ -48,19 +48,30 @@ jobs:
       # which here is the case we want to keep going for. It also swallows a
       # genuine failure (no network, advisory db unreachable), so the next step
       # exists to stop that being mistaken for a clean result.
+      #
+      # Both Rust lockfiles, one tracking issue: auditing only src-tauri's let
+      # RUSTSEC-2026-0285 sit unreported in tools/Cargo.lock.
       - name: Audit the default branch
-        run: cargo audit --file src-tauri/Cargo.lock --json > audit-report.json || true
+        run: |
+          cargo audit --file src-tauri/Cargo.lock --json > audit-report.json || true
+          cargo audit --file tools/Cargo.lock --json > audit-report-tools.json || true
       # Without this, an audit that failed to run writes an empty file, the
       # tracker reads "no findings", and it CLOSES a standing advisory's
       # tracking issue. Silence about a broken audit is the one outcome worse
       # than a noisy one.
       - name: Refuse to treat a failed audit as a clean one
         run: |
-          if [ ! -s audit-report.json ]; then
-            echo "cargo audit produced no report -- treating as a failed run, not a clean one" >&2
-            exit 1
-          fi
+          for report in audit-report.json audit-report-tools.json; do
+            if [ ! -s "$report" ]; then
+              echo "cargo audit produced no $report -- treating as a failed run, not a clean one" >&2
+              exit 1
+            fi
+          done
       - name: Open, update or close the tracking issue
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/audit-tracking-issue.mjs --report audit-report.json --apply
+        run: >-
+          node scripts/audit-tracking-issue.mjs
+          --report src-tauri/Cargo.lock=audit-report.json
+          --report tools/Cargo.lock=audit-report-tools.json
+          --apply

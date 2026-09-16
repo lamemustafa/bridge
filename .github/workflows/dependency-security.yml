@@ -42,3 +42,10 @@ jobs:
           fallback: none
       - name: Audit locked Rust dependencies
         run: cargo audit --file src-tauri/Cargo.lock
+      # The tools workspace has its own lockfile. Auditing only the app's let
+      # RUSTSEC-2026-0285 (rustls) sit unreported in tools/Cargo.lock after the
+      # app lockfile was patched. `if: always()` so an app finding does not hide
+      # a tools finding on the same pull request.
+      - name: Audit locked Rust tools dependencies
+        if: always()
+        run: cargo audit --file tools/Cargo.lock
