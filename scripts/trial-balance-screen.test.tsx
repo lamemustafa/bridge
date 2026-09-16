@@ -380,6 +380,11 @@ test("shows the observed closing empty count", async () => {
 });
 
 
+// The heaviest test in this file: eight re-renders of a 100-row page with up to
+// 102 parent options, plus four real 200 ms discovery waits. It took about 1.2 s
+// alone and 2.2 s at load average 16, and timed out at vitest's 5 s default
+// under cargo-build load (5.3 s). The budget covers contention only; every
+// assertion stays the same.
 test("bounds parent options and finds later values without rereading or losing selection", async () => {
   const rows = Array.from({ length: 1000 }, (_, index) => ({ ...report.read.report.rows[0], name: `Ledger ${index}`, guid: `ledger-${index}`, parent: index === 999 ? "Parent" : `Parent ${index}` }));
   const initial = parentDiscoveryFor(rows.map((row) => row.parent));
@@ -425,7 +430,7 @@ test("bounds parent options and finds later values without rereading or losing s
   expect(select.value).toBe('returned:"Parent"');
   expect(mocks.invoke.mock.calls.filter(([command]) => command === "fetch_tally_trial_balance")).toHaveLength(1);
   await act(async () => root.unmount());
-});
+}, 20_000);
 
 test("keeps a literal case variant reachable while bounding over 100 folded matches", async () => {
   const variants = Array.from({ length: 128 }, (_, index) => {
