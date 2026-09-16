@@ -214,6 +214,15 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// command returns what it builds, but nothing in the frontend calls that
 /// command and nothing sends its result off the machine. It becomes a candidate
 /// when something does. bridge#416 records the reasoning for the rest.
+///
+/// Also not pinned: the four frontend modules bridge#468 moved out of the pinned
+/// `src/main.tsx` and `src/MirrorProofScreen.tsx`, where they had been copied.
+/// `tally-mirror-contract.ts` holds only types, which are erased at runtime.
+/// `display-format.ts`, `tally-capability-evidence.tsx` and
+/// `tally-command-error.tsx` present identifiers, capability labels and command
+/// errors. The error notice's classification comes from the pinned
+/// `tally-error-copy.ts`. None of them decides which book a report or drawer is
+/// attributed to, or what Bridge posts or lets leave the machine.
 pub const MAX_SURFACE_FILES: usize = 251;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
