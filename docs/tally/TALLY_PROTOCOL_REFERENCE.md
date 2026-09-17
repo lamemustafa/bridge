@@ -1749,23 +1749,32 @@ The two columns also ask different questions of the same group, and that gap mat
 
 **Admitted** means a captured ledger was observed sitting under a captured group — the whole
 edge the classifier walks, not just its far end. A group row proves the identity exists; it does
-not show a ledger's `PARENT` resolving to it. Two identities clear that bar: `Bank Accounts` and
-`Cash-in-Hand`.
+not show a ledger's `PARENT` resolving to it. Three identities clear that bar: `Bank Accounts`,
+`Cash-in-Hand` and `Bank OD A/c`.
 
-**Known money** is wider, and covers two more:
+**Known money** is wider, and covers one more:
 
 | identity | group row captured | ledger under it captured | admitted |
 | --- | --- | --- | --- |
 | `Bank Accounts`, `Cash-in-Hand` | yes | yes | yes |
-| `Bank OD A/c` | yes | **no** | no |
+| `Bank OD A/c` | yes | yes — 2026-09-17 | yes |
 | `Bank OCC A/c` | **no** | no | no |
 
-A ledger under either unadmitted identity is refused on a money leg for want of an observed edge,
+> **Scoped correction, 2026-09-17 — `Bank OD A/c` is admitted.** This row used to read "ledger
+> under it captured: **no**", and an overdraft or cash-credit book could not be imported through
+> Bridge. The promoting read was taken from the synthetic `BRIDGE SHAPE LAB` on licensed TallyPrime
+> 7.1 Silver: the `StandardLedgerCatalogV1` request and the native `List of Groups` request the
+> build renders, each sent twice with byte-identical responses. The catalogue carries `HDFC CC`
+> with `PARENT` `Bank OD A/c`, and the group collection carries that group with `RESERVEDNAME`
+> `Bank OD A/c`. Both are committed as
+> `tests/fixtures/agent/native-shape-lab-{ledger-catalogue,groups}.utf16le.xml`. One company, one
+> release: a book whose overdraft ledger sits under a user group beneath `Bank OD A/c` walks the same
+> ancestry and is classified the same way, but that shape was not itself captured.
+
+A ledger under the unadmitted identity is refused on a money leg for want of an observed edge,
 and refused on a counterparty leg because it plainly holds money. Both refusals are the same
 ignorance pointed in the safe direction; reading "not admitted" as "not money" would wave through
-exactly the bank-to-bank Payment the counterparty rule exists to catch. The practical cost is
-that an overdraft or cash-credit book cannot be imported through Bridge yet — one
-`List of Ledgers` read against such a book promotes `Bank OD A/c` and removes it.
+exactly the bank-to-bank Payment the counterparty rule exists to catch.
 
 Classification walks the ledger's group ancestry through `RESERVEDNAME` per §8.2b, so a renamed
 predefined group still classifies. A book whose money ledger sits under a group the Group

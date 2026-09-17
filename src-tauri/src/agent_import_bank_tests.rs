@@ -191,12 +191,10 @@ fn exactly_the_captured_cash_and_bank_reserved_groups_are_admitted() {
     // Sweep every predefined group the live capture contains, to pin the
     // admitted set to observation rather than to recollection. The ledger side
     // of each edge is synthetic here, which is the point: the test above
-    // establishes `Bank Accounts` and `Cash-in-Hand` from captured ledgers, and
-    // this one establishes that no *other* predefined group joins them.
-    //
-    // `Bank OD A/c` is captured as a group in both companies and still not
-    // admitted, because no captured ledger sits beneath it: admission needs the
-    // whole edge, not just its far end.
+    // establishes `Bank Accounts` and `Cash-in-Hand` from captured ledgers,
+    // `a_captured_ledger_under_bank_od_is_established_as_bank` establishes
+    // `Bank OD A/c` the same way, and this one establishes that no *other*
+    // predefined group joins them.
     let groups = captured_groups();
     let admitted = groups
         .iter()
@@ -208,7 +206,7 @@ fn exactly_the_captured_cash_and_bank_reserved_groups_are_admitted() {
         .collect::<Vec<_>>();
     assert_eq!(
         admitted,
-        ["Bank Accounts", "Cash-in-Hand"],
+        ["Bank Accounts", "Bank OD A/c", "Cash-in-Hand"],
         "captured group set admits only these as cash or bank"
     );
     // `Bank OCC A/c` is a documented Tally group that neither capture contains,
@@ -657,41 +655,88 @@ fn a_payment_between_two_money_ledgers_is_refused_as_a_contra() {
     }
 }
 
+/// The licensed-lab `List of Groups` and `StandardLedgerCatalogV1` reads of
+/// `BRIDGE SHAPE LAB`, sent with the requests the build renders. Its `HDFC CC`
+/// is the one captured ledger in this tree whose parent is `Bank OD A/c`.
+const SHAPE_LAB_GUID: &str = "3a6bd6e1-b835-4bff-89dd-8a6af138c346";
+
+fn utf16le(bytes: &[u8]) -> String {
+    String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .expect("captured BOM-less UTF-16LE")
+}
+
+fn captured_shape_lab_masters() -> (Vec<(String, Option<String>)>, Vec<TallyNamedMaster>) {
+    let catalogue = utf16le(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-shape-lab-ledger-catalogue.utf16le.xml"
+    ));
+    let ledgers =
+        parse_standard_ledger_catalog_response(&catalogue, "BRIDGE SHAPE LAB", SHAPE_LAB_GUID)
+            .expect("captured Shape Lab catalogue rows")
+            .parents()
+            .map(|(name, parent)| (name.to_string(), parent.map(str::to_string)))
+            .collect();
+    let groups = bridge_tally_protocol::native_outstandings::parse_native_group_snapshot(
+        &utf16le(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-shape-lab-groups.utf16le.xml"
+        )),
+        SHAPE_LAB_GUID,
+    )
+    .expect("captured Shape Lab group rows");
+    (ledgers, groups)
+}
+
 #[test]
-fn a_captured_money_group_with_no_captured_ledger_is_not_admitted() {
-    // `Bank OD A/c` is a captured group row in both companies, so its identity
-    // is not in doubt — but no captured ledger's `PARENT` resolves to it, and
-    // that edge is what classification reads. Admitting it on the group row
-    // alone would ship the money leg's whole claim on half its evidence.
-    let mut ledgers = captured_demo_ledger_parents();
-    ledgers.push(("Overdraft Account".into(), Some("Bank OD A/c".into())));
-    let masters = observed(&ledgers, captured_demo_groups());
-    assert!(captured_demo_groups()
+fn a_captured_ledger_under_bank_od_is_established_as_bank() {
+    // Both sides of the edge are verbatim captures parsed by the production
+    // readers: the catalogue row naming `Bank OD A/c` as `HDFC CC`'s parent,
+    // and the group row carrying that reserved identity. That is the evidence
+    // an overdraft or cash-credit account needed before it could fund a
+    // Payment or sit in a Contra.
+    let (ledgers, groups) = captured_shape_lab_masters();
+    assert_eq!(ledgers.len(), 43, "the whole captured catalogue is swept");
+    assert!(ledgers
         .iter()
-        .any(|group| group.reserved_name.as_deref() == Some("Bank OD A/c")));
+        .any(|(name, parent)| name == "HDFC CC" && parent.as_deref() == Some("Bank OD A/c")));
+    assert!(groups.iter().any(|group| group.name == "Bank OD A/c"
+        && group.reserved_name.as_deref() == Some("Bank OD A/c")));
+    let masters = observed(&ledgers, groups);
     assert_eq!(
-        masters.classify("Overdraft Account"),
-        CashBankState::UnadmittedMoney {
-            reserved_group: "Bank OD A/c",
-            gap: "that group is captured, but no captured ledger sits under it, and the ledger-to-parent edge is what this classification reads",
+        masters.classify("HDFC CC"),
+        CashBankState::Established {
+            reserved_group: "Bank OD A/c"
         }
     );
-    // The refusal names the gap that actually exists. Saying "never appeared in
-    // a captured group set" here would send an operator looking for a group
-    // capture this tree already has.
-    let detail = masters.classify("Overdraft Account").detail();
-    assert!(detail.contains("no captured ledger sits under it"));
-    assert!(!detail.contains("never appeared"));
-    // Refused as funding, and refused as a counterparty, exactly as any other
-    // money group Bridge will not admit.
+    let money = ledgers
+        .iter()
+        .filter(|(name, _)| LegRequirement::Money.admits(&masters.classify(name)))
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        money,
+        ["Bank of Baroda CA", "Cash", "HDFC CC"],
+        "no other captured ledger of the 43 is admitted as money"
+    );
     for (voucher_type, dr, cr) in [
-        ("Payment", "Gujarat Poly Industries", "Overdraft Account"),
-        ("Payment", "Overdraft Account", "HDFC Bank Current Account"),
-        ("Contra", "Overdraft Account", "HDFC Bank Current Account"),
+        ("Contra", "HDFC CC", "Bank of Baroda CA"),
+        ("Payment", "Power Charges", "HDFC CC"),
+        ("Receipt", "HDFC CC", "Shape Buyer 1"),
     ] {
         let refusals = cash_bank_refusals(&demo_batch(voucher_type, dr, cr), &masters, 200_000);
-        assert!(!refusals.ledgers.is_empty(), "{voucher_type} {dr} / {cr}");
+        assert!(refusals.ledgers.is_empty(), "{voucher_type} {dr} / {cr}");
     }
+    // Still money on the counterparty side: a Payment from one bank into the
+    // overdraft is a Contra, and is refused as one.
+    let refusals = cash_bank_refusals(
+        &demo_batch("Payment", "HDFC CC", "Bank of Baroda CA"),
+        &masters,
+        200_000,
+    );
+    assert!(!refusals.ledgers.is_empty());
 }
 
 #[test]

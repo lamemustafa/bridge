@@ -1,0 +1,15 @@
+{
+  "source": "Live licensed TallyPrime 7.1 Silver synthetic-company StandardLedgerCatalogV1 paired read, request rendered by render_standard_ledger_catalog_request(\"BRIDGE SHAPE LAB\")",
+  "observed_date": "2026-09-17",
+  "source_response_bytes": 50562,
+  "source_response_sha256": "db70a2cad8b3bd6e1fb09375c91456dcf6ab195323a9634b72f8995e2ca64b07",
+  "source_request_bytes": 1974,
+  "source_request_sha256": "827f126cefc90cdaf4e15f41208bb5361458a87c3d8facfe3075bc6285c3dc28",
+  "fixture_bytes": 50562,
+  "fixture_sha256": "db70a2cad8b3bd6e1fb09375c91456dcf6ab195323a9634b72f8995e2ca64b07",
+  "encoding": "UTF-16LE without BOM",
+  "rows": 43,
+  "transformation": [],
+  "provenance_limit": "Byte-exact live response; the paired read returned identical bytes. HDFC CC is a ledger whose PARENT is Bank OD A/c, the captured edge that admits that group. Opening balances are synthetic. No import success is claimed from this read alone.",
+  "sensitivity_review": "Operator-created synthetic lab company with synthetic ledgers (including deliberately malformed names retained unchanged) and Tally built-ins (Cash, CGST, IGST, Profit & Loss A/c, ROUND OFF); no GSTIN, PAN, email, phone, address, URL, credentials or machine paths."
+}

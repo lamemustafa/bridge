@@ -193,10 +193,11 @@ The four rest on different observations, and each build reports its own in
   [reference §9.13](../tally/TALLY_PROTOCOL_REFERENCE.md). These three are
   admitted only as two entries over two distinct ledgers with no voucher number
   and no reference, and their money side must be a ledger whose live group
-  ancestry reaches a reserved `Bank Accounts` or `Cash-in-Hand` identity, while
+  ancestry reaches a reserved `Bank Accounts`, `Cash-in-Hand` or `Bank OD A/c`
+  identity, while
   their counterparty side must be established as holding no money — money on
   both sides is a `Contra`, and an unresolvable group is refused too. A money group is admitted only where a captured ledger sits under
-  it, so an overdraft or cash-credit ledger (`Bank OD A/c`, `Bank OCC A/c`) is
+  it, so a ledger under `Bank OCC A/c`, which no capture carries, is
   refused on either side until one is captured. Bill-wise allocation is not supported: every party amount lands On
   Account, and a build that names a counterparty warns so.
 
