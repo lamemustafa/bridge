@@ -1821,6 +1821,37 @@ the one it guards — the same trap as comparing `REMOTEID` above, where the fie
 carrying Tally's value rather than the client's. Both close with one live read that adds them to
 the `FETCH` list and looks at what arrives.
 
+> **Scoped correction, 2026-09-17 — both were read back, and they differ.** The table above
+> predates this read. Licensed TallyPrime 7.1 Silver, synthetic `BRIDGE SHAPE LAB`: the §9.8
+> verification collection's request, with `EFFECTIVEDATE` and `PARTYLEDGERNAME` appended to its
+> `FETCH`, sent once over `20250422..20250423`. The window held six vouchers. Three were written by
+> earlier lab runs with narrations of their own (a Contra, a Journal and a Sales voucher). Their
+> written values were not recorded here, so they are not tabulated, but each also returned
+> `EFFECTIVEDATE` equal to `DATE`. The three Bridge-built vouchers, found by their `[BRIDGE:…]`
+> markers, are the rows below. The Receipt and Payment were built by
+> `bridge_mcp`, imported from its file and amended from a Bridge-built file; the Payment was last
+> re-imported from a copy of that file with only its amount edited. The Contra was built by
+> `bridge_mcp` and imported from its file. Every file wrote the `PARTYLEDGERNAME` and
+> `EFFECTIVEDATE` shown here:
+>
+> | voucher | written `DATE` / `EFFECTIVEDATE` | returned `EFFECTIVEDATE` | written `PARTYLEDGERNAME` | returned `PARTYLEDGERNAME` |
+> | --- | --- | --- | --- | --- |
+> | Receipt | `20250422` / `20250422` | `20250422`, `TYPE="Date"` | the counterparty (`Shape Buyer 5`) | **the bank ledger** (`Bank of Baroda CA`) |
+> | Payment | `20250422` / `20250422` | `20250422`, `TYPE="Date"` | the counterparty (`Power Charges`) | **the bank ledger** (`Bank of Baroda CA`) |
+> | Contra | `20250423` / `20250423` | `20250423`, `TYPE="Date"` | none written | the debit bank ledger (`HDFC CC`) |
+>
+> - **`EFFECTIVEDATE` is returned, equal to `DATE`**, on all three types. Comparing it is now
+>   possible. `verify_import` still does not fetch it, so the limit above still holds for the code.
+> - **`PARTYLEDGERNAME` is returned but does not echo what was written.** On these vouchers it held
+>   a cash or bank ledger that was on the voucher, not the counterparty Bridge wrote. **Do not
+>   compare it with the written value:** that comparison would refuse every one of these legitimate
+>   vouchers, which is the `REMOTEID` trap again. Whether a readback can detect a silently dropped
+>   counterparty is still open. The entries comparison already requires the counterparty's ledger
+>   among the signed entries.
+>
+> One read, one company, one release, three Bridge-built vouchers in a six-voucher window. It does not establish
+> what a Tally UI edit to either field returns.
+
 ### 9.9 Bulk import throughput
 
 **VERIFIED.** One import request may carry many `<VOUCHER>` elements; the counters aggregate.
