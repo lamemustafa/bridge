@@ -819,7 +819,7 @@
     },
     {
       "path": "src-tauri/src/sync/reconciliation.rs",
-      "sha256": "7094862f2cec5072226d6ffa0dd7a0aa8828b002c0d438b7874a2a54de59b963"
+      "sha256": "ef79ae399a2c35c0f64b9d937936d684c17a651edf6c376df9906b058bf5f35a"
     },
     {
       "path": "src-tauri/src/sync/snapshot.rs",
@@ -1066,5 +1066,5 @@
       "sha256": "0ab5bfbe6d81b1e10530744c338fb91efa57fe5a66fb4bc0cfd382495eaf02a4"
     }
   ],
-  "manifest_sha256": "8609564a6fd91d51a0a02221a5acf4b9cb9380fa11ef24b7d016ad5861f3cc8e"
+  "manifest_sha256": "dd09546c46de8262ea8249e614748c89224b42746863d21dbb0e305f976b7478"
 }
