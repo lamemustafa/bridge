@@ -3,7 +3,7 @@
   "name": "bridge-tally",
   "display_name": "ComplyEaze Bridge",
   "version": "0.2.0",
-  "description": "Read the TallyPrime books on this computer, and prepare Journal, Payment, Receipt and Contra vouchers as a local file. Only a Journal is posted, and every posting needs your approval in a native dialog.",
+  "description": "Read the TallyPrime books on this computer, and prepare Journal, Payment, Receipt and Contra vouchers as a local file. Only a Journal is posted, and every posting needs your approval in a native dialog. What it reads goes to your AI provider, unredacted unless you change Response redaction below.",
   "author": {
     "name": "Bridge contributors"
   },
