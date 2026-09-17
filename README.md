@@ -78,6 +78,16 @@ always go with the answer. Decide this deliberately for client data.
 
 ## Installing it
 
+**Before you install, turn on Tally's HTTP gateway.** TallyPrime does not
+listen for ComplyEaze Bridge by default. In Tally's own connectivity / client-server
+configuration settings, set Tally to act as a server (**"acts as Both"** in
+Tally's own words) and note its HTTP gateway port — `9000` by default, but
+configurable. To check it is actually on, open `http://localhost:9000/status`
+(substitute your port) in a browser: a running gateway answers with a short
+Tally XML response, and a browser that cannot connect means the gateway is
+still off. If instead it hangs without answering, Tally may simply be busy
+behind another request — wait and retry rather than changing the setting.
+
 An **unsigned evaluation preview** of the Claude Desktop extension is published
 as [`mcp-preview-0.2.0`](https://github.com/lamemustafa/bridge/releases/tag/mcp-preview-0.2.0).
 Follow the [installation guide](./docs/agent/INSTALL.md) to install and configure

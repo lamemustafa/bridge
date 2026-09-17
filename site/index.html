@@ -53,18 +53,19 @@
             <h2 id="setup-title">No terminal or configuration file required</h2>
           </div>
         </div>
+        <p class="channel-note">Before you begin: TallyPrime's HTTP gateway is off by default, and ComplyEaze Bridge cannot reach Tally until it is on. In Tally's own connectivity / client-server configuration settings, set Tally to act as a server (<strong>"acts as Both"</strong> in Tally's own words) and note its HTTP gateway port. To confirm it is listening, open <code>http://localhost:9000/status</code> (substitute your port) in a browser: a running gateway answers with a short Tally XML response, and a browser that cannot connect means the gateway is still off. If instead it hangs without answering, Tally may simply be busy behind another request — wait and retry rather than changing the setting.</p>
         <ol>
           <li>Open the downloaded <code>.mcpb</code> file. In Claude Desktop, choose <strong>Settings → Extensions → Advanced settings → Install Extension…</strong> if your computer does not open it automatically.</li>
           <li>Keep the Tally host as <strong>localhost</strong>. Bridge accepts only a local loopback connection; it does not expose Tally to the internet.</li>
           <li>On a Mac, Tally must already be available on <strong>localhost</strong> through a local Windows VM or organization-approved local forwarding. A separate PC or LAN-only Tally cannot be reached by entering its network address.</li>
-          <li>Set <strong>Your Tally port</strong> to the port used by Tally's local HTTP gateway, then finish the extension setup.</li>
+          <li>Set <strong>Your Tally port</strong> to the HTTP gateway port you turned on above, then finish the extension setup.</li>
           <li>Restart Claude Desktop if the extension is installed but its tools do not appear. Use <strong>Connectors</strong> in a new chat to check that Bridge is connected.</li>
         </ol>
 
         <div class="port-guide">
           <label for="tally-port">Port example (this page does not save settings)</label>
           <input id="tally-port" name="tally-port" type="number" min="1" max="65535" value="9000" inputmode="numeric" />
-          <p id="port-guidance">Use <strong>9000</strong> unless Tally's local HTTP gateway is configured for another port.</p>
+          <p id="port-guidance">Use <strong>9000</strong> unless Tally's local HTTP gateway is configured for another port — and only once you've confirmed the gateway is on.</p>
           <p>This is Tally's HTTP gateway port, not a Tally licence port. This webpage does not save or change any setting. Enter the value in Claude Desktop's extension setup, then restart Claude Desktop after changing it.</p>
         </div>
       </section>
