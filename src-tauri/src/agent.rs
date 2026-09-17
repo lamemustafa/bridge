@@ -391,6 +391,11 @@ impl From<String> for ToolFailure {
     }
 }
 
+/// The generic agent read-failure code. It names no operation and covers parse
+/// failures, application rejections and transport faults alike, which is why a
+/// deadline is worth substituting for this one and for nothing else.
+const GENERIC_RUNTIME_READ_FAILURE: &str = "agent_runtime_read_failed";
+
 impl ToolFailure {
     fn from_runtime(code: &str, error: anyhow::Error) -> Self {
         let code = if let Some(error) = error.chain().find_map(|cause| {
@@ -426,6 +431,27 @@ impl ToolFailure {
             )
         }) {
             "financial_read_profile_unqualified"
+        } else if code == GENERIC_RUNTIME_READ_FAILURE
+            && error.chain().any(|cause| {
+                matches!(
+                    cause.downcast_ref::<bridge_tally_transport::TallyTransportError>(),
+                    Some(bridge_tally_transport::TallyTransportError::RequestTimedOut)
+                )
+            })
+        {
+            // A deadline is the one transport failure a caller can act on without
+            // reading Bridge's source: narrow the window or the batch. It used to
+            // fall through to `agent_runtime_read_failed`, a catch-all that also
+            // covers parse failures and application rejections, so a timeout was
+            // indistinguishable from them in a log.
+            //
+            // Scoped to that catch-all ON PURPOSE. Every other call site passes a
+            // code that already names the operation — `import_mode_probe_failed`,
+            // `ledger_movement_read_failed` — and replacing those would tell the
+            // caller why it failed while taking away what failed. That is a net
+            // loss of information, and an existing test caught it: naming the
+            // deadline is only an improvement where the code named nothing.
+            bridge_tally_transport::TallyTransportError::RequestTimedOut.safe_code()
         } else {
             code
         };
@@ -484,7 +510,7 @@ impl Server {
             .runtime
             .fetch_agent_read(self.tally_config(), identity, admitted)
             .await
-            .map_err(|error| ToolFailure::from_runtime("agent_runtime_read_failed", error))?;
+            .map_err(|error| ToolFailure::from_runtime(GENERIC_RUNTIME_READ_FAILURE, error))?;
         let evidence = Evidence {
             request_sha256,
             response_sha256: response.encoded_sha256,

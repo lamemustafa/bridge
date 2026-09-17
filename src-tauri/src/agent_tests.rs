@@ -269,6 +269,71 @@ async fn invalid_scope_arguments_are_rejected_before_any_tally_probe() {
 }
 
 #[test]
+fn a_read_deadline_is_named_rather_than_collapsed_into_the_generic_failure() {
+    use bridge_tally_transport::TallyTransportError;
+
+    // The real error is always wrapped by the time it reaches from_runtime, so
+    // the chain walk — not a bare downcast — is what has to work.
+    let wrapped = ToolFailure::from_runtime(
+        GENERIC_RUNTIME_READ_FAILURE,
+        anyhow::Error::new(TallyTransportError::RequestTimedOut)
+            .context("reading the import verification window"),
+    );
+    assert_eq!(wrapped.code, "request_deadline_exceeded");
+
+    // Unwrapped too, so the test does not depend on the wrapping to pass.
+    let bare = ToolFailure::from_runtime(
+        GENERIC_RUNTIME_READ_FAILURE,
+        anyhow::Error::new(TallyTransportError::RequestTimedOut),
+    );
+    assert_eq!(bare.code, "request_deadline_exceeded");
+
+    // Through the wrapper production actually uses. A real read failure reaches
+    // from_runtime inside a `RuntimeReadFailure`, whose source is an
+    // `anyhow::Error`; if the chain walk could not see through that, this branch
+    // would be dead code that every direct-construction case above still passes.
+    let wrapped_as_production_wraps_it = ToolFailure::from_runtime(
+        GENERIC_RUNTIME_READ_FAILURE,
+        crate::tally::runtime::with_read_evidence(
+            anyhow::Error::new(TallyTransportError::RequestTimedOut),
+            crate::tally::runtime::RuntimeReadEvidence::empty(),
+        ),
+    );
+    assert_eq!(
+        wrapped_as_production_wraps_it.code,
+        "request_deadline_exceeded"
+    );
+
+    // A code that already NAMES the operation keeps it. Substituting there would
+    // tell the caller why it failed while taking away what failed, which is a net
+    // loss — `review_refuses_fresh_unreviewable_text_but_retains_dispatched_reconciliation`
+    // caught exactly that on an earlier cut of this change.
+    for operation in ["import_mode_probe_failed", "ledger_movement_read_failed"] {
+        let failure = ToolFailure::from_runtime(
+            operation,
+            anyhow::Error::new(TallyTransportError::RequestTimedOut),
+        );
+        assert_eq!(
+            failure.code, operation,
+            "{operation} lost its operation name"
+        );
+    }
+
+    // Scope guard the other way: this narrows ONE cause out of the catch-all, so
+    // every other transport failure still reports the catch-all rather than this
+    // change quietly re-labelling a dozen codes at once.
+    for other in [
+        TallyTransportError::ConnectionFailed,
+        TallyTransportError::RequestFailed,
+        TallyTransportError::ResponseTruncated,
+        TallyTransportError::HttpStatus { status: 500 },
+    ] {
+        let failure = ToolFailure::from_runtime(GENERIC_RUNTIME_READ_FAILURE, other.into());
+        assert_eq!(failure.code, GENERIC_RUNTIME_READ_FAILURE);
+    }
+}
+
+#[test]
 fn ledger_master_fields_reject_unknown_schema_values() {
     assert_eq!(
         ledger_master_fields("complaince"),
