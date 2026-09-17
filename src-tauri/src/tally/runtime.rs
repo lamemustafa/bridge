@@ -1994,12 +1994,20 @@ impl TallyRuntime {
     /// commitments. Currency admission remains inside the runtime so callers
     /// cannot label an unverified currency as INR or bypass the paired master
     /// read.
+    ///
+    /// The group collection is returned alongside the records rather than
+    /// dropped: `fetch_party_ledger_master_source` already reads it, in the
+    /// same company-bracketed triple as the master and balance rows, purely
+    /// to let Schedule III classify the party rows it captures. A caller that
+    /// needs ledger *ancestry* (ledger_masters' compliance path) can now
+    /// build a `GroupIndex` from this without any additional Tally read.
     pub async fn fetch_agent_party_ledger_masters_with_evidence(
         &self,
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
     ) -> anyhow::Result<(
         Vec<bridge_tally_protocol::PartyLedgerMasterRecord>,
+        Vec<bridge_tally_protocol::TallyNamedMaster>,
         RuntimeReadEvidence,
     )> {
         let currency_read = self
@@ -2014,6 +2022,7 @@ impl TallyRuntime {
             .await
             .map_err(|error| with_read_evidence(error, currency_evidence.clone()))?;
         let evidence = currency_evidence.combine(source_evidence);
+        let groups = source.groups.clone();
         let records = source
             .rows
             .into_iter()
@@ -2027,7 +2036,7 @@ impl TallyRuntime {
                 fields: row.fields,
             })
             .collect();
-        Ok((records, evidence))
+        Ok((records, groups, evidence))
     }
 
     /// Retain the three actual request body commitments alongside their paired

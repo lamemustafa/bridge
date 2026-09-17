@@ -146,6 +146,121 @@ fn a_whitespace_only_reserved_name_is_no_more_an_identity_than_an_empty_one() {
     );
 }
 
+fn hop(name: &str, reserved: &str) -> AncestryHop {
+    AncestryHop {
+        name: name.to_string(),
+        reserved_name: reserved.to_string(),
+    }
+}
+
+#[test]
+fn a_normal_multi_level_chain_resolves_every_hop_to_the_root() {
+    // HDFC CC -> Bank OD A/c -> Loans (Liability) -> reserved root, matching
+    // the lab's own multi-level tree (HDFC CC under Bank OD A/c under Loans
+    // (Liability)). Two predefined groups stacked on each other: the walk
+    // must not stop at the first one.
+    let index = GroupIndex::build([
+        group("Bank OD A/c", "Loans (Liability)", Some("Bank OD A/c")),
+        group(
+            "Loans (Liability)",
+            "\u{fffd}#4; Primary",
+            Some("Loans (Liability)"),
+        ),
+    ]);
+    let chain = index.ancestry_chain(Some("Bank OD A/c"));
+    assert!(chain.is_complete());
+    assert_eq!(chain.gap, None);
+    assert_eq!(
+        chain.hops,
+        vec![
+            hop("Bank OD A/c", "Bank OD A/c"),
+            hop("Loans (Liability)", "Loans (Liability)"),
+        ]
+    );
+}
+
+#[test]
+fn a_user_created_group_is_recorded_as_its_own_hop_not_skipped() {
+    // House Debtors is user-created (empty RESERVEDNAME) and sits under the
+    // predefined Sundry Debtors. Unlike reserved_ancestor, which climbs
+    // through a user-created group silently, the full chain must show it.
+    let chain = tree().ancestry_chain(Some("House Debtors"));
+    assert!(chain.is_complete());
+    assert_eq!(
+        chain.hops,
+        vec![
+            hop("House Debtors", ""),
+            hop("Sundry Debtors", "Sundry Debtors"),
+            hop("Current Assets", "Current Assets"),
+        ]
+    );
+}
+
+#[test]
+fn a_ledger_directly_under_a_primary_group_yields_a_single_complete_hop() {
+    // Cash-in-Hand's own parent is the reserved root directly, matching the
+    // lab's own `Cash` ledger under `Cash-in-Hand`: one hop, then done.
+    let index = GroupIndex::build([group(
+        "Cash-in-Hand",
+        "\u{fffd}#4; Primary",
+        Some("Cash-in-Hand"),
+    )]);
+    let chain = index.ancestry_chain(Some("Cash-in-Hand"));
+    assert!(chain.is_complete());
+    assert_eq!(chain.gap, None);
+    assert_eq!(chain.hops, vec![hop("Cash-in-Hand", "Cash-in-Hand")]);
+}
+
+#[test]
+fn a_chain_with_an_ancestry_gap_keeps_the_resolved_prefix_and_names_the_gap() {
+    // Bank Accounts' own parent ("Current Assets") is not in this narrower
+    // index, so the walk resolves one real hop and then refuses rather than
+    // guessing the rest.
+    let narrow = GroupIndex::build([group(
+        "Bank Accounts",
+        "Current Assets",
+        Some("Bank Accounts"),
+    )]);
+    let chain = narrow.ancestry_chain(Some("Bank Accounts"));
+    assert!(!chain.is_complete());
+    assert_eq!(chain.gap, Some(AncestryGap::GroupAbsent));
+    assert_eq!(chain.hops, vec![hop("Bank Accounts", "Bank Accounts")]);
+}
+
+#[test]
+fn ancestry_chain_reports_every_other_gap_with_its_resolved_prefix() {
+    assert_eq!(
+        GroupIndex::default().ancestry_chain(None),
+        AncestryChain {
+            hops: vec![],
+            gap: Some(AncestryGap::NoParent),
+        }
+    );
+    let repeated = GroupIndex::build([
+        group("Odd Parent", "Bank Accounts", Some("")),
+        group("Bank Accounts", "Current Assets", Some("Bank Accounts")),
+        group("Bank Accounts", "Current Assets", Some("Bank Accounts")),
+    ]);
+    let chain = repeated.ancestry_chain(Some("Odd Parent"));
+    assert_eq!(chain.hops, vec![hop("Odd Parent", "")]);
+    assert_eq!(chain.gap, Some(AncestryGap::GroupNameRepeated));
+
+    let unattributed = GroupIndex::build([
+        group("Odd Parent", "No RESERVEDNAME", Some("")),
+        group("No RESERVEDNAME", "Current Assets", None),
+    ]);
+    let chain = unattributed.ancestry_chain(Some("Odd Parent"));
+    assert_eq!(chain.hops, vec![hop("Odd Parent", "")]);
+    assert_eq!(chain.gap, Some(AncestryGap::ReservedNameMissing));
+
+    let looping = GroupIndex::build([group("Loop", "Loop", Some(""))]);
+    let chain = looping.ancestry_chain(Some("Loop"));
+    // "Loop" is itself resolved as one hop (its own RESERVEDNAME is known)
+    // before the walk revisits "Loop" as a parent and detects the cycle.
+    assert_eq!(chain.hops, vec![hop("Loop", "")]);
+    assert_eq!(chain.gap, Some(AncestryGap::Cycle));
+}
+
 #[test]
 fn an_empty_reserved_name_is_not_an_absent_one() {
     // The two look alike and mean opposite things: empty is Tally saying
