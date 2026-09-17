@@ -1,10 +1,14 @@
-//! Column geometry and row rules for the two supported statement layouts.
+//! Column geometry and row rules for the supported statement layouts.
 //!
-//! A direct port of the `SBI` and `HDFC` classes in
+//! `Sbi` and `Hdfc` are a direct port of the `SBI` and `HDFC` classes in
 //! `scripts/bank_statement_import.py`. The reasoning behind each rule — why a
 //! boundary is the shape it is, and which real statement it was measured
 //! against — is written there at length and is not repeated here; where a rule
 //! looks arbitrary, read that docstring before changing it.
+//!
+//! `Ubi` (Union Bank of India) has no Python reference. Its rules come from the
+//! text layer of one real statement, described by shape only (68 single-line
+//! rows): see [`Layout::SingleLine`] and `ubi_party`.
 
 use crate::date::{self, Date};
 use crate::geometry::Word;
@@ -18,6 +22,17 @@ use std::sync::LazyLock;
 pub enum Bank {
     Sbi,
     Hdfc,
+    Ubi,
+}
+
+/// How a layout's rows are read off the page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Layout {
+    /// Words bucketed into x-bounded columns, rows spanning several lines.
+    Columns,
+    /// One printed line per transaction, read as text: the layout needs no
+    /// column bounds, so none were guessed.
+    SingleLine,
 }
 
 /// Why a statement cell is `(x_min, x_max, name)`: see [`Bank::columns`].
@@ -52,6 +67,7 @@ impl Bank {
         match name {
             "sbi" => Some(Self::Sbi),
             "hdfc" => Some(Self::Hdfc),
+            "ubi" => Some(Self::Ubi),
             _ => None,
         }
     }
@@ -60,6 +76,24 @@ impl Bank {
         match self {
             Self::Sbi => "sbi",
             Self::Hdfc => "hdfc",
+            Self::Ubi => "ubi",
+        }
+    }
+
+    pub fn layout(self) -> Layout {
+        match self {
+            Self::Sbi | Self::Hdfc => Layout::Columns,
+            Self::Ubi => Layout::SingleLine,
+        }
+    }
+
+    /// Whether the statement prints debit and credit totals an operator can
+    /// supply as controls. Union Bank prints neither totals nor an opening or
+    /// closing line.
+    pub fn prints_totals(self) -> bool {
+        match self {
+            Self::Sbi | Self::Hdfc => true,
+            Self::Ubi => false,
         }
     }
 
@@ -87,6 +121,8 @@ impl Bank {
                 (480.0, 560.0, "cr"),
                 (560.0, 9999.0, "bal"),
             ],
+            // not read by columns; one catch-all so `column_of` stays total
+            Self::Ubi => &[(0.0, 9999.0, "narr")],
         }
     }
 
@@ -103,7 +139,7 @@ impl Bank {
     /// Columns only ever populated on the row carrying the date.
     pub fn row_scoped(self) -> &'static [&'static str] {
         match self {
-            Self::Sbi => &[],
+            Self::Sbi | Self::Ubi => &[],
             Self::Hdfc => &["ref", "vdt", "dr", "cr", "bal"],
         }
     }
@@ -111,7 +147,7 @@ impl Bank {
     /// A line carrying every token of any group ends the current page's table.
     pub fn bottom_anchors(self) -> Anchors {
         match self {
-            Self::Sbi => &[],
+            Self::Sbi | Self::Ubi => &[],
             Self::Hdfc => &[&["HDFC", "BANK", "LIMITED"], &["STATEMENT", "SUMMARY"]],
         }
     }
@@ -119,7 +155,7 @@ impl Bank {
     /// ... and these end the statement entirely; later pages are not read.
     pub fn end_anchors(self) -> Anchors {
         match self {
-            Self::Sbi => &[],
+            Self::Sbi | Self::Ubi => &[],
             Self::Hdfc => &[&["STATEMENT", "SUMMARY"]],
         }
     }
@@ -131,6 +167,8 @@ impl Bank {
             Self::Sbi => &[&["Txn"]],
             // page 1 repeats the column header; later pages only the period line
             Self::Hdfc => &[&["Narration"], &["Statement", "account"]],
+            // the column header is repeated on every page
+            Self::Ubi => &[UBI_HEADER],
         }
     }
 
@@ -140,6 +178,8 @@ impl Bank {
             Self::Sbi => &[&["Account", "Number"]],
             // "Account Status" and "Account Type" print the same first word
             Self::Hdfc => &[&["Account", "No"]],
+            // a masked "<label> No" line and a CIF ID line also print digits
+            Self::Ubi => &[&["Account", "Number"]],
         }
     }
 
@@ -160,7 +200,7 @@ impl Bank {
                 "Credit",
                 "Balance",
             ],
-            Self::Hdfc => &[],
+            Self::Hdfc | Self::Ubi => &[],
         }
     }
 
@@ -191,6 +231,7 @@ impl Bank {
                 SBI_DATE.is_match(strip(&joined))
             }
             Self::Hdfc => cell.len() == 1 && HDFC_DATE.is_match(&cell[0].text),
+            Self::Ubi => false,
         }
     }
 
@@ -199,6 +240,7 @@ impl Bank {
             // "31 Jul" over "2026" in one cell; spacing after the join is not stable
             Self::Sbi => date::parse_day_month_name_year(&remove_space(text)),
             Self::Hdfc => date::parse_day_month_short_year(text),
+            Self::Ubi => date::parse_day_month_year_hyphenated(text),
         }
     }
 
@@ -207,6 +249,7 @@ impl Bank {
         match self {
             Self::Sbi => "%d%b%Y",
             Self::Hdfc => "%d/%m/%y",
+            Self::Ubi => "%d-%m-%Y",
         }
     }
 
@@ -214,6 +257,7 @@ impl Bank {
         match self {
             Self::Sbi => sbi_party(row),
             Self::Hdfc => hdfc_party(row),
+            Self::Ubi => ubi_party(row),
         }
     }
 
@@ -221,7 +265,91 @@ impl Bank {
         match self {
             Self::Sbi => sbi_reference(row),
             Self::Hdfc => hdfc_reference(row),
+            Self::Ubi => ubi_reference(row),
         }
+    }
+}
+
+/// The Union Bank column header, which starts every page's table.
+const UBI_HEADER: &[&str] = &["Date", "Transaction", "Id", "Remarks"];
+
+/// What one printed line of a single-line table is.
+#[derive(Debug, PartialEq, Eq)]
+pub enum LineKind {
+    /// A transaction, as row cells.
+    Row(Row),
+    /// The repeated column header or the `Page N of M` footer.
+    Furniture,
+    /// Opens with a date, so it was meant to be a row, but is not the row
+    /// shape: a wrapped cell, an unseen amount format, or a misread.
+    MalformedRow,
+    /// Anything else.
+    Other,
+}
+
+/// `Page N of M` anywhere among a line's words, as `(N, M)`.
+pub fn page_footer(words: &[&str]) -> Option<(usize, usize)> {
+    words.windows(4).find_map(|window| match window {
+        ["Page", number, "of", count] if all_digits(number) && all_digits(count) => {
+            Some((number.parse().ok()?, count.parse().ok()?))
+        }
+        _ => None,
+    })
+}
+
+impl Bank {
+    /// Classify one printed line of a [`Layout::SingleLine`] table.
+    ///
+    /// The row rule: `DD-MM-YYYY <transaction id> <remarks> <amount>(Cr|Dr)
+    /// <balance>(Cr|Dr)`, each figure a whole word so that remarks ending in
+    /// digits cannot lend them to the amount. The amount's side is its suffix; a `(Dr)` balance is
+    /// overdrawn and read as negative. Thousands separators are accepted though
+    /// none were seen.
+    pub fn classify_line(self, words: &[&str]) -> LineKind {
+        pattern!(
+            UBI_ROW,
+            r"^([0-9]{2}-[0-9]{2}-[0-9]{4}) ([A-Z][A-Z0-9]{4,}) (\S(?:.*\S)?) ([0-9][0-9,]*\.[0-9]{2}) ?\((Cr|Dr)\) ([0-9][0-9,]*\.[0-9]{2}) ?\((Cr|Dr)\)$"
+        );
+        pattern!(UBI_DATE_START, r"^[0-9]{2}-[0-9]{2}-[0-9]{4}\b");
+        debug_assert_eq!(self.layout(), Layout::SingleLine);
+        let text = words.join(" ");
+        let text = text.as_str();
+        // The row rule is tried first: a row whose remarks happen to contain the
+        // header's words or "Page 1 of 2" is still a row. Furniture never opens
+        // with a date, so it cannot match the row rule.
+        let Some(found) = UBI_ROW.captures(text) else {
+            if page_footer(words).is_some() || words.starts_with(UBI_HEADER) {
+                return LineKind::Furniture;
+            }
+            return if UBI_DATE_START.is_match(text) {
+                LineKind::MalformedRow
+            } else {
+                LineKind::Other
+            };
+        };
+        let amount = found[4].replace(',', "");
+        let balance = found[6].replace(',', "");
+        let mut row = Row::default();
+        row.set(DATE, &found[1]);
+        row.set("ref", &found[2]);
+        row.set(NARRATION, &found[3]);
+        row.set("narr_spaced", &found[3]);
+        let (filled, empty) = if &found[5] == "Dr" {
+            (DEBIT, CREDIT)
+        } else {
+            (CREDIT, DEBIT)
+        };
+        row.set(filled, amount);
+        row.set(empty, "");
+        row.set(
+            BALANCE,
+            if &found[7] == "Dr" {
+                format!("-{balance}")
+            } else {
+                balance
+            },
+        );
+        LineKind::Row(row)
     }
 }
 
@@ -515,4 +643,75 @@ fn hdfc_reference(row: &Row) -> (String, String) {
         "TXN"
     };
     (mode.to_string(), reference.to_string())
+}
+
+/// Union Bank remarks, by prefix. Each rule names the counterparty field only
+/// where the observed shape settles it; `MOBFT` does not, so it reaches
+/// suspense rather than a guessed name.
+fn ubi_party(row: &Row) -> String {
+    pattern!(UPI, r"^UPIAB/[0-9]{12}/CR/([^/]+)/[A-Z]{4}/[^/]*@[^/]*$");
+    pattern!(IMPS_AB, r"^IMPSAB/[0-9]{12}/([^/]+)/[0-9]{10}$");
+    pattern!(
+        IMPS_AR,
+        r"^IMPSAR/[0-9]{12}/([^/]+)/(?:[0-9]{14}|[0-9]{11})$"
+    );
+    pattern!(NEFT, r"^NEFT:(.+) (\S+)$");
+    pattern!(CLEARING, r"^CLG/([^/]+)$");
+    pattern!(CARD_FEE, r"^ANN\.FEE[0-9]{16}DATE OF ISSUANCE");
+
+    let narration = strip(row.get(NARRATION));
+    let named = |name: &str| {
+        let name = squash(name);
+        if name.is_empty() {
+            UNRESOLVED.to_string()
+        } else {
+            name
+        }
+    };
+    for pattern in [&*UPI, &*IMPS_AB, &*IMPS_AR, &*CLEARING] {
+        if let Some(found) = pattern.captures(narration) {
+            return named(&found[1]);
+        }
+    }
+    if let Some(found) = NEFT.captures(narration) {
+        // the tail is a bank reference; without one the name has no end
+        if looks_like_utr(&found[2]) {
+            return named(&found[1]);
+        }
+        return UNRESOLVED.to_string();
+    }
+    if narration == "BY CASH" {
+        return "CASH DEPOSIT".to_string();
+    }
+    if CARD_FEE.is_match(narration) {
+        return "CARD ANNUAL FEE".to_string();
+    }
+    UNRESOLVED.to_string()
+}
+
+fn ubi_reference(row: &Row) -> (String, String) {
+    pattern!(UPI, r"^UPIAB/([0-9]{12})/");
+    pattern!(IMPS, r"^IMPSA[BR]/([0-9]{12})/");
+    pattern!(MOBILE, r"^MOBFT/.*/([0-9]{12})$");
+    pattern!(NEFT, r"^NEFT:.+ (\S+)$");
+    let narration = strip(row.get(NARRATION));
+    let pair = |mode: &str, value: &str| (mode.to_string(), value.to_string());
+    for (mode, pattern) in [("UPI", &*UPI), ("IMPS", &*IMPS), ("MOBFT", &*MOBILE)] {
+        if let Some(found) = pattern.captures(narration) {
+            return pair(mode, &found[1]);
+        }
+    }
+    if let Some(found) = NEFT.captures(narration) {
+        if looks_like_utr(&found[1]) {
+            return pair("NEFT", &found[1]);
+        }
+    }
+    let mode = if narration.starts_with("CLG/") {
+        "CLG"
+    } else if narration == "BY CASH" {
+        "CASH"
+    } else {
+        "TXN"
+    };
+    pair(mode, strip(row.get("ref")))
 }

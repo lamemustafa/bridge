@@ -1,7 +1,7 @@
-//! Calendar dates as the two statement layouts print them.
+//! Calendar dates as the statement layouts print them.
 //!
 //! Ported from Python's `datetime.strptime` for exactly the two formats the
-//! profiles use (`%d/%m/%y` and `%d%b%Y`), including its quirks: `%d` and `%m`
+//! reference's profiles use (`%d/%m/%y` and `%d%b%Y`), including its quirks: `%d` and `%m`
 //! accept one digit, `%b` is case-insensitive, `%y` pivots at 69, and a
 //! successful prefix that leaves characters unconsumed is an error rather than
 //! a retry.
@@ -114,5 +114,19 @@ pub fn parse_day_month_name_year(text: &str) -> Option<Date> {
         found[3].parse().ok()?,
         u8::try_from(month + 1).ok()?,
         day(&found[1])?,
+    )
+}
+
+/// `DD-MM-YYYY`, Union Bank's form. It has no Python reference, so it is
+/// strict rather than strptime-shaped: two-digit day and month, four-digit
+/// year, nothing left over.
+pub fn parse_day_month_year_hyphenated(text: &str) -> Option<Date> {
+    static PATTERN: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^([0-9]{2})-([0-9]{2})-([0-9]{4})$").unwrap());
+    let found = PATTERN.captures(text)?;
+    Date::new(
+        found[3].parse().ok()?,
+        found[2].parse().ok()?,
+        found[1].parse().ok()?,
     )
 }

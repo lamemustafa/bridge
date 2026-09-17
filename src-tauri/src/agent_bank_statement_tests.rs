@@ -178,6 +178,30 @@ async fn inputs_are_refused_before_the_statement_is_opened() {
         let response = server.call_tool("parse_bank_statement", args).await;
         assert_eq!(error_code(&response), Some(expected), "{key}");
     }
+    let mut one_total = base.clone();
+    one_total.as_object_mut().unwrap().remove("total_credits");
+    assert_eq!(
+        error_code(&server.call_tool("parse_bank_statement", one_total).await),
+        Some("statement_control_totals_incomplete")
+    );
+    // HDFC prints its totals, so they cannot be left out; Union Bank prints none
+    let mut no_totals = base.clone();
+    for key in ["total_debits", "total_credits"] {
+        no_totals.as_object_mut().unwrap().remove(key);
+    }
+    assert_eq!(
+        error_code(
+            &server
+                .call_tool("parse_bank_statement", no_totals.clone())
+                .await
+        ),
+        Some("statement_control_totals_required")
+    );
+    no_totals["bank"] = json!("ubi");
+    assert_eq!(
+        error_code(&server.call_tool("parse_bank_statement", no_totals).await),
+        Some("statement_file_unreadable")
+    );
     let mut reversed = base.clone();
     reversed["from"] = json!("2026-08-31");
     reversed["to"] = json!("2026-08-01");
@@ -242,6 +266,7 @@ async fn only_the_summary_leaves_and_the_password_appears_nowhere() {
     assert_eq!(result["suspense_rows"], 4);
     assert_eq!(result["account_last4"], "4321");
     assert_eq!(result["reconciled"]["running_balance_every_row"], true);
+    assert_eq!(result["reconciled"]["totals_match_statement"], true);
     let northwind = result["counterparties"]
         .as_array()
         .unwrap()
@@ -447,5 +472,41 @@ async fn refusals_name_a_category_and_a_row_never_the_statement() {
     assert!(
         !directory.path().join("agent/bank-statements").exists()
             || every_file_under(&directory.path().join("agent/bank-statements")).is_empty()
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs PDFium: set BRIDGE_PDFIUM_LIBRARY and run with --ignored"]
+async fn a_union_bank_statement_parses_without_printed_totals() {
+    assert!(env::var_os("BRIDGE_PDFIUM_LIBRARY").is_some());
+    let directory = tempfile::tempdir().unwrap();
+    let (statement, password_file) =
+        statement_files(directory.path(), "ubi-synthetic.pdf", "synthetic-user-7788");
+    let server = server(directory.path(), true, Redaction::None);
+    let args = json!({
+        "statement_path": statement.to_str().unwrap(),
+        "password_file": password_file.to_str().unwrap(),
+        "bank": "ubi",
+        "account_label": "UBI SB xx7788",
+        "opening_balance": "10,000.00",
+        "closing_balance": "500.00",
+        "bank_ledger": "Synthetic Bank Ledger",
+        "suspense_ledger": "Suspense",
+        "mapping": [{"party": "CASH DEPOSIT", "ledger": "Cash", "treatment": "contra"}]
+    });
+    let response = server.call_tool("parse_bank_statement", args.clone()).await;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(result["statement_rows"], 6, "{response}");
+    assert_eq!(result["vouchers"], 6);
+    assert_eq!(result["reconciled"]["total_debits"], "13250.50");
+    assert_eq!(result["reconciled"]["total_credits"], "3750.50");
+    assert_eq!(result["reconciled"]["totals_match_statement"], false);
+
+    // a closing balance the rows do not reach is still refused
+    let mut short = args;
+    short["closing_balance"] = json!("0.00");
+    assert_eq!(
+        error_code(&server.call_tool("parse_bank_statement", short).await),
+        Some("statement_extent_unproven")
     );
 }

@@ -84,15 +84,19 @@ fn arithmetic(error: impl std::fmt::Debug) -> Refusal {
     )
 }
 
-/// The four figures the statement itself prints. The closing balance alone is
-/// the NET of the rows, so a dropped tail whose debits and credits cancel still
+/// The figures the statement itself prints. The closing balance alone is the
+/// NET of the rows, so a dropped tail whose debits and credits cancel still
 /// lands on it; the two totals are independent of the net and of each other.
+///
+/// The totals are optional only because some layouts do not print them (see
+/// [`crate::bank::Bank::prints_totals`]); the pipeline refuses to go without
+/// them for a layout that does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Controls {
     pub opening: ExactDecimal,
     pub closing: ExactDecimal,
-    pub debits: ExactDecimal,
-    pub credits: ExactDecimal,
+    pub debits: Option<ExactDecimal>,
+    pub credits: Option<ExactDecimal>,
 }
 
 impl Controls {
@@ -102,11 +106,31 @@ impl Controls {
         debits: &str,
         credits: &str,
     ) -> Result<Self, Refusal> {
+        Self::parse_optional(opening, closing, Some(debits), Some(credits))
+    }
+
+    /// Both totals or neither: one without the other is refused.
+    pub fn parse_optional(
+        opening: &str,
+        closing: &str,
+        debits: Option<&str>,
+        credits: Option<&str>,
+    ) -> Result<Self, Refusal> {
+        if debits.is_some() != credits.is_some() {
+            return Err(Refusal::new(
+                "control_totals_incomplete",
+                "supply both total debits and total credits, or neither",
+            ));
+        }
         Ok(Self {
             opening: control_value(opening, "opening balance", true)?,
             closing: control_value(closing, "closing balance", true)?,
-            debits: control_value(debits, "total debits", false)?,
-            credits: control_value(credits, "total credits", false)?,
+            debits: debits
+                .map(|text| control_value(text, "total debits", false))
+                .transpose()?,
+            credits: credits
+                .map(|text| control_value(text, "total credits", false))
+                .transpose()?,
         })
     }
 }
@@ -176,14 +200,8 @@ pub struct Totals {
     pub credits: ExactDecimal,
 }
 
-/// Prove the parse reproduces the statement's printed debit and credit totals
-/// (`verify_against_statement`). They are the only check that sees a dropped
-/// tail whose two sides cancel.
-pub fn verify_against_statement(
-    rows: &[Row],
-    debits: &ExactDecimal,
-    credits: &ExactDecimal,
-) -> Result<Totals, Refusal> {
+/// Debit and credit totals over every parsed row, unchecked.
+pub fn statement_totals(rows: &[Row]) -> Result<Totals, Refusal> {
     let mut totals = Totals {
         debits: ExactDecimal::zero(),
         credits: ExactDecimal::zero(),
@@ -196,6 +214,18 @@ pub fn verify_against_statement(
             totals.credits = totals.credits.checked_add(&credit).map_err(arithmetic)?;
         }
     }
+    Ok(totals)
+}
+
+/// Prove the parse reproduces the statement's printed debit and credit totals
+/// (`verify_against_statement`). They are the only check that sees a dropped
+/// tail whose two sides cancel.
+pub fn verify_against_statement(
+    rows: &[Row],
+    debits: &ExactDecimal,
+    credits: &ExactDecimal,
+) -> Result<Totals, Refusal> {
+    let totals = statement_totals(rows)?;
     for (label, actual, expected) in [
         ("debits", &totals.debits, debits),
         ("credits", &totals.credits, credits),
