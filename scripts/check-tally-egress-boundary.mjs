@@ -81,12 +81,26 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 // declare reqwest *directly*, not which crates reach it transitively.
 const TALLY_HTTP_TRANSPORT_CRATE = "bridge-tally-transport";
 
-// `bridge` is the Tauri app crate. It legitimately depends on reqwest
-// directly for two things that are NOT the Tally path: axal.rs (AXAL
-// sign-in / cloud storage) and documents.rs (the document upload feature).
-// README.md:64-70 names both explicitly as the parts of the app that DO
-// upload. Source check 2 below is what keeps that dependency edge from
-// being used anywhere else inside the crate.
+// `bridge` is the app crate. It legitimately depends on reqwest directly for
+// two things that are NOT the Tally path: axal.rs (AXAL sign-in / cloud
+// storage) and documents.rs (the document upload feature). README.md:64-70
+// names both explicitly as the parts of the app that DO upload.
+//
+// Do not read "app crate" as "Tauri only". Both modules are declared
+// unconditionally in lib.rs, with no cfg(feature) gate; src/bin/bridge_mcp.rs
+// links bridge_lib; and scripts/package-mcpb.mjs ships bridge_mcp as the
+// extension binary. So this reqwest edge is compiled into the artifact a user
+// installs, not just into the desktop app. The honest claim is "present and
+// unreachable from the agent surface", not "absent" -- and "unreachable" is
+// what source check 2 below exists to keep true.
+//
+// The standard this gate is modelled on is the Tally transport's own loopback
+// guard, which is stronger than a file allow-list: `endpoint_url` special-cases
+// only the literal string "localhost" and hardcodes 127.0.0.1 without ever
+// resolving DNS, so a hosts-file entry aiming a hostname at loopback cannot
+// pass. It runs on every network method rather than once at construction,
+// redirects are disabled, and no environment variable or cargo feature relaxes
+// it. Where a future control can be written that way, prefer it to a list.
 const APP_CRATE = "bridge";
 
 function directDependents(manifestPath, packageName) {
