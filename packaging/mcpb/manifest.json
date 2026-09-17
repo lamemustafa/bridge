@@ -1,9 +1,9 @@
 {
   "manifest_version": "0.1",
   "name": "bridge-tally",
-  "display_name": "Bridge Tally",
+  "display_name": "ComplyEaze Bridge",
   "version": "0.2.0",
-  "description": "Read local Tally data and prepare Journals. Each new Journal posting requires a separate native approval.",
+  "description": "Read the TallyPrime books on this computer, and prepare Journal, Payment, Receipt and Contra vouchers as a local file. Only a Journal is posted, and every posting needs your approval in a native dialog.",
   "author": {
     "name": "Bridge contributors"
   },
