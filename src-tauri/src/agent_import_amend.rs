@@ -184,9 +184,18 @@ impl Lineage {
                 last_diffs = diffs;
             }
             match matched {
-                Some(batch_id) => admitted.push(json!({"bridge_txn_id":txn_id,
+                Some(batch_id) => {
+                    let mut entry = json!({"bridge_txn_id":txn_id,
                     "book_matches_batch_id":batch_id,"guid":row.guid,"master_id":row.master_id,
-                    "alter_id":row.alter_id})),
+                    "alter_id":row.alter_id});
+                    // the compare-and-swap could not see an edit to it
+                    if row.effective_date.is_none()
+                        && row.voucher_type.as_deref() != Some("Journal")
+                    {
+                        entry["not_observed"] = json!(["effective_date"]);
+                    }
+                    admitted.push(entry);
+                }
                 None => refused.push(
                     json!({"bridge_txn_id":txn_id,"reason":"book_voucher_diverged",
                     "diffs_from_latest_build":last_diffs,"guid":row.guid,"alter_id":row.alter_id}),

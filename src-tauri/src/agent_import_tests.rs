@@ -410,6 +410,7 @@ fn duplicate_detection_uses_stable_voucher_identity_independently_of_remote_id()
                 voucher_number: None,
                 cancelled: Some(false),
                 optional: Some(false),
+                effective_date: None,
                 entries: vec![ReadEntry {
                     ledger: "Expense".into(),
                     amount: "-12.50".into(),
@@ -481,6 +482,7 @@ fn verification_masks_entry_diffs_and_duplicate_fingerprints_before_release() {
         voucher_number: None,
         cancelled: Some(false),
         optional: Some(false),
+        effective_date: None,
         entries: vec![ReadEntry {
             ledger: "Private Synthetic Party".into(),
             amount: "-12.50".into(),
@@ -572,6 +574,7 @@ fn verification_reports_absence_divergence_and_duplicate_fingerprints() {
             master_id: None,
             cancelled: Some(false),
             optional: Some(false),
+            effective_date: None,
             entries: vec![
                 ReadEntry {
                     ledger: "Expense".to_string(),
@@ -596,6 +599,7 @@ fn verification_reports_absence_divergence_and_duplicate_fingerprints() {
             master_id: None,
             cancelled: Some(false),
             optional: Some(false),
+            effective_date: None,
             entries: vec![
                 ReadEntry {
                     ledger: "Expense".to_string(),
@@ -637,6 +641,7 @@ fn verification_window_corroboration_rejects_each_unsafe_branch() {
         master_id: None,
         cancelled: Some(false),
         optional: Some(false),
+        effective_date: None,
         entries: vec![],
     };
     let inside = voucher("guid-1", 3, "20260901");
@@ -769,6 +774,7 @@ fn unrelated_window_duplicates_do_not_block_a_verified_batch() {
         master_id: None,
         cancelled: Some(false),
         optional: Some(false),
+        effective_date: None,
         entries: vec![
             ReadEntry {
                 ledger: "Expense".to_string(),
@@ -794,6 +800,7 @@ fn unrelated_window_duplicates_do_not_block_a_verified_batch() {
         master_id: None,
         cancelled: Some(false),
         optional: Some(false),
+        effective_date: None,
         entries: vec![ReadEntry {
             ledger: "Unrelated".to_string(),
             amount: "1.00".to_string(),
@@ -850,6 +857,7 @@ fn fingerprint_only_verification_requires_a_post_mark_voucher() {
         master_id: None,
         cancelled: Some(false),
         optional: Some(false),
+        effective_date: None,
         entries: vec![
             ReadEntry {
                 ledger: "Expense".to_string(),
@@ -873,6 +881,10 @@ fn fingerprint_only_verification_requires_a_post_mark_voucher() {
     let after = verify_observed_batch(&line, &[observed(11)]).expect("verification result");
     assert_eq!(after["vouchers"][0]["status"], "matching_content_observed");
     assert_eq!(after["vouchers"][0]["attribution"], "not_established");
+    assert_eq!(
+        after["vouchers"][0]["not_observed"],
+        json!(["effective_date"])
+    );
     assert_eq!(after["counts"]["posted_verified"], 0);
     assert_eq!(verification_status(&after, 1), "verification_incomplete");
 }
@@ -913,6 +925,7 @@ fn fingerprint_fallback_consumes_an_observed_voucher_once_per_batch() {
         master_id: None,
         cancelled: Some(false),
         optional: Some(false),
+        effective_date: None,
         entries: vec![
             ReadEntry {
                 ledger: "Expense".to_string(),
@@ -974,6 +987,7 @@ fn tagged_matches_are_reserved_and_consumed_independently_of_batch_order() {
         master_id: None,
         cancelled: Some(false),
         optional: Some(false),
+        effective_date: None,
         entries: vec![
             ReadEntry {
                 ledger: "Expense".to_string(),
@@ -1042,6 +1056,7 @@ fn narration_tag_verification_requires_a_post_mark_voucher() {
         master_id: None,
         cancelled: Some(false),
         optional: Some(false),
+        effective_date: None,
         entries: vec![
             ReadEntry {
                 ledger: "Expense".to_string(),
@@ -1106,6 +1121,7 @@ fn verification_compares_amounts_numerically_and_preserves_real_divergence() {
         master_id: None,
         cancelled: Some(false),
         optional: Some(false),
+        effective_date: None,
         entries: vec![
             ReadEntry {
                 ledger: "Expense".to_string(),
@@ -1163,6 +1179,7 @@ fn verified_import_vouchers_require_observed_effective_accounting_flags() {
         master_id: None,
         cancelled: Some(false),
         optional: Some(false),
+        effective_date: None,
         entries: vec![
             ReadEntry {
                 ledger: "Expense".to_string(),
@@ -1188,6 +1205,10 @@ fn verified_import_vouchers_require_observed_effective_accounting_flags() {
         let result =
             verify_observed_batch(&line, &[ineffective]).expect("ineffective voucher result");
         assert_eq!(result["vouchers"][0]["status"], "posted_not_effective");
+        assert_eq!(
+            result["vouchers"][0]["not_observed"],
+            json!(["effective_date"])
+        );
         assert_eq!(result["counts"]["posted_not_effective"], 1);
     }
     let mut missing = observed;

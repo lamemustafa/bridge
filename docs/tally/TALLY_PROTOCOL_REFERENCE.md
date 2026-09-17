@@ -1802,7 +1802,9 @@ carries no such flag, and adding one would mean authoring a request shape with n
 behind it. Every party amount therefore lands On Account, exactly as the measured import did,
 and every build naming a counterparty says so in its warnings.
 
-**Two written elements are not verified: `EFFECTIVEDATE` and `PARTYLEDGERNAME`.** The
+**Two written elements are not verified: `EFFECTIVEDATE` and `PARTYLEDGERNAME`.** *(Written before
+#467 and #469. `EFFECTIVEDATE` is now verified and `PARTYLEDGERNAME` is still not; see the two
+scoped corrections below.)* The
 verification collection of §9.8 fetches neither, so `verify_import` compares the date, voucher
 type and signed entries and cannot see whether Tally kept, rewrote or dropped either — nor
 whether an operator later edited them. A readback with a wrong effective date, or a party
@@ -1841,7 +1843,8 @@ the `FETCH` list and looks at what arrives.
 > | Contra | `20250423` / `20250423` | `20250423`, `TYPE="Date"` | none written | the debit bank ledger (`HDFC CC`) |
 >
 > - **`EFFECTIVEDATE` is returned, equal to `DATE`**, on all three types. Comparing it is now
->   possible. `verify_import` still does not fetch it, so the limit above still holds for the code.
+>   possible. `verify_import` did not fetch it when this read was taken; #469 closed that, see the
+>   next correction.
 > - **`PARTYLEDGERNAME` is returned but does not echo what was written.** On these vouchers it held
 >   a cash or bank ledger that was on the voucher, not the counterparty Bridge wrote. **Do not
 >   compare it with the written value:** that comparison would refuse every one of these legitimate
@@ -1851,6 +1854,19 @@ the `FETCH` list and looks at what arrives.
 >
 > One read, one company, one release, three Bridge-built vouchers in a six-voucher window. It does not establish
 > what a Tally UI edit to either field returns.
+
+> **Scoped correction, 2026-09-17 — `EFFECTIVEDATE` is now verified (#469).** A live read
+> (#467: licensed 7.1 Silver, synthetic lab) returned `EFFECTIVEDATE` with `TYPE="Date"`, equal
+> to `DATE`, on a Bridge-built Receipt, Payment and Contra. The committed capture
+> `native-three-vouchers.utf16le.xml` also carries it on two of its three vouchers. The §9.8
+> verification read now appends `EFFECTIVEDATE` to its `FETCH`. For Payment, Receipt and Contra, a
+> returned value that differs from the written date is an `effective_date` diff, in `verify_import`
+> and in the amendment compare-and-swap. An absent or empty element is **not** a diff, because
+> requiring it would refuse every verification on a release that does not return it; the row
+> reports `"not_observed": ["effective_date"]` instead. A Journal is written without the element
+> and is neither compared nor flagged. The public voucher tools do not fetch it or return it.
+> `PARTYLEDGERNAME` stays unfetched: on the same read it held a bank ledger, not the written
+> counterparty.
 
 ### 9.9 Bulk import throughput
 

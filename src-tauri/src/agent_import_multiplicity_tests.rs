@@ -19,6 +19,7 @@ fn identical_batch() -> (ImportLedgerLine, Vec<ReadVoucher>) {
             voucher_number: None,
             cancelled: Some(false),
             optional: Some(false),
+            effective_date: None,
             entries: voucher
                 .entries
                 .iter()
