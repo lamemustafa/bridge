@@ -2,8 +2,8 @@
 
 ComplyEaze Bridge lets an AI assistant read from, and write to, the TallyPrime
 running on your own computer. Nothing in that path copies your books to a server
-of ours. What you ask about does reach the AI provider you chose, exactly as the
-rest of that conversation does — see *One thing to understand before you use it*
+of ours. What the assistant reads does reach the AI provider you chose, exactly as
+the rest of that conversation does — see *One thing to understand before you use it*
 below before you point this at client data.
 
 It connects to Tally over Tally's own local XML gateway, on `localhost` only. A
