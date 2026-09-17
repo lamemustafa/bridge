@@ -131,7 +131,7 @@
     },
     {
       "path": "src-tauri/Cargo.toml",
-      "sha256": "4f7e26161715a5ae8f5db7942bdb2ef66d7b07cb6f5073cb36bba89057a6b5b4"
+      "sha256": "d38ffa53f41c59d77fc92af59e0f6a4821ef0c4c21b192621fcfb10c17db5d1c"
     },
     {
       "path": "src-tauri/crates/bridge-bank-statement/Cargo.toml",
@@ -1074,5 +1074,5 @@
       "sha256": "0ab5bfbe6d81b1e10530744c338fb91efa57fe5a66fb4bc0cfd382495eaf02a4"
     }
   ],
-  "manifest_sha256": "4fe7fa33133d98c237ca9c955802339114d7db4ce25ef02805f1a9b09a95ea2c"
+  "manifest_sha256": "fb2fffbb8e9dda78e93597bd97ca9799b0be025a4a9a8d7209c4de0edf39f688"
 }
