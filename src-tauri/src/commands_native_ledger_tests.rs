@@ -114,8 +114,10 @@ async fn captured_native_ledger_refusals_reach_command_validation_classification
             .map(|i| encode(&plans[i].fixture.body(), plans[i].encoding).len())
             .sum();
         let simulator = SequenceSimulator::spawn(plans).unwrap();
-        // This is the runtime operation used by fetch_tally_ledgers, followed
-        // by that command's actual error classifier.
+        // TallyRuntime::fetch_ledgers is the native ledger admission runtime
+        // operation; this asserts on its raw error chain directly rather than
+        // through a command-layer classifier (its only #[tauri::command]
+        // caller, fetch_tally_ledgers, was deleted as unreachable in #474).
         let error = TallyRuntime::default()
             .fetch_ledgers(
                 TallyConfig {

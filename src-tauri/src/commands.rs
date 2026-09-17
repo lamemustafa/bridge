@@ -1,11 +1,9 @@
 use crate::db::tally_incremental::IncrementalFoundationEvidence;
 use crate::db::tally_mirror::{
-    company_profile_correlation_key, selected_read_scope_commitment_sha256, CapabilityItemInput,
-    CapabilityKind as MirrorCapabilityKind, CapabilitySnapshotInput,
-    CapabilityState as MirrorCapabilityState, Confidence, FreshnessState,
+    company_profile_correlation_key, CapabilityItemInput, CapabilityKind as MirrorCapabilityKind,
+    CapabilitySnapshotInput, CapabilityState as MirrorCapabilityState, Confidence, FreshnessState,
     LocalReconciliationMismatch, ProofSummary, RedactedProofExport, ReviewedSetupInput,
-    SelectedReadObservationCommitmentMaterial, SelectedReadObservationInput,
-    SelectedReadScopeCommitmentMaterial, SelectedReadScopeInput, SourceIdentityInput,
+    SelectedReadObservationInput, SelectedReadScopeInput, SourceIdentityInput,
     WriteFixtureEnrollmentInput, WriteFixtureEnrollmentStatus,
 };
 use crate::gst::{GstDraftRequest, GstReturnDraft};
@@ -38,18 +36,16 @@ use crate::tally::validators::{
 };
 pub use crate::tally::VerifiedCompanyIdentity;
 use crate::tally::{
-    company_source_identity, core_snapshot_start_authorized, source_lineage,
-    CachedProbeReservation, ConnectionStatus, EndpointKey, OpenBillRow,
-    OutstandingsCurrencyAssertion, OutstandingsLoadResult, RuntimeTallyConnector,
-    SelectedReadObservation, SelectedReadScopeEvidence, TallyCompany, TallyConfig, TallyLedger,
-    TallyRuntime, TallySessionSnapshot, TallyTelemetryPreviewExport, TallyVoucher,
-    UnallocatedParty, VerifiedCompanyIdentityError, SELECTED_LEDGER_QUERY_PROFILE_ID,
-    SELECTED_VOUCHER_QUERY_PROFILE_ID,
+    company_source_identity, core_snapshot_start_authorized, source_lineage, ConnectionStatus,
+    EndpointKey, OpenBillRow, OutstandingsCurrencyAssertion, OutstandingsLoadResult,
+    RuntimeTallyConnector, SelectedReadScopeEvidence, TallyCompany, TallyConfig, TallyRuntime,
+    TallySessionSnapshot, TallyTelemetryPreviewExport, UnallocatedParty,
+    VerifiedCompanyIdentityError,
 };
 use bridge_tally_core::{
-    CapabilityEvidence, CapabilityFeatureId, CapabilityPackId, CapabilityState,
-    CompanyRef as CoreCompanyRef, EvidenceConfidence, ReadWindow, RequestContext, TallyConnector,
-    TallyDate, TransportId, CORE_ACCOUNTING_SCHEMA_VERSION,
+    CapabilityFeatureId, CapabilityPackId, CapabilityState, CompanyRef as CoreCompanyRef,
+    ReadWindow, RequestContext, TallyConnector, TallyDate, TransportId,
+    CORE_ACCOUNTING_SCHEMA_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -511,443 +507,6 @@ fn persisted_tally_probe_result(
     })
 }
 
-#[derive(Debug, Deserialize)]
-pub struct QualifySelectedReadsRequest {
-    pub config: TallyConfig,
-    pub expected_review_id: String,
-    pub expected_review_commitment_sha256: String,
-    pub selected_company: SelectedCompanyIdentity,
-    pub voucher_from_yyyymmdd: String,
-    pub voucher_to_yyyymmdd: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct SelectedReadQualificationResult {
-    pub review_id: String,
-    pub observed_at_unix_ms: i64,
-    pub profile: bridge_tally_core::CapabilityProfile,
-    pub profile_sha256: String,
-    pub review_commitment_sha256: String,
-    pub selected_read_scope: SelectedReadScopeEvidence,
-    pub no_writes_attempted: bool,
-    pub raw_records_retained: bool,
-    pub completeness_claimed: bool,
-}
-
-#[tauri::command]
-pub async fn qualify_selected_tally_reads(
-    request: QualifySelectedReadsRequest,
-    runtime: State<'_, TallyRuntime>,
-) -> Result<SelectedReadQualificationResult, TallyCommandError> {
-    validate_date_range(&request.voucher_from_yyyymmdd, &request.voucher_to_yyyymmdd).map_err(
-        |message| {
-            tally_command_error(
-                "selected_read_window_invalid",
-                "Endpoint configuration",
-                message,
-                "after_change",
-                false,
-                "Choose a valid inclusive voucher window and qualify again.",
-            )
-        },
-    )?;
-    let from_date = chrono::NaiveDate::parse_from_str(&request.voucher_from_yyyymmdd, "%Y%m%d")
-        .map_err(|_| selected_read_window_too_large_error())?;
-    let to_date = chrono::NaiveDate::parse_from_str(&request.voucher_to_yyyymmdd, "%Y%m%d")
-        .map_err(|_| selected_read_window_too_large_error())?;
-    if (to_date - from_date).num_days() > 30 {
-        return Err(selected_read_window_too_large_error());
-    }
-    let canonical_origin = EndpointKey::from_config(&request.config)
-        .map(|endpoint| endpoint.as_str().to_string())
-        .map_err(|_| {
-            tally_command_error(
-                "endpoint_configuration_invalid",
-                "Endpoint configuration",
-                "Tally endpoint validation failed",
-                "after_change",
-                false,
-                "Use localhost or a loopback IP and a valid port, then probe again.",
-            )
-        })?;
-    let mut reservation = runtime
-        .reserve_cached_probe_fresh(
-            &request.config,
-            &request.expected_review_id,
-            SETUP_PROBE_MAX_AGE_MS,
-        )
-        .map_err(tally_runtime_command_error)?
-        .ok_or_else(reviewed_probe_expired_error)?;
-    let parent_observed_at_unix_ms = reservation.observed_at_unix_ms();
-    let mut probe = reservation.result().clone();
-
-    let parent_commitment = match reviewed_probe_commitment_sha256(
-        &request.expected_review_id,
-        &canonical_origin,
-        parent_observed_at_unix_ms,
-        &probe,
-    ) {
-        Ok(commitment) => commitment,
-        Err(_) => return Err(reviewed_probe_changed_error()),
-    };
-    if parent_commitment != request.expected_review_commitment_sha256 {
-        return Err(reviewed_probe_changed_error());
-    }
-    let selected_guid = match normalize_company_guid(&request.selected_company.company_guid) {
-        Ok(guid) => guid,
-        Err(_) => {
-            return Err(tally_command_error(
-                "stable_company_identity_required",
-                "Tally application",
-                "The selected company does not have a safe observed GUID.",
-                "after_change",
-                false,
-                "Select one company with an observed name, number, GUID, and book opening date from the current probe.",
-            ));
-        }
-    };
-    let matching_companies = probe
-        .companies
-        .iter()
-        .filter(|company| {
-            company.name == request.selected_company.display_name
-                && company
-                    .guid
-                    .as_deref()
-                    .is_some_and(|guid| guid.eq_ignore_ascii_case(&selected_guid))
-                && company.company_number.as_deref()
-                    == Some(request.selected_company.company_number.as_str())
-                && company.books_from.as_deref()
-                    == Some(request.selected_company.books_from_yyyymmdd.as_str())
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    let [company] = matching_companies.as_slice() else {
-        return Err(tally_command_error(
-            "reviewed_company_scope_changed",
-            "Tally application",
-            "The selected company is absent or ambiguous in the reviewed probe.",
-            "safe",
-            false,
-            "Probe again and select one company from the replacement result.",
-        ));
-    };
-    if company.guid.is_none() {
-        return Err(reviewed_probe_changed_error());
-    }
-
-    let identity = verify_observed_company_tuple_for_reservation(
-        &runtime,
-        &request.config,
-        &request.selected_company,
-        &reservation,
-    )
-    .await?;
-    let ledger_result = runtime
-        .qualify_selected_ledgers(request.config.clone(), &reservation, &identity)
-        .await;
-    let ledger_result = match ledger_result {
-        Err(error) if selected_read_cancelled(&error) => {
-            return Err(tally_runtime_command_error(error));
-        }
-        result => result,
-    };
-    if ledger_result
-        .as_ref()
-        .is_err_and(selected_read_identity_failure)
-    {
-        consume_selected_read_reservation(&mut reservation)?;
-        return Err(selected_read_company_context_error());
-    }
-    let ledger_observation = selected_read_observation(
-        "selected_ledger_read",
-        ledger_result,
-        false,
-        "selected_ledger_read_empty_observed",
-        "selected_ledger_read_non_empty_observed",
-    );
-    let voucher_observation = if ledger_observation.state == CapabilityState::Supported {
-        let result = runtime
-            .qualify_selected_vouchers(
-                request.config.clone(),
-                &reservation,
-                &identity,
-                request.voucher_from_yyyymmdd.clone(),
-                request.voucher_to_yyyymmdd.clone(),
-            )
-            .await;
-        let result = match result {
-            Err(error) if selected_read_cancelled(&error) => {
-                return Err(tally_runtime_command_error(error));
-            }
-            result => result,
-        };
-        if result.as_ref().is_err_and(selected_read_identity_failure) {
-            consume_selected_read_reservation(&mut reservation)?;
-            return Err(selected_read_company_context_error());
-        }
-        selected_read_observation(
-            "selected_voucher_window_read",
-            result,
-            true,
-            "selected_voucher_window_empty_observed",
-            "selected_voucher_window_non_empty_observed",
-        )
-    } else {
-        crate::tally::connection::SelectedReadCapabilityObservation {
-            capability_key: "selected_voucher_window_read",
-            state: CapabilityState::Unknown,
-            confidence: EvidenceConfidence::Unknown,
-            safe_reason_code: "qualification_prerequisite_failed",
-            result_bucket: "skipped",
-            request_sha256: None,
-            decoded_response_sha256: None,
-            response_encoding: None,
-            company_context_verified: false,
-            schema_verified: false,
-            record_count_verified: false,
-            identity_evidence_state: "unverified",
-            date_window_verified: false,
-        }
-    };
-    let observed_at_unix_ms = chrono::Utc::now().timestamp_millis();
-    let observations = vec![ledger_observation, voucher_observation];
-    let commitment_observations = observations
-        .iter()
-        .map(|observation| SelectedReadObservationCommitmentMaterial {
-            capability_key: observation.capability_key.to_string(),
-            state: capability_state_label(observation.state).to_string(),
-            confidence: evidence_confidence_label(observation.confidence).to_string(),
-            safe_reason_code: observation.safe_reason_code.to_string(),
-            result_bucket: observation.result_bucket.to_string(),
-            request_sha256: observation.request_sha256.clone(),
-            decoded_response_sha256: observation.decoded_response_sha256.clone(),
-            response_encoding: observation.response_encoding.map(str::to_string),
-            company_context_verified: observation.company_context_verified,
-            schema_verified: observation.schema_verified,
-            record_count_verified: observation.record_count_verified,
-            identity_evidence_state: observation.identity_evidence_state.to_string(),
-            date_window_verified: observation.date_window_verified,
-        })
-        .collect::<Vec<_>>();
-    let casefolded_guid = identity.company_guid().to_ascii_lowercase();
-    let scope_commitment_sha256 =
-        match selected_read_scope_commitment_sha256(&SelectedReadScopeCommitmentMaterial {
-            parent_review_commitment_sha256: parent_commitment.clone(),
-            canonical_origin: canonical_origin.clone(),
-            company_guid_ascii_casefolded: casefolded_guid.clone(),
-            company_name: company.name.clone(),
-            company_number: request.selected_company.company_number.clone(),
-            books_from_yyyymmdd: request.selected_company.books_from_yyyymmdd.clone(),
-            ledger_profile_id: SELECTED_LEDGER_QUERY_PROFILE_ID.to_string(),
-            voucher_profile_id: SELECTED_VOUCHER_QUERY_PROFILE_ID.to_string(),
-            voucher_from_yyyymmdd: request.voucher_from_yyyymmdd.clone(),
-            voucher_to_yyyymmdd: request.voucher_to_yyyymmdd.clone(),
-            observed_at_unix_ms,
-            observations: commitment_observations,
-        }) {
-            Ok(commitment) => commitment,
-            Err(_) => {
-                let _ = reservation.consume();
-                return Err(selected_read_review_state_uncertain_error());
-            }
-        };
-    for observation in &observations {
-        probe.profile.features.insert(
-            if observation.capability_key == "selected_ledger_read" {
-                CapabilityFeatureId::SelectedLedgerRead
-            } else {
-                CapabilityFeatureId::SelectedVoucherWindowRead
-            },
-            CapabilityEvidence {
-                state: observation.state,
-                confidence: observation.confidence,
-                safe_reason_code: Some(observation.safe_reason_code.to_string()),
-            },
-        );
-    }
-    probe.profile.profile_version = 4;
-    let selected_read_scope = SelectedReadScopeEvidence {
-        scope_version: 2,
-        ledger_profile_id: SELECTED_LEDGER_QUERY_PROFILE_ID.to_string(),
-        voucher_profile_id: SELECTED_VOUCHER_QUERY_PROFILE_ID.to_string(),
-        voucher_from_yyyymmdd: request.voucher_from_yyyymmdd.clone(),
-        voucher_to_yyyymmdd: request.voucher_to_yyyymmdd.clone(),
-        scope_commitment_sha256,
-        parent_review_sha256: parent_commitment,
-        company_guid_ascii_casefolded: casefolded_guid,
-        company_number: request.selected_company.company_number.clone(),
-        books_from_yyyymmdd: request.selected_company.books_from_yyyymmdd.clone(),
-        observations,
-    };
-    probe.selected_read_scope = Some(selected_read_scope.clone());
-    let replacement_review_id = uuid::Uuid::new_v4().to_string();
-    let profile_sha256 = match capability_profile_sha256(&probe.profile) {
-        Ok(hash) => hash,
-        Err(_) => {
-            let _ = reservation.consume();
-            return Err(selected_read_review_state_uncertain_error());
-        }
-    };
-    let review_commitment_sha256 = match reviewed_probe_commitment_sha256(
-        &replacement_review_id,
-        &canonical_origin,
-        observed_at_unix_ms,
-        &probe,
-    ) {
-        Ok(commitment) => commitment,
-        Err(_) => {
-            let _ = reservation.consume();
-            return Err(selected_read_review_state_uncertain_error());
-        }
-    };
-    let replaced = match reservation.replace(
-        replacement_review_id.clone(),
-        observed_at_unix_ms,
-        probe.clone(),
-    ) {
-        Ok(replaced) => replaced,
-        Err(_) => return Err(selected_read_review_state_uncertain_error()),
-    };
-    if !replaced {
-        return Err(selected_read_review_state_uncertain_error());
-    }
-    Ok(SelectedReadQualificationResult {
-        review_id: replacement_review_id,
-        observed_at_unix_ms,
-        profile: probe.profile,
-        profile_sha256,
-        review_commitment_sha256,
-        selected_read_scope,
-        no_writes_attempted: true,
-        raw_records_retained: false,
-        completeness_claimed: false,
-    })
-}
-
-fn selected_read_observation(
-    capability_key: &'static str,
-    result: anyhow::Result<SelectedReadObservation>,
-    date_window: bool,
-    empty_reason: &'static str,
-    non_empty_reason: &'static str,
-) -> crate::tally::connection::SelectedReadCapabilityObservation {
-    match result {
-        Ok(observed) => crate::tally::connection::SelectedReadCapabilityObservation {
-            capability_key,
-            state: CapabilityState::Supported,
-            confidence: EvidenceConfidence::Observed,
-            safe_reason_code: if observed.result_bucket == "empty_observed" {
-                empty_reason
-            } else {
-                non_empty_reason
-            },
-            result_bucket: observed.result_bucket,
-            request_sha256: Some(observed.request_sha256),
-            decoded_response_sha256: Some(observed.decoded_response_sha256),
-            response_encoding: Some(observed.response_encoding),
-            company_context_verified: true,
-            schema_verified: true,
-            record_count_verified: true,
-            identity_evidence_state: if observed.result_bucket == "empty_observed" {
-                "not_applicable_empty"
-            } else {
-                "verified"
-            },
-            date_window_verified: date_window,
-        },
-        Err(error) => crate::tally::connection::SelectedReadCapabilityObservation {
-            capability_key,
-            state: CapabilityState::Unknown,
-            confidence: EvidenceConfidence::Observed,
-            safe_reason_code: selected_read_failure_reason(&error, date_window),
-            result_bucket: "rejected",
-            request_sha256: None,
-            decoded_response_sha256: None,
-            response_encoding: None,
-            company_context_verified: false,
-            schema_verified: false,
-            record_count_verified: false,
-            identity_evidence_state: "unverified",
-            date_window_verified: false,
-        },
-    }
-}
-
-fn selected_read_identity_failure(error: &anyhow::Error) -> bool {
-    let message = error.to_string().to_ascii_lowercase();
-    message.contains("company") && (message.contains("context") || message.contains("identity"))
-}
-
-fn selected_read_cancelled(error: &anyhow::Error) -> bool {
-    matches!(
-        error.downcast_ref::<TallyRuntimeControlError>(),
-        Some(TallyRuntimeControlError::Cancelled)
-    )
-}
-
-fn consume_selected_read_reservation(
-    reservation: &mut CachedProbeReservation,
-) -> Result<(), TallyCommandError> {
-    match reservation.consume() {
-        Ok(true) => Ok(()),
-        Ok(false) | Err(_) => Err(selected_read_review_state_uncertain_error()),
-    }
-}
-
-fn selected_read_failure_reason(error: &anyhow::Error, voucher: bool) -> &'static str {
-    let message = error.to_string();
-    if voucher && message.contains("voucher_date_outside_requested_window") {
-        "selected_voucher_date_outside_window"
-    } else if message.contains("stable") || message.contains("identity") {
-        "selected_read_identity_unavailable"
-    } else if message.contains("schema") || message.contains("structural") {
-        "selected_read_schema_rejected"
-    } else {
-        "selected_read_transport_or_validation_failed"
-    }
-}
-
-fn capability_state_label(state: CapabilityState) -> &'static str {
-    match state {
-        CapabilityState::Supported => "supported",
-        CapabilityState::Unsupported => "unsupported",
-        CapabilityState::Unknown => "unknown",
-        CapabilityState::NotConfigured => "not_configured",
-    }
-}
-
-fn evidence_confidence_label(confidence: EvidenceConfidence) -> &'static str {
-    match confidence {
-        EvidenceConfidence::Documented => "documented",
-        EvidenceConfidence::Observed => "observed",
-        EvidenceConfidence::Inferred => "inferred",
-        EvidenceConfidence::Unknown => "unknown",
-    }
-}
-
-fn selected_read_window_too_large_error() -> TallyCommandError {
-    tally_command_error(
-        "selected_read_window_invalid",
-        "Endpoint configuration",
-        "Selected-read qualification is limited to one inclusive 31-day voucher window.",
-        "after_change",
-        false,
-        "Choose a valid window of 31 days or fewer.",
-    )
-}
-
-fn reviewed_probe_expired_error() -> TallyCommandError {
-    tally_command_error(
-        "reviewed_probe_expired",
-        "Operation",
-        "The reviewed Capability Passport is missing, busy, or older than five minutes.",
-        "safe",
-        false,
-        "Probe again and review the exact company scope before qualifying.",
-    )
-}
-
 fn reviewed_probe_changed_error() -> TallyCommandError {
     tally_command_error(
         "reviewed_probe_changed",
@@ -956,28 +515,6 @@ fn reviewed_probe_changed_error() -> TallyCommandError {
         "safe",
         false,
         "Probe again and review the replacement Passport before qualifying.",
-    )
-}
-
-fn selected_read_company_context_error() -> TallyCommandError {
-    tally_command_error(
-        "selected_read_company_context_changed",
-        "Tally application",
-        "A selected read did not prove the exact reviewed company context.",
-        "after_change",
-        true,
-        "Stop using this review, verify the loaded Tally company, and probe again.",
-    )
-}
-
-fn selected_read_review_state_uncertain_error() -> TallyCommandError {
-    tally_command_error(
-        "selected_read_review_state_uncertain",
-        "Operation",
-        "The read-only qualification finished, but its reviewed state could not be installed.",
-        "after_change",
-        true,
-        "Probe again before qualifying or saving any company scope.",
     )
 }
 
@@ -2171,14 +1708,6 @@ pub struct FetchOutstandingsResponse {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct VoucherRequest {
-    pub config: TallyConfig,
-    pub selected_company: SelectedCompanyIdentity,
-    pub from: String,
-    pub to: String,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct SelectedLedgerEntriesRequest {
     pub config: TallyConfig,
     pub selected_company: SelectedCompanyIdentity,
@@ -2202,19 +1731,6 @@ pub(crate) async fn verify_observed_company_tuple(
 ) -> Result<VerifiedCompanyIdentity, TallyCommandError> {
     let companies = runtime
         .fetch_companies(config.clone())
-        .await
-        .map_err(tally_runtime_command_error)?;
-    verify_observed_company_tuple_from_companies(selected, companies)
-}
-
-async fn verify_observed_company_tuple_for_reservation(
-    runtime: &TallyRuntime,
-    config: &TallyConfig,
-    selected: &SelectedCompanyIdentity,
-    reservation: &CachedProbeReservation,
-) -> Result<VerifiedCompanyIdentity, TallyCommandError> {
-    let companies = runtime
-        .fetch_companies_for_reservation(config.clone(), reservation)
         .await
         .map_err(tally_runtime_command_error)?;
     verify_observed_company_tuple_from_companies(selected, companies)
@@ -2307,19 +1823,6 @@ fn verify_observed_company_tuple_from_companies(
     })
 }
 
-#[tauri::command]
-pub async fn fetch_tally_ledgers(
-    request: CompanyRequest,
-    runtime: State<'_, TallyRuntime>,
-) -> Result<Vec<TallyLedger>, TallyCommandError> {
-    let identity =
-        verify_observed_company_tuple(&runtime, &request.config, &request.selected_company).await?;
-    runtime
-        .fetch_ledgers(request.config, &identity)
-        .await
-        .map_err(tally_runtime_command_error)
-}
-
 /// Reads and writes one columnar party/ledger master workbook. The workbook
 /// is built only from the runtime's verified, paired source; this command
 /// accepts no ledger row or amount from the webview.
@@ -2375,42 +1878,6 @@ pub async fn export_party_ledger_master(
             "Verify local Downloads-folder access, then retry the export.",
         )
     })
-}
-
-#[tauri::command]
-pub async fn fetch_standard_tally_ledger_catalog(
-    request: CompanyRequest,
-    runtime: State<'_, TallyRuntime>,
-) -> Result<Vec<TallyLedger>, TallyCommandError> {
-    let identity =
-        verify_observed_company_tuple(&runtime, &request.config, &request.selected_company).await?;
-    runtime
-        .fetch_standard_ledger_catalog(request.config, &identity)
-        .await
-        .map_err(tally_runtime_command_error)
-}
-
-#[tauri::command]
-pub async fn fetch_tally_vouchers(
-    request: VoucherRequest,
-    runtime: State<'_, TallyRuntime>,
-) -> Result<Vec<TallyVoucher>, TallyCommandError> {
-    let identity =
-        verify_observed_company_tuple(&runtime, &request.config, &request.selected_company).await?;
-    validate_date_range(&request.from, &request.to).map_err(|message| {
-        tally_command_error(
-            "accounting_period_invalid",
-            "Endpoint configuration",
-            message,
-            "after_change",
-            false,
-            "Choose a valid accounting period, then repeat the read-only action.",
-        )
-    })?;
-    runtime
-        .fetch_vouchers(request.config, &identity, request.from, request.to)
-        .await
-        .map_err(tally_runtime_command_error)
 }
 
 /// Returns selected-ledger voucher entries using the MCP's captured-source

@@ -2,9 +2,10 @@
 
 ## Status
 
-Accepted for the local read-only setup flow. Broad ledger or voucher support,
-source completeness, accounting correctness, write authority, and public
-release support remain rejected without separate evidence.
+**Withdrawn 2026-09-17 (#474).** Accepted below for the local read-only setup
+flow when written, and still an accurate record of what was decided and why.
+The implementing path is gone: see **Amendment** below before relying on
+anything in this ADR as current behavior.
 
 ## Context
 
@@ -87,3 +88,65 @@ Portable and native simulator evidence can validate this authority boundary,
 but it cannot create a public compatibility claim. The exact Windows/Tally/
 release/mode support-matrix cell remains `Unknown` until a consented synthetic
 live observation and the separate compatibility attestation gate succeed.
+
+## Amendment (2026-09-17, #474): the implementing path is withdrawn
+
+The command surface this ADR authorized was never wired to a caller. The
+setup/readiness flow that was meant to invoke it was replaced (the "readiness
+workflow change" already noted in `docs/rust-module-conventions.md`'s
+`commands.rs` map), and from that point `qualify_selected_tally_reads`,
+`fetch_tally_ledgers`, `fetch_standard_tally_ledger_catalog`, and
+`fetch_tally_vouchers` were declared `#[tauri::command]` functions with no
+entry in `generate_handler!`. `scripts/tally-setup-safety.test.mjs` pinned that
+absence, and `scripts/tauri-command-registration.test.mjs` (#462) allow-listed
+it, rather than either side calling the path or removing it.
+
+Issue #474 decided **delete** over **keep, with a reason**. This PR removed the
+four commands and every helper reachable only from them in
+`src-tauri/src/commands.rs` — 12 helper functions and two request/response
+structs (`QualifySelectedReadsRequest`, `VoucherRequest`) — and the one direct
+unit test of an otherwise-exclusive helper
+(`selected_read_observation_distinguishes_empty_identity_evidence` in
+`commands_tests.rs`). What this measured, precisely:
+
+- **Compiler-verified dead code.** With the four commands' and their two
+  request/result structs' visibility narrowed from `pub` to `pub(crate)` (the
+  minimum narrowing that removes their automatic "reachable from the crate
+  root" status; narrowing the surrounding `pub mod`s instead breaks real
+  cross-crate uses in `tests/unit_a_live.rs` and `src/bin/bridge_mcp.rs`),
+  `cargo check --locked --workspace --all-targets --all-features` from
+  `src-tauri/` reported all 18 deleted items (4 commands, 2 structs, 12
+  functions) as `never used` / `never constructed`, and nothing else. After
+  deletion, the same command against the same tree reports zero warnings.
+- **Scope.** This is `commands.rs`-only evidence. The runtime- and db-layer
+  machinery this ADR describes — `CachedProbeReservation`,
+  `TallyRuntime`/`TallyClient::qualify_selected_ledgers` and
+  `::qualify_selected_vouchers`, `db::tally_mirror::
+  selected_read_scope_commitment_sha256` and its commitment-material types —
+  is **not** touched by this change. Each still has direct unit test coverage
+  in `tally/runtime_tests.rs`, `tally/connection_tests.rs`, and
+  `db/tally_mirror_tests.rs` that calls it independently of the deleted
+  commands, so it was out of this compiler check's dead-code scope and is a
+  separate decision.
+- **Test names.** `cargo test -p bridge --lib -- --list`, sorted, before and
+  after, differs by exactly one line: the removed
+  `commands::tests::selected_read_observation_distinguishes_empty_identity_evidence`.
+  Every other test name is unchanged.
+
+**What this does not claim.** It does not claim the runtime/db qualification
+machinery is dead — it measurably is not, by its own tests. It does not claim
+selected-read qualification was a bad design; the Context and Decision above
+still describe a real, carefully-scoped authority boundary. It claims only
+that the specific `#[tauri::command]` surface had no live caller and no
+reintroduction plan on record, so the pinned safety test and the allow-list
+that existed only to keep it unexposed were themselves dead weight.
+
+**To reintroduce this path**, a future change would need to: restore the four
+commands and their exclusive helpers in `commands.rs` (this history is in
+version control), register them in `generate_handler!`, wire an actual caller
+in the setup/readiness flow, restore or rewrite `commands_tests.rs` coverage
+for the command layer (the runtime/db layer already has it), and record that
+decision here or in a superseding ADR — not by re-adding a pinned
+"deliberately unexposed" allow-list, which this PR also removed from
+`scripts/tauri-command-registration.test.mjs` as no longer meaningful once
+nothing is deliberately unexposed.

@@ -51,6 +51,10 @@ test("local proposals survive shell navigation and save without source or Tally 
   const calls = await page.evaluate(() => (window as unknown as { sourceDraftCalls: { command: string; args: unknown }[] }).sourceDraftCalls);
   const saved = calls.find((call) => call.command === "desktop_save_source_draft");
   expect(saved?.args).toEqual({ request: { draft_id: "11111111-1111-4111-8111-111111111111", revision: 1, proposals: [{ date: "20260402", voucher_type: null, narration: null, notes: "Keep this question for review", entries: [{ ledger: null, side: null, amount: null }] }] } });
+  // `fetch_standard_tally_ledger_catalog` was deleted as unreachable in #474, so this arm can
+  // never fire from live code today. It is kept, not dropped: unlike the other legacy names here
+  // it does not start with `fetch_tally_`, so nothing else in this alternation would catch a
+  // future reintroduction of exactly that command name into the source-draft flow.
   expect(calls.filter((call) => /^(fetch_tally_|fetch_selected_ledger_entries|fetch_standard_tally_ledger_catalog|desktop_post_|build_import|post_import)/.test(call.command))).toEqual([]);
   await page.getByLabel("Preparation notes", { exact: true }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath("desktop.png"), fullPage: true });
