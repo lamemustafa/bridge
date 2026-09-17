@@ -26,8 +26,10 @@
 //    compile-time property -- cargo will not link a crate against reqwest
 //    unless its Cargo.toml says so -- but it only sees crate boundaries. It
 //    cannot see what a crate that *is* allowed to depend on reqwest
-//    (`bridge`, the Tauri app crate, which legitimately needs it for
-//    axal.rs/documents.rs) does with that dependency inside its own files.
+//    (`bridge`, the app crate, which legitimately needs it for
+//    axal.rs/documents.rs -- see the note above APP_CRATE: both ship in the
+//    extension binary too, not only in the desktop app) does with that
+//    dependency inside its own files.
 //
 // 2. A source scan of the app crate (`src-tauri/src`): asserts that
 //    `reqwest::`, `hyper::`, and raw socket construction appear only in a
