@@ -85,8 +85,12 @@ Tally's own words) and note its HTTP gateway port — `9000` by default, but
 configurable. To check it is actually on, open `http://localhost:9000/status`
 (substitute your port) in a browser: a running gateway answers with a short
 Tally XML response, and a browser that cannot connect means the gateway is
-still off. If instead it hangs without answering, Tally may simply be busy
-behind another request — wait and retry rather than changing the setting.
+still off — **unless Tally is running in a Windows virtual machine on a Mac**,
+in which case run this check inside that VM, or only once your local
+forwarding is working. A Mac browser that cannot connect may mean the
+forwarding described below is missing rather than that the gateway is off.
+If instead it hangs without answering, Tally may simply be busy behind
+another request — wait and retry rather than changing the setting.
 
 An **unsigned evaluation preview** of the Claude Desktop extension is published
 as [`mcp-preview-0.2.0`](https://github.com/lamemustafa/bridge/releases/tag/mcp-preview-0.2.0).

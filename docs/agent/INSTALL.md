@@ -29,10 +29,14 @@ words) and note its HTTP gateway port — `9000` by default, but configurable.
 To confirm the gateway is actually listening, open
 `http://localhost:9000/status` (substitute your port) in a browser: a running
 gateway answers with a short Tally XML response, and a browser that cannot
-connect means the gateway is still off. If instead it hangs without answering,
-Tally may simply be busy behind another request — wait and retry rather than
-changing the setting. Do this before step 3 below, so the port you enter in
-Bridge matches a gateway that is actually on.
+connect means the gateway is still off — **unless Tally is running in a Windows
+virtual machine on a Mac**, in which case run this check inside that VM, or
+only once the local forwarding in step 2 below is working. A Mac browser that
+cannot connect may mean that forwarding is missing rather than that the gateway
+is off. If instead it hangs without answering, Tally may simply be busy behind
+another request — wait and retry rather than changing the setting. Do this
+before step 3 below, so the port you enter in Bridge matches a gateway that is
+actually on.
 
 ## Install and configure
 
