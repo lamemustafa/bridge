@@ -58,7 +58,7 @@ use uuid::Uuid;
 use verification::{
     actual_entry_fingerprint, alter_id_delta, canonical_verification_amount,
     company_high_water_mark, corroborate_verification_window, expected_entry_fingerprint,
-    parse_import_vouchers, render_proof_markdown, verification_status,
+    parse_import_voucher_rows, parse_import_vouchers, render_proof_markdown, verification_status,
     verification_window_identities, verify_batch, voucher_diffs, voucher_is_accounting_effective,
 };
 #[cfg(test)]
@@ -785,15 +785,18 @@ impl Server {
             if line.company.as_ref() != Some(&import_company_tuple(&company)?) {
                 return Err("company_identity_mismatch".to_string().into());
             }
-            let request =
-                render_import_verification_read(&company.name, &line.date_from, &line.date_to);
-            let (xml, evidence) = self.post_read(&identity, request.clone()).await?;
-            accumulated = combine_evidence(accumulated.clone(), evidence.clone());
-            let observed = parse_import_vouchers(&xml, identity.company_guid())?;
-            let (corroboration_xml, corroboration_evidence) =
-                self.post_read(&identity, request).await?;
+            let (observed, observed_evidence) = self
+                .read_verification_window(&identity, &company.name, &line.date_from, &line.date_to)
+                .await?;
+            accumulated = combine_evidence(accumulated.clone(), observed_evidence.clone());
+            let (corroboration, corroboration_evidence) = self
+                .read_verification_window(&identity, &company.name, &line.date_from, &line.date_to)
+                .await?;
             accumulated = combine_evidence(accumulated.clone(), corroboration_evidence.clone());
-            let corroboration = parse_import_vouchers(&corroboration_xml, identity.company_guid())?;
+            // The window may have been served in parts, so there is no single
+            // response to hash. The evidence's own response digest already folds
+            // every part that was read, which is the honest commitment here.
+            let voucher_read_sha256 = observed_evidence.response_sha256.clone();
             corroborate_verification_window(&observed, &corroboration, &line.date_from, &line.date_to)?;
             let result = verify_batch(&line, &observed)?;
             let mut closing_mode_evidence = None;
@@ -821,7 +824,7 @@ impl Server {
                 "pre_import_mark": line.pre_import_mark, "alter_id_delta": alter_id_delta(&line.pre_import_mark, &observed.rows),
                 "counts": result["counts"], "vouchers": result["vouchers"], "duplicates": result["duplicates"],
                 "unrelated_duplicates_in_window": result["unrelated_duplicates_in_window"],
-                "evidence": {"mode_opening": opening_mode.evidence, "mode_closing": closing_mode_evidence, "company": identity_evidence, "voucher_read": evidence, "voucher_read_corroboration": corroboration_evidence, "voucher_read_sha256": sha256_hex(xml.as_bytes())}
+                "evidence": {"mode_opening": opening_mode.evidence, "mode_closing": closing_mode_evidence, "company": identity_evidence, "voucher_read": observed_evidence, "voucher_read_corroboration": corroboration_evidence, "voucher_read_sha256": voucher_read_sha256}
             });
             let mut payload = json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": proof});
             if dispatched {
@@ -939,6 +942,69 @@ impl Server {
                 .with_prior_evidence(evidence.clone())
         })?;
         Ok((groups, evidence))
+    }
+
+    /// Read the whole verification window, splitting it when Tally cannot serve
+    /// it in one response.
+    ///
+    /// The window is never narrowed — only divided. Every sub-window is read and
+    /// its rows concatenated, so the set of vouchers observed is identical to
+    /// what one undivided read would have returned. That distinction matters
+    /// because this read feeds an attribution check: filtering it by voucher
+    /// identity would make it cheaper by making it see less, which is how a
+    /// safety gate quietly stops being one. A date partition costs more requests
+    /// and gives up nothing.
+    ///
+    /// Splitting is reactive rather than scheduled, because cost per day is a
+    /// property of the book and not of the calendar: one licensed book served a
+    /// month in 7.6s and 11.8MB while a quarter of the same book exceeded both
+    /// the 20s per-leg deadline and the 32MB transport cap, and another book
+    /// served a whole year in about nine seconds. Any fixed page size is wrong
+    /// on one of them.
+    async fn read_verification_window(
+        &self,
+        identity: &super::VerifiedCompanyIdentity,
+        company: &str,
+        from: &str,
+        to: &str,
+    ) -> Result<(ImportReadSource, Evidence), ToolFailure> {
+        let mut evidence: Option<Evidence> = None;
+        let mut rows = Vec::new();
+        // Ascending order, so the rows arrive in the same order an undivided read
+        // would have produced and a reader diffing two runs sees no churn.
+        let mut pending = vec![(from.to_string(), to.to_string())];
+        while let Some((start, end)) = pending.pop() {
+            let request = render_import_verification_read(company, &start, &end);
+            match self.post_read(identity, request).await {
+                Ok((xml, read_evidence)) => {
+                    evidence = Some(match evidence {
+                        Some(prior) => combine_evidence(prior, read_evidence),
+                        None => read_evidence,
+                    });
+                    rows.extend(parse_import_voucher_rows(&xml, identity.company_guid())?);
+                }
+                Err(failure) if window_is_too_large(&failure) => {
+                    let (left, right) = split_verification_window(&start, &end)
+                        // A single day that still cannot be served is not something
+                        // splitting can fix, and silently returning the rows from
+                        // the days that did work would be a verification over an
+                        // incomplete window. Refuse instead.
+                        .ok_or_else(|| {
+                            ToolFailure::from("verification_window_day_not_readable".to_string())
+                        })?;
+                    pending.push(right);
+                    pending.push(left);
+                }
+                Err(other) => return Err(other),
+            }
+        }
+        let evidence = evidence.unwrap_or_else(|| local_evidence("verification_window_empty"));
+        // Admit ONCE over the union. `admit` enforces identity uniqueness across
+        // the whole row set, so admitting each sub-window separately would check
+        // uniqueness only within each one and let a voucher duplicated across two
+        // sub-windows through — a hole that splitting would have opened and that
+        // the undivided read never had.
+        Ok((ImportReadSource::admit(rows)?, evidence))
     }
 
     async fn pre_import_mark(
@@ -2040,6 +2106,39 @@ fn render_voucher_xml(voucher: &ImportVoucher, remote_id: Uuid, attribution_id: 
     // native posting uses a separate private REMOTEID and no supplied number.
     // See docs/tally/TALLY_PROTOCOL_REFERENCE.md §9.8 for scope and limits.
     format!("<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><VOUCHER REMOTEID=\"{}\" VCHTYPE=\"{}\" ACTION=\"Create\" OBJVIEW=\"Accounting Voucher View\"><DATE>{date}</DATE>{effective_date}<VOUCHERTYPENAME>{}</VOUCHERTYPENAME>{party}{voucher_number}{narration}{reference}{entries}</VOUCHER></TALLYMESSAGE>", remote_id, voucher.voucher_type.as_str(), voucher.voucher_type.as_str())
+}
+
+fn window_is_too_large(failure: &ToolFailure) -> bool {
+    super::is_window_too_large_code(&failure.code)
+}
+
+/// Split an inclusive `YYYYMMDD` window into two inclusive halves that exactly
+/// partition it, or `None` when it is already a single day.
+///
+/// Exactness is the whole point. The verification read filters on
+/// `$Date >= from AND $Date <= to`, so `[from, mid]` and `[mid + 1, to]` cover
+/// every date the undivided window covered, once each. A gap would silently drop
+/// vouchers from an attribution check and an overlap would double-count them —
+/// either turns a read that got smaller into a verification that got weaker.
+fn split_verification_window(from: &str, to: &str) -> Option<((String, String), (String, String))> {
+    let parse = |value: &str| chrono::NaiveDate::parse_from_str(value, "%Y%m%d").ok();
+    let (start, end) = (parse(from)?, parse(to)?);
+    if start >= end {
+        return None;
+    }
+    let mid = start + chrono::Duration::days((end - start).num_days() / 2);
+    // `mid` equals `start` on a two-day window, which is correct and still shrinks
+    // both halves. It cannot reach `end`, because the window spans at least one day
+    // and `floor(n / 2) < n` for every `n >= 1` — so the right half is always a
+    // proper subset and the loop in `read_verification_window` terminates. Asserted
+    // rather than clamped: a clamp here would be unreachable today and would
+    // silently absorb a future change to the midpoint that broke termination.
+    debug_assert!(mid < end, "midpoint must shrink both halves");
+    let stamp = |date: chrono::NaiveDate| date.format("%Y%m%d").to_string();
+    Some((
+        (stamp(start), stamp(mid)),
+        (stamp(mid + chrono::Duration::days(1)), stamp(end)),
+    ))
 }
 
 fn render_import_verification_read(company: &str, from: &str, to: &str) -> String {
