@@ -242,8 +242,16 @@
       "sha256": "755a07c97831d9d8838290ed81ef6c0be112b127f0929c9d73590132b86f5a13"
     },
     {
+      "path": "src-tauri/crates/bridge-tally-protocol/src/import_outcome.rs",
+      "sha256": "e2b7e1fd98960885d3ea56cd525897ebedf637af554e860bea1f2f7c0743ff4c"
+    },
+    {
       "path": "src-tauri/crates/bridge-tally-protocol/src/lib.rs",
-      "sha256": "85179d06bd88f000741327587526791bc2877195740cea99010cf4a29333da2d"
+      "sha256": "4cb9d1dbc48f9157f468a24055604dcc744a161d0af94b2522332dcb122f67cd"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-protocol/src/native_ledger_collection.rs",
+      "sha256": "a861644e3aec31156f30551bdb68ce215ea0dce78f9bc3e75a2132b27bad7257"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/compute.rs",
@@ -316,6 +324,14 @@
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/outstandings_shared.rs",
       "sha256": "86b87c9c6cf7597701e454269951e12c4b9d13d72c39e8b8552fb1a29c4be24e"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-protocol/src/standard_ledger_catalog.rs",
+      "sha256": "c74b145b299c4e153d6d6dc3ee452a38ad659abb20b0396cafdb73e12a6779c8"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-protocol/src/text_encoding.rs",
+      "sha256": "bcc4e29132ed79eecfa1a1ae34f1b806addba0ec01cb21002f2640f95258dd6c"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/tolerant_xml.rs",
@@ -1015,7 +1031,7 @@
     },
     {
       "path": "tools/bridge-tally-compatibility/src/lib.rs",
-      "sha256": "3b4bc870d88f40a0ca9d5d66bd632f548f2febc19f2d4354466e190a7384245a"
+      "sha256": "eb9e2f57184b76172463ee306c26f10aeb55fafc94fbb6199d8d0ae6e291fbde"
     },
     {
       "path": "tools/bridge-tally-compatibility/src/main.rs",
@@ -1050,5 +1066,5 @@
       "sha256": "0ab5bfbe6d81b1e10530744c338fb91efa57fe5a66fb4bc0cfd382495eaf02a4"
     }
   ],
-  "manifest_sha256": "f7b8fd65da647fb72d43198c791118f3ce3ff44a7139d45fff71cbcd5fc5a65d"
+  "manifest_sha256": "358e80e3bc0b3f9b98f869144ee361267ffec05d42db7dca7db174054a29ce8e"
 }

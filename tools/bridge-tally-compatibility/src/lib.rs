@@ -31,7 +31,7 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// and manifest) but makes further unreviewed additions an explicit
 /// compatibility-surface decision.
 ///
-/// **Raised ten times, the first three by branches that did not see each
+/// **Raised eleven times, the first three by branches that did not see each
 /// other.** 210 to 211 on master for `src-tauri/src/agent_ledgers.rs`, 211 to
 /// 212 for `src-tauri/crates/bridge-tally-core/src/master_binding.rs`, 212 to
 /// 216 in a single commit for the voucher-presence engine, its adapter, its
@@ -44,7 +44,8 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// `src-tauri/src/agent_import_amend.rs`, 239 to 251 for the
 /// bank-statement parser's twelve files, and, after the lowering to 249
 /// described below, 249 to 262 for the thirteen test modules of
-/// `src-tauri/src/reports`. Each reason stands; a
+/// `src-tauri/src/reports`, and 262 to 266 for the four modules carved out of
+/// the `bridge-tally-protocol` crate root. Each reason stands; a
 /// merge that
 /// keeps a raise but loses its pin would pass the gate with behavior silently
 /// outside the evidence boundary, which is the failure this constant exists to
@@ -234,6 +235,27 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 ///   `trial_balance_store_tests.rs` and `trial_balance_xlsx_tests.rs` -- the
 ///   tests formerly inline in the report file of the same stem.
 ///
+/// The raise by four binds the modules carved out of the pinned
+/// `bridge-tally-protocol` crate root, so the split does not shrink the seal by
+/// what it moved:
+/// - `text_encoding.rs` -- how every Tally response body becomes text: the
+///   declared-versus-observed encoding check and bounded, strict UTF-8/UTF-16
+///   decoding.
+/// - `import_outcome.rs` -- the import response's application status and its
+///   created, altered, deleted, ignored, errors, cancelled and exceptions
+///   counters, from which Bridge reports what a post did.
+/// - `standard_ledger_catalog.rs` -- which standard ledgers Bridge reports as
+///   existing and which company a catalogue belongs to; it refuses a ledger name
+///   carrying a bidirectional override or one of the listed invisible characters
+///   that would render one spelling as another, while admitting the zero-width
+///   joiners Indic ledger names need.
+/// - `native_ledger_collection.rs` -- ledger source records and party ledger
+///   master fields from the native Ledger collection, bound to the pinned
+///   company: a ledger read fails when no row's GUID carries the company prefix,
+///   counting rather than dropping individual foreign prefixes, and a party
+///   ledger master read fails as a whole unless the response names the pinned
+///   company GUID.
+///
 /// Not pinned, and deliberately: files feature-gated out of every shipped build
 /// (`agent_lab.rs`, `jsonex*.rs`, `india_tax_observation.rs`), operator filing
 /// labels, dead or declaration-only modules, and `observability.rs`. Its count
@@ -250,7 +272,7 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// errors. The error notice's classification comes from the pinned
 /// `tally-error-copy.ts`. None of them decides which book a report or drawer is
 /// attributed to, or what Bridge posts or lets leave the machine.
-pub const MAX_SURFACE_FILES: usize = 262;
+pub const MAX_SURFACE_FILES: usize = 266;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
