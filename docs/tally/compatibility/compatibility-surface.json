@@ -79,7 +79,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "af1b7f10a440eb7765d2adbed38939f7fd672f8ad3b61361d1330071f5f9c6e9"
+      "sha256": "3d38cdf493f793db235a19a16e667ccf8c8fd39c16673458a95aa014f95aab09"
     },
     {
       "path": "pnpm-lock.yaml",
@@ -115,7 +115,7 @@
     },
     {
       "path": "scripts/tally-setup-safety.test.mjs",
-      "sha256": "ebe899cdb9121d4f6d3ddc799afa3704e8875a8e740ebb761c9a3588284a099a"
+      "sha256": "b99576f96f180f29a7c50493ffa32c92bc868384e40fd08adfe23f267fea3626"
     },
     {
       "path": "scripts/trial-balance-screen.test.tsx",
@@ -123,7 +123,7 @@
     },
     {
       "path": "scripts/ux1-shell.test.mjs",
-      "sha256": "86b34e794e49df25c4ee6b4d50aa3788c4bede8cc4103af573fc189dfb9e8bc2"
+      "sha256": "704a280d6f16b869b034538601c47e4f647b8c17a7cf3ce41171b320674a5813"
     },
     {
       "path": "src-tauri/Cargo.lock",
@@ -967,7 +967,7 @@
     },
     {
       "path": "src/main.tsx",
-      "sha256": "a9cabe3bb8e7a5b12c89e193de143b9deb2f2f694325ab9c48fce2754eac6ff6"
+      "sha256": "086ca74a911f6c7387ce4e0e354de937a413e3b6ff51f0f6cd282f1f7e97dfe0"
     },
     {
       "path": "src/outstandings-as-of.ts",
@@ -992,6 +992,10 @@
     {
       "path": "src/outstandings-provenance.ts",
       "sha256": "7f8e05f908854028d9048e5aa7547c6a10435d542ae331df60a119d9998f062b"
+    },
+    {
+      "path": "src/persisted-company-profiles.ts",
+      "sha256": "922b7127b4a10be0af1f25a549f8e6cb3c630a06b0b97b2ff5c439606b5ec325"
     },
     {
       "path": "src/source-draft-types.ts",
@@ -1031,7 +1035,7 @@
     },
     {
       "path": "tools/bridge-tally-compatibility/src/lib.rs",
-      "sha256": "83e7f37ba82cb1984664dfb090d7229689ebcb89f8633824ebee0adcd568ef2e"
+      "sha256": "e5e142429c05e9cae193973304df750a10195c5d2b42fb6299e4d1f04b135c3c"
     },
     {
       "path": "tools/bridge-tally-compatibility/src/main.rs",
@@ -1066,5 +1070,5 @@
       "sha256": "0ab5bfbe6d81b1e10530744c338fb91efa57fe5a66fb4bc0cfd382495eaf02a4"
     }
   ],
-  "manifest_sha256": "b847a5b3d3bba65d7983027abeea085a7a60f7bbf103b1e70d41b168b69c110c"
+  "manifest_sha256": "ca25d4a2c19d2f24ed1570be099f4832521349ce590657ae80177074e81ee72d"
 }
