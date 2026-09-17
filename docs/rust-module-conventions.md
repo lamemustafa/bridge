@@ -14,6 +14,8 @@ keeps its measurements and adds three things:
 parent keeps, the reseal order, and how to prove a move is pure. This document covers **whether
 and what**: which files to touch, what counts as a good seam, and the principles behind both.
 Read both before splitting a file.
+[`frontend-module-conventions.md`](./frontend-module-conventions.md) is the TypeScript and React
+counterpart.
 
 ## The constraint general advice does not know about
 
