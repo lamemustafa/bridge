@@ -396,6 +396,31 @@ impl From<String> for ToolFailure {
 /// deadline is worth substituting for this one and for nothing else.
 const GENERIC_RUNTIME_READ_FAILURE: &str = "agent_runtime_read_failed";
 
+/// Response budget below which a refusal carries no remediation, so that the
+/// guidance can never displace the refusal code it explains. Well above the
+/// longest guidance string plus the refusal envelope, and far below the 200,000
+/// default, so only a caller that has deliberately asked for tiny responses
+/// gives it up.
+const REMEDIATION_MIN_RESPONSE_BUDGET: usize = 4_096;
+
+/// Guidance for refusals whose remedy a caller cannot derive from the code alone.
+///
+/// Deliberately sparse. A code without a documented, concrete next step returns
+/// `None` and its refusal keeps the general message, because filler guidance is
+/// worse than none: it reads as authoritative while sending the caller nowhere.
+/// This never softens a refusal — it only says what to do about one.
+fn refusal_remediation(code: &str) -> Option<&'static str> {
+    match code {
+        "empty_book_first_import" => Some(
+            "This company has never held a voucher, so Tally reports no voucher high-water \
+             mark and Bridge has no \"before\" to attribute an import against. Record one \
+             voucher in this company by another route and confirm it in Tally, then build \
+             this batch again.",
+        ),
+        _ => None,
+    }
+}
+
 impl ToolFailure {
     fn from_runtime(code: &str, error: anyhow::Error) -> Self {
         let code = if let Some(error) = error.chain().find_map(|cause| {
@@ -569,8 +594,25 @@ impl Server {
                 });
                 evidence.state = "partial";
                 evidence.reason_code = Some(code.clone());
+                let mut error = json!({"code": code, "message": "Bridge refused this operation."});
+                // Additive: `code` and `message` keep their existing shape for
+                // every refusal, and `remediation` appears only for the codes
+                // that have a concrete next step to name.
+                //
+                // Never trade the code for the guidance. `max_bytes` is settable
+                // down to 256, and `enforce_response_byte_cap` has no page shape
+                // to trim inside an error object — it replaces the entire refusal
+                // with `agent_response_too_large`. So at a deliberately small cap
+                // these ~250 extra bytes could cost the caller the one thing it
+                // most needs, leaving it worse off than before this field existed.
+                // Guidance is a convenience; the refusal code is not.
+                if let Some(remediation) = refusal_remediation(&code) {
+                    if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
+                        error["remediation"] = json!(remediation);
+                    }
+                }
                 ToolOutcome {
-                    payload: json!({"error": {"code": code, "message": "Bridge refused this operation."}}),
+                    payload: json!({ "error": error }),
                     evidence,
                     company_guid: args
                         .get("company_guid")
