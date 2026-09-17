@@ -170,7 +170,10 @@ mod tests {
         // Observed live on licensed TallyPrime 7.1 Gold: a company that has never
         // held a voucher returns ALTMSTID and omits ALTVCHID entirely — not a zero.
         let empty_book = xml.replacen("<ALTVCHID TYPE=\"Number\"> 101605</ALTVCHID>", "", 1);
-        assert_ne!(empty_book, xml, "fixture no longer carries the voucher axis");
+        assert_ne!(
+            empty_book, xml,
+            "fixture no longer carries the voucher axis"
+        );
         assert_eq!(
             parse_company_high_water(&empty_book, guid),
             Err(VOUCHER_CHECKPOINT_NOT_OBSERVED.to_string())
@@ -180,7 +183,10 @@ mod tests {
         // code must not be returned. Were it returned here, pre_import_mark would
         // report an empty book for a response Bridge could not read.
         let neither = empty_book.replacen("<ALTMSTID TYPE=\"Number\"> 328</ALTMSTID>", "", 1);
-        assert_ne!(neither, empty_book, "fixture no longer carries the master axis");
+        assert_ne!(
+            neither, empty_book,
+            "fixture no longer carries the master axis"
+        );
         assert_eq!(
             parse_company_high_water(&neither, guid),
             Err("master_checkpoint_not_observed".to_string())

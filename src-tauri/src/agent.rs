@@ -594,8 +594,7 @@ impl Server {
                 });
                 evidence.state = "partial";
                 evidence.reason_code = Some(code.clone());
-                let mut error =
-                    json!({"code": code, "message": "Bridge refused this operation."});
+                let mut error = json!({"code": code, "message": "Bridge refused this operation."});
                 // Additive: `code` and `message` keep their existing shape for
                 // every refusal, and `remediation` appears only for the codes
                 // that have a concrete next step to name.
