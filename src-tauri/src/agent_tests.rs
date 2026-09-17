@@ -261,10 +261,37 @@ async fn invalid_scope_arguments_are_rejected_before_any_tally_probe() {
         ),
     ] {
         let response = server.call_tool(tool, args).await;
-        assert_eq!(
-            response["structuredContent"]["result"]["error"]["code"], code,
-            "{tool}"
+        let error = &response["structuredContent"]["result"]["error"];
+        assert_eq!(error["code"], code, "{tool}");
+        // Remediation is additive: a refusal with no documented next step keeps
+        // exactly the two fields it always carried. This drives the real payload
+        // assembly, so it fails if remediation is ever attached unconditionally.
+        assert!(
+            error.get("remediation").is_none(),
+            "{tool} refusal gained unearned remediation: {error}"
         );
+        assert_eq!(error["message"], "Bridge refused this operation.", "{tool}");
+    }
+}
+
+#[test]
+fn remediation_is_present_only_where_a_concrete_next_step_exists() {
+    let guidance = refusal_remediation("empty_book_first_import").expect("empty book guidance");
+    // The guidance must name the action to take, not restate the refusal.
+    assert!(
+        guidance.contains("Record one voucher in this company by another route"),
+        "{guidance}"
+    );
+    // Sparse by design. A code with no documented step gets None rather than
+    // filler, because guidance that reads as authoritative and sends the caller
+    // nowhere is worse than the general message.
+    for code in [
+        "pre_import_mark_unobserved",
+        "agent_runtime_read_failed",
+        "pagination_invalid",
+        "masters_not_exact",
+    ] {
+        assert_eq!(refusal_remediation(code), None, "{code}");
     }
 }
 

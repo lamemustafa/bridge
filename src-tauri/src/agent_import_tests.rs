@@ -1233,6 +1233,34 @@ fn company_high_water_mark_refuses_voucher_scan_shapes_and_preserves_attribution
 }
 
 #[test]
+fn only_the_empty_book_parse_failure_is_named_distinctly() {
+    // An empty book is the one cause with a next step the caller can take.
+    assert_eq!(
+        pre_import_mark_refusal(VOUCHER_CHECKPOINT_NOT_OBSERVED),
+        "empty_book_first_import"
+    );
+    // Every other cause parse_company_high_water can report must keep the
+    // general refusal. Enumerated rather than sampled: promoting any of these
+    // would tell a caller its book is empty when Bridge simply could not read
+    // the response, and the documented remedy — post a first voucher — would
+    // then be wrong advice acted on against a book that already has some.
+    for cause in [
+        "master_checkpoint_not_observed",
+        "voucher_checkpoint_invalid",
+        "master_checkpoint_invalid",
+        "agent_read_protocol_invalid",
+        "company_high_water_identity_absent",
+        "company_high_water_identity_ambiguous",
+    ] {
+        assert_eq!(
+            pre_import_mark_refusal(cause),
+            "pre_import_mark_unobserved",
+            "{cause} must not be reported as an empty book"
+        );
+    }
+}
+
+#[test]
 fn verification_unescapes_every_record_text_node_before_fingerprinting() {
     let xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><GUID>guid-escape</GUID><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><NARRATION>Party &amp; Co &lt;quoted&gt; &quot;name&quot; &#x26;</NARRATION><ALLLEDGERENTRIES.LIST><LEDGERNAME>R&amp;D &lt;Lab&gt; &quot;A&quot; &#38;</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-12.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
     let observed = parse_import_vouchers(xml, "guid").expect("escaped export parses");

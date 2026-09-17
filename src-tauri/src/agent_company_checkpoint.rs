@@ -97,10 +97,17 @@ pub(in crate::agent) fn parse_company_high_water(
     }
     scope.finish()?;
     let row = matched.ok_or_else(|| "company_high_water_identity_absent".to_string())?;
-    Ok(json!({
-        "altvchid": observed_checkpoint(row.get("ALTVCHID"), "voucher")?,
-        "altmstid": observed_checkpoint(row.get("ALTMSTID"), "master")?,
-    }))
+    // Observe the master axis first. A company that has never held a voucher
+    // returns ALTMSTID but omits ALTVCHID entirely, and `pre_import_mark` reads
+    // the resulting `voucher_checkpoint_not_observed` as that empty book. That
+    // reading is only sound while the master axis has already been admitted: it
+    // is what proves this row parsed and matched the requested company, rather
+    // than a response Bridge failed to read. Evaluating the voucher axis first
+    // would return the same code for a row that never parsed at all, and the
+    // distinction would silently become unsound.
+    let altmstid = observed_checkpoint(row.get("ALTMSTID"), "master")?;
+    let altvchid = observed_checkpoint(row.get("ALTVCHID"), "voucher")?;
+    Ok(json!({"altvchid": altvchid, "altmstid": altmstid}))
 }
 
 #[cfg(test)]
@@ -142,6 +149,51 @@ mod tests {
         assert_eq!(
             parse_company_high_water(&altered, guid),
             Err("company_high_water_identity_ambiguous".into())
+        );
+    }
+
+    fn book_extents_fixture() -> String {
+        let bytes = include_bytes!("../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents.utf16le.xml");
+        let words = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>();
+        String::from_utf16(&words).unwrap()
+    }
+
+    #[test]
+    fn an_empty_book_omits_the_voucher_axis_and_keeps_the_master_axis() {
+        let xml = book_extents_fixture();
+        let guid = "bb8ad19e-6aef-4239-a917-87fec0c6215e";
+        // Observed live on licensed TallyPrime 7.1 Gold: a company that has never
+        // held a voucher returns ALTMSTID and omits ALTVCHID entirely — not a zero.
+        let empty_book = xml.replacen("<ALTVCHID TYPE=\"Number\"> 101605</ALTVCHID>", "", 1);
+        assert_ne!(empty_book, xml, "fixture no longer carries the voucher axis");
+        assert_eq!(
+            parse_company_high_water(&empty_book, guid),
+            Err(VOUCHER_CHECKPOINT_NOT_OBSERVED.to_string())
+        );
+        // Ordering guard, and the reason the master axis is observed first: with
+        // BOTH axes absent this row has not been shown to parse, so the voucher
+        // code must not be returned. Were it returned here, pre_import_mark would
+        // report an empty book for a response Bridge could not read.
+        let neither = empty_book.replacen("<ALTMSTID TYPE=\"Number\"> 328</ALTMSTID>", "", 1);
+        assert_ne!(neither, empty_book, "fixture no longer carries the master axis");
+        assert_eq!(
+            parse_company_high_water(&neither, guid),
+            Err("master_checkpoint_not_observed".to_string())
+        );
+    }
+
+    #[test]
+    fn voucher_axis_absence_matches_its_named_code() {
+        // pre_import_mark matches VOUCHER_CHECKPOINT_NOT_OBSERVED as a literal
+        // against what observed_checkpoint formats from its axis argument. Pin
+        // the two together so renaming the axis cannot silently stop the match
+        // and quietly restore the collapsed refusal.
+        assert_eq!(
+            observed_checkpoint(None, "voucher"),
+            Err(VOUCHER_CHECKPOINT_NOT_OBSERVED.to_string())
         );
     }
 }

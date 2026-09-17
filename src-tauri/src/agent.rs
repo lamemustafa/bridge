@@ -396,6 +396,24 @@ impl From<String> for ToolFailure {
 /// deadline is worth substituting for this one and for nothing else.
 const GENERIC_RUNTIME_READ_FAILURE: &str = "agent_runtime_read_failed";
 
+/// Guidance for refusals whose remedy a caller cannot derive from the code alone.
+///
+/// Deliberately sparse. A code without a documented, concrete next step returns
+/// `None` and its refusal keeps the general message, because filler guidance is
+/// worse than none: it reads as authoritative while sending the caller nowhere.
+/// This never softens a refusal — it only says what to do about one.
+fn refusal_remediation(code: &str) -> Option<&'static str> {
+    match code {
+        "empty_book_first_import" => Some(
+            "This company has never held a voucher, so Tally reports no voucher high-water \
+             mark and Bridge has no \"before\" to attribute an import against. Record one \
+             voucher in this company by another route and confirm it in Tally, then build \
+             this batch again.",
+        ),
+        _ => None,
+    }
+}
+
 impl ToolFailure {
     fn from_runtime(code: &str, error: anyhow::Error) -> Self {
         let code = if let Some(error) = error.chain().find_map(|cause| {
@@ -569,8 +587,16 @@ impl Server {
                 });
                 evidence.state = "partial";
                 evidence.reason_code = Some(code.clone());
+                let mut error =
+                    json!({"code": code, "message": "Bridge refused this operation."});
+                // Additive: `code` and `message` keep their existing shape for
+                // every refusal, and `remediation` appears only for the codes
+                // that have a concrete next step to name.
+                if let Some(remediation) = refusal_remediation(&code) {
+                    error["remediation"] = json!(remediation);
+                }
                 ToolOutcome {
-                    payload: json!({"error": {"code": code, "message": "Bridge refused this operation."}}),
+                    payload: json!({ "error": error }),
                     evidence,
                     company_guid: args
                         .get("company_guid")

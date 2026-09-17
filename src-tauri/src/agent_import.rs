@@ -1,7 +1,7 @@
 use super::{
     combine_evidence, company_json, normalized_date, parse_company_high_water, party_name,
     render_agent_company_high_water, required_string, sha256_hex, sha256_json, Evidence, Server,
-    ToolFailure, ToolOutcome,
+    ToolFailure, ToolOutcome, VOUCHER_CHECKPOINT_NOT_OBSERVED,
 };
 use crate::tally::agent_read_request::AgentReadRequest;
 use crate::tally::standard_ledger_catalog::{
@@ -96,6 +96,30 @@ const MAX_VOUCHERS: usize = 1_000;
 pub(super) const MAX_MASTER_NAMES: usize = 100;
 pub(super) const MAX_MASTER_NAME_CHARS: usize = 1024;
 const MAX_TEXT_CHARS: usize = 2_000;
+
+/// Name the one parse failure a caller can act on, and keep every other cause on
+/// the general refusal.
+///
+/// `parse_company_high_water` already reports which of its causes fired. That
+/// detail used to be discarded, so an empty book — a company that has never held
+/// a voucher, for which Tally omits ALTVCHID entirely — was indistinguishable
+/// from a malformed response, an unmatched company GUID or an ambiguous company
+/// row. Only the empty book has a next step the caller can take, so only it is
+/// promoted.
+///
+/// This changes what a refusal is *called*, never whether it refuses. Without a
+/// voucher high-water mark there is no "before", so an import cannot be
+/// attributed and Bridge must still decline either way.
+///
+/// Kept pure and separate from `pre_import_mark` so the mapping is provable
+/// without a live gateway or a scripted response sequence.
+fn pre_import_mark_refusal(parse_error: &str) -> &'static str {
+    if parse_error == VOUCHER_CHECKPOINT_NOT_OBSERVED {
+        "empty_book_first_import"
+    } else {
+        "pre_import_mark_unobserved"
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -929,8 +953,8 @@ impl Server {
         let (xml, evidence) = self
             .post_read(identity, render_agent_company_high_water(&company.name))
             .await?;
-        let high_water = parse_company_high_water(&xml, guid).map_err(|_| {
-            ToolFailure::from("pre_import_mark_unobserved".to_string())
+        let high_water = parse_company_high_water(&xml, guid).map_err(|code| {
+            ToolFailure::from(pre_import_mark_refusal(&code).to_string())
                 .with_prior_evidence(evidence.clone())
         })?;
         let mark = company_high_water_mark(&high_water)
