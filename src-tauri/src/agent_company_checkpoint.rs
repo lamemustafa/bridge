@@ -99,12 +99,14 @@ pub(in crate::agent) fn parse_company_high_water(
     let row = matched.ok_or_else(|| "company_high_water_identity_absent".to_string())?;
     // Observe the master axis first. A company that has never held a voucher
     // returns ALTMSTID but omits ALTVCHID entirely, and `pre_import_mark` reads
-    // the resulting `voucher_checkpoint_not_observed` as that empty book. That
-    // reading is only sound while the master axis has already been admitted: it
-    // is what proves this row parsed and matched the requested company, rather
-    // than a response Bridge failed to read. Evaluating the voucher axis first
-    // would return the same code for a row that never parsed at all, and the
-    // distinction would silently become unsound.
+    // the resulting `voucher_checkpoint_not_observed` as that empty book.
+    //
+    // This row already matched the requested company — `matched` guarantees that
+    // whichever order these run in. What the ordering adds is narrower and is the
+    // whole basis of the distinction: that the master axis was itself observed as
+    // a number. Without it, a row carrying NEITHER axis would return the voucher
+    // code, and a response Bridge could not read would be reported to the caller
+    // as an empty book.
     let altmstid = observed_checkpoint(row.get("ALTMSTID"), "master")?;
     let altvchid = observed_checkpoint(row.get("ALTVCHID"), "voucher")?;
     Ok(json!({"altvchid": altvchid, "altmstid": altmstid}))

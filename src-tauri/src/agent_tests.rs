@@ -275,6 +275,66 @@ async fn invalid_scope_arguments_are_rejected_before_any_tally_probe() {
 }
 
 #[test]
+fn an_empty_book_refusal_carries_its_remediation_through_the_real_payload() {
+    let directory = tempfile::tempdir().expect("agent directory");
+    let server = Server::new(settings(
+        "127.0.0.1:9".parse().unwrap(),
+        directory.path().to_path_buf(),
+    ));
+    // Drives the real payload assembly, not `refusal_remediation` alone. Without
+    // this, deleting the attachment in `finish_tool_response` would leave every
+    // other test green while callers silently stopped receiving the guidance:
+    // the sibling tests only assert remediation is ABSENT where it should be,
+    // and that stays true when it is never attached at all.
+    let response = server.finish_tool_response(
+        "build_import_xml",
+        &json!({"company_guid": "00000000-0000-4000-8000-000000000001"}),
+        Utc::now(),
+        Err(ToolFailure::from("empty_book_first_import".to_string())),
+    );
+    let error = &response.value["structuredContent"]["result"]["error"];
+    assert_eq!(error["code"], "empty_book_first_import");
+    assert_eq!(error["message"], "Bridge refused this operation.");
+    assert!(
+        error["remediation"]
+            .as_str()
+            .expect("remediation attached to the refusal payload")
+            .contains("Record one voucher in this company by another route"),
+        "{error}"
+    );
+    assert_eq!(response.value["isError"], true);
+}
+
+#[test]
+fn a_small_response_budget_keeps_the_refusal_code_and_drops_only_the_guidance() {
+    let directory = tempfile::tempdir().expect("agent directory");
+    let mut small = settings(
+        "127.0.0.1:9".parse().unwrap(),
+        directory.path().to_path_buf(),
+    );
+    // Just under the guidance threshold, and still roomy enough for the refusal
+    // envelope itself — so this exercises the new guard rather than the
+    // pre-existing too-large path, which would prove nothing about it.
+    small.max_bytes = REMEDIATION_MIN_RESPONSE_BUDGET - 1;
+    let server = Server::new(small);
+    let response = server.finish_tool_response(
+        "build_import_xml",
+        &json!({"company_guid": "00000000-0000-4000-8000-000000000001"}),
+        Utc::now(),
+        Err(ToolFailure::from("empty_book_first_import".to_string())),
+    );
+    let error = &response.value["structuredContent"]["result"]["error"];
+    // The code is what the caller cannot do without, so it must survive a budget
+    // too small to carry the guidance as well.
+    assert_eq!(error["code"], "empty_book_first_import");
+    assert_eq!(error["message"], "Bridge refused this operation.");
+    assert!(
+        error.get("remediation").is_none(),
+        "guidance displaced the refusal budget: {error}"
+    );
+}
+
+#[test]
 fn remediation_is_present_only_where_a_concrete_next_step_exists() {
     let guidance = refusal_remediation("empty_book_first_import").expect("empty book guidance");
     // The guidance must name the action to take, not restate the refusal.

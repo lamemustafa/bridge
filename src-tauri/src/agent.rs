@@ -396,6 +396,13 @@ impl From<String> for ToolFailure {
 /// deadline is worth substituting for this one and for nothing else.
 const GENERIC_RUNTIME_READ_FAILURE: &str = "agent_runtime_read_failed";
 
+/// Response budget below which a refusal carries no remediation, so that the
+/// guidance can never displace the refusal code it explains. Well above the
+/// longest guidance string plus the refusal envelope, and far below the 200,000
+/// default, so only a caller that has deliberately asked for tiny responses
+/// gives it up.
+const REMEDIATION_MIN_RESPONSE_BUDGET: usize = 4_096;
+
 /// Guidance for refusals whose remedy a caller cannot derive from the code alone.
 ///
 /// Deliberately sparse. A code without a documented, concrete next step returns
@@ -592,8 +599,18 @@ impl Server {
                 // Additive: `code` and `message` keep their existing shape for
                 // every refusal, and `remediation` appears only for the codes
                 // that have a concrete next step to name.
+                //
+                // Never trade the code for the guidance. `max_bytes` is settable
+                // down to 256, and `enforce_response_byte_cap` has no page shape
+                // to trim inside an error object — it replaces the entire refusal
+                // with `agent_response_too_large`. So at a deliberately small cap
+                // these ~250 extra bytes could cost the caller the one thing it
+                // most needs, leaving it worse off than before this field existed.
+                // Guidance is a convenience; the refusal code is not.
                 if let Some(remediation) = refusal_remediation(&code) {
-                    error["remediation"] = json!(remediation);
+                    if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
+                        error["remediation"] = json!(remediation);
+                    }
                 }
                 ToolOutcome {
                     payload: json!({ "error": error }),
