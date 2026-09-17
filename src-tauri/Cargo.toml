@@ -93,10 +93,6 @@ crate-type = ["rlib"]
 name = "bridge"
 path = "src/main.rs"
 
-[[bin]]
-name = "bridge-daemon"
-path = "src/daemon.rs"
-
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

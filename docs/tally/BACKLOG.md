@@ -12,7 +12,7 @@ is met.
 | Item | Why parked | Revisit condition |
 | --- | --- | --- |
 | GSTR-2B bulk-resolution layer | Tally native owns single-company recon; solo dev can't fight the platform now | Write substrate has run one clean quarter AND a design partner asks |
-| Remote agent on client machines | Fleet product a solo dev cannot operate; reputational risk lands on the firm | Cloud relay + support capacity exist |
+| Remote agent on client machines (the executor / Axal "E3" scope, and the reserved `bridge-daemon` stub, are this item under other names) | Fleet product a solo dev cannot operate; reputational risk lands on the firm. Reaffirmed 2026-09-17: staying parked pending a larger team — not a reversal, just naming the stub as the same parked item | Cloud relay + support capacity exist |
 | Client-maintained-books drift via backup/TCP ingestion | Lighter alternative to the remote agent; still post-wedge | Drift Sentinel v1 adopted at 2+ firms |
 | Tally-on-cloud (hosted RDP) topology — headless agent in VM | v1 is local single-machine only; declared `Unsupported` in Passport | A design partner runs hosted Tally; local topology at GA |
 | Bank-statement PDF/OCR parsing | Format-zoo maintenance tail; CSV/Excel covers most rows | Thin product loop in daily use |
