@@ -112,8 +112,8 @@ unit test of an otherwise-exclusive helper
 - **Compiler-verified dead code.** With the four commands' and their two
   request/result structs' visibility narrowed from `pub` to `pub(crate)` (the
   minimum narrowing that removes their automatic "reachable from the crate
-  root" status; narrowing the surrounding `pub mod`s instead breaks real
-  cross-crate uses in `tests/unit_a_live.rs` and `src/bin/bridge_mcp.rs`),
+  root" status; narrowing the surrounding `pub mod`s instead breaks a real
+  cross-crate use in `tests/unit_a_live.rs`),
   `cargo check --locked --workspace --all-targets --all-features` from
   `src-tauri/` reported all 18 deleted items (4 commands, 2 structs, 12
   functions) as `never used` / `never constructed`, and nothing else. After
@@ -123,11 +123,21 @@ unit test of an otherwise-exclusive helper
   `TallyRuntime`/`TallyClient::qualify_selected_ledgers` and
   `::qualify_selected_vouchers`, `db::tally_mirror::
   selected_read_scope_commitment_sha256` and its commitment-material types —
-  is **not** touched by this change. Each still has direct unit test coverage
-  in `tally/runtime_tests.rs`, `tally/connection_tests.rs`, and
-  `db/tally_mirror_tests.rs` that calls it independently of the deleted
-  commands, so it was out of this compiler check's dead-code scope and is a
-  separate decision.
+  is **not** touched by this change, and is a separate decision.
+
+  Coverage is **uneven**, and the difference matters:
+  `qualify_selected_ledgers` has direct unit tests that call it independently
+  of the deleted commands (`tally/connection_tests.rs:375`,
+  `tally/runtime_tests.rs:1503`, `:1593`, `:1725`), as does the
+  `db::tally_mirror` commitment material. **`qualify_selected_vouchers` has
+  none** — a tree-wide search finds only its two definitions
+  (`tally/connection.rs:1635`, `tally/runtime.rs:3169`) and one internal call
+  at `tally/runtime.rs:3190`. Deleting `fetch_tally_vouchers` removes its last
+  caller outside that pair, so it is left reachable only from `runtime.rs` and
+  pinned by no test. It survived this compiler check because the check was
+  scoped to `commands.rs`, not because anything exercises it. Whoever next
+  decides the fate of this machinery should treat the vouchers path as
+  unprotected rather than assume the ledgers path's coverage extends to it.
 - **Test names.** `cargo test -p bridge --lib -- --list`, sorted, before and
   after, differs by exactly one line: the removed
   `commands::tests::selected_read_observation_distinguishes_empty_identity_evidence`.
