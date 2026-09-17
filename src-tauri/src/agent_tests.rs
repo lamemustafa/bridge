@@ -78,6 +78,10 @@ fn voucher_profiles_fetch_accounting_state_and_bill_allocations() {
         for field in [
             "ISCANCELLED",
             "ISOPTIONAL",
+            // Allow-listing ISPOSTDATED in agent_voucher_scalars.rs is inert unless
+            // it is also named here: Tally omits a field from COLLECTION XML that
+            // the FETCH list does not name, no matter what the parser accepts.
+            "ISPOSTDATED",
             // The ENTRY wildcard, which 2.4a proves correct on the instance where
             // curated allocation paths misreport New Ref/Agst Ref as On Account.
             // The narrower BILLALLOCATIONS.* is cheaper and measured equivalent

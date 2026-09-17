@@ -20,8 +20,15 @@ use super::*;
 /// `TAXBILLALLOCATIONS.LIST` — a different list from `BILLALLOCATIONS.LIST` — proven by
 /// `entry_wildcard_response_parses_with_its_twenty_seven_nested_lists` against a live
 /// capture rather than a constructed one.
+///
+/// `ISPOSTDATED` is requested here for the same reason `ISCANCELLED`/
+/// `ISOPTIONAL` are: Tally will not include a field in COLLECTION XML that
+/// this FETCH list does not name, regardless of what the parser is willing
+/// to accept. Allow-listing the tag in `agent_voucher_scalars.rs` without
+/// asking for it here would make `post_dated` permanently absent — a
+/// wired-looking field that never fires.
 const AGENT_VOUCHER_FETCH: &str = "DATE,VOUCHERNUMBER,VOUCHERTYPENAME,PARTYLEDGERNAME,NARRATION,\
-GUID,ALTERID,MASTERID,ISCANCELLED,ISOPTIONAL,ALLLEDGERENTRIES.*";
+GUID,ALTERID,MASTERID,ISCANCELLED,ISOPTIONAL,ISPOSTDATED,ALLLEDGERENTRIES.*";
 
 /// The FETCH list for `ledger_movement`, which DISCARDS bill allocations.
 ///
