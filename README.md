@@ -1,7 +1,10 @@
 # ComplyEaze Bridge
 
 ComplyEaze Bridge lets an AI assistant read from, and write to, the TallyPrime
-running on your own computer — without your books leaving it.
+running on your own computer. Nothing in that path copies your books to a server
+of ours. What you ask about does reach the AI provider you chose, exactly as the
+rest of that conversation does — see *One thing to understand before you use it*
+below before you point this at client data.
 
 It connects to Tally over Tally's own local XML gateway, on `localhost` only. A
 remote Tally host is refused outright rather than supported, so there is no
@@ -64,9 +67,10 @@ With writing on:
 **One part of the app does upload, and it is not this one.** Bridge also
 contains a document feature that uploads files *you* choose to ComplyEaze cloud
 storage, and an AXAL sign-in. Those are separate and user-initiated, and share
-no code with the Tally path described here — but they ship in the same
-application, so you should know they exist before deciding what to run on a
-machine holding client books. Both are documented under *Integration trust
+no code with the Tally path described here. They are compiled into the same
+binary the Claude Desktop extension runs, and no Bridge tool can reach them, but
+you should know they are present before deciding what to run on a machine
+holding client books. Both are documented under *Integration trust
 boundaries* below.
 
 **One thing to understand before you use it.** When you ask an AI assistant for
