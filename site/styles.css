@@ -159,7 +159,8 @@ code {
 .port-guide input[aria-invalid="true"] { border-color: #a8341f; }
 .port-guide p { color: var(--ink-soft); line-height: 1.55; margin: 14px 0 0; max-width: 66ch; }
 
-.plain-language { display: grid; gap: 32px; grid-template-columns: minmax(200px, 0.72fr) minmax(0, 1fr); }
+.plain-language > h2 { max-width: 30ch; }
+.plain-language > p { margin-top: 20px; }
 .plain-language p, .aftercare p { line-height: 1.6; margin: 0; max-width: 66ch; }
 .aftercare p + p { margin-top: 12px; }
 
@@ -167,7 +168,7 @@ code {
   .page { width: min(100% - 24px, 960px); }
   .intro { padding: 48px 0 44px; }
   .release-panel, .setup, .plain-language, .aftercare { padding: 40px 0 32px; }
-  .section-heading, .plain-language { display: block; }
+  .section-heading { display: block; }
   .release-status { margin-top: 14px; text-align: left; }
   .downloads { grid-template-columns: 1fr; }
 }
