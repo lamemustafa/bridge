@@ -283,7 +283,12 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// errors. The error notice's classification comes from the pinned
 /// `tally-error-copy.ts`. None of them decides which book a report or drawer is
 /// attributed to, or what Bridge posts or lets leave the machine.
-pub const MAX_SURFACE_FILES: usize = 267;
+///
+/// `src-tauri/src/agent_import_verification.rs` is `agent_import.rs`'s read-back
+/// verification, moved out with only visibility and `super::` paths changed. It
+/// decides whether an imported voucher is reported `posted_verified`, which the
+/// posting path and the amendment compare-and-swap also rely on.
+pub const MAX_SURFACE_FILES: usize = 268;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
