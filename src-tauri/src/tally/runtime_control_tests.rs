@@ -12,6 +12,17 @@ fn test_runtime(spacing: Duration, threshold: u32) -> PortableReadRuntime {
     .unwrap()
 }
 
+#[test]
+fn shipped_request_spacing_is_half_a_second_and_within_the_policy_bound() {
+    assert_eq!(SHIPPED_REQUEST_SPACING, Duration::from_millis(500));
+    assert!(RuntimePolicy {
+        request_spacing: SHIPPED_REQUEST_SPACING,
+        ..RuntimePolicy::default()
+    }
+    .validate()
+    .is_ok());
+}
+
 fn endpoint(value: &str) -> EndpointIdentity {
     EndpointIdentity::new(value).unwrap()
 }

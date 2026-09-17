@@ -25,6 +25,15 @@ use tokio_util::sync::CancellationToken;
 const MAX_ENDPOINT_IDENTITY_BYTES: usize = 512;
 const MAX_QUEUE_DEADLINE: Duration = Duration::from_secs(120);
 const MAX_REQUEST_SPACING: Duration = Duration::from_secs(10);
+const SHIPPED_REQUEST_SPACING: Duration = Duration::from_millis(500);
+// Unit tests read from the in-process protocol simulator, where spacing protects
+// nothing and costs half a second per read. The gate itself is exercised with
+// an explicit spacing in `runtime_control_tests`, which also pins the shipped
+// value.
+#[cfg(not(test))]
+const DEFAULT_REQUEST_SPACING: Duration = SHIPPED_REQUEST_SPACING;
+#[cfg(test)]
+const DEFAULT_REQUEST_SPACING: Duration = Duration::ZERO;
 const MAX_CIRCUIT_COOLDOWN: Duration = Duration::from_secs(10 * 60);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(60);
 pub(super) const TELEMETRY_PREVIEW_SCHEMA: &str = crate::observability::PREVIEW_SCHEMA;
@@ -278,7 +287,7 @@ impl Default for RuntimePolicy {
     fn default() -> Self {
         Self {
             queue_deadline: Duration::from_secs(30),
-            request_spacing: Duration::from_millis(500),
+            request_spacing: DEFAULT_REQUEST_SPACING,
             circuit_failure_threshold: 3,
             circuit_cooldown: Duration::from_secs(10),
             maximum_endpoint_sessions: 32,
