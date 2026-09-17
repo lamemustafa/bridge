@@ -20,6 +20,24 @@ it is not signed or notarized. Each archive has a same-named `.sha256` file and
 a small provenance record on its release so an organization can identify the
 downloaded bytes and source commit.
 
+## Before you install
+
+TallyPrime's HTTP gateway is off by default, and ComplyEaze Bridge cannot reach
+Tally until it is on. In Tally's own connectivity / client-server configuration
+settings, set Tally to act as a server (**"acts as Both"** in Tally's own
+words) and note its HTTP gateway port — `9000` by default, but configurable.
+To confirm the gateway is actually listening, open
+`http://localhost:9000/status` (substitute your port) in a browser: a running
+gateway answers with a short Tally XML response, and a browser that cannot
+connect means the gateway is still off — **unless Tally is running in a Windows
+virtual machine on a Mac**, in which case run this check inside that VM, or
+only once the local forwarding in step 2 below is working. A Mac browser that
+cannot connect may mean that forwarding is missing rather than that the gateway
+is off. If instead it hangs without answering, Tally may simply be busy behind
+another request — wait and retry rather than changing the setting. Do this
+before step 3 below, so the port you enter in Bridge matches a gateway that is
+actually on.
+
 ## Install and configure
 
 1. Open the `.mcpb` file. If it does not open Claude Desktop, use **Settings →
@@ -28,9 +46,11 @@ downloaded bytes and source commit.
    endpoint. On a Mac, Tally must already be available there through a local
    Windows VM or organization-approved local forwarding. A separate PC or a
    LAN-only Tally cannot be reached by entering its network address.
-3. Set **Tally port** to Tally's local HTTP gateway port. It defaults to `9000`.
-   This is not a Tally licence port. Changing it changes only where Bridge calls
-   Tally, not Tally's own HTTP setting.
+3. Set **Tally port** to the HTTP gateway port you turned on and confirmed
+   above (see *Before you install*). It defaults to `9000`, but only if
+   Tally's gateway is configured for that port. This is not a Tally licence
+   port. Changing it changes only where Bridge calls Tally, not Tally's own
+   HTTP setting.
 4. Save the extension settings and restart Claude Desktop if its tools are not
    visible. In a new chat, use **Connectors** to confirm Bridge is connected.
 
