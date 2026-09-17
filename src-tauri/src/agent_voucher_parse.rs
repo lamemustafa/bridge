@@ -380,6 +380,27 @@ fn parse_voucher_rows(
                             Value::Bool(required_tally_bool(row.get("ISCANCELLED"))?);
                         parsed["optional"] =
                             Value::Bool(required_tally_bool(row.get("ISOPTIONAL"))?);
+                        // Unlike ISCANCELLED/ISOPTIONAL, a real capture has shown Tally
+                        // omitting ISPOSTDATED entirely rather than asserting "No" on every
+                        // voucher. required_tally_bool would refuse the whole read on that
+                        // shape; that is right for a tag known to always be present, but
+                        // wrong here; it would turn "Tally did not say" into a hard failure
+                        // instead of a legible unknown. So this field is optional like
+                        // EFFECTIVEDATE above: an absent or empty element is not observed and
+                        // the key is omitted, never invented as `false`. A present value must
+                        // be Yes/No: an unrecognised value refuses the read rather than
+                        // guessing, exactly as a malformed EFFECTIVEDATE does.
+                        if let Some(post_dated) = row
+                            .get("ISPOSTDATED")
+                            .map(|value| value.trim())
+                            .filter(|value| !value.is_empty())
+                        {
+                            parsed["post_dated"] = Value::Bool(match post_dated {
+                                "Yes" => true,
+                                "No" => false,
+                                _ => return Err("voucher_post_dated_invalid".to_string()),
+                            });
+                        }
                         rows.push(parsed);
                     }
                 }

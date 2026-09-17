@@ -951,3 +951,76 @@ fn effective_date_is_read_for_import_verification_only() {
         Err("agent_read_protocol_invalid".to_string())
     );
 }
+
+/// The captured three-voucher response with the first voucher's ISCANCELLED
+/// element immediately followed by an injected ISPOSTDATED `element`. This is
+/// negative fault injection into a captured response — the real capture never
+/// carried ISPOSTDATED at all (see the absent case below) — not a new
+/// fixture or evidence of a live Tally response shape.
+fn with_post_dated(element: &str) -> String {
+    captured_native_vouchers().replacen(
+        "<ISCANCELLED TYPE=\"Logical\">No</ISCANCELLED>",
+        &format!("<ISCANCELLED TYPE=\"Logical\">No</ISCANCELLED>{element}"),
+        1,
+    )
+}
+
+#[test]
+fn post_dated_is_optional_unlike_cancelled_and_optional() {
+    // The unmodified capture never asserts ISPOSTDATED on any of its three
+    // vouchers — this is real captured Tally output, not a synthetic gap.
+    // Unlike a missing ISCANCELLED/ISOPTIONAL (which required_tally_bool
+    // refuses the whole read over), an absent ISPOSTDATED must not fail the
+    // read and must not be invented as `false`: the key is omitted so a
+    // caller can tell "Tally did not say" from "Tally said no".
+    let captured = captured_native_vouchers();
+    for rows in [
+        parse_agent_rows(&captured, CAPTURED_VOUCHER_COMPANY_GUID).unwrap(),
+        parse_agent_changed_rows(&captured, CAPTURED_VOUCHER_COMPANY_GUID).unwrap(),
+        parse_import_verification_rows(&captured, CAPTURED_VOUCHER_COMPANY_GUID).unwrap(),
+    ] {
+        assert_eq!(rows.len(), 3);
+        assert!(
+            rows.iter().all(|row| row.get("post_dated").is_none()),
+            "an absent ISPOSTDATED must not be invented as false or true"
+        );
+        // cancelled/optional are unaffected and still always booleans.
+        assert!(rows
+            .iter()
+            .all(|row| row["cancelled"].is_boolean() && row["optional"].is_boolean()));
+    }
+
+    // ISPOSTDATED=Yes on voucher 1 only.
+    let yes = with_post_dated("<ISPOSTDATED TYPE=\"Logical\">Yes</ISPOSTDATED>");
+    let rows = parse_agent_rows(&yes, CAPTURED_VOUCHER_COMPANY_GUID).unwrap();
+    assert_eq!(rows[0]["post_dated"], true);
+    assert!(rows[1].get("post_dated").is_none());
+    assert!(rows[2].get("post_dated").is_none());
+
+    // ISPOSTDATED=No is observed and distinct from absent.
+    let no = with_post_dated("<ISPOSTDATED TYPE=\"Logical\">No</ISPOSTDATED>");
+    let rows = parse_agent_rows(&no, CAPTURED_VOUCHER_COMPANY_GUID).unwrap();
+    assert_eq!(rows[0]["post_dated"], false);
+
+    // An empty element is not observed, exactly like an absent one.
+    let empty = with_post_dated("<ISPOSTDATED TYPE=\"Logical\"></ISPOSTDATED>");
+    let rows = parse_agent_rows(&empty, CAPTURED_VOUCHER_COMPANY_GUID).unwrap();
+    assert!(rows[0].get("post_dated").is_none());
+
+    // A present but unrecognised value refuses the read rather than guessing.
+    let invalid = with_post_dated("<ISPOSTDATED TYPE=\"Logical\">Maybe</ISPOSTDATED>");
+    assert_eq!(
+        parse_agent_rows(&invalid, CAPTURED_VOUCHER_COMPANY_GUID),
+        Err("voucher_post_dated_invalid".to_string())
+    );
+
+    // Two ISPOSTDATED elements on one voucher cannot be reconciled into one
+    // written value; the wire admission layer refuses the duplicate scalar.
+    let repeated = with_post_dated(
+        "<ISPOSTDATED TYPE=\"Logical\">Yes</ISPOSTDATED><ISPOSTDATED TYPE=\"Logical\">No</ISPOSTDATED>",
+    );
+    assert_eq!(
+        parse_agent_rows(&repeated, CAPTURED_VOUCHER_COMPANY_GUID),
+        Err("agent_read_protocol_invalid".to_string())
+    );
+}
