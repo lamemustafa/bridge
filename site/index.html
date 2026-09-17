@@ -17,14 +17,14 @@
 
       <section class="intro" aria-labelledby="page-title">
         <h1 id="page-title">Ask Claude who owes you, and how old the bills are.</h1>
-        <p class="lede">ComplyEaze Bridge connects Claude Desktop to the TallyPrime already running on this computer, over Tally's own local gateway. Ask about outstanding receivables and payables, ledger balances or vouchers in a date window — in a chat, without exporting anything.</p>
+        <p class="lede">ComplyEaze Bridge connects Claude Desktop to the TallyPrime already running on this computer, over Tally's own local gateway. Ask about outstanding receivables and payables, ledger balances or vouchers in a date window, in a chat, without exporting anything.</p>
         <p class="support-line">Every voucher it posts waits for your approval in a separate dialog, and the assistant cannot approve it. <strong>Preview packages:</strong> Windows x64 and Apple Silicon Mac. Intel Mac and other platforms are not yet qualified; read each release's notes for its host-validation status.</p>
       </section>
 
       <section class="release-panel" aria-labelledby="download-title">
         <div class="section-heading">
           <div>
-            <h2 id="download-title"><span class="step-index">1.</span> Choose your computer</h2>
+            <h2 id="download-title">Choose your computer</h2>
           </div>
           <p id="release-status" class="release-status" role="status">Checking releases…</p>
         </div>
@@ -47,10 +47,10 @@
       <section class="setup" aria-labelledby="setup-title">
         <div class="section-heading">
           <div>
-            <h2 id="setup-title"><span class="step-index">2.</span> Install and connect</h2>
+            <h2 id="setup-title">Install and connect</h2>
           </div>
         </div>
-        <p class="channel-note"><strong>First, switch Tally's gateway on.</strong> TallyPrime does not listen for ComplyEaze Bridge by default. In Tally's connectivity / client-server configuration settings, set Tally to act as a server — <strong>"acts as Both"</strong> in Tally's own words — and note its HTTP gateway port. To confirm it is listening, open <code>http://localhost:9000/status</code> in a browser, substituting your port: a running gateway answers with a short Tally XML response.</p>
+        <p class="channel-note"><strong>First, switch Tally's gateway on.</strong> TallyPrime does not listen for ComplyEaze Bridge by default. In Tally's connectivity / client-server configuration settings, set Tally to act as a server (<strong>"acts as Both"</strong> in Tally's own words) and note its HTTP gateway port. To confirm it is listening, open <code>http://localhost:9000/status</code> in a browser, substituting your port: a running gateway answers with a short Tally XML response.</p>
         <details class="aside">
           <summary>If that check fails, read this before changing anything</summary>
           <p><strong>On a Mac with Tally in a Windows virtual machine,</strong> run the check inside that VM, or only once the local forwarding in step 3 below is working. A Mac browser that cannot connect may mean that forwarding is missing rather than that the gateway is off.</p>

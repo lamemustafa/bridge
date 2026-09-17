@@ -25,5 +25,5 @@ export function releaseAssets(release, platform) {
 }
 
 export function releaseLabel(release) {
-  return `${release.tag_name} — unsigned preview`;
+  return `${release.tag_name} (unsigned preview)`;
 }
