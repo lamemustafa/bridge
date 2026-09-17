@@ -27,9 +27,11 @@ them, through an AI assistant such as Claude Desktop.
 - **Records what it did.** Every tool call Bridge runs — read or write, and
   whether it succeeds or is refused — appends a receipt to a log on your own
   machine, naming the company it touched and fingerprinting what was asked and
-  what came back. Reads keep those fingerprints as evidence alongside; import
-  batches additionally record which Tally endpoint they spoke to. A reviewer can
-  read the log rather than take a summary on trust.
+  what came back. Reads keep those fingerprints as evidence alongside. A
+  prepared batch records the local endpoint it was built for, and a native posting
+  is refused if that endpoint has changed since; that is a safety check kept in
+  Bridge's internal import ledger, not a line in the proof report a reviewer
+  opens. A reviewer can read the log rather than take a summary on trust.
 
 **Whether writing is on depends on how you installed it.** Everything above is
 reading. When writing is off, the write tools do not merely refuse — they are
