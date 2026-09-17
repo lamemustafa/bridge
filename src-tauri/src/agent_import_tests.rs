@@ -1220,6 +1220,34 @@ fn verified_import_vouchers_require_observed_effective_accounting_flags() {
 }
 
 #[test]
+fn a_window_span_counts_both_endpoints() {
+    assert_eq!(window_span_days("20260401", "20260401"), Some(1));
+    assert_eq!(window_span_days("20260401", "20260402"), Some(2));
+    assert_eq!(window_span_days("20260401", "20270331"), Some(365));
+    // A leap year is counted by the calendar, not by arithmetic on months.
+    assert_eq!(window_span_days("20240101", "20241231"), Some(366));
+    assert_eq!(window_span_days("notadate", "20260401"), None);
+}
+
+#[test]
+fn a_span_already_known_to_fail_is_split_without_another_read() {
+    // The point of carrying the failed span forward: a sibling branch of the same
+    // size is split immediately rather than spending a full deadline to relearn it.
+    assert!(must_split_before_reading(Some(91), Some(91)));
+    assert!(must_split_before_reading(Some(182), Some(91)));
+    // Smaller than anything known to fail: read it, do not pre-split.
+    assert!(!must_split_before_reading(Some(45), Some(91)));
+    // Nothing has failed yet, so nothing is known: always read.
+    assert!(!must_split_before_reading(Some(365), None));
+    // A single day is the floor. Pre-splitting it would spin, and refusing is the
+    // reader's job, not this predicate's.
+    assert!(!must_split_before_reading(Some(1), Some(1)));
+    // An unparseable span falls through to reading rather than being treated as a
+    // failure: this is an optimisation and must never decide correctness.
+    assert!(!must_split_before_reading(None, Some(30)));
+}
+
+#[test]
 fn splitting_a_verification_window_partitions_it_exactly() {
     // Every split must cover the original window once and only once. A gap drops
     // vouchers from an attribution check; an overlap double-counts them.

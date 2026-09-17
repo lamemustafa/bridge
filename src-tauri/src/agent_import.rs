@@ -973,7 +973,27 @@ impl Server {
         // Ascending order, so the rows arrive in the same order an undivided read
         // would have produced and a reader diffing two runs sees no churn.
         let mut pending = vec![(from.to_string(), to.to_string())];
+        // The smallest span already known to be unservable on THIS call. Splitting
+        // alone rediscovers that span once per branch, and each rediscovery costs a
+        // full deadline — on a measured book a year needs four levels, so most of
+        // the wall clock was spent re-learning the same fact. Carrying it forward
+        // splits an over-large window without asking Tally again.
+        //
+        // Deliberately per-call and in memory: no persisted page size, so there is
+        // nothing to invalidate and no stale value can survive into a later call
+        // against a book whose density has changed.
+        let mut smallest_failed_days: Option<i64> = None;
         while let Some((start, end)) = pending.pop() {
+            if must_split_before_reading(window_span_days(&start, &end), smallest_failed_days) {
+                // Known too big. Split without spending a deadline to confirm it.
+                // Falling through to the read would be correct but slower, so a
+                // missing span here costs time and never correctness.
+                if let Some((left, right)) = split_verification_window(&start, &end) {
+                    pending.push(right);
+                    pending.push(left);
+                    continue;
+                }
+            }
             let request = render_import_verification_read(company, &start, &end);
             match self.post_read(identity, request).await {
                 Ok((xml, read_evidence)) => {
@@ -984,6 +1004,13 @@ impl Server {
                     rows.extend(parse_import_voucher_rows(&xml, identity.company_guid())?);
                 }
                 Err(failure) if window_is_too_large(&failure) => {
+                    // Record the span so sibling branches do not pay a deadline to
+                    // learn the same thing. `min` because a later, smaller failure
+                    // is the tighter bound.
+                    if let Some(span) = window_span_days(&start, &end) {
+                        smallest_failed_days =
+                            Some(smallest_failed_days.map_or(span, |known| known.min(span)));
+                    }
                     let (left, right) = split_verification_window(&start, &end)
                         // A single day that still cannot be served is not something
                         // splitting can fix, and silently returning the rows from
@@ -2110,6 +2137,28 @@ fn render_voucher_xml(voucher: &ImportVoucher, remote_id: Uuid, attribution_id: 
 
 fn window_is_too_large(failure: &ToolFailure) -> bool {
     super::is_window_too_large_code(&failure.code)
+}
+
+/// Inclusive span of a `YYYYMMDD` window in days, or `None` if either bound is
+/// unparseable. A one-day window spans 1.
+fn window_span_days(from: &str, to: &str) -> Option<i64> {
+    let parse = |value: &str| chrono::NaiveDate::parse_from_str(value, "%Y%m%d").ok();
+    Some((parse(to)? - parse(from)?).num_days() + 1)
+}
+
+/// Whether a window is already known to be unservable at this size, so it can be
+/// split without spending a deadline to confirm it.
+///
+/// Only ever an optimisation. Answering `false` wrongly costs one extra read;
+/// answering `true` wrongly costs one extra split, and a split never narrows the
+/// window — both halves stay in the queue. Neither answer can change the set of
+/// vouchers observed, which is why an unparseable span (`None`) simply falls
+/// through to reading rather than being treated as a failure.
+fn must_split_before_reading(span: Option<i64>, smallest_failed: Option<i64>) -> bool {
+    match (span, smallest_failed) {
+        (Some(span), Some(failed)) => span >= failed && span > 1,
+        _ => false,
+    }
 }
 
 /// Split an inclusive `YYYYMMDD` window into two inclusive halves that exactly
