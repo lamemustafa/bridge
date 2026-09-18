@@ -87,7 +87,7 @@ this fixture is otherwise exercising.
 `golden/synthetic.depreciation.json` are the reference Python implementation's own canonical dumps
 for that engagement and read: its `tally-read-v1` adapter built the book, the named test ran with
 its AY 2026-27 rules, and its own canonical serialiser produced the result. All three regenerated
-together at reference-implementation (brain repo) commit `04a34da8bfcb71b2093c0cc66b19d11e3d05ded1`
+together at reference-implementation commit `04a34da8bfcb71b2093c0cc66b19d11e3d05ded1`
 because masterid 43-49 changed the shared book's cash and bank totals too (the Office/Reception
 Computers cash-paid additions), by
 
