@@ -1,11 +1,14 @@
 //! Rule values as data, read from the vendored excerpt of the reference Python implementation's
 //! rules table.
 //!
-//! Provenance: `rules/ay2026-27.s44ab.toml` holds the `[meta]` and `[s44ab]` tables of the
-//! reference implementation's own AY 2026-27 rules file, byte for byte, under a five-line
-//! header. The source file had sha256 [`SOURCE_SHA256`] when it was read at reference commit
+//! Provenance: `rules/ay2026-27.s44ab.toml` holds four byte-for-byte verbatim blocks of the
+//! reference implementation's own AY 2026-27 rules file -- `[meta]` through the end of `[s44ab]`,
+//! then `[s40a3]` in full, then the first three lines each of `[s269st]` and `[s269ss_269t]` --
+//! under a header explaining why each block stops where it does (see the file itself). The
+//! source file had sha256 [`SOURCE_SHA256`] when it was read at reference commit
 //! [`SOURCE_COMMIT`]. The local parity example re-checks, against a local copy of the reference
-//! implementation, that the excerpt is still verbatim and that both files give the same values.
+//! implementation, that every block is still a verbatim substring of the live source and that
+//! both files give the same values.
 //!
 //! [`VENDORED_SHA256`] is the vendored file's own hash; a unit test fails if the file changes
 //! without that constant (and so without a reviewer seeing the provenance above) changing too.
@@ -14,12 +17,12 @@ use crate::error::{AuditError, Result};
 
 pub const VENDORED: &str = include_str!("../rules/ay2026-27.s44ab.toml");
 pub const VENDORED_SHA256: &str =
-    "3a46d7c6f90f61cb62b71e0e75ce1f37b57b2b3912aa288d75f5069c2e9a87f4";
+    "982c49dba3f9fab8b729bcdb6a3aef8edd245975f6c1536228d022f05cf36c94";
 pub const SOURCE_PATH: &str = "the reference Python implementation's AY 2026-27 rules file";
 pub const SOURCE_SHA256: &str = "8a6ec80cd5d19da34392e93024dc9a43a98982b09fb457c662f627174acedf2d";
-pub const SOURCE_COMMIT: &str = "c2f206beb870a8fdb0775f2d1c71aa1ccfccca64";
+pub const SOURCE_COMMIT: &str = "dd376ed014d922a1e2b12052763af36a565402ec";
 
-/// The values `cash_44ab` reads.
+/// The values `cash_44ab` and `cash_payments_40a3` read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rules {
     /// `[meta].version`, echoed into every result as `rules_version`.
@@ -27,6 +30,16 @@ pub struct Rules {
     pub turnover_threshold_paise: i64,
     pub turnover_threshold_low_cash_paise: i64,
     pub cash_share_limit_bp: i64,
+    /// `[s40a3].limit_per_person_per_day_paise`.
+    pub s40a3_limit_per_person_per_day_paise: i64,
+    /// `[s40a3].goods_carriage_limit_paise`.
+    pub s40a3_goods_carriage_limit_paise: i64,
+    /// `[s40a3].excluded_group_roles`, in the order the source lists them.
+    pub s40a3_excluded_group_roles: Vec<String>,
+    /// `[s269st].limit_per_person_per_day_paise`.
+    pub s269st_limit_per_person_per_day_paise: i64,
+    /// `[s269ss_269t].limit_paise`.
+    pub s269ss_269t_limit_paise: i64,
 }
 
 impl Rules {
@@ -40,14 +53,33 @@ impl Rules {
                 .and_then(toml::Value::as_table)
                 .ok_or_else(|| AuditError::Config(format!("rules: no [{name}] table")))
         };
-        let (meta, s44ab) = (section("meta")?, section("s44ab")?);
-        let int = |key: &str| {
-            s44ab
-                .get(key)
-                .and_then(toml::Value::as_integer)
+        let (meta, s44ab, s40a3, s269st, s269ss_269t) = (
+            section("meta")?,
+            section("s44ab")?,
+            section("s40a3")?,
+            section("s269st")?,
+            section("s269ss_269t")?,
+        );
+        let int_in = |t: &toml::Table, table_name: &str, key: &str| {
+            t.get(key).and_then(toml::Value::as_integer).ok_or_else(|| {
+                AuditError::Config(format!("rules: [{table_name}].{key} is not an integer"))
+            })
+        };
+        let strings_in = |t: &toml::Table, table_name: &str, key: &str| -> Result<Vec<String>> {
+            t.get(key)
+                .and_then(toml::Value::as_array)
                 .ok_or_else(|| {
-                    AuditError::Config(format!("rules: [s44ab].{key} is not an integer"))
+                    AuditError::Config(format!("rules: [{table_name}].{key} is not a list"))
+                })?
+                .iter()
+                .map(|v| {
+                    v.as_str().map(str::to_string).ok_or_else(|| {
+                        AuditError::Config(format!(
+                            "rules: [{table_name}].{key} holds a non-string"
+                        ))
+                    })
                 })
+                .collect()
         };
         Ok(Self {
             version: meta
@@ -55,9 +87,26 @@ impl Rules {
                 .and_then(toml::Value::as_str)
                 .ok_or_else(|| AuditError::Config("rules: [meta].version".to_string()))?
                 .to_string(),
-            turnover_threshold_paise: int("turnover_threshold_paise")?,
-            turnover_threshold_low_cash_paise: int("turnover_threshold_low_cash_paise")?,
-            cash_share_limit_bp: int("cash_share_limit_bp")?,
+            turnover_threshold_paise: int_in(s44ab, "s44ab", "turnover_threshold_paise")?,
+            turnover_threshold_low_cash_paise: int_in(
+                s44ab,
+                "s44ab",
+                "turnover_threshold_low_cash_paise",
+            )?,
+            cash_share_limit_bp: int_in(s44ab, "s44ab", "cash_share_limit_bp")?,
+            s40a3_limit_per_person_per_day_paise: int_in(
+                s40a3,
+                "s40a3",
+                "limit_per_person_per_day_paise",
+            )?,
+            s40a3_goods_carriage_limit_paise: int_in(s40a3, "s40a3", "goods_carriage_limit_paise")?,
+            s40a3_excluded_group_roles: strings_in(s40a3, "s40a3", "excluded_group_roles")?,
+            s269st_limit_per_person_per_day_paise: int_in(
+                s269st,
+                "s269st",
+                "limit_per_person_per_day_paise",
+            )?,
+            s269ss_269t_limit_paise: int_in(s269ss_269t, "s269ss_269t", "limit_paise")?,
         })
     }
 
@@ -89,5 +138,24 @@ mod tests {
         assert_eq!(rules.turnover_threshold_paise, 1_000_000_000);
         assert_eq!(rules.turnover_threshold_low_cash_paise, 10_000_000_000);
         assert_eq!(rules.cash_share_limit_bp, 500);
+    }
+
+    #[test]
+    fn vendored_rules_carry_the_cash_payments_40a3_values() {
+        let rules = Rules::vendored().unwrap();
+        assert_eq!(rules.s40a3_limit_per_person_per_day_paise, 1_000_000);
+        assert_eq!(rules.s40a3_goods_carriage_limit_paise, 3_500_000);
+        assert_eq!(
+            rules.s40a3_excluded_group_roles,
+            vec![
+                "capital",
+                "loans_liability",
+                "loans_advances_asset",
+                "fixed_assets",
+                "duties_taxes",
+            ]
+        );
+        assert_eq!(rules.s269st_limit_per_person_per_day_paise, 20_000_000);
+        assert_eq!(rules.s269ss_269t_limit_paise, 2_000_000);
     }
 }

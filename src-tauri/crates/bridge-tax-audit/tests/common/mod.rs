@@ -4,7 +4,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use bridge_tax_audit::{cash_44ab_canonical, rules_for, Engagement, Result};
+use bridge_tax_audit::{
+    cash_44ab_canonical, cash_payments_40a3_canonical, rules_for, Engagement, Result,
+};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -14,6 +16,12 @@ pub fn fixtures() -> PathBuf {
 
 pub fn golden() -> Value {
     let text = std::fs::read_to_string(fixtures().join("golden/synthetic.cash_44ab.json")).unwrap();
+    serde_json::from_str(&text).unwrap()
+}
+
+pub fn golden_40a3() -> Value {
+    let text = std::fs::read_to_string(fixtures().join("golden/synthetic.cash_payments_40a3.json"))
+        .unwrap();
     serde_json::from_str(&text).unwrap()
 }
 
@@ -29,6 +37,11 @@ pub fn engagement(read_dir: &Path, allow_unbracketed: bool) -> Engagement {
 pub fn run(read_dir: &Path, allow_unbracketed: bool) -> Result<Value> {
     let e = engagement(read_dir, allow_unbracketed);
     cash_44ab_canonical(&e, &rules_for(&e)?)
+}
+
+pub fn run_40a3(read_dir: &Path, allow_unbracketed: bool) -> Result<Value> {
+    let e = engagement(read_dir, allow_unbracketed);
+    cash_payments_40a3_canonical(&e, &rules_for(&e)?)
 }
 
 fn hex(bytes: &[u8]) -> String {

@@ -60,7 +60,7 @@
     },
     {
       "id": "cash_44ab.cash_payments",
-      "value": 1915050,
+      "value": 106885051,
       "unit": "paise",
       "definition_sha256_16": "13cdeca70b770857",
       "definition_text": "Credits to cash ledgers. Books population (optional, cancelled and post-dated vouchers excluded); Contra excluded",
@@ -79,7 +79,7 @@
     },
     {
       "id": "cash_44ab.cash_receipts",
-      "value": 9873457,
+      "value": 104373457,
       "unit": "paise",
       "definition_sha256_16": "ac58939200fc3745",
       "definition_text": "Debits to cash ledgers. Books population (optional, cancelled and post-dated vouchers excluded); Contra excluded",
@@ -98,7 +98,7 @@
     },
     {
       "id": "cash_44ab.cash_share_payments",
-      "value": 1839,
+      "value": 9263,
       "unit": "bp",
       "definition_sha256_16": "7e25b1384200d83c",
       "definition_text": "cash_payments / (cash_payments + bank_payments)",
@@ -106,7 +106,7 @@
     },
     {
       "id": "cash_44ab.cash_share_receipts",
-      "value": 3384,
+      "value": 8439,
       "unit": "bp",
       "definition_sha256_16": "1bca1907d59fdbbd",
       "definition_text": "cash_receipts / (cash_receipts + bank_receipts)",

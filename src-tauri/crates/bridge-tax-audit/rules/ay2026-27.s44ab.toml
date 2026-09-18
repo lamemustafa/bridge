@@ -1,8 +1,17 @@
-# Vendored excerpt of the reference Python implementation's rules table for AY 2026-27: the
-# [meta] and [s44ab] tables only, copied byte for byte from the line "[meta]" to the line
-# 'status = "verified"' that closes [s44ab]. The source file's sha256 and the reference commit
-# are recorded in src/rules.rs. Only an excerpt is vendored: the rest of the source table cites
-# private research notes that do not belong in this repository.
+# Vendored excerpt of the reference Python implementation's rules table for AY 2026-27, as four
+# separate byte-for-byte verbatim blocks (each checked independently against the live source by
+# the local parity example, since the blocks are not contiguous in the source file):
+#   1. [meta] through the end of [s44ab] ("status = \"verified\"") -- excludes the [s44ab.turnover]
+#      sub-table immediately after it in the source, which cites a private research note.
+#   2. [s40a3] in full (five lines) -- cash_payments_40a3 reads every key in it.
+#   3. [s269st]'s first three lines only (limit_per_person_per_day_paise, authority, status) --
+#      excludes the table's Circular 22/2017 discussion further down, which cites a private
+#      research note and is not read by any ported test.
+#   4. [s269ss_269t]'s first three lines only (limit_paise, authority, status) -- excludes the
+#      table's exempt-lender-type discussion further down, which cites private research notes and
+#      is not read by any ported test (that discussion is for loans_interest.py, not yet ported).
+# The source file's sha256 and the reference commit are recorded in src/rules.rs. This file's own
+# name predates the [s40a3]/[s269st]/[s269ss_269t] additions; kept as-is rather than renamed.
 
 [meta]
 assessment_year = "2026-27"
@@ -15,4 +24,21 @@ turnover_threshold_paise = 1_00_00_000_00        # s.44AB(a)
 turnover_threshold_low_cash_paise = 10_00_00_000_00  # proviso to s.44AB(a)
 cash_share_limit_bp = 500                         # 5% of receipts and of payments, each
 authority = "s.44AB(a) and its proviso"
+status = "verified"
+
+[s40a3]
+limit_per_person_per_day_paise = 10_000_00
+goods_carriage_limit_paise = 35_000_00            # proviso to s.40A(3), not Rule 6DD(k)
+excluded_group_roles = ["capital", "loans_liability", "loans_advances_asset", "fixed_assets", "duties_taxes"]
+authority = "s.40A(3), its proviso; Rule 6DD for the CA"
+status = "verified"
+
+[s269st]
+limit_per_person_per_day_paise = 2_00_000_00      # limb (i) only is testable on books
+authority = "s.269ST(a)"
+status = "verified"
+
+[s269ss_269t]
+limit_paise = 20_000_00
+authority = "s.269SS, s.269T"
 status = "verified"

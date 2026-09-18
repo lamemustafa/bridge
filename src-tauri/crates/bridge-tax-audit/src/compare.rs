@@ -12,12 +12,36 @@ use serde_json::Value as Json;
 
 const NUMERIC_UNITS: [&str; 4] = ["paise", "bp", "count", "days"];
 
-/// The reference implementation's own minimum-figure-count default: anchored to the reference
-/// fixture's figure counts.
+/// A minimum figure count below which a dump cannot be trusted as complete, one entry per test
+/// id. `cash_44ab` always emits exactly 7 figures regardless of the book, so its fixture total
+/// and its structural floor are the same number.
+///
+/// `cash_payments_40a3` is not, and its 18 here is a DIFFERENT KIND of number from the reference
+/// Python implementation's own `DEFAULT_MIN_FIGURES["cash_payments_40a3"] = 28`
+/// (`tae/parity/compare.py`): that 28 is fixture-anchored -- it is the synthetic fixture's own
+/// actual figure count as of the commit that set it, chosen so the floor fails loudly if the
+/// fixture or the engine ever drifts the count without the constant being updated to match, and
+/// it moves (28 -> some other number) every time this crate's own synthetic fixture gains or
+/// loses figures, exactly as the 40 -> 49 in `tests/parity_40a3.rs` just did.
+///
+/// This 18 is STRUCTURAL instead: it is the count this module always emits regardless of the
+/// book's content, computed from the code, not read off any one fixture -- 4 s.40A(3) summary
+/// figures, plus 5 `s40a3_excluded_total_<kind>` figures (one per entry in
+/// `rules.s40a3.excluded_group_roles`, which the vendored AY 2026-27 rules always list as five:
+/// capital, loans_liability, loans_advances_asset, fixed_assets, duties_taxes -- even a kind with
+/// no rows still emits its total as zero), plus 3 s.269ST receipt summary figures, 3 s.269ST
+/// payment summary figures and 3 s.269SS/269T summary figures: 4 + 5 + 3 + 3 + 3 = 18. On top of
+/// that structural floor, the module emits 2 more figures per in-scope s.40A(3) over-limit
+/// payee-day and 1 more per s.269ST/s.269SS/269T row or candidate at or over its own limit -- so
+/// a real book with few such rows legitimately produces far fewer figures than this crate's own
+/// synthetic fixture's total (a three-client local parity run measured a real client at 22,
+/// still full, correct parity), and this 18 never needs to move when that fixture does. 18 is the
+/// right floor for that reason: low enough to admit a quiet real book, still high enough that an
+/// empty or near-empty dump cannot pass.
 pub fn default_min_figures(test_id: &str) -> usize {
     match test_id {
         "cash_44ab" => 7,
-        "cash_payments_40a3" => 28,
+        "cash_payments_40a3" => 18,
         _ => 1,
     }
 }

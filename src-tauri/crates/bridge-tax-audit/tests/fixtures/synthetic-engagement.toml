@@ -1,5 +1,6 @@
 # Engagement for the synthetic read beside this file. Invented; see PROVENANCE.md.
-# Shape: the keys of a reference-engine client config that cash_44ab reads, and nothing else.
+# Shape: the keys of a reference-engine client config that cash_44ab and cash_payments_40a3 read,
+# and nothing else.
 [client]
 label = "Lakeview Hardware Demo"
 entity_type = "individual"
@@ -17,3 +18,14 @@ allow_unbracketed_read = false
 [roles]
 cash_groups = ["Cash-in-Hand"]
 bank_groups = ["Bank Accounts", "Bank OD A/c"]
+# cash_payments_40a3 only: a role ledger-name set (not a group) excluded from being a s.269ST
+# party, same as a Duties & Taxes line.
+round_off_ledgers = ["Round Off"]
+
+# cash_payments_40a3 only: [loans.loan_ledgers.<ledger>] names a ledger the client has already
+# configured for the (not yet ported) loans_interest test; "Sunrise NBFC Loan" is covered here,
+# so its s.269SS candidate carries no Clause 31 tag, while "Highway Motors Loan" is deliberately
+# left out, so its s.269T candidate is the one this test tags for Clause 31.
+[loans.loan_ledgers."Sunrise NBFC Loan"]
+lender = "invented NBFC, not a real entity"
+lender_type = "nbfc"

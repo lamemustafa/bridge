@@ -41,7 +41,7 @@ fn synthetic_read_matches_the_python_golden() {
     assert_eq!(rust["rules_version"], "2026-09-17.1");
     assert_eq!(
         figure_mut(&mut rust.clone(), "cash_44ab.cash_receipts")["value"],
-        9_873_457
+        104_373_457
     );
     assert_eq!(
         rust["book_invariant_violations"].as_array().unwrap().len(),
@@ -176,8 +176,8 @@ fn one_paisa_in_the_read_bytes_is_reported() {
     assert!(
         d.iter()
             .any(|l| l.starts_with("cash_44ab.cash_receipts: value differs")
-                && l.contains("9873457")
-                && l.contains("9873458")),
+                && l.contains("104373457")
+                && l.contains("104373458")),
         "{d:?}"
     );
     assert_eq!(
