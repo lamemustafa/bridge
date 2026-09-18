@@ -948,3 +948,32 @@ async fn a_small_book_sends_the_same_voucher_request_as_before_the_bound() {
         );
     }
 }
+
+#[tokio::test]
+async fn a_part_heavier_than_the_sample_raises_the_estimate_for_the_rest() {
+    // The sample measures one ordinary voucher, so the plan fits three a read.
+    // The first day then comes back far heavier per voucher than the sample —
+    // its narrations padded in memory — and the rest of the window is planned
+    // again at that figure. At it the second day no longer fits, so it is
+    // refused rather than sent on the sample's word.
+    let limits = three_a_read();
+    let captured = three_vouchers();
+    let padding = "N".repeat(20_000);
+    let heavy = captured.replace(
+        "<NARRATION TYPE=\"String\">",
+        &format!("<NARRATION TYPE=\"String\">{padding}"),
+    );
+    assert_ne!(heavy, captured);
+    let mut plans = paired(&xml_plan(one_voucher()));
+    plans.extend(paired(&xml_plan(heavy)));
+    let (outcome, observed) = read_window(
+        plans,
+        WindowPlanSource::Counted(two_days_of_three()),
+        limits,
+    )
+    .await;
+    let failure = outcome.err().expect("the rest no longer fits");
+    assert_eq!(failure.code, "voucher_window_day_over_budget");
+    // The sample and the first day were read; the second day never was.
+    assert_eq!(observed.len(), 12);
+}
