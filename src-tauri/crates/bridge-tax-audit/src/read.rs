@@ -26,7 +26,14 @@ use sha2::{Digest, Sha256};
 use crate::error::{AuditError, Result};
 use crate::xml::MAX_CONTENT_BYTES;
 
-const REQUIRED_KINDS: [&str; 5] = ["company", "groups", "ledgers", "trial_balance", "vouchers"];
+const REQUIRED_KINDS: [&str; 6] = [
+    "company",
+    "groups",
+    "ledgers",
+    "trial_balance",
+    "voucher_types",
+    "vouchers",
+];
 const SINGLETON_KINDS: [&str; 10] = [
     "company",
     "company_list",

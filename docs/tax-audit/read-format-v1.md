@@ -178,7 +178,7 @@ path.
 | C1 | Schema-valid; `format = "tally-read"`; major version 1 (any minor). Unknown fields and kinds are ignored |
 | C2 | Paths are relative and inside the read, with no `.` or `..` segment, no backslash and no symlink anywhere below the read root. `storage` matches the `.gz` suffix. `manifest.json` is a regular file |
 | C3 | For every part, consumed or not: the stored bytes and the decoded content both match their sha256 and length. Decompression is capped at 512 MiB. Each parser's own returned sha256 must equal the manifest's, which closes the gap between verifying a file and parsing it |
-| C4 | Part ids are unique. Singleton kinds appear at most once. `company`, `groups`, `ledgers`, `trial_balance` and at least one `vouchers` part are present. No reference points at an unknown part. A `stock_summary` is selected by exact `as_of` |
+| C4 | Part ids are unique. Singleton kinds appear at most once. `company`, `groups`, `ledgers`, `trial_balance`, `voucher_types` and at least one `vouchers` part are present, and every voucher's type resolves through `voucher_types` to a type that is its own parent (a base type such as Contra). A type that does not resolve, or whose chain repeats, refuses the read (`C4-vtype-unresolved`); it is never read as its own base type. No reference points at an unknown part. A `stock_summary` is selected by exact `as_of` |
 | C5 | The company part's GUID equals `company.guid`. The read's period equals the client's period |
 | C6 | High-water bracket (section 4) |
 | C7 | Voucher windows are sorted, disjoint and contiguous, and their union is exactly the period |

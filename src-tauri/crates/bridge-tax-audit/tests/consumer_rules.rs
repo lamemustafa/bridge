@@ -61,6 +61,36 @@ fn c4_a_missing_required_kind_is_refused() {
 }
 
 #[test]
+fn c4_a_read_without_voucher_types_is_refused() {
+    let scratch = common::ScratchRead::new("c4-voucher-types");
+    let mut m = scratch.manifest();
+    m["parts"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|p| p["kind"] != "voucher_types");
+    scratch.set_manifest(&m);
+    assert_eq!(code_of(common::run(&scratch.dir, false)), "C4-required");
+}
+
+#[test]
+fn c4_a_voucher_type_that_does_not_resolve_is_refused_not_read_as_its_own_base() {
+    // "Bank Transfer" is a Contra-derived type the synthetic vouchers use. Without its
+    // definition it would otherwise be read as a base type of its own and counted as a real
+    // receipt or payment.
+    let scratch = common::ScratchRead::new("c4-vtype");
+    scratch.edit_part(
+        "voucher-types",
+        "NAME=\"Bank Transfer\"",
+        "NAME=\"Bank Transfer (renamed)\"",
+        true,
+    );
+    assert_eq!(
+        code_of(common::run(&scratch.dir, false)),
+        "C4-vtype-unresolved"
+    );
+}
+
+#[test]
 fn c5_a_company_part_for_another_guid_is_refused() {
     let scratch = common::ScratchRead::new("c5");
     let mut m = scratch.manifest();

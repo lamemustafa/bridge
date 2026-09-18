@@ -273,7 +273,8 @@ fn load_tb(root: &Element, part: &str) -> Result<BTreeMap<String, TbRow>> {
 }
 
 /// Voucher type name to its base type (Sales, Payment, Contra, ...), following PARENT until a
-/// type is its own parent or the chain repeats.
+/// type is its own parent. A chain that repeats never reaches a base type, so its names are left
+/// out, and a voucher of that type is refused rather than given a guessed base type.
 fn base_types(root: &Element) -> BTreeMap<String, String> {
     let mut parents = BTreeMap::new();
     for vt in root.descendants_named("VOUCHERTYPE") {
@@ -292,7 +293,9 @@ fn base_types(root: &Element) -> BTreeMap<String, String> {
             seen.insert(cur.clone());
             cur.clone_from(&parents[&cur]);
         }
-        out.insert(name.clone(), cur);
+        if parents.get(&cur) == Some(&cur) {
+            out.insert(name.clone(), cur);
+        }
     }
     out
 }
@@ -427,11 +430,20 @@ fn load_vouchers(
             "" => v.attr("REMOTEID").unwrap_or_default(),
             guid => guid,
         };
+        // A type the voucher_types part cannot resolve is refused, never read as its own base
+        // type: a custom-named Contra type ("Bank Transfer") would otherwise count as a real
+        // receipt or payment and move cash_44ab's shares with no warning.
+        let Some(base_type) = base.get(vtype) else {
+            return Err(AuditError::refused(
+                "C4-vtype-unresolved",
+                format!("{part}: voucher type {vtype:?} does not resolve to a base type"),
+            ));
+        };
         vouchers.push(Voucher {
             guid: guid.to_string(),
             date,
             vtype: vtype.to_string(),
-            base_type: base.get(vtype).map_or(vtype, String::as_str).to_string(),
+            base_type: base_type.clone(),
             number: v.child_text("VOUCHERNUMBER").to_string(),
             status,
             lines,
@@ -457,10 +469,8 @@ pub fn load_book(read: &Read, company_name: &str) -> Result<Book> {
     let ledgers = load_ledgers(&xml::read(&lp.content, &lp.id)?, &groups, &lp.id)?;
     let tp = required(read, "trial_balance")?;
     let tb = load_tb(&xml::read(&tp.content, &tp.id)?, &tp.id)?;
-    let base = match read.one("voucher_types") {
-        Some(p) => base_types(&xml::read(&p.content, &p.id)?),
-        None => BTreeMap::new(),
-    };
+    let vp = required(read, "voucher_types")?;
+    let base = base_types(&xml::read(&vp.content, &vp.id)?);
     let side = read
         .one("voucher_status_list")
         .map(load_side_list)
