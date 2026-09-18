@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, fmt::Write as _};
 
 #[cfg(test)]
 use std::cell::Cell;
@@ -69,8 +69,54 @@ fn find_numeric_reference_terminator(reference: &str) -> Option<usize> {
     search.find(';')
 }
 
+/// Mark every numeric character reference to a code point XML 1.0 forbids.
+///
+/// Tally writes references XML 1.0 forbids -- `&#4;` before its reserved
+/// values, as in `&#4; Primary` -- so a strict parser refuses an ordinary
+/// response (`docs/tally/TALLY_PROTOCOL_REFERENCE.md` §1.1(a); this rule is
+/// §1.1(d)). The rewrite runs on decoded text before parsing and changes only
+/// two atom forms:
+///
+/// - A decimal or hexadecimal (`x` or `X`) reference whose code point is not an
+///   XML 1.0 `Char` (a C0 control other than tab, LF and CR, a surrogate,
+///   U+FFFE, U+FFFF, or anything beyond U+10FFFF) becomes the literal text
+///   U+FFFD `#` *n* `;`, with *n* in decimal. `&#4; Primary` becomes
+///   `"\u{fffd}#4; Primary"`, whose prefix is [`crate::TALLY_SANITIZED_ROOT_MARKER`].
+/// - A U+FFFD already in the text -- literal, or a legal reference to it --
+///   that is directly followed by `#`, one or more ASCII digits and `;` within
+///   twelve bytes becomes U+FFFD `#65533;`. Every marker the rewrite emits
+///   therefore denotes exactly one source atom, and the rewrite is reversible.
+///
+/// Everything else is left for the XML parser: legal references, raw
+/// characters (C0 controls included), and a `&#` whose `;` is not within the
+/// twelve bytes that follow it. The rewrite neither refuses nor strips; a
+/// caller that refuses raw U+0000, U+FFFE or U+FFFF does so itself.
+///
+/// ```
+/// use bridge_tally_protocol::{mark_forbidden_numeric_references, TALLY_SANITIZED_ROOT_MARKER};
+///
+/// let marked = mark_forbidden_numeric_references("<PARENT>&#4; Primary</PARENT>");
+/// assert_eq!(marked, "<PARENT>\u{fffd}#4; Primary</PARENT>");
+/// assert!(marked["<PARENT>".len()..].starts_with(TALLY_SANITIZED_ROOT_MARKER));
+///
+/// // A literal U+FFFD that could be read as a marker is escaped, not merged.
+/// assert_eq!(
+///     mark_forbidden_numeric_references("\u{fffd}#4;"),
+///     "\u{fffd}#65533;#4;"
+/// );
+///
+/// // Text with nothing to mark is borrowed, not copied.
+/// assert!(matches!(
+///     mark_forbidden_numeric_references("<A>&#9;&amp;</A>"),
+///     std::borrow::Cow::Borrowed(_)
+/// ));
+/// ```
+pub fn mark_forbidden_numeric_references(xml: &str) -> Cow<'_, str> {
+    rewrite_forbidden_numeric_references(xml, || {}, None)
+}
+
 pub(crate) fn sanitize_invalid_numeric_references(xml: &str) -> Cow<'_, str> {
-    sanitize_invalid_numeric_references_with_marker_search_observer(xml, || {})
+    mark_forbidden_numeric_references(xml)
 }
 
 /// One sanitizer replacement: sanitized-text bytes `[output_start, output_end)`
@@ -157,85 +203,19 @@ impl<'a> SanitizedXml<'a> {
 }
 
 pub(crate) fn sanitize_invalid_numeric_references_with_provenance(xml: &str) -> SanitizedXml<'_> {
-    let sanitized = sanitize_invalid_numeric_references(xml);
-    let Cow::Owned(text) = sanitized else {
+    // The rewrite records each span as it emits it, so the provenance map is
+    // the rewrite's own account of what it changed rather than a second parse
+    // of the same grammar that could stop, or continue, somewhere else.
+    let mut repairs = Vec::new();
+    let text = rewrite_forbidden_numeric_references(xml, || {}, Some(&mut repairs));
+    if let Cow::Borrowed(_) = text {
+        debug_assert!(repairs.is_empty());
         return SanitizedXml {
             original: xml,
-            text: Cow::Borrowed(xml),
+            text,
             repairs: None,
         };
-    };
-
-    // The sanitizer changes only two source atom forms.  Replaying that small
-    // grammar gives every repaired-parser offset its raw-wire boundary. Only
-    // the repaired spans themselves are recorded -- untouched runs between
-    // repairs need no entry because `resolve_original_offset` derives their
-    // mapping from the drift left by the nearest preceding repair.
-    let mut source = 0;
-    let mut output = 0;
-    let mut repairs = Vec::new();
-    while source < xml.len() {
-        let source_tail = &xml[source..];
-        let output_tail = &text[output..];
-        // A literal U+FFFD is expanded whenever the ORIGINAL text after it
-        // collides with the marker form -- i.e. matches `#<digits>;` for ANY
-        // digit sequence, not only `#65533;`. This must call the exact same
-        // `collides_with_marker_form` predicate the sanitizer uses (see the
-        // marker-search branch above `sanitize_invalid_numeric_references_with_marker_search_observer`),
-        // or the two can silently drift apart again.
-        if source_tail.starts_with('\u{fffd}')
-            && collides_with_marker_form(&source_tail['\u{fffd}'.len_utf8()..])
-            && output_tail.starts_with("\u{fffd}#65533;")
-        {
-            let replacement_len = "\u{fffd}#65533;".len();
-            let source_end = source + '\u{fffd}'.len_utf8();
-            repairs.push(RepairSpan {
-                output_start: output,
-                output_end: output + replacement_len,
-                source_start: source,
-                source_end,
-            });
-            source = source_end;
-            output += replacement_len;
-            continue;
-        }
-        if source_tail.starts_with("&#") {
-            if let Some(relative_end) = find_numeric_reference_terminator(&source_tail[1..]) {
-                let token_end = source + 1 + relative_end;
-                let token = &xml[source + 2..token_end];
-                let parsed = token
-                    .strip_prefix('x')
-                    .or_else(|| token.strip_prefix('X'))
-                    .and_then(|hex| u32::from_str_radix(hex, 16).ok())
-                    .or_else(|| token.parse::<u32>().ok());
-                let source_end = token_end + 1;
-                let ambiguous_replacement =
-                    parsed == Some(0xfffd) && collides_with_marker_form(&xml[source_end..]);
-                if parsed.is_some_and(|value| !is_xml_10_char(value)) || ambiguous_replacement {
-                    let replacement_len =
-                        "\u{fffd}".len() + format!("#{};", parsed.unwrap_or_default()).len();
-                    repairs.push(RepairSpan {
-                        output_start: output,
-                        output_end: output + replacement_len,
-                        source_start: source,
-                        source_end,
-                    });
-                    source = source_end;
-                    output += replacement_len;
-                    continue;
-                }
-            }
-        }
-        let width = source_tail
-            .chars()
-            .next()
-            .expect("source is non-empty")
-            .len_utf8();
-        source += width;
-        output += width;
     }
-    debug_assert_eq!(output, text.len());
-    debug_assert_eq!(source, xml.len());
     debug_assert_eq!(
         resolve_original_offset(&repairs, text.len(), text.len()),
         Some(xml.len()),
@@ -243,15 +223,48 @@ pub(crate) fn sanitize_invalid_numeric_references_with_provenance(xml: &str) -> 
     );
     SanitizedXml {
         original: xml,
-        text: Cow::Owned(text),
+        text,
         repairs: Some(repairs),
     }
 }
 
+#[cfg(test)]
 fn sanitize_invalid_numeric_references_with_marker_search_observer(
     xml: &str,
-    mut observe_replacement_marker_search: impl FnMut(),
+    observe_replacement_marker_search: impl FnMut(),
 ) -> Cow<'_, str> {
+    rewrite_forbidden_numeric_references(xml, observe_replacement_marker_search, None)
+}
+
+/// Append one replacement to `target`, recording its span when asked.
+fn emit_replacement(
+    target: &mut String,
+    repairs: &mut Option<&mut Vec<RepairSpan>>,
+    source: std::ops::Range<usize>,
+    code_point: u32,
+) {
+    let output_start = target.len();
+    target.push('\u{fffd}');
+    // `write!` to a `String` cannot fail.
+    let _ = write!(target, "#{code_point};");
+    if let Some(repairs) = repairs {
+        repairs.push(RepairSpan {
+            output_start,
+            output_end: target.len(),
+            source_start: source.start,
+            source_end: source.end,
+        });
+    }
+}
+
+/// The one implementation of the rewrite. `repairs`, when given, receives
+/// every replacement span in emission order; provenance is built from those
+/// spans and from nothing else.
+fn rewrite_forbidden_numeric_references<'a>(
+    xml: &'a str,
+    mut observe_replacement_marker_search: impl FnMut(),
+    mut repairs: Option<&mut Vec<RepairSpan>>,
+) -> Cow<'a, str> {
     let mut scan = 0_usize;
     let mut copy_from = 0_usize;
     let mut output = None::<String>;
@@ -287,15 +300,19 @@ fn sanitize_invalid_numeric_references_with_marker_search_observer(
             // through the same grammar; this keeps the transformation
             // injective even for source containing the previous `\u{fffd}#4;`
             // representation.
-            target.push('\u{fffd}');
-            target.push_str("#65533;");
+            emit_replacement(target, &mut repairs, start..after, 0xfffd);
             copy_from = after;
             scan = after;
             continue;
         }
 
         let Some(relative_end) = find_numeric_reference_terminator(&xml[start + 1..]) else {
-            break;
+            // No `;` within the longest reference this rewrite accepts. This
+            // `&#` is not a reference the rewrite can judge, so it is left as
+            // written for the XML parser; the scan continues after it, so a
+            // later forbidden reference is still marked.
+            scan = start + "&#".len();
+            continue;
         };
         let end = start + 1 + relative_end;
         let token = &xml[start + 2..end];
@@ -304,13 +321,16 @@ fn sanitize_invalid_numeric_references_with_marker_search_observer(
             .or_else(|| token.strip_prefix('X'))
             .and_then(|hex| u32::from_str_radix(hex, 16).ok())
             .or_else(|| token.parse::<u32>().ok());
-        let illegal = parsed.is_some_and(|value| !is_xml_10_char(value));
-        // A legal reference to U+FFFD decodes to the marker character, so it is
-        // ambiguous under exactly the same condition as a literal one -- and
-        // only then. Rewriting it unconditionally corrupts a legitimate value.
-        let ambiguous_replacement =
-            parsed == Some(0xfffd) && collides_with_marker_form(&xml[end + 1..]);
-        if illegal || ambiguous_replacement {
+        let replaced = match parsed {
+            Some(value) if !is_xml_10_char(value) => Some(value),
+            // A legal reference to U+FFFD decodes to the marker character, so
+            // it is ambiguous under exactly the same condition as a literal
+            // one -- and only then. Rewriting it unconditionally corrupts a
+            // legitimate value.
+            Some(0xfffd) if collides_with_marker_form(&xml[end + 1..]) => Some(0xfffd),
+            _ => None,
+        };
+        if let Some(code_point) = replaced {
             let target = output.get_or_insert_with(|| String::with_capacity(xml.len()));
             target.push_str(&xml[copy_from..start]);
             // Preserve the numeric identity in a self-escaping marker.
@@ -319,8 +339,7 @@ fn sanitize_invalid_numeric_references_with_marker_search_observer(
             // text already holding that marker. Literal U+FFFD is encoded
             // above as `U+FFFD#65533;`, so every emitted `U+FFFD#<n>;` denotes
             // exactly one source atom while remaining XML-1.0 legal.
-            target.push('\u{fffd}');
-            target.push_str(&format!("#{};", parsed.unwrap_or_default()));
+            emit_replacement(target, &mut repairs, start..end + 1, code_point);
             copy_from = end + 1;
         }
         scan = end + 1;
