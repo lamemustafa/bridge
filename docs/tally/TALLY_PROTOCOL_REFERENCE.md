@@ -738,6 +738,43 @@ group's `PARENT` is the control-marked reserved root of §1.1, not the word `Pri
 
 ---
 
+### 8.2c `REFERENCE`, `ISPOSTDATED`, `ISINVOICE`, `PARTYGSTIN` on the voucher `FETCH` — **VERIFIED presence 2026-09-18; `PARTYGSTIN` population UNVERIFIED**
+
+**Scope: TallyPrime 7.1 Silver, licensed, `education_mode: false`, synthetic company
+`BRIDGE SHAPE LAB`, twelve one-month voucher windows (2025-04 through 2026-03), 67 vouchers
+total.** Requests and responses retained with request/response SHA-256 in the capture manifest.
+
+Adding `REFERENCE,ISPOSTDATED,ISINVOICE,PARTYGSTIN` to the end of the voucher `FETCH` list (after
+`ALLLEDGERENTRIES.*`) returned cleanly on every window; none of the four altered the shape of any
+other field or the response's `STATUS`. Per field, counted exactly across all 67 vouchers:
+
+- **`REFERENCE`** (`TYPE="String"`, the same shape `NARRATION` uses): populated on 9 of 67 rows,
+  every one carrying the literal value `SHAPELAB-MANUAL-1`; empty
+  (`<REFERENCE TYPE="String"></REFERENCE>`) on the remaining 58. Both shapes are structurally
+  identical to `NARRATION`'s already-handled empty/populated cases.
+- **`ISPOSTDATED`** (`TYPE="Logical"`): `No` on 66 rows, `Yes` on 1 (the 2025-06 window). This is
+  live corroboration — not just the wire-request change a prior commit made — that this
+  release/licence does assert the tag when it is requested; it does not establish that every
+  release ever asserts it, which is exactly the case the parser's optional-field handling (empty
+  or absent means "not observed", never `false`) defends against.
+- **`ISINVOICE`**: unlike the other three logicals here, Tally emits this **without** a
+  `TYPE="Logical"` attribute on all 67 rows — always exactly `<ISINVOICE>No</ISINVOICE>` or
+  `<ISINVOICE>Yes</ISINVOICE>` (16 `Yes`, 51 `No`), never with a `TYPE` attribute at all. Bridge's
+  scalar admission matches on tag name only and never inspects attributes, so the missing `TYPE`
+  does not change how it is read.
+- **`PARTYGSTIN`** (`TYPE="String"`): the tag is present and well-formed on all 67 rows, but
+  **empty on every one** — this synthetic company's party ledgers carry no GSTIN. The capture
+  proves the tag round-trips through this FETCH list; it does not establish what a populated
+  value looks like on the wire. Treat presence and the empty case as **VERIFIED**, a populated
+  value as **UNVERIFIED**.
+
+No fixture in this repository was captured with this FETCH list before this date. `REFERENCE`,
+`ISINVOICE` and `PARTYGSTIN` are proven at the parser layer by fault-injecting these exact
+observed shapes (empty and `SHAPELAB-MANUAL-1`/`Yes`/`No`) into an existing captured voucher
+fixture, following §8.2a's own convention for a shape not yet exercised in the committed corpus.
+
+---
+
 ### 8.3 GST duty head — the vocabulary is irregular and `TAXTYPE` qualifies it — **VERIFIED 2026-09-12; single instance**
 
 **Scope: TallyPrime 7.1 Silver, licensed, one company, 28 ledger masters.** Captured from
@@ -3310,3 +3347,4 @@ UI. Deletion was not exercised at all. Per P6, neither may be built upon.
 | 2026-09-10 | Added §9.13's Payment/Receipt/Contra import shapes from a licensed 7.1 Gold bank-statement import, and §8.2b's `RESERVEDNAME` group-identity rule that its cash/bank gate is built on. |
 | 2026-09-11 | Extended §12a.9 to TallyPrime 7.1 licensed Silver and the `StandardLedgerCatalogV1` profile from a live rename/restore capture (VERIFIED), and recorded three structural facts with separate markers: ledger `RESERVEDNAME` follows the same reserved/not-reserved convention as groups, one of nine populated (VERIFIED), company-scoped ledger GUIDs (PARTIAL — verified on all nine rows of one company). XML-driven rename and deletion remain UNVERIFIED. A later revision the same day withdrew a `CMPINFO` alteration-counter claim that the committed fixtures did not support. |
 | 2026-09-11 | Narrowed §9.13's company-guard paragraph to match §9.11d: which *kind* of mismatched `SVCURRENTCOMPANY` posts silently is UNVERIFIED, so the classification by name shape was withdrawn, and the pre-write check was corrected from the GUID alone to the whole §9.11b identity tuple. |
+| 2026-09-18 | Added §8.2c: `REFERENCE`/`ISPOSTDATED`/`ISINVOICE`/`PARTYGSTIN` added to the voucher `FETCH` list and captured on licensed TallyPrime 7.1 Silver (`BRIDGE SHAPE LAB`, 67 vouchers, twelve windows). `ISINVOICE` never carries `TYPE="Logical"`, unlike the other three; `PARTYGSTIN` round-trips but was empty on every observed row (population UNVERIFIED). |

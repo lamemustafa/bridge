@@ -27,8 +27,19 @@ use super::*;
 /// to accept. Allow-listing the tag in `agent_voucher_scalars.rs` without
 /// asking for it here would make `post_dated` permanently absent — a
 /// wired-looking field that never fires.
+///
+/// `REFERENCE`, `ISINVOICE` and `PARTYGSTIN` are requested for the same
+/// reason, added after `ALLLEDGERENTRIES.*` to match the order proven on the
+/// wire in protocol reference §8.2c (TallyPrime 7.1 Silver, licensed,
+/// `BRIDGE SHAPE LAB`, 2026-09-18): all three round-trip cleanly alongside
+/// the existing fields, `ISINVOICE` is the one logical here Tally emits
+/// without a `TYPE="Logical"` attribute (irrelevant to parsing, which
+/// matches on tag name only), and `PARTYGSTIN` was structurally present but
+/// empty on every voucher in that capture — its population is unverified,
+/// not its presence.
 const AGENT_VOUCHER_FETCH: &str = "DATE,VOUCHERNUMBER,VOUCHERTYPENAME,PARTYLEDGERNAME,NARRATION,\
-GUID,ALTERID,MASTERID,ISCANCELLED,ISOPTIONAL,ISPOSTDATED,ALLLEDGERENTRIES.*";
+GUID,ALTERID,MASTERID,ISCANCELLED,ISOPTIONAL,ISPOSTDATED,ALLLEDGERENTRIES.*,\
+REFERENCE,ISINVOICE,PARTYGSTIN";
 
 /// The FETCH list for `ledger_movement`, which DISCARDS bill allocations.
 ///

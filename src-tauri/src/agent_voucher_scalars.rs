@@ -16,6 +16,9 @@ pub(in crate::agent) fn is_voucher_scalar(field: &str) -> bool {
             | "ISCANCELLED"
             | "ISOPTIONAL"
             | "ISPOSTDATED"
+            | "REFERENCE"
+            | "ISINVOICE"
+            | "PARTYGSTIN"
     )
 }
 
