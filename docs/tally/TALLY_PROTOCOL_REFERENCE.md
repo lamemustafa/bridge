@@ -2848,6 +2848,107 @@ the only way to avoid paying 22 s to discover that nothing changed.
 reads) · 21,532 wildcard. Segment sizing can be derived from a single sample read with
 confidence.
 
+## 11c. A windowed voucher read is bounded before it is sent — **rule; the measurements below are VERIFIED, the bound's own requests are UNVERIFIED live**
+
+### 11c.1 What was measured
+
+**VERIFIED**, measured on a licensed lab gateway the week of 2026-09-14. Figures are UTF-8 bytes
+unless marked; Bridge's wire is UTF-16LE (§1.2), which costs exactly twice as much.
+
+- **Response size follows vouchers returned, not window width**, with a fixed per-request overhead
+  of about 0.15 s. This repeats §11b.4 and §12a.8 on more books.
+- **Bytes per voucher depend on the book and on the request shape:**
+
+  | Book | Shape | Bytes per voucher |
+  | --- | --- | --- |
+  | Synthetic, accounting-only | named ledger-entry fields | ~4.7 KB |
+  | Larger accounting book | named ledger-entry fields | ~6.7 KB |
+  | Inventory-heavy trading book, whole year (16,367 vouchers, 587 MB) | named ledger-entry fields | **35.0 KB** mean |
+  | Same book, one day (41 vouchers) | named ledger-entry fields | 28 KB |
+  | Same book, one day | `ALLLEDGERENTRIES.*` entry wildcard | ~128 KB |
+
+- **A one-day probe understated the year on that book** (28 KB against a 35.0 KB mean). A single
+  small sample is not a reliable estimator on its own.
+- **Half-month windows were barely inside the cap.** With named fields the heaviest half-month of
+  that year reached 98.4% of Bridge's 32 MiB transport cap. It succeeded; it had no margin.
+- **Month-scale entry-wildcard windows on that book returned hundreds of megabytes and took
+  minutes.** A response that large can fail mid-transfer, and afterwards the gateway can stop
+  accepting connections for every company for tens of minutes; a client that gives up does not stop
+  Tally (§11b.2). The reproducing detail is deliberately not recorded here.
+
+### 11c.2 Why the existing limits do not protect Tally
+
+Bridge's response cap (`XML_RESPONSE_MAX_BYTES`, 32 MiB) and per-leg deadline (20 s) are enforced
+on the response, client-side. By the time either trips, Tally has already committed to building the
+whole response and will finish it regardless (§11b.1, §11b.2). They protect Bridge's memory and its
+caller; they cannot protect the gateway. The only bound that protects Tally is one applied before a
+request is sent — which is what §11b.2's "never issue a read you cannot afford to wait out" and
+§12a.8's pre-flight count already ask for.
+
+### 11c.3 The rule
+
+Before a windowed voucher read, predict its response and divide the window so that no single
+request is predicted over a budget well below the cap.
+
+1. **Budget.** Half the transport cap, in encoded wire bytes: 16 MiB. The prediction is an
+   estimate (§12a.8), and the other half is what absorbs its error before the cap does.
+2. **Vouchers in the window, cheapest estimate first.**
+   - The company's voucher high-water mark, `ALTVCHID` (§10), bounds the whole book: every voucher
+     carries an AlterID no greater than it. If the mark times the shape's conservative per-voucher
+     cost fits the budget, no window of the book can exceed it, and the window is sent **undivided,
+     exactly as before**. A company that has never held a voucher omits `ALTVCHID`; that is a zero.
+   - Otherwise, a **census** of the window: one row per voucher carrying only `GUID`, `ALTERID` and
+     `DATE` (the §12.7 witness fetch), filtered by the window's `$Date` bounds **and** an AlterID
+     span. The span is what bounds the census itself: with distinct AlterIDs it cannot return more
+     rows than the span is wide, however dense the window, so the book is censused in spans each
+     sized under the budget at a conservative census cost. The census gives a count per day.
+   - A caller already holding such a witness count for the same window may supply it instead, and
+     no census is sent. A count that names a day outside the window is refused.
+3. **Bytes per voucher for the request shape.**
+   - Measured per book, per call, from a **bounded sample**: the highest AlterIDs in each third of
+     the window's census, read in the real shape and narrowed to those AlterID spans, so the sample
+     cannot exceed the budget even at the conservative cost. The heaviest third is planned at
+     **1.5 times** its measured figure. That margin is deliberate, because the sample is not the
+     book.
+   - As parts of the window are read, a part heavier than the planning figure raises it, and the
+     rest of the window is planned again. The figure is never lowered within a call, and nothing is
+     remembered between calls.
+   - When nothing can be measured, a **conservative per-shape default** above the heaviest figure
+     measured for that shape: 96 KiB per voucher on the wire for named ledger-entry fields (48 KiB of
+     UTF-8, against a 35.0 KB measured mean) and 384 KiB for the entry wildcard (192 KiB of UTF-8,
+     against ~128 KB measured). Unknown is never treated as small.
+4. **Divide by date, greedily.** Days are packed in order into contiguous ranges, each predicted
+   within the budget. The ranges tile the window exactly — no gap, no overlap — so reading every
+   range observes the same vouchers one undivided read would. A day without vouchers joins whichever
+   range it falls in.
+5. **Refuse by name, before any data read,** rather than send:
+   - `voucher_window_day_over_budget` — one day alone is predicted over the budget. A date window
+     cannot divide a day.
+   - `voucher_window_too_many_reads` — the window needs more than 128 reads.
+   - `voucher_window_volume_unestimated` — the high-water mark could not be observed, the book needs
+     more than 32 census spans, or a census could not be read. An unestimated window is exactly the
+     unbounded request this rule exists to stop.
+6. **A corroborating second read replays the first read's ranges** rather than planning again, so
+   two reads compared by hash are compared part for part.
+7. **The transport cap remains the final safeguard.** Where a caller already divided a window after
+   a deadline or an oversized response (#485, the import-verification read), it still does.
+
+### 11c.4 What this does not establish
+
+- **UNVERIFIED live:** the census request and the AlterID-narrowed sample have not been sent to a
+  live gateway. Each is assembled from parts verified separately — the `$Date` filter (§5.2), the
+  AlterID filter (§10.1, and as a range in §12a.8), the witness fetch (§12.7) — which is not the
+  same as the combination being verified (principle P6).
+- **UNVERIFIED on these books:** the census row cost. About 1.2 KB of UTF-8 per row was measured on
+  other books (§11a, §11b, §12a.8); the rule plans at 4 KiB on the wire.
+- **`ALTVCHID` as a count bound** rests on AlterIDs being distinct and no greater than the mark.
+  §10 supports that; it has not been checked against a counted book with migrated or restored data.
+- **Elapsed time is not bounded by bytes.** §12a.8 records a fixed scan cost per request that
+  division pays again; a census of a wide window on a large book pays one scan per span. The per-leg
+  deadline still applies to every request the rule sends.
+- **Encoding of the 2026-09 figures.** The rule doubles UTF-8 figures for the wire. Which encoding
+  each figure above was captured in is to be confirmed in live qualification.
+
 ## 11a. Scale measurements — 11,287-voucher corpus
 
 **VERIFIED 2026-07-29** on a generated production-shaped corpus: 25 customers and 15
@@ -3376,3 +3477,4 @@ UI. Deletion was not exercised at all. Per P6, neither may be built upon.
 | 2026-09-11 | Narrowed §9.13's company-guard paragraph to match §9.11d: which *kind* of mismatched `SVCURRENTCOMPANY` posts silently is UNVERIFIED, so the classification by name shape was withdrawn, and the pre-write check was corrected from the GUID alone to the whole §9.11b identity tuple. |
 | 2026-09-18 | Added §8.2c: `REFERENCE`/`ISPOSTDATED`/`ISINVOICE`/`PARTYGSTIN` added to the voucher `FETCH` list and captured on licensed TallyPrime 7.1 Silver (`BRIDGE SHAPE LAB`, 67 vouchers, twelve windows). `ISINVOICE` never carries `TYPE="Logical"`, unlike the other three; `PARTYGSTIN` round-trips but was empty on every observed row (population UNVERIFIED). |
 | 2026-09-18 | Added §1.1(d): the rule `mark_forbidden_numeric_references` applies before parsing, now public in `bridge-tally-protocol`, including that a `&#` with no `;` in its window no longer ends the rewrite. |
+| 2026-09-18 | Added §11c: the pre-flight volume bound for windowed voucher reads, with the bytes-per-voucher measurements behind it (a whole-year 35.0 KB mean on an inventory-heavy book, understated by a one-day probe; half-month windows at 98.4% of the cap). The measurements are VERIFIED; the census and sample requests the rule sends are UNVERIFIED live. |
