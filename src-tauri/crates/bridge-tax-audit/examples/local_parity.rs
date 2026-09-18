@@ -7,15 +7,23 @@
 //!     TEST_ID ENGINE_RULES_TOML CLIENT_TOML READ_DIR PYTHON_DUMP_JSON RUST_DUMP_OUT
 //! ```
 //!
-//! `TEST_ID` is `cash_44ab` or `cash_payments_40a3`. `CLIENT_TOML` is the reference engine's
-//! client config; its `[snapshot]` is replaced in memory by `READ_DIR` with
+//! `TEST_ID` is `cash_44ab`, `cash_payments_40a3` or `depreciation`. `CLIENT_TOML` is the
+//! reference engine's client config; its `[snapshot]` is replaced in memory by `READ_DIR` with
 //! `allow_unbracketed_read = true`, the same switch `parity/python_golden.py --read` applies, so
 //! both sides read the same bytes. For `cash_payments_40a3`, `CLIENT_TOML`'s own `[roles]
 //! .round_off_ledgers` and `[loans.loan_ledgers.*]` (both optional) are read the same way
-//! `Engagement::from_toml` reads them for any other engagement. `PYTHON_DUMP_JSON` is that
-//! script's output for the same config, read and test id. `ENGINE_RULES_TOML` is the reference
-//! engine's full rules file: the vendored excerpt must still be a byte-for-byte verbatim part of
-//! it (checked block by block; see `src/rules.rs`) and give the same values.
+//! `Engagement::from_toml` reads them for any other engagement. For `depreciation`,
+//! `CLIENT_TOML`'s own `[depreciation]` table (`block_by_ledger`, `opening_wdv_paise`,
+//! `dep_expense_ledgers`, all REQUIRED, and an optional `put_to_use_by_voucher`) is read the same
+//! way -- note this crate does not resolve `[ledger_ids]`/`[group_ids]` identity-binding
+//! (Bridge ADR 0016) the way the reference engine's `tae/binding.py` does before any test module
+//! sees a client config: a real client TOML's `block_by_ledger`/`dep_expense_ledgers` LABELS must
+//! already equal the read's CURRENT ledger names, or this example and `python_golden.py` (which
+//! also bypasses `bind_config()`) will disagree from the read the config was written against.
+//! `PYTHON_DUMP_JSON` is that script's output for the same config, read and test id.
+//! `ENGINE_RULES_TOML` is the reference engine's full rules file: the vendored excerpt must still
+//! be a byte-for-byte verbatim part of it (checked block by block; see `src/rules.rs`) and give
+//! the same values.
 //!
 //! Prints one summary line, and every difference if there are any; exits non-zero on any
 //! difference or refusal.
@@ -27,7 +35,9 @@ use std::time::Instant;
 use bridge_tax_audit::canonical::hex;
 use bridge_tax_audit::compare::compare;
 use bridge_tax_audit::rules::{Rules, SOURCE_SHA256, VENDORED};
-use bridge_tax_audit::{cash_44ab_on, cash_payments_40a3_on, load_book, Engagement};
+use bridge_tax_audit::{
+    cash_44ab_on, cash_payments_40a3_on, depreciation_on, load_book, Engagement,
+};
 use sha2::{Digest, Sha256};
 
 fn fail(message: impl std::fmt::Display) -> ExitCode {
@@ -58,9 +68,9 @@ fn main() -> ExitCode {
              READ_DIR PYTHON_DUMP_JSON RUST_DUMP_OUT",
         );
     };
-    if test_id != "cash_44ab" && test_id != "cash_payments_40a3" {
+    if !["cash_44ab", "cash_payments_40a3", "depreciation"].contains(&test_id.as_str()) {
         return fail(format!(
-            "unknown TEST_ID {test_id:?}; expected cash_44ab or cash_payments_40a3"
+            "unknown TEST_ID {test_id:?}; expected cash_44ab, cash_payments_40a3 or depreciation"
         ));
     }
 
@@ -111,7 +121,8 @@ fn main() -> ExitCode {
     };
     let rust = match test_id.as_str() {
         "cash_44ab" => cash_44ab_on(&engagement, &book, &rules),
-        _ => cash_payments_40a3_on(&engagement, &book, &rules),
+        "cash_payments_40a3" => cash_payments_40a3_on(&engagement, &book, &rules),
+        _ => depreciation_on(&engagement, &book, &rules),
     };
     let rust = match rust {
         Ok(doc) => doc,

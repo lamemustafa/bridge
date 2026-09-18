@@ -3,19 +3,22 @@
 //!
 //! This slice's end-to-end path: read a tally-read-v1 directory ([`read`], every byte verified
 //! against its manifest), build only the book fields a test needs ([`book`]), evaluate the book
-//! and result invariants ([`invariants`]), run a test ([`cash_44ab`], [`cash_payments_40a3`])
-//! with rule values from a vendored rules excerpt ([`rules`]), and serialise the result
-//! canonically ([`canonical`]) so [`compare`] can diff it against the reference engine's dump
-//! under the same rules the reference's own comparer applies.
+//! and result invariants ([`invariants`]), run a test ([`cash_44ab`], [`cash_payments_40a3`],
+//! [`depreciation`]) with rule values from a vendored rules excerpt ([`rules`]), and serialise the
+//! result canonically ([`canonical`]) so [`compare`] can diff it against the reference engine's
+//! dump under the same rules the reference's own comparer applies. `depreciation` additionally
+//! carries a module-level invariant (`depreciation::check_invariants`, DEP-1/DEP-2), threaded
+//! through [`canonical::canonical_test_result`]'s `module_check` parameter.
 //!
 //! Nothing here talks to Tally, and nothing here writes. The crate reads files a person (or,
 //! later, Bridge) put on disk.
 //!
-//! **Parity evidence.** `tests/parity.rs` compares this crate's dump over a committed synthetic
-//! read with the reference engine's dump over the same bytes, and proves the comparison can
-//! fail. That is parity on invented data only. The evidence that the slice reads real Tally
-//! books is `examples/local_parity.rs`, run on the machine that holds client reads and never
-//! committed; each change to this crate should record that run's result.
+//! **Parity evidence.** `tests/parity.rs`, `tests/parity_40a3.rs` and `tests/parity_depreciation.rs`
+//! each compare this crate's dump over a committed synthetic read with the reference engine's dump
+//! over the same bytes, and prove the comparison can fail. That is parity on invented data only.
+//! The evidence that the slice reads real Tally books is `examples/local_parity.rs`, run on the
+//! machine that holds client reads and never committed; each change to this crate should record
+//! that run's result.
 //!
 //! **In CI.** The crate is a member of the `src-tauri` Cargo workspace, so the existing
 //! workspace `cargo test`/`clippy`/`fmt` steps, and the dependency-inventory and licence gates,
@@ -26,6 +29,7 @@ pub mod canonical;
 pub mod cash_44ab;
 pub mod cash_payments_40a3;
 pub mod compare;
+pub mod depreciation;
 pub mod error;
 pub mod findings;
 pub mod invariants;
@@ -33,7 +37,7 @@ pub mod read;
 pub mod rules;
 pub mod xml;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use bridge_tally_primitives::TallyDate;
@@ -60,6 +64,26 @@ pub struct Engagement {
     pub bank_groups: Vec<String>,
     pub round_off_ledgers: Vec<String>,
     pub loan_ledgers_configured: Vec<String>,
+    /// `depreciation`-only: `None` when the client config carries no `[depreciation]` table at
+    /// all (an engagement that never runs that test); `Some` once the table is present, at which
+    /// point `block_by_ledger`, `opening_wdv_paise` and `dep_expense_ledgers` are REQUIRED within
+    /// it (the reference engine's own `depreciation_config` raises on a missing key rather than
+    /// defaulting it -- unlike `round_off_ledgers`/`loan_ledgers_configured` above, "nothing
+    /// configured" is not a valid state for a client that has fixed assets at all).
+    pub depreciation: Option<DepreciationConfig>,
+}
+
+/// `[depreciation]` from the client config: see [`Engagement::depreciation`].
+#[derive(Debug, Clone, Default)]
+pub struct DepreciationConfig {
+    pub block_by_ledger: BTreeMap<String, String>,
+    pub opening_wdv_paise: BTreeMap<String, i64>,
+    pub dep_expense_ledgers: BTreeSet<String>,
+    /// `[depreciation.put_to_use_by_voucher]`, guid -> date; optional, empty when absent (no
+    /// client TOML configures this key today -- the reference engine's own `pack.py` never
+    /// passes it either -- but `depreciation.py`'s `run()` signature carries it, so this port
+    /// does too).
+    pub put_to_use_by_voucher: BTreeMap<String, TallyDate>,
 }
 
 /// `[snapshot]` keys of the reference engine's legacy raw-export layout. A config naming a read
@@ -141,6 +165,93 @@ impl Engagement {
             .and_then(toml::Value::as_str)
             .filter(|p| !p.is_empty())
             .ok_or_else(|| AuditError::refused("CFG-path", "[snapshot].path is required"))?;
+        let depreciation = cfg
+            .get("depreciation")
+            .and_then(toml::Value::as_table)
+            .map(|dep| -> Result<DepreciationConfig> {
+                let string_map = |key: &str| -> Result<BTreeMap<String, String>> {
+                    dep.get(key)
+                        .and_then(toml::Value::as_table)
+                        .ok_or_else(|| {
+                            AuditError::Config(format!("[depreciation].{key} is not a table"))
+                        })?
+                        .iter()
+                        .map(|(k, v)| {
+                            v.as_str()
+                                .map(|s| (k.clone(), s.to_string()))
+                                .ok_or_else(|| {
+                                    AuditError::Config(format!(
+                                        "[depreciation].{key}.{k} is not a string"
+                                    ))
+                                })
+                        })
+                        .collect()
+                };
+                let int_map = |key: &str| -> Result<BTreeMap<String, i64>> {
+                    dep.get(key)
+                        .and_then(toml::Value::as_table)
+                        .ok_or_else(|| {
+                            AuditError::Config(format!("[depreciation].{key} is not a table"))
+                        })?
+                        .iter()
+                        .map(|(k, v)| {
+                            v.as_integer().map(|n| (k.clone(), n)).ok_or_else(|| {
+                                AuditError::Config(format!(
+                                    "[depreciation].{key}.{k} is not an integer"
+                                ))
+                            })
+                        })
+                        .collect()
+                };
+                let dep_expense_ledgers: BTreeSet<String> = dep
+                    .get("dep_expense_ledgers")
+                    .and_then(toml::Value::as_array)
+                    .ok_or_else(|| {
+                        AuditError::Config(
+                            "[depreciation].dep_expense_ledgers is not a list".to_string(),
+                        )
+                    })?
+                    .iter()
+                    .map(|v| {
+                        v.as_str().map(str::to_string).ok_or_else(|| {
+                            AuditError::Config(
+                                "[depreciation].dep_expense_ledgers holds a non-string".to_string(),
+                            )
+                        })
+                    })
+                    .collect::<Result<_>>()?;
+                let put_to_use_by_voucher = dep
+                    .get("put_to_use_by_voucher")
+                    .and_then(toml::Value::as_table)
+                    .map(|t| -> Result<BTreeMap<String, TallyDate>> {
+                        t.iter()
+                            .map(|(guid, v)| {
+                                let s = v.as_str().ok_or_else(|| {
+                                    AuditError::Config(format!(
+                                        "[depreciation].put_to_use_by_voucher.{guid} is not a \
+string"
+                                    ))
+                                })?;
+                                let d = TallyDate::parse(s.replace('-', "")).map_err(|_| {
+                                    AuditError::Config(format!(
+                                        "[depreciation].put_to_use_by_voucher.{guid} {s:?} is \
+not YYYY-MM-DD"
+                                    ))
+                                })?;
+                                Ok((guid.clone(), d))
+                            })
+                            .collect()
+                    })
+                    .transpose()?
+                    .unwrap_or_default();
+                Ok(DepreciationConfig {
+                    block_by_ledger: string_map("block_by_ledger")?,
+                    opening_wdv_paise: int_map("opening_wdv_paise")?,
+                    dep_expense_ledgers,
+                    put_to_use_by_voucher,
+                })
+            })
+            .transpose()?;
         Ok(Self {
             label: string(client, "label")?,
             assessment_year: string(client, "assessment_year")?,
@@ -166,6 +277,7 @@ impl Engagement {
                 .and_then(toml::Value::as_table)
                 .map(|table| table.keys().cloned().collect())
                 .unwrap_or_default(),
+            depreciation,
         })
     }
 }
@@ -197,7 +309,7 @@ pub fn cash_44ab_on(
     let cash = book.ledgers_under_any(&engagement.cash_groups);
     let bank = book.ledgers_under_any(&engagement.bank_groups);
     let result = cash_44ab::run(book, rules, &cash, &bank)?;
-    canonical::canonical_test_result(book, &result)
+    canonical::canonical_test_result(book, &result, None)
 }
 
 /// Read, verify, build the book, run `cash_44ab` and return its canonical parity dump.
@@ -225,7 +337,7 @@ pub fn cash_payments_40a3_on(
         &loan_ledgers_configured,
         &round_off_ledgers,
     )?;
-    canonical::canonical_test_result(book, &result)
+    canonical::canonical_test_result(book, &result, None)
 }
 
 /// Read, verify, build the book, run `cash_payments_40a3` and return its canonical parity dump.
@@ -234,4 +346,37 @@ pub fn cash_payments_40a3_canonical(
     rules: &Rules,
 ) -> Result<serde_json::Value> {
     cash_payments_40a3_on(engagement, &load_book(engagement)?, rules)
+}
+
+/// Run `depreciation` on a book and return its canonical parity dump. Refuses with
+/// `AuditError::Config` if the engagement carries no `[depreciation]` table, mirroring the
+/// reference engine's own `depreciation_config`/`require` failing loud on a client config that
+/// never named its Fixed Assets blocks (see [`Engagement::depreciation`]).
+pub fn depreciation_on(
+    engagement: &Engagement,
+    book: &book::Book,
+    rules: &Rules,
+) -> Result<serde_json::Value> {
+    let dep = engagement.depreciation.as_ref().ok_or_else(|| {
+        AuditError::Config(
+            "client config missing required key 'depreciation' (no [depreciation] table)"
+                .to_string(),
+        )
+    })?;
+    let result = depreciation::run(
+        book,
+        rules,
+        &engagement.period,
+        &dep.block_by_ledger,
+        &dep.opening_wdv_paise,
+        &dep.dep_expense_ledgers,
+        &dep.put_to_use_by_voucher,
+    )?;
+    let module_check = depreciation::check_invariants(book, &result)?;
+    canonical::canonical_test_result(book, &result, Some(module_check))
+}
+
+/// Read, verify, build the book, run `depreciation` and return its canonical parity dump.
+pub fn depreciation_canonical(engagement: &Engagement, rules: &Rules) -> Result<serde_json::Value> {
+    depreciation_on(engagement, &load_book(engagement)?, rules)
 }

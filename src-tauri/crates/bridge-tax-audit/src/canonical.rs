@@ -112,8 +112,47 @@ fn report(codes: &[&str], violations: Vec<Violation>) -> (Json, Json) {
     (json!(codes), Json::Array(violations))
 }
 
-/// The full canonical dump for one test result on one book.
-pub fn canonical_test_result(book: &Book, result: &TestResult) -> Result<Json> {
+/// The test module's OWN `check_invariants(book, result)`, if it has one, in the standard
+/// 2-arg-in/`Vec<String>`-out shape: `None` when the test has no module-level invariant function
+/// yet (`cash_44ab` and `cash_payments_40a3` do not; both sides of a parity comparison must show
+/// an EMPTY evaluated-codes list for that test until one is added), `Some(violations)` -- even an
+/// empty vec -- once one exists and was evaluated (`depreciation`'s DEP-1/DEP-2). Mirrors the
+/// reference engine's own `module_invariant_report`: a single code `"<test_id>.check_invariants"`
+/// stands for the whole module function, and each returned string becomes one violation with that
+/// code, `result.test_id` as `subject`, and the string itself (NFC-normalised) as `detail`.
+fn module_report(test_id: &str, module_check: Option<Vec<String>>) -> (Json, Json) {
+    match module_check {
+        None => (json!([]), json!([])),
+        Some(raw) => {
+            let code = format!("{test_id}.check_invariants");
+            let mut violations: Vec<Violation> = raw
+                .into_iter()
+                .map(|s| Violation {
+                    invariant: code.clone(),
+                    subject: nfc(test_id),
+                    detail: nfc(&s),
+                })
+                .collect();
+            violations.sort();
+            let violations = violations
+                .into_iter()
+                .map(
+                    |v| json!({"invariant": v.invariant, "subject": v.subject, "detail": v.detail}),
+                )
+                .collect();
+            (json!([code]), Json::Array(violations))
+        }
+    }
+}
+
+/// The full canonical dump for one test result on one book. `module_check` is this test's own
+/// `check_invariants` output, or `None` for a test with no module-level invariant function yet
+/// (see [`module_report`]).
+pub fn canonical_test_result(
+    book: &Book,
+    result: &TestResult,
+    module_check: Option<Vec<String>>,
+) -> Result<Json> {
     let mut figures: Vec<&Figure> = result.figures.iter().collect();
     figures.sort_by(|a, b| a.id.cmp(&b.id));
     let mut findings: Vec<&Finding> = result.findings.iter().collect();
@@ -122,6 +161,7 @@ pub fn canonical_test_result(book: &Book, result: &TestResult) -> Result<Json> {
     let (book_codes, book_violations) = report(&book_codes, book_violations);
     let (result_codes, result_violations) = result_invariants(book, result);
     let (result_codes, result_violations) = report(&result_codes, result_violations);
+    let (module_codes, module_violations) = module_report(&result.test_id, module_check);
     Ok(json!({
         "spec_version": SPEC_VERSION,
         "test_id": result.test_id,
@@ -135,9 +175,7 @@ pub fn canonical_test_result(book: &Book, result: &TestResult) -> Result<Json> {
         "book_invariant_violations": book_violations,
         "result_invariants_evaluated": result_codes,
         "result_invariant_violations": result_violations,
-        // cash_44ab has no module-level check_invariants in either language yet; the spec
-        // requires the empty list on both sides until one exists.
-        "module_invariants_evaluated": [],
-        "module_invariant_violations": [],
+        "module_invariants_evaluated": module_codes,
+        "module_invariant_violations": module_violations,
     }))
 }

@@ -7,7 +7,7 @@ invented.
 ## What these fixtures establish, and what they do not
 
 They establish **parity**: that this crate and the Python reference engine it ports compute
-the same canonical `cash_44ab` and `cash_payments_40a3` results
+the same canonical `cash_44ab`, `cash_payments_40a3` and `depreciation` results
 (`docs/tax-audit/parity-spec-v1.md`) from the same bytes. They do **not** establish anything
 about Tally. No byte here was served by Tally. The XML follows the element layout Tally uses for
 collection exports (envelope, `CMPINFO` counts, UTF-16LE without a BOM for the group and ledger
@@ -56,15 +56,40 @@ outside it) -- both transport-name heuristic hits and both over the plain s.40A(
 also carry an s.40A(3) finding.
 
 `synthetic-engagement.toml` is the engagement for it: the reference-engine client-config keys
-`cash_44ab` and `cash_payments_40a3` read, and nothing else.
+`cash_44ab`, `cash_payments_40a3` and `depreciation` read, and nothing else.
+
+Masterid 43-49 (added for `depreciation`) extend the same book further: three real blocks the
+vendored rules carry (furniture_10, plant_machinery_15, computers_40), fully mapped -- including
+the pre-existing "Delivery Van" from the `cash_payments_40a3` extension above, which shares
+`plant_machinery_15`'s block per the module's own rule that a motor vehicle not used in a hiring
+business is general Plant & Machinery, not a separate code. One case exactly AT each boundary the
+module tests: "Office Furniture" put to use for exactly 180 days (full rate) beside "Showroom
+Furniture" one calendar day later, at 179 days (half rate); "Office Computers" paid exactly Rs
+10,000 in cash -- the s.43(1) second proviso limit itself -- not flagged, beside "Reception
+Computers" at Rs 10,000.01, one paisa over it, flagged. Also: "Factory Machine", whose Rs 5,50,000
+deletion exceeds the full-rate pool and spills into the half-rate one (s.43(6)), and whose
+depreciation-journal voucher (crediting it, debiting "Depreciation A/c") wires
+`dep_expense_ledgers` and the book-vs-Act tie; and a GST line beside the Office Computers addition
+proving `gst_tcs_addition_lines_seen_count` is exercised on data. "Comfort Furnishings" and
+"Machinery Disposal Proceeds" are invented counter-ledgers only, carrying no depreciation meaning
+of their own. "Owner Capital"'s opening balance was adjusted (from -Rs 1,20,000 to -Rs 5,70,000)
+to offset "Factory Machine"'s new Rs 4,50,000 opening balance, so ledger openings still sum to
+zero (POP-3) -- this has no effect on `cash_44ab`/`cash_payments_40a3`, which never read a
+ledger's opening balance. The "unmapped Fixed Assets ledger fails loud" and DEP-1/DEP-2 paths
+(which would blank every block figure for the whole test) are deliberately NOT in this shared
+fixture; they are covered by the crate's own Rust unit tests on hand-built books instead
+(`src/depreciation.rs`), since triggering them here would blank every other depreciation figure
+this fixture is otherwise exercising.
 
 ## The goldens
 
-`golden/synthetic.cash_44ab.json` and `golden/synthetic.cash_payments_40a3.json` are the
-reference Python implementation's own canonical dumps for that engagement and read: its
-`tally-read-v1` adapter built the book, the named test ran with its AY 2026-27 rules, and its
-own canonical serialiser produced the result. Produced at reference-implementation commit
-`b924bf69573deb94d0781beb5e007bf89b4fb2a4` by
+`golden/synthetic.cash_44ab.json`, `golden/synthetic.cash_payments_40a3.json` and
+`golden/synthetic.depreciation.json` are the reference Python implementation's own canonical dumps
+for that engagement and read: its `tally-read-v1` adapter built the book, the named test ran with
+its AY 2026-27 rules, and its own canonical serialiser produced the result. All three regenerated
+together at reference-implementation (brain repo) commit `04a34da8bfcb71b2093c0cc66b19d11e3d05ded1`
+because masterid 43-49 changed the shared book's cash and bank totals too (the Office/Reception
+Computers cash-paid additions), by
 
 ```
 uv run -q --with openpyxl --with xlrd --with python-docx --with jsonschema --with striprtf \
@@ -75,30 +100,37 @@ uv run -q --with openpyxl --with xlrd --with python-docx --with jsonschema --wit
     --with pdfplumber python parity/python_golden.py ENGINE \
     tests/fixtures/synthetic-engagement.toml tests/fixtures/golden/synthetic.cash_payments_40a3.json \
     --test cash_payments_40a3
+uv run -q --with openpyxl --with xlrd --with python-docx --with jsonschema --with striprtf \
+    --with pdfplumber python parity/python_golden.py ENGINE \
+    tests/fixtures/synthetic-engagement.toml tests/fixtures/golden/synthetic.depreciation.json \
+    --test depreciation
 ```
 
 (`golden/synthetic.cash_44ab.json` was first produced at commit `c2f206beb870a8fdb0775f2d1c71aa1ccfccca64`,
 regenerated at `dd376ed014d922a1e2b12052763af36a565402ec` because masterid 19-37 changed the shared
-book's cash and bank totals, and regenerated again at the commit above because masterid 38-42 did
-too. Both goldens were regenerated at the commit above for the same masterid 38-42 change.)
+book's cash and bank totals, regenerated again at `b924bf69573deb94d0781beb5e007bf89b4fb2a4` because
+masterid 38-42 did too, and regenerated once more at the commit above for masterid 43-49.
+`golden/synthetic.cash_payments_40a3.json` was regenerated at the same three points for the same
+reasons. `golden/synthetic.depreciation.json` is new at the commit above.)
 
 ## Bytes
 
 | Fixture | Bytes | SHA-256 | Path |
 | --- | ---: | --- | --- |
-| `synthetic.cash_44ab.json` | 5,828 | `d023d87f6b2d59224c505f2fca54f512a233913caaf383bf9d6e482864a542f0` | `golden/synthetic.cash_44ab.json` |
-| `synthetic.cash_payments_40a3.json` | 69,094 | `49d04faa59d68b8fba06dd6757535ee98085bde01ecf2444b4851b1848917eb6` | `golden/synthetic.cash_payments_40a3.json` |
-| `synthetic-engagement.toml` | 1,167 | `2dd1b7f2acd0736d1663d417a3dcdf7957a69e17f8aad45f5c4fa88c69a47ef8` | `synthetic-engagement.toml` |
-| `manifest.json` | 9,706 | `7d3357e9b12e1afe2667a52eeea98b6471dd19c47787d8abc0730faaf23dfb3b` | `synthetic-read/manifest.json` |
+| `synthetic.cash_44ab.json` | 5,828 | `c424096e2accfab877b68d5391f81a5e5319698637e2b68d64cae75314d3ac8f` | `golden/synthetic.cash_44ab.json` |
+| `synthetic.cash_payments_40a3.json` | 72,284 | `92111e5254ad0acc1a06bd634b47fa1f45924461c4779bb08f2bf1ed36875db9` | `golden/synthetic.cash_payments_40a3.json` |
+| `synthetic.depreciation.json` | 27,636 | `d5988a304a6702cefe1a9a3f26ac48a36beddd8fde418b4cab0ca805b82c9952` | `golden/synthetic.depreciation.json` |
+| `synthetic-engagement.toml` | 2,228 | `958a674b3772ff992b6317ee2a70c57cfb3439d09b96579f45e57b1074355e42` | `synthetic-engagement.toml` |
+| `manifest.json` | 9,711 | `87b117c78d911cdfeb5fbf02466dd3aecd5379b17a2876aad65cc0ea989595bf` | `synthetic-read/manifest.json` |
 | `company_object.xml` | 606 | `f1b6fe4e6b6cc406a4ae92ce0ef62a6c79a88a99ac83b1888989a98fbee967b4` | `synthetic-read/parts/company_object.xml` |
 | `groups.xml` | 6,466 | `d314bbcea1fb8a70e5e3e1a25008da57031f872da06d971be6014af82f950395` | `synthetic-read/parts/groups.xml` |
-| `high_water_after.xml` | 643 | `737c8f46527674e4075f2c1c6d0754e0c3edfd16e2a9096ee675af6bdfc3cecf` | `synthetic-read/parts/high_water_after.xml` |
-| `high_water_before.xml` | 643 | `737c8f46527674e4075f2c1c6d0754e0c3edfd16e2a9096ee675af6bdfc3cecf` | `synthetic-read/parts/high_water_before.xml` |
-| `ledgers.xml` | 11,306 | `b081ef22bceeb4e0f8f174a4994a0202b725bf59765689bd45b868b3ee0ddaf0` | `synthetic-read/parts/ledgers.xml` |
-| `tb_fy.xml` | 8,752 | `6efdefbc8aeb7709bc9c314012ebbeb30732d9075f957f34bc5d40a94df6cbb6` | `synthetic-read/parts/tb_fy.xml` |
+| `high_water_after.xml` | 643 | `f4d7380ecb17a3d8d67ef205161aa8b15cbc440789d77090113197671fdb2e60` | `synthetic-read/parts/high_water_after.xml` |
+| `high_water_before.xml` | 643 | `f4d7380ecb17a3d8d67ef205161aa8b15cbc440789d77090113197671fdb2e60` | `synthetic-read/parts/high_water_before.xml` |
+| `ledgers.xml` | 14,088 | `1b54f883ce5202c837906f754a0bc477759d4a23063cae2650c6303821510415` | `synthetic-read/parts/ledgers.xml` |
+| `tb_fy.xml` | 10,997 | `e68556a5dc2ac071300c97285f9324377cc1c1622847c05ee3badd751ec842f0` | `synthetic-read/parts/tb_fy.xml` |
 | `voucher_status_list.json` | 249 | `c7959e4e91a445f774ff2a5eaad4f8968f6fc82e21622d5168ececf9b0a1aa78` | `synthetic-read/parts/voucher_status_list.json` |
-| `vouchers_h1.xml` | 42,016 | `1660ff7e5aff5c3c17b6cdfc70457733fbebc5117e10490949399da9d2565591` | `synthetic-read/parts/vouchers_h1.xml` |
-| `vouchers_h2.xml.gz` | 913 | `d2561801c2c360a29c658db2dcce389b05014f05d4766c48592249a28be5f4fb` | `synthetic-read/parts/vouchers_h2.xml.gz` |
+| `vouchers_h1.xml` | 46,156 | `286698675efad21064cb78d53c8a5dba27a1f19e3a6e371223a73d16c012bb65` | `synthetic-read/parts/vouchers_h1.xml` |
+| `vouchers_h2.xml.gz` | 1,156 | `cd9cb1f339141bc1af8585fd16c445f21016dccbbccd5cd21d1bd82c1feb41b1` | `synthetic-read/parts/vouchers_h2.xml.gz` |
 | `vouchertypes.xml` | 1,307 | `56a74424d30240ea24c2e0858e854ac3e199123d92f6fb8b8cfc640b068b42da` | `synthetic-read/parts/vouchertypes.xml` |
 
 Sensitivity review: invented names, GUIDs and amounts only; no client, person, path or host

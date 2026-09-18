@@ -149,7 +149,7 @@
     },
     {
       "id": "cash_payments_40a3.s269st_payment_at_or_over_limit_count",
-      "value": 4,
+      "value": 5,
       "unit": "count",
       "definition_sha256_16": "e654ca772b964a2c",
       "definition_text": "(date, party) pairs where the day's cash payment total is at or over the s.269ST(a) limb (a) threshold (20000000 paise per person per day) -- reportable in clause 31(bc), not a contravention by the assessee (s.269ST binds the receiver, not the payer).",
@@ -157,7 +157,7 @@
     },
     {
       "id": "cash_payments_40a3.s269st_payment_party_days_any_amount_count",
-      "value": 19,
+      "value": 21,
       "unit": "count",
       "definition_sha256_16": "18a18587fa068631",
       "definition_text": "Distinct (date, party ledger) pairs with a cash payment on a population, non-Contra voucher, party ledger not under 'Purchase Accounts'.",
@@ -165,7 +165,7 @@
     },
     {
       "id": "cash_payments_40a3.s269st_payment_party_days_any_amount_total",
-      "value": 106885051,
+      "value": 145485051,
       "unit": "paise",
       "definition_sha256_16": "8c86cb1053b7214c",
       "definition_text": "Sum of cash paid across all (date, party) pairs above, any amount.",
@@ -269,6 +269,30 @@
           "kind": "voucher",
           "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002a",
           "label": "Payment P/23 on 2025-07-11"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002b",
+          "label": "Purchase PU/3 on 2025-04-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002c",
+          "label": "Purchase PU/4 on 2025-04-01"
+        }
+      ]
+    },
+    {
+      "id": "cash_payments_40a3.s269st_payment_row_amount_2025-04-01_417e434b",
+      "value": 23600000,
+      "unit": "paise",
+      "definition_sha256_16": "0cb916123d8685ef",
+      "definition_text": "Cash paid to one party ledger (tag 417e434b) on 2025-04-01, summed across every population voucher that day.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002b",
+          "label": "Purchase PU/3 on 2025-04-01"
         }
       ]
     },
@@ -400,10 +424,10 @@
     },
     {
       "id": "cash_payments_40a3.s40a3_excluded_total_duties_taxes",
-      "value": 2300000,
+      "value": 5900000,
       "unit": "paise",
-      "definition_sha256_16": "d1278147329f253c",
-      "definition_text": "Cash paid to ledgers under Tally group 'Duties & Taxes' (excluded from s.40A(3) scope by rules.s40a3.excluded_group_roles); 2 (date, payee) pairs.",
+      "definition_sha256_16": "9772cc682a7ef2b4",
+      "definition_text": "Cash paid to ledgers under Tally group 'Duties & Taxes' (excluded from s.40A(3) scope by rules.s40a3.excluded_group_roles); 3 (date, payee) pairs.",
       "evidence": [
         {
           "kind": "voucher",
@@ -414,20 +438,35 @@
           "kind": "voucher",
           "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000024",
           "label": "Purchase PU/2 on 2025-07-03"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002b",
+          "label": "Purchase PU/3 on 2025-04-01"
         }
       ]
     },
     {
       "id": "cash_payments_40a3.s40a3_excluded_total_fixed_assets",
-      "value": 4500000,
+      "value": 39500000,
       "unit": "paise",
-      "definition_sha256_16": "a17e38030654b95b",
-      "definition_text": "Cash paid to ledgers under Tally group 'Fixed Assets' (excluded from s.40A(3) scope by rules.s40a3.excluded_group_roles); 1 (date, payee) pairs.",
+      "definition_sha256_16": "761893c825b509e3",
+      "definition_text": "Cash paid to ledgers under Tally group 'Fixed Assets' (excluded from s.40A(3) scope by rules.s40a3.excluded_group_roles); 3 (date, payee) pairs.",
       "evidence": [
         {
           "kind": "voucher",
           "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000001b",
           "label": "Payment P/16 on 2025-06-19"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002b",
+          "label": "Purchase PU/3 on 2025-04-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002c",
+          "label": "Purchase PU/4 on 2025-04-01"
         }
       ]
     },
@@ -541,7 +580,7 @@
     },
     {
       "id": "cash_payments_40a3.s40a3_over_limit_all_kinds_count",
-      "value": 14,
+      "value": 17,
       "unit": "count",
       "definition_sha256_16": "23053c3df828c87b",
       "definition_text": "(date, payee) pairs over the s.40A(3) limit before excluding capital, loans, fixed assets and duties and taxes; the in-scope count is a subset.",
@@ -1052,6 +1091,44 @@
       "ask_client_text": [
         "Confirm whether this receipt is genuinely from one party.",
         "Confirm whether limbs (ii)/(iii) are separately breached (documents needed)."
+      ]
+    },
+    {
+      "id": "cash_payments_40a3/s269st_payment/2025-04-01_417e434b",
+      "clauses": [
+        "s.269ST(a)"
+      ],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "amount",
+          "figure_id": "cash_payments_40a3.s269st_payment_row_amount_2025-04-01_417e434b"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Computers",
+          "label": ""
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002b",
+          "label": "Purchase PU/3 on 2025-04-01"
+        }
+      ],
+      "title_sha256_16": "80dfc7821ab104e4",
+      "title_text": "Cash paid to one party at or over the s.269ST person-per-day threshold on 2025-04-01 -- reportable in clause 31(bc)",
+      "limits_sha256_16": "12dc1fc0e70c3fb7",
+      "limits_text": [
+        "s.269ST(a) is a duty on the receiver of the cash, not the payer: the section reads 'No person shall receive...'. A payment made by the assessee is not itself a books-testable exposure for the assessee under s.269ST; it is a Form 3CD clause 31(bc) reporting item only (limb (a): aggregate per person per day).",
+        "Books test covers limb (a) (aggregate per person per day) only. Limbs (b) (a single transaction) and (c) (receipts relating to one event or occasion) need bill-wise/event linkage the books do not carry.",
+        "This payment is counted once for clause 31(bc), in the high-value transactions list; it is shown here for the s.40A(3) review only and is not counted a second time."
+      ],
+      "ask_client_sha256_16": "6e00ef51c09c64fc",
+      "ask_client_text": [
+        "Confirm whether this payment is genuinely to one party.",
+        "Confirm whether limbs (b)/(c) apply from the party's own records (documents needed)."
       ]
     },
     {
