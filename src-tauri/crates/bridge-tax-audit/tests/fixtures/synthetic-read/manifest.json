@@ -32,13 +32,13 @@
   "status": "unchanged",
   "attempts": 1,
   "before": {
-   "alter_voucher_id": 137,
+   "alter_voucher_id": 142,
    "alter_master_id": 57,
    "observed_at": null,
    "part": "high-water-before"
   },
   "after": {
-   "alter_voucher_id": 137,
+   "alter_voucher_id": 142,
    "alter_master_id": 57,
    "observed_at": null,
    "part": "high-water-after"
@@ -55,9 +55,9 @@
    "response": {
     "path": "parts/high_water_before.xml",
     "storage": "identity",
-    "stored_sha256": "d483fb8a2a57383f0ff21ec5abab368bd3127b55523aa21d99ae0bf9cf638b1f",
+    "stored_sha256": "737c8f46527674e4075f2c1c6d0754e0c3edfd16e2a9096ee675af6bdfc3cecf",
     "stored_bytes": 643,
-    "sha256": "d483fb8a2a57383f0ff21ec5abab368bd3127b55523aa21d99ae0bf9cf638b1f",
+    "sha256": "737c8f46527674e4075f2c1c6d0754e0c3edfd16e2a9096ee675af6bdfc3cecf",
     "bytes": 643,
     "media_type": "application/xml",
     "text_encoding": "utf-8",
@@ -127,10 +127,10 @@
    "response": {
     "path": "parts/ledgers.xml",
     "storage": "identity",
-    "stored_sha256": "06b8cc1a80a1fbcba996edd82775c2bc7ab1d7a8ee1537faa0ec9cf8fbab5733",
-    "stored_bytes": 9894,
-    "sha256": "06b8cc1a80a1fbcba996edd82775c2bc7ab1d7a8ee1537faa0ec9cf8fbab5733",
-    "bytes": 9894,
+    "stored_sha256": "b081ef22bceeb4e0f8f174a4994a0202b725bf59765689bd45b868b3ee0ddaf0",
+    "stored_bytes": 11306,
+    "sha256": "b081ef22bceeb4e0f8f174a4994a0202b725bf59765689bd45b868b3ee0ddaf0",
+    "bytes": 11306,
     "media_type": "application/xml",
     "text_encoding": "utf-16le",
     "wire_exact": false,
@@ -151,10 +151,10 @@
    "response": {
     "path": "parts/tb_fy.xml",
     "storage": "identity",
-    "stored_sha256": "27bd539694d8b1159c62100a72dd886e034bb0650a66c9f71a55e2e32f817adb",
-    "stored_bytes": 7631,
-    "sha256": "27bd539694d8b1159c62100a72dd886e034bb0650a66c9f71a55e2e32f817adb",
-    "bytes": 7631,
+    "stored_sha256": "6efdefbc8aeb7709bc9c314012ebbeb30732d9075f957f34bc5d40a94df6cbb6",
+    "stored_bytes": 8752,
+    "sha256": "6efdefbc8aeb7709bc9c314012ebbeb30732d9075f957f34bc5d40a94df6cbb6",
+    "bytes": 8752,
     "media_type": "application/xml",
     "text_encoding": "utf-8",
     "wire_exact": false,
@@ -203,10 +203,10 @@
    "response": {
     "path": "parts/vouchers_h1.xml",
     "storage": "identity",
-    "stored_sha256": "f923d0a3308486417fc181aff5fc9ced79d7bb5e64a2911268a948bc2d634406",
-    "stored_bytes": 36297,
-    "sha256": "f923d0a3308486417fc181aff5fc9ced79d7bb5e64a2911268a948bc2d634406",
-    "bytes": 36297,
+    "stored_sha256": "1660ff7e5aff5c3c17b6cdfc70457733fbebc5117e10490949399da9d2565591",
+    "stored_bytes": 42016,
+    "sha256": "1660ff7e5aff5c3c17b6cdfc70457733fbebc5117e10490949399da9d2565591",
+    "bytes": 42016,
     "media_type": "application/xml",
     "text_encoding": "utf-8",
     "wire_exact": false,
@@ -221,8 +221,8 @@
     "from": "2025-04-01",
     "to": "2025-09-30"
    },
-   "rows": 31,
-   "alter_id_max": 137
+   "rows": 36,
+   "alter_id_max": 142
   },
   {
    "id": "vouchers-2025-10-01",
@@ -292,9 +292,9 @@
    "response": {
     "path": "parts/high_water_after.xml",
     "storage": "identity",
-    "stored_sha256": "d483fb8a2a57383f0ff21ec5abab368bd3127b55523aa21d99ae0bf9cf638b1f",
+    "stored_sha256": "737c8f46527674e4075f2c1c6d0754e0c3edfd16e2a9096ee675af6bdfc3cecf",
     "stored_bytes": 643,
-    "sha256": "d483fb8a2a57383f0ff21ec5abab368bd3127b55523aa21d99ae0bf9cf638b1f",
+    "sha256": "737c8f46527674e4075f2c1c6d0754e0c3edfd16e2a9096ee675af6bdfc3cecf",
     "bytes": 643,
     "media_type": "application/xml",
     "text_encoding": "utf-8",

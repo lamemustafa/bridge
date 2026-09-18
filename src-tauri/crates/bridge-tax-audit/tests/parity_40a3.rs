@@ -47,22 +47,22 @@ fn synthetic_read_matches_the_python_golden() {
         differences.join("\n")
     );
     // Anchor the pass to content, so an empty or trivial dump cannot be what passed.
-    assert_eq!(rust["figures"].as_array().unwrap().len(), 40);
-    assert_eq!(rust["findings"].as_array().unwrap().len(), 15);
+    assert_eq!(rust["figures"].as_array().unwrap().len(), 49);
+    assert_eq!(rust["findings"].as_array().unwrap().len(), 21);
     assert_eq!(rust["rules_version"], "2026-09-17.1");
     assert_eq!(
         figure_mut(
             &mut rust.clone(),
             "cash_payments_40a3.s40a3_over_limit_in_scope_count"
         )["value"],
-        7
+        10
     );
     assert_eq!(
         figure_mut(
             &mut rust.clone(),
             "cash_payments_40a3.s269ss269t_candidate_count"
         )["value"],
-        2
+        3
     );
     assert_eq!(
         rust["book_invariant_violations"].as_array().unwrap().len(),

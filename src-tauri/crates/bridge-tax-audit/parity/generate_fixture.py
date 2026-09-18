@@ -8,7 +8,7 @@ served by Tally: this fixture proves that the Rust port and the Python reference
 agree on the same input, and nothing about how Tally behaves. See tests/fixtures/PROVENANCE.md.
 
 One Book exercises both ported tests end to end: `cash_44ab` (cash and bank receipts/payments)
-and `cash_payments_40a3` (masterid 19-37) -- a payee over the s.40A(3) daily limit aggregated
+and `cash_payments_40a3` (masterid 19-42) -- a payee over the s.40A(3) daily limit aggregated
 across two same-day vouchers, a payee exactly at the limit and one under it, a goods-carriage
 heuristic hit within the Rs 35,000 proviso limit, one cash payment excluded from s.40A(3) scope
 for each of the five `excluded_group_roles` kinds (the loans_liability example is two group
@@ -16,6 +16,16 @@ levels below "Loans (Liability)", proving the exclusion walks the full chain, no
 immediate parent), s.269ST receipts and payments at/over and under the limit, a real party with
 a tax or round-off line folded into it, an unidentified-party cash leg (no real party line, tax
 only), and a covered/uncovered pair of s.269SS/269T loan candidates in both directions.
+
+Masterid 38-42 add one case exactly AT each of the four ">="/"or more"/inclusive comparisons a
+2026-09-18 mutation review found the fixture never exercised (flipping the comparison direction
+in the Rust port passed every existing test): a s.269ST receipt of exactly Rs 2,00,000 from one
+party in one day (Fairfield Textiles), a s.269ST payment leg of exactly Rs 2,00,000 to one party
+in one day (Ashwood Traders), a s.269SS/269T loan-ledger line of exactly Rs 20,000 (a second
+Sunrise NBFC Loan voucher), and the goods-carriage proviso limit itself: one payee-day of exactly
+Rs 35,000 (Coastal Freight Carriers, still within the higher limit) and one of Rs 35,000.01, one
+paisa over it (Bayside Cargo Logistics, now outside it) -- both transport-name heuristic hits and
+both over the plain s.40A(3) limit, so both also produce an s.40A(3) finding.
 
 Deterministic: running it twice writes identical bytes (gzip mtime is fixed at 0).
 
@@ -86,6 +96,11 @@ LEDGERS = {
     "Cobalt Fittings": ("Sundry Creditors", 0),  # s.269ST payment leg party, over the limit
     "Metro Hardware Distributors": ("Sundry Creditors", 0),  # s.269ST payment: one real party + round-off folded in
     "Round Off": ("Indirect Expenses", 0),  # round_off_ledgers role, not under Duties & Taxes
+    # masterid 38-42 boundary ledgers below (2026-09-18 mutation review). Every name is invented.
+    "Fairfield Textiles": ("Sundry Debtors", 0),  # s.269ST receipt: exactly at the limit
+    "Ashwood Traders": ("Sundry Creditors", 0),  # s.269ST payment leg: exactly at the limit
+    "Coastal Freight Carriers": ("Sundry Creditors", 0),  # goods-carriage: exactly at the Rs 35,000 proviso limit
+    "Bayside Cargo Logistics": ("Sundry Creditors", 0),  # goods-carriage: Rs 0.01 over the proviso limit
 }
 
 VOUCHER_TYPES = (("Contra", "Contra"), ("Journal", "Journal"), ("Payment", "Payment"),
@@ -138,6 +153,20 @@ VOUCHERS_H1 = (
     (36, "20250703", "Purchase", "PU/2", None, (("Purchases - Hardware", "-190000.00"), ("GST Payable", "-20000.00"), ("Cash", "210000.00"))),
     # s.269SS candidate, covered by [loans] configuration: Rs 30,000 cash accepted against Sunrise NBFC Loan.
     (37, "20250704", "Receipt", "R/8", None, (("Cash", "-30000.00"), ("Sunrise NBFC Loan", "30000.00"))),
+    # ---- masterid 38-42: one case exactly at each ">="/inclusive comparison (2026-09-18 mutation review).
+    # s.269ST receipt leg, exactly at the Rs 2,00,000 per-person-per-day limit (limb (i), "or more").
+    (38, "20250707", "Receipt", "R/9", None, (("Cash", "-200000.00"), ("Fairfield Textiles", "200000.00"))),
+    # s.269ST payment leg, exactly at the Rs 2,00,000 per-person-per-day threshold.
+    (39, "20250708", "Payment", "P/21", None, (("Ashwood Traders", "-200000.00"), ("Cash", "200000.00"))),
+    # s.269SS/269T candidate, exactly at the Rs 20,000 limit ("or more"): a second Sunrise NBFC Loan
+    # voucher, cash accepted.
+    (40, "20250709", "Receipt", "R/10", None, (("Cash", "-20000.00"), ("Sunrise NBFC Loan", "20000.00"))),
+    # Coastal Freight Carriers: Rs 35,000 cash, exactly at the goods-carriage proviso limit (still
+    # within it, transport-name heuristic hit, also over the plain Rs 10,000 s.40A(3) limit).
+    (41, "20250710", "Payment", "P/22", None, (("Coastal Freight Carriers", "-35000.00"), ("Cash", "35000.00"))),
+    # Bayside Cargo Logistics: Rs 35,000.01 cash, one paisa over the goods-carriage proviso limit
+    # (now outside it; same transport-name heuristic and s.40A(3) over-limit as the row above).
+    (42, "20250711", "Payment", "P/23", None, (("Bayside Cargo Logistics", "-35000.01"), ("Cash", "35000.01"))),
 )
 # The second window carries no ISOPTIONAL/ISPOSTDATED tags (the shape of an export whose
 # status came from a separate side list); the voucher_status_list part decides them.
@@ -155,7 +184,7 @@ EXCLUDED = {10, 11, 16, 17}
 # Tally's TB for this ledger is written 5.00 away from its vouchers, so POP-1 fires on it.
 TB_SKEW = {"Electricity": 500}
 ALTER_BASE = 100
-HIGH_WATER = (ALTER_BASE + 37, 57)
+HIGH_WATER = (ALTER_BASE + 42, 57)
 
 
 def paise(text: str) -> int:
