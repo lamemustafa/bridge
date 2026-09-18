@@ -8,6 +8,16 @@ repository did not write.
 
 Read the banner comment at the top of each file for exactly what is real and what is not.
 
+`source-draft-capture-bindings.json` is not a bank capture. It is a
+`SourceDraftCatalogTargets` payload: its `targets` are the ledger names the production reader
+parses from the captured, synthetic-company catalogue
+`src-tauri/crates/bridge-tally-protocol/tests/fixtures/agent/native-ledger-catalogue.utf16le.xml`
+(see that capture's `.json` sidecar), its `bindings` come from running authored source XML through
+the production binder, and its `evidence` digests are copied from the sidecar. Its own `provenance`
+object says the same. `src-tauri/src/source_draft/catalog_tests.rs` asserts that `targets`,
+`bindings` and `evidence` still equal the live producer's output; `scripts/source-draft-screen.test.tsx`
+serves it as a mocked backend response. No byte count or SHA-256 is declared for it.
+
 ## Re-deriving them
 
 `../sanitise-bbox-capture.py` is the whole procedure and the fixtures reproduce from it byte for byte:

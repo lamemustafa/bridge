@@ -139,27 +139,24 @@ the gap rather than silently leaving it uncovered):
       - run: cargo fmt --manifest-path tools/Cargo.toml --all -- --check
 ```
 
-## 3. Fixture provenance — REPORTING
+## 3. Fixture provenance — BLOCKING (wired)
 
 `scripts/check-fixture-provenance.mjs` generalises the
 `tests/fixtures/*/PROVENANCE.md` pattern (a per-fixture line naming where the
 bytes came from, and — for a fixture asserted as byte-exact captured evidence
 — its size and SHA-256) to every directory `check-fixture-byte-integrity.mjs`
-already covers. **Fails today**: 51 of 125 fixtures across the four covered
-directories have no provenance mention at all (28/101 in
+already covers. When first proposed it failed on 51 of 125 fixtures (28/101 in
 `bridge-tally-protocol/tests/fixtures`, all 20/20 in
 `tally-protocol-simulator/fixtures`, both 2/2 in
-`docs/tally/compatibility/fixtures`, 1/3 in `scripts/fixtures`) — hence
-REPORTING, not BLOCKING, until those are backfilled.
+`docs/tally/compatibility/fixtures`, 1/3 in `scripts/fixtures`), so it was
+proposed as REPORTING. Those 51 are now backfilled and it passes clean, so it
+is wired into `ci.yml` as a blocking step in the `tally-portable` job, directly
+after `Enforce fixture byte integrity`:
 
 ```yaml
-      - name: Report fixture provenance coverage (non-blocking)
-        continue-on-error: true
+      - name: Enforce fixture provenance
         run: node scripts/check-fixture-provenance.mjs
 ```
-
-Place alongside the existing `check:fixture-byte-integrity` step (the
-`tally-portable` job).
 
 ## 4. Unbounded reads — BLOCKING
 
@@ -258,7 +255,7 @@ dependencies beyond Node and `git ls-files`.
 | rustfmt | `rustfmt.toml` (no new step; existing `rust-format` job covers it) | BLOCKING (already is) | 0 files would change |
 | clippy default groups | existing `-D warnings` steps, `-A clippy::pedantic` appended | BLOCKING (already is, unchanged) | 0 warnings (unchanged by this PR) |
 | clippy pedantic | `lint-pedantic-advisory` job (new) | REPORTING | 1,199 warnings (1,150 + 49) |
-| Fixture provenance | `check-fixture-provenance.mjs` | REPORTING | 51/125 fixtures undocumented |
+| Fixture provenance | `check-fixture-provenance.mjs` | BLOCKING (wired in `tally-portable`) | 0 undocumented (51/125 backfilled) |
 | Unbounded reads | `check-unbounded-reads.mjs` | BLOCKING | 0 unbounded (3 reviewed exceptions) |
 | PII regex regression coverage | `check-pii-regex-regression-coverage.mjs` | BLOCKING | clean (0 regex edits in this diff) |
 | Parser accept/reject symmetry | `check-parser-test-symmetry.mjs` | BLOCKING | clean (0 parser files in this diff) |

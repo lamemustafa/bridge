@@ -1,0 +1,10 @@
+{
+  "source": "Live licensed TallyPrime 7.1 Silver voucher read with FETCH ALLLEDGERENTRIES.BILLALLOCATIONS.*, added in 169b7df3 (squashed into aab534b2, #311)",
+  "observed_date": "not recorded; added 2026-09-11",
+  "fixture_bytes": 17200,
+  "fixture_sha256": "5decded6074a4431781d6e2ce4fd42d02cf1b4d94f4a1a1a0ccf777355629874",
+  "encoding": "UTF-16LE without BOM, LF line endings",
+  "transformation": "not recorded",
+  "provenance_limit": "Commit and test comment say captured live; neither records the port, company name or window, nor the source response's own bytes or SHA-256. The fixture holds two vouchers (20250627, 20250703) and is far smaller than the 168,051 bytes the same commit measured for this fetch shape over three months, so whether it is a narrower read or a trimmed one is unrecorded. The hash pins the committed bytes only. Used by agent_voucher_parse_tests::allocation_wildcard_response_parses_and_types_on_account.",
+  "sensitivity_review": "Synthetic lab company GUID only; no company name, customer data or credentials in the file."
+}
