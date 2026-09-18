@@ -111,3 +111,62 @@ including `ZZ CafÃ© NaÃ¯ve Ledger`. This is an observed source-byte property
 not a capture defect: do not normalize, repair, or hand-edit it. The WR2
 fixture carries clean non-ASCII names and is the suitable fixture for tests
 requiring a clean Unicode ledger name.
+
+## Aarav Group snapshot without company GUID — 2026-08-20
+
+`group_snapshot_aarav.xml` is a live response from TallyPrime 7.1 EDU on port
+9001 with the synthetic `Aarav Trading Company Demo` selected, `/status` 200
+before and after (`41f97f58`, #158). The response arrived as BOM-less UTF-16LE
+and was stored decoded to UTF-8; the commit states it was not hand-edited. It
+predates the GUID-widened Group request, so its 28 rows carry no `GUID` — which
+is what `wire_group_tests.rs` uses it to prove is refused. Its CRLF line
+endings survived commit, so it is not among the Git-normalised files above.
+The original UTF-16LE bytes' SHA-256 and the exact request were not recorded;
+the hash below pins the committed decoded bytes only.
+
+| Fixture | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `group_snapshot_aarav.xml` | 17,959 | `2d8a1acd8b7c7a2f49f3c588fb1fb0581a7e2a5c640526f0aad4ec89fd22dcfa` |
+
+## Master fields lab — 2026-08-28
+
+Live responses from one licensed TallyPrime Silver synthetic company,
+`BRIDGE MASTER FIELDS LAB`, added in `375d8bd6` (#193).
+`docs/tally/TALLY_PROTOCOL_REFERENCE.md` §9.4a records the run: every request
+bracketed by a 200 `/status`, every write scoped to the lab company, and the
+exact native responses retained here. Port and Tally release number are not
+recorded, and no transformation is recorded; the `.utf8` suffix names the
+stored encoding, not a documented decode step.
+
+The native master/balance/group reads:
+
+| Fixture | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `ledgers_native_master_fields_lab.utf8.xml` | 15,146 | `def766e42d0e36b4b73d7a176fa0ad08d1a7467e301000650fb5ba9a2ae06f29` |
+| `ledger_snapshot_master_fields_lab.utf8.xml` | 9,796 | `7e7af264d7251713d5179c6b6614f47329d860e941587ec9a5245597bf059f77` |
+| `group_snapshot_master_fields_lab.utf8.xml` | 24,453 | `a9839b578ed776b707597e5dad93d155ab443b93c03d5ecb0b70bfd7ac207b1b` |
+
+These predate the response-bound `BRIDGECOMPANYGUID` compute; tests that need
+it inject it at test time rather than editing the fixture.
+
+The partial-`Alter` experiment §9.4a describes, in order — create, readback,
+alter, readback:
+
+| Fixture | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `master_fields_lab_partial_alter_create.response.xml` | 1,917 | `2d23cac5f83c0f119d3545f27a07472faec8cd963d1bbd725e2073d0bdb7990a` |
+| `master_fields_lab_partial_alter_before.response.xml` | 215,611 | `042f8a2997cb9a4b6910a6edc1cdab08a69f2cf6dff627c5e98bd6219d5ade76` |
+| `master_fields_lab_partial_alter.response.xml` | 1,917 | `56e11c463b5251d90e506157a29237813ea5ff04958beb46431e8b30bd2aa7fc` |
+| `master_fields_lab_partial_alter_after.response.xml` | 215,611 | `1f367a0f00a2b3dd10881f17beeafb72d813247292d8873304b2c7265d036aa1` |
+
+`_before` is the readback taken before the Alter (PAN `ZZZZZ0000Z`,
+`ALTERID` 208); `_after` differs from it only in the PAN (`ZZZZZ0001Z`) and
+`ALTERID` 209, and still carries the Party GSTIN.
+
+The three requests — `master_fields_lab_partial_alter_create.request.xml`,
+`master_fields_lab_partial_alter.request.xml` and
+`master_fields_lab_partial_alter_readback.request.xml` — record what the lab
+run sent, but their authorship is not recorded: no Bridge request builder
+emits the `All Masters` import or the `List of Accounts` export they contain,
+and whether their trailing newline was on the wire is unknown. They are
+documented here as named-only evidence, with no byte-exact claim.

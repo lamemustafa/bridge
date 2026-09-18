@@ -7,7 +7,9 @@ official TallyPrime 7.0+ JSON integration examples, reviewed on 2026-07-15:
 - https://help.tallysolutions.com/wp-content/uploads/2025/11/Ledger-Collection-Response.docx
 - https://help.tallysolutions.com/wp-content/uploads/2025/11/voucher-collection-response.docx
 
-The original downloadable examples are not committed. The checked-in files use
+The two fixtures are `ledger_collection_sanitized.json` (from the Ledger
+Collection example) and `voucher_collection_nested_sanitized.json` (from the
+voucher collection example). The original downloadable examples are not committed. The checked-in files use
 synthetic Bridge names, identifiers, and voucher numbers while retaining the
 documented envelope, wrapper, omitted-versus-empty, multilingual, accounting-
 value, and nested-array shapes needed for parser tests. They contain no live
