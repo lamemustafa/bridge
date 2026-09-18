@@ -233,3 +233,76 @@ One general protocol observation from that validation is worth recording here be
 every consumer, not one client: a live group-master response can carry raw ASCII control
 characters (observed: `U+0003`) inside `PARENTSTRUCTURE` elements. A strict XML parser may reject
 these outright, so a `groups` part reader must tolerate them rather than assume well-formed XML.
+Section 10 says how.
+
+## 10. Text decoding: the Tally text rule
+
+Tally's responses are not always well-formed XML 1.0, and the parts of a read keep them exactly as
+sent (section 2). Every consumer turns a part's content into text by this one rule, so that two
+consumers of the same bytes get the same strings. Bridge's committed group captures
+(`src-tauri/crates/bridge-tally-protocol/tests/fixtures/native/group_snapshot_*`) show both of
+the cases it exists for:
+
+- raw `U+0003` characters inside `PARENTSTRUCTURE`, which Tally sends even when the request's
+  `FETCH` list does not ask for that field. Each name in the list is wrapped in a pair of them:
+  `U+0003 Sundry Debtors U+0003 U+0003 Current Assets U+0003` (spaces added for reading);
+- the character reference `&#4;` in front of Tally's reserved values: `&#4; Primary` in `PARENT`
+  and `PRIMARYGRPPARENT` for the top-level root, and `&#4; Not Applicable`, `&#4; Any` and similar
+  in other master and voucher fields. XML 1.0 forbids the code point it names.
+
+The rule, in order:
+
+1. **Bytes to text.** Content whose second byte is `0x00` is UTF-16LE without a BOM. Otherwise a
+   UTF-8, UTF-16LE or UTF-16BE byte-order mark selects that encoding, and anything else is UTF-8.
+   Decoding is strict; the XML declaration's `encoding` is not consulted.
+2. **No DTD.** A document that declares a DTD or an entity is refused.
+3. **Forbidden references are marked, not deleted.** A numeric character reference, decimal or
+   hexadecimal (`x` or `X`), whose code point XML 1.0 forbids (C0 controls other than tab, LF and
+   CR; the surrogates; `U+FFFE`; `U+FFFF`; beyond `U+10FFFF`) is replaced, before parsing, by the
+   text `U+FFFD` `#` *n* `;` with *n* in decimal. `&#4; Primary` therefore reads as the string
+   `"\u{FFFD}#4; Primary"`, and `&#x1F;` as `"\u{FFFD}#31;"`.
+   - A `U+FFFD` already in the document, literal or written as a legal reference, that is directly
+     followed by `#`, one to ten ASCII digits and `;` is replaced by `U+FFFD` `#65533;`. The
+     rewrite is therefore injective: every decoded value maps back to the code points Tally sent.
+   - The scan for a reference's `;` covers at most twelve bytes, starting at its `#`. The rewrite
+     ends at a `&#` whose `;` lies further on; what follows is left to the XML parser, which
+     refuses any reference to a forbidden code point.
+   - This is the rewrite `bridge-tally-protocol` already applies before its native group, ledger,
+     voucher, trial-balance and outstandings parsers read a response (`tolerant_xml`), and
+     `TALLY_SANITIZED_ROOT_MARKER` in that crate is the `U+FFFD#4;` prefix.
+4. **Raw characters are kept.** Every raw character stays as itself, C0 controls included, in
+   element text and attribute values. `PARENTSTRUCTURE` keeps its `U+0003` separators. A raw
+   `U+0000`, `U+FFFE` or `U+FFFF` is refused: Tally has not been seen to send one, and a NUL
+   usually means the bytes were decoded with the wrong encoding. Legal character references and
+   the five predefined entities resolve as XML 1.0 says.
+5. **Nothing else is transformed.** No value is trimmed, case-folded or normalised while it is
+   decoded. A test that needs a trimmed view (is this empty? is this the root?) trims a copy.
+
+**The reserved root.** A `PARENT` is Tally's reserved top-level root when, after trimming
+whitespace, it starts with `U+FFFD#4;` and the rest, trimmed again, is `Primary` (ASCII case
+ignored). Only the marked form is the root. A `PARENT` of plain `Primary` names a group a user
+called that, and a chain walks through it like any other group. The same test with another word
+(`U+FFFD#4; Not Applicable`) recognises Tally's other reserved values. A consumer that renders a
+reserved value for a person may show it without the marker, as Tally does; a decision may not
+depend on the unmarked spelling.
+
+**`PARENTSTRUCTURE`.** No consumer rule reads it, and ancestry comes from `PARENT` one hop at a
+time. A consumer that does read it treats it as a list: split on `U+0003` and drop the empty
+items. It is never compared or stored as one string with its separators.
+
+**A parser that refuses raw C0 controls** (expat, the parser behind Python's `ElementTree`, is
+one) may carry them through the parse as other characters, provided the carriage is reversible
+for every input and every value is mapped back before use. It must not delete them.
+
+`bridge-tax-audit`'s `xml` module implements this rule. `tests/tally_text_rule.rs` reads every
+committed Bridge group capture with it, and checks each decoded `PARENT` against
+`bridge-tally-protocol`'s own native group parser on the captures that carry a company GUID and
+on every `PARENT` spelled from up to four of fifteen reference and marker atoms.
+`tests/reserved_root.rs` covers the reserved root and a group named `Primary`.
+
+**Where Bridge's own decoders differ from this rule today.** The rule follows
+`bridge-tally-protocol`, because it is the decoder in front of that crate's native collection
+parsers and it is lossless. Bridge's agent-facing parsers resolve `&#4;` with a plain XML
+unescape, to the raw `U+0004` character, so the same wire text has two spellings inside Bridge.
+The protocol crate's `is_tally_reserved_root` also accepts a plain `Primary`. A consumer of a
+read follows this section, not either of those behaviours.

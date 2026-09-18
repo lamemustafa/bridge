@@ -182,23 +182,28 @@ fn tally_date(text: &str, part: &str) -> Result<TallyDate> {
         .map_err(|_| AuditError::parse(part, format!("not a YYYYMMDD date: {text:?}")))
 }
 
-fn load_groups(root: &Element) -> BTreeMap<String, Option<String>> {
+/// Group name to parent group, `None` for a group directly under Tally's reserved root (or with
+/// no parent, or one of [`PRIMARY_GROUPS`]). Only the reserved-root marker form ends a chain
+/// ([`xml::is_reserved_root`]); a PARENT of `Primary` names a user group called that.
+pub fn load_groups(root: &Element) -> BTreeMap<String, Option<String>> {
     let mut out = BTreeMap::new();
     for g in root.descendants_named("GROUP") {
         let Some(name) = g.attr("NAME").filter(|n| !n.is_empty()) else {
             continue;
         };
-        let parent = xml::py_strip(&g.child_text("PARENT").replace('\u{4}', "")).to_string();
-        let primary = parent.is_empty() || parent == "Primary" || PRIMARY_GROUPS.contains(&name);
-        out.insert(name.to_string(), (!primary).then_some(parent));
+        let parent = g.child_text("PARENT");
+        let primary =
+            parent.is_empty() || xml::is_reserved_root(parent) || PRIMARY_GROUPS.contains(&name);
+        out.insert(name.to_string(), (!primary).then(|| parent.to_string()));
     }
     out
 }
 
 /// The reference engine's `_chain`, including its answers for a missing group (incomplete)
-/// and for a cycle (complete).
-fn chain(parent: &str, groups: &BTreeMap<String, Option<String>>) -> (Vec<String>, bool) {
-    if parent.is_empty() || parent == "Primary" {
+/// and for a cycle (complete). A ledger directly under the reserved root has the decoded
+/// PARENT text itself (`"\u{fffd}#4; Primary"`) as its one-element chain.
+pub fn chain(parent: &str, groups: &BTreeMap<String, Option<String>>) -> (Vec<String>, bool) {
+    if parent.is_empty() || xml::is_reserved_root(parent) {
         let root = if parent.is_empty() { "Primary" } else { parent };
         return (vec![root.to_string()], true);
     }

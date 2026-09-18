@@ -1,25 +1,36 @@
-//! Tally XML bytes to a small element tree, with the reference Python implementation's reading
-//! rules.
-//!
-//! The reference implementation's Tally XML adapter does four things before it parses, and this
-//! module does the same so both sides see the same text:
+//! Tally XML bytes to a small element tree, by the Tally text rule
+//! (`docs/tax-audit/read-format-v1.md` section 10), which the reference Python implementation
+//! follows too.
 //!
 //! 1. Content whose second byte is NUL is UTF-16LE without a BOM (how Tally serves master
 //!    collections) and is decoded as such. Anything else goes through Bridge's own
 //!    [`decode_tally_text_bytes_limited`]: a UTF-8, UTF-16LE or UTF-16BE BOM, else UTF-8.
 //! 2. A document declaring a DTD or an entity is refused outright.
-//! 3. The character reference `&#4;` (Tally's U+0004 metadata marker, e.g. `&#4; Primary`) is
-//!    deleted. The reference engine deletes it from the byte stream, which only matches when
-//!    the stream is ASCII-compatible, so for BOM-marked UTF-16 it is left in place and then
-//!    refused below, as the reference engine's XML parser refuses it.
-//! 4. The document must be well-formed XML 1.0: characters XML forbids (raw C0 controls other
-//!    than tab, LF and CR, U+FFFE, U+FFFF), whether raw or written as a character reference,
-//!    are refused, as expat refuses them.
+//! 3. A numeric character reference to a code point XML 1.0 forbids (Tally writes `&#4;` before
+//!    its reserved values, e.g. `&#4; Primary`) becomes the text U+FFFD `#` *n* `;`, with *n* in
+//!    decimal: `&#4; Primary` reads as `"\u{fffd}#4; Primary"`. A U+FFFD already in the document
+//!    (literal, or a legal reference to it) that is directly followed by `#`, one to ten ASCII
+//!    digits and `;` becomes U+FFFD `#65533;`, so the rewrite is injective and every value can
+//!    be mapped back to the code points Tally sent. This is exactly what `bridge-tally-protocol`'s
+//!    `tolerant_xml` does before its native group, ledger and voucher parsers read a response;
+//!    [`mark_forbidden_references`] is a copy of it, because that module is private to Bridge's
+//!    pinned protocol crate, and `tests/tally_text_rule.rs` holds the copy to Bridge's output.
+//! 4. Raw characters are kept as themselves, C0 controls included: Tally separates the names in
+//!    `PARENTSTRUCTURE` with raw U+0003, and nothing is stripped at decode time. A raw U+0000,
+//!    U+FFFE or U+FFFF is refused (Tally has not been seen to send one; a NUL means the bytes
+//!    were decoded with the wrong encoding). References to legal code points and the five
+//!    predefined entities resolve as XML 1.0 says.
+//!
+//! Nothing here trims or case-folds a value. [`is_reserved_root`] decides whether a PARENT is
+//! Tally's reserved root, and only the marker form is: a user group literally named `Primary`
+//! is an ordinary group.
 //!
 //! The tree keeps what an `ElementTree` query needs: the element name, attributes (normalised as
 //! XML 1.0 requires), the text before the first child (`ElementTree`'s `.text`) and the children.
 
-use bridge_tally_protocol::{decode_tally_text_bytes_limited, TallyTextEncoding};
+use std::borrow::Cow;
+
+use bridge_tally_protocol::{decode_tally_text_bytes_limited, TALLY_SANITIZED_ROOT_MARKER};
 use quick_xml::escape::resolve_predefined_entity;
 use quick_xml::events::Event;
 use quick_xml::{Reader, XmlVersion};
@@ -92,6 +103,20 @@ fn is_xml_char(c: char) -> bool {
     matches!(c, '\t' | '\n' | '\r' | '\u{20}'..='\u{d7ff}' | '\u{e000}'..='\u{fffd}' | '\u{10000}'..)
 }
 
+/// Tally's reserved value behind a `&#4;` reference (`Primary`, `Not Applicable`, ...), read
+/// from decoded text: the value after the U+FFFD `#4;` marker, or `None` for any other text.
+pub fn reserved_value(text: &str) -> Option<&str> {
+    py_strip(text)
+        .strip_prefix(TALLY_SANITIZED_ROOT_MARKER)
+        .map(py_strip)
+}
+
+/// Whether a decoded PARENT names Tally's reserved top-level root (`&#4; Primary` on the wire).
+/// A bare `Primary` is a group of that name, never the root.
+pub fn is_reserved_root(text: &str) -> bool {
+    reserved_value(text).is_some_and(|value| value.eq_ignore_ascii_case("primary"))
+}
+
 /// Decode stored content to text by the rules in the module docs (steps 1-3).
 pub fn decode(content: &[u8], part: &str) -> Result<String> {
     if content.len() > MAX_CONTENT_BYTES {
@@ -100,7 +125,7 @@ pub fn decode(content: &[u8], part: &str) -> Result<String> {
             "decompressed size exceeds the limit",
         ));
     }
-    let (text, strip_marker) = if content.len() > 1 && content[1] == 0 {
+    let text = if content.len() > 1 && content[1] == 0 {
         if !content.len().is_multiple_of(2) {
             return Err(AuditError::parse(part, "truncated UTF-16LE content"));
         }
@@ -108,17 +133,12 @@ pub fn decode(content: &[u8], part: &str) -> Result<String> {
             .chunks_exact(2)
             .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
             .collect();
-        let text = String::from_utf16(&units)
-            .map_err(|_| AuditError::parse(part, "invalid UTF-16LE content"))?;
-        (text, true)
+        String::from_utf16(&units)
+            .map_err(|_| AuditError::parse(part, "invalid UTF-16LE content"))?
     } else {
-        let decoded = decode_tally_text_bytes_limited(content, MAX_CONTENT_BYTES)
-            .map_err(|error| AuditError::parse(part, format!("undecodable content: {error:?}")))?;
-        let ascii_compatible = matches!(
-            decoded.encoding,
-            TallyTextEncoding::Utf8 | TallyTextEncoding::Utf8Bom
-        );
-        (decoded.text, ascii_compatible)
+        decode_tally_text_bytes_limited(content, MAX_CONTENT_BYTES)
+            .map_err(|error| AuditError::parse(part, format!("undecodable content: {error:?}")))?
+            .text
     };
     let head: String = text.chars().take(4096).collect::<String>().to_uppercase();
     if head.contains("<!DOCTYPE") || text.to_uppercase().contains("<!ENTITY") {
@@ -127,18 +147,120 @@ pub fn decode(content: &[u8], part: &str) -> Result<String> {
             "DTD or entity declaration in a Tally export",
         ));
     }
-    Ok(if strip_marker {
-        text.replace("&#4;", "")
-    } else {
-        text
+    Ok(match mark_forbidden_references(&text) {
+        Cow::Borrowed(_) => text,
+        Cow::Owned(marked) => marked,
     })
 }
 
+/// No scan may run past the longest token the rewrite could accept: `#`, at most ten u32
+/// digits, `;`.
+const MAX_MARKER_FORM_BYTES: usize = 12;
+
+/// At most `limit` bytes, without splitting a UTF-8 character.
+fn bounded(text: &str, limit: usize) -> &str {
+    let mut end = limit.min(text.len());
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
+/// Whether `rest` (the text after a U+FFFD) starts with the marker form `#<digits>;`.
+fn collides_with_marker_form(rest: &str) -> bool {
+    let window = bounded(rest, MAX_MARKER_FORM_BYTES);
+    let Some(window) = window.strip_prefix('#') else {
+        return false;
+    };
+    let digits = window.split(';').next().unwrap_or("");
+    !digits.is_empty()
+        && digits.len() < window.len()
+        && digits.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn is_xml_10_code_point(value: u32) -> bool {
+    matches!(value, 0x9 | 0xA | 0xD | 0x20..=0xD7FF | 0xE000..=0xFFFD | 0x10000..=0x10FFFF)
+}
+
+/// Step 3 of the module docs, before parsing: a copy of `bridge-tally-protocol`'s
+/// `tolerant_xml::sanitize_invalid_numeric_references` (private to that pinned crate). Scans,
+/// terminators and number parsing are the same, including where the original stops: a `&#`
+/// with no `;` within twelve bytes ends the rewrite, and the parser then refuses that
+/// reference.
+pub fn mark_forbidden_references(xml: &str) -> Cow<'_, str> {
+    let mut scan = 0_usize;
+    let mut copy_from = 0_usize;
+    let mut output = None::<String>;
+    let mut replacement_marker = xml.find('\u{fffd}');
+    let mut numeric_reference = xml.find("&#");
+    while scan < xml.len() {
+        if replacement_marker.is_some_and(|marker| marker < scan) {
+            replacement_marker = xml[scan..].find('\u{fffd}').map(|offset| scan + offset);
+        }
+        if numeric_reference.is_some_and(|reference| reference < scan) {
+            numeric_reference = xml[scan..].find("&#").map(|offset| scan + offset);
+        }
+        let Some(start) = [numeric_reference, replacement_marker]
+            .into_iter()
+            .flatten()
+            .min()
+        else {
+            break;
+        };
+        if replacement_marker == Some(start) {
+            let after = start + '\u{fffd}'.len_utf8();
+            if collides_with_marker_form(&xml[after..]) {
+                let target = output.get_or_insert_with(|| String::with_capacity(xml.len()));
+                target.push_str(&xml[copy_from..start]);
+                target.push_str("\u{fffd}#65533;");
+                copy_from = after;
+            }
+            scan = after;
+            continue;
+        }
+        let Some(relative_end) = bounded(&xml[start + 1..], MAX_MARKER_FORM_BYTES).find(';') else {
+            break;
+        };
+        let end = start + 1 + relative_end;
+        let token = &xml[start + 2..end];
+        let parsed = token
+            .strip_prefix('x')
+            .or_else(|| token.strip_prefix('X'))
+            .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+            .or_else(|| token.parse::<u32>().ok());
+        let forbidden = parsed.is_some_and(|value| !is_xml_10_code_point(value));
+        let ambiguous_replacement =
+            parsed == Some(0xfffd) && collides_with_marker_form(&xml[end + 1..]);
+        if forbidden || ambiguous_replacement {
+            let target = output.get_or_insert_with(|| String::with_capacity(xml.len()));
+            target.push_str(&xml[copy_from..start]);
+            target.push('\u{fffd}');
+            target.push_str(&format!("#{};", parsed.unwrap_or_default()));
+            copy_from = end + 1;
+        }
+        scan = end + 1;
+    }
+    match output {
+        Some(mut output) => {
+            output.push_str(&xml[copy_from..]);
+            Cow::Owned(output)
+        }
+        None => Cow::Borrowed(xml),
+    }
+}
+
+/// Step 4 of the module docs: raw characters are kept, except these three.
 fn legal(text: &str, part: &str) -> Result<()> {
-    match text.chars().find(|c| !is_xml_char(*c)) {
+    match text
+        .chars()
+        .find(|c| matches!(c, '\u{0}' | '\u{fffe}' | '\u{ffff}'))
+    {
         Some(c) => Err(AuditError::parse(
             part,
-            format!("character U+{:04X} is not allowed in XML", u32::from(c)),
+            format!(
+                "character U+{:04X} is not allowed in Tally text",
+                u32::from(c)
+            ),
         )),
         None => Ok(()),
     }
