@@ -6,7 +6,8 @@
 //! separators inside `PARENTSTRUCTURE` and its `&#4; Primary` references, verbatim.
 
 use bridge_tally_protocol::{
-    parse_native_group_source_records_with_evidence, PartyLedgerMasterFieldObservation,
+    mark_forbidden_numeric_references, parse_native_group_source_records_with_evidence,
+    PartyLedgerMasterFieldObservation,
 };
 use bridge_tax_audit::xml::{self, Element};
 
@@ -223,4 +224,40 @@ fn a_forbidden_reference_the_rewrite_does_not_mark_is_refused() {
     let marked = xml.replace("&#00000000004;", "&#0000000004;");
     let root = xml::read(marked.as_bytes(), "marked").expect("a marked reference reads");
     assert_eq!(groups(&root)[0].child_text("PARENT"), "A\u{fffd}#4;B");
+}
+
+/// An unterminated `&#` -- no `;` within the rewrite's twelve-byte scan window -- must not stop
+/// the scan: a later, fully-formed forbidden reference in the same document is still marked.
+///
+/// The pre-#503 copy of this rule that `bridge-tax-audit` carried in its own `xml` module (before
+/// it called `bridge-tally-protocol`'s public `mark_forbidden_numeric_references`) broke on
+/// exactly this input: reaching the unterminated `&#` ended its whole scan with `break`, so a
+/// later, otherwise ordinary `&#4;` was left unmarked and reached the XML parser, which refuses
+/// it (a raw U+0004 is not an XML 1.0 `Char`).
+#[test]
+fn an_unterminated_reference_does_not_stop_marking_a_later_forbidden_one() {
+    // "#" plus these eleven digits exactly fills the twelve-byte scan window with no `;`, so
+    // this reference is left exactly as written by both the old and the fixed rule.
+    let unterminated_digits = "0".repeat(11);
+    let xml = format!("<ROOT>A&#{unterminated_digits}B&#4; Primary</ROOT>");
+
+    // bridge-tally-protocol's own public rule (already exercised by the rest of this file)
+    // is the reference behaviour: the unterminated reference survives untouched, and the scan
+    // continues past it to mark the later, well-terminated forbidden reference.
+    let expected = format!("<ROOT>A&#{unterminated_digits}B\u{fffd}#4; Primary</ROOT>");
+    assert_eq!(
+        mark_forbidden_numeric_references(&xml),
+        expected,
+        "bridge-tally-protocol must keep scanning past an unterminated reference"
+    );
+
+    // bridge-tax-audit's `xml::decode` (steps 1-3 of the module docs: bytes to text, the DTD
+    // check, then the forbidden-reference rewrite) now calls that same public rule, so it must
+    // produce the identical marked text, not the pre-#503 copy's truncated one.
+    let decoded = xml::decode(xml.as_bytes(), "unterminated-then-forbidden")
+        .expect("no DTD or entity declaration here, so decode must succeed");
+    assert_eq!(
+        decoded, expected,
+        "bridge-tax-audit's decode step must mark the later forbidden reference too"
+    );
 }
