@@ -5,6 +5,16 @@
 //! qualification evidence requires Tally application `STATUS=1`; interactive
 //! company discovery additionally accepts one strict, direct report shape for
 //! documented compatibility.
+//!
+//! Tally's responses carry numeric character references that XML 1.0 forbids,
+//! `&#4;` above all. Before its native collection parsers read a response, this
+//! crate marks each one with [`mark_forbidden_numeric_references`]: the
+//! reference becomes the literal text U+FFFD `#` *n* `;` (so `&#4; Primary`
+//! reads as [`TALLY_SANITIZED_ROOT_MARKER`] followed by ` Primary`), and a
+//! U+FFFD already in the text that could be mistaken for a marker becomes
+//! U+FFFD `#65533;`, which keeps the rewrite reversible. Raw characters are not
+//! touched. The rule is recorded in `docs/tally/TALLY_PROTOCOL_REFERENCE.md`
+//! §1.1(d).
 
 use std::{
     collections::{HashMap, HashSet},
@@ -71,6 +81,7 @@ pub use text_encoding::{
     validate_tally_xml_response_content_type, DecodedTallyText, ExpectedTallyTextEncoding,
     StreamDecodedTallyText, TallyTextDecodeError, TallyTextEncoding, TallyTextStreamDecoder,
 };
+pub use tolerant_xml::mark_forbidden_numeric_references;
 
 pub const BRIDGE_LEDGER_EXPORT_SCHEMA: &str = "bridge.tally.ledgers/1";
 pub const BRIDGE_LEDGER_WRITE_READBACK_SCHEMA: &str = "bridge.tally.ledger-write-readback/1";
@@ -83,8 +94,9 @@ pub const MAX_INTERACTIVE_DISCOVERY_COMPANIES: usize = 100;
 
 /// The sanitized representation of Tally's U+0004 metadata prefix.
 ///
-/// `tolerant_xml` produces this exact form for an illegal `&#4;` reference;
-/// literal U+FFFD source text remains distinguishable as `U+FFFD#65533;`.
+/// [`mark_forbidden_numeric_references`] produces this exact form for an
+/// illegal `&#4;` reference; literal U+FFFD source text that could collide with
+/// it remains distinguishable as `U+FFFD#65533;`.
 pub const TALLY_SANITIZED_ROOT_MARKER: &str = "\u{fffd}#4;";
 
 /// Whether Tally text names the reserved top-level root.
