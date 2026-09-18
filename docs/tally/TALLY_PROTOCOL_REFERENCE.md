@@ -146,9 +146,10 @@ before an XML parser sees it.
   U+FFFF itself; a NUL usually means the bytes were decoded with the wrong encoding.
 
 The twelve-byte window fits `#`, ten digits and `;`. A reference padded with leading zeros beyond
-that is left to the XML parser, and quick-xml, the parser this crate uses, resolves a padded
-reference to a forbidden code point other than U+0000 to the raw character instead of refusing
-it. None of the committed fixtures contains a padded reference or an unterminated `&#`.
+that is left to the XML parser. quick-xml, the parser this crate uses, resolves a padded
+reference to a C0 control character, U+FFFE or U+FFFF to the raw character instead of refusing
+it; it refuses U+0000, surrogates and code points above U+10FFFF, which are not valid characters
+(`quick-xml` 0.41 `escape.rs`, `parse_number`). None of the committed fixtures contains a padded reference or an unterminated `&#`.
 
 ### 1.2 Request charset controls response charset
 
