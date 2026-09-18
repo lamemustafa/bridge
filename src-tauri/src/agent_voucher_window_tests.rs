@@ -977,3 +977,37 @@ async fn a_part_heavier_than_the_sample_raises_the_estimate_for_the_rest() {
     // The sample and the first day were read; the second day never was.
     assert_eq!(observed.len(), 12);
 }
+
+#[tokio::test]
+async fn a_supplied_count_of_another_window_is_refused_before_any_read() {
+    // A caller-held count must describe this window. One that counts a day
+    // outside it is a count of something else, and planning from it could put
+    // an unbounded day inside a read it believes is small.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(listener.local_addr().unwrap(), directory.path());
+    let identity = identity();
+    let failure = server
+        .read_voucher_window(
+            &identity,
+            identity.display_name(),
+            "20260801",
+            "20260802",
+            VoucherReadShape::EntryWildcard,
+            WindowPlanSource::Counted(WindowCensus::from_rows([
+                (day("20260801"), 1),
+                (day("20260803"), 2),
+            ])),
+            three_a_read(),
+            |xml| parse_agent_rows(xml, GUID),
+        )
+        .await
+        .err()
+        .expect("refused");
+    assert_eq!(failure.code, "window_not_honoured");
+    assert!(matches!(
+        listener.accept(),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+    ));
+}
