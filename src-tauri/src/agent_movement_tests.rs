@@ -277,10 +277,21 @@ async fn movement_read_preserves_observed_count_after_accounting_exclusions() {
             import_enabled: false,
             writes_enabled: false,
         });
-        let (page, _) = server
-            .read_movement_vouchers(&identity, &observed.name, date.clone(), date)
+        // A caller-held high-water mark small enough to bound the window, so
+        // the pre-flight (protocol reference §11c) sends nothing of its own.
+        let page = server
+            .read_movement_vouchers(
+                &identity,
+                &observed.name,
+                (date.clone(), date),
+                WindowPlanSource::Estimate {
+                    known_high_water: Some(3),
+                },
+                None,
+            )
             .await
-            .unwrap();
+            .unwrap()
+            .page;
         assert_eq!(page.observed_rows, 3);
         assert!(
             page.rows.is_empty(),
