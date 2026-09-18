@@ -124,6 +124,32 @@ property that matters.**
 **One real parser requirement:** `&` is returned XML-escaped inside attribute values
 (`NAME="ZZ Ram &amp; Sons Pvt Ltd"`). Attribute values must be unescaped before comparison.
 
+#### (d) The marking rule Bridge applies before parsing
+
+This is a rule Bridge chose, not an observation of Tally. `bridge-tally-protocol` exposes it as
+`mark_forbidden_numeric_references`, and its native collection parsers apply it to decoded text
+before an XML parser sees it.
+
+- A decimal or hexadecimal (`x` or `X`) numeric reference to a code point XML 1.0 forbids (a C0
+  control other than tab, LF and CR, a surrogate, U+FFFE, U+FFFF, or beyond U+10FFFF) becomes the
+  literal text U+FFFD `#` *n* `;`, with *n* in decimal. `&#4; Primary` reads as
+  `U+FFFD#4; Primary`; that prefix is the crate's `TALLY_SANITIZED_ROOT_MARKER`.
+- A U+FFFD already present, literal or as a legal reference, that is directly followed by `#`,
+  digits and `;` becomes U+FFFD `#65533;`. Every marker then stands for exactly one source atom, so
+  the rewrite is reversible: `U+FFFD#65533;` reads back as U+FFFD and `U+FFFD#`*n*`;` as the
+  reference to *n*.
+- Everything else passes through unchanged: legal references, raw characters including raw C0
+  controls (Tally sends raw U+0003 in `PARENTSTRUCTURE`), and a `&#` whose `;` is not within the
+  twelve bytes after it. The scan continues past such a `&#`, so a later forbidden reference is
+  still marked.
+- The rewrite refuses nothing. A consumer of decoded Tally text refuses a raw U+0000, U+FFFE or
+  U+FFFF itself; a NUL usually means the bytes were decoded with the wrong encoding.
+
+The twelve-byte window fits `#`, ten digits and `;`. A reference padded with leading zeros beyond
+that is left to the XML parser, and quick-xml, the parser this crate uses, resolves a padded
+reference to a forbidden code point other than U+0000 to the raw character instead of refusing
+it. None of the committed fixtures contains a padded reference or an unterminated `&#`.
+
 ### 1.2 Request charset controls response charset
 
 **VERIFIED 2026-08-19.** Matched requests against a synthetic validation book
@@ -3348,3 +3374,4 @@ UI. Deletion was not exercised at all. Per P6, neither may be built upon.
 | 2026-09-11 | Extended §12a.9 to TallyPrime 7.1 licensed Silver and the `StandardLedgerCatalogV1` profile from a live rename/restore capture (VERIFIED), and recorded three structural facts with separate markers: ledger `RESERVEDNAME` follows the same reserved/not-reserved convention as groups, one of nine populated (VERIFIED), company-scoped ledger GUIDs (PARTIAL — verified on all nine rows of one company). XML-driven rename and deletion remain UNVERIFIED. A later revision the same day withdrew a `CMPINFO` alteration-counter claim that the committed fixtures did not support. |
 | 2026-09-11 | Narrowed §9.13's company-guard paragraph to match §9.11d: which *kind* of mismatched `SVCURRENTCOMPANY` posts silently is UNVERIFIED, so the classification by name shape was withdrawn, and the pre-write check was corrected from the GUID alone to the whole §9.11b identity tuple. |
 | 2026-09-18 | Added §8.2c: `REFERENCE`/`ISPOSTDATED`/`ISINVOICE`/`PARTYGSTIN` added to the voucher `FETCH` list and captured on licensed TallyPrime 7.1 Silver (`BRIDGE SHAPE LAB`, 67 vouchers, twelve windows). `ISINVOICE` never carries `TYPE="Logical"`, unlike the other three; `PARTYGSTIN` round-trips but was empty on every observed row (population UNVERIFIED). |
+| 2026-09-18 | Added §1.1(d): the rule `mark_forbidden_numeric_references` applies before parsing, now public in `bridge-tally-protocol`, including that a `&#` with no `;` in its window no longer ends the rewrite. |
