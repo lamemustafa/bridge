@@ -1,0 +1,19 @@
+# Engagement for the synthetic read beside this file. Invented; see PROVENANCE.md.
+# Shape: the keys of a reference-engine client config that cash_44ab reads, and nothing else.
+[client]
+label = "Lakeview Hardware Demo"
+entity_type = "individual"
+assessment_year = "2026-27"
+
+[period]
+start = "2025-04-01"
+end = "2026-03-31"
+
+[snapshot]
+format = "tally-read-v1"
+path = "synthetic-read"
+allow_unbracketed_read = false
+
+[roles]
+cash_groups = ["Cash-in-Hand"]
+bank_groups = ["Bank Accounts", "Bank OD A/c"]
