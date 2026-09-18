@@ -60,7 +60,7 @@
     },
     {
       "id": "cash_44ab.cash_payments",
-      "value": 106885051,
+      "value": 108885052,
       "unit": "paise",
       "definition_sha256_16": "13cdeca70b770857",
       "definition_text": "Credits to cash ledgers. Books population (optional, cancelled and post-dated vouchers excluded); Contra excluded",
@@ -98,7 +98,7 @@
     },
     {
       "id": "cash_44ab.cash_share_payments",
-      "value": 9263,
+      "value": 9276,
       "unit": "bp",
       "definition_sha256_16": "7e25b1384200d83c",
       "definition_text": "cash_payments / (cash_payments + bank_payments)",

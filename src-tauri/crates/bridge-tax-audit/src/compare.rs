@@ -38,10 +38,19 @@ const NUMERIC_UNITS: [&str; 4] = ["paise", "bp", "count", "days"];
 /// still full, correct parity), and this 18 never needs to move when that fixture does. 18 is the
 /// right floor for that reason: low enough to admit a quiet real book, still high enough that an
 /// empty or near-empty dump cannot pass.
+/// `depreciation` always emits at least these 2 figures, in every code path -- even the "unmapped
+/// Fixed Assets ledger" fail-loud path (which returns before any block, cash-flag or totals
+/// figure) still carries them: `gst_tcs_addition_lines_seen_count` (a plain verification counter)
+/// and `dep_expense_ledgers_count`. Unlike `cash_payments_40a3`'s 18, this floor is deliberately
+/// small: every other figure is conditioned on at least one Fixed Assets ledger or one configured
+/// block existing, which a real client book is never guaranteed to have (a services business with
+/// no fixed assets at all is a legitimate, quiet book, not a broken dump). 2 is still high enough
+/// that an empty or near-empty dump cannot pass.
 pub fn default_min_figures(test_id: &str) -> usize {
     match test_id {
         "cash_44ab" => 7,
         "cash_payments_40a3" => 18,
+        "depreciation" => 2,
         _ => 1,
     }
 }

@@ -27,6 +27,22 @@ Rs 35,000 (Coastal Freight Carriers, still within the higher limit) and one of R
 paisa over it (Bayside Cargo Logistics, now outside it) -- both transport-name heuristic hits and
 both over the plain s.40A(3) limit, so both also produce an s.40A(3) finding.
 
+Masterid 43-49 add `depreciation` (Income-tax Act block WDV vs books) to the same book, across the
+three real blocks the vendored rules carry (furniture_10 10%, plant_machinery_15 15%,
+computers_40 40%) -- fully mapped throughout, so the "unmapped ledger fails loud" and DEP-1/DEP-2
+paths (which would blank every block figure for the whole test) are covered by the crate's own
+Rust unit tests on hand-built books instead, never by this shared fixture. One case exactly AT
+each boundary the module tests: an addition put to use for exactly 180 days (Office Furniture,
+full rate) beside one for exactly 179 days (Showroom Furniture, half rate, one calendar day
+later); a cash-paid addition of exactly Rs 10,000 -- the s.43(1) second proviso limit itself --
+not flagged (Office Computers) beside one of Rs 10,000.01, one paisa over it, flagged (Reception
+Computers). Also: a deletion (Factory Machine, masterid 48) that exceeds the full-rate pool and
+spills into the half-rate one (s.43(6)); a depreciation-journal voucher (masterid 49, crediting
+Factory Machine, debiting "Depreciation A/c") wiring `dep_expense_ledgers` and the book-vs-Act
+tie; and a GST line beside the Office Computers addition (masterid 43) proving
+`gst_tcs_addition_lines_seen_count` is exercised on data. Every new ledger's TB is left to the
+script's own auto-derivation (no `TB_SKEW` entry), so DEP-1 ties cleanly on all of them.
+
 Deterministic: running it twice writes identical bytes (gzip mtime is fixed at 0).
 
     python3 parity/generate_fixture.py tests/fixtures
@@ -76,7 +92,7 @@ LEDGERS = {
     "Purchases - Hardware": ("Purchase Accounts", 0),
     "Shop Rent": ("Shop Running Costs", 0),
     "Electricity": ("Indirect Expenses", 0),
-    "Owner Capital": ("Capital Account", -1_20_000_00),
+    "Owner Capital": ("Capital Account", -5_70_000_00),  # offsets Factory Machine's opening below, so TB openings still sum to zero (POP-3)
     "Pinecrest Builders": ("Sundry Debtors", 20_000_00),
     "Tidewater Fasteners": ("Sundry Creditors", -15_000_00),
     "Unmapped Holding": ("Legacy Holding", 0),
@@ -101,6 +117,17 @@ LEDGERS = {
     "Ashwood Traders": ("Sundry Creditors", 0),  # s.269ST payment leg: exactly at the limit
     "Coastal Freight Carriers": ("Sundry Creditors", 0),  # goods-carriage: exactly at the Rs 35,000 proviso limit
     "Bayside Cargo Logistics": ("Sundry Creditors", 0),  # goods-carriage: Rs 0.01 over the proviso limit
+    # masterid 43-49 ledgers below, for `depreciation`. Every name is invented; "Fixed Assets" is
+    # one of Bridge's own reserved primary groups (book.rs PRIMARY_GROUPS), so a ledger can be
+    # parented to it directly with no GROUP element, same convention as "Delivery Van" above.
+    "Office Furniture": ("Fixed Assets", 0),  # furniture_10: addition at exactly 180 days used (full rate)
+    "Showroom Furniture": ("Fixed Assets", 0),  # furniture_10: addition at exactly 179 days used (half rate)
+    "Factory Machine": ("Fixed Assets", 4_50_000_00),  # plant_machinery_15: deletion spills into the half-rate pool (s.43(6)); also the DEP-1/book-vs-Act journal
+    "Office Computers": ("Fixed Assets", 0),  # computers_40: cash-paid addition exactly AT the s.43(1) second proviso limit (not flagged)
+    "Reception Computers": ("Fixed Assets", 0),  # computers_40: cash-paid addition Rs 0.01 over the limit (flagged)
+    "Depreciation A/c": ("Indirect Expenses", 0),  # dep_expense_ledgers: the client's own book depreciation charge
+    "Comfort Furnishings": ("Sundry Creditors", 0),  # invented supplier absorbing the non-cash addition credits above
+    "Machinery Disposal Proceeds": ("Current Assets", 0),  # invented counter-ledger for the Factory Machine deletion (amount receivable)
 }
 
 VOUCHER_TYPES = (("Contra", "Contra"), ("Journal", "Journal"), ("Payment", "Payment"),
@@ -167,6 +194,19 @@ VOUCHERS_H1 = (
     # Bayside Cargo Logistics: Rs 35,000.01 cash, one paisa over the goods-carriage proviso limit
     # (now outside it; same transport-name heuristic and s.40A(3) over-limit as the row above).
     (42, "20250711", "Payment", "P/23", None, (("Bayside Cargo Logistics", "-35000.01"), ("Cash", "35000.01"))),
+    # ---- masterid 43-49: `depreciation` (see the module docstring above for the full scenario map).
+    # Office Computers (computers_40): addition Rs 2,00,000 with a GST input-tax line alongside it
+    # (gst_tcs_addition_lines_seen_count) and a cash payment of exactly Rs 10,000 -- the s.43(1)
+    # second proviso limit itself -- NOT flagged (the limit is "over", not "at or over").
+    (43, "20250401", "Purchase", "PU/3", None,
+     (("Office Computers", "-200000.00"), ("GST Payable", "-36000.00"), ("Cash", "10000.00"), ("Comfort Furnishings", "226000.00"))),
+    # Reception Computers (computers_40): addition Rs 1,50,000 with a cash payment of Rs 10,000.01,
+    # one paisa over the s.43(1) limit -- flagged.
+    (44, "20250401", "Purchase", "PU/4", None,
+     (("Reception Computers", "-150000.00"), ("Cash", "10000.01"), ("Comfort Furnishings", "139999.99"))),
+    # Factory Machine deletion of Rs 5,50,000, exceeding the full-rate pool (opening only, no >=180
+    # addition here) and spilling into the half-rate pool (s.43(6)).
+    (48, "20250601", "Journal", "J/2", None, (("Machinery Disposal Proceeds", "-550000.00"), ("Factory Machine", "550000.00"))),
 )
 # The second window carries no ISOPTIONAL/ISPOSTDATED tags (the shape of an export whose
 # status came from a separate side list); the voucher_status_list part decides them.
@@ -177,6 +217,17 @@ VOUCHERS_H2 = (
     (16, "20260105", "Payment", "P/6", None, (("Shop Rent", "-8000.00"), ("Cash", "8000.00"))),
     (17, "20260320", "Receipt", "R/4", None, (("Lakeview Bank Current A/c", "-10000.00"), ("Pinecrest Builders", "10000.00"))),
     (18, "20260214", "Payment", "P/7", None, (("Tidewater Fasteners", "-4000.00"), ("Counter Till", "4000.00"))),
+    # ---- masterid 45-47, 49: `depreciation` (continued from VOUCHERS_H1's masterid 43/44/48).
+    # Office Furniture (furniture_10): addition put to use exactly 180 days before period end
+    # (2026-03-31), inclusive -- the s.32(1) second proviso boundary itself: full rate.
+    (45, "20251003", "Purchase", "PU/6", None, (("Office Furniture", "-100000.00"), ("Comfort Furnishings", "100000.00"))),
+    # Showroom Furniture (furniture_10): one calendar day later, exactly 179 days used: half rate.
+    (46, "20251004", "Purchase", "PU/7", None, (("Showroom Furniture", "-60000.00"), ("Comfort Furnishings", "60000.00"))),
+    # Factory Machine (plant_machinery_15): a mid-year addition well under 180 days used, paid on credit.
+    (47, "20260201", "Purchase", "PU/5", None, (("Factory Machine", "-80000.00"), ("Comfort Furnishings", "80000.00"))),
+    # Depreciation journal: the client's own book depreciation for the year on Factory Machine,
+    # wiring dep_expense_ledgers and the book-vs-Act tie (book_dep_total, book_dep_tie_diff_paise).
+    (49, "20260331", "Journal", "J/3", None, (("Depreciation A/c", "-45000.00"), ("Factory Machine", "45000.00"))),
 )
 SIDE_LIST = ({"masterid": "16", "optional": True, "cancelled": False, "postdated": False, "void": False},
              {"masterid": "17", "optional": False, "cancelled": False, "postdated": True, "void": False})
@@ -184,7 +235,7 @@ EXCLUDED = {10, 11, 16, 17}
 # Tally's TB for this ledger is written 5.00 away from its vouchers, so POP-1 fires on it.
 TB_SKEW = {"Electricity": 500}
 ALTER_BASE = 100
-HIGH_WATER = (ALTER_BASE + 42, 57)
+HIGH_WATER = (ALTER_BASE + 49, 57)  # closing high-water must be >= the max ALTERID across both windows (masterid 49, H2)
 
 
 def paise(text: str) -> int:
