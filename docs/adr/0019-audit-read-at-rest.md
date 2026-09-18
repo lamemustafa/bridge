@@ -72,7 +72,7 @@ What Bridge does today:
   that local Tally data has been fully erased" (`docs/tally/privacy-model.md:9-47`, the "Book data"
   row is at `:12`).
 - **Egress is recorded.** Every tool call appends a receipt to `agent-egress.jsonl` in the data
-  directory (`src-tauri/src/agent.rs:869`).
+  directory (`Server::append_framed_egress`, `src-tauri/src/agent_delivery.rs:32-72`).
 - **Files on disk bypass that receipt.** A process with a shell or a filesystem tool, running as
   the same user as Bridge, can read any file in the data directory and send it to its own model
   provider without redaction and without a receipt.
