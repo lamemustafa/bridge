@@ -1,0 +1,314 @@
+{
+ "format": "tally-read",
+ "format_version": "1.0",
+ "read_id": "synthetic-lakeview-1",
+ "created_at": "2026-09-18T00:00:00+05:30",
+ "read_at": "2026-09-18T00:00:00+05:30",
+ "producer": {
+  "name": "bridge-tax-audit parity/generate_fixture.py",
+  "version": "1",
+  "kind": "synthetic",
+  "source": null
+ },
+ "company": {
+  "guid": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c",
+  "name": "Lakeview Hardware Demo",
+  "books_from": "2025-04-01"
+ },
+ "tally": {
+  "basis": "not_recorded",
+  "product": null,
+  "release": null,
+  "license_tier": null,
+  "education_mode": null,
+  "observed_at": null,
+  "evidence_part": null
+ },
+ "period": {
+  "from": "2025-04-01",
+  "to": "2026-03-31"
+ },
+ "consistency": {
+  "status": "unchanged",
+  "attempts": 1,
+  "before": {
+   "alter_voucher_id": 118,
+   "alter_master_id": 57,
+   "observed_at": null,
+   "part": "high-water-before"
+  },
+  "after": {
+   "alter_voucher_id": 118,
+   "alter_master_id": 57,
+   "observed_at": null,
+   "part": "high-water-after"
+  }
+ },
+ "elapsed_ms": null,
+ "parts": [
+  {
+   "id": "high-water-before",
+   "kind": "company_high_water",
+   "name": "high_water_before.xml",
+   "request": null,
+   "request_absent_reason": "synthetic fixture: no request was sent",
+   "response": {
+    "path": "parts/high_water_before.xml",
+    "storage": "identity",
+    "stored_sha256": "5207edc8a183d7ff35cd454e165d5384d064bcd157f4182bc92599a8ef17a584",
+    "stored_bytes": 643,
+    "sha256": "5207edc8a183d7ff35cd454e165d5384d064bcd157f4182bc92599a8ef17a584",
+    "bytes": 643,
+    "media_type": "application/xml",
+    "text_encoding": "utf-8",
+    "wire_exact": false,
+    "transformation": "derived",
+    "transformation_note": "synthetic: written by parity/generate_fixture.py, never served by Tally"
+   },
+   "fetch_profile": "synthetic",
+   "requested_at": null,
+   "elapsed_ms": null,
+   "tally_status": null
+  },
+  {
+   "id": "company",
+   "kind": "company",
+   "name": "company_object.xml",
+   "request": null,
+   "request_absent_reason": "synthetic fixture: no request was sent",
+   "response": {
+    "path": "parts/company_object.xml",
+    "storage": "identity",
+    "stored_sha256": "f1b6fe4e6b6cc406a4ae92ce0ef62a6c79a88a99ac83b1888989a98fbee967b4",
+    "stored_bytes": 606,
+    "sha256": "f1b6fe4e6b6cc406a4ae92ce0ef62a6c79a88a99ac83b1888989a98fbee967b4",
+    "bytes": 606,
+    "media_type": "application/xml",
+    "text_encoding": "utf-8",
+    "wire_exact": false,
+    "transformation": "derived",
+    "transformation_note": "synthetic: written by parity/generate_fixture.py, never served by Tally"
+   },
+   "fetch_profile": "synthetic",
+   "requested_at": null,
+   "elapsed_ms": null,
+   "tally_status": null
+  },
+  {
+   "id": "groups",
+   "kind": "groups",
+   "name": "groups.xml",
+   "request": null,
+   "request_absent_reason": "synthetic fixture: no request was sent",
+   "response": {
+    "path": "parts/groups.xml",
+    "storage": "identity",
+    "stored_sha256": "7f87422759a3e70fe62c55fc91712ef19fbf7ffdc0a03ec8bb9afd80217b9a0e",
+    "stored_bytes": 5428,
+    "sha256": "7f87422759a3e70fe62c55fc91712ef19fbf7ffdc0a03ec8bb9afd80217b9a0e",
+    "bytes": 5428,
+    "media_type": "application/xml",
+    "text_encoding": "utf-16le",
+    "wire_exact": false,
+    "transformation": "derived",
+    "transformation_note": "synthetic: written by parity/generate_fixture.py, never served by Tally"
+   },
+   "fetch_profile": "synthetic",
+   "requested_at": null,
+   "elapsed_ms": null,
+   "tally_status": null
+  },
+  {
+   "id": "ledgers",
+   "kind": "ledgers",
+   "name": "ledgers.xml",
+   "request": null,
+   "request_absent_reason": "synthetic fixture: no request was sent",
+   "response": {
+    "path": "parts/ledgers.xml",
+    "storage": "identity",
+    "stored_sha256": "733c887fb4c7134760e62c2a5ec1b5181822b73f8cf218c9535ef91e7f4e6b23",
+    "stored_bytes": 5362,
+    "sha256": "733c887fb4c7134760e62c2a5ec1b5181822b73f8cf218c9535ef91e7f4e6b23",
+    "bytes": 5362,
+    "media_type": "application/xml",
+    "text_encoding": "utf-16le",
+    "wire_exact": false,
+    "transformation": "derived",
+    "transformation_note": "synthetic: written by parity/generate_fixture.py, never served by Tally"
+   },
+   "fetch_profile": "synthetic",
+   "requested_at": null,
+   "elapsed_ms": null,
+   "tally_status": null
+  },
+  {
+   "id": "trial-balance",
+   "kind": "trial_balance",
+   "name": "tb_fy.xml",
+   "request": null,
+   "request_absent_reason": "synthetic fixture: no request was sent",
+   "response": {
+    "path": "parts/tb_fy.xml",
+    "storage": "identity",
+    "stored_sha256": "ba8b65d832c76710ffb70519a078f07e7587a0e79ba408ba860535ed24403c66",
+    "stored_bytes": 4030,
+    "sha256": "ba8b65d832c76710ffb70519a078f07e7587a0e79ba408ba860535ed24403c66",
+    "bytes": 4030,
+    "media_type": "application/xml",
+    "text_encoding": "utf-8",
+    "wire_exact": false,
+    "transformation": "derived",
+    "transformation_note": "synthetic: written by parity/generate_fixture.py, never served by Tally"
+   },
+   "fetch_profile": "synthetic",
+   "requested_at": null,
+   "elapsed_ms": null,
+   "tally_status": null,
+   "window": {
+    "from": "2025-04-01",
+    "to": "2026-03-31"
+   }
+  },
+  {
+   "id": "voucher-types",
+   "kind": "voucher_types",
+   "name": "vouchertypes.xml",
+   "request": null,
+   "request_absent_reason": "synthetic fixture: no request was sent",
+   "response": {
+    "path": "parts/vouchertypes.xml",
+    "storage": "identity",
+    "stored_sha256": "56a74424d30240ea24c2e0858e854ac3e199123d92f6fb8b8cfc640b068b42da",
+    "stored_bytes": 1307,
+    "sha256": "56a74424d30240ea24c2e0858e854ac3e199123d92f6fb8b8cfc640b068b42da",
+    "bytes": 1307,
+    "media_type": "application/xml",
+    "text_encoding": "utf-8",
+    "wire_exact": false,
+    "transformation": "derived",
+    "transformation_note": "synthetic: written by parity/generate_fixture.py, never served by Tally"
+   },
+   "fetch_profile": "synthetic",
+   "requested_at": null,
+   "elapsed_ms": null,
+   "tally_status": null
+  },
+  {
+   "id": "vouchers-2025-04-01",
+   "kind": "vouchers",
+   "name": "vouchers_h1.xml",
+   "request": null,
+   "request_absent_reason": "synthetic fixture: no request was sent",
+   "response": {
+    "path": "parts/vouchers_h1.xml",
+    "storage": "identity",
+    "stored_sha256": "535395a112dc59e1f14b76da10bc2ee48d0230c8277369685e38d2623bb86f5b",
+    "stored_bytes": 13728,
+    "sha256": "535395a112dc59e1f14b76da10bc2ee48d0230c8277369685e38d2623bb86f5b",
+    "bytes": 13728,
+    "media_type": "application/xml",
+    "text_encoding": "utf-8",
+    "wire_exact": false,
+    "transformation": "derived",
+    "transformation_note": "synthetic: written by parity/generate_fixture.py, never served by Tally"
+   },
+   "fetch_profile": "synthetic",
+   "requested_at": null,
+   "elapsed_ms": null,
+   "tally_status": null,
+   "window": {
+    "from": "2025-04-01",
+    "to": "2025-09-30"
+   },
+   "rows": 12,
+   "alter_id_max": 112
+  },
+  {
+   "id": "vouchers-2025-10-01",
+   "kind": "vouchers",
+   "name": "vouchers_h2.xml.gz",
+   "request": null,
+   "request_absent_reason": "synthetic fixture: no request was sent",
+   "response": {
+    "path": "parts/vouchers_h2.xml.gz",
+    "storage": "gzip",
+    "stored_sha256": "d2561801c2c360a29c658db2dcce389b05014f05d4766c48592249a28be5f4fb",
+    "stored_bytes": 913,
+    "sha256": "63fe8c0e502767e1a7ebd99f9ca3c5959d8e09542cb402b40b5f85c16fca4946",
+    "bytes": 6411,
+    "media_type": "application/xml",
+    "text_encoding": "utf-8",
+    "wire_exact": false,
+    "transformation": "derived",
+    "transformation_note": "synthetic: written by parity/generate_fixture.py, never served by Tally"
+   },
+   "fetch_profile": "synthetic",
+   "requested_at": null,
+   "elapsed_ms": null,
+   "tally_status": null,
+   "window": {
+    "from": "2025-10-01",
+    "to": "2026-03-31"
+   },
+   "rows": 6,
+   "alter_id_max": 118
+  },
+  {
+   "id": "voucher-status-list",
+   "kind": "voucher_status_list",
+   "name": "voucher_status_list.json",
+   "request": null,
+   "request_absent_reason": "synthetic fixture: no request was sent",
+   "response": {
+    "path": "parts/voucher_status_list.json",
+    "storage": "identity",
+    "stored_sha256": "c7959e4e91a445f774ff2a5eaad4f8968f6fc82e21622d5168ececf9b0a1aa78",
+    "stored_bytes": 249,
+    "sha256": "c7959e4e91a445f774ff2a5eaad4f8968f6fc82e21622d5168ececf9b0a1aa78",
+    "bytes": 249,
+    "media_type": "application/json",
+    "text_encoding": "utf-8",
+    "wire_exact": false,
+    "transformation": "derived",
+    "transformation_note": "synthetic: written by parity/generate_fixture.py, never served by Tally"
+   },
+   "fetch_profile": "synthetic",
+   "requested_at": null,
+   "elapsed_ms": null,
+   "tally_status": null,
+   "scope": {
+    "from": "2025-04-01",
+    "to": "2026-03-31",
+    "exhaustive": true
+   }
+  },
+  {
+   "id": "high-water-after",
+   "kind": "company_high_water",
+   "name": "high_water_after.xml",
+   "request": null,
+   "request_absent_reason": "synthetic fixture: no request was sent",
+   "response": {
+    "path": "parts/high_water_after.xml",
+    "storage": "identity",
+    "stored_sha256": "5207edc8a183d7ff35cd454e165d5384d064bcd157f4182bc92599a8ef17a584",
+    "stored_bytes": 643,
+    "sha256": "5207edc8a183d7ff35cd454e165d5384d064bcd157f4182bc92599a8ef17a584",
+    "bytes": 643,
+    "media_type": "application/xml",
+    "text_encoding": "utf-8",
+    "wire_exact": false,
+    "transformation": "derived",
+    "transformation_note": "synthetic: written by parity/generate_fixture.py, never served by Tally"
+   },
+   "fetch_profile": "synthetic",
+   "requested_at": null,
+   "elapsed_ms": null,
+   "tally_status": null
+  }
+ ],
+ "notes": [
+  "Synthetic read: every name, GUID and amount is invented; no byte was served by Tally."
+ ]
+}

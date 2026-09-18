@@ -1,0 +1,215 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "cash_44ab",
+  "test_version": "1",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "63ed2c9b9f9f5f18",
+  "population_note_text": "Books population (optional, cancelled and post-dated vouchers excluded); Contra excluded",
+  "figures": [
+    {
+      "id": "cash_44ab.applicable_threshold",
+      "value": 1000000000,
+      "unit": "paise",
+      "definition_sha256_16": "42fc9c686e60400e",
+      "definition_text": "₹10 crore if both cash shares are within 5%, else ₹1 crore",
+      "evidence": [
+        {
+          "kind": "rule",
+          "id": "s44ab",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "cash_44ab.bank_payments",
+      "value": 8500000,
+      "unit": "paise",
+      "definition_sha256_16": "068d14cc3112d3df",
+      "definition_text": "Credits to bank ledgers. Books population (optional, cancelled and post-dated vouchers excluded); Contra excluded",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Lakeview Bank Current A/c",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Ridge Bank OD A/c",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "cash_44ab.bank_receipts",
+      "value": 19300000,
+      "unit": "paise",
+      "definition_sha256_16": "6b0a6cd0d11bcf0c",
+      "definition_text": "Debits to bank ledgers. Books population (optional, cancelled and post-dated vouchers excluded); Contra excluded",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Lakeview Bank Current A/c",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Ridge Bank OD A/c",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "cash_44ab.cash_payments",
+      "value": 1915050,
+      "unit": "paise",
+      "definition_sha256_16": "13cdeca70b770857",
+      "definition_text": "Credits to cash ledgers. Books population (optional, cancelled and post-dated vouchers excluded); Contra excluded",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Cash",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Counter Till",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "cash_44ab.cash_receipts",
+      "value": 9873457,
+      "unit": "paise",
+      "definition_sha256_16": "ac58939200fc3745",
+      "definition_text": "Debits to cash ledgers. Books population (optional, cancelled and post-dated vouchers excluded); Contra excluded",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Cash",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Counter Till",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "cash_44ab.cash_share_payments",
+      "value": 1839,
+      "unit": "bp",
+      "definition_sha256_16": "7e25b1384200d83c",
+      "definition_text": "cash_payments / (cash_payments + bank_payments)",
+      "evidence": []
+    },
+    {
+      "id": "cash_44ab.cash_share_receipts",
+      "value": 3384,
+      "unit": "bp",
+      "definition_sha256_16": "1bca1907d59fdbbd",
+      "definition_text": "cash_receipts / (cash_receipts + bank_receipts)",
+      "evidence": []
+    }
+  ],
+  "findings": [
+    {
+      "id": "cash_44ab/applicability",
+      "clauses": [
+        "s.44AB(a)",
+        "3CD-8"
+      ],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "applicable_threshold",
+          "figure_id": "cash_44ab.applicable_threshold"
+        },
+        {
+          "name": "cash_receipts",
+          "figure_id": "cash_44ab.cash_receipts"
+        },
+        {
+          "name": "cash_share_payments",
+          "figure_id": "cash_44ab.cash_share_payments"
+        },
+        {
+          "name": "cash_share_receipts",
+          "figure_id": "cash_44ab.cash_share_receipts"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Cash",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Counter Till",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Lakeview Bank Current A/c",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Ridge Bank OD A/c",
+          "label": ""
+        }
+      ],
+      "title_sha256_16": "9e849be29a38c17f",
+      "title_text": "Cash share of receipts and payments on the books",
+      "limits_sha256_16": "92c84d61c0a0bc3e",
+      "limits_text": [
+        "Books only: a cheque or draft that is not account-payee counts as cash and is not visible in Tally.",
+        "Bank ledgers are taken as recorded; full-year bank statements are needed to confirm."
+      ],
+      "ask_client_sha256_16": "3ac454ce34a5bc80",
+      "ask_client_text": [
+        "Full-year bank statements for every account"
+      ]
+    }
+  ],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3"
+  ],
+  "book_invariant_violations": [
+    {
+      "invariant": "MAP-1",
+      "subject": "Unmapped Holding",
+      "detail": "chain incomplete: Legacy Holding"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Electricity",
+      "detail": "vouchers 365050 vs TB movement 365550 paise"
+    },
+    {
+      "invariant": "POP-2",
+      "subject": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000000c",
+      "detail": "Journal J/1 2025-09-28 lines sum 200"
+    },
+    {
+      "invariant": "POP-3",
+      "subject": "closing_paise",
+      "detail": "TB closing_paise sums to 700 paise"
+    }
+  ],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [],
+  "module_invariants_evaluated": [],
+  "module_invariant_violations": []
+}
