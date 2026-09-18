@@ -32,13 +32,13 @@
   "status": "unchanged",
   "attempts": 1,
   "before": {
-   "alter_voucher_id": 118,
+   "alter_voucher_id": 137,
    "alter_master_id": 57,
    "observed_at": null,
    "part": "high-water-before"
   },
   "after": {
-   "alter_voucher_id": 118,
+   "alter_voucher_id": 137,
    "alter_master_id": 57,
    "observed_at": null,
    "part": "high-water-after"
@@ -55,9 +55,9 @@
    "response": {
     "path": "parts/high_water_before.xml",
     "storage": "identity",
-    "stored_sha256": "5207edc8a183d7ff35cd454e165d5384d064bcd157f4182bc92599a8ef17a584",
+    "stored_sha256": "d483fb8a2a57383f0ff21ec5abab368bd3127b55523aa21d99ae0bf9cf638b1f",
     "stored_bytes": 643,
-    "sha256": "5207edc8a183d7ff35cd454e165d5384d064bcd157f4182bc92599a8ef17a584",
+    "sha256": "d483fb8a2a57383f0ff21ec5abab368bd3127b55523aa21d99ae0bf9cf638b1f",
     "bytes": 643,
     "media_type": "application/xml",
     "text_encoding": "utf-8",
@@ -103,10 +103,10 @@
    "response": {
     "path": "parts/groups.xml",
     "storage": "identity",
-    "stored_sha256": "7f87422759a3e70fe62c55fc91712ef19fbf7ffdc0a03ec8bb9afd80217b9a0e",
-    "stored_bytes": 5428,
-    "sha256": "7f87422759a3e70fe62c55fc91712ef19fbf7ffdc0a03ec8bb9afd80217b9a0e",
-    "bytes": 5428,
+    "stored_sha256": "d314bbcea1fb8a70e5e3e1a25008da57031f872da06d971be6014af82f950395",
+    "stored_bytes": 6466,
+    "sha256": "d314bbcea1fb8a70e5e3e1a25008da57031f872da06d971be6014af82f950395",
+    "bytes": 6466,
     "media_type": "application/xml",
     "text_encoding": "utf-16le",
     "wire_exact": false,
@@ -127,10 +127,10 @@
    "response": {
     "path": "parts/ledgers.xml",
     "storage": "identity",
-    "stored_sha256": "733c887fb4c7134760e62c2a5ec1b5181822b73f8cf218c9535ef91e7f4e6b23",
-    "stored_bytes": 5362,
-    "sha256": "733c887fb4c7134760e62c2a5ec1b5181822b73f8cf218c9535ef91e7f4e6b23",
-    "bytes": 5362,
+    "stored_sha256": "06b8cc1a80a1fbcba996edd82775c2bc7ab1d7a8ee1537faa0ec9cf8fbab5733",
+    "stored_bytes": 9894,
+    "sha256": "06b8cc1a80a1fbcba996edd82775c2bc7ab1d7a8ee1537faa0ec9cf8fbab5733",
+    "bytes": 9894,
     "media_type": "application/xml",
     "text_encoding": "utf-16le",
     "wire_exact": false,
@@ -151,10 +151,10 @@
    "response": {
     "path": "parts/tb_fy.xml",
     "storage": "identity",
-    "stored_sha256": "ba8b65d832c76710ffb70519a078f07e7587a0e79ba408ba860535ed24403c66",
-    "stored_bytes": 4030,
-    "sha256": "ba8b65d832c76710ffb70519a078f07e7587a0e79ba408ba860535ed24403c66",
-    "bytes": 4030,
+    "stored_sha256": "27bd539694d8b1159c62100a72dd886e034bb0650a66c9f71a55e2e32f817adb",
+    "stored_bytes": 7631,
+    "sha256": "27bd539694d8b1159c62100a72dd886e034bb0650a66c9f71a55e2e32f817adb",
+    "bytes": 7631,
     "media_type": "application/xml",
     "text_encoding": "utf-8",
     "wire_exact": false,
@@ -203,10 +203,10 @@
    "response": {
     "path": "parts/vouchers_h1.xml",
     "storage": "identity",
-    "stored_sha256": "535395a112dc59e1f14b76da10bc2ee48d0230c8277369685e38d2623bb86f5b",
-    "stored_bytes": 13728,
-    "sha256": "535395a112dc59e1f14b76da10bc2ee48d0230c8277369685e38d2623bb86f5b",
-    "bytes": 13728,
+    "stored_sha256": "f923d0a3308486417fc181aff5fc9ced79d7bb5e64a2911268a948bc2d634406",
+    "stored_bytes": 36297,
+    "sha256": "f923d0a3308486417fc181aff5fc9ced79d7bb5e64a2911268a948bc2d634406",
+    "bytes": 36297,
     "media_type": "application/xml",
     "text_encoding": "utf-8",
     "wire_exact": false,
@@ -221,8 +221,8 @@
     "from": "2025-04-01",
     "to": "2025-09-30"
    },
-   "rows": 12,
-   "alter_id_max": 112
+   "rows": 31,
+   "alter_id_max": 137
   },
   {
    "id": "vouchers-2025-10-01",
@@ -292,9 +292,9 @@
    "response": {
     "path": "parts/high_water_after.xml",
     "storage": "identity",
-    "stored_sha256": "5207edc8a183d7ff35cd454e165d5384d064bcd157f4182bc92599a8ef17a584",
+    "stored_sha256": "d483fb8a2a57383f0ff21ec5abab368bd3127b55523aa21d99ae0bf9cf638b1f",
     "stored_bytes": 643,
-    "sha256": "5207edc8a183d7ff35cd454e165d5384d064bcd157f4182bc92599a8ef17a584",
+    "sha256": "d483fb8a2a57383f0ff21ec5abab368bd3127b55523aa21d99ae0bf9cf638b1f",
     "bytes": 643,
     "media_type": "application/xml",
     "text_encoding": "utf-8",

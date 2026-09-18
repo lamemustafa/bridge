@@ -1,7 +1,7 @@
 [package]
 name = "bridge-tax-audit"
 version = "0.1.0"
-description = "Reads a tally-read-v1 directory into an audit book and runs books-based tax-audit tests (first slice: cash_44ab) with canonical parity output"
+description = "Reads a tally-read-v1 directory into an audit book and runs books-based tax-audit tests (cash_44ab, cash_payments_40a3) with canonical parity output"
 license = "Apache-2.0"
 repository = "https://github.com/lamemustafa/bridge"
 publish = false
@@ -18,6 +18,7 @@ flate2 = "1"
 quick-xml = "0.41"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha1 = "0.11"
 sha2 = "0.11"
 thiserror = "2"
 toml = "0.9"

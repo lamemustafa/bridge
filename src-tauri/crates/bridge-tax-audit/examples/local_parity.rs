@@ -4,14 +4,18 @@
 //!
 //! ```text
 //! cargo run --release --example local_parity -- \
-//!     ENGINE_RULES_TOML CLIENT_TOML READ_DIR PYTHON_DUMP_JSON RUST_DUMP_OUT
+//!     TEST_ID ENGINE_RULES_TOML CLIENT_TOML READ_DIR PYTHON_DUMP_JSON RUST_DUMP_OUT
 //! ```
 //!
-//! `CLIENT_TOML` is the reference engine's client config; its `[snapshot]` is replaced in
-//! memory by `READ_DIR` with `allow_unbracketed_read = true`, the same switch `parity/python_golden.py
-//! --read` applies, so both sides read the same bytes. `PYTHON_DUMP_JSON` is that script's
-//! output for the same config and read. `ENGINE_RULES_TOML` is the reference engine's full
-//! rules file: the vendored excerpt must still be a verbatim part of it and give the same values.
+//! `TEST_ID` is `cash_44ab` or `cash_payments_40a3`. `CLIENT_TOML` is the reference engine's
+//! client config; its `[snapshot]` is replaced in memory by `READ_DIR` with
+//! `allow_unbracketed_read = true`, the same switch `parity/python_golden.py --read` applies, so
+//! both sides read the same bytes. For `cash_payments_40a3`, `CLIENT_TOML`'s own `[roles]
+//! .round_off_ledgers` and `[loans.loan_ledgers.*]` (both optional) are read the same way
+//! `Engagement::from_toml` reads them for any other engagement. `PYTHON_DUMP_JSON` is that
+//! script's output for the same config, read and test id. `ENGINE_RULES_TOML` is the reference
+//! engine's full rules file: the vendored excerpt must still be a byte-for-byte verbatim part of
+//! it (checked block by block; see `src/rules.rs`) and give the same values.
 //!
 //! Prints one summary line, and every difference if there are any; exits non-zero on any
 //! difference or refusal.
@@ -23,7 +27,7 @@ use std::time::Instant;
 use bridge_tax_audit::canonical::hex;
 use bridge_tax_audit::compare::compare;
 use bridge_tax_audit::rules::{Rules, SOURCE_SHA256, VENDORED};
-use bridge_tax_audit::{cash_44ab_on, load_book, Engagement};
+use bridge_tax_audit::{cash_44ab_on, cash_payments_40a3_on, load_book, Engagement};
 use sha2::{Digest, Sha256};
 
 fn fail(message: impl std::fmt::Display) -> ExitCode {
@@ -31,13 +35,34 @@ fn fail(message: impl std::fmt::Display) -> ExitCode {
     ExitCode::FAILURE
 }
 
+/// Every vendored TOML block (separated by a blank line in `rules/ay2026-27.s44ab.toml`) must
+/// independently be a byte-for-byte verbatim substring of the live source. The blocks are not
+/// contiguous in the source file (two are truncated mid-table to skip a private research
+/// citation, and `[s44ab.turnover]`/`[s271da]` sit between them), so checking the whole
+/// post-header body as a single substring -- this example's earlier, `cash_44ab`-only check --
+/// no longer applies.
+fn vendored_blocks_are_verbatim(source: &str) -> bool {
+    let body = &VENDORED[VENDORED.find("\n[meta]\n").map_or(0, |i| i + 1)..];
+    body.split("\n\n")
+        .map(str::trim_end)
+        .filter(|block| !block.is_empty())
+        .all(|block| source.contains(block))
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let [rules_toml, client_toml, read_dir, python_dump, rust_out] = args.as_slice() else {
+    let [test_id, rules_toml, client_toml, read_dir, python_dump, rust_out] = args.as_slice()
+    else {
         return fail(
-            "usage: ENGINE_RULES_TOML CLIENT_TOML READ_DIR PYTHON_DUMP_JSON RUST_DUMP_OUT",
+            "usage: TEST_ID(cash_44ab|cash_payments_40a3) ENGINE_RULES_TOML CLIENT_TOML \
+             READ_DIR PYTHON_DUMP_JSON RUST_DUMP_OUT",
         );
     };
+    if test_id != "cash_44ab" && test_id != "cash_payments_40a3" {
+        return fail(format!(
+            "unknown TEST_ID {test_id:?}; expected cash_44ab or cash_payments_40a3"
+        ));
+    }
 
     // The vendored rules excerpt against the live source.
     let source = match std::fs::read_to_string(rules_toml) {
@@ -45,14 +70,14 @@ fn main() -> ExitCode {
         Err(e) => return fail(format!("{rules_toml}: {e}")),
     };
     let source_sha = hex(&Sha256::digest(source.as_bytes()));
-    let body = &VENDORED[VENDORED.find("\n[meta]\n").map_or(0, |i| i + 1)..];
+    let verbatim = vendored_blocks_are_verbatim(&source);
     let (live, vendored) = (Rules::parse(&source), Rules::vendored());
     let rules = match (live, vendored) {
-        (Ok(live), Ok(vendored)) if live == vendored && source.contains(body) => vendored,
+        (Ok(live), Ok(vendored)) if live == vendored && verbatim => vendored,
         (live, vendored) => {
             return fail(format!(
-                "vendored rules no longer match the source: verbatim={} live={live:?} vendored={vendored:?}",
-                source.contains(body)
+                "vendored rules no longer match the source: verbatim={verbatim} live={live:?} \
+                 vendored={vendored:?}"
             ))
         }
     };
@@ -84,7 +109,11 @@ fn main() -> ExitCode {
         Ok(book) => book,
         Err(e) => return fail(format!("the Rust slice refused the read: {e}")),
     };
-    let rust = match cash_44ab_on(&engagement, &book, &rules) {
+    let rust = match test_id.as_str() {
+        "cash_44ab" => cash_44ab_on(&engagement, &book, &rules),
+        _ => cash_payments_40a3_on(&engagement, &book, &rules),
+    };
+    let rust = match rust {
         Ok(doc) => doc,
         Err(e) => return fail(format!("the Rust slice refused: {e}")),
     };
@@ -116,7 +145,7 @@ fn main() -> ExitCode {
     match compare(&python, &rust, None) {
         Err(e) => fail(format!("PARITY REFUSED: {e}")),
         Ok(differences) => {
-            println!("identical_json={}", python == rust);
+            println!("test_id={test_id} identical_json={}", python == rust);
             println!(
                 "figures={} findings={} book_violations={} result_violations={} differences={} rust_ms={} rules: {rules_note}",
                 count("figures"),

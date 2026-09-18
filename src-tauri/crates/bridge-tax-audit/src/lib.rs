@@ -1,12 +1,12 @@
 //! Books-based tax-audit tests over a Tally read, ported from a Python reference engine one
 //! test at a time, each proven equal to the reference by a canonical parity dump.
 //!
-//! This first slice is the smallest end-to-end path: read a tally-read-v1 directory
-//! ([`read`], every byte verified against its manifest), build only the book fields the first
-//! test needs ([`book`]), evaluate the book and result invariants ([`invariants`]), run
-//! `cash_44ab` ([`cash_44ab`]) with rule values from a vendored rules excerpt ([`rules`]), and
-//! serialise the result canonically ([`canonical`]) so [`compare`] can diff it against the
-//! reference engine's dump under the same rules the reference's own comparer applies.
+//! This slice's end-to-end path: read a tally-read-v1 directory ([`read`], every byte verified
+//! against its manifest), build only the book fields a test needs ([`book`]), evaluate the book
+//! and result invariants ([`invariants`]), run a test ([`cash_44ab`], [`cash_payments_40a3`])
+//! with rule values from a vendored rules excerpt ([`rules`]), and serialise the result
+//! canonically ([`canonical`]) so [`compare`] can diff it against the reference engine's dump
+//! under the same rules the reference's own comparer applies.
 //!
 //! Nothing here talks to Tally, and nothing here writes. The crate reads files a person (or,
 //! later, Bridge) put on disk.
@@ -24,6 +24,7 @@
 pub mod book;
 pub mod canonical;
 pub mod cash_44ab;
+pub mod cash_payments_40a3;
 pub mod compare;
 pub mod error;
 pub mod findings;
@@ -32,6 +33,7 @@ pub mod read;
 pub mod rules;
 pub mod xml;
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use bridge_tally_primitives::TallyDate;
@@ -42,7 +44,11 @@ use rules::Rules;
 
 /// The engagement keys this slice reads, from a reference-engine client config: `[client]`
 /// label and assessment year, `[period]`, `[snapshot]` naming a tally-read-v1 directory, and
-/// the `[roles]` cash and bank groups.
+/// the `[roles]` cash and bank groups. `round_off_ledgers` and `loan_ledgers_configured` are
+/// `cash_payments_40a3`-only and are empty when the client config carries no `[roles]
+/// .round_off_ledgers` key or no `[loans]` table at all -- the expected shape for a client with
+/// nothing configured there, same convention the reference engine's own loaders use, not an
+/// error.
 #[derive(Debug, Clone)]
 pub struct Engagement {
     pub label: String,
@@ -52,6 +58,8 @@ pub struct Engagement {
     pub allow_unbracketed_read: bool,
     pub cash_groups: Vec<String>,
     pub bank_groups: Vec<String>,
+    pub round_off_ledgers: Vec<String>,
+    pub loan_ledgers_configured: Vec<String>,
 }
 
 /// `[snapshot]` keys of the reference engine's legacy raw-export layout. A config naming a read
@@ -147,6 +155,17 @@ impl Engagement {
                 .unwrap_or(false),
             cash_groups: strings(roles, "cash_groups")?,
             bank_groups: strings(roles, "bank_groups")?,
+            round_off_ledgers: match roles.get("round_off_ledgers") {
+                Some(_) => strings(roles, "round_off_ledgers")?,
+                None => Vec::new(),
+            },
+            loan_ledgers_configured: cfg
+                .get("loans")
+                .and_then(toml::Value::as_table)
+                .and_then(|loans| loans.get("loan_ledgers"))
+                .and_then(toml::Value::as_table)
+                .map(|table| table.keys().cloned().collect())
+                .unwrap_or_default(),
         })
     }
 }
@@ -184,4 +203,35 @@ pub fn cash_44ab_on(
 /// Read, verify, build the book, run `cash_44ab` and return its canonical parity dump.
 pub fn cash_44ab_canonical(engagement: &Engagement, rules: &Rules) -> Result<serde_json::Value> {
     cash_44ab_on(engagement, &load_book(engagement)?, rules)
+}
+
+/// Run `cash_payments_40a3` on a book and return its canonical parity dump.
+pub fn cash_payments_40a3_on(
+    engagement: &Engagement,
+    book: &book::Book,
+    rules: &Rules,
+) -> Result<serde_json::Value> {
+    let cash = book.ledgers_under_any(&engagement.cash_groups);
+    let bank = book.ledgers_under_any(&engagement.bank_groups);
+    let loan_ledgers_configured: BTreeSet<String> =
+        engagement.loan_ledgers_configured.iter().cloned().collect();
+    let round_off_ledgers: BTreeSet<String> =
+        engagement.round_off_ledgers.iter().cloned().collect();
+    let result = cash_payments_40a3::run(
+        book,
+        rules,
+        &cash,
+        &bank,
+        &loan_ledgers_configured,
+        &round_off_ledgers,
+    )?;
+    canonical::canonical_test_result(book, &result)
+}
+
+/// Read, verify, build the book, run `cash_payments_40a3` and return its canonical parity dump.
+pub fn cash_payments_40a3_canonical(
+    engagement: &Engagement,
+    rules: &Rules,
+) -> Result<serde_json::Value> {
+    cash_payments_40a3_on(engagement, &load_book(engagement)?, rules)
 }

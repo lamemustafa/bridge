@@ -67,6 +67,17 @@ impl EvidenceRef {
         }
     }
 
+    /// An evidence ref carrying a label: the reference engine's canonical serialiser compares
+    /// this field, so a port must reproduce a fixed label format exactly (e.g. a voucher's
+    /// `"{vtype} {number} on {date}"`), never free prose that merely conveys the same meaning.
+    pub fn with_label(kind: &str, id: &str, label: &str) -> Self {
+        Self {
+            kind: kind.to_string(),
+            id: id.to_string(),
+            label: label.to_string(),
+        }
+    }
+
     pub fn key(&self) -> String {
         format!("{}:{}", self.kind, self.id)
     }

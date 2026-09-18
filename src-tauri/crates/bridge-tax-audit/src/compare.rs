@@ -12,12 +12,21 @@ use serde_json::Value as Json;
 
 const NUMERIC_UNITS: [&str; 4] = ["paise", "bp", "count", "days"];
 
-/// The reference implementation's own minimum-figure-count default: anchored to the reference
-/// fixture's figure counts.
+/// The reference implementation's own minimum-figure-count default. `cash_44ab` always emits
+/// exactly 7 figures regardless of the book, so its fixture total and its structural floor are
+/// the same number. `cash_payments_40a3` is not: it emits 18 figures unconditionally (4 s.40A(3)
+/// summary figures, 5 `s40a3_excluded_total_<kind>` figures -- one per `excluded_group_roles`
+/// entry even when a kind has no rows --, 3 s.269ST receipt summary figures, 3 s.269ST payment
+/// summary figures, 3 s.269SS/269T summary figures) plus 2 figures per in-scope s.40A(3)
+/// over-limit row and 1 figure per s.269ST/s.269SS/269T row or candidate over its own limit --
+/// so a real book with few such rows legitimately produces far fewer than the 40-figure
+/// synthetic fixture's total (a three-client local parity run measured a real client at 22,
+/// still full, correct parity). 18 is the right floor: low enough to admit a quiet real book,
+/// still high enough that an empty or near-empty dump cannot pass.
 pub fn default_min_figures(test_id: &str) -> usize {
     match test_id {
         "cash_44ab" => 7,
-        "cash_payments_40a3" => 28,
+        "cash_payments_40a3" => 18,
         _ => 1,
     }
 }
