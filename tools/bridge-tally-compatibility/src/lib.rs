@@ -292,7 +292,7 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// `src-tauri/src/agent_voucher_window.rs` is the pre-flight volume bound for
 /// windowed voucher reads (protocol reference §11c). It decides which voucher
 /// requests Bridge sends Tally — whether a window goes out whole, in which date
-/// parts, and which windows are refused unsent — for `vouchers`,
+/// and AlterID parts, and which windows are refused unsent — for `vouchers`,
 /// `voucher_presence`, `ledger_movement` and the import-verification read.
 pub const MAX_SURFACE_FILES: usize = 269;
 pub const MAX_OPERATIONS: usize = 16;
