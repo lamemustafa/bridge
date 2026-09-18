@@ -24,9 +24,11 @@
 //! * **A ledger exposes `PARENT` and no `PARENTSTRUCTURE`**, so ancestry is one
 //!   hop at a time through the group collection rather than read off the row.
 //! * **The reserved root is control-marked**, and arrives through the tolerant
-//!   reader as a replacement marker rather than the bare word. That spelling is
-//!   already the crate's [`is_tally_reserved_root`], which this reuses rather
-//!   than re-deriving — a second copy would be a second thing to get wrong.
+//!   reader as a replacement marker rather than the bare word. That spelling,
+//!   and only that one, is the crate's [`is_tally_reserved_root`], which this
+//!   reuses rather than re-deriving — a second copy would be a second thing to
+//!   get wrong. A bare `Primary` is a group a user named that, climbed like
+//!   any other.
 //!
 //! **The hop itself is matched exactly, not normalized.** Tally matches master
 //! names by exact codepoint, and a `PARENT` is emitted verbatim from the group

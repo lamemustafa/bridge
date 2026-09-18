@@ -310,7 +310,8 @@ on every `PARENT` spelled from up to four of fifteen reference and marker atoms.
 
 **Where Bridge's own decoders differ from this rule today.** The rule follows
 `bridge-tally-protocol`, because it is the decoder in front of that crate's native collection
-parsers and it is lossless. Bridge's agent-facing parsers resolve `&#4;` with a plain XML
-unescape, to the raw `U+0004` character, so the same wire text has two spellings inside Bridge.
-The protocol crate's `is_tally_reserved_root` also accepts a plain `Primary`. A consumer of a
-read follows this section, not either of those behaviours.
+parsers and it is lossless. Bridge's agent-facing parsers, the standard ledger catalogue and the
+Bridge-schema group parser apply the same marking first, and the protocol crate's
+`is_tally_reserved_root` accepts only the marked form, as the reserved-root rule above does. The
+parsers `TALLY_PROTOCOL_REFERENCE.md` §1.1(d) lists as not yet covered still resolve `&#4;` to the
+raw `U+0004` character. A consumer of a read follows this section, not those parsers.

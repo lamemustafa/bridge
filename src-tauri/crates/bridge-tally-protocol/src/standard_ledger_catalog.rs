@@ -65,6 +65,9 @@ pub fn parse_standard_ledger_identity_observation(
     xml: &str,
     expected_company_name: &str,
 ) -> anyhow::Result<StandardLedgerIdentityObservation> {
+    // The one rule every Tally read applies first (§1.1(d)).
+    let marked = crate::mark_forbidden_numeric_references(xml);
+    let xml = marked.as_ref();
     validate_export_response(xml)?;
     let expected_company_name = normalized_standard_value(expected_company_name, "company name")?;
     let mut reader = configured_reader(xml);
@@ -271,6 +274,13 @@ fn parse_standard_ledger_catalog_rows(
     expected_company_name: &str,
     expected_company_guid: &str,
 ) -> Result<Vec<StandardLedgerCatalogRow>, StandardLedgerCatalogError> {
+    // The one rule every Tally read applies first (§1.1(d)): ledger names and
+    // parents here must spell a forbidden reference exactly as the voucher
+    // rows they are matched against do, and `&#4; Primary` must reach
+    // `group_ancestry` as the reserved root rather than as a control
+    // character `safe_standard_ledger_parent` would discard.
+    let marked = crate::mark_forbidden_numeric_references(xml);
+    let xml = marked.as_ref();
     validate_export_response(xml).map_err(|_| StandardLedgerCatalogError::MalformedResponse)?;
     let expected_company_name = normalized_standard_value(expected_company_name, "company name")
         .map_err(|_| StandardLedgerCatalogError::BoundsViolation)?;

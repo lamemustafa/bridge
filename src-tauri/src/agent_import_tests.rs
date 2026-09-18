@@ -1451,6 +1451,38 @@ fn voucher_number_length_counts_unicode_characters_and_preserves_safety_checks()
 }
 
 #[test]
+fn text_that_would_read_back_changed_is_refused_before_posting() {
+    // The agent readers rewrite a literal U+FFFD followed by `#`, digits and
+    // `;` (`agent_voucher_parse_tests`'s
+    // `a_literal_replacement_character_that_looks_like_a_marker_reads_back_escaped`
+    // measures it on a capture), so such a value could never verify.
+    let mut input = captured_catalogue_payload();
+    assert_eq!(validate_payload(&input), Ok(()));
+    for text in ["A\u{fffd}#5;", "\u{fffd}#65533;"] {
+        let mut changed = input.clone();
+        changed.vouchers[0].narration = Some(text.to_string());
+        assert_eq!(
+            validate_payload(&changed),
+            Err("voucher_text_invalid".to_string()),
+            "{text:?}"
+        );
+        let mut changed = input.clone();
+        changed.vouchers[0].entries[0].ledger = text.to_string();
+        assert_eq!(
+            validate_payload(&changed),
+            Err("voucher_entry_invalid".to_string()),
+            "{text:?}"
+        );
+    }
+    // A replacement character on its own, and reference-looking text the
+    // writer escapes, read back unchanged and stay admissible.
+    for text in ["A\u{fffd}B", "\u{fffd}#x5;", "&#4; Primary", "A\u{fffd}#"] {
+        input.vouchers[0].narration = Some(text.to_string());
+        assert_eq!(validate_payload(&input), Ok(()), "{text:?}");
+    }
+}
+
+#[test]
 fn batch_company_tuple_rejects_a_same_guid_different_book() {
     let company = |books_from: &str| bridge_tally_protocol::TallyCompany {
         name: "Bridge Book".to_string(),

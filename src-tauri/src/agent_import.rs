@@ -1503,6 +1503,7 @@ fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
             if text.is_empty()
                 || text.chars().count() > MAX_TEXT_CHARS
                 || text.chars().any(char::is_control)
+                || reads_back_as_other_text(text)
             {
                 return Err("voucher_text_invalid".to_string());
             }
@@ -1518,6 +1519,7 @@ fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
             if entry.ledger.trim().is_empty()
                 || entry.ledger.chars().count() > MAX_MASTER_NAME_CHARS
                 || entry.ledger.chars().any(char::is_control)
+                || reads_back_as_other_text(&entry.ledger)
                 || !valid_2dp_amount(&entry.amount)
             {
                 return Err("voucher_entry_invalid".to_string());
@@ -1722,6 +1724,24 @@ fn cash_bank_refusals(
         ledgers,
         legs,
     }
+}
+
+/// Whether a value Bridge writes would read back as different text.
+///
+/// Every agent reader marks forbidden numeric references before parsing
+/// (`TALLY_PROTOCOL_REFERENCE.md` §1.1(d)), and to keep that rewrite
+/// reversible it also rewrites a literal U+FFFD directly followed by `#`,
+/// digits and `;` to `U+FFFD#65533;`. A posted ledger name, voucher number,
+/// narration or reference holding that sequence would therefore read back
+/// changed: the read-back fingerprint and the preflight duplicate check would
+/// compare different text for the same voucher. Such a value is refused rather
+/// than posted unverifiable. The value is escaped as the writer escapes it, so
+/// a literal `&#4;` in it is text, not a reference, and is not refused.
+fn reads_back_as_other_text(value: &str) -> bool {
+    matches!(
+        bridge_tally_protocol::mark_forbidden_numeric_references(&quick_xml::escape::escape(value)),
+        std::borrow::Cow::Owned(_)
+    )
 }
 
 fn contains_reserved_marker(value: &str) -> bool {

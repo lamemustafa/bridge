@@ -378,6 +378,8 @@ fn parse_lab_master_rows(
     xml: &str,
     row_tag: &str,
 ) -> Result<Vec<BTreeMap<String, String>>, String> {
+    let marked = mark_agent_xml(xml);
+    let xml = marked.as_ref();
     validate_agent_envelope(xml)?;
     let row_tag = row_tag.to_ascii_uppercase();
     let mut reader = quick_xml::Reader::from_str(xml);
@@ -561,6 +563,8 @@ const BATCH_PREFIX: [&str; 7] = [
 /// (`agent_voucher_parse.rs`). Rows carry a lower-case `date` field so the
 /// shared `window_honoured` check can be reused unmodified.
 fn parse_lab_inventory_vouchers(xml: &str) -> Result<Vec<Value>, String> {
+    let marked = mark_agent_xml(xml);
+    let xml = marked.as_ref();
     validate_agent_envelope(xml)?;
     let mut reader = quick_xml::Reader::from_str(xml);
     reader.config_mut().trim_text(false);
@@ -844,6 +848,24 @@ mod tests {
 </ALLINVENTORYENTRIES.LIST></VOUCHER>\
 </COLLECTION></DATA></BODY></ENVELOPE>"
             .to_string()
+    }
+
+    #[test]
+    fn inventory_voucher_text_reads_a_forbidden_reference_as_the_marker() {
+        // No captured inventory voucher exists, so the captured atom
+        // `&#4; Not Applicable` (GSTCLASS in the entry-wildcard capture) is
+        // placed in this synthetic envelope's GODOWNNAME. It must read as the
+        // marked form every other Bridge reader produces (§1.1(d)), not U+0004.
+        let xml = synthetic_inventory_voucher_collection().replacen(
+            "Main Godown",
+            "&#4; Not Applicable",
+            1,
+        );
+        let rows = parse_lab_inventory_vouchers(&xml).expect("parses");
+        assert_eq!(
+            rows[0]["inventory_entries"][0]["godown"],
+            json!("\u{fffd}#4; Not Applicable")
+        );
     }
 
     #[test]

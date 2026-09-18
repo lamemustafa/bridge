@@ -99,18 +99,21 @@ pub const MAX_INTERACTIVE_DISCOVERY_COMPANIES: usize = 100;
 /// it remains distinguishable as `U+FFFD#65533;`.
 pub const TALLY_SANITIZED_ROOT_MARKER: &str = "\u{fffd}#4;";
 
-/// Whether Tally text names the reserved top-level root.
+/// Whether decoded Tally text names the reserved top-level root.
 ///
-/// Tally may prefix its `Primary` root with the sanitized U+0004 metadata
-/// marker. The marker also occurs on non-root metadata, so it is removed only
-/// before comparing the complete remaining token to `Primary`.
+/// Tally writes its root as `&#4; Primary`, and every Bridge decoder reads
+/// that as [`TALLY_SANITIZED_ROOT_MARKER`] followed by ` Primary`
+/// (`docs/tally/TALLY_PROTOCOL_REFERENCE.md` §1.1(d)). Only that marked form
+/// is the root: after trimming, the text must start with the marker, and the
+/// rest, trimmed again, must be `Primary` (ASCII case ignored). A bare
+/// `Primary` names a group a user called that, and a chain walks through it
+/// like any other group. The marker also prefixes Tally's other reserved
+/// values (`&#4; Resave`, `&#4; Not Applicable`), which are not the root.
 pub fn is_tally_reserved_root(value: &str) -> bool {
-    let value = value.trim();
-    let value = value
+    value
+        .trim()
         .strip_prefix(TALLY_SANITIZED_ROOT_MARKER)
-        .unwrap_or(value)
-        .trim();
-    value.eq_ignore_ascii_case("primary")
+        .is_some_and(|rest| rest.trim().eq_ignore_ascii_case("primary"))
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -738,9 +741,14 @@ fn parse_named_master_source_records(
     schema: &str,
     object_type: &str,
 ) -> anyhow::Result<ParsedExport<ParsedSourceRecord<TallyNamedMaster>>> {
-    validate_export_response(xml)?;
-    let evidence = scan_export_evidence(xml)?;
-    let mut reader = configured_reader(xml);
+    // Mark forbidden references before anything reads the text, as the native
+    // collection parsers do (§1.1(d)), so `&#4; Primary` reads as the marker
+    // and not as a raw U+0004. Row hashes still attest the original bytes.
+    let sanitized = tolerant_xml::sanitize_invalid_numeric_references_with_provenance(xml);
+    let text = sanitized.as_str();
+    validate_export_response(text)?;
+    let evidence = scan_export_evidence(text)?;
+    let mut reader = configured_reader(text);
     let mut path = Vec::<Vec<u8>>::new();
     let mut records = Vec::new();
     loop {
@@ -765,8 +773,8 @@ fn parse_named_master_source_records(
                     identity_kind,
                     identities,
                     alter_id,
-                    raw_source_sha256: source_fragment_sha256(
-                        xml,
+                    raw_source_sha256: source_fragment_sha256_from_sanitized(
+                        &sanitized,
                         record_start,
                         reader.buffer_position() as usize,
                     )?,
@@ -792,8 +800,8 @@ fn parse_named_master_source_records(
                     identity_kind,
                     identities,
                     alter_id: attr_value(&reader, &element, b"ALTERID"),
-                    raw_source_sha256: source_fragment_sha256(
-                        xml,
+                    raw_source_sha256: source_fragment_sha256_from_sanitized(
+                        &sanitized,
                         record_start,
                         reader.buffer_position() as usize,
                     )?,
