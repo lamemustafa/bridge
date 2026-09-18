@@ -1,7 +1,10 @@
 # ComplyEaze Bridge
 
 ComplyEaze Bridge lets an AI assistant read from, and write to, the TallyPrime
-running on your own computer — without your books leaving it.
+running on your own computer. Nothing in that path copies your books to a server
+of ours. What the assistant reads does reach the AI provider you chose, exactly as
+the rest of that conversation does — see *One thing to understand before you use it*
+below before you point this at client data.
 
 It connects to Tally over Tally's own local XML gateway, on `localhost` only. A
 remote Tally host is refused outright rather than supported, so there is no
@@ -24,9 +27,11 @@ them, through an AI assistant such as Claude Desktop.
 - **Records what it did.** Every tool call Bridge runs — read or write, and
   whether it succeeds or is refused — appends a receipt to a log on your own
   machine, naming the company it touched and fingerprinting what was asked and
-  what came back. Reads keep those fingerprints as evidence alongside; import
-  batches additionally record which Tally endpoint they spoke to. A reviewer can
-  read the log rather than take a summary on trust.
+  what came back. Reads keep those fingerprints as evidence alongside. A
+  prepared batch records the local endpoint it was built for, and a native posting
+  is refused if that endpoint has changed since; that is a safety check kept in
+  Bridge's internal import ledger, not a line in the proof report a reviewer
+  opens. A reviewer can read the log rather than take a summary on trust.
 
 **Whether writing is on depends on how you installed it.** Everything above is
 reading. When writing is off, the write tools do not merely refuse — they are
@@ -64,9 +69,10 @@ With writing on:
 **One part of the app does upload, and it is not this one.** Bridge also
 contains a document feature that uploads files *you* choose to ComplyEaze cloud
 storage, and an AXAL sign-in. Those are separate and user-initiated, and share
-no code with the Tally path described here — but they ship in the same
-application, so you should know they exist before deciding what to run on a
-machine holding client books. Both are documented under *Integration trust
+no code with the Tally path described here. They are compiled into the same
+binary the Claude Desktop extension runs, and no Bridge tool can reach them, but
+you should know they are present before deciding what to run on a machine
+holding client books. Both are documented under *Integration trust
 boundaries* below.
 
 **One thing to understand before you use it.** When you ask an AI assistant for

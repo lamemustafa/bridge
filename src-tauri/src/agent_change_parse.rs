@@ -86,6 +86,12 @@ pub(super) fn checkpoint_advanceable(
     !truncated && returned_max.unwrap_or(requested_checkpoint) >= company_high_water
 }
 
+/// The absent-voucher-axis error, named because `pre_import_mark` matches on it
+/// to separate an empty book from a response it could not read. The guard test
+/// `voucher_axis_absence_matches_its_named_code` pins this to what
+/// `observed_checkpoint` actually formats, so the two cannot drift apart.
+pub(super) const VOUCHER_CHECKPOINT_NOT_OBSERVED: &str = "voucher_checkpoint_not_observed";
+
 pub(super) fn observed_checkpoint(value: Option<&String>, axis: &str) -> Result<u64, String> {
     value
         .ok_or_else(|| format!("{axis}_checkpoint_not_observed"))?

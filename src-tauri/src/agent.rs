@@ -396,8 +396,78 @@ impl From<String> for ToolFailure {
 /// deadline is worth substituting for this one and for nothing else.
 const GENERIC_RUNTIME_READ_FAILURE: &str = "agent_runtime_read_failed";
 
+/// Response budget below which a refusal carries no remediation, so that the
+/// guidance can never displace the refusal code it explains. Well above the
+/// longest guidance string plus the refusal envelope, and far below the 200,000
+/// default, so only a caller that has deliberately asked for tiny responses
+/// gives it up.
+const REMEDIATION_MIN_RESPONSE_BUDGET: usize = 4_096;
+
+/// Guidance for refusals whose remedy a caller cannot derive from the code alone.
+///
+/// Deliberately sparse. A code without a documented, concrete next step returns
+/// `None` and its refusal keeps the general message, because filler guidance is
+/// worse than none: it reads as authoritative while sending the caller nowhere.
+/// This never softens a refusal — it only says what to do about one.
+fn refusal_remediation(code: &str) -> Option<&'static str> {
+    match code {
+        "empty_book_first_import" => Some(
+            "This company has never held a voucher, so Tally reports no voucher high-water \
+             mark and Bridge has no \"before\" to attribute an import against. Record one \
+             voucher in this company by another route and confirm it in Tally, then build \
+             this batch again.",
+        ),
+        _ => None,
+    }
+}
+
+/// Whether a refusal code is one of the two that mean "this window asked for
+/// more than one read can carry".
+///
+/// The literals are pinned to `TallyTransportError::safe_code()` by
+/// `the_oversized_window_codes_match_the_transport_vocabulary`, so renaming a
+/// transport code cannot silently stop the splitter recognising it — which would
+/// turn a recoverable oversized window back into a hard failure.
+pub(super) fn is_window_too_large_code(code: &str) -> bool {
+    matches!(
+        code,
+        "request_deadline_exceeded" | "response_size_limit_exceeded"
+    )
+}
+
+/// Name the transport failures that mean "this window asked for more than one
+/// read can carry", and nothing else.
+///
+/// Two limits produce that, and which one trips first depends on the book: the
+/// 20s per-leg deadline (`DEFAULT_REQUEST_TIMEOUT`) and the 32MB transport
+/// response cap (`XML_RESPONSE_MAX_BYTES`). Measured on one licensed book, a
+/// month of vouchers took 7.6s and 11.8MB while a quarter took 25.7s and 41.2MB
+/// — over both at once — so neither limit alone predicts the answer and a caller
+/// that splits must react to either.
+///
+/// Returns the transport's own `safe_code()` so the vocabulary is not duplicated.
+pub(super) fn window_too_large_code(error: &anyhow::Error) -> Option<&'static str> {
+    error.chain().find_map(|cause| {
+        match cause.downcast_ref::<bridge_tally_transport::TallyTransportError>() {
+            Some(
+                failure @ (bridge_tally_transport::TallyTransportError::RequestTimedOut
+                | bridge_tally_transport::TallyTransportError::ResponseTooLarge { .. }),
+            ) => Some(failure.safe_code()),
+            _ => None,
+        }
+    })
+}
+
 impl ToolFailure {
     fn from_runtime(code: &str, error: anyhow::Error) -> Self {
+        // Only the catch-all is eligible for substitution; a code that already
+        // names its operation keeps it. Bound here rather than inline because
+        // this edition has no let-chains.
+        let oversized = if code == GENERIC_RUNTIME_READ_FAILURE {
+            window_too_large_code(&error)
+        } else {
+            None
+        };
         let code = if let Some(error) = error.chain().find_map(|cause| {
             cause.downcast_ref::<crate::tally::runtime::TrialBalanceReadError>()
         }) {
@@ -431,27 +501,23 @@ impl ToolFailure {
             )
         }) {
             "financial_read_profile_unqualified"
-        } else if code == GENERIC_RUNTIME_READ_FAILURE
-            && error.chain().any(|cause| {
-                matches!(
-                    cause.downcast_ref::<bridge_tally_transport::TallyTransportError>(),
-                    Some(bridge_tally_transport::TallyTransportError::RequestTimedOut)
-                )
-            })
-        {
-            // A deadline is the one transport failure a caller can act on without
-            // reading Bridge's source: narrow the window or the batch. It used to
-            // fall through to `agent_runtime_read_failed`, a catch-all that also
-            // covers parse failures and application rejections, so a timeout was
-            // indistinguishable from them in a log.
+        } else if let Some(oversized) = oversized {
+            // A deadline or an oversized response are the transport failures a
+            // caller can act on without reading Bridge's source: both mean the
+            // window asked for more than one read can carry, and they differ only
+            // in which limit tripped first — the 20s per-leg deadline or the 32MB
+            // transport response cap. They used to fall through to
+            // `agent_runtime_read_failed`, a catch-all that also covers parse
+            // failures and application rejections, so neither was distinguishable
+            // from them in a log.
             //
             // Scoped to that catch-all ON PURPOSE. Every other call site passes a
             // code that already names the operation — `import_mode_probe_failed`,
             // `ledger_movement_read_failed` — and replacing those would tell the
             // caller why it failed while taking away what failed. That is a net
             // loss of information, and an existing test caught it: naming the
-            // deadline is only an improvement where the code named nothing.
-            bridge_tally_transport::TallyTransportError::RequestTimedOut.safe_code()
+            // cause is only an improvement where the code named nothing.
+            oversized
         } else {
             code
         };
@@ -569,8 +635,25 @@ impl Server {
                 });
                 evidence.state = "partial";
                 evidence.reason_code = Some(code.clone());
+                let mut error = json!({"code": code, "message": "Bridge refused this operation."});
+                // Additive: `code` and `message` keep their existing shape for
+                // every refusal, and `remediation` appears only for the codes
+                // that have a concrete next step to name.
+                //
+                // Never trade the code for the guidance. `max_bytes` is settable
+                // down to 256, and `enforce_response_byte_cap` has no page shape
+                // to trim inside an error object — it replaces the entire refusal
+                // with `agent_response_too_large`. So at a deliberately small cap
+                // these ~250 extra bytes could cost the caller the one thing it
+                // most needs, leaving it worse off than before this field existed.
+                // Guidance is a convenience; the refusal code is not.
+                if let Some(remediation) = refusal_remediation(&code) {
+                    if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
+                        error["remediation"] = json!(remediation);
+                    }
+                }
                 ToolOutcome {
-                    payload: json!({"error": {"code": code, "message": "Bridge refused this operation."}}),
+                    payload: json!({ "error": error }),
                     evidence,
                     company_guid: args
                         .get("company_guid")
