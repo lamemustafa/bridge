@@ -421,8 +421,53 @@ fn refusal_remediation(code: &str) -> Option<&'static str> {
     }
 }
 
+/// Whether a refusal code is one of the two that mean "this window asked for
+/// more than one read can carry".
+///
+/// The literals are pinned to `TallyTransportError::safe_code()` by
+/// `the_oversized_window_codes_match_the_transport_vocabulary`, so renaming a
+/// transport code cannot silently stop the splitter recognising it — which would
+/// turn a recoverable oversized window back into a hard failure.
+pub(super) fn is_window_too_large_code(code: &str) -> bool {
+    matches!(
+        code,
+        "request_deadline_exceeded" | "response_size_limit_exceeded"
+    )
+}
+
+/// Name the transport failures that mean "this window asked for more than one
+/// read can carry", and nothing else.
+///
+/// Two limits produce that, and which one trips first depends on the book: the
+/// 20s per-leg deadline (`DEFAULT_REQUEST_TIMEOUT`) and the 32MB transport
+/// response cap (`XML_RESPONSE_MAX_BYTES`). Measured on one licensed book, a
+/// month of vouchers took 7.6s and 11.8MB while a quarter took 25.7s and 41.2MB
+/// — over both at once — so neither limit alone predicts the answer and a caller
+/// that splits must react to either.
+///
+/// Returns the transport's own `safe_code()` so the vocabulary is not duplicated.
+pub(super) fn window_too_large_code(error: &anyhow::Error) -> Option<&'static str> {
+    error.chain().find_map(|cause| {
+        match cause.downcast_ref::<bridge_tally_transport::TallyTransportError>() {
+            Some(
+                failure @ (bridge_tally_transport::TallyTransportError::RequestTimedOut
+                | bridge_tally_transport::TallyTransportError::ResponseTooLarge { .. }),
+            ) => Some(failure.safe_code()),
+            _ => None,
+        }
+    })
+}
+
 impl ToolFailure {
     fn from_runtime(code: &str, error: anyhow::Error) -> Self {
+        // Only the catch-all is eligible for substitution; a code that already
+        // names its operation keeps it. Bound here rather than inline because
+        // this edition has no let-chains.
+        let oversized = if code == GENERIC_RUNTIME_READ_FAILURE {
+            window_too_large_code(&error)
+        } else {
+            None
+        };
         let code = if let Some(error) = error.chain().find_map(|cause| {
             cause.downcast_ref::<crate::tally::runtime::TrialBalanceReadError>()
         }) {
@@ -456,27 +501,23 @@ impl ToolFailure {
             )
         }) {
             "financial_read_profile_unqualified"
-        } else if code == GENERIC_RUNTIME_READ_FAILURE
-            && error.chain().any(|cause| {
-                matches!(
-                    cause.downcast_ref::<bridge_tally_transport::TallyTransportError>(),
-                    Some(bridge_tally_transport::TallyTransportError::RequestTimedOut)
-                )
-            })
-        {
-            // A deadline is the one transport failure a caller can act on without
-            // reading Bridge's source: narrow the window or the batch. It used to
-            // fall through to `agent_runtime_read_failed`, a catch-all that also
-            // covers parse failures and application rejections, so a timeout was
-            // indistinguishable from them in a log.
+        } else if let Some(oversized) = oversized {
+            // A deadline or an oversized response are the transport failures a
+            // caller can act on without reading Bridge's source: both mean the
+            // window asked for more than one read can carry, and they differ only
+            // in which limit tripped first — the 20s per-leg deadline or the 32MB
+            // transport response cap. They used to fall through to
+            // `agent_runtime_read_failed`, a catch-all that also covers parse
+            // failures and application rejections, so neither was distinguishable
+            // from them in a log.
             //
             // Scoped to that catch-all ON PURPOSE. Every other call site passes a
             // code that already names the operation — `import_mode_probe_failed`,
             // `ledger_movement_read_failed` — and replacing those would tell the
             // caller why it failed while taking away what failed. That is a net
             // loss of information, and an existing test caught it: naming the
-            // deadline is only an improvement where the code named nothing.
-            bridge_tally_transport::TallyTransportError::RequestTimedOut.safe_code()
+            // cause is only an improvement where the code named nothing.
+            oversized
         } else {
             code
         };

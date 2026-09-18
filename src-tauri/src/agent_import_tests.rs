@@ -1220,6 +1220,113 @@ fn verified_import_vouchers_require_observed_effective_accounting_flags() {
 }
 
 #[test]
+fn a_window_span_counts_both_endpoints() {
+    assert_eq!(window_span_days("20260401", "20260401"), Some(1));
+    assert_eq!(window_span_days("20260401", "20260402"), Some(2));
+    assert_eq!(window_span_days("20260401", "20270331"), Some(365));
+    // A leap year is counted by the calendar, not by arithmetic on months.
+    assert_eq!(window_span_days("20240101", "20241231"), Some(366));
+    assert_eq!(window_span_days("notadate", "20260401"), None);
+}
+
+#[test]
+fn a_span_already_known_to_fail_is_split_without_another_read() {
+    // The point of carrying the failed span forward: a sibling branch of the same
+    // size is split immediately rather than spending a full deadline to relearn it.
+    assert!(must_split_before_reading(Some(91), Some(91)));
+    assert!(must_split_before_reading(Some(182), Some(91)));
+    // Smaller than anything known to fail: read it, do not pre-split.
+    assert!(!must_split_before_reading(Some(45), Some(91)));
+    // Nothing has failed yet, so nothing is known: always read.
+    assert!(!must_split_before_reading(Some(365), None));
+    // A single day is the floor. Pre-splitting it would spin, and refusing is the
+    // reader's job, not this predicate's.
+    assert!(!must_split_before_reading(Some(1), Some(1)));
+    // An unparseable span falls through to reading rather than being treated as a
+    // failure: this is an optimisation and must never decide correctness.
+    assert!(!must_split_before_reading(None, Some(30)));
+}
+
+#[test]
+fn splitting_a_verification_window_partitions_it_exactly() {
+    // Every split must cover the original window once and only once. A gap drops
+    // vouchers from an attribution check; an overlap double-counts them.
+    for (from, to) in [
+        ("20260401", "20270331"), // a full financial year
+        ("20260401", "20260430"), // a month
+        ("20260401", "20260402"), // two days: mid must equal start
+        ("20260228", "20260301"), // across a month boundary
+        ("20240228", "20240301"), // across a leap day
+        ("20251231", "20260101"), // across a year boundary
+    ] {
+        let ((left_from, left_to), (right_from, right_to)) =
+            split_verification_window(from, to).expect("a multi-day window splits");
+        assert_eq!(left_from, from, "left half must start where the window did");
+        assert_eq!(right_to, to, "right half must end where the window did");
+        let day = |value: &str| chrono::NaiveDate::parse_from_str(value, "%Y%m%d").unwrap();
+        // Contiguous, no gap and no overlap: the right half starts exactly the day
+        // after the left half ends.
+        assert_eq!(
+            day(&right_from),
+            day(&left_to) + chrono::Duration::days(1),
+            "{from}..{to} split with a gap or an overlap"
+        );
+        // And it must actually shrink, or the splitter would never terminate.
+        assert!(
+            day(&left_to) < day(to),
+            "left half did not shrink {from}..{to}"
+        );
+        assert!(
+            day(&right_from) > day(from),
+            "right half did not shrink {from}..{to}"
+        );
+    }
+}
+
+#[test]
+fn a_single_day_verification_window_cannot_be_split() {
+    // The recursion floor. Without it the splitter would spin on a day it cannot
+    // read; with it, read_verification_window refuses rather than returning a
+    // verification over an incomplete window.
+    assert_eq!(split_verification_window("20260401", "20260401"), None);
+    // A reversed window is refused rather than silently inverted.
+    assert_eq!(split_verification_window("20260430", "20260401"), None);
+    // An unparseable bound is refused rather than guessed at.
+    assert_eq!(split_verification_window("notadate", "20260401"), None);
+}
+
+#[test]
+fn the_oversized_window_codes_match_the_transport_vocabulary() {
+    use bridge_tally_transport::TallyTransportError;
+    // The splitter matches these as literals. Pin them to what the transport
+    // actually emits, so renaming a transport code cannot silently stop an
+    // oversized window from being retried in halves — which would turn a
+    // recoverable read back into a hard failure with no test going red.
+    assert!(super::super::is_window_too_large_code(
+        TallyTransportError::RequestTimedOut.safe_code()
+    ));
+    assert!(super::super::is_window_too_large_code(
+        TallyTransportError::ResponseTooLarge {
+            limit: 32 * 1024 * 1024,
+            declared_by_peer: false,
+        }
+        .safe_code()
+    ));
+    // Scope guard: a failure splitting cannot fix must not trigger a retry.
+    for unrelated in [
+        TallyTransportError::ConnectionFailed.safe_code(),
+        TallyTransportError::RequestFailed.safe_code(),
+        "agent_runtime_read_failed",
+        "agent_read_protocol_invalid",
+    ] {
+        assert!(
+            !super::super::is_window_too_large_code(unrelated),
+            "{unrelated} must not be retried by splitting"
+        );
+    }
+}
+
+#[test]
 fn company_high_water_mark_refuses_voucher_scan_shapes_and_preserves_attribution_boundary() {
     assert_eq!(
         company_high_water_mark(&json!({"vouchers":[{"alter_id":999}]})),

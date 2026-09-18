@@ -11,6 +11,20 @@ pub(super) fn parse_import_vouchers(
     xml: &str,
     company_guid: &str,
 ) -> Result<ImportReadSource, String> {
+    ImportReadSource::admit(parse_import_voucher_rows(xml, company_guid)?)
+}
+
+/// Parse one verification response into rows **without admitting them.**
+///
+/// `ImportReadSource::admit` enforces identity uniqueness across the whole row
+/// set, so a window read in parts must be admitted **once over the union** — not
+/// per part. Admitting each part separately would check uniqueness only within
+/// each part and let a voucher duplicated across two sub-windows through, which
+/// is exactly the kind of thing this read exists to catch.
+pub(super) fn parse_import_voucher_rows(
+    xml: &str,
+    company_guid: &str,
+) -> Result<Vec<ReadVoucher>, String> {
     let parsed =
         super::super::parse_import_verification_rows(xml, company_guid).map_err(|code| {
             match code.as_str() {
@@ -46,7 +60,7 @@ pub(super) fn parse_import_vouchers(
     for entry in rows.iter_mut().flat_map(|row| &mut row.entries) {
         entry.is_deemed_positive = entry.is_deemed_positive.trim().to_string();
     }
-    ImportReadSource::admit(rows)
+    Ok(rows)
 }
 
 // File preflight and later verification require the same window and row identities.
