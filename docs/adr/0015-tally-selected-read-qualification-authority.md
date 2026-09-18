@@ -103,8 +103,9 @@ it, rather than either side calling the path or removing it.
 
 Issue #474 decided **delete** over **keep, with a reason**. This PR removed the
 four commands and every helper reachable only from them in
-`src-tauri/src/commands.rs` — 12 helper functions and two request/response
-structs (`QualifySelectedReadsRequest`, `VoucherRequest`) — and the one direct
+`src-tauri/src/commands.rs` — 12 helper functions and three structs
+(`QualifySelectedReadsRequest`, `VoucherRequest`, and the response type
+`SelectedReadQualificationResult`) — and the one direct
 unit test of an otherwise-exclusive helper
 (`selected_read_observation_distinguishes_empty_identity_evidence` in
 `commands_tests.rs`). What this measured, precisely:
@@ -116,8 +117,11 @@ unit test of an otherwise-exclusive helper
   cross-crate use in `tests/unit_a_live.rs`),
   `cargo check --locked --workspace --all-targets --all-features` from
   `src-tauri/` reported all 18 deleted items (4 commands, 2 structs, 12
-  functions) as `never used` / `never constructed`, and nothing else. After
-  deletion, the same command against the same tree reports zero warnings.
+  functions) as `never used` / `never constructed`, and nothing else. The
+  nineteenth deleted item, `SelectedReadQualificationResult`, draws no warning
+  under this method (rustc still visits a dead function's signature types); a
+  tree-wide search confirms its only references were inside `commands.rs`.
+  After deletion, the same command against the same tree reports zero warnings.
 - **Scope.** This is `commands.rs`-only evidence. The runtime- and db-layer
   machinery this ADR describes — `CachedProbeReservation`,
   `TallyRuntime`/`TallyClient::qualify_selected_ledgers` and

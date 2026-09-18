@@ -27,7 +27,7 @@
     },
     {
       "path": "docs/adr/0015-tally-selected-read-qualification-authority.md",
-      "sha256": "387c9f61d31a341d16ef827ab642dfe6e5162aa262b3d5ea76315ab81bc7f15a"
+      "sha256": "ed65712f1f02b7efceca3011d39bfa9c4e3f2bf1ec387fd40d5014bfcd2e4dfc"
     },
     {
       "path": "docs/step-by-step-roadmap.md",
@@ -1074,5 +1074,5 @@
       "sha256": "0ab5bfbe6d81b1e10530744c338fb91efa57fe5a66fb4bc0cfd382495eaf02a4"
     }
   ],
-  "manifest_sha256": "34e02a3bbf9a29db11ed77dc512f03715a9efcc7577d611c516ea2008e95f65e"
+  "manifest_sha256": "3b8a5250b1822fb171bc20a524b6cb9629258baade58194ace87ab4f79fea9a5"
 }
