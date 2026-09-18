@@ -516,3 +516,258 @@ fn ancestry_scope_matches_any_hop_but_never_an_unresolved_tail() {
         &gapped_names
     ));
 }
+
+// -- ledger_masters ancestry through the tool call ---------------------------
+//
+// The tests above call the helpers directly, so they stay green if
+// `Server::ledger_masters` stops calling them: an inverted or deleted
+// refusal, the wrong collection handed to `GroupIndex::build`, or a `retain`
+// that no longer applies. These drive `call_tool("ledger_masters", ..)` over
+// a replayed Tally sequence built from the captured party-master fixtures.
+
+mod through_the_tool {
+    use super::*;
+    use tally_protocol_simulator::{
+        Fixture, ProductStatus, ScenarioPlan, SequenceSimulator, WireEncoding,
+    };
+
+    const GUID: &str = "61c6de69-1748-461c-ad3f-162cb949df9f";
+
+    fn captured(bytes: &[u8]) -> String {
+        String::from_utf16(
+            &bytes
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
+    }
+
+    fn companies() -> String {
+        captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.utf16le.xml"
+        ))
+    }
+
+    fn masters() -> String {
+        captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-party-masters.utf16le.xml"
+        ))
+    }
+
+    fn balances() -> String {
+        captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-party-balances.utf16le.xml"
+        ))
+    }
+
+    fn groups() -> String {
+        captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-party-groups.utf16le.xml"
+        ))
+    }
+
+    fn xml(body: String) -> ScenarioPlan {
+        ScenarioPlan::new(Fixture::SyntheticXml(body)).with_encoding(WireEncoding::Utf16Le)
+    }
+
+    fn status() -> ScenarioPlan {
+        ScenarioPlan::new(Fixture::ProductStatus(ProductStatus::TallyPrime))
+    }
+
+    fn pair(plans: &mut Vec<ScenarioPlan>, source: ScenarioPlan) {
+        plans.extend([source.clone(), status(), source, status()]);
+    }
+
+    /// The paired company-identity read every tool call starts with.
+    fn identity_plans() -> Vec<ScenarioPlan> {
+        let mut plans = Vec::new();
+        pair(&mut plans, xml(companies()));
+        plans
+    }
+
+    /// The whole successful `fields=compliance` sequence: identity, the
+    /// extent-bracketed currency read, then the profile probe and the
+    /// extent-bracketed master/balance/group triple.
+    fn compliance_plans(masters: String, balances: String) -> Vec<ScenarioPlan> {
+        let company = xml(companies());
+        let extent = xml(include_str!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+        )
+        .to_owned());
+        let currency = xml(captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+        )));
+        let mut plans = identity_plans();
+        plans.push(company.clone());
+        pair(&mut plans, extent.clone());
+        pair(&mut plans, currency);
+        pair(&mut plans, extent.clone());
+        plans.push(company.clone());
+        plans.extend([status(), company.clone(), company.clone()]);
+        pair(&mut plans, extent.clone());
+        for source in [masters, balances, groups()] {
+            pair(&mut plans, xml(source));
+        }
+        pair(&mut plans, extent);
+        plans.extend([company.clone(), status(), company]);
+        plans
+    }
+
+    async fn call(plans: Vec<ScenarioPlan>, args: Value) -> (Value, usize) {
+        let simulator = SequenceSimulator::spawn(plans).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let server = Server::new(Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".into(),
+                port: simulator.address().port(),
+            },
+            data_dir: directory.path().into(),
+            max_rows: 500,
+            max_bytes: 200_000,
+            redaction: Redaction::None,
+            import_enabled: false,
+            writes_enabled: false,
+        });
+        let response = server.call_tool("ledger_masters", args).await;
+        let requests = simulator.finish().unwrap().len();
+        (response, requests)
+    }
+
+    fn items(response: &Value) -> &Vec<Value> {
+        assert_ne!(response["isError"], true, "{response}");
+        response["structuredContent"]["result"]["items"]
+            .as_array()
+            .unwrap_or_else(|| panic!("no items: {response}"))
+    }
+
+    fn row<'a>(items: &'a [Value], name: &str) -> &'a Value {
+        items
+            .iter()
+            .find(|item| item["name"] == name)
+            .unwrap_or_else(|| panic!("{name} missing from {items:?}"))
+    }
+
+    fn names(items: &[Value]) -> std::collections::BTreeSet<String> {
+        items
+            .iter()
+            .map(|item| item["name"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn ancestry_scope_with_basic_fields_is_refused_before_any_ledger_read() {
+        for args in [
+            json!({"company_guid":GUID,"fields":"basic","group_scope":"ancestry"}),
+            // `fields` defaults to basic, so omitting it must refuse too.
+            json!({"company_guid":GUID,"group":"Loans (Liability)","group_scope":"ancestry"}),
+        ] {
+            let (response, requests) = call(identity_plans(), args.clone()).await;
+            assert_eq!(response["isError"], true, "{args}");
+            assert_eq!(
+                response["structuredContent"]["result"]["error"]["code"],
+                "group_scope_ancestry_requires_compliance_fields",
+                "{args}"
+            );
+            // Only the identity pair was served: no profile, ledger or group
+            // read followed the refusal.
+            assert_eq!(requests, 4, "{args}");
+        }
+    }
+
+    #[tokio::test]
+    async fn compliance_rows_carry_the_chain_resolved_from_the_captured_groups() {
+        let plans = compliance_plans(masters(), balances());
+        let total = plans.len();
+        let (response, requests) =
+            call(plans, json!({"company_guid":GUID,"fields":"compliance"})).await;
+        let items = items(&response);
+        assert_eq!(requests, total);
+        assert_eq!(items.len(), 9);
+        // A user-created group (empty RESERVEDNAME) is a hop like any other,
+        // and the walk continues through it to the reserved root.
+        assert_eq!(
+            row(items, "Bridge Nested Debtor WR4")["ancestry"],
+            json!({
+                "chain": [
+                    {"name": "Bridge Nested Debtors WR4", "reserved_name": ""},
+                    {"name": "Sundry Debtors", "reserved_name": "Sundry Debtors"},
+                    {"name": "Current Assets", "reserved_name": "Current Assets"},
+                ],
+                "complete": true,
+                "gap": null,
+            })
+        );
+        assert_eq!(
+            row(items, "Cash")["ancestry"],
+            json!({
+                "chain": [
+                    {"name": "Cash-in-Hand", "reserved_name": "Cash-in-Hand"},
+                    {"name": "Current Assets", "reserved_name": "Current Assets"},
+                ],
+                "complete": true,
+                "gap": null,
+            })
+        );
+        for item in items {
+            assert!(item["ancestry"].is_object(), "{item}");
+        }
+    }
+
+    #[tokio::test]
+    async fn ancestry_scope_admits_a_ledger_whose_parent_is_below_the_group() {
+        let sundry = |scope: &str| json!({"company_guid":GUID,"fields":"compliance","group":"Sundry Debtors","group_scope":scope});
+        let (immediate, _) =
+            call(compliance_plans(masters(), balances()), sundry("immediate")).await;
+        let (ancestry, _) = call(compliance_plans(masters(), balances()), sundry("ancestry")).await;
+        let immediate = names(items(&immediate));
+        let ancestry = names(items(&ancestry));
+        assert!(!immediate.is_empty());
+        assert!(!immediate.contains("Bridge Nested Debtor WR4"));
+        let mut expected = immediate.clone();
+        expected.insert("Bridge Nested Debtor WR4".to_string());
+        assert_eq!(ancestry, expected);
+    }
+
+    #[tokio::test]
+    async fn ancestry_scope_reaches_loans_liability_through_bank_od() {
+        // The capture has the `Bank OD A/c` -> `Loans (Liability)` groups but
+        // no ledger under them, so one captured ledger is re-parented in both
+        // the master and the balance response. Only PARENT changes; this is
+        // not live evidence of such a ledger.
+        let reparent = |source: String| {
+            let from = "<PARENT TYPE=\"String\">Sales Accounts</PARENT>";
+            assert_eq!(source.matches(from).count(), 1);
+            source.replace(from, "<PARENT TYPE=\"String\">Bank OD A/c</PARENT>")
+        };
+        let loans = |scope: &str| json!({"company_guid":GUID,"fields":"compliance","group":"Loans (Liability)","group_scope":scope});
+        let (response, _) = call(
+            compliance_plans(reparent(masters()), reparent(balances())),
+            loans("ancestry"),
+        )
+        .await;
+        let found = items(&response);
+        assert_eq!(names(found), ["WR2 Sales".to_string()].into());
+        assert_eq!(found[0]["parent"], "Bank OD A/c");
+        assert_eq!(
+            found[0]["ancestry"],
+            json!({
+                "chain": [
+                    {"name": "Bank OD A/c", "reserved_name": "Bank OD A/c"},
+                    {"name": "Loans (Liability)", "reserved_name": "Loans (Liability)"},
+                ],
+                "complete": true,
+                "gap": null,
+            })
+        );
+        assert_eq!(response["structuredContent"]["result"]["total"], 1);
+
+        // The default scope still matches only the immediate parent.
+        let (response, _) = call(
+            compliance_plans(reparent(masters()), reparent(balances())),
+            loans("immediate"),
+        )
+        .await;
+        assert!(items(&response).is_empty());
+    }
+}
