@@ -78,12 +78,24 @@ fn voucher_profiles_fetch_accounting_state_and_bill_allocations() {
         for field in [
             "ISCANCELLED",
             "ISOPTIONAL",
+            // Allow-listing ISPOSTDATED in agent_voucher_scalars.rs is inert unless
+            // it is also named here: Tally omits a field from COLLECTION XML that
+            // the FETCH list does not name, no matter what the parser accepts.
+            "ISPOSTDATED",
             // The ENTRY wildcard, which 2.4a proves correct on the instance where
             // curated allocation paths misreport New Ref/Agst Ref as On Account.
             // The narrower BILLALLOCATIONS.* is cheaper and measured equivalent
             // HERE, but untested THERE -- and an unverified narrowing is not worth
             // a payload saving when the failure is silently-wrong evidence.
             "ALLLEDGERENTRIES.*",
+            // Same inertness trap as ISPOSTDATED above: allow-listing REFERENCE/
+            // ISINVOICE/PARTYGSTIN in agent_voucher_scalars.rs without also naming
+            // them here would leave reference/is_invoice/party_gstin permanently
+            // absent. Protocol reference §8.2c captured all three cleanly on
+            // TallyPrime 7.1 Silver alongside the existing fields.
+            "REFERENCE",
+            "ISINVOICE",
+            "PARTYGSTIN",
         ] {
             assert!(fields.iter().any(|value| value == field), "missing {field}");
         }

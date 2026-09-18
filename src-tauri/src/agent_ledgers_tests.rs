@@ -6,6 +6,8 @@ use bridge_tally_protocol::{
     PartyLedgerMasterFieldObservation,
 };
 
+use super::*;
+
 const COMPANY_GUID: &str = "ae1490be-52c5-4544-9ffc-4b7da85f9797";
 
 /// A minimized parser fixture built from the task's measured field values
@@ -321,4 +323,196 @@ fn gst_duty_head_vocabulary_is_explicit_and_irregular() {
             }
         );
     }
+}
+
+// -- ledger_masters ancestry exposure ---------------------------------------
+//
+// GroupIndex::ancestry_chain itself is proven (including by mutation) in
+// bridge_tally_protocol::group_ancestry's own test module. These cover the
+// wire-shaping layer this file owns: rendering a chain to JSON, mapping every
+// AncestryGap to a stable wire string, and the group/group_scope filter that
+// now reads that chain.
+
+fn group(
+    name: &str,
+    parent: &str,
+    reserved: Option<&str>,
+) -> bridge_tally_protocol::TallyNamedMaster {
+    bridge_tally_protocol::TallyNamedMaster {
+        name: name.into(),
+        parent: PartyLedgerMasterFieldObservation::Returned(parent.into()),
+        reserved_name: reserved.map(str::to_string),
+    }
+}
+
+/// Mirrors the lab's own tree: `HDFC CC` under `Bank OD A/c` under `Loans
+/// (Liability)`, and `Cash` under `Cash-in-Hand`, both reaching the reserved
+/// root directly.
+fn lab_shaped_groups() -> bridge_tally_protocol::group_ancestry::GroupIndex {
+    bridge_tally_protocol::group_ancestry::GroupIndex::build([
+        group("Bank OD A/c", "Loans (Liability)", Some("Bank OD A/c")),
+        group(
+            "Loans (Liability)",
+            "\u{fffd}#4; Primary",
+            Some("Loans (Liability)"),
+        ),
+        group("Cash-in-Hand", "\u{fffd}#4; Primary", Some("Cash-in-Hand")),
+    ])
+}
+
+#[test]
+fn ancestry_json_renders_a_complete_multi_level_chain() {
+    let chain = lab_shaped_groups().ancestry_chain(Some("Bank OD A/c"));
+    let rendered = ancestry_json(&chain);
+    assert_eq!(rendered["complete"], true);
+    assert_eq!(rendered["gap"], Value::Null);
+    assert_eq!(
+        rendered["chain"],
+        json!([
+            {"name": "Bank OD A/c", "reserved_name": "Bank OD A/c"},
+            {"name": "Loans (Liability)", "reserved_name": "Loans (Liability)"},
+        ])
+    );
+}
+
+#[test]
+fn ancestry_json_renders_a_single_hop_directly_under_a_primary_group() {
+    let chain = lab_shaped_groups().ancestry_chain(Some("Cash-in-Hand"));
+    let rendered = ancestry_json(&chain);
+    assert_eq!(rendered["complete"], true);
+    assert_eq!(rendered["gap"], Value::Null);
+    assert_eq!(
+        rendered["chain"],
+        json!([{"name": "Cash-in-Hand", "reserved_name": "Cash-in-Hand"}])
+    );
+}
+
+#[test]
+fn ancestry_json_reports_an_incomplete_chain_without_padding_or_guessing() {
+    // "Bank OD A/c" is present but its own parent "Loans (Liability)" is not
+    // in this narrower index, so the resolved prefix must stop exactly there.
+    let narrow = bridge_tally_protocol::group_ancestry::GroupIndex::build([group(
+        "Bank OD A/c",
+        "Loans (Liability)",
+        Some("Bank OD A/c"),
+    )]);
+    let chain = narrow.ancestry_chain(Some("Bank OD A/c"));
+    let rendered = ancestry_json(&chain);
+    assert_eq!(rendered["complete"], false);
+    assert_eq!(rendered["gap"], "group_absent");
+    assert_eq!(
+        rendered["chain"],
+        json!([{"name": "Bank OD A/c", "reserved_name": "Bank OD A/c"}]),
+        "the one hop actually resolved must still be reported, not dropped"
+    );
+}
+
+#[test]
+fn every_ancestry_gap_has_a_distinct_stable_wire_code() {
+    let mut codes = std::collections::BTreeSet::new();
+    for gap in [
+        AncestryGap::NoParent,
+        AncestryGap::ReachedRoot,
+        AncestryGap::GroupAbsent,
+        AncestryGap::GroupNameRepeated,
+        AncestryGap::ReservedNameMissing,
+        AncestryGap::Cycle,
+        AncestryGap::Exhausted,
+    ] {
+        assert!(
+            codes.insert(ancestry_gap_code(gap)),
+            "{gap:?} must render to a code no other gap also uses"
+        );
+    }
+}
+
+#[test]
+fn group_scope_defaults_to_immediate_and_rejects_an_unknown_value() {
+    assert_eq!(group_scope(&json!({})), Ok(GroupScope::Immediate));
+    assert_eq!(
+        group_scope(&json!({"group_scope": "immediate"})),
+        Ok(GroupScope::Immediate)
+    );
+    assert_eq!(
+        group_scope(&json!({"group_scope": "ancestry"})),
+        Ok(GroupScope::Ancestry)
+    );
+    assert_eq!(
+        group_scope(&json!({"group_scope": "everything"})),
+        Err("argument_invalid:group_scope".to_string())
+    );
+}
+
+#[test]
+fn immediate_scope_never_reaches_past_the_ledgers_own_parent() {
+    let index = lab_shaped_groups();
+    let chain = index.ancestry_chain(Some("Bank OD A/c"));
+    let hop_names = chain
+        .hops
+        .iter()
+        .map(|hop| hop.name.clone())
+        .collect::<Vec<_>>();
+    assert!(hop_names.contains(&"Loans (Liability)".to_string()));
+    // The immediate parent itself still matches under either scope.
+    assert!(group_matches(
+        GroupScope::Immediate,
+        "Bank OD A/c",
+        Some("Bank OD A/c"),
+        &hop_names
+    ));
+    // But the original tool behaviour is preserved: a deeper ancestor is
+    // invisible to Immediate, exactly as it always was.
+    assert!(!group_matches(
+        GroupScope::Immediate,
+        "Loans (Liability)",
+        Some("Bank OD A/c"),
+        &hop_names
+    ));
+}
+
+#[test]
+fn ancestry_scope_matches_any_hop_but_never_an_unresolved_tail() {
+    let index = lab_shaped_groups();
+    let chain = index.ancestry_chain(Some("Bank OD A/c"));
+    let hop_names = chain
+        .hops
+        .iter()
+        .map(|hop| hop.name.clone())
+        .collect::<Vec<_>>();
+    assert!(group_matches(
+        GroupScope::Ancestry,
+        "Loans (Liability)",
+        Some("Bank OD A/c"),
+        &hop_names
+    ));
+    // A name that is not anywhere in the resolved chain must not match --
+    // ancestry scope broadens what counts as a hit, it never invents one.
+    assert!(!group_matches(
+        GroupScope::Ancestry,
+        "Sundry Debtors",
+        Some("Bank OD A/c"),
+        &hop_names
+    ));
+
+    // A ledger whose ancestry has a gap must never match a name that only
+    // the unresolved tail could have reached: the resolved prefix is all
+    // `group_matches` is given, and it must not be treated as the full chain.
+    let narrow = bridge_tally_protocol::group_ancestry::GroupIndex::build([group(
+        "Bank OD A/c",
+        "Loans (Liability)",
+        Some("Bank OD A/c"),
+    )]);
+    let gapped = narrow.ancestry_chain(Some("Bank OD A/c"));
+    let gapped_names = gapped
+        .hops
+        .iter()
+        .map(|hop| hop.name.clone())
+        .collect::<Vec<_>>();
+    assert!(!gapped.is_complete());
+    assert!(!group_matches(
+        GroupScope::Ancestry,
+        "Loans (Liability)",
+        Some("Bank OD A/c"),
+        &gapped_names
+    ));
 }

@@ -380,6 +380,74 @@ fn parse_voucher_rows(
                             Value::Bool(required_tally_bool(row.get("ISCANCELLED"))?);
                         parsed["optional"] =
                             Value::Bool(required_tally_bool(row.get("ISOPTIONAL"))?);
+                        // Unlike ISCANCELLED/ISOPTIONAL, a real capture has shown Tally
+                        // omitting ISPOSTDATED entirely rather than asserting "No" on every
+                        // voucher. required_tally_bool would refuse the whole read on that
+                        // shape; that is right for a tag known to always be present, but
+                        // wrong here; it would turn "Tally did not say" into a hard failure
+                        // instead of a legible unknown. So this field is optional like
+                        // EFFECTIVEDATE above: an absent or empty element is not observed and
+                        // the key is omitted, never invented as `false`. A present value must
+                        // be Yes/No: an unrecognised value refuses the read rather than
+                        // guessing, exactly as a malformed EFFECTIVEDATE does.
+                        if let Some(post_dated) = row
+                            .get("ISPOSTDATED")
+                            .map(|value| value.trim())
+                            .filter(|value| !value.is_empty())
+                        {
+                            parsed["post_dated"] = Value::Bool(match post_dated {
+                                "Yes" => true,
+                                "No" => false,
+                                _ => return Err("voucher_post_dated_invalid".to_string()),
+                            });
+                        }
+                        // REFERENCE is TYPE="String", the same shape NARRATION uses, but
+                        // unlike NARRATION a blank reference carries no information worth
+                        // returning: protocol reference §8.2c observed it empty on most
+                        // vouchers and populated with a manual reference number on the
+                        // rest. An empty or absent element is not observed and the key is
+                        // omitted, never emitted as "".
+                        if let Some(reference) = row
+                            .get("REFERENCE")
+                            .map(|value| value.trim())
+                            .filter(|value| !value.is_empty())
+                        {
+                            parsed["reference"] = json!(reference);
+                        }
+                        // ISINVOICE follows ISPOSTDATED's optional-boolean idiom exactly:
+                        // absent or empty is "Tally did not say" and the key is omitted,
+                        // never invented as false; a present value must be Yes/No. §8.2c's
+                        // capture asserted it (with one of those two values) on every
+                        // voucher observed, unlike ISPOSTDATED, but that is one instance on
+                        // one release and is not grounds to promote it to
+                        // required_tally_bool. §8.2c also notes ISINVOICE is the one
+                        // logical here Tally emits without a TYPE="Logical" attribute;
+                        // parsing here matches on tag name only, so that is not visible to
+                        // this code and changes nothing about it.
+                        if let Some(is_invoice) = row
+                            .get("ISINVOICE")
+                            .map(|value| value.trim())
+                            .filter(|value| !value.is_empty())
+                        {
+                            parsed["is_invoice"] = Value::Bool(match is_invoice {
+                                "Yes" => true,
+                                "No" => false,
+                                _ => return Err("voucher_is_invoice_invalid".to_string()),
+                            });
+                        }
+                        // PARTYGSTIN is TYPE="String", handled like REFERENCE above: an
+                        // empty or absent element is not observed. §8.2c's capture proved
+                        // the tag round-trips through this FETCH list but never observed a
+                        // populated value (this synthetic company's parties carry no
+                        // GSTIN) -- presence is verified, population is not, and this
+                        // parsing makes no claim about what a populated value looks like.
+                        if let Some(party_gstin) = row
+                            .get("PARTYGSTIN")
+                            .map(|value| value.trim())
+                            .filter(|value| !value.is_empty())
+                        {
+                            parsed["party_gstin"] = json!(party_gstin);
+                        }
                         rows.push(parsed);
                     }
                 }
