@@ -1,5 +1,6 @@
-//! What a test produces (the reference engine's `tae/findings.py`): figures, each a number a
-//! CA may see with its unit and one-line definition, and findings that cite figures by id.
+//! What a test produces (the reference Python implementation's findings module): figures, each
+//! a number a CA may see with its unit and one-line definition, and findings that cite figures
+//! by id.
 
 /// A figure's value. Money is paise and ratios are basis points, both integers; a ratio with
 /// a zero denominator is `Undefined`, which is not zero. There is no float variant.

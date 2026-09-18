@@ -1,5 +1,5 @@
 //! Cash share of receipts and payments for the proviso to s.44AB(a) (Form 3CD clause 8
-//! context). A port of the reference engine's `tae/audit_tests/cash_44ab.py`, version 1.
+//! context). A port of the reference Python implementation's `cash_44ab` test module, version 1.
 //!
 //! Cash is the ledgers under the engagement's cash groups, bank the ledgers under its bank
 //! groups; Contra vouchers are excluded from both legs; each share is cash / (cash + bank),

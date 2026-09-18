@@ -1,13 +1,13 @@
 //! The audit book: only the fields `cash_44ab` and the book invariants read, built from a
-//! verified [`Read`] by the reference engine's rules (`tae/adapters/tally_xml.py` and
-//! `read_format.py`, `load_book`).
+//! verified [`Read`] by the reference Python implementation's rules (its Tally XML adapter and
+//! its `tally-read-v1` loader, `load_book`).
 //!
 //! Conventions, as in the reference model: money is integer paise, debit positive (Tally
 //! writes debit negative; the adapter flips once, here); identity is the company GUID; a
 //! voucher's status is explicit and an unknown status makes [`Book::population`] refuse.
 //!
-//! Where the reference engine keys a dict by name (groups, ledgers, TB rows), a later entry
-//! with the same name replaces an earlier one; the maps here do the same.
+//! Where the reference implementation keys a dict by name (groups, ledgers, TB rows), a later
+//! entry with the same name replaces an earlier one; the maps here do the same.
 
 use std::collections::{BTreeMap, BTreeSet};
 

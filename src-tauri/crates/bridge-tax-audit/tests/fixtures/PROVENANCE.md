@@ -7,7 +7,7 @@ invented.
 ## What these fixtures establish, and what they do not
 
 They establish **parity**: that this crate and the Python reference engine it ports compute
-the same canonical `cash_44ab` result (PARITY-SPEC-v1) from the same bytes. They do **not**
+the same canonical `cash_44ab` result (`docs/tax-audit/parity-spec-v1.md`) from the same bytes. They do **not**
 establish anything about Tally. No byte here was served by Tally. The XML follows the element
 layout Tally uses for collection exports (envelope, `CMPINFO` counts, UTF-16LE without a BOM
 for the group and ledger masters, `&#4;` before `Primary`, flags and amounts in Tally's sign),
@@ -35,10 +35,10 @@ half-to-even rounding give different paise.
 
 ## The golden
 
-`golden/synthetic.cash_44ab.json` is the reference engine's own canonical dump for that
-engagement and read: its `read_format` adapter built the book, its `cash_44ab` ran with its
-AY 2026-27 rules, and its `tae.parity.canonical` serialised the result. Produced at reference
-engine commit `c2f206beb870a8fdb0775f2d1c71aa1ccfccca64` by
+`golden/synthetic.cash_44ab.json` is the reference Python implementation's own canonical dump for
+that engagement and read: its `tally-read-v1` adapter built the book, its `cash_44ab` test ran
+with its AY 2026-27 rules, and its own canonical serialiser produced the result. Produced at
+reference-implementation commit `c2f206beb870a8fdb0775f2d1c71aa1ccfccca64` by
 
 ```
 uv run -q --with openpyxl --with xlrd --with python-docx --with jsonschema --with striprtf \

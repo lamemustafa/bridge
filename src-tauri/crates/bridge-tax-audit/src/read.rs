@@ -1,4 +1,5 @@
-//! A tally-read-v1 directory, opened and verified (READ-FORMAT-v1 section 7, rules C1-C7, C10).
+//! A tally-read-v1 directory, opened and verified (`docs/tax-audit/read-format-v1.md` section 7,
+//! rules C1-C7, C10).
 //!
 //! [`Read::open`] admits a directory only if its manifest is well formed (C1), every path is
 //! safe (C2), every stored file and its decoded content match their declared sha256 and length

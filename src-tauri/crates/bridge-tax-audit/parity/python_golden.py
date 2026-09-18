@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Produce the reference engine's canonical cash_44ab dump (PARITY-SPEC-v1) for one engagement.
+"""Produce the reference Python implementation's canonical cash_44ab dump
+(docs/tax-audit/parity-spec-v1.md) for one engagement.
 
 The reference engine is the Python tax-audit engine this crate ports; it is not in this
 repository. Pass its `engine/` directory (the one holding the `tae` package) as ENGINE. Run it
@@ -14,8 +15,8 @@ With --read DIR, the [snapshot] table is replaced in memory by that read with
 allow_unbracketed_read = true -- the same switch the engine's own read-format parity gate
 applies -- so a legacy client config can be run against its wrapped read without editing it.
 
-The book is built by the engine's own read-format adapter and the dump by its own
-tae.parity.canonical, so this script adds no logic of its own beyond choosing the inputs.
+The book is built by the reference implementation's own read-format adapter and the dump by its
+own canonical serialiser, so this script adds no logic of its own beyond choosing the inputs.
 """
 from __future__ import annotations
 

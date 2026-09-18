@@ -1,7 +1,8 @@
-//! The canonical, language-neutral serialisation of one test result (PARITY-SPEC-v1; the
-//! reference is `tae/parity/canonical.py`). Integer paise and basis points only, never a
-//! float; every list sorted by plain code-point order; prose compared by a 16-hex-character
-//! sha256 of its NFC form, with the text riding along for a human reading a diff.
+//! The canonical, language-neutral serialisation of one test result
+//! (`docs/tax-audit/parity-spec-v1.md`; the reference is the Python implementation's own
+//! canonical serialiser). Integer paise and basis points only, never a float; every list sorted
+//! by plain code-point order; prose compared by a 16-hex-character sha256 of its NFC form, with
+//! the text riding along for a human reading a diff.
 
 use serde_json::{json, Value as Json};
 use sha2::{Digest, Sha256};

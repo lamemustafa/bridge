@@ -1,10 +1,11 @@
-//! Rule values as data, read from the vendored excerpt of the reference engine's rules table.
+//! Rule values as data, read from the vendored excerpt of the reference Python implementation's
+//! rules table.
 //!
 //! Provenance: `rules/ay2026-27.s44ab.toml` holds the `[meta]` and `[s44ab]` tables of the
-//! reference engine's `tae/rules/ay2026-27.toml`, byte for byte, under a five-line header. The
-//! source file had sha256 [`SOURCE_SHA256`] when it was read at engine commit
-//! [`SOURCE_COMMIT`]. The local parity example re-checks, against a live copy of the engine,
-//! that the excerpt is still verbatim and that both files give the same values.
+//! reference implementation's own AY 2026-27 rules file, byte for byte, under a five-line
+//! header. The source file had sha256 [`SOURCE_SHA256`] when it was read at reference commit
+//! [`SOURCE_COMMIT`]. The local parity example re-checks, against a local copy of the reference
+//! implementation, that the excerpt is still verbatim and that both files give the same values.
 //!
 //! [`VENDORED_SHA256`] is the vendored file's own hash; a unit test fails if the file changes
 //! without that constant (and so without a reviewer seeing the provenance above) changing too.
@@ -13,8 +14,8 @@ use crate::error::{AuditError, Result};
 
 pub const VENDORED: &str = include_str!("../rules/ay2026-27.s44ab.toml");
 pub const VENDORED_SHA256: &str =
-    "62d8026e4717bad9960086a34e05fd80c6101747bae31b9d0777e0f71a844e4e";
-pub const SOURCE_PATH: &str = "tae/rules/ay2026-27.toml";
+    "3a46d7c6f90f61cb62b71e0e75ce1f37b57b2b3912aa288d75f5069c2e9a87f4";
+pub const SOURCE_PATH: &str = "the reference Python implementation's AY 2026-27 rules file";
 pub const SOURCE_SHA256: &str = "8a6ec80cd5d19da34392e93024dc9a43a98982b09fb457c662f627174acedf2d";
 pub const SOURCE_COMMIT: &str = "c2f206beb870a8fdb0775f2d1c71aa1ccfccca64";
 

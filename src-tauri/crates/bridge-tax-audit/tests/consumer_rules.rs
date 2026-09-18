@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-//! One refusal per consumer rule the slice enforces (READ-FORMAT-v1 section 7), each driven by
-//! altering a scratch copy of the synthetic read and asserting the rule's code, never a
-//! message substring.
+//! One refusal per consumer rule the slice enforces (`docs/tax-audit/read-format-v1.md` section
+//! 7), each driven by altering a scratch copy of the synthetic read and asserting the rule's
+//! code, never a message substring.
 
 mod common;
 

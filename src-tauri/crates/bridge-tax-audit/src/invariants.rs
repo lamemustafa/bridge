@@ -1,10 +1,10 @@
 //! Invariants: properties that must hold before a figure leaves the engine (the reference
-//! engine's `tae/invariants.py`). Each re-derives what it needs from the book, never from a
-//! test's own computation. Codes and violation strings match the reference exactly, because
-//! the parity dump compares them.
+//! Python implementation's own invariants module). Each re-derives what it needs from the book,
+//! never from a test's own computation. Codes and violation strings match the reference exactly,
+//! because the parity dump compares them.
 //!
-//! POL-1 is not here: the reference calls it an observation, not a gate, and the parity dump
-//! excludes it.
+//! POL-1 is not here: the reference implementation calls it an observation, not a gate, and the
+//! parity dump excludes it.
 
 use std::collections::{BTreeMap, BTreeSet};
 

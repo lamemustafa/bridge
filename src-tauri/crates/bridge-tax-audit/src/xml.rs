@@ -1,7 +1,8 @@
-//! Tally XML bytes to a small element tree, with the reference engine's reading rules.
+//! Tally XML bytes to a small element tree, with the reference Python implementation's reading
+//! rules.
 //!
-//! The reference engine (`tae/adapters/tally_xml.py`, `_read`) does four things before it
-//! parses, and this module does the same so both sides see the same text:
+//! The reference implementation's Tally XML adapter does four things before it parses, and this
+//! module does the same so both sides see the same text:
 //!
 //! 1. Content whose second byte is NUL is UTF-16LE without a BOM (how Tally serves master
 //!    collections) and is decoded as such. Anything else goes through Bridge's own

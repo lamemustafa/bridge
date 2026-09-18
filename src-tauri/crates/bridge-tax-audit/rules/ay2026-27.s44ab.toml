@@ -1,7 +1,7 @@
-# Vendored excerpt of the reference engine's rules table for AY 2026-27 (tae/rules/ay2026-27.toml):
-# the [meta] and [s44ab] tables only, copied byte for byte from the line "[meta]" to the line
-# 'status = "verified"' that closes [s44ab]. The source file's sha256 and the engine commit are
-# recorded in src/rules.rs. Only an excerpt is vendored: the rest of the source table cites
+# Vendored excerpt of the reference Python implementation's rules table for AY 2026-27: the
+# [meta] and [s44ab] tables only, copied byte for byte from the line "[meta]" to the line
+# 'status = "verified"' that closes [s44ab]. The source file's sha256 and the reference commit
+# are recorded in src/rules.rs. Only an excerpt is vendored: the rest of the source table cites
 # private research notes that do not belong in this repository.
 
 [meta]

@@ -1,10 +1,10 @@
-//! Diff two canonical dumps by the same rules as the reference's `tae/parity/compare.py`
-//! (PARITY-SPEC-v1 section 7): type validation on both sides first, refusal of an
-//! empty-vs-empty comparison, a minimum figure count, identical figure and finding key sets
-//! (the full symmetric difference is reported), then per-figure unit, value, definition hash
-//! and evidence; per-finding clauses (ordered), confidence, facts, evidence and prose hashes;
-//! the population note; and the invariant reports. Every list is re-sorted before comparing,
-//! so a producer's order never decides the result.
+//! Diff two canonical dumps by the same rules as the reference Python implementation's own
+//! comparison tool (`docs/tax-audit/parity-spec-v1.md` section 7): type validation on both
+//! sides first, refusal of an empty-vs-empty comparison, a minimum figure count, identical
+//! figure and finding key sets (the full symmetric difference is reported), then per-figure
+//! unit, value, definition hash and evidence; per-finding clauses (ordered), confidence, facts,
+//! evidence and prose hashes; the population note; and the invariant reports. Every list is
+//! re-sorted before comparing, so a producer's order never decides the result.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -12,7 +12,8 @@ use serde_json::Value as Json;
 
 const NUMERIC_UNITS: [&str; 4] = ["paise", "bp", "count", "days"];
 
-/// The reference's `DEFAULT_MIN_FIGURES`: anchored to the reference fixture's figure counts.
+/// The reference implementation's own minimum-figure-count default: anchored to the reference
+/// fixture's figure counts.
 pub fn default_min_figures(test_id: &str) -> usize {
     match test_id {
         "cash_44ab" => 7,
