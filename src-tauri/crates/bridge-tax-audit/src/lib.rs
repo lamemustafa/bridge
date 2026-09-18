@@ -17,9 +17,9 @@
 //! books is `examples/local_parity.rs`, run on the machine that holds client reads and never
 //! committed; each change to this crate should record that run's result.
 //!
-//! **Not yet in CI.** The crate is a standalone Cargo workspace because joining the src-tauri
-//! workspace edits `src-tauri/Cargo.toml` and `src-tauri/Cargo.lock`, both pinned in the
-//! compatibility surface. Run its gates with `--manifest-path` pointing here.
+//! **In CI.** The crate is a member of the `src-tauri` Cargo workspace, so the existing
+//! workspace `cargo test`/`clippy`/`fmt` steps, and the dependency-inventory and licence gates,
+//! already cover it; no crate-specific CI step is needed.
 
 pub mod book;
 pub mod canonical;

@@ -11,18 +11,6 @@ rust-version = "1.96"
 [lints]
 workspace = true
 
-# A standalone workspace for now, on purpose. Joining the src-tauri workspace means editing
-# src-tauri/Cargo.toml and src-tauri/Cargo.lock, which are both pinned in the compatibility
-# surface; that is an owner decision batched with other pin-touching changes. Until then CI
-# does not run this crate (see the crate docs in src/lib.rs). The lint table mirrors
-# src-tauri/Cargo.toml's, the same way tools/Cargo.toml does.
-[workspace]
-
-[workspace.lints.clippy]
-pedantic = { level = "warn", priority = -1 }
-missing_errors_doc = { level = "allow", priority = 1 }
-must_use_candidate = { level = "allow", priority = 1 }
-
 [dependencies]
 bridge-tally-primitives = { path = "../bridge-tally-primitives" }
 bridge-tally-protocol = { path = "../bridge-tally-protocol" }
