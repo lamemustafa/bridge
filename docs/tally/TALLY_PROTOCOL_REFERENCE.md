@@ -2893,8 +2893,13 @@ request is predicted over a budget well below the cap.
 1. **Budget, and the one margin.** Half the transport cap, in encoded wire bytes: 16 MiB. A part is
    planned at the book's measured cost per voucher, not at an inflated one; the other half of the
    cap is the only allowance for that measurement being wrong. It is sized for the understatement
-   measured in §11c.1 (a one-day probe 1.25 times below the year) with room, not for a book whose
-   vouchers differ in weight by more than about twice from those already read.
+   measured in §11c.1 (a one-day probe 1.25 times below the year) with room.
+   **The floor makes that margin hold.** A measured cost never replaces the default below **half** of
+   it. A part planned within the budget at a figure of at least half the default holds at most
+   `2 × budget / default` vouchers, so if no voucher in it is heavier than the default — which is set
+   above the heaviest cost measured for the shape — the part is at most twice the budget: the cap.
+   Without the floor, one light first part (bank receipts at a tenth of an inventory voucher's cost)
+   would plan the next part at ten times its safe size. A light book pays in more, smaller parts.
 2. **Vouchers in the window, cheapest estimate first.**
    - The company's voucher high-water mark, `ALTVCHID` (§10), bounds the whole book: every voucher
      carries an AlterID no greater than it. If the mark times the shape's conservative per-voucher
@@ -2903,9 +2908,11 @@ request is predicted over a budget well below the cap.
    - Otherwise, a **census** of the window: one row per voucher carrying only `GUID`, `ALTERID` and
      `DATE` (the §12.7 witness fetch), narrowed **by date first**, because a narrow date window is
      what makes a voucher filter cheap and an AlterID range over the whole book is not. Each census
-     covers a date range whose expected rows fit one read: at first from the book's average density
-     (the high-water mark over the days since the books began), then from the density counted so
-     far, doubled. A short window on an ordinary book is one census.
+     covers a date range whose expected rows fit one read at **twice** the density assumed: at first
+     the book's average density (the high-water mark over the days since the books began), then the
+     density counted so far. A later range may cover **at most twice the days** of the one before,
+     so a sparse or empty stretch cannot license a census over thousands of days. A short window on
+     an ordinary book is one census.
    - A census the transport refuses as too large is halved by date. A single day still too large is
      counted in AlterID spans of the book, each bounded by construction because it cannot return more
      rows than it is wide. A census that times out is not retried, because the gateway may still be
@@ -2962,6 +2969,23 @@ request is predicted over a budget well below the cap.
   actual size departs from its prediction on a heavy, mixed book is the central live measurement.
 - **Encoding of the 2026-09 figures.** The rule doubles UTF-8 figures for the wire. Which encoding
   each figure above was captured in is to be confirmed in live qualification.
+- **Whether `ALTVCHID` moves on every change is UNVERIFIED.** The bracket (rule 6) detects a change
+  during a divided read only if the change advances the mark. §10 observed it advance on a create.
+  Whether an alteration, a cancellation, a re-dating or a **deletion** advances it is not
+  established; a deletion, having no AlterID to assign, plausibly does not. A voucher deleted
+  between two parts may then be returned by the part already read, with no refusal. This is the one
+  gap here that can be silent, and it is the first item of live qualification.
+- **The empty-window corroboration reuses the first read's mark.** Its widened read (±1 day) is
+  bounded with the high-water mark the window's own read observed. If that widened read is divided,
+  its bracket compares against the earlier mark, so a voucher posted anywhere in the company between
+  the two reads refuses it. That refusal is loud and safe; re-reading the mark would trade it for one
+  more request on every empty window, and is not done.
+- **A day too dense for a date census** is counted in AlterID spans of the whole book, 4,096 at a
+  time within the 64-request census allowance, so on a book whose mark exceeds about 262,000 such a
+  day is refused as unestimated.
+- **AlterID 0.** Every span starts above an exclusive lower bound of 0, so a voucher with AlterID 0
+  could not be read by a divided day. None has been observed; a census row carrying AlterID 0 is
+  refused rather than planned around.
 
 ## 11a. Scale measurements — 11,287-voucher corpus
 

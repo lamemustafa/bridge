@@ -836,8 +836,9 @@ fn part(from: &str, to: &str, span: Option<AlterIdSpan>) -> WindowPart {
 #[tokio::test]
 async fn the_first_part_measures_the_book_and_the_rest_of_its_day_is_read_above_it() {
     // Default capacity 1: the heavy day is planned in one-voucher spans. The
-    // first span measures one voucher, capacity becomes 3, and the rest of that
-    // day is re-planned from above the AlterID already read, then day two whole.
+    // first span measures one voucher, capacity becomes 2 (the floor at half the
+    // default binds here), and the rest of that day is re-planned from above
+    // the AlterID already read, then day two whole.
     let limits = three_a_read();
     let census = WindowCensus::from_rows([
         (day("20260801"), 1),
@@ -845,12 +846,11 @@ async fn the_first_part_measures_the_book_and_the_rest_of_its_day_is_read_above_
         (day("20260801"), 3),
         (day("20260802"), 4),
         (day("20260802"), 5),
-        (day("20260802"), 6),
     ]);
     let mut plans = paired(&xml_plan(vouchers_kept(1)));
     plans.extend(paired(&xml_plan(vouchers_kept(2))));
     plans.extend(paired(&xml_plan(
-        three_vouchers().replace("20260801", "20260802"),
+        vouchers_kept(2).replace("20260801", "20260802"),
     )));
     let (outcome, observed) = read_window(
         plans,
@@ -861,7 +861,7 @@ async fn the_first_part_measures_the_book_and_the_rest_of_its_day_is_read_above_
     )
     .await;
     let outcome = outcome.unwrap();
-    assert_eq!(outcome.rows.len(), 6);
+    assert_eq!(outcome.rows.len(), 5);
     let expected = [
         part(
             "20260801",
@@ -876,7 +876,7 @@ async fn the_first_part_measures_the_book_and_the_rest_of_its_day_is_read_above_
             "20260801",
             Some(AlterIdSpan {
                 after: 1,
-                through: 6,
+                through: 5,
             }),
         ),
         part("20260802", "20260802", None),
@@ -901,17 +901,16 @@ async fn the_first_part_measures_the_book_and_the_rest_of_its_day_is_read_above_
 #[tokio::test]
 async fn a_replan_after_a_whole_day_reads_the_days_after_it() {
     // Day one fits the default; day two does not. Measuring day one raises
-    // capacity to 3, and the re-plan must begin on day two — not re-read day one.
+    // capacity to 2, and the re-plan must begin on day two — not re-read day one.
     let limits = three_a_read();
     let census = WindowCensus::from_rows([
         (day("20260801"), 1),
         (day("20260802"), 2),
         (day("20260802"), 3),
-        (day("20260802"), 4),
     ]);
     let mut plans = paired(&xml_plan(vouchers_kept(1)));
     plans.extend(paired(&xml_plan(
-        three_vouchers().replace("20260801", "20260802"),
+        vouchers_kept(2).replace("20260801", "20260802"),
     )));
     let (outcome, observed) = read_window(
         plans,
@@ -929,7 +928,7 @@ async fn a_replan_after_a_whole_day_reads_the_days_after_it() {
             part("20260802", "20260802", None)
         ]
     );
-    assert_eq!(outcome.rows.len(), 4);
+    assert_eq!(outcome.rows.len(), 3);
     assert_eq!(observed.len(), 12);
 }
 
@@ -1021,13 +1020,14 @@ async fn a_short_window_on_a_big_book_is_counted_in_one_date_census() {
     // census of the window, which here proves the window small enough to read
     // whole — the request it was before the bound existed.
     // Production limits: a census of up to 4,096 rows, and the book's average
-    // density since its books began (2026-04-01) is about 2,000 a day.
+    // density since its books began (2026-04-01) is about 2,000 a day, planned
+    // at twice that for the first census — so a one-day window is one census.
     let limits = WindowReadLimits::for_shape(VoucherReadShape::EntryWildcard);
     let mut plans = paired(&xml_plan(three_vouchers()));
     plans.extend(paired(&xml_plan(three_vouchers())));
     let (outcome, observed) = read_window(
         plans,
-        ("20260801", "20260802"),
+        ("20260801", "20260801"),
         VoucherReadShape::EntryWildcard,
         WindowPlanSource::Estimate {
             known_high_water: Some(250_000),
@@ -1036,14 +1036,14 @@ async fn a_short_window_on_a_big_book_is_counted_in_one_date_census() {
     )
     .await;
     let outcome = outcome.unwrap();
-    assert_eq!(outcome.reads, [part("20260801", "20260802", None)]);
+    assert_eq!(outcome.reads, [part("20260801", "20260801", None)]);
     assert_eq!(observed.len(), 12);
     assert_requests(
         &observed,
         &[1, 7],
         &[
-            render_agent_voucher_census(&company(), "20260801", "20260802", None).unwrap(),
-            render_agent_vouchers(&company(), "20260801", "20260802", None).unwrap(),
+            render_agent_voucher_census(&company(), "20260801", "20260801", None).unwrap(),
+            render_agent_vouchers(&company(), "20260801", "20260801", None).unwrap(),
         ],
     );
 }
@@ -1307,10 +1307,12 @@ async fn a_lighter_part_never_loosens_the_plan_for_the_rest() {
         &format!("<NARRATION TYPE=\"String\">{}", "N".repeat(20_000)),
     );
     assert_ne!(heavy, vouchers_kept(1));
-    let budget = 3 * wire_len(&xml_plan(heavy.clone()));
+    // The default fits one voucher a read and its floor (half) no more than
+    // the heavy measurement, so the measured figure is what plans the rest.
+    let heavy_len = wire_len(&xml_plan(heavy.clone()));
     let limits = WindowReadLimits {
-        budget_bytes: budget,
-        default_bytes_per_voucher: budget,
+        budget_bytes: 3 * heavy_len,
+        default_bytes_per_voucher: 2 * heavy_len,
     };
     let census = WindowCensus::from_rows(
         [
@@ -1399,5 +1401,260 @@ async fn a_census_the_transport_refuses_is_halved_by_date_earlier_half_first() {
             render_agent_voucher_census(&company(), "20260802", "20260802", None).unwrap(),
             render_agent_vouchers(&company(), "20260801", "20260802", None).unwrap(),
         ],
+    );
+}
+
+#[test]
+fn a_light_first_measurement_cannot_plan_a_heavy_part_over_the_cap() {
+    // The floor: a measured figure never falls below half the shape default.
+    let default = VoucherReadShape::ImportVerification.default_wire_bytes_per_voucher();
+    assert_eq!(planning_figure(default, 10_000), default / 2);
+    assert_eq!(planning_figure(default, 70_000), 70_000);
+    // The review's case: a first part of bank receipts at ~10 KB on the wire,
+    // then inventory vouchers at the default's weight. Planned from the light
+    // figure, every part must still fit the cap at the heavy weight — and fit
+    // the budget at the default's own floor.
+    let census = heavy_book();
+    let figure = planning_figure(default, 10_000);
+    let reads = plan_window_reads(
+        day("20250601"),
+        day("20250630"),
+        &census,
+        None,
+        census.max_alter_id(),
+        figure,
+        WINDOW_READ_BUDGET_BYTES,
+        MAX_PLANNED_READS,
+    )
+    .unwrap();
+    for read in &reads {
+        assert!(
+            read.vouchers * figure <= WINDOW_READ_BUDGET_BYTES,
+            "{read:?}"
+        );
+        assert!(
+            read.vouchers * default <= bridge_tally_transport::XML_RESPONSE_MAX_BYTES as u64,
+            "{read:?} would exceed the cap at the default's weight"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_light_first_part_does_not_widen_the_next_beyond_the_floor() {
+    // Default capacity 1; the floor allows at most 2 a read. Day one measures a
+    // light voucher that alone would allow 4, so day two's four vouchers must
+    // still go in two spans of two.
+    let one = wire_len(&xml_plan(vouchers_kept(1)));
+    let limits = WindowReadLimits {
+        budget_bytes: 4 * one,
+        default_bytes_per_voucher: 4 * one,
+    };
+    let census = WindowCensus::from_rows([
+        (day("20260801"), 1),
+        (day("20260802"), 2),
+        (day("20260802"), 3),
+        (day("20260802"), 4),
+        (day("20260802"), 5),
+    ]);
+    let second = vouchers_kept(2).replace("20260801", "20260802");
+    let mut plans = paired(&xml_plan(vouchers_kept(1)));
+    plans.extend(paired(&xml_plan(second.clone())));
+    plans.extend(paired(&xml_plan(second)));
+    let (outcome, _) = read_window(
+        plans,
+        ("20260801", "20260802"),
+        VoucherReadShape::EntryWildcard,
+        WindowPlanSource::Counted(census),
+        limits,
+    )
+    .await;
+    assert_eq!(
+        outcome.unwrap().reads,
+        [
+            part("20260801", "20260801", None),
+            part(
+                "20260802",
+                "20260802",
+                Some(AlterIdSpan {
+                    after: 0,
+                    through: 3
+                })
+            ),
+            part(
+                "20260802",
+                "20260802",
+                Some(AlterIdSpan {
+                    after: 3,
+                    through: 5
+                })
+            ),
+        ]
+    );
+}
+
+#[test]
+fn a_census_range_assumes_twice_the_density_and_grows_at_most_twofold() {
+    // First census: the book's average density, doubled. 4,096 / (100 × 2).
+    assert_eq!(census_range_days(4096, 100, None), 20);
+    // A dense start is at least one day.
+    assert_eq!(census_range_days(4096, 10_000, None), 1);
+    // After an empty range the next may only double, however sparse it looked.
+    assert_eq!(census_range_days(4096, 100, Some((0, 5, 5))), 10);
+    // Counted density, doubled, binds when it is tighter than doubling:
+    // 2,000 rows over 10 days is 200 a day, planned at 400: 10 days.
+    assert_eq!(census_range_days(4096, 100, Some((2_000, 10, 10))), 10);
+    // And a dense count shrinks the next range below the previous one.
+    assert_eq!(census_range_days(4096, 100, Some((20_000, 10, 10))), 1);
+}
+
+#[test]
+fn a_census_divides_on_an_oversized_response_and_refuses_on_a_deadline() {
+    use bridge_tally_transport::TallyTransportError;
+    let oversized = TallyTransportError::ResponseTooLarge {
+        limit: 32 * 1024 * 1024,
+        declared_by_peer: true,
+    };
+    assert_eq!(census_failure(oversized.safe_code()), CensusFailure::Divide);
+    // A deadline is never retried, not even in halves.
+    assert_eq!(
+        census_failure(TallyTransportError::RequestTimedOut.safe_code()),
+        CensusFailure::Refuse
+    );
+    assert_eq!(
+        census_failure(TallyTransportError::ConnectionFailed.safe_code()),
+        CensusFailure::Propagate
+    );
+    assert_eq!(
+        census_failure("agent_runtime_read_failed"),
+        CensusFailure::Propagate
+    );
+}
+
+#[tokio::test]
+async fn a_census_that_times_out_refuses_the_window_and_sends_nothing_more() {
+    // Takes the transport's 20 s deadline. The census never answers; the read
+    // is refused as unestimated and nothing else is sent. Spare responses are
+    // queued so that a retry, if one were made, would be served and seen.
+    let limits = WindowReadLimits {
+        budget_bytes: 16 * 1024,
+        default_bytes_per_voucher: 16 * 1024,
+    };
+    let mut plans = vec![
+        company_plan(),
+        xml_plan(empty_collection()).with_delivery(
+            tally_protocol_simulator::Delivery::SlowHeaders(std::time::Duration::from_secs(25)),
+        ),
+    ];
+    for _ in 0..4 {
+        plans.extend(paired(&xml_plan(empty_collection())));
+    }
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let identity = identity();
+    let failure = server
+        .read_voucher_window(
+            &identity,
+            identity.display_name(),
+            "20260801",
+            "20260801",
+            VoucherReadShape::EntryWildcard,
+            WindowPlanSource::Estimate {
+                known_high_water: Some(5),
+            },
+            limits,
+            |xml| parse_agent_rows(xml, GUID),
+        )
+        .await
+        .err()
+        .expect("a census deadline refuses the window");
+    assert_eq!(failure.code, VOLUME_UNESTIMATED);
+    simulator.cancel();
+    let observed = simulator.finish().unwrap();
+    assert_eq!(
+        observed.len(),
+        2,
+        "nothing was sent after the timed-out census"
+    );
+    assert_eq!(
+        observed[1].request_body_sha256,
+        request_sha(
+            &render_agent_voucher_census(&company(), "20260801", "20260801", None).unwrap()
+        )
+    );
+}
+
+#[tokio::test]
+async fn a_read_divided_only_by_date_is_bracketed_too() {
+    // Two days of one voucher each; the default fits one a read, so the window
+    // is read as two date ranges with no AlterID span. The mark is still read
+    // again afterwards, and a moved mark refuses the read.
+    let heavy = vouchers_kept(1).replace(
+        "<NARRATION TYPE=\"String\">",
+        &format!("<NARRATION TYPE=\"String\">{}", "N".repeat(20_000)),
+    );
+    let heavy_len = wire_len(&xml_plan(heavy.clone()));
+    let limits = WindowReadLimits {
+        budget_bytes: 2 * heavy_len,
+        default_bytes_per_voucher: 2 * heavy_len,
+    };
+    // One census: AlterIDs 2 and 3, one on each day.
+    let two = vouchers_kept(2);
+    let second_date = two.rfind("<DATE TYPE=\"Date\">20260801</DATE>").unwrap();
+    let mut census = two.clone();
+    census.replace_range(
+        second_date..second_date + "<DATE TYPE=\"Date\">20260801</DATE>".len(),
+        "<DATE TYPE=\"Date\">20260802</DATE>",
+    );
+    for (closing, expect_ok) in [(3, true), (4, false)] {
+        let mut plans = paired(&xml_plan(census.clone()));
+        plans.extend(paired(&xml_plan(heavy.clone())));
+        plans.extend(paired(&xml_plan(
+            vouchers_kept(1).replace("20260801", "20260802"),
+        )));
+        plans.extend(paired(&mark(closing)));
+        let (outcome, observed) = read_window(
+            plans,
+            ("20260801", "20260802"),
+            VoucherReadShape::EntryWildcard,
+            WindowPlanSource::Estimate {
+                known_high_water: Some(3),
+            },
+            limits,
+        )
+        .await;
+        assert_eq!(observed.len(), 24);
+        match outcome {
+            Ok(read) => {
+                assert!(expect_ok);
+                assert_eq!(
+                    read.reads,
+                    [
+                        part("20260801", "20260801", None),
+                        part("20260802", "20260802", None)
+                    ]
+                );
+            }
+            Err(failure) => {
+                assert!(!expect_ok);
+                assert_eq!(failure.code, WINDOW_CHANGED_DURING_READ);
+            }
+        }
+    }
+}
+
+#[test]
+fn a_census_row_with_alterid_zero_is_refused() {
+    // A day divided by AlterID starts every span above 0, so a voucher with
+    // AlterID 0 could never be read in parts. Refuse the census instead.
+    let zero = three_vouchers().replacen(
+        "<ALTERID TYPE=\"Number\"> 1</ALTERID>",
+        "<ALTERID TYPE=\"Number\"> 0</ALTERID>",
+        1,
+    );
+    assert_ne!(zero, three_vouchers());
+    assert_eq!(
+        parse_voucher_census(&zero, ("20260801", "20260801"), None),
+        Err("agent_read_protocol_invalid".to_string())
     );
 }

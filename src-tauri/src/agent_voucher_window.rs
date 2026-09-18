@@ -217,6 +217,73 @@ pub(super) const VOLUME_UNESTIMATED: &str = "voucher_window_volume_unestimated";
 /// its parts may not describe one state of the book. See `read_voucher_window`.
 pub(super) const WINDOW_CHANGED_DURING_READ: &str = "voucher_window_changed_during_read";
 
+/// A measured per-voucher cost may replace the shape's default, but never falls
+/// below half of it.
+///
+/// This floor is what makes the one margin a guarantee rather than a hope. A
+/// part planned within the budget at a figure no lower than half the default
+/// holds at most `2 × budget / default` vouchers; if none of them is heavier
+/// than the default — which is set above the heaviest cost measured for the
+/// shape (§11c.1) — the part is at most twice the budget, which is the cap.
+/// Without it, one light first part (bank receipts at a tenth of an inventory
+/// voucher's cost) would plan the next part at ten times its safe size.
+/// The cost is more, smaller parts on a light book, never a refusal.
+pub(super) fn planning_figure(default_bytes_per_voucher: u64, measured: u64) -> u64 {
+    measured.max(default_bytes_per_voucher.div_ceil(MEASURED_FLOOR_DIVISOR))
+}
+
+/// See [`planning_figure`].
+const MEASURED_FLOOR_DIVISOR: u64 = 2;
+
+/// How many days the next date census may cover.
+///
+/// The first census assumes the book's average density times
+/// [`CENSUS_DENSITY_FACTOR`], because the average hides dense stretches. Later
+/// ones use the density counted so far, times the same factor, but may cover
+/// at most twice the days of the one before: a sparse or empty stretch says
+/// little about the next, and without that cap one empty range would let the
+/// next census span thousands of days. Always at least one day.
+pub(super) fn census_range_days(
+    capacity: u64,
+    prior_density: u64,
+    counted: Option<(u64, u64, u64)>,
+) -> u64 {
+    let days = match counted {
+        None => capacity / prior_density.max(1).saturating_mul(CENSUS_DENSITY_FACTOR),
+        Some((rows, days_counted, previous_days)) => {
+            let density = rows
+                .div_ceil(days_counted.max(1))
+                .max(1)
+                .saturating_mul(CENSUS_DENSITY_FACTOR);
+            (capacity / density).min(previous_days.saturating_mul(2))
+        }
+    };
+    days.max(1)
+}
+
+/// What a census does with a read Tally did not serve.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CensusFailure {
+    /// The response was over the transport cap: count the range in smaller parts.
+    Divide,
+    /// The read timed out. Not retried in any form: the gateway may still be
+    /// building the abandoned response, and more requests queue behind it. The
+    /// window is refused as unestimated.
+    Refuse,
+    /// Any other failure is the caller's, unchanged.
+    Propagate,
+}
+
+pub(super) fn census_failure(code: &str) -> CensusFailure {
+    if code == "response_size_limit_exceeded" {
+        CensusFailure::Divide
+    } else if is_window_too_large_code(code) {
+        CensusFailure::Refuse
+    } else {
+        CensusFailure::Propagate
+    }
+}
+
 /// Vouchers one read may carry at `bytes_per_voucher` under `budget`.
 fn vouchers_per_read(budget: u64, bytes_per_voucher: u64) -> u64 {
     budget / bytes_per_voucher.max(1)
@@ -740,7 +807,7 @@ impl Server {
                         let next = if measured {
                             bytes_per_voucher.max(observed)
                         } else {
-                            observed
+                            planning_figure(limits.default_bytes_per_voucher, observed)
                         };
                         measured = true;
                         if next == bytes_per_voucher {
@@ -924,8 +991,8 @@ impl Server {
         let unestimated = || ToolFailure::from(VOLUME_UNESTIMATED.to_string());
         let mut rows = Vec::new();
         let mut spent = 0_usize;
-        let mut density = prior_density.max(1);
         let (mut counted_days, mut counted_rows) = (0_u64, 0_u64);
+        let mut previous_days: Option<u64> = None;
         // Pending census requests, in order. A span is only ever used for one day.
         let mut pending: Vec<(NaiveDate, NaiveDate, Option<AlterIdSpan>)> = Vec::new();
         let mut cursor = Some(first);
@@ -936,7 +1003,11 @@ impl Server {
                     let Some(start) = cursor.filter(|day| *day <= last) else {
                         break;
                     };
-                    let days = (capacity / density).max(1);
+                    let days = census_range_days(
+                        capacity,
+                        prior_density,
+                        previous_days.map(|previous| (counted_rows, counted_days, previous)),
+                    );
                     let end = start
                         .checked_add_days(chrono::Days::new(days - 1))
                         .map_or(last, |end| end.min(last));
@@ -951,7 +1022,7 @@ impl Server {
             let request = render_agent_voucher_census(company, &stamp(start), &stamp(end), span)?;
             let (xml, evidence) = match self.post_read(identity, request).await {
                 Ok(read) => read,
-                Err(failure) if failure.code == "response_size_limit_exceeded" => {
+                Err(failure) if census_failure(&failure.code) == CensusFailure::Divide => {
                     if let Some(((left_from, left_to), (right_from, right_to))) =
                         split_verification_window(&stamp(start), &stamp(end))
                     {
@@ -971,8 +1042,11 @@ impl Server {
                     }
                     continue;
                 }
-                Err(failure) if is_window_too_large_code(&failure.code) => {
-                    return Err(unestimated());
+                Err(failure) if census_failure(&failure.code) == CensusFailure::Refuse => {
+                    // Keep what the failed attempt observed, under the refusal.
+                    let mut refused = unestimated();
+                    refused.evidence = failure.evidence;
+                    return Err(refused);
                 }
                 Err(failure) => return Err(failure),
             };
@@ -980,12 +1054,10 @@ impl Server {
             let counted = parse_voucher_census(&xml, (&stamp(start), &stamp(end)), span)
                 .map_err(|_| unestimated())?;
             if span.is_none() {
-                counted_days += u64::try_from((end - start).num_days() + 1).unwrap_or(1);
+                let days = u64::try_from((end - start).num_days() + 1).unwrap_or(1);
+                counted_days += days;
                 counted_rows += counted.len() as u64;
-                density = counted_rows
-                    .div_ceil(counted_days.max(1))
-                    .saturating_mul(CENSUS_DENSITY_FACTOR)
-                    .max(1);
+                previous_days = Some(days);
             }
             rows.extend(counted);
         }
@@ -1170,6 +1242,11 @@ pub(super) fn parse_voucher_census(
                     let alter_id = row
                         .get("ALTERID")
                         .and_then(|value| value.trim().parse::<u64>().ok())
+                        // AlterID 0 is below every span's exclusive lower bound,
+                        // so a day divided by AlterID could never read it. No
+                        // such voucher has been observed; refuse rather than
+                        // plan around one.
+                        .filter(|alter_id| *alter_id > 0)
                         .ok_or_else(invalid)?;
                     if day < first || day > last || span.is_some_and(|span| !span.holds(alter_id)) {
                         return Err("window_not_honoured".to_string());
