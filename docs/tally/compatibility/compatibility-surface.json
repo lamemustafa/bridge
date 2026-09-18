@@ -99,7 +99,7 @@
     },
     {
       "path": "scripts/ledger-entries-ui.test.mjs",
-      "sha256": "8a916071983b3cc67756f3ab165a011df83a7c3ac08dfa2ff0b1380cec20d893"
+      "sha256": "df115704e2599faebed7fe2d84f6a23dd0794af9d04dfa2dcc0448150bc2ddba"
     },
     {
       "path": "scripts/outstandings-copy.test.mjs",
@@ -1078,5 +1078,5 @@
       "sha256": "0ab5bfbe6d81b1e10530744c338fb91efa57fe5a66fb4bc0cfd382495eaf02a4"
     }
   ],
-  "manifest_sha256": "49093d7bb888556e4369f68e66a70a888daf4b14c2bb93756ed259e94b995b6b"
+  "manifest_sha256": "2ce3d7708c7c6975a721749bee3f836f23838e99ed60daf2f6123f063f240ce2"
 }
