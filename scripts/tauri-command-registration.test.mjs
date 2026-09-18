@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Every `#[tauri::command]` must be registered in `generate_handler!` or be one of the
-// deliberately unexposed legacy reads. Nothing else checks this: the macro accepts whatever list
-// it is given, the compiler does not warn about a command that is never registered, and a missing
-// registration fails only when the frontend's `invoke` reaches the IPC boundary at runtime.
+// Every `#[tauri::command]` must be registered in `generate_handler!`. Nothing else checks this:
+// the macro accepts whatever list it is given, the compiler does not warn about a command that is
+// never registered, and a missing registration fails only when the frontend's `invoke` reaches the
+// IPC boundary at runtime.
 
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
@@ -63,18 +63,6 @@ export function registeredCommands(source) {
     .map((path) => path.split("::").at(-1));
 }
 
-// The four legacy reads that scripts/tally-setup-safety.test.mjs keeps unexposed. That file is
-// pinned in the compatibility surface, so the list is read from it rather than moved into a shared
-// unpinned module: an edit to such a module would change a sealed safety test without changing
-// its digest. See docs/rust-module-conventions.md for the open decision on deleting them.
-export function deliberatelyUnexposed(safetyTestSource) {
-  const block = /for \(const command of \[([\s\S]*?)\]\)/.exec(safetyTestSource);
-  assert.ok(block, "could not find the unexposed legacy-read list in tally-setup-safety.test.mjs");
-  const names = [...block[1].matchAll(/"([A-Za-z_][A-Za-z0-9_]*)"/g)].map((m) => m[1]);
-  assert.ok(names.length > 0, "the unexposed legacy-read list is empty");
-  return new Set(names);
-}
-
 async function rustFiles(dir) {
   const out = [];
   for (const entry of await readdir(dir, { withFileTypes: true })) {
@@ -125,9 +113,14 @@ test("the registration reader ignores commented-out entries and keeps the last p
   assert.deepEqual(registeredCommands(source), ["alpha", "gamma"]);
 });
 
-test("every declared Tauri command is registered or deliberately unexposed", async () => {
+// #474 deleted the last deliberately-unexposed commands (qualify_selected_tally_reads,
+// fetch_tally_ledgers, fetch_standard_tally_ledger_catalog, fetch_tally_vouchers) and their
+// commands.rs-exclusive helpers, so this no longer allow-lists anything: every declared
+// `#[tauri::command]` must be registered in `generate_handler!`. A future command that is
+// deliberately built but not yet wired up should get its own named exemption here, with a reason,
+// rather than reviving a silent allow-list.
+test("every declared Tauri command is registered in generate_handler!", async () => {
   const root = new URL("../src-tauri/src", import.meta.url).pathname;
-  const unexposed = deliberatelyUnexposed(await readFile(new URL("./tally-setup-safety.test.mjs", import.meta.url), "utf8"));
   const declared = new Map();
   for (const file of await rustFiles(root)) {
     for (const name of declaredCommands(await readFile(file, "utf8"))) {
@@ -138,11 +131,7 @@ test("every declared Tauri command is registered or deliberately unexposed", asy
   const registered = new Set(registeredCommands(await readFile(`${root}/lib.rs`, "utf8")));
 
   assert.ok(declared.size > 0, "no #[tauri::command] declarations found; the extractor is broken");
-  const missing = [...declared.keys()].filter((name) => !registered.has(name) && !unexposed.has(name));
+  const missing = [...declared.keys()].filter((name) => !registered.has(name));
   assert.deepEqual(missing, [], "declared commands missing from generate_handler!");
   for (const name of registered) assert.ok(declared.has(name), `registered command ${name} has no #[tauri::command] declaration`);
-  for (const name of unexposed) {
-    assert.ok(declared.has(name), `${name} is listed as unexposed but is no longer declared; update tally-setup-safety.test.mjs`);
-    assert.ok(!registered.has(name), `${name} is listed as unexposed but is now registered`);
-  }
 });

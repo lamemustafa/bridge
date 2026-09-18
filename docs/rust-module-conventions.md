@@ -199,15 +199,18 @@ preference) moved to `commands/all_clients.rs` (#472). They shared no item with 
 the new file sits under the existing unpinned "operator filing labels" exemption, and test names
 were identical before and after.
 
-**Delete-first finding (a decision, not a refactor).** Four declared commands are deliberately
+**Delete-first finding, resolved (#474).** Four declared commands were deliberately
 unregistered: `qualify_selected_tally_reads`, `fetch_tally_ledgers`,
 `fetch_standard_tally_ledger_catalog` and `fetch_tally_vouchers`.
-`scripts/tally-setup-safety.test.mjs` asserts they stay unexposed as "unqualified legacy reads".
-About 510 lines of `commands.rs` are reachable only from them, 290 of which are
-`qualify_selected_tally_reads`. That makes them deletion candidates under convention 1 and
-checklist item 1. But ADR 0015 records selected-read qualification as accepted for the setup
-flow, so removing them is an owner decision to take before any `commands.rs` split, not a
-mechanical cleanup.
+`scripts/tally-setup-safety.test.mjs` asserted they stayed unexposed as "unqualified legacy
+reads", and 533 lines of `commands.rs` (`cargo check` plus `wc -l`, not the item-graph estimate
+below) were reachable only from them, 290 of which were `qualify_selected_tally_reads`. The
+owner decided **delete** over ADR 0015's "keep, with a reason" alternative; #474 removed the
+four commands, their twelve commands.rs-exclusive helpers, and the one test that existed only to
+exercise one of those helpers, and withdrew ADR 0015's accepted status accordingly. The
+55-command, "about 510 lines", and 3,350-item-line figures above predate that deletion and have
+not been re-measured; a future `commands.rs` split should re-run the item-graph measurement
+rather than trust these numbers.
 
 ### `src/sync/snapshot.rs` (pinned)
 

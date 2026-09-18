@@ -4,21 +4,17 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("Tally setup does not expose unqualified legacy reads", async () => {
-  const [frontend, commands] = await Promise.all([
-    readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8"),
-  ]);
-
-  for (const command of [
-    "qualify_selected_tally_reads",
-    "fetch_tally_ledgers",
-    "fetch_standard_tally_ledger_catalog",
-    "fetch_tally_vouchers",
-  ]) {
-    assert.doesNotMatch(frontend, new RegExp(`\\b${command}\\b`));
-    assert.doesNotMatch(commands, new RegExp(`\\bcommands::${command}\\b`));
-  }
+// #474 deleted the four legacy reads this test used to keep unregistered
+// (qualify_selected_tally_reads, fetch_tally_ledgers,
+// fetch_standard_tally_ledger_catalog, fetch_tally_vouchers) and their
+// commands.rs-exclusive helpers: ADR 0015 recorded selected-read
+// qualification as accepted, but the command implementing it had been
+// unregistered since the readiness workflow change, and nothing reachable
+// from `commands::` names them any more. scripts/tauri-command-registration.
+// test.mjs no longer allow-lists anything, so every declared
+// `#[tauri::command]` must be registered.
+test("Tally setup keeps company discovery gated behind explicit navigation", async () => {
+  const frontend = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
 
   assert.match(frontend, /discoveredCompanyPrompt && view !== "companies" && view !== "settings"/);
   assert.match(frontend, /async function discoverUntrustedCompanies\(\) \{\s*if \(currentProbeCompanyList\.length > 0\) return;/s);
