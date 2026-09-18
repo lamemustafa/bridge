@@ -262,7 +262,7 @@ struct MovementWindowRead {
     /// The voucher source (and any empty-window corroboration) alone.
     evidence: Evidence,
     preflight: Option<Evidence>,
-    reads: Vec<(String, String)>,
+    reads: Vec<WindowPart>,
     high_water: Option<u64>,
 }
 

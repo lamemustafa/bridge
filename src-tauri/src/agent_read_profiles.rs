@@ -62,23 +62,23 @@ pub(super) fn render_agent_movement_vouchers(
     from: &str,
     to: &str,
 ) -> Result<String, String> {
-    render_agent_movement_vouchers_sample(company, from, to, None)
+    render_agent_movement_vouchers_in_span(company, from, to, None)
 }
 
 /// [`render_agent_movement_vouchers`], optionally narrowed to an AlterID span.
-/// `None` renders the unnarrowed request byte for byte; `Some` is only the
-/// bounded calibration sample of protocol reference §11c.
-pub(super) fn render_agent_movement_vouchers_sample(
+/// `None` renders the unnarrowed request byte for byte; `Some` is one part of
+/// a day too heavy for one read (protocol reference §11c).
+pub(super) fn render_agent_movement_vouchers_in_span(
     company: &str,
     from: &str,
     to: &str,
-    sample: Option<AlterIdSpan>,
+    span: Option<AlterIdSpan>,
 ) -> Result<String, String> {
     render_windowed_vouchers(
         company,
         from,
         to,
-        &sample.map(AlterIdSpan::filter).unwrap_or_default(),
+        &span.map(AlterIdSpan::filter).unwrap_or_default(),
         AGENT_MOVEMENT_FETCH,
     )
 }
@@ -96,39 +96,41 @@ pub(super) fn render_agent_vouchers(
 }
 
 /// [`render_agent_vouchers`], optionally narrowed to an AlterID span. `None`
-/// renders the unnarrowed request byte for byte; `Some` is only the bounded
-/// calibration sample of protocol reference §11c.
-pub(super) fn render_agent_vouchers_sample(
+/// renders the unnarrowed request byte for byte; `Some` is one part of a day
+/// too heavy for one read (protocol reference §11c).
+pub(super) fn render_agent_vouchers_in_span(
     company: &str,
     from: &str,
     to: &str,
-    sample: Option<AlterIdSpan>,
+    span: Option<AlterIdSpan>,
 ) -> Result<String, String> {
     render_windowed_vouchers(
         company,
         from,
         to,
-        &sample.map(AlterIdSpan::filter).unwrap_or_default(),
+        &span.map(AlterIdSpan::filter).unwrap_or_default(),
         AGENT_VOUCHER_FETCH,
     )
 }
 
 /// The pre-flight census of protocol reference §11c: one light row per voucher
-/// in the window whose AlterID falls in `span`, and nothing else.
+/// in the window, optionally only those whose AlterID falls in `span`.
 ///
 /// The `FETCH` is the one §12.7 qualified for the empty-partition witness, and
 /// the AlterID range is the segment filter the outstandings scanner sends. The
-/// span is what bounds this request: with distinct AlterIDs it cannot return
-/// more than `span.through - span.after` rows, however dense the window is.
+/// date window is what keeps a census cheap; a span is used only to count one
+/// day too dense for a date census, where it bounds the response by
+/// construction: with distinct AlterIDs it cannot return more than
+/// `span.through - span.after` rows.
 pub(super) fn render_agent_voucher_census(
     company: &str,
     from: &str,
     to: &str,
-    span: AlterIdSpan,
+    span: Option<AlterIdSpan>,
 ) -> Result<String, String> {
     let company = ValidatedCompanyName::new(company.to_string())
         .map_err(|_| "company_name_invalid".to_string())?;
-    let span_filter = span.filter();
+    let span_filter = span.map(AlterIdSpan::filter).unwrap_or_default();
     Ok(format!(
         "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Voucher Census</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeAgentCensus\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"{span_filter}</SYSTEM><COLLECTION NAME=\"Bridge Agent Voucher Census\" ISMODIFY=\"No\"><TYPE>Voucher</TYPE><FETCH>GUID,ALTERID,DATE</FETCH><FILTERS>BridgeAgentCensus</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>",
         xml_escape(company.as_str())

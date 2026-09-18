@@ -601,6 +601,12 @@ impl Server {
             // This observes today's source, not a bound on later Tally mutations.
             // The high-water mark was read just above, so the pre-flight bound
             // costs no further read for a book it already proves small.
+            //
+            // This read was a single request before the bound. It now also
+            // halves a part Tally cannot serve (#485), as verify_import does:
+            // it is the same request shape over the same window as the
+            // verification it precedes, and a preflight stricter than that
+            // verification would refuse to build a batch that could be verified.
             let preflight_read = self
                 .read_verification_window(
                     &identity,
@@ -2128,24 +2134,24 @@ struct VerificationWindowRead {
     source: ImportReadSource,
     evidence: Evidence,
     preflight_evidence: Option<Evidence>,
-    reads: Vec<(String, String)>,
+    reads: Vec<super::WindowPart>,
 }
 
 pub(super) fn render_import_verification_read(company: &str, from: &str, to: &str) -> String {
-    render_import_verification_sample(company, from, to, None)
+    render_import_verification_in_span(company, from, to, None)
 }
 
 /// [`render_import_verification_read`], optionally narrowed to an AlterID span.
-/// `None` renders the unnarrowed request byte for byte; `Some` is only the
-/// bounded calibration sample of protocol reference §11c, whose rows are
-/// measured and discarded, never verified against.
-pub(super) fn render_import_verification_sample(
+/// `None` renders the unnarrowed request byte for byte; `Some` is one part of
+/// a day too heavy for one read (protocol reference §11c). Every part is read
+/// and verified against; none is discarded.
+pub(super) fn render_import_verification_in_span(
     company: &str,
     from: &str,
     to: &str,
-    sample: Option<super::AlterIdSpan>,
+    span: Option<super::AlterIdSpan>,
 ) -> String {
-    let span_filter = sample.map(super::AlterIdSpan::filter).unwrap_or_default();
+    let span_filter = span.map(super::AlterIdSpan::filter).unwrap_or_default();
     format!("<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Import Verification</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeImportWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"{span_filter}</SYSTEM><COLLECTION NAME=\"Bridge Agent Import Verification\" ISMODIFY=\"No\"><TYPE>Voucher</TYPE><FETCH>DATE,VOUCHERNUMBER,VOUCHERTYPENAME,REMOTEID,GUID,MASTERID,ALTERID,NARRATION,ISCANCELLED,ISOPTIONAL,ALLLEDGERENTRIES.LEDGERNAME,ALLLEDGERENTRIES.AMOUNT,ALLLEDGERENTRIES.ISDEEMEDPOSITIVE,EFFECTIVEDATE</FETCH><FILTERS>BridgeImportWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>", xml_escape(company))
 }
 
