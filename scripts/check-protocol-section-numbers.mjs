@@ -35,11 +35,9 @@ const compatibilitySurface = fileURLToPath(
   new URL("../docs/tally/compatibility/compatibility-surface.json", import.meta.url),
 );
 const PARTS_MARKER = /^<!-- protocol-reference-parts:\s*(.*?)\s*-->$/m;
-const LEGACY_ROUTE_LINE = /^ {0,3}<a\s+id="([^"]+)"\s*><\/a>\s+\[([^\]]+)\]\(\.\/([^#)]+)#([^)]+)\)\s*$/;
 const LEGACY_ANCHOR_LINE = /^ {0,3}<a\s+id="([^"]+)"\s*><\/a>\s*$/;
 const LEGACY_LINK_LINE = /^ {0,3}\[([^\]]+)\]\(\.\/([^#)]+)#([^)]+)\)\s*$/;
-const LEGACY_HEADING = /^ {0,3}#{2,6}\s+(.+?)\s*#*\s*$/;
-const CANONICAL_HEADING = /^ {0,3}#{1,6}\s+(.+?)\s*#*\s*$/;
+const ROUTE_HEADING = /^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/;
 
 // The canonical file stays at the historic path. It and the sibling parts it
 // names share one number allocation; a pre-split base has no marker and is
@@ -170,22 +168,21 @@ const NOT_A_PARAGRAPH = /^ {0,3}(?:[-*+]\s|\d{1,9}[.)]\s|>|\||#)/;
 // numbered Setext heading underneath it entirely.
 const BLOCK_BOUNDARY = /^ {0,3}(?:#{1,6}\s|`{3,}|~{3,}|(?:[-*_]\s*){3,}$)/;
 
-// Keep one fence state machine for number scanning, route-heading validation,
-// and canonical redirect extraction. Consumers still decide which visible
-// Markdown forms they admit; this iterator only establishes that a line is not
-// inside a fenced code block.
-function* unfencedLines(lines) {
+// Keep one visibility state machine for number scanning, route-heading
+// validation, and canonical redirect extraction. It excludes fenced blocks and
+// HTML comments before any consumer can mistake examples for rendered content.
+// Mixed comment/content lines are outside the admitted protocol grammar and
+// fail closed rather than asking this gate to become a general Markdown parser.
+function* visibleMarkdownLines(lines, origin) {
   let fence = null;
+  let comment = false;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     const rail = FENCE.exec(line);
-    if (rail) {
+    if (fence !== null) {
+      if (!rail) continue;
       const after = line.slice(line.indexOf(rail[1]) + rail[1].length);
-      if (fence === null) {
-        // A backtick fence's info string may not contain a backtick. Such a
-        // line is neither an opener nor a route/heading source.
-        if (rail[1][0] !== "`" || !after.includes("`")) fence = rail[1];
-      } else if (
+      if (
         rail[1][0] === fence[0] &&
         rail[1].length >= fence.length &&
         after.trim() === ""
@@ -194,7 +191,39 @@ function* unfencedLines(lines) {
       }
       continue;
     }
-    if (fence === null) yield { line, index, lines };
+    if (comment) {
+      const end = line.indexOf("-->");
+      if (end !== -1) {
+        if (line.slice(end + 3).trim()) {
+          throw new Error(`unsupported content after an HTML comment in ${origin}:${index + 1}`);
+        }
+        comment = false;
+      }
+      continue;
+    }
+    if (rail) {
+      const after = line.slice(line.indexOf(rail[1]) + rail[1].length);
+      // A backtick fence's info string may not contain a backtick. Such a line
+      // is neither an opener nor a route/heading source.
+      if (rail[1][0] !== "`" || !after.includes("`")) fence = rail[1];
+      continue;
+    }
+    const start = line.indexOf("<!--");
+    if (start !== -1) {
+      if (line.slice(0, start).trim()) {
+        throw new Error(`unsupported content before an HTML comment in ${origin}:${index + 1}`);
+      }
+      const end = line.indexOf("-->", start + 4);
+      if (end === -1) comment = true;
+      else if (line.slice(end + 3).trim()) {
+        throw new Error(`unsupported content after an HTML comment in ${origin}:${index + 1}`);
+      }
+      continue;
+    }
+    yield { line, index };
+  }
+  if (comment) {
+    throw new Error(`unclosed HTML comment in ${origin}`);
   }
 }
 
@@ -276,11 +305,14 @@ function scan(lines, file, occurrences = new Map()) {
     occurrences.get(number).push({ file, line, text: text.trim() });
   };
 
-  for (const { line, index } of unfencedLines(lines)) {
+  const visible = [...visibleMarkdownLines(lines, file)];
+  const visibleLines = lines.map(() => "");
+  for (const { line, index } of visible) visibleLines[index] = line;
+  for (const { line, index } of visible) {
     // Setext: this underlines the paragraph above it, and such a heading may
     // span several lines — the number is on the *first* of them, not on the
     // line immediately above the underline.
-    const setext = setextHeadingAt(lines, index);
+    const setext = setextHeadingAt(visibleLines, index);
     if (setext) {
       // Matched against the raw line, not a trimmed copy: SETEXT_NUMBER's own
       // {0,3} indentation limit is what rejects a four-space-indented code
@@ -569,17 +601,30 @@ function headingRoutes(referenceSet) {
   const routes = [];
   for (const { path, text } of referenceSet) {
     const lines = text.split("\n");
-    for (const { line, index } of unfencedLines(lines)) {
-      const setext = setextHeadingAt(lines, index);
+    const origin = relPath(path);
+    const visible = [...visibleMarkdownLines(lines, origin)];
+    const visibleLines = lines.map(() => "");
+    for (const { line, index } of visible) visibleLines[index] = line;
+    const localSeeds = new Set();
+    for (const { line, index } of visible) {
+      const setext = setextHeadingAt(visibleLines, index);
       if (setext) {
         throw new Error(
-          `Setext headings are unsupported in split protocol routes: ${relPath(path)}:${setext.line}`,
+          `Setext headings are unsupported in split protocol routes: ${origin}:${setext.line}`,
         );
       }
-      const found = LEGACY_HEADING.exec(line);
+      const found = ROUTE_HEADING.exec(line);
       if (!found) continue;
-      const title = found[1];
+      const title = found[2];
       const seed = anchorSeed(title);
+      if (localSeeds.has(seed)) {
+        throw new Error(`ambiguous duplicate file-local heading fragment ${short(seed)} in ${origin}`);
+      }
+      localSeeds.add(seed);
+      // H1 participates in the file-local GitHub fragment namespace but was
+      // never a section in the monolithic reference, so it reserves only the
+      // part-local target ID and does not generate a legacy redirect.
+      if (found[1].length === 1) continue;
       if (globalSeeds.has(seed)) {
         throw new Error(`ambiguous duplicate split-route heading fragment ${short(seed)}`);
       }
@@ -597,45 +642,9 @@ function headingRoutes(referenceSet) {
 
 function indexedContents(indexText) {
   const lines = indexText.split("\n");
-  const visible = new Map();
-  let comment = false;
-  for (const { line, index } of unfencedLines(lines)) {
-    if (comment) {
-      const end = line.indexOf("-->");
-      if (end !== -1) {
-        if (line.slice(end + 3).trim()) {
-          throw new Error(
-            `unsupported content after an HTML comment in split protocol index: ` +
-              `${relPath(canonicalReference)}:${index + 1}`,
-          );
-        }
-        comment = false;
-      }
-      continue;
-    }
-    const commentStart = line.indexOf("<!--");
-    if (commentStart !== -1) {
-      if (line.slice(0, commentStart).trim()) {
-        throw new Error(
-          `unsupported inline HTML comment in split protocol index: ` +
-            `${relPath(canonicalReference)}:${index + 1}`,
-        );
-      }
-      const end = line.indexOf("-->", commentStart + 4);
-      if (end === -1) comment = true;
-      else if (line.slice(end + 3).trim()) {
-        throw new Error(
-          `unsupported content after an HTML comment in split protocol index: ` +
-            `${relPath(canonicalReference)}:${index + 1}`,
-        );
-      }
-      continue;
-    }
-    visible.set(index, line);
-  }
-  if (comment) {
-    throw new Error(`unclosed HTML comment in split protocol index: ${relPath(canonicalReference)}`);
-  }
+  const origin = relPath(canonicalReference);
+  const visibleEntries = [...visibleMarkdownLines(lines, origin)];
+  const visible = new Map(visibleEntries.map(({ line, index }) => [index, line]));
 
   // Every visible canonical heading also creates a GitHub fragment, including
   // H1 navigation headings. Validate those titles with the same admitted
@@ -653,9 +662,9 @@ function indexedContents(indexText) {
           `${relPath(canonicalReference)}:${setext.line}`,
       );
     }
-    const heading = CANONICAL_HEADING.exec(line);
+    const heading = ROUTE_HEADING.exec(line);
     if (!heading) continue;
-    const seed = anchorSeed(heading[1]);
+    const seed = anchorSeed(heading[2]);
     if (seenHeadingSeeds.has(seed)) {
       throw new Error(`ambiguous duplicate canonical-index heading fragment ${short(seed)}`);
     }
@@ -665,16 +674,6 @@ function indexedContents(indexText) {
 
   const routes = [];
   for (const [index, line] of visible) {
-    const sameLine = LEGACY_ROUTE_LINE.exec(line);
-    if (sameLine) {
-      routes.push({
-        legacy: sameLine[1],
-        title: sameLine[2],
-        path: `docs/tally/${sameLine[3]}`,
-        target: sameLine[4],
-      });
-      continue;
-    }
     const anchor = LEGACY_ANCHOR_LINE.exec(line);
     if (anchor) {
       const blank = visible.get(index + 1);

@@ -300,13 +300,15 @@ const anchorsFor = (documents) => {
     });
   });
 };
+const routeBlock = ({ anchor, title, path, target }) =>
+  `<a id="${anchor}"></a>\n\n[${title}](./${path.split("/").pop()}#${target})`;
 const splitIndex = (documents, omitted = new Set()) => `# Reference index
 
 ` +
   `<!-- protocol-reference-parts: TALLY_PROTOCOL_REFERENCE_PART_A.md | TALLY_PROTOCOL_REFERENCE_PART_B.md -->
 
 ` +
-  anchorsFor(documents).filter(({ anchor }) => !omitted.has(anchor)).map(({ anchor, title, path, target }) => `<a id="${anchor}"></a> [${title}](./${path.split("/").pop()}#${target})`).join("\n") +
+  anchorsFor(documents).filter(({ anchor }) => !omitted.has(anchor)).map(routeBlock).join("\n") +
   "\n";
 const runSplitGate = (first, second, omitted) => {
   writeFileSync(join(work, PART_A), first);
@@ -353,6 +355,38 @@ git(work, "fetch", "-q", "origin");
   } else {
     failed += 1;
     console.error(`FAIL a current Setext route source must be refused\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+{
+  const first = `${SPLIT_BASE_DOC}\n## Reference\n\nbody\n`;
+  const out = runSplitGate(first, "# Part B\n");
+  const text = `${out.stdout}${out.stderr}`;
+  if (
+    out.status !== 0 &&
+    text.includes("ambiguous duplicate file-local heading fragment") &&
+    text.includes("reference")
+  ) {
+    console.log("ok   a part H1 reserves its file-local fragment before H2-H6 routes");
+  } else {
+    failed += 1;
+    console.error(`FAIL a part H1 must reserve its rendered fragment\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+{
+  const first = `${SPLIT_BASE_DOC}\n<!--\n## 90 Hidden example heading\n-->\n`;
+  const second = "# Part B\n";
+  writeFileSync(join(work, PART_A), first);
+  writeFileSync(join(work, PART_B), second);
+  writeFileSync(join(work, DOC), splitIndex([SPLIT_BASE_DOC, second]));
+  writeSurface(work, [DOC, PART_A, PART_B]);
+  const out = runGate();
+  if (out.status === 0) {
+    console.log("ok   a heading inside a part HTML comment does not create a route or number");
+  } else {
+    failed += 1;
+    console.error(`FAIL commented part headings must stay invisible\n  exit ${out.status}: ${`${out.stdout}${out.stderr}`.split("\n").slice(0, 6).join("\n  ")}`);
   }
 }
 
@@ -585,7 +619,12 @@ for (const [name, title] of [
   const second = "# Part B\n";
   const repeats = Array.from({ length: 80 }, (_, index) => {
     const anchor = `duplicate-route-${String(index).padStart(2, "0")}-${"x".repeat(300)}`;
-    const route = `<a id="${anchor}"></a> [extra](./TALLY_PROTOCOL_REFERENCE_PART_A.md#10-alpha)`;
+    const route = routeBlock({
+      anchor,
+      title: "extra",
+      path: PART_A,
+      target: "10-alpha",
+    });
     return `${route}\n${route}`;
   }).join("\n");
   writeFileSync(join(work, PART_A), first);
@@ -649,13 +688,21 @@ for (const [name, title] of [
   const moved = "## 9.7 Operation support matrix\n\nbody\n";
   const first = SPLIT_BASE_DOC.replace(moved, "");
   const second = `# Part B\n\n${moved}`;
-  const fakeRoute = '<a id="97-operation-support-matrix"></a> [9.7 Operation support matrix](./TALLY_PROTOCOL_REFERENCE_PART_B.md#97-operation-support-matrix)';
+  const fakeRoute = routeBlock({
+    anchor: "97-operation-support-matrix",
+    title: "9.7 Operation support matrix",
+    path: PART_B,
+    target: "97-operation-support-matrix",
+  });
+  const sameLineRoute = '<a id="97-operation-support-matrix"></a> [9.7 Operation support matrix](./TALLY_PROTOCOL_REFERENCE_PART_B.md#97-operation-support-matrix)';
+  const quotedRoute = fakeRoute.split("\n").map((line) => line ? `> ${line}` : ">").join("\n");
   writeFileSync(join(work, PART_A), first);
   writeFileSync(join(work, PART_B), second);
   writeFileSync(
     join(work, DOC),
     splitIndex([first, second], new Set(["97-operation-support-matrix"])) +
-      `\n\`\`\`md\n${fakeRoute}\n\`\`\`\n> ${fakeRoute}\n\`${fakeRoute}\`\n<!--\n${fakeRoute}\n-->\n`,
+      `\n\`\`\`md\n${fakeRoute}\n\`\`\`\n${quotedRoute}\n\`${sameLineRoute}\`\n` +
+      `<!--\n${fakeRoute}\n-->\n`,
   );
   writeSurface(work, [DOC, PART_A, PART_B]);
   const out = runGate();
@@ -673,12 +720,40 @@ for (const [name, title] of [
   }
 }
 
+{
+  const moved = "## 9.7 Operation support matrix\n\nbody\n";
+  const first = SPLIT_BASE_DOC.replace(moved, "");
+  const second = `# Part B\n\n${moved}`;
+  const sameLineRoute = '<a id="97-operation-support-matrix"></a> [9.7 Operation support matrix](./TALLY_PROTOCOL_REFERENCE_PART_B.md#97-operation-support-matrix)';
+  writeFileSync(join(work, PART_A), first);
+  writeFileSync(join(work, PART_B), second);
+  writeFileSync(
+    join(work, DOC),
+    splitIndex([first, second], new Set(["97-operation-support-matrix"])) +
+      `\n\`\n${sameLineRoute}\n\`\n`,
+  );
+  writeSurface(work, [DOC, PART_A, PART_B]);
+  const out = runGate();
+  const text = `${out.stdout}${out.stderr}`;
+  if (out.status !== 0 && text.includes("unsupported raw HTML block in split protocol index")) {
+    console.log("ok   a full route inside multiline inline code is refused");
+  } else {
+    failed += 1;
+    console.error(`FAIL multiline inline code must not satisfy a legacy route\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
 
 {
   const moved = "## 9.7 Operation support matrix\n\nbody\n";
   const first = SPLIT_BASE_DOC.replace(moved, "");
   const second = `# Part B\n\n${moved}`;
-  const fakeRoute = '<a id="97-operation-support-matrix"></a> [9.7 Operation support matrix](./TALLY_PROTOCOL_REFERENCE_PART_B.md#97-operation-support-matrix)';
+  const fakeRoute = routeBlock({
+    anchor: "97-operation-support-matrix",
+    title: "9.7 Operation support matrix",
+    path: PART_B,
+    target: "97-operation-support-matrix",
+  });
   writeFileSync(join(work, PART_A), first);
   writeFileSync(join(work, PART_B), second);
   writeFileSync(
@@ -730,7 +805,12 @@ const sep = "\\";`);
   const first = SPLIT_BASE_DOC.replace("## 10 Alpha", "## 10 Alpha revised");
   const second = "# Part B\n";
   const index = splitIndex([first, second]);
-  const alias = '<a id="10-alpha"></a> [10 Alpha](./TALLY_PROTOCOL_REFERENCE_PART_A.md#10-alpha-revised)\n';
+  const alias = routeBlock({
+    anchor: "10-alpha",
+    title: "10 Alpha",
+    path: PART_A,
+    target: "10-alpha-revised",
+  }) + "\n";
   writeFileSync(join(work, PART_A), first);
   writeFileSync(join(work, PART_B), second);
   const expectRoute = (name, content, diagnostic, anchor = "10-alpha") => {
@@ -752,12 +832,22 @@ const sep = "\\";`);
 
   const splitBaseFirst = `${first}\n## Method note revised\n\nmethod\n`;
   const splitBaseIndex = splitIndex([splitBaseFirst, second]);
-  const methodAlias = '<a id="method-note"></a> [Method note](./TALLY_PROTOCOL_REFERENCE_PART_A.md#method-note-revised)\n';
+  const methodAlias = routeBlock({
+    anchor: "method-note",
+    title: "Method note",
+    path: PART_A,
+    target: "method-note-revised",
+  }) + "\n";
   const splitBaseContent = splitBaseIndex + alias + methodAlias;
   writeFileSync(join(work, PART_A), splitBaseFirst);
   writeFileSync(join(upstream, PART_A), splitBaseFirst);
   writeFileSync(join(upstream, PART_B), second);
-  const fencedBaseExample = '\n```md\n<a id="example-only"></a> [example](./TALLY_PROTOCOL_REFERENCE_PART_A.md#method-note-revised)\n```\n';
+  const fencedBaseExample = `\n\`\`\`md\n${routeBlock({
+    anchor: "example-only",
+    title: "example",
+    path: PART_A,
+    target: "method-note-revised",
+  })}\n\`\`\`\n`;
   writeFileSync(join(upstream, DOC), splitBaseContent + fencedBaseExample);
   git(upstream, "add", "-A");
   git(upstream, "commit", "-qm", "split reference with a fenced route example");
@@ -781,7 +871,12 @@ const sep = "\\";`);
 
   const retitledAgainFirst = splitBaseFirst.replace("## Method note revised", "## Method note final");
   const retitledAgainIndex = splitIndex([retitledAgainFirst, second]);
-  const revisedAlias = '<a id="method-note-revised"></a> [Method note revised](./TALLY_PROTOCOL_REFERENCE_PART_A.md#method-note-final)\n';
+  const revisedAlias = routeBlock({
+    anchor: "method-note-revised",
+    title: "Method note revised",
+    path: PART_A,
+    target: "method-note-final",
+  }) + "\n";
   writeFileSync(join(work, PART_A), retitledAgainFirst);
   expectRoute(
     "an inherited alias may follow a legitimate second retitle",
@@ -798,7 +893,7 @@ const sep = "\\";`);
   const duplicateText = `${duplicateOut.stdout}${duplicateOut.stderr}`;
   if (
     duplicateOut.status !== 0 &&
-    duplicateText.includes("ambiguous duplicate split-route heading fragment") &&
+    duplicateText.includes("ambiguous duplicate file-local heading fragment") &&
     duplicateText.includes("method-note-revised")
   ) {
     console.log("ok   a duplicate heading insertion cannot steal an ordinary base fragment");
