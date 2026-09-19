@@ -45,3 +45,29 @@ fn raw_nul_and_noncharacters_are_refused_other_c0_controls_are_kept() {
         assert_eq!(root.child("B").unwrap().text, format!("x{c}y"));
     }
 }
+
+#[test]
+fn the_protocol_crate_recognises_the_root_exactly_as_this_rule_does() {
+    // Bridge's own ancestry walks use `bridge_tally_protocol::is_tally_reserved_root`.
+    // It trims with Rust's whitespace rather than Python's, so the spellings
+    // compared here avoid U+001C..U+001F, where only this crate trims.
+    for value in [
+        "\u{fffd}#4; Primary",
+        " \u{fffd}#4;Primary ",
+        "\u{fffd}#4;  PRIMARY",
+        "Primary",
+        " primary ",
+        "\u{4} Primary",
+        "&#4; Primary",
+        "\u{fffd}#65533;#4; Primary",
+        "\u{fffd}#4; Primary Group",
+        "\u{fffd}#4; Resave",
+        "",
+    ] {
+        assert_eq!(
+            bridge_tally_protocol::is_tally_reserved_root(value),
+            xml::is_reserved_root(value),
+            "{value:?}"
+        );
+    }
+}

@@ -167,14 +167,15 @@ fn captured_masters_establish_cash_and_refuse_every_other_captured_ledger() {
         }
     );
     // `Profit & Loss A/c` is the one captured ledger parented on the reserved
-    // account root. The catalogue reader refuses a control-bearing parent
-    // outright rather than returning it, so the classifier sees no parent at
-    // all — which is still a refusal, and the reason says the true thing.
+    // account root. The catalogue reader marks the captured `&#4; Primary`
+    // (`TALLY_PROTOCOL_REFERENCE.md` §1.1(d)) instead of reading a control
+    // character it then discarded, so the classifier sees the root itself —
+    // still a refusal, and the reason now names the parent Tally returned.
     let root = masters.classify("Profit & Loss A/c");
     assert_eq!(root.state(), "not_established");
     assert!(
-        root.detail().contains("no parent group"),
-        "an unreturned parent is reported as one: {}",
+        root.detail().contains("account root"),
+        "a root-parented ledger is reported as one: {}",
         root.detail()
     );
     for (name, _) in &ledgers {
@@ -242,7 +243,7 @@ fn a_user_created_group_at_the_account_root_ends_the_walk_as_the_root() {
     // defined against that. It still refuses, as an absent group.
     let raw = observed(&under("\u{4} Primary"), captured_demo_groups()).classify("Probe Ledger");
     assert_eq!(raw.state(), "not_established");
-    for spelling in [captured_root.as_str(), "Primary"] {
+    for (spelling, is_root) in [(captured_root.as_str(), true), ("Primary", false)] {
         let mut rows = captured_groups();
         rows.push(TallyNamedMaster {
             name: "House Accounts".into(),
@@ -251,9 +252,12 @@ fn a_user_created_group_at_the_account_root_ends_the_walk_as_the_root() {
         });
         let state = observed(&under("House Accounts"), rows).classify("Probe Ledger");
         assert_eq!(state.state(), "not_established");
-        assert!(
+        // A bare `Primary` is a group a user named that; none is captured,
+        // so the walk reports it absent rather than calling it the root.
+        assert_eq!(
             state.detail().contains("account root"),
-            "{spelling:?} reads as the reserved root: {}",
+            is_root,
+            "{spelling:?}: {}",
             state.detail()
         );
     }

@@ -417,6 +417,31 @@ fn refusal_remediation(code: &str) -> Option<&'static str> {
              voucher in this company by another route and confirm it in Tally, then build \
              this batch again.",
         ),
+        // Narration, reference and voucher number share this code for several
+        // unrelated text failures (empty, over the schema's character cap, a
+        // control character); the least discoverable of them is specific to
+        // the voucher number, so it is named here rather than left for a
+        // caller to reverse-engineer.
+        "voucher_text_invalid" => Some(
+            "The voucher number is empty, longer than the schema allows, holds a control \
+             character, or — the one cause that is not visible by inspection — begins a \
+             literal U+FFFD immediately followed by `#`, digits and `;` (for example \
+             U+FFFD#5;). Bridge's own agent readers rewrite exactly that sequence before \
+             parsing, so a voucher number carrying it would read back as different text and \
+             could never be confirmed as posted. Remove that sequence from the voucher number \
+             and resubmit; narration and reference may carry it freely.",
+        ),
+        // Same shared-code shape as voucher_text_invalid, for a ledger name
+        // instead of the voucher number.
+        "voucher_entry_invalid" => Some(
+            "A ledger name is empty, longer than the schema allows, holds a control character, \
+             pairs with an amount that is not a valid two-decimal figure, or — the one cause \
+             that is not visible by inspection — begins a literal U+FFFD immediately followed \
+             by `#`, digits and `;` (for example U+FFFD#5;). Bridge's own agent readers rewrite \
+             exactly that sequence before parsing, so a ledger name carrying it would read back \
+             as different text and could never be confirmed as posted. Rename the ledger to \
+             drop that sequence and resubmit.",
+        ),
         _ => None,
     }
 }

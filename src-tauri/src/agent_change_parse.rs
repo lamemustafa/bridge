@@ -101,6 +101,8 @@ pub(super) fn observed_checkpoint(value: Option<&String>, axis: &str) -> Result<
 }
 
 pub(super) fn parse_agent_changed_masters(xml: &str) -> Result<Vec<Value>, String> {
+    let marked = mark_agent_xml(xml);
+    let xml = marked.as_ref();
     validate_agent_envelope(xml)?;
     let mut reader = quick_xml::Reader::from_str(xml);
     reader.config_mut().trim_text(false);

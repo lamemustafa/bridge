@@ -6,6 +6,8 @@ pub(in crate::agent) fn parse_company_high_water(
     xml: &str,
     expected_guid: &str,
 ) -> Result<Value, String> {
+    let marked = mark_agent_xml(xml);
+    let xml = marked.as_ref();
     validate_agent_envelope(xml)?;
     let invalid = || "agent_read_protocol_invalid".to_string();
     let mut reader = quick_xml::Reader::from_str(xml);
