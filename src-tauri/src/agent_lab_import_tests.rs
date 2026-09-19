@@ -1823,6 +1823,26 @@ Vch/Ledger deletion/alteration is not permitted"
 }
 
 #[test]
+fn extract_line_error_texts_keeps_one_message_split_by_a_reference_as_one_entry() {
+    // Regression: quick_xml delivers `&amp;` as its own `GeneralRef` event,
+    // separate from the surrounding `Text`. Before buffering per `LINEERROR`,
+    // a single message containing a reference -- e.g. quoting a ledger name
+    // with an ampersand, invented here as "RAM & SONS" -- was silently split
+    // into multiple entries in `errors`, then read back as several garbled
+    // messages once joined with `"; "`.
+    let response = "<RESPONSE><CREATED>0</CREATED><ALTERED>0</ALTERED><DELETED>0</DELETED>\
+<LASTVCHID>0</LASTVCHID><LASTMID>0</LASTMID><COMBINED>0</COMBINED><IGNORED>0</IGNORED>\
+<ERRORS>0</ERRORS><CANCELLED>0</CANCELLED><EXCEPTIONS>1</EXCEPTIONS>\
+<LINEERROR>Ledger &quot;RAM &amp; SONS&quot; already exists</LINEERROR></RESPONSE>";
+    let errors = extract_line_error_texts(response);
+    assert_eq!(
+        errors,
+        vec!["Ledger \"RAM & SONS\" already exists".to_string()],
+        "a reference-split message must stay one entry, not several"
+    );
+}
+
+#[test]
 fn tally_import_counters_json_surfaces_every_counter() {
     let outcome = bridge_tally_protocol::parse_import_outcome(REHEARSAL_REJECTION_RESPONSE)
         .expect("valid RESPONSE shape");
