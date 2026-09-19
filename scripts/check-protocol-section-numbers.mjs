@@ -24,11 +24,65 @@
 
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const reference = fileURLToPath(
+const repository = fileURLToPath(new URL("../", import.meta.url));
+const canonicalReference = fileURLToPath(
   new URL("../docs/tally/TALLY_PROTOCOL_REFERENCE.md", import.meta.url),
 );
+const PARTS_MARKER = /^<!-- protocol-reference-parts:\s*(.*?)\s*-->$/m;
+const LEGACY_ROUTE = /<a\s+id="([^"]+)"\s*><\/a>\s+\[([^\]]+)\]\(\.\/([^#)]+)#([^)]+)\)/g;
+const LEGACY_HEADING = /^ {0,3}#{2,6}\s+(.+?)\s*#*\s*$/;
+
+// The canonical file stays at the historic path. It names the sibling parts
+// whose headings share one allocation; a pre-split base has no marker and is
+// scanned as the single original document. Keeping this inventory in the
+// canonical index makes the split explicit and prevents a new part from being
+// silently outside the duplicate/renumber gate.
+function referencePaths(indexText, origin) {
+  const marker = PARTS_MARKER.exec(indexText);
+  if (!marker) return [canonicalReference];
+  const parts = marker[1].split("|").map((part) => part.trim()).filter(Boolean);
+  if (!parts.length || new Set(parts).size !== parts.length) {
+    throw new Error(`invalid protocol-reference part inventory in ${origin}`);
+  }
+  return parts.map((part) => {
+    if (!/^TALLY_PROTOCOL_REFERENCE_[A-Z0-9_]+\.md$/.test(part)) {
+      throw new Error(`invalid protocol-reference part ${JSON.stringify(part)} in ${origin}`);
+    }
+    return resolve(canonicalReference, "..", part);
+  });
+}
+
+const relPath = (path) => relative(repository, path).split(sep).join("/");
+
+function showAt(ref, path) {
+  return spawnSync("git", ["show", `${ref}:${relPath(path)}`], {
+    cwd: repository,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+}
+
+function referencesAt(ref) {
+  const index = showAt(ref, canonicalReference);
+  if (index.status !== 0) return null;
+  const paths = referencePaths(index.stdout, `${ref}:${relPath(canonicalReference)}`);
+  return paths.map((path) => {
+    const shown = path === canonicalReference ? index : showAt(ref, path);
+    if (shown.status !== 0) {
+      throw new Error(`protocol-reference part ${relPath(path)} declared by ${ref} is unreadable`);
+    }
+    return { path, text: shown.stdout };
+  });
+}
+
+const canonicalText = readFileSync(canonicalReference, "utf8");
+const references = referencePaths(canonicalText, relPath(canonicalReference)).map((path) => ({
+  path,
+  text: readFileSync(path, "utf8"),
+}));
 
 // `1.2`, `9.12a` and `12a.4` are all section numbers this document uses.
 //
@@ -111,12 +165,11 @@ function titleOf(line) {
 
 // Scanning one document's lines into number -> occurrences. A function rather
 // than a loop, because the base revision has to be scanned the same way.
-function scan(lines) {
-  const occurrences = new Map();
+function scan(lines, file, occurrences = new Map()) {
   let fence = null;
   const record = (number, line, text) => {
     if (!occurrences.has(number)) occurrences.set(number, []);
-    occurrences.get(number).push({ line, text: text.trim() });
+    occurrences.get(number).push({ file, line, text: text.trim() });
   };
 
   lines.forEach((line, index) => {
@@ -180,30 +233,34 @@ function scan(lines) {
 // renumbering a unique heading leaves it unique. Only the base knows which
 // numbers were already allocated.
 function baseNumbers() {
-  const repository = fileURLToPath(new URL("../", import.meta.url));
   const candidates = [
     process.env.GITHUB_BASE_REF ? `origin/${process.env.GITHUB_BASE_REF}` : null,
     "origin/master",
     "master",
   ].filter(Boolean);
   for (const ref of candidates) {
-    const show = spawnSync(
-      "git",
-      ["show", `${ref}:docs/tally/TALLY_PROTOCOL_REFERENCE.md`],
-      { cwd: repository, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
-    );
-    if (show.status === 0) return { ref, numbers: scan(show.stdout.split("\n")) };
+    const baseReferences = referencesAt(ref);
+    if (!baseReferences) continue;
+    const numbers = new Map();
+    for (const { path, text } of baseReferences) {
+      scan(text.split("\n"), relPath(path), numbers);
+    }
+    return { ref, numbers, references: baseReferences, indexText: showAt(ref, canonicalReference).stdout };
   }
   return null;
 }
 
-const lines = readFileSync(reference, "utf8").split("\n");
-const occurrences = scan(lines);
+const occurrences = new Map();
+let totalLines = 0;
+for (const { path, text } of references) {
+  totalLines += text.split("\n").length;
+  scan(text.split("\n"), relPath(path), occurrences);
+}
 
 if (!occurrences.size) {
   throw new Error(
-    `no numbered headings found in ${reference} — the heading pattern no longer ` +
-      "matches the document, so this gate is checking nothing",
+    `no numbered headings found in ${references.map(({ path }) => relPath(path)).join(", ")} — ` +
+      "the heading pattern no longer matches, so this gate is checking nothing",
   );
 }
 
@@ -219,7 +276,7 @@ function short(value) {
 function describe(number, found) {
   const shown = found.slice(0, MAX_REPORTED_OCCURRENCES);
   const lines = shown.map(
-    (one) => `    line ${one.line}: ${short(one.text)}`,
+    (one) => `    ${one.file}:${one.line}: ${short(one.text)}`,
   );
   if (found.length > shown.length) {
     lines.push(`    ... and ${found.length - shown.length} more`);
@@ -354,6 +411,97 @@ if (base) {
   );
 }
 
+// The canonical index retains every legacy GitHub fragment after the old
+// single document is split. Each visible redirect must name the source heading
+// and point to its part-local GitHub fragment. Fences are excluded: a literal
+// `##` in an example is never a heading or a redirect destination.
+function anchorSeed(title) {
+  // Existing public fragments cover every punctuation form used by the current
+  // headings. Their titles contain no non-ASCII letters or digits; this keeps
+  // the established GitHub fragment spelling without introducing a dependency.
+  return title.toLowerCase().replace(/[^a-z0-9 _-]/g, "").replace(/ /g, "-");
+}
+
+function headingRoutes(referenceSet) {
+  const globalCounts = new Map();
+  const routes = [];
+  for (const { path, text } of referenceSet) {
+    const localCounts = new Map();
+    let fence = null;
+    for (const line of text.split("\n")) {
+      const rail = FENCE.exec(line);
+      if (rail) {
+        const after = line.slice(line.indexOf(rail[1]) + rail[1].length);
+        if (fence === null) {
+          if (rail[1][0] !== "`" || !after.includes("`")) fence = rail[1];
+        } else if (rail[1][0] === fence[0] && rail[1].length >= fence.length && after.trim() === "") {
+          fence = null;
+        }
+        continue;
+      }
+      if (fence !== null) continue;
+      const found = LEGACY_HEADING.exec(line);
+      if (!found) continue;
+      const title = found[1];
+      const seed = anchorSeed(title);
+      const globalCount = globalCounts.get(seed) ?? 0;
+      const localCount = localCounts.get(seed) ?? 0;
+      routes.push({
+        legacy: globalCount === 0 ? seed : `${seed}-${globalCount}`,
+        target: localCount === 0 ? seed : `${seed}-${localCount}`,
+        title,
+        path: relPath(path),
+      });
+      globalCounts.set(seed, globalCount + 1);
+      localCounts.set(seed, localCount + 1);
+    }
+  }
+  return routes;
+}
+
+if (PARTS_MARKER.test(canonicalText)) {
+  const indexed = new Map();
+  for (const match of canonicalText.matchAll(LEGACY_ROUTE)) {
+    if (indexed.has(match[1])) {
+      failures.push(`legacy anchor ${short(match[1])} is duplicated in ${relPath(canonicalReference)}`);
+    }
+    indexed.set(match[1], { title: match[2], path: `docs/tally/${match[3]}`, target: match[4] });
+  }
+  const currentRoutes = headingRoutes(references);
+  const required = new Map(currentRoutes.map((route) => [route.legacy, route]));
+  const aliases = [];
+  if (base) {
+    for (const route of headingRoutes(base.references)) {
+      if (!required.has(route.legacy)) aliases.push(route);
+    }
+    // A prior split base may already contain aliases for headings retitled
+    // before this change. Keep those historic fragments alive too.
+    for (const match of base.indexText.matchAll(LEGACY_ROUTE)) {
+      if (!required.has(match[1]) && !aliases.some((route) => route.legacy === match[1])) {
+        aliases.push({ legacy: match[1], title: match[2], path: `docs/tally/${match[3]}`, target: match[4] });
+      }
+    }
+  }
+  const missing = [...required.keys(), ...aliases.map((route) => route.legacy)].filter((anchor) => !indexed.has(anchor));
+  if (missing.length) {
+    failures.push(`legacy section anchor(s) missing from ${relPath(canonicalReference)}:\n` + missing.slice(0, MAX_REPORTED_NUMBERS).map((anchor) => `    ${short(anchor)}`).join("\n"));
+  }
+  const misrouted = currentRoutes.filter((route) => {
+    const actual = indexed.get(route.legacy);
+    return actual && (actual.title !== route.title || actual.path !== route.path || actual.target !== route.target);
+  });
+  const destinations = new Set(currentRoutes.map((route) => `${route.path}#${route.target}`));
+  const brokenAliases = aliases.filter((route) => {
+    const actual = indexed.get(route.legacy);
+    return actual && !destinations.has(`${actual.path}#${actual.target}`);
+  });
+  if (misrouted.length || brokenAliases.length) {
+    const bad = [...misrouted, ...brokenAliases];
+    failures.push(`legacy section redirect(s) do not resolve to a current moved heading:\n` + bad.slice(0, MAX_REPORTED_NUMBERS).map((route) => `    ${short(route.legacy)}`).join("\n"));
+  }
+
+}
+
 if (failures.length) {
   // Not "duplicate section numbers": this gate enforces three rules and reports
   // them through one list, so naming the first one mislabels the other two. A
@@ -368,6 +516,6 @@ if (failures.length) {
 
 const excused = [...KNOWN_DUPLICATES.keys()].join(", ");
 console.log(
-  `Protocol section numbers are unique (${occurrences.size} numbers, ` +
-    `${lines.length} lines; known duplicates excused: ${excused}).`,
+  `Protocol section numbers are unique across ${references.length} file(s) ` +
+    `(${occurrences.size} numbers, ${totalLines} lines; known duplicates excused: ${excused}).`,
 );

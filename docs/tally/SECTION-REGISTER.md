@@ -1,15 +1,16 @@
 # Protocol-reference section numbers
 
-`TALLY_PROTOCOL_REFERENCE.md` numbers its sections sequentially and several branches extend it at
-once. A number is not visible to another branch until it merges, so two branches can claim the same
-one and neither notices until the second rebases.
+The canonical `TALLY_PROTOCOL_REFERENCE.md` index and its declared parts number sections
+sequentially and several branches extend them at once. A number is not visible to another branch
+until it merges, so two branches can claim the same one and neither notices until the second rebases.
 
 **This is not hypothetical.** A branch cut from an older master added a `9.11c` while master gained
 a different `9.11c` underneath it. Separately, `1.2` is *already* used twice on master today.
 
 **The check is `scripts/check-protocol-section-numbers.mjs`, and it runs in CI.** It reads the
-numbered headings out of the reference and fails on a duplicate. There is nothing to remember and
-nothing to keep in step.
+numbered headings from every part declared by the canonical index, fails on a duplicate across the
+whole reference, and checks that the index retains every legacy heading anchor. There is nothing to
+remember and nothing to keep in step.
 
 ```bash
 node scripts/check-protocol-section-numbers.mjs   # before you push, if you like
@@ -32,7 +33,7 @@ apart is worth summarising, because the reasoning generalises:
    exact failure the mechanism existed to prevent, now reached *through* it.
 
 The headings **are** the allocation. Anything that keeps a second copy of them drifts from them, and
-a copy that is only sometimes updated drifts silently. So the gate reads the document.
+a copy that is only sometimes updated drifts silently. So the gate reads the declared parts.
 
 ## What the gate does and does not guarantee
 
@@ -103,8 +104,9 @@ described several ranges incorrectly.
 
 ## Editing the reference needs a compatibility-surface reseal
 
-`TALLY_PROTOCOL_REFERENCE.md` is pinned in `compatibility-surface.json`, so **even a
-documentation-only edit stales its digest** and fails the `Tally portable core` job
+`TALLY_PROTOCOL_REFERENCE.md` and each part it declares must be pinned in
+`compatibility-surface.json`, so **even a documentation-only edit stales a digest** and fails the
+`Tally portable core` job
 (`real_tree_has_complete_migration_and_report_surface_coverage`). Nothing in a docs diff suggests a
 compatibility gate is involved; two PRs failed CI for exactly this before it was written down.
 
