@@ -7,11 +7,11 @@
   "population_note_text": "Books population (optional, cancelled and post-dated vouchers excluded); Contra excluded throughout.",
   "figures": [
     {
-      "id": "cash_payments_40a3.s269ss269t_amount_covered_64a41ff9a7e2_bce6b9b7",
+      "id": "cash_payments_40a3.s269ss269t_amount_covered_64a41ff9a7e2_977bdd42",
       "value": 2000000,
       "unit": "paise",
-      "definition_sha256_16": "5641b44a8c0d30f8",
-      "definition_text": "Loan-ledger line (tag bce6b9b7) on voucher b5c-00000028, cash accepted in the same voucher (covered by the client's [loans] configuration).",
+      "definition_sha256_16": "0b416628df943696",
+      "definition_text": "Loan-ledger line (tag 977bdd42) on voucher b5c-00000028, cash accepted in the same voucher (covered by the client's [loans] configuration).",
       "evidence": [
         {
           "kind": "voucher",
@@ -21,11 +21,11 @@
       ]
     },
     {
-      "id": "cash_payments_40a3.s269ss269t_amount_covered_ed7cfd4f0b63_bce6b9b7",
+      "id": "cash_payments_40a3.s269ss269t_amount_covered_ed7cfd4f0b63_977bdd42",
       "value": 3000000,
       "unit": "paise",
-      "definition_sha256_16": "ced2b22ae5644efc",
-      "definition_text": "Loan-ledger line (tag bce6b9b7) on voucher b5c-00000025, cash accepted in the same voucher (covered by the client's [loans] configuration).",
+      "definition_sha256_16": "a7221a745686bf93",
+      "definition_text": "Loan-ledger line (tag 977bdd42) on voucher b5c-00000025, cash accepted in the same voucher (covered by the client's [loans] configuration).",
       "evidence": [
         {
           "kind": "voucher",
@@ -35,11 +35,11 @@
       ]
     },
     {
-      "id": "cash_payments_40a3.s269ss269t_amount_uncovered_6e85c2190386_3ad3ebb9",
+      "id": "cash_payments_40a3.s269ss269t_amount_uncovered_6e85c2190386_bb7e7b30",
       "value": 2500000,
       "unit": "paise",
-      "definition_sha256_16": "a515c5a5857ba2c4",
-      "definition_text": "Loan-ledger line (tag 3ad3ebb9) on voucher b5c-00000019, cash repaid in the same voucher (uncovered by the client's [loans] configuration).",
+      "definition_sha256_16": "bb054af19e819e41",
+      "definition_text": "Loan-ledger line (tag bb7e7b30) on voucher b5c-00000019, cash repaid in the same voucher (uncovered by the client's [loans] configuration).",
       "evidence": [
         {
           "kind": "voucher",
@@ -283,11 +283,11 @@
       ]
     },
     {
-      "id": "cash_payments_40a3.s269st_payment_row_amount_2025-04-01_417e434b",
+      "id": "cash_payments_40a3.s269st_payment_row_amount_2025-04-01_192cf253",
       "value": 23600000,
       "unit": "paise",
-      "definition_sha256_16": "0cb916123d8685ef",
-      "definition_text": "Cash paid to one party ledger (tag 417e434b) on 2025-04-01, summed across every population voucher that day.",
+      "definition_sha256_16": "76010e6f3482105b",
+      "definition_text": "Cash paid to one party ledger (tag 192cf253) on 2025-04-01, summed across every population voucher that day.",
       "evidence": [
         {
           "kind": "voucher",
@@ -297,11 +297,11 @@
       ]
     },
     {
-      "id": "cash_payments_40a3.s269st_payment_row_amount_2025-06-27_a71e73e5",
+      "id": "cash_payments_40a3.s269st_payment_row_amount_2025-06-27_1fd9a51e",
       "value": 20500000,
       "unit": "paise",
-      "definition_sha256_16": "41e2d71ef5c70ea3",
-      "definition_text": "Cash paid to one party ledger (tag a71e73e5) on 2025-06-27, summed across every population voucher that day.",
+      "definition_sha256_16": "960e498c2a313b85",
+      "definition_text": "Cash paid to one party ledger (tag 1fd9a51e) on 2025-06-27, summed across every population voucher that day.",
       "evidence": [
         {
           "kind": "voucher",
@@ -311,11 +311,11 @@
       ]
     },
     {
-      "id": "cash_payments_40a3.s269st_payment_row_amount_2025-07-02_4effdb73",
+      "id": "cash_payments_40a3.s269st_payment_row_amount_2025-07-02_c9fe11d8",
       "value": 20500000,
       "unit": "paise",
-      "definition_sha256_16": "65f4999abbdb75de",
-      "definition_text": "Cash paid to one party ledger (tag 4effdb73) on 2025-07-02, summed across every population voucher that day.",
+      "definition_sha256_16": "89becfa7b08ce5e5",
+      "definition_text": "Cash paid to one party ledger (tag c9fe11d8) on 2025-07-02, summed across every population voucher that day.",
       "evidence": [
         {
           "kind": "voucher",
@@ -339,11 +339,11 @@
       ]
     },
     {
-      "id": "cash_payments_40a3.s269st_payment_row_amount_2025-07-08_0454b985",
+      "id": "cash_payments_40a3.s269st_payment_row_amount_2025-07-08_a98ff567",
       "value": 20000000,
       "unit": "paise",
-      "definition_sha256_16": "2708f4d0a9ce5541",
-      "definition_text": "Cash paid to one party ledger (tag 0454b985) on 2025-07-08, summed across every population voucher that day.",
+      "definition_sha256_16": "f9abfc4f4fa8629d",
+      "definition_text": "Cash paid to one party ledger (tag a98ff567) on 2025-07-08, summed across every population voucher that day.",
       "evidence": [
         {
           "kind": "voucher",
@@ -353,11 +353,11 @@
       ]
     },
     {
-      "id": "cash_payments_40a3.s269st_row_amount_2025-06-23_e08c0b2c",
+      "id": "cash_payments_40a3.s269st_row_amount_2025-06-23_9275dd88",
       "value": 21000000,
       "unit": "paise",
-      "definition_sha256_16": "574d313f658b3b23",
-      "definition_text": "Cash received from one party ledger (tag e08c0b2c) on 2025-06-23, summed across every population voucher that day.",
+      "definition_sha256_16": "95d88333345d893e",
+      "definition_text": "Cash received from one party ledger (tag 9275dd88) on 2025-06-23, summed across every population voucher that day.",
       "evidence": [
         {
           "kind": "voucher",
@@ -367,11 +367,11 @@
       ]
     },
     {
-      "id": "cash_payments_40a3.s269st_row_amount_2025-06-25_f6d9b859",
+      "id": "cash_payments_40a3.s269st_row_amount_2025-06-25_f46622c1",
       "value": 21500000,
       "unit": "paise",
-      "definition_sha256_16": "b303328a34a73c4c",
-      "definition_text": "Cash received from one party ledger (tag f6d9b859) on 2025-06-25, summed across every population voucher that day.",
+      "definition_sha256_16": "88408179985749ac",
+      "definition_text": "Cash received from one party ledger (tag f46622c1) on 2025-06-25, summed across every population voucher that day.",
       "evidence": [
         {
           "kind": "voucher",
@@ -395,11 +395,11 @@
       ]
     },
     {
-      "id": "cash_payments_40a3.s269st_row_amount_2025-07-07_d4a150bd",
+      "id": "cash_payments_40a3.s269st_row_amount_2025-07-07_bec7c3d4",
       "value": 20000000,
       "unit": "paise",
-      "definition_sha256_16": "3834551c7d12c870",
-      "definition_text": "Cash received from one party ledger (tag d4a150bd) on 2025-07-07, summed across every population voucher that day.",
+      "definition_sha256_16": "765059b16a08e51e",
+      "definition_text": "Cash received from one party ledger (tag bec7c3d4) on 2025-07-07, summed across every population voucher that day.",
       "evidence": [
         {
           "kind": "voucher",
@@ -499,7 +499,7 @@
       ]
     },
     {
-      "id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-06-10_296769e6",
+      "id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-06-10_0988e024",
       "value": "no",
       "unit": "text",
       "definition_sha256_16": "9585dc9d141a6a85",
@@ -507,7 +507,7 @@
       "evidence": []
     },
     {
-      "id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-06-13_15d857ac",
+      "id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-06-13_026540de",
       "value": "yes",
       "unit": "text",
       "definition_sha256_16": "9585dc9d141a6a85",
@@ -515,7 +515,7 @@
       "evidence": []
     },
     {
-      "id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-06-27_a71e73e5",
+      "id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-06-27_1fd9a51e",
       "value": "no",
       "unit": "text",
       "definition_sha256_16": "9585dc9d141a6a85",
@@ -523,7 +523,7 @@
       "evidence": []
     },
     {
-      "id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-07-02_4effdb73",
+      "id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-07-02_2d3194aa",
       "value": "no",
       "unit": "text",
       "definition_sha256_16": "9585dc9d141a6a85",
@@ -531,7 +531,7 @@
       "evidence": []
     },
     {
-      "id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-07-02_c08babb6",
+      "id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-07-02_c9fe11d8",
       "value": "no",
       "unit": "text",
       "definition_sha256_16": "9585dc9d141a6a85",
@@ -539,7 +539,7 @@
       "evidence": []
     },
     {
-      "id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-07-03_e4a33fbe",
+      "id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-07-03_136920fc",
       "value": "no",
       "unit": "text",
       "definition_sha256_16": "9585dc9d141a6a85",
@@ -547,7 +547,7 @@
       "evidence": []
     },
     {
-      "id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-07-08_0454b985",
+      "id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-07-08_a98ff567",
       "value": "no",
       "unit": "text",
       "definition_sha256_16": "9585dc9d141a6a85",
@@ -555,7 +555,7 @@
       "evidence": []
     },
     {
-      "id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-07-10_73528196",
+      "id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-07-10_20cc34e7",
       "value": "yes",
       "unit": "text",
       "definition_sha256_16": "9585dc9d141a6a85",
@@ -563,7 +563,7 @@
       "evidence": []
     },
     {
-      "id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-07-11_16c5d350",
+      "id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-07-11_c40af84a",
       "value": "no",
       "unit": "text",
       "definition_sha256_16": "9585dc9d141a6a85",
@@ -571,7 +571,7 @@
       "evidence": []
     },
     {
-      "id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-11-11_e4a33fbe",
+      "id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-11-11_136920fc",
       "value": "no",
       "unit": "text",
       "definition_sha256_16": "9585dc9d141a6a85",
@@ -687,11 +687,11 @@
       ]
     },
     {
-      "id": "cash_payments_40a3.s40a3_row_amount_2025-06-10_296769e6",
+      "id": "cash_payments_40a3.s40a3_row_amount_2025-06-10_0988e024",
       "value": 1170000,
       "unit": "paise",
-      "definition_sha256_16": "c0fe89887e487bd2",
-      "definition_text": "Cash paid to one payee ledger (tag 296769e6) on 2025-06-10, summed across every population voucher that day.",
+      "definition_sha256_16": "07631a7a12e11eb9",
+      "definition_text": "Cash paid to one payee ledger (tag 0988e024) on 2025-06-10, summed across every population voucher that day.",
       "evidence": [
         {
           "kind": "voucher",
@@ -706,11 +706,11 @@
       ]
     },
     {
-      "id": "cash_payments_40a3.s40a3_row_amount_2025-06-13_15d857ac",
+      "id": "cash_payments_40a3.s40a3_row_amount_2025-06-13_026540de",
       "value": 3200000,
       "unit": "paise",
-      "definition_sha256_16": "5a3ba9b691b7ed11",
-      "definition_text": "Cash paid to one payee ledger (tag 15d857ac) on 2025-06-13, summed across every population voucher that day.",
+      "definition_sha256_16": "a64f39945d462743",
+      "definition_text": "Cash paid to one payee ledger (tag 026540de) on 2025-06-13, summed across every population voucher that day.",
       "evidence": [
         {
           "kind": "voucher",
@@ -720,11 +720,11 @@
       ]
     },
     {
-      "id": "cash_payments_40a3.s40a3_row_amount_2025-06-27_a71e73e5",
+      "id": "cash_payments_40a3.s40a3_row_amount_2025-06-27_1fd9a51e",
       "value": 20500000,
       "unit": "paise",
-      "definition_sha256_16": "2d469220226d4ea8",
-      "definition_text": "Cash paid to one payee ledger (tag a71e73e5) on 2025-06-27, summed across every population voucher that day.",
+      "definition_sha256_16": "2e8aee3f3e3521ec",
+      "definition_text": "Cash paid to one payee ledger (tag 1fd9a51e) on 2025-06-27, summed across every population voucher that day.",
       "evidence": [
         {
           "kind": "voucher",
@@ -734,25 +734,11 @@
       ]
     },
     {
-      "id": "cash_payments_40a3.s40a3_row_amount_2025-07-02_4effdb73",
-      "value": 18500000,
-      "unit": "paise",
-      "definition_sha256_16": "9a8aa6fb0a84ed72",
-      "definition_text": "Cash paid to one payee ledger (tag 4effdb73) on 2025-07-02, summed across every population voucher that day.",
-      "evidence": [
-        {
-          "kind": "voucher",
-          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000023",
-          "label": "Payment P/20 on 2025-07-02"
-        }
-      ]
-    },
-    {
-      "id": "cash_payments_40a3.s40a3_row_amount_2025-07-02_c08babb6",
+      "id": "cash_payments_40a3.s40a3_row_amount_2025-07-02_2d3194aa",
       "value": 2000000,
       "unit": "paise",
-      "definition_sha256_16": "5b66f3c53d1e0062",
-      "definition_text": "Cash paid to one payee ledger (tag c08babb6) on 2025-07-02, summed across every population voucher that day.",
+      "definition_sha256_16": "bfd3cdd21c11b16f",
+      "definition_text": "Cash paid to one payee ledger (tag 2d3194aa) on 2025-07-02, summed across every population voucher that day.",
       "evidence": [
         {
           "kind": "voucher",
@@ -762,11 +748,25 @@
       ]
     },
     {
-      "id": "cash_payments_40a3.s40a3_row_amount_2025-07-03_e4a33fbe",
+      "id": "cash_payments_40a3.s40a3_row_amount_2025-07-02_c9fe11d8",
+      "value": 18500000,
+      "unit": "paise",
+      "definition_sha256_16": "a6c71a8f07ad6c52",
+      "definition_text": "Cash paid to one payee ledger (tag c9fe11d8) on 2025-07-02, summed across every population voucher that day.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000023",
+          "label": "Payment P/20 on 2025-07-02"
+        }
+      ]
+    },
+    {
+      "id": "cash_payments_40a3.s40a3_row_amount_2025-07-03_136920fc",
       "value": 19000000,
       "unit": "paise",
-      "definition_sha256_16": "5d07d2a080bd7dcb",
-      "definition_text": "Cash paid to one payee ledger (tag e4a33fbe) on 2025-07-03, summed across every population voucher that day.",
+      "definition_sha256_16": "203f37d43814d2b7",
+      "definition_text": "Cash paid to one payee ledger (tag 136920fc) on 2025-07-03, summed across every population voucher that day.",
       "evidence": [
         {
           "kind": "voucher",
@@ -776,11 +776,11 @@
       ]
     },
     {
-      "id": "cash_payments_40a3.s40a3_row_amount_2025-07-08_0454b985",
+      "id": "cash_payments_40a3.s40a3_row_amount_2025-07-08_a98ff567",
       "value": 20000000,
       "unit": "paise",
-      "definition_sha256_16": "d72cfe44f3c2c1cf",
-      "definition_text": "Cash paid to one payee ledger (tag 0454b985) on 2025-07-08, summed across every population voucher that day.",
+      "definition_sha256_16": "f2449801e4ccd333",
+      "definition_text": "Cash paid to one payee ledger (tag a98ff567) on 2025-07-08, summed across every population voucher that day.",
       "evidence": [
         {
           "kind": "voucher",
@@ -790,11 +790,11 @@
       ]
     },
     {
-      "id": "cash_payments_40a3.s40a3_row_amount_2025-07-10_73528196",
+      "id": "cash_payments_40a3.s40a3_row_amount_2025-07-10_20cc34e7",
       "value": 3500000,
       "unit": "paise",
-      "definition_sha256_16": "8724879bff18102c",
-      "definition_text": "Cash paid to one payee ledger (tag 73528196) on 2025-07-10, summed across every population voucher that day.",
+      "definition_sha256_16": "9237c6b9d89d2603",
+      "definition_text": "Cash paid to one payee ledger (tag 20cc34e7) on 2025-07-10, summed across every population voucher that day.",
       "evidence": [
         {
           "kind": "voucher",
@@ -804,11 +804,11 @@
       ]
     },
     {
-      "id": "cash_payments_40a3.s40a3_row_amount_2025-07-11_16c5d350",
+      "id": "cash_payments_40a3.s40a3_row_amount_2025-07-11_c40af84a",
       "value": 3500001,
       "unit": "paise",
-      "definition_sha256_16": "4232bcc53b27c00f",
-      "definition_text": "Cash paid to one payee ledger (tag 16c5d350) on 2025-07-11, summed across every population voucher that day.",
+      "definition_sha256_16": "a610eb696d5e729c",
+      "definition_text": "Cash paid to one payee ledger (tag c40af84a) on 2025-07-11, summed across every population voucher that day.",
       "evidence": [
         {
           "kind": "voucher",
@@ -818,11 +818,11 @@
       ]
     },
     {
-      "id": "cash_payments_40a3.s40a3_row_amount_2025-11-11_e4a33fbe",
+      "id": "cash_payments_40a3.s40a3_row_amount_2025-11-11_136920fc",
       "value": 1200000,
       "unit": "paise",
-      "definition_sha256_16": "607a604045feb1be",
-      "definition_text": "Cash paid to one payee ledger (tag e4a33fbe) on 2025-11-11, summed across every population voucher that day.",
+      "definition_sha256_16": "2490b96ff43dd0ee",
+      "definition_text": "Cash paid to one payee ledger (tag 136920fc) on 2025-11-11, summed across every population voucher that day.",
       "evidence": [
         {
           "kind": "voucher",
@@ -834,7 +834,7 @@
   ],
   "findings": [
     {
-      "id": "cash_payments_40a3/s269ss269t/64a41ff9a7e2_bce6b9b7",
+      "id": "cash_payments_40a3/s269ss269t/64a41ff9a7e2_977bdd42",
       "clauses": [
         "s.269SS"
       ],
@@ -842,7 +842,7 @@
       "facts": [
         {
           "name": "amount",
-          "figure_id": "cash_payments_40a3.s269ss269t_amount_covered_64a41ff9a7e2_bce6b9b7"
+          "figure_id": "cash_payments_40a3.s269ss269t_amount_covered_64a41ff9a7e2_977bdd42"
         }
       ],
       "evidence": [
@@ -871,7 +871,7 @@
       ]
     },
     {
-      "id": "cash_payments_40a3/s269ss269t/6e85c2190386_3ad3ebb9",
+      "id": "cash_payments_40a3/s269ss269t/6e85c2190386_bb7e7b30",
       "clauses": [
         "s.269T",
         "3CD-31(c)"
@@ -880,7 +880,7 @@
       "facts": [
         {
           "name": "amount",
-          "figure_id": "cash_payments_40a3.s269ss269t_amount_uncovered_6e85c2190386_3ad3ebb9"
+          "figure_id": "cash_payments_40a3.s269ss269t_amount_uncovered_6e85c2190386_bb7e7b30"
         }
       ],
       "evidence": [
@@ -909,7 +909,7 @@
       ]
     },
     {
-      "id": "cash_payments_40a3/s269ss269t/ed7cfd4f0b63_bce6b9b7",
+      "id": "cash_payments_40a3/s269ss269t/ed7cfd4f0b63_977bdd42",
       "clauses": [
         "s.269SS"
       ],
@@ -917,7 +917,7 @@
       "facts": [
         {
           "name": "amount",
-          "figure_id": "cash_payments_40a3.s269ss269t_amount_covered_ed7cfd4f0b63_bce6b9b7"
+          "figure_id": "cash_payments_40a3.s269ss269t_amount_covered_ed7cfd4f0b63_977bdd42"
         }
       ],
       "evidence": [
@@ -946,7 +946,7 @@
       ]
     },
     {
-      "id": "cash_payments_40a3/s269st/2025-06-23_e08c0b2c",
+      "id": "cash_payments_40a3/s269st/2025-06-23_9275dd88",
       "clauses": [
         "s.269ST(a)"
       ],
@@ -954,7 +954,7 @@
       "facts": [
         {
           "name": "amount",
-          "figure_id": "cash_payments_40a3.s269st_row_amount_2025-06-23_e08c0b2c"
+          "figure_id": "cash_payments_40a3.s269st_row_amount_2025-06-23_9275dd88"
         }
       ],
       "evidence": [
@@ -983,7 +983,7 @@
       ]
     },
     {
-      "id": "cash_payments_40a3/s269st/2025-06-25_f6d9b859",
+      "id": "cash_payments_40a3/s269st/2025-06-25_f46622c1",
       "clauses": [
         "s.269ST(a)"
       ],
@@ -991,7 +991,7 @@
       "facts": [
         {
           "name": "amount",
-          "figure_id": "cash_payments_40a3.s269st_row_amount_2025-06-25_f6d9b859"
+          "figure_id": "cash_payments_40a3.s269st_row_amount_2025-06-25_f46622c1"
         }
       ],
       "evidence": [
@@ -1057,7 +1057,7 @@
       ]
     },
     {
-      "id": "cash_payments_40a3/s269st/2025-07-07_d4a150bd",
+      "id": "cash_payments_40a3/s269st/2025-07-07_bec7c3d4",
       "clauses": [
         "s.269ST(a)"
       ],
@@ -1065,7 +1065,7 @@
       "facts": [
         {
           "name": "amount",
-          "figure_id": "cash_payments_40a3.s269st_row_amount_2025-07-07_d4a150bd"
+          "figure_id": "cash_payments_40a3.s269st_row_amount_2025-07-07_bec7c3d4"
         }
       ],
       "evidence": [
@@ -1094,7 +1094,7 @@
       ]
     },
     {
-      "id": "cash_payments_40a3/s269st_payment/2025-04-01_417e434b",
+      "id": "cash_payments_40a3/s269st_payment/2025-04-01_192cf253",
       "clauses": [
         "s.269ST(a)"
       ],
@@ -1102,7 +1102,7 @@
       "facts": [
         {
           "name": "amount",
-          "figure_id": "cash_payments_40a3.s269st_payment_row_amount_2025-04-01_417e434b"
+          "figure_id": "cash_payments_40a3.s269st_payment_row_amount_2025-04-01_192cf253"
         }
       ],
       "evidence": [
@@ -1132,7 +1132,7 @@
       ]
     },
     {
-      "id": "cash_payments_40a3/s269st_payment/2025-06-27_a71e73e5",
+      "id": "cash_payments_40a3/s269st_payment/2025-06-27_1fd9a51e",
       "clauses": [
         "s.269ST(a)"
       ],
@@ -1140,7 +1140,7 @@
       "facts": [
         {
           "name": "amount",
-          "figure_id": "cash_payments_40a3.s269st_payment_row_amount_2025-06-27_a71e73e5"
+          "figure_id": "cash_payments_40a3.s269st_payment_row_amount_2025-06-27_1fd9a51e"
         }
       ],
       "evidence": [
@@ -1170,7 +1170,7 @@
       ]
     },
     {
-      "id": "cash_payments_40a3/s269st_payment/2025-07-02_4effdb73",
+      "id": "cash_payments_40a3/s269st_payment/2025-07-02_c9fe11d8",
       "clauses": [
         "s.269ST(a)"
       ],
@@ -1178,7 +1178,7 @@
       "facts": [
         {
           "name": "amount",
-          "figure_id": "cash_payments_40a3.s269st_payment_row_amount_2025-07-02_4effdb73"
+          "figure_id": "cash_payments_40a3.s269st_payment_row_amount_2025-07-02_c9fe11d8"
         }
       ],
       "evidence": [
@@ -1246,7 +1246,7 @@
       ]
     },
     {
-      "id": "cash_payments_40a3/s269st_payment/2025-07-08_0454b985",
+      "id": "cash_payments_40a3/s269st_payment/2025-07-08_a98ff567",
       "clauses": [
         "s.269ST(a)"
       ],
@@ -1254,7 +1254,7 @@
       "facts": [
         {
           "name": "amount",
-          "figure_id": "cash_payments_40a3.s269st_payment_row_amount_2025-07-08_0454b985"
+          "figure_id": "cash_payments_40a3.s269st_payment_row_amount_2025-07-08_a98ff567"
         }
       ],
       "evidence": [
@@ -1284,7 +1284,7 @@
       ]
     },
     {
-      "id": "cash_payments_40a3/s40a3/2025-06-10_296769e6",
+      "id": "cash_payments_40a3/s40a3/2025-06-10_0988e024",
       "clauses": [
         "s.40A(3)",
         "3CD-21(d)"
@@ -1293,11 +1293,11 @@
       "facts": [
         {
           "name": "amount",
-          "figure_id": "cash_payments_40a3.s40a3_row_amount_2025-06-10_296769e6"
+          "figure_id": "cash_payments_40a3.s40a3_row_amount_2025-06-10_0988e024"
         },
         {
           "name": "goods_carriage_candidate",
-          "figure_id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-06-10_296769e6"
+          "figure_id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-06-10_0988e024"
         }
       ],
       "evidence": [
@@ -1331,7 +1331,7 @@
       ]
     },
     {
-      "id": "cash_payments_40a3/s40a3/2025-06-13_15d857ac",
+      "id": "cash_payments_40a3/s40a3/2025-06-13_026540de",
       "clauses": [
         "s.40A(3)",
         "3CD-21(d)"
@@ -1340,11 +1340,11 @@
       "facts": [
         {
           "name": "amount",
-          "figure_id": "cash_payments_40a3.s40a3_row_amount_2025-06-13_15d857ac"
+          "figure_id": "cash_payments_40a3.s40a3_row_amount_2025-06-13_026540de"
         },
         {
           "name": "goods_carriage_candidate",
-          "figure_id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-06-13_15d857ac"
+          "figure_id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-06-13_026540de"
         }
       ],
       "evidence": [
@@ -1374,7 +1374,7 @@
       ]
     },
     {
-      "id": "cash_payments_40a3/s40a3/2025-06-27_a71e73e5",
+      "id": "cash_payments_40a3/s40a3/2025-06-27_1fd9a51e",
       "clauses": [
         "s.40A(3)",
         "3CD-21(d)"
@@ -1383,11 +1383,11 @@
       "facts": [
         {
           "name": "amount",
-          "figure_id": "cash_payments_40a3.s40a3_row_amount_2025-06-27_a71e73e5"
+          "figure_id": "cash_payments_40a3.s40a3_row_amount_2025-06-27_1fd9a51e"
         },
         {
           "name": "goods_carriage_candidate",
-          "figure_id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-06-27_a71e73e5"
+          "figure_id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-06-27_1fd9a51e"
         }
       ],
       "evidence": [
@@ -1416,7 +1416,7 @@
       ]
     },
     {
-      "id": "cash_payments_40a3/s40a3/2025-07-02_4effdb73",
+      "id": "cash_payments_40a3/s40a3/2025-07-02_2d3194aa",
       "clauses": [
         "s.40A(3)",
         "3CD-21(d)"
@@ -1425,53 +1425,11 @@
       "facts": [
         {
           "name": "amount",
-          "figure_id": "cash_payments_40a3.s40a3_row_amount_2025-07-02_4effdb73"
+          "figure_id": "cash_payments_40a3.s40a3_row_amount_2025-07-02_2d3194aa"
         },
         {
           "name": "goods_carriage_candidate",
-          "figure_id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-07-02_4effdb73"
-        }
-      ],
-      "evidence": [
-        {
-          "kind": "ledger",
-          "id": "Metro Hardware Distributors",
-          "label": ""
-        },
-        {
-          "kind": "voucher",
-          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000023",
-          "label": "Payment P/20 on 2025-07-02"
-        }
-      ],
-      "title_sha256_16": "93195ae1f382d375",
-      "title_text": "Cash paid to one payee over the s.40A(3) daily limit on 2025-07-02",
-      "limits_sha256_16": "b7a8d59cd2c8f86c",
-      "limits_text": [
-        "Books only: Rule 6DD exceptions (e.g. bank/cooperative-bank closure, payments to government, payments where banking facilities are not available) are not visible from vouchers; ask the client whether any exception applies to this payment.",
-        "A single cash entry on this ledger and day may be a lump/year-end total covering several smaller payments to different people or on different days that the books do not itemise separately; confirm before treating it as one payee-day breach."
-      ],
-      "ask_client_sha256_16": "764d41d5b385c5e2",
-      "ask_client_text": [
-        "Confirm whether any Rule 6DD exception applies to this payment.",
-        "Confirm whether this ledger/day is a single payee or a lump entry covering several payments."
-      ]
-    },
-    {
-      "id": "cash_payments_40a3/s40a3/2025-07-02_c08babb6",
-      "clauses": [
-        "s.40A(3)",
-        "3CD-21(d)"
-      ],
-      "confidence": "needs_document",
-      "facts": [
-        {
-          "name": "amount",
-          "figure_id": "cash_payments_40a3.s40a3_row_amount_2025-07-02_c08babb6"
-        },
-        {
-          "name": "goods_carriage_candidate",
-          "figure_id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-07-02_c08babb6"
+          "figure_id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-07-02_2d3194aa"
         }
       ],
       "evidence": [
@@ -1500,7 +1458,7 @@
       ]
     },
     {
-      "id": "cash_payments_40a3/s40a3/2025-07-03_e4a33fbe",
+      "id": "cash_payments_40a3/s40a3/2025-07-02_c9fe11d8",
       "clauses": [
         "s.40A(3)",
         "3CD-21(d)"
@@ -1509,11 +1467,53 @@
       "facts": [
         {
           "name": "amount",
-          "figure_id": "cash_payments_40a3.s40a3_row_amount_2025-07-03_e4a33fbe"
+          "figure_id": "cash_payments_40a3.s40a3_row_amount_2025-07-02_c9fe11d8"
         },
         {
           "name": "goods_carriage_candidate",
-          "figure_id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-07-03_e4a33fbe"
+          "figure_id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-07-02_c9fe11d8"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Metro Hardware Distributors",
+          "label": ""
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000023",
+          "label": "Payment P/20 on 2025-07-02"
+        }
+      ],
+      "title_sha256_16": "93195ae1f382d375",
+      "title_text": "Cash paid to one payee over the s.40A(3) daily limit on 2025-07-02",
+      "limits_sha256_16": "b7a8d59cd2c8f86c",
+      "limits_text": [
+        "Books only: Rule 6DD exceptions (e.g. bank/cooperative-bank closure, payments to government, payments where banking facilities are not available) are not visible from vouchers; ask the client whether any exception applies to this payment.",
+        "A single cash entry on this ledger and day may be a lump/year-end total covering several smaller payments to different people or on different days that the books do not itemise separately; confirm before treating it as one payee-day breach."
+      ],
+      "ask_client_sha256_16": "764d41d5b385c5e2",
+      "ask_client_text": [
+        "Confirm whether any Rule 6DD exception applies to this payment.",
+        "Confirm whether this ledger/day is a single payee or a lump entry covering several payments."
+      ]
+    },
+    {
+      "id": "cash_payments_40a3/s40a3/2025-07-03_136920fc",
+      "clauses": [
+        "s.40A(3)",
+        "3CD-21(d)"
+      ],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "amount",
+          "figure_id": "cash_payments_40a3.s40a3_row_amount_2025-07-03_136920fc"
+        },
+        {
+          "name": "goods_carriage_candidate",
+          "figure_id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-07-03_136920fc"
         }
       ],
       "evidence": [
@@ -1542,7 +1542,7 @@
       ]
     },
     {
-      "id": "cash_payments_40a3/s40a3/2025-07-08_0454b985",
+      "id": "cash_payments_40a3/s40a3/2025-07-08_a98ff567",
       "clauses": [
         "s.40A(3)",
         "3CD-21(d)"
@@ -1551,11 +1551,11 @@
       "facts": [
         {
           "name": "amount",
-          "figure_id": "cash_payments_40a3.s40a3_row_amount_2025-07-08_0454b985"
+          "figure_id": "cash_payments_40a3.s40a3_row_amount_2025-07-08_a98ff567"
         },
         {
           "name": "goods_carriage_candidate",
-          "figure_id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-07-08_0454b985"
+          "figure_id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-07-08_a98ff567"
         }
       ],
       "evidence": [
@@ -1584,7 +1584,7 @@
       ]
     },
     {
-      "id": "cash_payments_40a3/s40a3/2025-07-10_73528196",
+      "id": "cash_payments_40a3/s40a3/2025-07-10_20cc34e7",
       "clauses": [
         "s.40A(3)",
         "3CD-21(d)"
@@ -1593,11 +1593,11 @@
       "facts": [
         {
           "name": "amount",
-          "figure_id": "cash_payments_40a3.s40a3_row_amount_2025-07-10_73528196"
+          "figure_id": "cash_payments_40a3.s40a3_row_amount_2025-07-10_20cc34e7"
         },
         {
           "name": "goods_carriage_candidate",
-          "figure_id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-07-10_73528196"
+          "figure_id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-07-10_20cc34e7"
         }
       ],
       "evidence": [
@@ -1627,7 +1627,7 @@
       ]
     },
     {
-      "id": "cash_payments_40a3/s40a3/2025-07-11_16c5d350",
+      "id": "cash_payments_40a3/s40a3/2025-07-11_c40af84a",
       "clauses": [
         "s.40A(3)",
         "3CD-21(d)"
@@ -1636,11 +1636,11 @@
       "facts": [
         {
           "name": "amount",
-          "figure_id": "cash_payments_40a3.s40a3_row_amount_2025-07-11_16c5d350"
+          "figure_id": "cash_payments_40a3.s40a3_row_amount_2025-07-11_c40af84a"
         },
         {
           "name": "goods_carriage_candidate",
-          "figure_id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-07-11_16c5d350"
+          "figure_id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-07-11_c40af84a"
         }
       ],
       "evidence": [
@@ -1669,7 +1669,7 @@
       ]
     },
     {
-      "id": "cash_payments_40a3/s40a3/2025-11-11_e4a33fbe",
+      "id": "cash_payments_40a3/s40a3/2025-11-11_136920fc",
       "clauses": [
         "s.40A(3)",
         "3CD-21(d)"
@@ -1678,11 +1678,11 @@
       "facts": [
         {
           "name": "amount",
-          "figure_id": "cash_payments_40a3.s40a3_row_amount_2025-11-11_e4a33fbe"
+          "figure_id": "cash_payments_40a3.s40a3_row_amount_2025-11-11_136920fc"
         },
         {
           "name": "goods_carriage_candidate",
-          "figure_id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-11-11_e4a33fbe"
+          "figure_id": "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-11-11_136920fc"
         }
       ],
       "evidence": [

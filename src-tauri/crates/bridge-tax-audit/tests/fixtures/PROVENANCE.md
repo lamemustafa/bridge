@@ -113,20 +113,36 @@ masterid 38-42 did too, and regenerated once more at the commit above for master
 `golden/synthetic.cash_payments_40a3.json` was regenerated at the same three points for the same
 reasons. `golden/synthetic.depreciation.json` is new at the commit above.)
 
+2026-09-19: `cash_payments_40a3` and `depreciation` switched their per-row figure/finding ids from
+hashing a ledger's display NAME to `tae.ledger_ids.stable_ledger_tag` (Tally GUID) at reference-
+implementation commit `84386b14b77a291c0bf5b1ae70e7e8afb9b609a3` -- the same rename-churn fix
+`creditor_ageing_43bh` and the rest of `audit_tests` already had; `cash_44ab` needed no change (it
+carries no name-derived id). `synthetic-read/parts/ledgers.xml` (and its `manifest.json` sha256/
+bytes) gained a `<GUID>`/`<MASTERID>` per ledger master (`parity/generate_fixture.py`'s `lguid`,
+masterid 501+, distinct from the voucher masterids 1-49 above) -- a real Tally ledger export always
+carries one, and `stable_ledger_tag` refuses a ledger with none. `golden/synthetic.
+cash_payments_40a3.json` and `golden/synthetic.depreciation.json` were regenerated at the commit
+above (id-tag text only; every figure/finding value is byte-identical to the previous goldens).
+`golden/synthetic.cash_44ab.json` is untouched (same reason it needed no source change). Fixture
+regenerated first, deterministically, by `python3 parity/generate_fixture.py tests/fixtures`, then
+the two goldens by the same `python_golden.py` invocations above (ENGINE pointed at the reference-
+implementation commit above), before the two SHA-256 rows here were updated by hand from that
+output.
+
 ## Bytes
 
 | Fixture | Bytes | SHA-256 | Path |
 | --- | ---: | --- | --- |
 | `synthetic.cash_44ab.json` | 5,828 | `c424096e2accfab877b68d5391f81a5e5319698637e2b68d64cae75314d3ac8f` | `golden/synthetic.cash_44ab.json` |
-| `synthetic.cash_payments_40a3.json` | 72,284 | `92111e5254ad0acc1a06bd634b47fa1f45924461c4779bb08f2bf1ed36875db9` | `golden/synthetic.cash_payments_40a3.json` |
-| `synthetic.depreciation.json` | 27,636 | `d5988a304a6702cefe1a9a3f26ac48a36beddd8fde418b4cab0ca805b82c9952` | `golden/synthetic.depreciation.json` |
+| `synthetic.cash_payments_40a3.json` | 72,284 | `9dc98414ef0271c1ca2544a7e7042716471ec7f5c260c52f3ab0193d947f3269` | `golden/synthetic.cash_payments_40a3.json` |
+| `synthetic.depreciation.json` | 27,636 | `5610251b272be9c60ebe196d8fe6cfdc2c0d081460bf26173ded0dee265ce168` | `golden/synthetic.depreciation.json` |
 | `synthetic-engagement.toml` | 2,228 | `958a674b3772ff992b6317ee2a70c57cfb3439d09b96579f45e57b1074355e42` | `synthetic-engagement.toml` |
-| `manifest.json` | 9,711 | `87b117c78d911cdfeb5fbf02466dd3aecd5379b17a2876aad65cc0ea989595bf` | `synthetic-read/manifest.json` |
+| `manifest.json` | 9,711 | `70665282d0a3a5905405dc67ab0f45c046584f786b618658d581398d68ec246d` | `synthetic-read/manifest.json` |
 | `company_object.xml` | 606 | `f1b6fe4e6b6cc406a4ae92ce0ef62a6c79a88a99ac83b1888989a98fbee967b4` | `synthetic-read/parts/company_object.xml` |
 | `groups.xml` | 6,466 | `d314bbcea1fb8a70e5e3e1a25008da57031f872da06d971be6014af82f950395` | `synthetic-read/parts/groups.xml` |
 | `high_water_after.xml` | 643 | `f4d7380ecb17a3d8d67ef205161aa8b15cbc440789d77090113197671fdb2e60` | `synthetic-read/parts/high_water_after.xml` |
 | `high_water_before.xml` | 643 | `f4d7380ecb17a3d8d67ef205161aa8b15cbc440789d77090113197671fdb2e60` | `synthetic-read/parts/high_water_before.xml` |
-| `ledgers.xml` | 14,088 | `1b54f883ce5202c837906f754a0bc477759d4a23063cae2650c6303821510415` | `synthetic-read/parts/ledgers.xml` |
+| `ledgers.xml` | 22,372 | `a496cadef8cea0cf82997646888bf2f6295e8f9299e197538fb66ea1199524bd` | `synthetic-read/parts/ledgers.xml` |
 | `tb_fy.xml` | 10,997 | `e68556a5dc2ac071300c97285f9324377cc1c1622847c05ee3badd751ec842f0` | `synthetic-read/parts/tb_fy.xml` |
 | `voucher_status_list.json` | 249 | `c7959e4e91a445f774ff2a5eaad4f8968f6fc82e21622d5168ececf9b0a1aa78` | `synthetic-read/parts/voucher_status_list.json` |
 | `vouchers_h1.xml` | 46,156 | `286698675efad21064cb78d53c8a5dba27a1f19e3a6e371223a73d16c012bb65` | `synthetic-read/parts/vouchers_h1.xml` |

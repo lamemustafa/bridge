@@ -123,7 +123,7 @@ fn a_dump_below_the_eighteen_figure_floor_is_reported() {
 #[test]
 fn a_flipped_goods_carriage_exemption_is_reported() {
     let mut rust = rust_dump();
-    let id = "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-06-13_15d857ac";
+    let id = "cash_payments_40a3.s40a3_goods_carriage_candidate_2025-06-13_026540de";
     assert_eq!(figure_mut(&mut rust, id)["value"], "yes");
     figure_mut(&mut rust, id)["value"] = json!("no");
     let d = diffs(&rust);
