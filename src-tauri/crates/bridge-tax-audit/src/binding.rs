@@ -488,12 +488,18 @@ fn drift_rows(
 /// with every bound label rewritten to its master's current name, and a [`BindingReport`].
 /// `engagement` itself is never modified. See the module docs for what is bound and refused.
 pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, BindingReport)> {
+    // Mirrors the reference implementation's `bind_config`: one kind is parsed, resolved, walked
+    // across every location it names and unused-checked -- completely -- before the other kind
+    // even parses its identity table. The reference iterates `("ledger", ...)` before
+    // `("group", ...)`, so a config with both an unused `[ledger_ids]` entry and an unrelated
+    // problem in `[group_ids]` (an unknown GUID, say) refuses over the ledger side first: the
+    // group table's identity is never even resolved. Resolving both kinds up front, as this used
+    // to, would let a `[group_ids]` problem surface before an earlier, unused `[ledger_ids]`
+    // entry ever gets its chance to refuse -- a different refusal than the reference gives for
+    // the same config.
     let ledger_ids = parse_identity_table(&engagement.raw_cfg, "ledger_ids")?;
-    let group_ids = parse_identity_table(&engagement.raw_cfg, "group_ids")?;
     let lmasters = ledger_masters(book);
-    let gmasters = group_masters(book);
     let ledger_current = resolve_ids("ledger", "ledger_ids", &ledger_ids, &lmasters)?;
-    let group_current = resolve_ids("group", "group_ids", &group_ids, &gmasters)?;
 
     let mut lbinder = Binder::new(
         "ledger",
@@ -502,16 +508,7 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
         ledger_current,
         &lmasters,
     );
-    let mut gbinder = Binder::new(
-        "group",
-        BIND_GROUP_UNKNOWN,
-        "group_ids",
-        group_current,
-        &gmasters,
-    );
 
-    let cash_groups = gbinder.bind_list(&engagement.cash_groups, "roles.cash_groups")?;
-    let bank_groups = gbinder.bind_list(&engagement.bank_groups, "roles.bank_groups")?;
     let round_off_ledgers =
         lbinder.bind_list(&engagement.round_off_ledgers, "roles.round_off_ledgers")?;
 
@@ -543,6 +540,22 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
     }
 
     lbinder.check_unused()?;
+
+    let group_ids = parse_identity_table(&engagement.raw_cfg, "group_ids")?;
+    let gmasters = group_masters(book);
+    let group_current = resolve_ids("group", "group_ids", &group_ids, &gmasters)?;
+
+    let mut gbinder = Binder::new(
+        "group",
+        BIND_GROUP_UNKNOWN,
+        "group_ids",
+        group_current,
+        &gmasters,
+    );
+
+    let cash_groups = gbinder.bind_list(&engagement.cash_groups, "roles.cash_groups")?;
+    let bank_groups = gbinder.bind_list(&engagement.bank_groups, "roles.bank_groups")?;
+
     gbinder.check_unused()?;
 
     let mut drifts = drift_rows(
@@ -950,6 +963,40 @@ mod tests {
             "Someone Else's Ledger".to_string(),
             ledger("Someone Else's Ledger", "Indirect Expenses", G_OTHER, None),
         );
+        let err = e.bind(&b).unwrap_err();
+        assert_eq!(err.code(), Some(BIND_ID_UNUSED));
+        assert!(format!("{err}").contains("Never Used"));
+    }
+
+    #[test]
+    fn an_unused_ledger_entry_refuses_before_an_unrelated_group_problem_is_even_reached() {
+        // Two independent problems in one config: [ledger_ids] binds a label no ledger location
+        // reads, and [group_ids] names a GUID no group in the Book carries at all. The reference
+        // implementation's `bind_config` processes one kind completely -- parse its identity
+        // table, resolve it, walk every location of that kind, then run that kind's unused check
+        // -- before the other kind's identity table is even parsed, in kind order (ledger, then
+        // group). So here the ledger pass's unused check refuses first; the group pass, and its
+        // unknown GUID, is never reached. Resolving every kind's identity table up front (the bug
+        // this test guards against) would instead refuse BIND-GUID-UNKNOWN, because that
+        // resolution ran before either kind's locations, or its unused check, were reached.
+        let e = engagement(&format!(
+            "round_off_ledgers = [\"Round Off\"]\n\
+             [ledger_ids]\n\"Round Off\" = {G_ROUNDOFF:?}\n\"Never Used\" = {G_OTHER:?}\n\
+             [group_ids]\n\"Some Group\" = \"11111111-1111-1111-1111-0000000000ff\"\n"
+        ));
+        let mut b = book("Cash-in-Hand", "", None);
+        b.ledgers.insert(
+            "Round Off".to_string(),
+            ledger("Round Off", "Indirect Expenses", G_ROUNDOFF, None),
+        );
+        // As in the test above, G_OTHER must resolve to a real master, or the ledger pass itself
+        // refuses BIND-GUID-UNKNOWN before ever reaching its own unused check.
+        b.ledgers.insert(
+            "Someone Else's Ledger".to_string(),
+            ledger("Someone Else's Ledger", "Indirect Expenses", G_OTHER, None),
+        );
+        // No master anywhere carries "...-0000000000ff": if the group side were ever resolved,
+        // this would refuse BIND-GUID-UNKNOWN instead.
         let err = e.bind(&b).unwrap_err();
         assert_eq!(err.code(), Some(BIND_ID_UNUSED));
         assert!(format!("{err}").contains("Never Used"));

@@ -50,6 +50,7 @@ def main() -> int:
     sys.path.insert(0, str(Path(a.engine).resolve()))
     from tae.adapters import read_format
     from tae.audit_tests import cash_44ab, cash_payments_40a3, depreciation
+    from tae.binding import bind_config
     from tae.config import (depreciation_config, load_rules, loan_ledgers_config, resolve_ledgers,
                              role_ledger_set)
     from tae.model import Engagement
@@ -61,7 +62,13 @@ def main() -> int:
         cfg["snapshot"] = {"format": "tally-read-v1", "path": str(Path(a.read).resolve()),
                            "allow_unbracketed_read": True}
     book = read_format.load_book(cfg, path.parent)
-    eng = Engagement(cfg["client"]["entity_type"], cfg["client"]["assessment_year"], book)
+    # Mirror tae/run.py's load(): every configured ledger/group name is bound against the Book
+    # before anything downstream reads it, so a renamed ledger's [ledger_ids]/[group_ids] entry
+    # (or a bare name that still matches) is resolved the same way the reference runner resolves
+    # it -- not the raw, possibly-stale name straight out of the TOML.
+    cfg, binding = bind_config(cfg, book, path.parent)
+    eng = Engagement(cfg["client"]["entity_type"], cfg["client"]["assessment_year"], book,
+                      config_binding=binding.drifts)
     rules = load_rules(eng.assessment_year, eng.entity_type)
     cash = resolve_ledgers(book, cfg["roles"]["cash_groups"])
     bank = resolve_ledgers(book, cfg["roles"]["bank_groups"])

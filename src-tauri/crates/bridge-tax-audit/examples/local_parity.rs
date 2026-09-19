@@ -23,15 +23,18 @@
 //! **Identity binding.** `CLIENT_TOML`'s `[ledger_ids]`/`[group_ids]` are resolved through
 //! `Engagement::bind` (`src/binding.rs`, `docs/tax-audit/config-identity-binding-v1.md`) exactly
 //! as the reference implementation's `tae/binding.py` resolves them for its own tests, letting a
-//! renamed ledger or group bound by identity in the TOML read correctly here too. Those two
-//! tables are written for the reference implementation's FULL pack, though, and a real client
-//! TOML typically binds many labels this port never reads (`tds`, `gst_outward`,
-//! `related_parties`, ...); `narrow_identity_tables` below strips `[ledger_ids]`/`[group_ids]`
-//! down to just the labels the six locations this port's `Engagement` reads actually use, before
-//! `Engagement::from_toml` ever sees them, so `BIND-ID-UNUSED` never fires on a label this port
-//! simply does not consume. `python_golden.py` bypasses `tae/binding.py` entirely and reads every
-//! label as-is, so this only matters when a TOML's labels differ from the read's current names;
-//! see this file's own local-only rerun instructions for that case.
+//! renamed ledger or group bound by identity in the TOML read correctly here too. `python_golden.py`
+//! binds the same way now: it calls `bind_config` before building its `Engagement`, mirroring
+//! `tae/run.py`'s own `load()`, so a renamed ledger's identity entry (or a bare name that still
+//! matches) resolves on both sides of the comparison, not just this one. Those two tables are
+//! written for the reference implementation's FULL pack, though, and a real client TOML typically
+//! binds many labels this port never reads (`tds`, `gst_outward`, `related_parties`, ...);
+//! `narrow_identity_tables` below strips `[ledger_ids]`/`[group_ids]` down to just the labels the
+//! six locations this port's `Engagement` reads actually use, before `Engagement::from_toml` ever
+//! sees them, so `BIND-ID-UNUSED` never fires on a label this port simply does not consume.
+//! `python_golden.py`'s own `bind_config` call sees the FULL, unnarrowed tables (it binds every
+//! location the reference implementation reads, not just the six this port ports), so its
+//! `BIND-ID-UNUSED` check never trips over a label only this side narrowed away.
 //!
 //! Prints one summary line, and every difference if there are any; exits non-zero on any
 //! difference or refusal.
