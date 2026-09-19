@@ -34,6 +34,11 @@ async fn movement_refuses_voucher_changes_even_when_period_openings_match() {
     let voucher = captured(include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/agent/native-three-vouchers.utf16le.xml"
     ));
+    // A small synthetic mark for this company, in the shape the import tests
+    // already replay: three vouchers cannot exceed the window budget.
+    let high_water = captured_utf8(
+        "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY><GUID>61c6de69-1748-461c-ad3f-162cb949df9f</GUID><ALTVCHID>3</ALTVCHID><ALTMSTID>7</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>",
+    );
     let status = ScenarioPlan::new(Fixture::ProductStatus(ProductStatus::TallyPrime));
     let opening = || {
         vec![
@@ -109,6 +114,9 @@ async fn movement_refuses_voucher_changes_even_when_period_openings_match() {
             status.clone(),
         ];
         plans.extend(opening());
+        // The pre-flight high-water read (protocol reference §11c) precedes the
+        // first window read only; the closing read replays its ranges.
+        plans.extend(voucher_read(high_water.clone()));
         plans.extend(voucher_read(before));
         if change != "incomplete" {
             plans.extend(opening());
@@ -172,7 +180,7 @@ async fn movement_refuses_voucher_changes_even_when_period_openings_match() {
         let observations = simulator.finish().unwrap();
         assert_eq!(
             observations.len(),
-            if change == "incomplete" { 28 } else { 52 }
+            if change == "incomplete" { 34 } else { 58 }
         );
     }
 }

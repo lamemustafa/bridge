@@ -1767,11 +1767,26 @@ async fn voucher_read_evidence_uses_utf16_transport_bytes() {
         ))
         .with_framing(ResponseFraming::ContentLength)
     };
+    // The pre-flight volume bound (protocol reference §11c) reads the voucher
+    // high-water mark first. A small synthetic mark keeps this window whole, so
+    // the test still isolates the byte accounting it exists for.
+    let high_water_xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY><GUID>bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID><ALTVCHID>2</ALTVCHID><ALTMSTID>7</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>";
+    let high_water_plan = || {
+        ScenarioPlan::new(Fixture::SyntheticXml(high_water_xml.to_string()))
+            .with_encoding(WireEncoding::Utf16Le)
+            .with_framing(ResponseFraming::ContentLength)
+    };
     let simulator = SequenceSimulator::spawn(vec![
         company_plan(),
         status_plan(),
         company_plan(),
         status_plan(),
+        company_plan(),
+        high_water_plan(),
+        status_plan(),
+        high_water_plan(),
+        status_plan(),
+        company_plan(),
         company_plan(),
         voucher_plan(),
         status_plan(),
@@ -1806,6 +1821,7 @@ async fn voucher_read_evidence_uses_utf16_transport_bytes() {
         .all(|row| row["cancelled"].is_boolean() && row["optional"].is_boolean()));
     let expected_bytes = bridge_tally_protocol::encode_tally_xml_request_utf16le(&company_xml)
         .len()
+        + bridge_tally_protocol::encode_tally_xml_request_utf16le(high_water_xml).len()
         + bridge_tally_protocol::encode_tally_xml_request_utf16le(captured_vouchers).len();
     assert_eq!(
         response["structuredContent"]["evidence"]["bytes"],
@@ -1813,9 +1829,9 @@ async fn voucher_read_evidence_uses_utf16_transport_bytes() {
     );
     assert_ne!(
         response["structuredContent"]["evidence"]["bytes"],
-        company_xml.len() + captured_vouchers.len()
+        company_xml.len() + high_water_xml.len() + captured_vouchers.len()
     );
-    assert_eq!(simulator.finish().expect("simulator result").len(), 10);
+    assert_eq!(simulator.finish().expect("simulator result").len(), 16);
 }
 
 #[tokio::test]
