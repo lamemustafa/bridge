@@ -307,6 +307,30 @@ const runSplitGate = (first, second, omitted) => {
 }
 
 {
+  const first = BASE_DOC;
+  const second = "# Part B\n";
+  writeFileSync(join(work, PART_A), first);
+  writeFileSync(join(work, PART_B), second);
+  writeFileSync(
+    join(work, DOC),
+    splitIndex([first, second]) + "\n## 9.7 Numbered index heading\n\n",
+  );
+  const out = runGate();
+  const text = `${out.stdout}${out.stderr}`;
+  if (
+    out.status !== 0 &&
+    text.includes("is used 2 times") &&
+    text.includes("9.7") &&
+    text.includes("(1 problem(s))")
+  ) {
+    console.log("ok   a number duplicated between the canonical index and a part is caught");
+  } else {
+    failed += 1;
+    console.error(`FAIL an index-part duplicate must be caught\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+{
   const moved = "## 9.7 Operation support matrix\n\nbody\n";
   const first = BASE_DOC.replace(moved, "");
   const out = runSplitGate(first, `# Part B\n\n${moved}`);
@@ -316,6 +340,40 @@ const runSplitGate = (first, second, omitted) => {
   } else {
     failed += 1;
     console.error(`FAIL a genuine section move must pass\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+// Generated indexes can repeat many different anchors. The refusal must name
+// this fault and its total count without allowing the diagnostic to scale with
+// every repeated ID.
+{
+  const first = BASE_DOC;
+  const second = "# Part B\n";
+  const repeats = Array.from({ length: 80 }, (_, index) => {
+    const anchor = `duplicate-route-${String(index).padStart(2, "0")}-${"x".repeat(300)}`;
+    const route = `<a id="${anchor}"></a> [extra](./TALLY_PROTOCOL_REFERENCE_PART_A.md#10-alpha)`;
+    return `${route}\n${route}`;
+  }).join("\n");
+  writeFileSync(join(work, PART_A), first);
+  writeFileSync(join(work, PART_B), second);
+  writeFileSync(join(work, DOC), `${splitIndex([first, second])}${repeats}\n`);
+  const out = runGate();
+  const text = `${out.stdout}${out.stderr}`;
+  const shownDuplicates = text.match(/^    duplicate-route-/gm)?.length ?? 0;
+  if (
+    out.status !== 0 &&
+    text.includes("80 duplicate legacy-anchor occurrence(s)") &&
+    text.includes("(1 problem(s))") &&
+    shownDuplicates === 20 &&
+    text.length < 8_000
+  ) {
+    console.log("ok   duplicate-anchor diagnostics report the fault and count within a fixed bound");
+  } else {
+    failed += 1;
+    console.error(
+      `FAIL duplicate-anchor diagnostics must be bounded and specific\n` +
+        `  exit ${out.status}; shown ${shownDuplicates}; bytes ${text.length}: ${text.split("\n").slice(0, 6).join("\n  ")}`,
+    );
   }
 }
 
@@ -389,13 +447,13 @@ const sep = "\\";`);
   const alias = '<a id="10-alpha"></a> [10 Alpha](./TALLY_PROTOCOL_REFERENCE_PART_A.md#10-alpha-revised)\n';
   writeFileSync(join(work, PART_A), first);
   writeFileSync(join(work, PART_B), second);
-  const expectRoute = (name, content, diagnostic) => {
+  const expectRoute = (name, content, diagnostic, anchor = "10-alpha") => {
     writeFileSync(join(work, DOC), content);
     const out = runGate();
     const text = `${out.stdout}${out.stderr}`;
     const ok = diagnostic === undefined
       ? out.status === 0
-      : out.status !== 0 && text.includes(diagnostic) && text.includes("10-alpha") && text.includes("(1 problem(s))");
+      : out.status !== 0 && text.includes(diagnostic) && text.includes(anchor) && text.includes("(1 problem(s))");
     if (ok) console.log(`ok   ${name}`);
     else {
       failed += 1;
@@ -406,16 +464,52 @@ const sep = "\\";`);
   expectRoute("legacy aliases cannot target a nonexistent heading",
     index + alias.replace("#10-alpha-revised)", "#missing-heading)"), "do not resolve");
 
-  writeFileSync(join(upstream, PART_A), first);
+  const splitBaseFirst = `${first}\n## Method note revised\n\nmethod\n`;
+  const splitBaseIndex = splitIndex([splitBaseFirst, second]);
+  const methodAlias = '<a id="method-note"></a> [Method note](./TALLY_PROTOCOL_REFERENCE_PART_A.md#method-note-revised)\n';
+  const splitBaseContent = splitBaseIndex + alias + methodAlias;
+  writeFileSync(join(work, PART_A), splitBaseFirst);
+  writeFileSync(join(upstream, PART_A), splitBaseFirst);
   writeFileSync(join(upstream, PART_B), second);
-  writeFileSync(join(upstream, DOC), index + alias);
+  writeFileSync(join(upstream, DOC), splitBaseContent);
   git(upstream, "add", "-A");
   git(upstream, "commit", "-qm", "split reference with a retained retitle alias");
   git(work, "fetch", "-q", "origin");
-  expectRoute("an inherited alias remains valid on a later split-base edit", index + alias);
-  expectRoute("a later split-base edit cannot drop its inherited alias", index, "legacy section anchor(s) missing");
+  expectRoute("an inherited alias remains valid on a later split-base edit", splitBaseContent);
+  expectRoute("a later split-base edit cannot drop its inherited alias", splitBaseIndex, "legacy section anchor(s) missing");
   expectRoute("an inherited alias cannot retain a dead destination",
-    index + alias.replace("#10-alpha-revised)", "#missing-heading)"), "do not resolve");
+    splitBaseIndex + alias.replace("#10-alpha-revised)", "#missing-heading)") + methodAlias, "do not resolve");
+
+  const collisionFirst = `${splitBaseFirst}\n## Method note\n\nnew section\n`;
+  writeFileSync(join(work, PART_A), collisionFirst);
+  expectRoute(
+    "a new unnumbered heading cannot steal an inherited alias",
+    splitIndex([collisionFirst, second]) + alias,
+    "inherited legacy anchor(s) reused by current headings",
+    "method-note",
+  );
+
+  // A numbered heading in a split index is part of the shared number
+  // namespace, but it is navigation rather than a legacy route source.
+  writeFileSync(join(work, PART_A), splitBaseFirst);
+  const numberedBaseContent = `${splitBaseContent}\n## 88 Index allocation\n\nindex body\n`;
+  writeFileSync(join(upstream, DOC), numberedBaseContent);
+  git(upstream, "add", DOC);
+  git(upstream, "commit", "-qm", "allocate a number in the split index");
+  git(work, "fetch", "-q", "origin");
+  expectRoute("an unchanged numbered split index passes without becoming a legacy route", numberedBaseContent);
+  expectRoute(
+    "deleting a base index number is caught",
+    splitBaseContent,
+    "absent here",
+    "88",
+  );
+  expectRoute(
+    "renumbering a base index heading is caught",
+    numberedBaseContent.replace("## 88 Index allocation", "## 89 Index allocation"),
+    "absent here",
+    "88",
+  );
   // The real-tree case below pulls a new fixture base. Only this disposable
   // clone is restored; all candidate files remain untouched.
   git(work, "checkout", "-q", "--", DOC);

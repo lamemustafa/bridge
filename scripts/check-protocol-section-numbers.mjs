@@ -35,11 +35,11 @@ const PARTS_MARKER = /^<!-- protocol-reference-parts:\s*(.*?)\s*-->$/m;
 const LEGACY_ROUTE = /<a\s+id="([^"]+)"\s*><\/a>\s+\[([^\]]+)\]\(\.\/([^#)]+)#([^)]+)\)/g;
 const LEGACY_HEADING = /^ {0,3}#{2,6}\s+(.+?)\s*#*\s*$/;
 
-// The canonical file stays at the historic path. It names the sibling parts
-// whose headings share one allocation; a pre-split base has no marker and is
+// The canonical file stays at the historic path. It and the sibling parts it
+// names share one number allocation; a pre-split base has no marker and is
 // scanned as the single original document. Keeping this inventory in the
-// canonical index makes the split explicit and prevents a new part from being
-// silently outside the duplicate/renumber gate.
+// canonical index makes the split explicit and prevents either the index or a
+// new part from being silently outside the duplicate/renumber gate.
 function referencePaths(indexText, origin) {
   const marker = PARTS_MARKER.exec(indexText);
   if (!marker) return [canonicalReference];
@@ -47,12 +47,12 @@ function referencePaths(indexText, origin) {
   if (!parts.length || new Set(parts).size !== parts.length) {
     throw new Error(`invalid protocol-reference part inventory in ${origin}`);
   }
-  return parts.map((part) => {
+  return [canonicalReference, ...parts.map((part) => {
     if (!/^TALLY_PROTOCOL_REFERENCE_[A-Z0-9_]+\.md$/.test(part)) {
       throw new Error(`invalid protocol-reference part ${JSON.stringify(part)} in ${origin}`);
     }
     return resolve(canonicalReference, "..", part);
-  });
+  })];
 }
 
 const relPath = (path) => relative(repository, path).split(sep).join("/");
@@ -83,6 +83,14 @@ const references = referencePaths(canonicalText, relPath(canonicalReference)).ma
   path,
   text: readFileSync(path, "utf8"),
 }));
+
+// The split index participates in section-number allocation, but its headings
+// are navigation and never generated legacy routes. Before the split, the
+// canonical document is both the number source and the route source.
+function routeReferences(referenceSet, indexText) {
+  if (!PARTS_MARKER.test(indexText)) return referenceSet;
+  return referenceSet.filter(({ path }) => path !== canonicalReference);
+}
 
 // `1.2`, `9.12a` and `12a.4` are all section numbers this document uses.
 //
@@ -461,24 +469,75 @@ function headingRoutes(referenceSet) {
 
 if (PARTS_MARKER.test(canonicalText)) {
   const indexed = new Map();
+  const duplicateAnchors = new Map();
   for (const match of canonicalText.matchAll(LEGACY_ROUTE)) {
     if (indexed.has(match[1])) {
-      failures.push(`legacy anchor ${short(match[1])} is duplicated in ${relPath(canonicalReference)}`);
+      duplicateAnchors.set(match[1], (duplicateAnchors.get(match[1]) ?? 0) + 1);
     }
     indexed.set(match[1], { title: match[2], path: `docs/tally/${match[3]}`, target: match[4] });
   }
-  const currentRoutes = headingRoutes(references);
+  if (duplicateAnchors.size) {
+    const duplicateOccurrences = [...duplicateAnchors.values()].reduce((total, count) => total + count, 0);
+    const shown = [...duplicateAnchors].slice(0, MAX_REPORTED_NUMBERS);
+    failures.push(
+      `${duplicateOccurrences} duplicate legacy-anchor occurrence(s) in ${relPath(canonicalReference)}:\n` +
+        shown
+          .map(([anchor, count]) => `    ${short(anchor)} (${count + 1} occurrences)`)
+          .join("\n") +
+        (duplicateAnchors.size > shown.length
+          ? `\n    ... and ${duplicateAnchors.size - shown.length} more duplicated legacy anchor(s)`
+          : ""),
+    );
+  }
+  const currentRoutes = headingRoutes(routeReferences(references, canonicalText));
   const required = new Map(currentRoutes.map((route) => [route.legacy, route]));
   const aliases = [];
   if (base) {
-    for (const route of headingRoutes(base.references)) {
+    const baseRoutes = headingRoutes(routeReferences(base.references, base.indexText));
+    const baseRequired = new Map(baseRoutes.map((route) => [route.legacy, route]));
+    const inheritedAliases = [];
+    for (const match of base.indexText.matchAll(LEGACY_ROUTE)) {
+      const route = {
+        legacy: match[1],
+        title: match[2],
+        path: `docs/tally/${match[3]}`,
+        target: match[4],
+      };
+      const normal = baseRequired.get(route.legacy);
+      if (
+        !normal ||
+        normal.title !== route.title ||
+        normal.path !== route.path ||
+        normal.target !== route.target
+      ) {
+        inheritedAliases.push(route);
+      }
+    }
+
+    const reusedAliases = inheritedAliases.filter((route) => required.has(route.legacy));
+    if (reusedAliases.length) {
+      failures.push(
+        `inherited legacy anchor(s) reused by current headings; these fragments already ` +
+          `identify earlier headings:\n` +
+          reusedAliases
+            .slice(0, MAX_REPORTED_NUMBERS)
+            .map((route) => `    ${short(route.legacy)}`)
+            .join("\n") +
+          (reusedAliases.length > MAX_REPORTED_NUMBERS
+            ? `\n    ... and ${reusedAliases.length - MAX_REPORTED_NUMBERS} more`
+            : ""),
+      );
+    }
+
+    for (const route of baseRoutes) {
       if (!required.has(route.legacy)) aliases.push(route);
     }
     // A prior split base may already contain aliases for headings retitled
-    // before this change. Keep those historic fragments alive too.
-    for (const match of base.indexText.matchAll(LEGACY_ROUTE)) {
-      if (!required.has(match[1]) && !aliases.some((route) => route.legacy === match[1])) {
-        aliases.push({ legacy: match[1], title: match[2], path: `docs/tally/${match[3]}`, target: match[4] });
+    // before this change. Keep those historic fragments alive too, reserving
+    // their IDs before a new current heading can claim them.
+    for (const route of inheritedAliases) {
+      if (!aliases.some((alias) => alias.legacy === route.legacy)) {
+        aliases.push(route);
       }
     }
   }
