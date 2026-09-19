@@ -55,12 +55,36 @@ pub struct Ledger {
     /// False when the group masters could not resolve the chain to a primary group.
     pub chain_complete: bool,
     pub opening_paise: i64,
+    /// The Tally GUID (`crate::binding` matches an engagement config's `[ledger_ids]` entry
+    /// against this), empty when the read's LEDGER element carried none.
+    pub guid: String,
+    /// The Tally MASTERID, when the digits parse as a positive integer.
+    pub masterid: Option<i64>,
 }
 
 impl Ledger {
     pub fn under(&self, group: &str) -> bool {
         self.chain.iter().any(|g| g == group)
     }
+}
+
+/// A group master's Tally identity, alongside [`Book::groups`]' parent-chain map. Kept separate
+/// from that map (rather than widening its value) because `chain()` walks it by name only and a
+/// third of the crate's tests build one by hand; `crate::binding` is the one reader of this map.
+#[derive(Debug, Clone, Default)]
+pub struct GroupMaster {
+    pub guid: String,
+    pub masterid: Option<i64>,
+}
+
+/// Digits-only MASTERID text to a positive integer, as the reference implementation's `_masterid`
+/// reads it (`getattr(obj, "masterid", "") or ""`, then `str.isdigit()`); anything else -- empty,
+/// signed, non-numeric -- carries no MASTERID.
+pub fn parse_masterid(text: &str) -> Option<i64> {
+    let t = xml::py_strip(text);
+    (!t.is_empty() && t.bytes().all(|b| b.is_ascii_digit()))
+        .then(|| t.parse().ok())
+        .flatten()
 }
 
 #[derive(Debug, Clone)]
@@ -100,6 +124,8 @@ pub struct Book {
     pub company_guid: String,
     pub read_at: String,
     pub groups: BTreeMap<String, Option<String>>,
+    /// Every group's Tally identity, by name; see [`GroupMaster`].
+    pub group_masters: BTreeMap<String, GroupMaster>,
     pub ledgers: BTreeMap<String, Ledger>,
     /// Every exported voucher, all statuses, in read order.
     pub vouchers: Vec<Voucher>,
@@ -199,6 +225,27 @@ pub fn load_groups(root: &Element) -> BTreeMap<String, Option<String>> {
     out
 }
 
+/// Every group's Tally identity, by name -- a separate pass over the same element type as
+/// [`load_groups`], read only by [`crate::binding`]. Kept as its own function (rather than
+/// widening `load_groups`' return) so that function's existing callers, which read only the
+/// parent-chain map, are undisturbed.
+pub fn load_group_masters(root: &Element) -> BTreeMap<String, GroupMaster> {
+    let mut out = BTreeMap::new();
+    for g in root.descendants_named("GROUP") {
+        let Some(name) = g.attr("NAME").filter(|n| !n.is_empty()) else {
+            continue;
+        };
+        out.insert(
+            name.to_string(),
+            GroupMaster {
+                guid: g.child_text("GUID").to_string(),
+                masterid: parse_masterid(g.child_text("MASTERID")),
+            },
+        );
+    }
+    out
+}
+
 /// The reference engine's `_chain`, including its answers for a missing group (incomplete)
 /// and for a cycle (complete). A ledger directly under the reserved root has the decoded
 /// PARENT text itself (`"\u{fffd}#4; Primary"`) as its one-element chain.
@@ -246,6 +293,8 @@ fn load_ledgers(
                 chain,
                 chain_complete,
                 opening_paise,
+                guid: l.child_text("GUID").to_string(),
+                masterid: parse_masterid(l.child_text("MASTERID")),
             },
         );
     }
@@ -464,7 +513,9 @@ fn required<'a>(read: &'a Read, kind: &str) -> Result<&'a Part> {
 /// Build the book from a verified read: C5 identity, C8 and C9 are checked here.
 pub fn load_book(read: &Read, company_name: &str) -> Result<Book> {
     let gp = required(read, "groups")?;
-    let groups = load_groups(&xml::read(&gp.content, &gp.id)?);
+    let gp_root = xml::read(&gp.content, &gp.id)?;
+    let groups = load_groups(&gp_root);
+    let group_masters = load_group_masters(&gp_root);
     let lp = required(read, "ledgers")?;
     let ledgers = load_ledgers(&xml::read(&lp.content, &lp.id)?, &groups, &lp.id)?;
     let tp = required(read, "trial_balance")?;
@@ -563,6 +614,7 @@ pub fn load_book(read: &Read, company_name: &str) -> Result<Book> {
         company_guid: guid.to_string(),
         read_at: read.read_at.clone(),
         groups,
+        group_masters,
         ledgers,
         vouchers,
         tb,

@@ -1041,6 +1041,8 @@ mod tests {
             chain: vec!["Fixed Assets".to_string()],
             chain_complete: true,
             opening_paise: 0,
+            guid: String::new(),
+            masterid: None,
         }
     }
 
@@ -1051,6 +1053,8 @@ mod tests {
             chain: vec![group.to_string()],
             chain_complete: true,
             opening_paise: 0,
+            guid: String::new(),
+            masterid: None,
         }
     }
 
@@ -1082,6 +1086,7 @@ mod tests {
             company_guid: "test-guid".to_string(),
             read_at: String::new(),
             groups: BTreeMap::new(),
+            group_masters: BTreeMap::new(),
             ledgers: ledgers.into_iter().map(|l| (l.name.clone(), l)).collect(),
             vouchers,
             tb: tb
