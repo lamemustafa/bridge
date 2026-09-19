@@ -462,6 +462,7 @@ fn every_party_master_source_validation_is_not_an_endpoint_failure() {
         Validation::MasterAlterId,
         Validation::MasterOpeningBalance,
         Validation::DuplicateMasterIdentity,
+        Validation::DuplicateMasterDisplayKey,
         Validation::BalanceMissingMasterLedger,
         Validation::OpeningBalancesDisagreed,
         Validation::BalanceLedgerAbsentFromMasterEvidence,

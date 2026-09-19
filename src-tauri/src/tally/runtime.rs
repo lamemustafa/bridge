@@ -3,7 +3,9 @@ use super::{
 };
 use super::{TallyProbeResult, TallyVoucher};
 use crate::observability::BodyBytesObservation;
-use crate::reports::party_ledger_master::PartyLedgerMasterSource;
+use crate::reports::party_ledger_master::{
+    PartyLedgerMasterJoinDiagnostic, PartyLedgerMasterJoinUnresolved, PartyLedgerMasterSource,
+};
 use crate::tally::connection::{canonical_loopback_origin, SelectedReadObservation};
 #[cfg(feature = "voucher-scan")]
 use crate::tally::connection::{LedgerOpeningCoverageRead, OutstandingsSegmentObservation};
@@ -83,6 +85,20 @@ pub struct AgentRead {
     pub body: String,
     pub encoded_bytes: usize,
     pub encoded_sha256: String,
+}
+
+/// The opt-in exact-join diagnostic representation for the MCP adapter.
+/// `records` are only established one-to-one master/balance joins; every
+/// source row outside that set is named by `unresolved`.  This is never a
+/// complete workbook source.
+#[derive(Debug, Clone)]
+pub(crate) struct AgentPartyLedgerMasterDiagnostics {
+    pub(crate) records: Vec<bridge_tally_protocol::PartyLedgerMasterRecord>,
+    pub(crate) groups: Vec<bridge_tally_protocol::TallyNamedMaster>,
+    pub(crate) unresolved: Vec<PartyLedgerMasterJoinUnresolved>,
+    pub(crate) master_observation_count: usize,
+    pub(crate) balance_observation_count: usize,
+    pub(crate) evidence: RuntimeReadEvidence,
 }
 
 async fn fetch_admitted_agent_read(
@@ -1989,6 +2005,53 @@ impl TallyRuntime {
         .await
     }
 
+    async fn fetch_party_ledger_master_diagnostic_with_evidence(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+        currency_assertion: PartyLedgerMasterCurrencyAssertion,
+    ) -> anyhow::Result<(PartyLedgerMasterJoinDiagnostic, RuntimeReadEvidence)> {
+        let _lease = self.begin_ordinary_read(&config)?;
+        let identity = identity.clone();
+        self.execute(
+            config,
+            ReadOperation::MasterExport,
+            ReadRetryPolicy::SINGLE_ATTEMPT,
+            move |client| {
+                let identity = identity.clone();
+                let currency_assertion = currency_assertion.clone();
+                async move {
+                    let mut evidence = RuntimeReadEvidence::empty();
+                    let result = async {
+                        let (boundary_profile, opening_evidence) =
+                            observe_read_boundary(&client).await?;
+                        evidence = opening_evidence;
+                        bracket_verified_company_identity(&client, &identity).await?;
+                        let diagnostic = client
+                            .fetch_party_ledger_master_diagnostic(
+                                &identity,
+                                boundary_profile,
+                                currency_assertion,
+                            )
+                            .await?;
+                        evidence = Self::party_ledger_master_diagnostic_evidence(
+                            &diagnostic,
+                            evidence.clone(),
+                        );
+                        bracket_verified_company_identity(&client, &identity).await?;
+                        let closing_evidence =
+                            confirm_read_boundary(&client, boundary_profile).await?;
+                        evidence = evidence.clone().combine(closing_evidence);
+                        Ok((diagnostic, evidence.clone()))
+                    }
+                    .await;
+                    result.map_err(|error| with_read_evidence(error, evidence))
+                }
+            },
+        )
+        .await
+    }
+
     /// Returns the existing paired, identity-bracketed party ledger source in
     /// a library-safe record form together with its retained response
     /// commitments. Currency admission remains inside the runtime so callers
@@ -2039,6 +2102,51 @@ impl TallyRuntime {
         Ok((records, groups, evidence))
     }
 
+    /// Reads the same currency-admitted, company-bracketed triple as the
+    /// strict agent method, but retains source-scoped exact-join observations
+    /// for the opt-in diagnostic MCP mode.  It does not construct a
+    /// `PartyLedgerMasterSource` and is therefore ineligible for workbook or
+    /// Schedule III use.
+    pub(crate) async fn fetch_agent_party_ledger_master_diagnostics_with_evidence(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+    ) -> anyhow::Result<AgentPartyLedgerMasterDiagnostics> {
+        let currency_read = self
+            .detect_base_currency_with_extent(config.clone(), identity)
+            .await?;
+        let currency_evidence = currency_read.evidence.clone();
+        let assertion = currency_read
+            .admit_inr()
+            .map_err(|code| with_read_evidence(anyhow::anyhow!(code), currency_evidence.clone()))?;
+        let (diagnostic, source_evidence) = self
+            .fetch_party_ledger_master_diagnostic_with_evidence(config, identity, assertion)
+            .await
+            .map_err(|error| with_read_evidence(error, currency_evidence.clone()))?;
+        let evidence = currency_evidence.combine(source_evidence);
+        let records = diagnostic
+            .rows
+            .into_iter()
+            .map(|row| bridge_tally_protocol::PartyLedgerMasterRecord {
+                ledger: TallyLedger {
+                    name: row.name,
+                    parent: row.parent,
+                    party_gstin: row.party_gstin,
+                    opening_balance: Some(row.opening_balance.as_str().to_string()),
+                },
+                fields: row.fields,
+            })
+            .collect();
+        Ok(AgentPartyLedgerMasterDiagnostics {
+            records,
+            groups: diagnostic.groups,
+            unresolved: diagnostic.unresolved,
+            master_observation_count: diagnostic.master_observation_count,
+            balance_observation_count: diagnostic.balance_observation_count,
+            evidence,
+        })
+    }
+
     /// Retain the three actual request body commitments alongside their paired
     /// source responses, and include the currency observation that admitted them.
     fn party_ledger_master_source_evidence(
@@ -2060,6 +2168,29 @@ impl TallyRuntime {
                 .master_response_bytes
                 .saturating_add(source.balance_response_bytes)
                 .saturating_add(source.group_response_bytes)
+                .saturating_mul(2),
+        })
+    }
+
+    fn party_ledger_master_diagnostic_evidence(
+        diagnostic: &PartyLedgerMasterJoinDiagnostic,
+        currency_evidence: RuntimeReadEvidence,
+    ) -> RuntimeReadEvidence {
+        currency_evidence.combine(RuntimeReadEvidence {
+            request_sha256: diagnostic.request_sha256.clone(),
+            response_sha256: sha256_hex(
+                format!(
+                    "{}:{}:{}",
+                    diagnostic.master_response_sha256,
+                    diagnostic.balance_response_sha256,
+                    diagnostic.group_response_sha256,
+                )
+                .as_bytes(),
+            ),
+            bytes: diagnostic
+                .master_response_bytes
+                .saturating_add(diagnostic.balance_response_bytes)
+                .saturating_add(diagnostic.group_response_bytes)
                 .saturating_mul(2),
         })
     }

@@ -1,7 +1,7 @@
 use anyhow::Context as _;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{
     atomic::{AtomicU64, AtomicU8, Ordering},
     Arc,
@@ -16,7 +16,11 @@ use super::{
     xml_parser::{self, TallyCompany},
     VerifiedCompanyIdentity,
 };
-use crate::reports::party_ledger_master::{PartyLedgerMasterRow, PartyLedgerMasterSource};
+use crate::reports::party_ledger_master::{
+    PartyLedgerMasterJoinDiagnostic, PartyLedgerMasterJoinUnresolved,
+    PartyLedgerMasterJoinUnresolvedReason, PartyLedgerMasterJoinUnresolvedSource,
+    PartyLedgerMasterRow, PartyLedgerMasterSource,
+};
 use crate::tally::runtime::{
     with_read_evidence, PartyLedgerMasterCurrencyAssertion, RuntimeReadEvidence,
 };
@@ -37,8 +41,8 @@ use bridge_tally_protocol::{
         parse_native_group_snapshot_with_evidence, parse_native_ledger_snapshot_for_company,
         render_native_group_snapshot_request, render_native_ledger_export_request,
         render_native_ledger_snapshot_request, render_native_voucher_export_request,
-        render_party_ledger_master_request, NativeLedgerExportPeriod, NativeLedgerSnapshotPeriod,
-        NativeOutstandingsError,
+        render_party_ledger_master_request, LedgerSnapshotEntry, NativeLedgerExportPeriod,
+        NativeLedgerSnapshotPeriod, NativeOutstandingsError,
     },
     outstandings_shared::{
         parse_company_book_extent_v2, require_master_witness, CompanyBookExtent,
@@ -51,6 +55,7 @@ use bridge_tally_protocol::{
     parse_selected_voucher_source_records_with_evidence, parse_standard_ledger_catalog,
     parse_standard_ledger_identity_observation, verify_selected_voucher_window_context,
     xml_read_profiles::{ReadOnlyProfile, ValidatedCompanyName},
+    ParsedSourceRecord, PartyLedgerMasterFieldObservation, PartyLedgerMasterRecord,
     TallyTextEncoding, BRIDGE_LEDGER_EXPORT_SCHEMA, BRIDGE_SELECTED_VOUCHER_EXPORT_SCHEMA,
 };
 use bridge_tally_transport::{
@@ -101,6 +106,292 @@ fn party_ledger_master_openings_agree(
     Ok(master_opening.numeric_eq(balance_opening))
 }
 
+fn balance_parent_observation(parent: Option<String>) -> PartyLedgerMasterFieldObservation {
+    parent
+        .map(PartyLedgerMasterFieldObservation::Returned)
+        .unwrap_or(PartyLedgerMasterFieldObservation::NotObserved)
+}
+
+fn unresolved_master(
+    source: &ParsedSourceRecord<PartyLedgerMasterRecord>,
+    source_ordinal: usize,
+    reason: PartyLedgerMasterJoinUnresolvedReason,
+) -> PartyLedgerMasterJoinUnresolved {
+    PartyLedgerMasterJoinUnresolved {
+        source: PartyLedgerMasterJoinUnresolvedSource::Master,
+        source_ordinal,
+        name: source.record.ledger.name.clone(),
+        parent: source.record.ledger.parent.clone(),
+        reason,
+    }
+}
+
+fn unresolved_balance(
+    balance: &LedgerSnapshotEntry,
+    source_ordinal: usize,
+    reason: PartyLedgerMasterJoinUnresolvedReason,
+) -> PartyLedgerMasterJoinUnresolved {
+    PartyLedgerMasterJoinUnresolved {
+        source: PartyLedgerMasterJoinUnresolvedSource::Balance,
+        source_ordinal,
+        name: balance.name.clone(),
+        parent: balance_parent_observation(balance.parent.clone()),
+        reason,
+    }
+}
+
+fn master_only_bucket_reason(
+    masters: &[(
+        usize,
+        ParsedSourceRecord<PartyLedgerMasterRecord>,
+        String,
+        String,
+        String,
+    )],
+) -> PartyLedgerMasterJoinUnresolvedReason {
+    if masters.len() > 1 {
+        PartyLedgerMasterJoinUnresolvedReason::DuplicateMasterDisplayKey
+    } else {
+        PartyLedgerMasterJoinUnresolvedReason::MasterMissingBalance
+    }
+}
+
+fn balance_only_bucket_reason(
+    balances: &[(usize, LedgerSnapshotEntry)],
+) -> PartyLedgerMasterJoinUnresolvedReason {
+    if balances.len() > 1 {
+        PartyLedgerMasterJoinUnresolvedReason::DuplicateBalanceDisplayKey
+    } else {
+        PartyLedgerMasterJoinUnresolvedReason::BalanceWithoutMaster
+    }
+}
+
+/// Joins only exact one-to-one `(NAME, PARENT)` buckets.  Every master has
+/// already passed its identity/opening admission before this function decides
+/// whether that row has a balance partner, so a missing partner cannot hide a
+/// malformed master.  Duplicate buckets are quarantined wholesale: choosing a
+/// first matching record would manufacture a pairing Tally did not establish.
+fn join_party_ledger_master_observations(
+    masters: Vec<ParsedSourceRecord<PartyLedgerMasterRecord>>,
+    balances: Vec<LedgerSnapshotEntry>,
+) -> anyhow::Result<(
+    Vec<PartyLedgerMasterRow>,
+    Vec<PartyLedgerMasterJoinUnresolved>,
+)> {
+    let mut masters_by_key = BTreeMap::new();
+    for (source_ordinal, source) in masters.into_iter().enumerate() {
+        let guid = source.identities.guid.clone().ok_or_else(|| {
+            anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterGuid)
+        })?;
+        let master_id =
+            source.identities.master_id.clone().ok_or_else(|| {
+                anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterId)
+            })?;
+        let alter_id = source.alter_id.clone().ok_or_else(|| {
+            anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterAlterId)
+        })?;
+        let master_opening = source
+            .record
+            .ledger
+            .opening_balance
+            .as_deref()
+            .ok_or_else(|| {
+                anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterOpeningBalance)
+            })?;
+        // Validate every required master field before the join.  The parsed
+        // value is intentionally not used as a join substitute; the balance
+        // comparison below still checks the exact observed master opening.
+        bridge_tally_core::ExactDecimal::parse(master_opening.to_owned())?;
+        let key = ledger_display_key(
+            &source.record.ledger.name,
+            source.record.ledger.parent.nonempty_returned_text(),
+        );
+        masters_by_key.entry(key).or_insert_with(Vec::new).push((
+            source_ordinal,
+            source,
+            guid,
+            master_id,
+            alter_id,
+        ));
+    }
+
+    let mut balances_by_key = BTreeMap::new();
+    for (source_ordinal, balance) in balances.into_iter().enumerate() {
+        let key = ledger_display_key(&balance.name, balance.parent.as_deref());
+        balances_by_key
+            .entry(key)
+            .or_insert_with(Vec::new)
+            .push((source_ordinal, balance));
+    }
+
+    let mut rows = Vec::new();
+    let mut unresolved = Vec::new();
+    let mut master_entries = masters_by_key.into_iter().peekable();
+    let mut balance_entries = balances_by_key.into_iter().peekable();
+    while master_entries.peek().is_some() || balance_entries.peek().is_some() {
+        let master_key = master_entries.peek().map(|(key, _)| key.as_str());
+        let balance_key = balance_entries.peek().map(|(key, _)| key.as_str());
+        match (master_key, balance_key) {
+            (Some(master_key), Some(balance_key)) if master_key == balance_key => {
+                let (_, masters) = master_entries.next().expect("observed master bucket");
+                let (_, balances) = balance_entries.next().expect("observed balance bucket");
+                if masters.len() == 1 && balances.len() == 1 {
+                    let (_, source, guid, master_id, alter_id) =
+                        masters.into_iter().next().expect("one master");
+                    let (_, balance) = balances.into_iter().next().expect("one balance");
+                    let master_opening = source
+                        .record
+                        .ledger
+                        .opening_balance
+                        .as_deref()
+                        .expect("admitted before bucket join");
+                    if !party_ledger_master_openings_agree(
+                        master_opening,
+                        &balance.opening_balance,
+                    )? {
+                        return Err(anyhow::Error::new(
+                            PartyLedgerMasterSourceValidationError::OpeningBalancesDisagreed,
+                        ));
+                    }
+                    rows.push(PartyLedgerMasterRow {
+                        name: source.record.ledger.name,
+                        parent: source.record.ledger.parent,
+                        party_gstin: source.record.ledger.party_gstin,
+                        fields: source.record.fields,
+                        guid,
+                        master_id,
+                        alter_id,
+                        opening_balance: balance.opening_balance,
+                        closing_balance: balance.closing_balance,
+                    });
+                } else {
+                    let master_reason = if masters.len() > 1 {
+                        PartyLedgerMasterJoinUnresolvedReason::DuplicateMasterDisplayKey
+                    } else {
+                        PartyLedgerMasterJoinUnresolvedReason::DuplicateBalanceDisplayKey
+                    };
+                    let balance_reason = if balances.len() > 1 {
+                        PartyLedgerMasterJoinUnresolvedReason::DuplicateBalanceDisplayKey
+                    } else {
+                        PartyLedgerMasterJoinUnresolvedReason::DuplicateMasterDisplayKey
+                    };
+                    unresolved.extend(masters.iter().map(|(ordinal, source, ..)| {
+                        unresolved_master(source, *ordinal, master_reason)
+                    }));
+                    unresolved.extend(balances.iter().map(|(ordinal, balance)| {
+                        unresolved_balance(balance, *ordinal, balance_reason)
+                    }));
+                }
+            }
+            (Some(master_key), Some(balance_key)) if master_key < balance_key => {
+                let (_, masters) = master_entries.next().expect("observed master bucket");
+                let reason = master_only_bucket_reason(&masters);
+                unresolved.extend(
+                    masters
+                        .iter()
+                        .map(|(ordinal, source, ..)| unresolved_master(source, *ordinal, reason)),
+                );
+            }
+            (Some(_), Some(_)) => {
+                let (_, balances) = balance_entries.next().expect("observed balance bucket");
+                let reason = balance_only_bucket_reason(&balances);
+                unresolved.extend(
+                    balances
+                        .iter()
+                        .map(|(ordinal, balance)| unresolved_balance(balance, *ordinal, reason)),
+                );
+            }
+            (Some(_), None) => {
+                let (_, masters) = master_entries.next().expect("observed master bucket");
+                let reason = master_only_bucket_reason(&masters);
+                unresolved.extend(
+                    masters
+                        .iter()
+                        .map(|(ordinal, source, ..)| unresolved_master(source, *ordinal, reason)),
+                );
+            }
+            (None, Some(_)) => {
+                let (_, balances) = balance_entries.next().expect("observed balance bucket");
+                let reason = balance_only_bucket_reason(&balances);
+                unresolved.extend(
+                    balances
+                        .iter()
+                        .map(|(ordinal, balance)| unresolved_balance(balance, *ordinal, reason)),
+                );
+            }
+            (None, None) => break,
+        }
+    }
+    rows.sort_by(|left, right| left.name.cmp(&right.name).then(left.guid.cmp(&right.guid)));
+    unresolved.sort_by(|left, right| {
+        left.source_ordinal
+            .cmp(&right.source_ordinal)
+            .then_with(|| match (left.source, right.source) {
+                (
+                    PartyLedgerMasterJoinUnresolvedSource::Master,
+                    PartyLedgerMasterJoinUnresolvedSource::Balance,
+                ) => std::cmp::Ordering::Less,
+                (
+                    PartyLedgerMasterJoinUnresolvedSource::Balance,
+                    PartyLedgerMasterJoinUnresolvedSource::Master,
+                ) => std::cmp::Ordering::Greater,
+                _ => std::cmp::Ordering::Equal,
+            })
+    });
+    Ok((rows, unresolved))
+}
+
+fn party_ledger_master_diagnostic_evidence(
+    diagnostic: &PartyLedgerMasterJoinDiagnostic,
+) -> RuntimeReadEvidence {
+    RuntimeReadEvidence {
+        request_sha256: diagnostic.request_sha256.clone(),
+        response_sha256: sha256_hex(
+            format!(
+                "{}:{}:{}",
+                diagnostic.master_response_sha256,
+                diagnostic.balance_response_sha256,
+                diagnostic.group_response_sha256,
+            )
+            .as_bytes(),
+        ),
+        bytes: diagnostic
+            .master_response_bytes
+            .saturating_add(diagnostic.balance_response_bytes)
+            .saturating_add(diagnostic.group_response_bytes)
+            .saturating_mul(2),
+    }
+}
+
+fn strict_party_ledger_master_source(
+    diagnostic: PartyLedgerMasterJoinDiagnostic,
+) -> anyhow::Result<PartyLedgerMasterSource> {
+    diagnostic.into_complete_source().map_err(|diagnostic| {
+        let refusal = diagnostic
+            .unresolved
+            .first()
+            .map(|unresolved| match unresolved.reason {
+                PartyLedgerMasterJoinUnresolvedReason::MasterMissingBalance => {
+                    PartyLedgerMasterSourceValidationError::BalanceMissingMasterLedger
+                }
+                PartyLedgerMasterJoinUnresolvedReason::BalanceWithoutMaster => {
+                    PartyLedgerMasterSourceValidationError::BalanceLedgerAbsentFromMasterEvidence
+                }
+                PartyLedgerMasterJoinUnresolvedReason::DuplicateMasterDisplayKey => {
+                    PartyLedgerMasterSourceValidationError::DuplicateMasterDisplayKey
+                }
+                PartyLedgerMasterJoinUnresolvedReason::DuplicateBalanceDisplayKey => {
+                    PartyLedgerMasterSourceValidationError::DuplicateBalanceDisplayKey
+                }
+            })
+            .expect("non-complete diagnostic has an unresolved observation");
+        crate::tally::runtime::with_read_evidence(
+            anyhow::Error::new(refusal),
+            party_ledger_master_diagnostic_evidence(&diagnostic),
+        )
+    })
+}
+
 /// The paired sources answered successfully but cannot be reconciled into one
 /// safe workbook source. This is distinct from endpoint or XML failure.
 #[derive(Debug, thiserror::Error)]
@@ -119,6 +410,8 @@ pub(crate) enum PartyLedgerMasterSourceValidationError {
     MasterOpeningBalance,
     #[error("Tally ledger master repeated a stable source identity")]
     DuplicateMasterIdentity,
+    #[error("Tally ledger master repeated a ledger display key")]
+    DuplicateMasterDisplayKey,
     #[error("Tally balance snapshot omitted a ledger master")]
     BalanceMissingMasterLedger,
     #[error("Tally ledger opening balances disagreed across the paired sources")]
@@ -1123,6 +1416,21 @@ impl TallyClient {
         boundary_profile: DateBoundaryProfile,
         currency_assertion: PartyLedgerMasterCurrencyAssertion,
     ) -> anyhow::Result<PartyLedgerMasterSource> {
+        let diagnostic = self
+            .fetch_party_ledger_master_diagnostic(identity, boundary_profile, currency_assertion)
+            .await?;
+        strict_party_ledger_master_source(diagnostic)
+    }
+
+    /// Reads the same paired, company-bracketed triple as the strict source,
+    /// retaining exact one-to-one joins and source-scoped unresolved rows for
+    /// the opt-in diagnostic consumer.  It is never a workbook source.
+    pub(crate) async fn fetch_party_ledger_master_diagnostic(
+        &self,
+        identity: &VerifiedCompanyIdentity,
+        boundary_profile: DateBoundaryProfile,
+        currency_assertion: PartyLedgerMasterCurrencyAssertion,
+    ) -> anyhow::Result<PartyLedgerMasterJoinDiagnostic> {
         let mut evidence = RuntimeReadEvidence::empty();
         let result = async {
             let opening_extent = self.fetch_company_book_extent(identity).await?;
@@ -1206,70 +1514,11 @@ impl TallyClient {
                 ));
             }
 
-            let mut balances_by_key = HashMap::new();
-            for balance in balances {
-                let key = ledger_display_key(&balance.name, balance.parent.as_deref());
-                if balances_by_key.insert(key, balance).is_some() {
-                    return Err(anyhow::Error::new(
-                        PartyLedgerMasterSourceValidationError::DuplicateBalanceDisplayKey,
-                    ));
-                }
-            }
-            let mut rows = Vec::with_capacity(master.records.len());
-            for source in master.records {
-                let key = ledger_display_key(
-                    &source.record.ledger.name,
-                    source.record.ledger.parent.nonempty_returned_text(),
-                );
-                let balance = balances_by_key.remove(&key).ok_or_else(|| {
-                    anyhow::Error::new(
-                        PartyLedgerMasterSourceValidationError::BalanceMissingMasterLedger,
-                    )
-                })?;
-                let guid = source.identities.guid.ok_or_else(|| {
-                    anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterGuid)
-                })?;
-                let master_id = source.identities.master_id.ok_or_else(|| {
-                    anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterId)
-                })?;
-                let alter_id = source.alter_id.ok_or_else(|| {
-                    anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterAlterId)
-                })?;
-                let master_opening =
-                    source
-                        .record
-                        .ledger
-                        .opening_balance
-                        .as_deref()
-                        .ok_or_else(|| {
-                            anyhow::Error::new(
-                                PartyLedgerMasterSourceValidationError::MasterOpeningBalance,
-                            )
-                        })?;
-                if !party_ledger_master_openings_agree(master_opening, &balance.opening_balance)? {
-                    return Err(anyhow::Error::new(
-                        PartyLedgerMasterSourceValidationError::OpeningBalancesDisagreed,
-                    ));
-                }
-                rows.push(PartyLedgerMasterRow {
-                    name: source.record.ledger.name,
-                    parent: source.record.ledger.parent,
-                    party_gstin: source.record.ledger.party_gstin,
-                    fields: source.record.fields,
-                    guid,
-                    master_id,
-                    alter_id,
-                    opening_balance: balance.opening_balance,
-                    closing_balance: balance.closing_balance,
-                });
-            }
-            if !balances_by_key.is_empty() {
-                return Err(anyhow::Error::new(
-                    PartyLedgerMasterSourceValidationError::BalanceLedgerAbsentFromMasterEvidence,
-                ));
-            }
-            rows.sort_by(|left, right| left.name.cmp(&right.name).then(left.guid.cmp(&right.guid)));
-            Ok(PartyLedgerMasterSource {
+            let master_observation_count = master.records.len();
+            let balance_observation_count = balances.len();
+            let (rows, unresolved) =
+                join_party_ledger_master_observations(master.records, balances)?;
+            Ok(PartyLedgerMasterJoinDiagnostic {
                 company: identity.display_name().to_string(),
                 company_guid: identity.company_guid().to_string(),
                 currency_assertion: currency.assertion,
@@ -1288,6 +1537,9 @@ impl TallyClient {
                 balance_response_bytes,
                 group_response_bytes,
                 groups,
+                unresolved,
+                master_observation_count,
+                balance_observation_count,
             })
         }
         .await;

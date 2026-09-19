@@ -615,6 +615,15 @@ mod through_the_tool {
     }
 
     async fn call(plans: Vec<ScenarioPlan>, args: Value) -> (Value, usize) {
+        call_with_settings(plans, args, Redaction::None, 200_000).await
+    }
+
+    async fn call_with_settings(
+        plans: Vec<ScenarioPlan>,
+        args: Value,
+        redaction: Redaction,
+        max_bytes: usize,
+    ) -> (Value, usize) {
         let simulator = SequenceSimulator::spawn(plans).unwrap();
         let directory = tempfile::tempdir().unwrap();
         let server = Server::new(Settings {
@@ -624,14 +633,245 @@ mod through_the_tool {
             },
             data_dir: directory.path().into(),
             max_rows: 500,
-            max_bytes: 200_000,
-            redaction: Redaction::None,
+            max_bytes,
+            redaction,
             import_enabled: false,
             writes_enabled: false,
         });
         let response = server.call_tool("ledger_masters", args).await;
-        let requests = simulator.finish().unwrap().len();
+        // A refusal may legitimately stop before the remaining replay plans.
+        // Cancel those plans so the assertion reports the actual tool refusal.
+        let refused = response["isError"] == true;
+        if refused {
+            simulator.cancel();
+        }
+        let observed = simulator
+            .finish()
+            .expect("replay transport must complete without failure");
+        let requests = observed.iter().filter(|request| !request.cancelled).count();
         (response, requests)
+    }
+
+    #[tokio::test]
+    async fn diagnostic_mode_accounts_for_every_captured_pair() {
+        let plans = compliance_plans(masters(), balances());
+        let expected_requests = plans.len();
+        let (response, requests) = call(
+            plans,
+            json!({"company_guid":GUID,"fields":"compliance_diagnostics"}),
+        )
+        .await;
+        let rows = items(&response);
+        assert_eq!(requests, expected_requests);
+        assert_eq!(rows.len(), 9);
+        assert!(rows.iter().all(|row| row["join_state"] == "matched"));
+        let content = &response["structuredContent"];
+        assert_eq!(content["result"]["state"], "complete");
+        assert_eq!(content["evidence"]["state"], "complete");
+        assert_eq!(
+            content["result"]["coverage"],
+            json!({"master_observations":9,"balance_observations":9,"matched_pairs":9,
+                "unresolved_master_observations":0,"unresolved_balance_observations":0}),
+        );
+    }
+
+    // Negative-only fault injection into a captured response. This is not
+    // evidence that a real Tally instance emits the injected mismatch.
+    fn unmatched_balance() -> String {
+        let original = balances();
+        let needle = "NAME=\"Bridge Nested Debtor WR4\"";
+        assert_eq!(original.matches(needle).count(), 1);
+        original.replace(needle, "NAME=\"Bridge Unmatched Diagnostic WR4\"")
+    }
+
+    #[tokio::test]
+    async fn diagnostic_partial_state_is_global_even_on_matched_or_empty_pages() {
+        let mut commitments = None;
+        for (offset, limit, count) in [(0, 1, 1), (8, 10, 2), (10, 1, 0), (50, 1, 0)] {
+            let plans = compliance_plans(masters(), unmatched_balance());
+            let expected_requests = plans.len();
+            let (response, requests) = call(
+                plans,
+                json!({
+                    "company_guid":GUID,"fields":"compliance_diagnostics",
+                    "offset":offset,"limit":limit,
+                }),
+            )
+            .await;
+            let rows = items(&response);
+            assert_eq!(requests, expected_requests);
+            assert_eq!(rows.len(), count);
+            let content = &response["structuredContent"];
+            let result = &content["result"];
+            let current = (
+                content["evidence"]["request_sha256"].clone(),
+                content["evidence"]["response_sha256"].clone(),
+            );
+            if let Some(prior) = &commitments {
+                assert_eq!(
+                    &current, prior,
+                    "unchanged source pages retain the same commitments"
+                );
+            }
+            commitments = Some(current);
+            assert_eq!(result["state"], "partial");
+            assert_eq!(result["partial_reason"], "exact_join_unresolved");
+            assert_eq!(content["evidence"]["state"], "partial");
+            assert_eq!(content["evidence"]["reason_code"], "exact_join_unresolved");
+            assert_eq!(result["total"], 10);
+            assert_eq!(result["total_basis"], "diagnostic_observations");
+            assert_eq!(
+                result["coverage"],
+                json!({
+                    "master_observations":9,"balance_observations":9,"matched_pairs":8,
+                    "unresolved_master_observations":1,"unresolved_balance_observations":1,
+                })
+            );
+            assert!(content["evidence"]["bytes"].as_u64().unwrap() > 0);
+            assert!(!content["evidence"]["response_sha256"]
+                .as_str()
+                .unwrap()
+                .is_empty());
+            if offset == 0 {
+                assert_eq!(rows[0]["join_state"], "matched");
+                assert_eq!(result["next_offset"], 1);
+                assert_eq!(content["truncated"], true);
+            } else {
+                assert_eq!(content["truncated"], false);
+                assert!(result["next_offset"].is_null());
+            }
+            for row in rows.iter().filter(|row| row["join_state"] == "unresolved") {
+                assert!(row["source_ordinal"].is_u64());
+                assert!(row["parent"].is_string());
+                for forbidden in [
+                    "opening_balance",
+                    "closing_balance",
+                    "party_gstin",
+                    "compliance",
+                    "guid",
+                ] {
+                    assert!(row.get(forbidden).is_none(), "{row}");
+                }
+            }
+            if offset == 8 {
+                assert_eq!(
+                    row(rows, "Bridge Nested Debtor WR4")["reason"],
+                    "master_missing_balance"
+                );
+                assert_eq!(
+                    row(rows, "Bridge Unmatched Diagnostic WR4")["reason"],
+                    "balance_without_master"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn diagnostic_mode_rejects_every_group_filter_before_ledger_reads() {
+        for extra in [
+            json!({"group":"Sundry Debtors"}),
+            json!({"group_scope":"immediate"}),
+            json!({"group_scope":"ancestry"}),
+        ] {
+            let mut args = json!({"company_guid":GUID,"fields":"compliance_diagnostics"});
+            args.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            let (response, requests) = call(identity_plans(), args).await;
+            assert_eq!(response["isError"], true);
+            assert_eq!(requests, 4);
+            assert_eq!(
+                response["structuredContent"]["result"]["error"]["code"],
+                "compliance_diagnostics_does_not_support_group_filter"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn diagnostic_mode_masks_unresolved_names_and_parents() {
+        let (response, _) = call_with_settings(
+            compliance_plans(masters(), unmatched_balance()),
+            json!({"company_guid":GUID,"fields":"compliance_diagnostics","offset":8}),
+            Redaction::MaskParties,
+            200_000,
+        )
+        .await;
+        let rows = items(&response);
+        assert_eq!(rows.len(), 2);
+        let encoded = serde_json::to_string(&response).unwrap();
+        for raw in [
+            "Bridge Nested Debtor WR4",
+            "Bridge Unmatched Diagnostic WR4",
+            "Bridge Nested Debtors WR4",
+        ] {
+            assert!(!encoded.contains(raw), "raw party name leaked: {raw}");
+        }
+        assert!(rows.iter().all(|row| row["parent"].is_string()));
+        assert_eq!(
+            response["structuredContent"]["result"]["coverage"]["unresolved_master_observations"],
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn diagnostic_byte_cap_keeps_global_coverage_and_resumable_offset() {
+        let args = json!({"company_guid":GUID,"fields":"compliance_diagnostics"});
+        let (full, _) = call(
+            compliance_plans(masters(), unmatched_balance()),
+            args.clone(),
+        )
+        .await;
+        assert_eq!(items(&full).len(), 10);
+        let (unchanged, _) = call(compliance_plans(masters(), balances()), args.clone()).await;
+        assert_ne!(
+            full["structuredContent"]["evidence"]["response_sha256"],
+            unchanged["structuredContent"]["evidence"]["response_sha256"],
+            "a changed source response must change its evidence commitment"
+        );
+
+        let cap = serde_json::to_vec(&full).unwrap().len() / 2;
+        let (bounded, _) = call_with_settings(
+            compliance_plans(masters(), unmatched_balance()),
+            args,
+            Redaction::None,
+            cap,
+        )
+        .await;
+        let rows = items(&bounded);
+        assert!(!rows.is_empty());
+        assert!(rows.len() < 10);
+        assert!(serde_json::to_vec(&bounded).unwrap().len() <= cap);
+        let content = &bounded["structuredContent"];
+        assert_eq!(content["truncated"], true);
+        assert_eq!(content["result"]["next_offset"], rows.len());
+        assert_eq!(content["result"]["state"], "partial");
+        assert_eq!(content["evidence"]["state"], "partial");
+        assert_eq!(
+            content["result"]["coverage"],
+            full["structuredContent"]["result"]["coverage"]
+        );
+    }
+
+    #[tokio::test]
+    async fn compliance_remains_strict_when_diagnostic_mode_can_explain_a_mismatch() {
+        let plans = compliance_plans(masters(), unmatched_balance());
+        // Strict conversion refuses before the final company/status/company bracket.
+        let expected_requests = plans.len() - 3;
+        let (response, requests) =
+            call(plans, json!({"company_guid":GUID,"fields":"compliance"})).await;
+        assert_eq!(requests, expected_requests);
+        assert_eq!(response["isError"], true);
+        assert_eq!(
+            response["structuredContent"]["result"]["error"]["code"],
+            "party_ledger_master_read_failed"
+        );
+        assert!(response["structuredContent"]["result"]
+            .get("items")
+            .is_none());
+        assert_eq!(
+            response["structuredContent"]["evidence"]["state"],
+            "partial"
+        );
     }
 
     fn items(response: &Value) -> &Vec<Value> {

@@ -1834,3 +1834,326 @@ async fn capability_probe_marks_presentation_equivalent_guid_siblings_ambiguous(
     assert_company_collection_request_shape(&post_xml.text);
     assert!(post_xml.text.contains("<ID>BridgeCompanyExtent</ID>"));
 }
+
+fn captured_agent_party_xml(bytes: &[u8]) -> String {
+    String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .expect("captured UTF-16LE party fixture decodes")
+}
+
+fn captured_party_join_inputs() -> (
+    Vec<bridge_tally_protocol::ParsedSourceRecord<bridge_tally_protocol::PartyLedgerMasterRecord>>,
+    Vec<bridge_tally_protocol::native_outstandings::LedgerSnapshotEntry>,
+) {
+    const GUID: &str = "61c6de69-1748-461c-ad3f-162cb949df9f";
+    let masters = super::parse_native_party_ledger_master_records_with_evidence(
+        &captured_agent_party_xml(include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-party-masters.utf16le.xml"
+        )),
+        GUID,
+    )
+    .expect("existing captured party-master fixture parses")
+    .records;
+    let balances = super::parse_native_ledger_snapshot_for_company(
+        &captured_agent_party_xml(include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-party-balances.utf16le.xml"
+        )),
+        GUID,
+    )
+    .expect("existing captured party-balance fixture parses");
+    (masters, balances)
+}
+
+#[test]
+fn captured_party_join_is_exact_and_complete_when_every_bucket_is_one_to_one() {
+    let (masters, balances) = captured_party_join_inputs();
+    let master_count = masters.len();
+    let balance_count = balances.len();
+    let (rows, unresolved) = super::join_party_ledger_master_observations(masters, balances)
+        .expect("captured master fields are admitted before their exact join");
+    assert!(
+        unresolved.is_empty(),
+        "captured source has only one-to-one keys"
+    );
+    assert_eq!(rows.len(), master_count);
+    assert_eq!(rows.len(), balance_count);
+}
+
+#[test]
+fn duplicate_master_bucket_quarantines_every_side_and_never_first_joins() {
+    let (mut masters, balances) = captured_party_join_inputs();
+    let mut duplicate = masters[0].clone();
+    duplicate.identities.guid = Some("diagnostic-distinct-guid".to_string());
+    duplicate.identities.master_id = Some("diagnostic-distinct-master-id".to_string());
+    duplicate.alter_id = Some("diagnostic-distinct-alter-id".to_string());
+    let key_name = duplicate.record.ledger.name.clone();
+    masters.push(duplicate);
+
+    let (rows, unresolved) =
+        super::join_party_ledger_master_observations(masters.clone(), balances.clone())
+            .expect("duplicate display key is diagnostic, not a malformed master");
+    assert!(
+        !rows.iter().any(|row| row.name == key_name),
+        "a 2:1 display-key bucket must not retain a guessed first master/balance pair"
+    );
+    assert_eq!(
+        unresolved
+            .iter()
+            .filter(|row| row.source == super::PartyLedgerMasterJoinUnresolvedSource::Master)
+            .count(),
+        2
+    );
+    assert_eq!(
+        unresolved
+            .iter()
+            .filter(|row| row.source == super::PartyLedgerMasterJoinUnresolvedSource::Balance)
+            .count(),
+        1
+    );
+    assert_eq!(
+        rows.len()
+            + unresolved
+                .iter()
+                .filter(|row| row.source == super::PartyLedgerMasterJoinUnresolvedSource::Master)
+                .count(),
+        masters.len(),
+        "every master is either joined once or retained unresolved"
+    );
+    assert_eq!(
+        rows.len()
+            + unresolved
+                .iter()
+                .filter(|row| row.source == super::PartyLedgerMasterJoinUnresolvedSource::Balance)
+                .count(),
+        balances.len(),
+        "every balance is either joined once or retained unresolved"
+    );
+    assert!(unresolved.iter().all(|row| {
+        row.reason == super::PartyLedgerMasterJoinUnresolvedReason::DuplicateMasterDisplayKey
+    }));
+
+    masters.reverse();
+    let mut reversed_balances = balances;
+    reversed_balances.reverse();
+    let (reordered_rows, reordered_unresolved) =
+        super::join_party_ledger_master_observations(masters, reversed_balances)
+            .expect("bucket order cannot select a different pair");
+    assert_eq!(
+        rows.iter().map(|row| &row.name).collect::<Vec<_>>(),
+        reordered_rows
+            .iter()
+            .map(|row| &row.name)
+            .collect::<Vec<_>>(),
+    );
+    assert_eq!(unresolved.len(), reordered_unresolved.len());
+    assert_eq!(
+        reordered_unresolved
+            .iter()
+            .filter(|row| row.source == super::PartyLedgerMasterJoinUnresolvedSource::Master)
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn duplicate_balance_bucket_quarantines_the_one_master_and_both_balances() {
+    let (masters, mut balances) = captured_party_join_inputs();
+    let duplicate = balances[0].clone();
+    let key_name = duplicate.name.clone();
+    balances.push(duplicate);
+
+    let (rows, unresolved) =
+        super::join_party_ledger_master_observations(masters.clone(), balances.clone())
+            .expect("duplicate balance display key is diagnostic, not a guessed pairing");
+    assert!(
+        !rows.iter().any(|row| row.name == key_name),
+        "a 1:2 display-key bucket must not retain its sole master against an arbitrary balance"
+    );
+    assert!(unresolved.iter().all(|row| {
+        row.reason == super::PartyLedgerMasterJoinUnresolvedReason::DuplicateBalanceDisplayKey
+    }));
+    assert_eq!(
+        unresolved
+            .iter()
+            .filter(|row| row.source == super::PartyLedgerMasterJoinUnresolvedSource::Master)
+            .count(),
+        1
+    );
+    assert_eq!(
+        unresolved
+            .iter()
+            .filter(|row| row.source == super::PartyLedgerMasterJoinUnresolvedSource::Balance)
+            .count(),
+        2
+    );
+    assert_eq!(
+        rows.len()
+            + unresolved
+                .iter()
+                .filter(|row| row.source == super::PartyLedgerMasterJoinUnresolvedSource::Master)
+                .count(),
+        masters.len()
+    );
+    assert_eq!(
+        rows.len()
+            + unresolved
+                .iter()
+                .filter(|row| row.source == super::PartyLedgerMasterJoinUnresolvedSource::Balance)
+                .count(),
+        balances.len()
+    );
+}
+
+#[test]
+fn unmatched_master_and_balance_are_both_preserved_as_typed_observations() {
+    let (masters, mut balances) = captured_party_join_inputs();
+    let removed = balances.remove(0);
+    let mut orphan = removed;
+    orphan.name = "diagnostic balance without master".to_string();
+    balances.push(orphan);
+
+    let (rows, unresolved) =
+        super::join_party_ledger_master_observations(masters.clone(), balances)
+            .expect("unmatched exact keys are diagnostic rather than a guessed join");
+    assert_eq!(rows.len() + 1, masters.len());
+    assert_eq!(
+        unresolved
+            .iter()
+            .filter(|row| row.reason
+                == super::PartyLedgerMasterJoinUnresolvedReason::MasterMissingBalance)
+            .count(),
+        1
+    );
+    assert_eq!(
+        unresolved
+            .iter()
+            .filter(|row| row.reason
+                == super::PartyLedgerMasterJoinUnresolvedReason::BalanceWithoutMaster)
+            .count(),
+        1
+    );
+    assert_eq!(
+        unresolved
+            .iter()
+            .filter(|row| row.source == super::PartyLedgerMasterJoinUnresolvedSource::Master)
+            .count()
+            + rows.len(),
+        masters.len(),
+        "every master is either joined once or retained unresolved"
+    );
+}
+
+#[test]
+fn missing_master_identity_remains_a_hard_failure_before_diagnostic_join() {
+    let (mut masters, mut balances) = captured_party_join_inputs();
+    let master_key = super::ledger_display_key(
+        &masters[0].record.ledger.name,
+        masters[0].record.ledger.parent.nonempty_returned_text(),
+    );
+    balances.retain(|balance| {
+        super::ledger_display_key(&balance.name, balance.parent.as_deref()) != master_key
+    });
+    masters[0].identities.guid = None;
+    let error = super::join_party_ledger_master_observations(masters, balances)
+        .expect_err("missing GUID cannot be downgraded into an unresolved join observation");
+    assert!(error.chain().any(|cause| matches!(
+        cause.downcast_ref::<super::PartyLedgerMasterSourceValidationError>(),
+        Some(super::PartyLedgerMasterSourceValidationError::MasterGuid)
+    )));
+}
+
+fn diagnostic_with_unresolved(
+    unresolved: Vec<super::PartyLedgerMasterJoinUnresolved>,
+) -> super::PartyLedgerMasterJoinDiagnostic {
+    super::PartyLedgerMasterJoinDiagnostic {
+        company: "Synthetic Books".to_string(),
+        company_guid: "synthetic-company-guid".to_string(),
+        currency_assertion: crate::tally::OutstandingsCurrencyAssertion::Inr,
+        currency_decimal_places: 2,
+        from: TallyDate::parse("20260401").unwrap(),
+        to: TallyDate::parse("20260919").unwrap(),
+        rows: vec![],
+        unresolved,
+        master_observation_count: 1,
+        balance_observation_count: 0,
+        request_sha256: "0".repeat(64),
+        master_response_sha256: "a".repeat(64),
+        balance_response_sha256: "b".repeat(64),
+        group_response_sha256: "c".repeat(64),
+        master_response_bytes: 1,
+        balance_response_bytes: 1,
+        group_response_bytes: 1,
+        groups: vec![],
+    }
+}
+
+#[test]
+fn strict_conversion_preserves_typed_missing_balance_refusal() {
+    let error = super::strict_party_ledger_master_source(diagnostic_with_unresolved(vec![
+        super::PartyLedgerMasterJoinUnresolved {
+            source: super::PartyLedgerMasterJoinUnresolvedSource::Master,
+            source_ordinal: 0,
+            name: "Observed master".to_string(),
+            parent: bridge_tally_protocol::PartyLedgerMasterFieldObservation::NotObserved,
+            reason: super::PartyLedgerMasterJoinUnresolvedReason::MasterMissingBalance,
+        },
+    ]))
+    .expect_err("unresolved diagnostics cannot convert into strict workbook source");
+    assert!(error.chain().any(|cause| matches!(
+        cause.downcast_ref::<super::PartyLedgerMasterSourceValidationError>(),
+        Some(super::PartyLedgerMasterSourceValidationError::BalanceMissingMasterLedger)
+    )));
+}
+
+#[test]
+fn duplicate_only_buckets_quarantine_every_observation_on_the_present_side() {
+    let (mut masters, mut balances) = captured_party_join_inputs();
+    let master_key = super::ledger_display_key(
+        &masters[0].record.ledger.name,
+        masters[0].record.ledger.parent.nonempty_returned_text(),
+    );
+    balances.retain(|balance| {
+        super::ledger_display_key(&balance.name, balance.parent.as_deref()) != master_key
+    });
+    let mut duplicate_master = masters[0].clone();
+    duplicate_master.identities.guid = Some("duplicate-only-master-guid".to_string());
+    duplicate_master.identities.master_id = Some("duplicate-only-master-id".to_string());
+    duplicate_master.alter_id = Some("duplicate-only-master-alter-id".to_string());
+    masters.push(duplicate_master);
+    let (_, unresolved_masters) = super::join_party_ledger_master_observations(masters, balances)
+        .expect("duplicate-only master bucket is diagnostic");
+    assert_eq!(
+        unresolved_masters
+            .iter()
+            .filter(|row| row.reason
+                == super::PartyLedgerMasterJoinUnresolvedReason::DuplicateMasterDisplayKey)
+            .count(),
+        2,
+        "both 2:0 master observations remain quarantined"
+    );
+
+    let (mut masters, mut balances) = captured_party_join_inputs();
+    let balance_key = super::ledger_display_key(&balances[0].name, balances[0].parent.as_deref());
+    masters.retain(|master| {
+        super::ledger_display_key(
+            &master.record.ledger.name,
+            master.record.ledger.parent.nonempty_returned_text(),
+        ) != balance_key
+    });
+    balances.push(balances[0].clone());
+    let (_, unresolved_balances) = super::join_party_ledger_master_observations(masters, balances)
+        .expect("duplicate-only balance bucket is diagnostic");
+    assert_eq!(
+        unresolved_balances
+            .iter()
+            .filter(|row| row.reason
+                == super::PartyLedgerMasterJoinUnresolvedReason::DuplicateBalanceDisplayKey)
+            .count(),
+        2,
+        "both 0:2 balance observations remain quarantined"
+    );
+}

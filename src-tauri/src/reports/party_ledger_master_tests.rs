@@ -76,6 +76,55 @@ fn source() -> PartyLedgerMasterSource {
     }
 }
 
+fn diagnostic_from_source(
+    source: PartyLedgerMasterSource,
+    unresolved: Vec<PartyLedgerMasterJoinUnresolved>,
+) -> PartyLedgerMasterJoinDiagnostic {
+    PartyLedgerMasterJoinDiagnostic {
+        company: source.company,
+        company_guid: source.company_guid,
+        currency_assertion: source.currency_assertion,
+        currency_decimal_places: source.currency_decimal_places,
+        from: source.from,
+        to: source.to,
+        master_observation_count: source.rows.len(),
+        balance_observation_count: source.rows.len(),
+        rows: source.rows,
+        unresolved,
+        request_sha256: source.request_sha256,
+        master_response_sha256: source.master_response_sha256,
+        balance_response_sha256: source.balance_response_sha256,
+        group_response_sha256: source.group_response_sha256,
+        master_response_bytes: source.master_response_bytes,
+        balance_response_bytes: source.balance_response_bytes,
+        group_response_bytes: source.group_response_bytes,
+        groups: source.groups,
+    }
+}
+
+#[test]
+fn only_zero_unresolved_diagnostic_converts_to_a_strict_source() {
+    let complete = diagnostic_from_source(source(), vec![])
+        .into_complete_source()
+        .expect("zero-unresolved diagnostic admits the existing strict source");
+    assert_eq!(complete.rows.len(), 1);
+
+    let partial = diagnostic_from_source(
+        source(),
+        vec![PartyLedgerMasterJoinUnresolved {
+            source: PartyLedgerMasterJoinUnresolvedSource::Master,
+            source_ordinal: 0,
+            name: "Customer".to_string(),
+            parent: PartyLedgerMasterFieldObservation::Returned("Sundry Debtors".to_string()),
+            reason: PartyLedgerMasterJoinUnresolvedReason::MasterMissingBalance,
+        }],
+    );
+    assert!(
+        partial.into_complete_source().is_err(),
+        "a diagnostic with any unresolved source observation cannot reach workbook consumers"
+    );
+}
+
 #[test]
 fn rejects_duplicate_source_identities_before_rendering() {
     let mut duplicate_guid = source();
