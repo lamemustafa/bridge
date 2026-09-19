@@ -518,6 +518,7 @@ pub fn load_book(read: &Read, company_name: &str) -> Result<Book> {
     let group_masters = load_group_masters(&gp_root);
     let lp = required(read, "ledgers")?;
     let ledgers = load_ledgers(&xml::read(&lp.content, &lp.id)?, &groups, &lp.id)?;
+    crate::ledger_ids::check_no_duplicate_ledger_guids(&ledgers)?;
     let tp = required(read, "trial_balance")?;
     let tb = load_tb(&xml::read(&tp.content, &tp.id)?, &tp.id)?;
     let vp = required(read, "voucher_types")?;

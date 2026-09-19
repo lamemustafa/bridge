@@ -43,6 +43,12 @@ tie; and a GST line beside the Office Computers addition (masterid 43) proving
 `gst_tcs_addition_lines_seen_count` is exercised on data. Every new ledger's TB is left to the
 script's own auto-derivation (no `TB_SKEW` entry), so DEP-1 ties cleanly on all of them.
 
+2026-09-19: every ledger master now carries its own GUID and MASTERID (`lguid`, masterid 501+,
+distinct numbering from the voucher masterids 1-49 above), the way a real Tally export always
+does -- needed once `cash_payments_40a3`/`depreciation` derive their row ids from
+`stable_ledger_tag` (Tally GUID, bridge#510) rather than a name hash; a ledger with no GUID
+refuses (`tae/ledger_ids.py`'s `MissingGuid`, mirrored by `ledger_ids::stable_ledger_tag` here).
+
 Deterministic: running it twice writes identical bytes (gzip mtime is fixed at 0).
 
     python3 parity/generate_fixture.py tests/fixtures
@@ -289,7 +295,9 @@ def ledgers_xml() -> str:
         f'    <LEDGER NAME="{esc(n)}" RESERVEDNAME="">\n'
         f'     <PARENT TYPE="String">{tally_text(p)}</PARENT>\n'
         f'     <OPENINGBALANCE TYPE="Amount">{amount_text(o)}</OPENINGBALANCE>\n'
-        f'    </LEDGER>\n' for n, (p, o) in LEDGERS.items())
+        f'     <GUID>{lguid(i)}</GUID>\n'
+        f'     <MASTERID TYPE="Number"> {i}</MASTERID>\n'
+        f'    </LEDGER>\n' for i, (n, (p, o)) in enumerate(LEDGERS.items(), start=501))
     return envelope(MASTER_ATTRS, body)
 
 
@@ -303,6 +311,17 @@ def voucher_types_xml() -> str:
 
 def vguid(masterid: int) -> str:
     return f"{GUID}-{masterid:08x}"
+
+
+def lguid(ledger_masterid: int) -> str:
+    """A ledger master's own Tally identity (bridge#510 / tae/ledger_ids.py): distinct numbering
+    from `vguid`'s voucher masterids (1-49) so a ledger and a voucher never share a GUID by
+    coincidence. Every ledger in this fixture carries one -- 2026-09-19, switching
+    cash_payments_40a3/depreciation's row ids to stable_ledger_tag (GUID-based) needs every
+    ledger this book's ledgers.xml describes to carry a GUID, exactly as a real Tally export
+    always does (tae/ledger_ids.py's own MissingGuid docstring: 0 missing across three real
+    client reads)."""
+    return f"{GUID}-ldg-{ledger_masterid:04d}"
 
 
 def voucher_xml(rows, with_flags: bool) -> str:
