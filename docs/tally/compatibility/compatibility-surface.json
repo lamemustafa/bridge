@@ -543,7 +543,7 @@
     },
     {
       "path": "src-tauri/src/db/encrypted.rs",
-      "sha256": "f3847d5d583a2a0542a2139f9e45b3354ecfd1c9542660ccb256ca807019c023"
+      "sha256": "33d77202e81a5bac90e0164208241ca024363e650cd9e4db7c52850225af7a7c"
     },
     {
       "path": "src-tauri/src/db/migrations/0002_tally_mirror.sql",
@@ -1074,5 +1074,5 @@
       "sha256": "0ab5bfbe6d81b1e10530744c338fb91efa57fe5a66fb4bc0cfd382495eaf02a4"
     }
   ],
-  "manifest_sha256": "7c69eaf352e51faf32d26fab395c660685ada104b2b1cdea890c1652e39221e0"
+  "manifest_sha256": "a106b161656ab14224af1b4d50464f74a2cb554d90b789e5fd5d581387fa6a7f"
 }

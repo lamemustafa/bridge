@@ -1,14 +1,37 @@
 use sha2::{Digest, Sha256};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use sqlx::{ConnectOptions, Executor, SqlitePool};
+use sqlx::{ConnectOptions, Executor, SqliteConnection, SqlitePool};
 use std::fs::{File, OpenOptions};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use tokio::sync::oneshot;
 use zeroize::Zeroizing;
 
 const MIRROR_KEY_BYTES: usize = 32;
 const KEYRING_SERVICE: &str = "com.complyeaze.bridge.tally-mirror";
 const KEYRING_ACCOUNT_PREFIX: &str = "database-key-v1";
+
+#[derive(Debug, thiserror::Error)]
+pub enum EncryptedOpenError {
+    #[error("The encrypted Tally mirror rejected the supplied key or its encrypted contents")]
+    UnreadableWithSuppliedKey {
+        #[source]
+        source: sqlx::Error,
+    },
+    #[error("The encrypted Tally mirror failed its integrity check")]
+    IntegrityFailed,
+    #[error("SQLCipher is unavailable for the encrypted Tally mirror")]
+    CipherUnavailable,
+    #[error("The encrypted Tally mirror security settings were not applied")]
+    SecuritySettings,
+    #[error("The encrypted Tally mirror storage could not be opened")]
+    Storage {
+        #[source]
+        source: sqlx::Error,
+    },
+    #[error("The encrypted Tally mirror connection pool timed out")]
+    PoolTimedOut,
+}
 
 pub trait MirrorKeyStore: Send + Sync {
     fn load(&self) -> anyhow::Result<Option<Zeroizing<Vec<u8>>>>;
@@ -143,95 +166,156 @@ pub async fn connect_encrypted(
         .create_if_missing(true)
         .disable_statement_logging();
 
+    // SQLx retries `after_connect` failures until its pool deadline and then drops their cause.
+    // Keep the first callback error in-band while it is still owned, but return an error to SQLx
+    // as well so an uninitialized connection can never enter the pool.
+    let (startup_error_sender, mut startup_error_receiver) = oneshot::channel();
+    let startup_error_sender = Arc::new(Mutex::new(Some(startup_error_sender)));
     let key_for_connections = Arc::clone(&connection_key);
+    let startup_error_for_connections = Arc::clone(&startup_error_sender);
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
+        .min_connections(0)
         .after_connect(move |connection, _metadata| {
             let key = Arc::clone(&key_for_connections);
+            let startup_error_sender = Arc::clone(&startup_error_for_connections);
             Box::pin(async move {
-                {
-                    let mut handle = connection.lock_handle().await?;
-                    let key_length = i32::try_from(key.len())
-                        .map_err(|_| sqlx::Error::Protocol("SQLCipher key is too long".into()))?;
-                    // SAFETY: `lock_handle()` excludes the SQLx worker for the duration of this
-                    // call, the handle is live, and `key` remains allocated for the whole call.
-                    // SQLCipher copies the key into its per-connection codec state.
-                    let status = unsafe {
-                        libsqlite3_sys::sqlite3_key(
-                            handle.as_raw_handle().as_ptr(),
-                            key.as_ptr().cast(),
-                            key_length,
-                        )
-                    };
-                    if status != libsqlite3_sys::SQLITE_OK {
-                        return Err(sqlx::Error::Protocol(
-                            "SQLCipher rejected the Tally mirror key".into(),
-                        ));
+                match configure_encrypted_connection(connection, &key).await {
+                    Ok(()) => Ok(()),
+                    Err(error) => {
+                        let sender = startup_error_sender
+                            .lock()
+                            .ok()
+                            .and_then(|mut sender| sender.take());
+                        match sender {
+                            Some(sender) => match sender.send(error) {
+                                Ok(()) => Err(sqlx::Error::Protocol(
+                                    "encrypted Tally mirror initialization failed".into(),
+                                )),
+                                Err(error) => Err(error),
+                            },
+                            None => Err(error),
+                        }
                     }
                 }
-
-                // These settings must be applied after sqlite3_key(). Executing them here also
-                // means replacement connections receive the same hardened configuration without
-                // putting key material in SqliteConnectOptions.
-                // Keep actionable SQLCipher errors while suppressing the per-allocation warning
-                // emitted when an operating-system page lock cannot be acquired.
-                connection
-                    .execute("PRAGMA cipher_log_level = ERROR;")
-                    .await?;
-                connection
-                    .execute("PRAGMA cipher_memory_security = ON;")
-                    .await?;
-                connection.execute("PRAGMA secure_delete = ON;").await?;
-                connection.execute("PRAGMA foreign_keys = ON;").await?;
-                connection.execute("PRAGMA journal_mode = WAL;").await?;
-                Ok(())
             })
         })
-        .connect_with(options)
-        .await?;
+        .connect_lazy_with(options);
 
-    let validation = validate_encrypted_connection(&pool).await;
-    if let Err(error) = validation {
+    let mut initial_acquire = Box::pin(pool.acquire());
+    let mut connection = tokio::select! {
+        biased;
+        startup_error = &mut startup_error_receiver => {
+            drop(initial_acquire);
+            pool.close().await;
+            return match startup_error {
+                Ok(error) => Err(encrypted_open_error(error).into()),
+                Err(_) => Err(EncryptedOpenError::PoolTimedOut.into()),
+            };
+        }
+        acquired = &mut initial_acquire => match acquired {
+            Ok(connection) => connection,
+            Err(error) => return Err(encrypted_open_error(error).into()),
+        },
+    };
+    drop(startup_error_receiver);
+
+    if let Err(error) = validate_encrypted_connection(&mut connection).await {
+        let _ = connection.close().await;
         pool.close().await;
-        return Err(error);
+        return Err(error.into());
     }
+    drop(connection);
     Ok(pool)
 }
 
-async fn validate_encrypted_connection(pool: &SqlitePool) -> anyhow::Result<()> {
+async fn configure_encrypted_connection(
+    connection: &mut SqliteConnection,
+    key: &[u8],
+) -> Result<(), sqlx::Error> {
+    {
+        let mut handle = connection.lock_handle().await?;
+        let key_length = i32::try_from(key.len())
+            .map_err(|_| sqlx::Error::Protocol("SQLCipher key is too long".into()))?;
+        // SAFETY: `lock_handle()` excludes the SQLx worker for the duration of this call, the
+        // handle is live, and `key` remains allocated for the whole call. SQLCipher copies the
+        // key into its per-connection codec state.
+        let status = unsafe {
+            libsqlite3_sys::sqlite3_key(
+                handle.as_raw_handle().as_ptr(),
+                key.as_ptr().cast(),
+                key_length,
+            )
+        };
+        if status != libsqlite3_sys::SQLITE_OK {
+            return Err(sqlx::Error::Protocol(
+                "SQLCipher rejected the Tally mirror key".into(),
+            ));
+        }
+    }
+    // These settings must be applied after sqlite3_key(). Keeping them here means replacement
+    // connections receive the same configuration without putting key material in connect options.
+    connection
+        .execute("PRAGMA cipher_log_level = ERROR;")
+        .await?;
+    connection
+        .execute("PRAGMA cipher_memory_security = ON;")
+        .await?;
+    connection.execute("PRAGMA secure_delete = ON;").await?;
+    connection.execute("PRAGMA foreign_keys = ON;").await?;
+    connection.execute("PRAGMA journal_mode = WAL;").await?;
+    Ok(())
+}
+
+async fn validate_encrypted_connection(
+    connection: &mut SqliteConnection,
+) -> Result<(), EncryptedOpenError> {
     let cipher_version = sqlx::query_scalar::<_, String>("PRAGMA cipher_version;")
-        .fetch_one(pool)
+        .fetch_one(&mut *connection)
         .await
-        .map_err(|_| {
-            anyhow::anyhow!("SQLCipher is unavailable or the Tally mirror key is invalid")
-        })?;
+        .map_err(encrypted_open_error)?;
     if cipher_version.trim().is_empty() {
-        anyhow::bail!("SQLCipher did not report an active cipher version");
+        return Err(EncryptedOpenError::CipherUnavailable);
     }
     sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sqlite_master;")
-        .fetch_one(pool)
+        .fetch_one(&mut *connection)
         .await
-        .map_err(|_| {
-            anyhow::anyhow!("The encrypted Tally mirror could not be opened with its stored key")
-        })?;
+        .map_err(encrypted_open_error)?;
     let integrity_errors = sqlx::query_scalar::<_, String>("PRAGMA cipher_integrity_check;")
-        .fetch_all(pool)
+        .fetch_all(&mut *connection)
         .await
-        .map_err(|_| anyhow::anyhow!("The encrypted Tally mirror could not be verified"))?;
+        .map_err(encrypted_open_error)?;
     if !integrity_errors.is_empty() {
-        anyhow::bail!("The encrypted Tally mirror failed its integrity check");
+        return Err(EncryptedOpenError::IntegrityFailed);
     }
 
     let foreign_keys = sqlx::query_scalar::<_, i64>("PRAGMA foreign_keys;")
-        .fetch_one(pool)
-        .await?;
+        .fetch_one(&mut *connection)
+        .await
+        .map_err(encrypted_open_error)?;
     let secure_delete = sqlx::query_scalar::<_, i64>("PRAGMA secure_delete;")
-        .fetch_one(pool)
-        .await?;
+        .fetch_one(&mut *connection)
+        .await
+        .map_err(encrypted_open_error)?;
     if foreign_keys != 1 || secure_delete != 1 {
-        anyhow::bail!("The encrypted Tally mirror security settings were not applied");
+        return Err(EncryptedOpenError::SecuritySettings);
     }
     Ok(())
+}
+
+fn encrypted_open_error(error: sqlx::Error) -> EncryptedOpenError {
+    if let sqlx::Error::Database(database_error) = &error {
+        let code = database_error
+            .code()
+            .and_then(|code| code.parse::<i32>().ok());
+        if code.is_some_and(|code| code & 0xff == libsqlite3_sys::SQLITE_NOTADB) {
+            return EncryptedOpenError::UnreadableWithSuppliedKey { source: error };
+        }
+    }
+    if matches!(error, sqlx::Error::PoolTimedOut) {
+        return EncryptedOpenError::PoolTimedOut;
+    }
+    EncryptedOpenError::Storage { source: error }
 }
 
 fn hex_key(key: &[u8]) -> String {

@@ -1,7 +1,11 @@
-use super::{connect_encrypted, resolve_mirror_key, MirrorKeyStore, MIRROR_KEY_BYTES};
+use super::{
+    connect_encrypted, encrypted_open_error, resolve_mirror_key, EncryptedOpenError,
+    MirrorKeyStore, MIRROR_KEY_BYTES,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
 
 #[derive(Default)]
@@ -147,6 +151,16 @@ async fn sqlcipher_encrypts_contents_and_rejects_the_wrong_key() {
             .await
             .expect("read through encrypted pooled connection");
         assert_eq!(value, "SENSITIVE_TALLY_MARKER");
+        let foreign_keys = sqlx::query_scalar::<_, i64>("PRAGMA foreign_keys;")
+            .fetch_one(&mut *connection)
+            .await
+            .expect("read replacement foreign-key setting");
+        let secure_delete = sqlx::query_scalar::<_, i64>("PRAGMA secure_delete;")
+            .fetch_one(&mut *connection)
+            .await
+            .expect("read replacement secure-delete setting");
+        assert_eq!(foreign_keys, 1);
+        assert_eq!(secure_delete, 1);
         connection
             .close()
             .await
@@ -165,7 +179,27 @@ async fn sqlcipher_encrypts_contents_and_rejects_the_wrong_key() {
     let before_wrong_key = fs::read(&database).expect("read encrypted database before retry");
 
     let wrong_key = Zeroizing::new(vec![0x22_u8; MIRROR_KEY_BYTES]);
-    assert!(connect_encrypted(&database, wrong_key).await.is_err());
+    let wrong_key_started = Instant::now();
+    let wrong_key_error = connect_encrypted(&database, wrong_key)
+        .await
+        .expect_err("wrong key must refuse the encrypted mirror");
+    assert!(
+        wrong_key_started.elapsed() < Duration::from_secs(5),
+        "wrong key must refuse before SQLx's pool retry deadline"
+    );
+    let source = match wrong_key_error.downcast_ref::<EncryptedOpenError>() {
+        Some(EncryptedOpenError::UnreadableWithSuppliedKey { source }) => source,
+        _ => panic!("wrong key must retain a typed SQLite refusal"),
+    };
+    assert!(matches!(
+        source,
+        sqlx::Error::Database(error) if error.code().as_deref() == Some("26")
+    ));
+    assert!(
+        !format!("{wrong_key_error:?}")
+            .contains("2222222222222222222222222222222222222222222222222222222222222222"),
+        "wrong-key failure must not render key material"
+    );
     assert_eq!(
         fs::read(&database).expect("read encrypted database after wrong key"),
         before_wrong_key,
@@ -182,4 +216,65 @@ async fn sqlcipher_encrypts_contents_and_rejects_the_wrong_key() {
         .expect("read encrypted value");
     assert_eq!(value, "SENSITIVE_TALLY_MARKER");
     reopened.close().await;
+}
+
+#[tokio::test]
+async fn corrupt_encrypted_contents_fail_with_a_typed_refusal() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let database = directory.path().join("mirror.db");
+    let corrupt_database = directory.path().join("corrupt-mirror.db");
+    let key = Zeroizing::new(vec![0x33_u8; MIRROR_KEY_BYTES]);
+    let pool = connect_encrypted(&database, key.clone())
+        .await
+        .expect("open encrypted mirror");
+    sqlx::query("CREATE TABLE proof(value BLOB NOT NULL);")
+        .execute(&pool)
+        .await
+        .expect("create encrypted table");
+    sqlx::query("INSERT INTO proof(value) VALUES (?1);")
+        .bind(vec![0x5a_u8; 64 * 1024])
+        .execute(&pool)
+        .await
+        .expect("write encrypted payload");
+    pool.close().await;
+
+    let mut corrupt_bytes = fs::read(&database).expect("read encrypted database");
+    let middle = corrupt_bytes.len() / 2;
+    corrupt_bytes[middle] ^= 0x01;
+    fs::write(&corrupt_database, corrupt_bytes).expect("write corrupted encrypted database");
+
+    let error = connect_encrypted(&corrupt_database, key)
+        .await
+        .expect_err("corrupt encrypted contents must refuse to open");
+    assert!(matches!(
+        error.downcast_ref::<EncryptedOpenError>(),
+        Some(EncryptedOpenError::UnreadableWithSuppliedKey { .. })
+            | Some(EncryptedOpenError::IntegrityFailed)
+    ));
+}
+
+#[tokio::test]
+async fn unrelated_storage_failure_is_not_a_key_refusal() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let database_directory = directory.path().join("not-a-database");
+    fs::create_dir(&database_directory).expect("create invalid database path");
+
+    let error = connect_encrypted(
+        &database_directory,
+        Zeroizing::new(vec![0x44_u8; MIRROR_KEY_BYTES]),
+    )
+    .await
+    .expect_err("directory path cannot open as a database");
+    assert!(matches!(
+        error.downcast_ref::<EncryptedOpenError>(),
+        Some(EncryptedOpenError::Storage { .. })
+    ));
+}
+
+#[test]
+fn pool_timeout_is_not_classified_as_an_encrypted_contents_refusal() {
+    assert!(matches!(
+        encrypted_open_error(sqlx::Error::PoolTimedOut),
+        EncryptedOpenError::PoolTimedOut
+    ));
 }
