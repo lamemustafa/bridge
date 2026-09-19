@@ -540,6 +540,18 @@ for (const [name, title] of [
 
 for (const [name, shadow] of [
   [
+    "an HTML ID after a heading interrupts an unmatched code span",
+    'Example ` text\n# Extra navigation\ntext <span id="97-operation-support-matrix"></span>\n`\n\n',
+  ],
+  [
+    "a multiline inline-code HTML example outside the admitted format",
+    'Example ` text\n<span id="97-operation-support-matrix"></span>\n`\n\n',
+  ],
+  [
+    "an indented HTML ID continuing a paragraph",
+    'Example paragraph\n    <span id="97-operation-support-matrix"></span>\n\n',
+  ],
+  [
     "an HTML ID after astral text and a paired code span",
     'Example \u{1f600}\u{1f600} `safe` <span id="97-operation-support-matrix"></span>\n\n',
   ],

@@ -190,7 +190,8 @@ markup is refused rather than approximated. Raw HTML blocks and inline HTML IDs 
 in the split index and declared parts, except for the canonical index’s complete standalone
 legacy-anchor lines. Each redirect uses one anchor line, one blank line and one standalone link
 line; orphan or duplicate anchor IDs are refused. Setext section headings are not supported in
-the split reference.
+the split reference. Literal HTML examples must use fenced blocks or same-line paired inline
+code; indented and multiline inline-code HTML examples are outside this gate’s admitted format.
 The index and every declared part are compatibility-pinned sources, so follow
 `docs/release-process.md` after edits. A build rule goes into `IMPLEMENTATION_GUIDE.md`;
 a plan change goes into the plan with a dated deviation note. A

@@ -224,10 +224,7 @@ function isEscaped(text, index) {
 
 function closingBacktickRun(text, start, length) {
   for (let index = start; index < text.length;) {
-    if (text[index] === "\n") {
-      const nextLine = text.indexOf("\n", index + 1);
-      if (nextLine !== -1 && !text.slice(index + 1, nextLine).trim()) return -1;
-    }
+    if (text[index] === "\n") return -1;
     if (text[index] !== "`") {
       index += 1;
       continue;
@@ -286,7 +283,6 @@ function closingHtmlTag(text) {
 function hasUnsupportedHtml(lines, index) {
   const unquote = (line) => line.replace(/^ {0,3}(?:> ?)+/, "");
   const line = unquote(lines[index]);
-  if (/^(?: {4,}|\t)/.test(line)) return false;
   if (/^ {0,3}</.test(line)) return true;
   for (const opener of line.matchAll(/<[A-Za-z!/]/g)) {
     let tag = line.slice(opener.index);
