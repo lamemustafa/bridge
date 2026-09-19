@@ -1455,12 +1455,18 @@ fn text_that_would_read_back_changed_is_refused_before_posting() {
     // The agent readers rewrite a literal U+FFFD followed by `#`, digits and
     // `;` (`agent_voucher_parse_tests`'s
     // `a_literal_replacement_character_that_looks_like_a_marker_reads_back_escaped`
-    // measures it on a capture), so such a value could never verify.
+    // measures it on a capture), so such a value could never verify — but only
+    // on a field `voucher_diffs` (agent_import_verification.rs) actually
+    // compares: the voucher number and a ledger name. Narration and reference
+    // are never compared there (attribution only searches narration for the
+    // `[BRIDGE:...]` tag, which the reserved-marker check leaves untouched),
+    // so the same sequence there is invisible to verification and stays
+    // admitted.
     let mut input = captured_catalogue_payload();
     assert_eq!(validate_payload(&input), Ok(()));
     for text in ["A\u{fffd}#5;", "\u{fffd}#65533;"] {
         let mut changed = input.clone();
-        changed.vouchers[0].narration = Some(text.to_string());
+        changed.vouchers[0].voucher_number = Some(text.to_string());
         assert_eq!(
             validate_payload(&changed),
             Err("voucher_text_invalid".to_string()),
@@ -1473,10 +1479,24 @@ fn text_that_would_read_back_changed_is_refused_before_posting() {
             Err("voucher_entry_invalid".to_string()),
             "{text:?}"
         );
+        // The regression this guards against: narrowing the refusal back onto
+        // narration (its pre-fix scope) instead of onto the fields
+        // verification compares. Both assertions below fail under that
+        // mutation — the first because narration would wrongly refuse, the
+        // second because voucher_number would wrongly admit.
+        let mut changed = input.clone();
+        changed.vouchers[0].narration = Some(text.to_string());
+        assert_eq!(validate_payload(&changed), Ok(()), "{text:?}");
+        let mut changed = input.clone();
+        changed.vouchers[0].reference = Some(text.to_string());
+        assert_eq!(validate_payload(&changed), Ok(()), "{text:?}");
     }
     // A replacement character on its own, and reference-looking text the
-    // writer escapes, read back unchanged and stay admissible.
+    // writer escapes, read back unchanged and stay admissible everywhere.
     for text in ["A\u{fffd}B", "\u{fffd}#x5;", "&#4; Primary", "A\u{fffd}#"] {
+        let mut changed = input.clone();
+        changed.vouchers[0].voucher_number = Some(text.to_string());
+        assert_eq!(validate_payload(&changed), Ok(()), "{text:?}");
         input.vouchers[0].narration = Some(text.to_string());
         assert_eq!(validate_payload(&input), Ok(()), "{text:?}");
     }
