@@ -262,3 +262,43 @@ figure or byte enters this repository or its CI.
 5. If the module has (or gains) a module-level invariant check, nothing else changes here — §5's
    generic handling already covers it; only its own code appearing on both sides is new
    information.
+
+## 11. Ledger tags: figure/finding ids keyed by GUID, not by name
+
+A per-ledger figure, finding or evidence id is not built from the ledger's display NAME — a
+read-shape/serialisation artifact can re-case a name between two reads of the same unchanged
+master (`ROUND OFF` -> `Round Off`) with no edit having happened, and a name-hash id would churn
+for no reason connected to the books. Both engines derive this id from the ledger's Tally GUID
+instead (the reference engine's ledger-tag module; this crate's `src/ledger_ids.rs`):
+
+1. **Normalise.** Trim surrounding whitespace, then lowercase (ASCII only — a GUID is hex digits
+   and hyphens). Two engines, or two Tally exports of the same GUID in different casing, must
+   agree on the same tag; the binding logic elsewhere in this stack already treats GUIDs as
+   case-insensitive, so the tag has to match that, not hash the raw, differently-cased bytes.
+2. **Hash.** `sha1(normalised_guid.encode("utf-8")).hexdigest()[:8]`.
+3. **Fallback to a name hash** — `sha1(name.encode("utf-8")).hexdigest()[:8]`, no GUID involved —
+   in two cases:
+   - `name` does not name a real ledger in the Book at all (a client-config alias, a synthetic
+     sentinel bucket, an orphaned Trial Balance row): never read fresh from Tally on every
+     capture, so it carries none of the rename-churn risk above, and hashing the string itself is
+     already stable.
+   - `name` **does** name a real Book ledger, but that ledger's own GUID is blank. The
+     `tally-read-v1` format does not require ledger GUIDs, so refusing here would turn a
+     previously-working run into a hard failure on an otherwise-valid read. The id for such a
+     ledger is stable only **within one read** — two reads of the same company can still rename
+     it, and the id will move, because there is no Tally identity left to anchor it to.
+4. **Duplicate GUIDs refuse.** Two different ledgers in the same Book that normalise (step 1) to
+   the same non-blank GUID is a corrupt read, not a legitimate case — Tally does not hand out one
+   GUID to two masters. Handing both ledgers the same figure id would silently merge their rows
+   under one id, which is worse than a refusal. Both engines check this once, over every ledger in
+   the Book, at Book construction/load: the reference engine's `Book.__post_init__`, and this
+   crate's `load_book` (`src/book.rs`) — both calling the same `check_no_duplicate_ledger_guids`.
+
+This fallback (step 3) applies to LEDGERS only. A blank GROUP GUID still refuses (no consumer
+relying on a successful group tag over a GUID-less group has been found), and this spec does not
+extend the fallback to groups without that same measurement.
+
+Any future change to this algorithm must be made in both engines in the same change, or parity
+between them breaks silently. §7 does not compare ids directly — a stable id is a downstream
+consumer's contract, not a `TestResult` field — but a hashed prose field or a figure/finding's
+identity keyed off this id will still diverge if the two engines disagree on how it is computed.

@@ -18,6 +18,10 @@ pub enum AuditError {
     /// The engagement or rules configuration is missing a key or has the wrong type.
     #[error("config: {0}")]
     Config(String),
+    /// Two different ledgers in the same Book normalise to the same non-blank Tally GUID (a
+    /// corrupt read); see `ledger_ids::check_no_duplicate_ledger_guids`.
+    #[error("duplicate ledger GUID: {0}")]
+    DuplicateGuid(String),
     #[error("{path}: {source}")]
     Io {
         path: String,

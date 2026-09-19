@@ -248,11 +248,11 @@
       "evidence": []
     },
     {
-      "id": "depreciation.cash_flagged_addition_29bb74708d7d_6275c86d",
+      "id": "depreciation.cash_flagged_addition_29bb74708d7d_d12d0157",
       "value": 4500000,
       "unit": "paise",
-      "definition_sha256_16": "97276a2d11cafc55",
-      "definition_text": "Addition to a Fixed Assets ledger (tag 6275c86d) on 2025-06-19 where the payment side shows cash of 4500000 paise (cash ledger credited in the same voucher), over rules_dep.cash_addition_limit_paise.",
+      "definition_sha256_16": "ac7b83fd7fd1408e",
+      "definition_text": "Addition to a Fixed Assets ledger (tag d12d0157) on 2025-06-19 where the payment side shows cash of 4500000 paise (cash ledger credited in the same voucher), over rules_dep.cash_addition_limit_paise.",
       "evidence": [
         {
           "kind": "voucher",
@@ -262,11 +262,11 @@
       ]
     },
     {
-      "id": "depreciation.cash_flagged_addition_93c837cdc45a_8b2d0431",
+      "id": "depreciation.cash_flagged_addition_93c837cdc45a_43102175",
       "value": 15000000,
       "unit": "paise",
-      "definition_sha256_16": "1597fe4014be3bc5",
-      "definition_text": "Addition to a Fixed Assets ledger (tag 8b2d0431) on 2025-04-01 where the payment side shows cash of 1000001 paise (cash ledger credited in the same voucher), over rules_dep.cash_addition_limit_paise.",
+      "definition_sha256_16": "f751285e6d52b6db",
+      "definition_text": "Addition to a Fixed Assets ledger (tag 43102175) on 2025-04-01 where the payment side shows cash of 1000001 paise (cash ledger credited in the same voucher), over rules_dep.cash_addition_limit_paise.",
       "evidence": [
         {
           "kind": "voucher",
@@ -507,11 +507,11 @@
       "evidence": []
     },
     {
-      "id": "depreciation.ledger_block_073c3b97",
+      "id": "depreciation.ledger_block_0081c196",
       "value": "furniture_10",
       "unit": "text",
-      "definition_sha256_16": "1493ea3aea5eb25e",
-      "definition_text": "Depreciation block this Fixed Assets ledger (tag 073c3b97) is mapped to, or 'unmapped'.",
+      "definition_sha256_16": "fbb49329a23817a6",
+      "definition_text": "Depreciation block this Fixed Assets ledger (tag 0081c196) is mapped to, or 'unmapped'.",
       "evidence": [
         {
           "kind": "ledger",
@@ -521,11 +521,11 @@
       ]
     },
     {
-      "id": "depreciation.ledger_block_417e434b",
+      "id": "depreciation.ledger_block_192cf253",
       "value": "computers_40",
       "unit": "text",
-      "definition_sha256_16": "b5c12e8a3f6d9586",
-      "definition_text": "Depreciation block this Fixed Assets ledger (tag 417e434b) is mapped to, or 'unmapped'.",
+      "definition_sha256_16": "f4c2bd5db04862ff",
+      "definition_text": "Depreciation block this Fixed Assets ledger (tag 192cf253) is mapped to, or 'unmapped'.",
       "evidence": [
         {
           "kind": "ledger",
@@ -535,25 +535,25 @@
       ]
     },
     {
-      "id": "depreciation.ledger_block_6275c86d",
+      "id": "depreciation.ledger_block_3359ea10",
       "value": "plant_machinery_15",
       "unit": "text",
-      "definition_sha256_16": "4ab820390aa2cdac",
-      "definition_text": "Depreciation block this Fixed Assets ledger (tag 6275c86d) is mapped to, or 'unmapped'.",
+      "definition_sha256_16": "188366b4c78f6c28",
+      "definition_text": "Depreciation block this Fixed Assets ledger (tag 3359ea10) is mapped to, or 'unmapped'.",
       "evidence": [
         {
           "kind": "ledger",
-          "id": "Delivery Van",
+          "id": "Factory Machine",
           "label": ""
         }
       ]
     },
     {
-      "id": "depreciation.ledger_block_8b2d0431",
+      "id": "depreciation.ledger_block_43102175",
       "value": "computers_40",
       "unit": "text",
-      "definition_sha256_16": "bef15af7f53199d2",
-      "definition_text": "Depreciation block this Fixed Assets ledger (tag 8b2d0431) is mapped to, or 'unmapped'.",
+      "definition_sha256_16": "79a32b81dff5ee13",
+      "definition_text": "Depreciation block this Fixed Assets ledger (tag 43102175) is mapped to, or 'unmapped'.",
       "evidence": [
         {
           "kind": "ledger",
@@ -563,29 +563,29 @@
       ]
     },
     {
-      "id": "depreciation.ledger_block_ee2e9b74",
-      "value": "furniture_10",
+      "id": "depreciation.ledger_block_d12d0157",
+      "value": "plant_machinery_15",
       "unit": "text",
-      "definition_sha256_16": "8419242a9c33655b",
-      "definition_text": "Depreciation block this Fixed Assets ledger (tag ee2e9b74) is mapped to, or 'unmapped'.",
+      "definition_sha256_16": "449c9596e187cc33",
+      "definition_text": "Depreciation block this Fixed Assets ledger (tag d12d0157) is mapped to, or 'unmapped'.",
       "evidence": [
         {
           "kind": "ledger",
-          "id": "Showroom Furniture",
+          "id": "Delivery Van",
           "label": ""
         }
       ]
     },
     {
-      "id": "depreciation.ledger_block_fce450ac",
-      "value": "plant_machinery_15",
+      "id": "depreciation.ledger_block_f412381f",
+      "value": "furniture_10",
       "unit": "text",
-      "definition_sha256_16": "2aa751a1f4d23c48",
-      "definition_text": "Depreciation block this Fixed Assets ledger (tag fce450ac) is mapped to, or 'unmapped'.",
+      "definition_sha256_16": "7003e15a16429a07",
+      "definition_text": "Depreciation block this Fixed Assets ledger (tag f412381f) is mapped to, or 'unmapped'.",
       "evidence": [
         {
           "kind": "ledger",
-          "id": "Factory Machine",
+          "id": "Showroom Furniture",
           "label": ""
         }
       ]
@@ -718,7 +718,7 @@
       "ask_client_text": []
     },
     {
-      "id": "depreciation/s43_1/29bb74708d7d_6275c86d",
+      "id": "depreciation/s43_1/29bb74708d7d_d12d0157",
       "clauses": [
         "s.43(1) second proviso",
         "3CD-18"
@@ -727,7 +727,7 @@
       "facts": [
         {
           "name": "amount",
-          "figure_id": "depreciation.cash_flagged_addition_29bb74708d7d_6275c86d"
+          "figure_id": "depreciation.cash_flagged_addition_29bb74708d7d_d12d0157"
         }
       ],
       "evidence": [
@@ -752,7 +752,7 @@
       ]
     },
     {
-      "id": "depreciation/s43_1/93c837cdc45a_8b2d0431",
+      "id": "depreciation/s43_1/93c837cdc45a_43102175",
       "clauses": [
         "s.43(1) second proviso",
         "3CD-18"
@@ -761,7 +761,7 @@
       "facts": [
         {
           "name": "amount",
-          "figure_id": "depreciation.cash_flagged_addition_93c837cdc45a_8b2d0431"
+          "figure_id": "depreciation.cash_flagged_addition_93c837cdc45a_43102175"
         }
       ],
       "evidence": [
