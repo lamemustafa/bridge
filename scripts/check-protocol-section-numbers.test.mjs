@@ -79,6 +79,19 @@ const root = mkdtempSync(join(tmpdir(), "section-gate-"));
 const upstream = join(root, "upstream");
 const work = join(root, "work");
 const DOC = "docs/tally/TALLY_PROTOCOL_REFERENCE.md";
+const SURFACE = "docs/tally/compatibility/compatibility-surface.json";
+const TEST_SHA256 = "0".repeat(64);
+const writeSurface = (repository, paths) => {
+  mkdirSync(dirname(join(repository, SURFACE)), { recursive: true });
+  writeFileSync(
+    join(repository, SURFACE),
+    JSON.stringify({
+      schema_version: 1,
+      files: paths.map((path) => ({ path, sha256: TEST_SHA256 })),
+      manifest_sha256: TEST_SHA256,
+    }),
+  );
+};
 
 mkdirSync(join(upstream, "scripts"), { recursive: true });
 mkdirSync(join(upstream, "docs/tally"), { recursive: true });
@@ -86,6 +99,7 @@ git(upstream, "init", "-q", ".");
 git(upstream, "config", "user.email", "test@example.invalid");
 git(upstream, "config", "user.name", "test");
 writeFileSync(join(upstream, DOC), BASE_DOC);
+writeSurface(upstream, [DOC]);
 copyFileSync(GATE, join(upstream, "scripts", "check-protocol-section-numbers.mjs"));
 git(upstream, "add", "-A");
 git(upstream, "commit", "-qm", "base");
@@ -262,6 +276,7 @@ if (/duplicate protocol-reference section numbers/.test(`${umbrella.stdout}${umb
 // second part, permit a whole section moving there, and retain the old anchor.
 const PART_A = "docs/tally/TALLY_PROTOCOL_REFERENCE_PART_A.md";
 const PART_B = "docs/tally/TALLY_PROTOCOL_REFERENCE_PART_B.md";
+const PART_C = "docs/tally/TALLY_PROTOCOL_REFERENCE_PART_C.md";
 const anchorsFor = (documents) => {
   const globalCounts = new Map();
   return documents.flatMap((document, index) => {
@@ -291,6 +306,7 @@ const runSplitGate = (first, second, omitted) => {
   writeFileSync(join(work, PART_A), first);
   writeFileSync(join(work, PART_B), second);
   writeFileSync(join(work, DOC), splitIndex([first, second], omitted));
+  writeSurface(work, [DOC, PART_A, PART_B]);
   return runGate();
 };
 
@@ -303,6 +319,73 @@ const runSplitGate = (first, second, omitted) => {
   } else {
     failed += 1;
     console.error(`FAIL a cross-part duplicate must be caught\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+// The canonical marker owns the protocol inventory. Every declared file must
+// also be pinned by the compatibility surface, without adding a second static
+// list to this gate.
+{
+  const first = BASE_DOC;
+  const second = "# Part B\n";
+  const third = "# Part C\n";
+  const indexWithThirdPart = splitIndex([first, second]).replace(
+    "TALLY_PROTOCOL_REFERENCE_PART_B.md -->",
+    "TALLY_PROTOCOL_REFERENCE_PART_B.md | TALLY_PROTOCOL_REFERENCE_PART_C.md -->",
+  );
+  writeFileSync(join(work, PART_A), first);
+  writeFileSync(join(work, PART_B), second);
+  writeFileSync(join(work, PART_C), third);
+  writeFileSync(join(work, DOC), indexWithThirdPart);
+  writeSurface(work, [DOC, PART_A, PART_B]);
+  let out = runGate();
+  let text = `${out.stdout}${out.stderr}`;
+  if (
+    out.status !== 0 &&
+    text.includes("protocol-reference file(s) absent from the compatibility surface") &&
+    text.includes(PART_C) &&
+    text.includes("(1 problem(s))")
+  ) {
+    console.log("ok   a declared protocol part absent from the compatibility surface is refused");
+  } else {
+    failed += 1;
+    console.error(`FAIL an unpinned declared part must be refused\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+
+  writeFileSync(
+    join(work, SURFACE),
+    JSON.stringify({
+      schema_version: 1,
+      files: [{ path: DOC }],
+      manifest_sha256: TEST_SHA256,
+    }),
+  );
+  out = runGate();
+  text = `${out.stdout}${out.stderr}`;
+  if (out.status !== 0 && text.includes("invalid compatibility surface file row 1")) {
+    console.log("ok   a malformed compatibility surface row is refused");
+  } else {
+    failed += 1;
+    console.error(`FAIL a malformed compatibility surface must be refused\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+
+  rmSync(join(work, SURFACE));
+  out = runGate();
+  text = `${out.stdout}${out.stderr}`;
+  if (out.status !== 0 && text.includes("compatibility surface is unreadable")) {
+    console.log("ok   a missing compatibility surface is refused");
+  } else {
+    failed += 1;
+    console.error(`FAIL a missing compatibility surface must be refused\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+
+  writeSurface(work, [DOC, PART_A, PART_B, PART_C]);
+  out = runGate();
+  if (out.status === 0) {
+    console.log("ok   an additionally declared protocol part passes once pinned");
+  } else {
+    failed += 1;
+    console.error(`FAIL a pinned declared part must pass\n  exit ${out.status}: ${`${out.stdout}${out.stderr}`.split("\n").slice(0, 6).join("\n  ")}`);
   }
 }
 
@@ -479,6 +562,21 @@ const sep = "\\";`);
   expectRoute("a later split-base edit cannot drop its inherited alias", splitBaseIndex, "legacy section anchor(s) missing");
   expectRoute("an inherited alias cannot retain a dead destination",
     splitBaseIndex + alias.replace("#10-alpha-revised)", "#missing-heading)") + methodAlias, "do not resolve");
+  expectRoute(
+    "an inherited alias cannot change its still-live destination",
+    splitBaseIndex + alias + methodAlias.replace("#method-note-revised)", "#10-alpha-revised)"),
+    "changed their still-live destination",
+    "method-note",
+  );
+
+  const retitledAgainFirst = splitBaseFirst.replace("## Method note revised", "## Method note final");
+  const retitledAgainIndex = splitIndex([retitledAgainFirst, second]);
+  const revisedAlias = '<a id="method-note-revised"></a> [Method note revised](./TALLY_PROTOCOL_REFERENCE_PART_A.md#method-note-final)\n';
+  writeFileSync(join(work, PART_A), retitledAgainFirst);
+  expectRoute(
+    "an inherited alias may follow a legitimate second retitle",
+    retitledAgainIndex + alias + revisedAlias + methodAlias.replace("#method-note-revised)", "#method-note-final)"),
+  );
 
   const collisionFirst = `${splitBaseFirst}\n## Method note\n\nnew section\n`;
   writeFileSync(join(work, PART_A), collisionFirst);
@@ -533,11 +631,12 @@ writeFileSync(join(upstream, DOC), realDoc);
 for (const part of realPartPaths) {
   writeFileSync(join(upstream, part), readFileSync(join(here, "..", part), "utf8"));
 }
+writeFileSync(join(upstream, SURFACE), readFileSync(join(here, "..", SURFACE), "utf8"));
 git(upstream, "add", "-A");
 git(upstream, "commit", "-qm", "the real reference");
 // The clone still carries the last case's edits; discard temporary split parts
 // before fetching the committed reference and its declared files.
-git(work, "checkout", "-q", "--", DOC);
+git(work, "checkout", "-q", "--", DOC, SURFACE);
 git(work, "clean", "-qfd");
 git(work, "pull", "-q");
 const real = runGate();

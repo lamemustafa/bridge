@@ -31,6 +31,9 @@ const repository = fileURLToPath(new URL("../", import.meta.url));
 const canonicalReference = fileURLToPath(
   new URL("../docs/tally/TALLY_PROTOCOL_REFERENCE.md", import.meta.url),
 );
+const compatibilitySurface = fileURLToPath(
+  new URL("../docs/tally/compatibility/compatibility-surface.json", import.meta.url),
+);
 const PARTS_MARKER = /^<!-- protocol-reference-parts:\s*(.*?)\s*-->$/m;
 const LEGACY_ROUTE = /<a\s+id="([^"]+)"\s*><\/a>\s+\[([^\]]+)\]\(\.\/([^#)]+)#([^)]+)\)/g;
 const LEGACY_HEADING = /^ {0,3}#{2,6}\s+(.+?)\s*#*\s*$/;
@@ -56,6 +59,49 @@ function referencePaths(indexText, origin) {
 }
 
 const relPath = (path) => relative(repository, path).split(sep).join("/");
+
+function compatibilitySurfacePaths() {
+  let text;
+  try {
+    text = readFileSync(compatibilitySurface, "utf8");
+  } catch {
+    throw new Error(`compatibility surface is unreadable: ${relPath(compatibilitySurface)}`);
+  }
+
+  let manifest;
+  try {
+    manifest = JSON.parse(text);
+  } catch {
+    throw new Error(`invalid compatibility surface JSON in ${relPath(compatibilitySurface)}`);
+  }
+  if (
+    manifest === null ||
+    typeof manifest !== "object" ||
+    Array.isArray(manifest) ||
+    manifest.schema_version !== 1 ||
+    !Array.isArray(manifest.files) ||
+    typeof manifest.manifest_sha256 !== "string" ||
+    !/^[0-9a-f]{64}$/.test(manifest.manifest_sha256)
+  ) {
+    throw new Error(`invalid compatibility surface schema in ${relPath(compatibilitySurface)}`);
+  }
+  return new Set(manifest.files.map((file, index) => {
+    if (
+      file === null ||
+      typeof file !== "object" ||
+      Array.isArray(file) ||
+      typeof file.path !== "string" ||
+      file.path.length === 0 ||
+      typeof file.sha256 !== "string" ||
+      !/^[0-9a-f]{64}$/.test(file.sha256)
+    ) {
+      throw new Error(
+        `invalid compatibility surface file row ${index + 1} in ${relPath(compatibilitySurface)}`,
+      );
+    }
+    return file.path;
+  }));
+}
 
 function showAt(ref, path) {
   return spawnSync("git", ["show", `${ref}:${relPath(path)}`], {
@@ -293,6 +339,22 @@ function describe(number, found) {
 }
 
 const failures = [];
+const surfacePaths = compatibilitySurfacePaths();
+const unpinnedReferences = references
+  .map(({ path }) => relPath(path))
+  .filter((path) => !surfacePaths.has(path));
+if (unpinnedReferences.length) {
+  failures.push(
+    `protocol-reference file(s) absent from the compatibility surface:\n` +
+      unpinnedReferences
+        .slice(0, MAX_REPORTED_NUMBERS)
+        .map((path) => `    ${short(path)}`)
+        .join("\n") +
+      (unpinnedReferences.length > MAX_REPORTED_NUMBERS
+        ? `\n    ... and ${unpinnedReferences.length - MAX_REPORTED_NUMBERS} more`
+        : ""),
+  );
+}
 let omitted = 0;
 for (const [number, found] of occurrences) {
   const excused = KNOWN_DUPLICATES.get(number);
@@ -492,10 +554,10 @@ if (PARTS_MARKER.test(canonicalText)) {
   const currentRoutes = headingRoutes(routeReferences(references, canonicalText));
   const required = new Map(currentRoutes.map((route) => [route.legacy, route]));
   const aliases = [];
+  const inheritedAliases = [];
   if (base) {
     const baseRoutes = headingRoutes(routeReferences(base.references, base.indexText));
     const baseRequired = new Map(baseRoutes.map((route) => [route.legacy, route]));
-    const inheritedAliases = [];
     for (const match of base.indexText.matchAll(LEGACY_ROUTE)) {
       const route = {
         legacy: match[1],
@@ -550,6 +612,30 @@ if (PARTS_MARKER.test(canonicalText)) {
     return actual && (actual.title !== route.title || actual.path !== route.path || actual.target !== route.target);
   });
   const destinations = new Set(currentRoutes.map((route) => `${route.path}#${route.target}`));
+  const retargetedLiveAliases = inheritedAliases.filter((route) => {
+    const priorDestination = `${route.path}#${route.target}`;
+    const actual = indexed.get(route.legacy);
+    const actualDestination = actual && `${actual.path}#${actual.target}`;
+    return (
+      !required.has(route.legacy) &&
+      destinations.has(priorDestination) &&
+      actualDestination &&
+      destinations.has(actualDestination) &&
+      actualDestination !== priorDestination
+    );
+  });
+  if (retargetedLiveAliases.length) {
+    failures.push(
+      `inherited legacy anchor(s) changed their still-live destination:\n` +
+        retargetedLiveAliases
+          .slice(0, MAX_REPORTED_NUMBERS)
+          .map((route) => `    ${short(route.legacy)}`)
+          .join("\n") +
+        (retargetedLiveAliases.length > MAX_REPORTED_NUMBERS
+          ? `\n    ... and ${retargetedLiveAliases.length - MAX_REPORTED_NUMBERS} more`
+          : ""),
+    );
+  }
   const brokenAliases = aliases.filter((route) => {
     const actual = indexed.get(route.legacy);
     return actual && !destinations.has(`${actual.path}#${actual.target}`);
