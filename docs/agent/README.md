@@ -88,6 +88,37 @@ no response or write-completion record is produced. Existing untyped receipts
 and their former `*_returned` fields remain readable historical records, but
 cannot establish completed delivery. Consumers must join new records by
 `receipt_id`; preparation alone is not a completed write.
+`ledger_masters` has an opt-in `fields: "compliance_diagnostics"` mode for
+examining exact master/balance join coverage. Existing `basic`, `compliance`,
+workbook and Schedule III reads retain their complete-only contracts. Diagnostic
+mode rejects both `group` and `group_scope`: unresolved observations cannot be
+assigned to a filtered population safely.
+
+Diagnostic `items` share one `offset`/`limit` pager. A `join_state: "matched"` row
+contains the usual compliance fields; an `unresolved` observation contains only
+its source (`master` or `balance`), zero-based source ordinal, exact parsed name
+and parent, and typed reason. A null parent means not observed; an empty string
+means returned empty. Party redaction also covers unresolved names and parents.
+No name folding, amount matching or guessed association is performed. Every
+observation in a duplicate display-key bucket is quarantined. Identity, opening
+balance, read stability and transport failures still refuse the entire read.
+
+Every page carries global `coverage` counts: master and balance observations,
+matched pairs, and unresolved observations on each side. The invariants are
+`master_observations = matched_pairs + unresolved_master_observations` and the
+corresponding balance equation. `total` counts diagnostic observations, **not
+distinct ledgers**. `result.state` and `evidence.state` remain `partial` with
+`exact_join_unresolved` even on a page containing only matched rows or no rows.
+Pagination `truncated` is independent of this semantic incompleteness. Byte
+limits may shorten `items`; use `next_offset` and retain the global coverage.
+Each page performs a fresh guarded read: compare source evidence commitments
+before combining pages, and restart collection if the source changed. Partial
+results must never be used as a complete book, financial total or audit export.
+
+This diagnostic contract is covered by captured-response replay and negative
+fault injection. The real-world failing join shape and live qualification remain
+open in #490; the mode is not evidence that its original trigger is fixed.
+
 All output object keys must remain server-defined; identifiers belong in values,
 including when adding new grouped reports.
 `egress_log` reads only the final 256 KiB, in 64 KiB reverse-seek chunks, so a

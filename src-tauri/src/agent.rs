@@ -997,10 +997,18 @@ pub(crate) async fn desktop_selected_vouchers(
     )
 }
 
-fn ledger_master_fields(fields: &str) -> Result<bool, String> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LedgerMasterFields {
+    Basic,
+    Compliance,
+    ComplianceDiagnostics,
+}
+
+fn ledger_master_fields(fields: &str) -> Result<LedgerMasterFields, String> {
     match fields {
-        "basic" => Ok(false),
-        "compliance" => Ok(true),
+        "basic" => Ok(LedgerMasterFields::Basic),
+        "compliance" => Ok(LedgerMasterFields::Compliance),
+        "compliance_diagnostics" => Ok(LedgerMasterFields::ComplianceDiagnostics),
         _ => Err("argument_invalid:fields".to_string()),
     }
 }

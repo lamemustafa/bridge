@@ -2,7 +2,7 @@ use std::fmt;
 
 use bridge_tally_primitives::{ExactDecimal, TallyDate};
 
-use crate::outstandings_shared::OutstandingsReport;
+use crate::{outstandings_shared::OutstandingsReport, PartyLedgerMasterFieldObservation};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NativeOutstandingsError {
@@ -94,6 +94,37 @@ pub struct LedgerSnapshotEntry {
     pub closing_balance: Option<ExactDecimal>,
     pub opening_balance: ExactDecimal,
     pub bill_wise_on: bool,
+}
+
+/// A native ledger snapshot row for the diagnostic-only exact join. Unlike
+/// [`LedgerSnapshotEntry`], this retains whether `PARENT` was returned empty
+/// or not returned at all. Legacy native-outstandings consumers retain the
+/// latter's existing flattened hierarchy value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LedgerSnapshotObservedParentEntry {
+    pub name: String,
+    pub parent: PartyLedgerMasterFieldObservation,
+    pub closing_balance: Option<ExactDecimal>,
+    pub opening_balance: ExactDecimal,
+    pub bill_wise_on: bool,
+}
+
+impl From<LedgerSnapshotObservedParentEntry> for LedgerSnapshotEntry {
+    fn from(value: LedgerSnapshotObservedParentEntry) -> Self {
+        Self {
+            name: value.name,
+            // Preserve the prior snapshot parser contract: an absent, empty,
+            // or whitespace-only parent did not name a legacy hierarchy hop.
+            parent: value
+                .parent
+                .returned_text()
+                .filter(|parent| !parent.trim().is_empty())
+                .map(str::to_owned),
+            closing_balance: value.closing_balance,
+            opening_balance: value.opening_balance,
+            bill_wise_on: value.bill_wise_on,
+        }
+    }
 }
 
 /// A party's unallocated residual: the gap between the ledger's own

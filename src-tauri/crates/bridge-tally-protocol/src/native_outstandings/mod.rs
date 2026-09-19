@@ -28,8 +28,9 @@ pub use compute::{
 };
 pub use date::{parse_native_display_date, NativeDisplayDateRole};
 pub use model::{
-    AgeingAnchor, CompanyCurrency, LedgerSnapshotEntry, NativeBillRow, NativeOutstandingsError,
-    NativeOutstandingsResult, NativeOverdueCrosscheck, PartyResidual,
+    AgeingAnchor, CompanyCurrency, LedgerSnapshotEntry, LedgerSnapshotObservedParentEntry,
+    NativeBillRow, NativeOutstandingsError, NativeOutstandingsResult, NativeOverdueCrosscheck,
+    PartyResidual,
 };
 pub use request::{
     render_company_currency_request, render_native_bills_request,
@@ -42,5 +43,6 @@ pub use request::{
 pub use wire::{
     parse_company_currency, parse_native_bill_rows, parse_native_group_snapshot,
     parse_native_group_snapshot_with_evidence, parse_native_ledger_snapshot,
-    parse_native_ledger_snapshot_for_company, NativeGroupSnapshotEntry,
+    parse_native_ledger_snapshot_for_company,
+    parse_native_ledger_snapshot_observations_for_company, NativeGroupSnapshotEntry,
 };

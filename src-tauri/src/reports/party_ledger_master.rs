@@ -58,6 +58,90 @@ pub(crate) struct PartyLedgerMasterRow {
     pub(crate) closing_balance: Option<ExactDecimal>,
 }
 
+/// The source collection after all read-level guards have passed, but before
+/// the exact `(NAME, PARENT)` master/balance join is admitted as a complete
+/// workbook source.  `rows` contains only one-to-one joins; every source row
+/// outside such a join has a source-scoped unresolved observation instead.
+///
+/// This is deliberately distinct from [`PartyLedgerMasterSource`].  A
+/// diagnostic must not be passed to workbook or Schedule III consumers: only
+/// [`Self::into_complete_source`] can construct that complete-only type.
+#[derive(Debug, Clone)]
+pub(crate) struct PartyLedgerMasterJoinDiagnostic {
+    pub(crate) company: String,
+    pub(crate) company_guid: String,
+    pub(crate) currency_assertion: OutstandingsCurrencyAssertion,
+    pub(crate) currency_decimal_places: u8,
+    pub(crate) from: TallyDate,
+    pub(crate) to: TallyDate,
+    pub(crate) rows: Vec<PartyLedgerMasterRow>,
+    pub(crate) unresolved: Vec<PartyLedgerMasterJoinUnresolved>,
+    pub(crate) master_observation_count: usize,
+    pub(crate) balance_observation_count: usize,
+    pub(crate) request_sha256: String,
+    pub(crate) master_response_sha256: String,
+    pub(crate) balance_response_sha256: String,
+    pub(crate) group_response_sha256: String,
+    pub(crate) master_response_bytes: usize,
+    pub(crate) balance_response_bytes: usize,
+    pub(crate) group_response_bytes: usize,
+    pub(crate) groups: Vec<TallyNamedMaster>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PartyLedgerMasterJoinUnresolvedSource {
+    Master,
+    Balance,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PartyLedgerMasterJoinUnresolvedReason {
+    MasterMissingBalance,
+    BalanceWithoutMaster,
+    DuplicateMasterDisplayKey,
+    DuplicateBalanceDisplayKey,
+}
+
+/// One unpaired source observation.  `name` and `parent` are the exact parsed
+/// values from that source side; no comparison-time normalization is exposed.
+/// No money or compliance fields are retained here, because no exact pair
+/// established that they belong to the other source response.
+#[derive(Debug, Clone)]
+pub(crate) struct PartyLedgerMasterJoinUnresolved {
+    pub(crate) source: PartyLedgerMasterJoinUnresolvedSource,
+    pub(crate) source_ordinal: usize,
+    pub(crate) name: String,
+    pub(crate) parent: PartyLedgerMasterFieldObservation,
+    pub(crate) reason: PartyLedgerMasterJoinUnresolvedReason,
+}
+
+impl PartyLedgerMasterJoinDiagnostic {
+    /// The strict source remains constructible only when every observed master
+    /// and balance row participated in an exact one-to-one join.
+    pub(crate) fn into_complete_source(self) -> Result<PartyLedgerMasterSource, Box<Self>> {
+        if !self.unresolved.is_empty() {
+            return Err(Box::new(self));
+        }
+        Ok(PartyLedgerMasterSource {
+            company: self.company,
+            company_guid: self.company_guid,
+            currency_assertion: self.currency_assertion,
+            currency_decimal_places: self.currency_decimal_places,
+            from: self.from,
+            to: self.to,
+            rows: self.rows,
+            request_sha256: self.request_sha256,
+            master_response_sha256: self.master_response_sha256,
+            balance_response_sha256: self.balance_response_sha256,
+            group_response_sha256: self.group_response_sha256,
+            master_response_bytes: self.master_response_bytes,
+            balance_response_bytes: self.balance_response_bytes,
+            group_response_bytes: self.group_response_bytes,
+            groups: self.groups,
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct PartyLedgerMasterWorkbook {
     source: PartyLedgerMasterSource,
