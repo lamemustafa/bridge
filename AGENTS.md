@@ -186,8 +186,11 @@ A behavioural discovery goes into the appropriate declared topic part linked fro
 legacy-link index; retain its section redirects and update them when adding or moving a
 heading. Use unique ATX section headings in the declared parts. The route gate supports ASCII
 text, `§`/`—` punctuation, `**bold**` and single-backtick inline code; unsupported heading or redirect
-markup is refused rather than approximated. Keep redirects as standalone visible anchor/link
-lines. Setext section headings are not supported in the split reference.
+markup is refused rather than approximated. Raw HTML blocks and inline HTML IDs are unsupported
+in the split index and declared parts, except for the canonical index’s complete standalone
+legacy-anchor lines. Each redirect uses one anchor line, one blank line and one standalone link
+line; orphan or duplicate anchor IDs are refused. Setext section headings are not supported in
+the split reference.
 The index and every declared part are compatibility-pinned sources, so follow
 `docs/release-process.md` after edits. A build rule goes into `IMPLEMENTATION_GUIDE.md`;
 a plan change goes into the plan with a dated deviation note. A

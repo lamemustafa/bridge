@@ -178,6 +178,14 @@ check(
   "passes",
 );
 check("adding a new number is the normal case", (d) => `${d}\n### 9.9 Brand new section\n\nnew\n`, "passes");
+check(
+  "a grandfathered formatted heading remains recognized after conversion to Setext",
+  (d) => d.replace(
+    "## 1.2 A modal error dialog in Tally's UI blocks the gateway until a human clicks OK — **P0 operationally**",
+    "1.2 A modal error dialog in Tally's UI blocks the gateway until a human clicks OK — **P0 operationally**\n---",
+  ),
+  "passes",
+);
 // A new section may legitimately carry a title an existing section already has
 // — the reference has two sections titled "Repeated heading" today. The swap
 // check must not read that as a move: the number it appears at is *new*, so no
@@ -288,9 +296,9 @@ const anchorsFor = (documents) => {
   return documents.flatMap((document, index) => {
     const localCounts = new Map();
     return document.split("\n").flatMap((line) => {
-      const found = /^ {0,3}#{2,6}\s+(.+?)\s*#*\s*$/.exec(line);
+      const found = /^ {0,3}#{2,6}\s+(.*)$/.exec(line);
       if (!found) return [];
-      const title = found[1];
+      const title = found[1].trimEnd().replace(/[ \t]+#+[ \t]*$/, "").trimEnd();
       const seed = title.toLowerCase().replace(/[^a-z0-9 _-]/g, "").replace(/ /g, "-");
       const global = globalCounts.get(seed) ?? 0;
       const local = localCounts.get(seed) ?? 0;
@@ -459,6 +467,166 @@ for (const [name, title] of [
 }
 
 {
+  const first = `${SPLIT_BASE_DOC}\n## 90 \`A]B\`\n\nbody\n`;
+  const out = runSplitGate(first, "# Part B\n");
+  if (out.status === 0) {
+    console.log("ok   a closing bracket inside an admitted code span remains part of the redirect label");
+  } else {
+    failed += 1;
+    console.error(`FAIL code-span brackets must not close redirect labels\n  exit ${out.status}: ${`${out.stdout}${out.stderr}`.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+{
+  const first = `${SPLIT_BASE_DOC}\n## 90 C#\n\nbody\n\n## 91 A##\n\nbody\n\n## 92 C# ###\n\nbody\n`;
+  const out = runSplitGate(first, "# Part B\n");
+  if (out.status === 0) {
+    console.log("ok   literal terminal hashes survive while a whitespace-delimited ATX closer is removed");
+  } else {
+    failed += 1;
+    console.error(`FAIL ATX closing hashes must not consume literal title hashes\n  exit ${out.status}: ${`${out.stdout}${out.stderr}`.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+{
+  const first = `${SPLIT_BASE_DOC}\n## **9.7** Duplicate claimant\n\nbody\n`;
+  const out = runSplitGate(first, "# Part B\n");
+  const text = `${out.stdout}${out.stderr}`;
+  if (
+    out.status !== 0 &&
+    text.includes("section 9.7 is used 2 times") &&
+    text.includes("**9.7** Duplicate claimant") &&
+    text.includes("(1 problem(s))")
+  ) {
+    console.log("ok   a formatted section prefix participates in number allocation");
+  } else {
+    failed += 1;
+    console.error(`FAIL formatted section numbers must not bypass allocation\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+{
+  const first = `${SPLIT_BASE_DOC}\n<div>\n## 90 Hidden heading\n</div>\n`;
+  const out = runSplitGate(first, "# Part B\n");
+  const text = `${out.stdout}${out.stderr}`;
+  if (out.status !== 0 && text.includes("unsupported raw HTML block in split protocol part")) {
+    console.log("ok   a heading hidden inside a part raw-HTML block cannot become a route target");
+  } else {
+    failed += 1;
+    console.error(`FAIL part raw-HTML blocks must be refused\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+{
+  const first = SPLIT_BASE_DOC;
+  const second = "# Part B\n";
+  const anchor = '<a id="97-operation-support-matrix"></a>';
+  writeFileSync(join(work, PART_A), first);
+  writeFileSync(join(work, PART_B), second);
+  writeFileSync(
+    join(work, DOC),
+    splitIndex([first, second]).replace(anchor, `paragraph ${anchor}\n\n${anchor}`),
+  );
+  writeSurface(work, [DOC, PART_A, PART_B]);
+  const out = runGate();
+  const text = `${out.stdout}${out.stderr}`;
+  if (out.status !== 0 && text.includes("unsupported raw HTML block in split protocol index")) {
+    console.log("ok   an inline canonical HTML ID cannot shadow a complete legacy redirect");
+  } else {
+    failed += 1;
+    console.error(`FAIL inline canonical HTML IDs must be refused\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+for (const [name, shadow] of [
+  [
+    "an unmatched backtick before an HTML ID",
+    'Example ` text <span id="97-operation-support-matrix"></span>\n\n',
+  ],
+  [
+    "a multiline HTML tag carrying an ID",
+    'Example <span\nid="97-operation-support-matrix"></span>\n\n',
+  ],
+  [
+    "an HTML ID whose attribute name is split from its assignment",
+    'Example <a\nid\n="97-operation-support-matrix"></a>\n\n',
+  ],
+  [
+    "a quoted multiline HTML ID",
+    '> Example <a\n> id\n> ="97-operation-support-matrix"></a>\n\n',
+  ],
+  [
+    "an HTML ID between mismatched backtick runs",
+    'Example ` one ``` <a id="97-operation-support-matrix"></a> ``\n\n',
+  ],
+  [
+    "an HTML ID between escaped backticks",
+    'Example \\` <a id="97-operation-support-matrix"></a> \\`\n\n',
+  ],
+  [
+    "an HTML ID after a backslash-prefixed code closer",
+    'Example `safe \\` <a id="97-operation-support-matrix"></a> `\n\n',
+  ],
+  [
+    "an HTML ID after a quoted greater-than attribute",
+    'Example <span title=">" id="97-operation-support-matrix"></span>\n\n',
+  ],
+]) {
+  const first = SPLIT_BASE_DOC;
+  const second = "# Part B\n";
+  const anchor = '<a id="97-operation-support-matrix"></a>';
+  writeFileSync(join(work, PART_A), first);
+  writeFileSync(join(work, PART_B), second);
+  writeFileSync(join(work, DOC), splitIndex([first, second]).replace(anchor, shadow + anchor));
+  writeSurface(work, [DOC, PART_A, PART_B]);
+  const out = runGate();
+  const text = `${out.stdout}${out.stderr}`;
+  if (out.status !== 0 && text.includes("unsupported raw HTML block in split protocol index")) {
+    console.log(`ok   ${name} cannot shadow a complete legacy redirect`);
+  } else {
+    failed += 1;
+    console.error(`FAIL ${name} must be refused\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+{
+  const first = `${SPLIT_BASE_DOC}\n## 90 id=value\n\nbody\n`;
+  const out = runSplitGate(first, "# Part B\n");
+  if (out.status === 0) {
+    console.log("ok   ordinary id=value heading text is not mistaken for raw HTML");
+  } else {
+    failed += 1;
+    console.error(`FAIL ordinary heading text must remain supported\n  exit ${out.status}: ${`${out.stdout}${out.stderr}`.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+{
+  const first = `${SPLIT_BASE_DOC}\nparagraph <a id="90-inline-id"></a>\n\n## 90 Inline id\n\nbody\n`;
+  const out = runSplitGate(first, "# Part B\n");
+  const text = `${out.stdout}${out.stderr}`;
+  if (out.status !== 0 && text.includes("unsupported raw HTML block in split protocol part")) {
+    console.log("ok   an inline part HTML ID cannot shadow a heading fragment");
+  } else {
+    failed += 1;
+    console.error(`FAIL inline part HTML IDs must be refused\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+for (const [name, example] of [
+  ["an inline-code HTML ID example", '`<a id="example-only"></a>`'],
+  ["an inline-code HTML ID example ending in a literal backslash", '`<a id="example-only"></a> \\`'],
+]) {
+  const first = `${SPLIT_BASE_DOC}\nparagraph ${example}\n`;
+  const out = runSplitGate(first, "# Part B\n");
+  if (out.status === 0) {
+    console.log(`ok   ${name} remains non-rendered content`);
+  } else {
+    failed += 1;
+    console.error(`FAIL ${name} must remain allowed\n  exit ${out.status}: ${`${out.stdout}${out.stderr}`.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+{
   const first = `${SPLIT_BASE_DOC}\n## Method note\n\nbody\n`;
   writeFileSync(join(work, PART_A), first);
   writeFileSync(join(work, PART_B), "# Part B\n");
@@ -574,6 +742,45 @@ for (const [name, title] of [
   }
 }
 
+// Inventory input is user-authored and reaches the gate before ordinary
+// failure aggregation. Reject oversized names and inventories before any
+// filesystem call, and keep the resulting native Node diagnostic bounded.
+for (const [name, inventory, diagnostic] of [
+  ["an invalid long part token", `bad-${"x".repeat(10_000)}`, "invalid protocol-reference part"],
+  [
+    "a valid-looking long part token",
+    `TALLY_PROTOCOL_REFERENCE_${"A".repeat(10_000)}.md`,
+    "invalid protocol-reference part",
+  ],
+  [
+    "an oversized declared-part inventory",
+    Array.from({ length: 65 }, (_, index) =>
+      `TALLY_PROTOCOL_REFERENCE_EXTRA_${String(index).padStart(2, "0")}.md`).join(" | "),
+    "too many protocol-reference parts",
+  ],
+]) {
+  const index = splitIndex([SPLIT_BASE_DOC, "# Part B\n"]).replace(
+    /<!-- protocol-reference-parts:.*?-->/,
+    `<!-- protocol-reference-parts: ${inventory} -->`,
+  );
+  writeFileSync(join(work, DOC), index);
+  const out = runGate();
+  const text = `${out.stdout}${out.stderr}`;
+  if (
+    out.status !== 0 &&
+    text.includes(diagnostic) &&
+    text.length < 3_000 &&
+    !text.includes("ENAMETOOLONG") &&
+    !text.includes("x".repeat(1_000)) &&
+    !text.includes("A".repeat(1_000))
+  ) {
+    console.log(`ok   ${name} is refused with a bounded diagnostic`);
+  } else {
+    failed += 1;
+    console.error(`FAIL ${name} must fail before native path handling with bounded output\n  exit ${out.status}; bytes ${text.length}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
 {
   const first = SPLIT_BASE_DOC;
   const second = "# Part B\n";
@@ -595,6 +802,31 @@ for (const [name, title] of [
   } else {
     failed += 1;
     console.error(`FAIL an index-part duplicate must be caught\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+{
+  const first = SPLIT_BASE_DOC;
+  const second = "# Part B\n";
+  const anchor = '<a id="97-operation-support-matrix"></a>';
+  const orphan = `${anchor}\n\norphaned anchor body\n\n`;
+  writeFileSync(join(work, PART_A), first);
+  writeFileSync(join(work, PART_B), second);
+  writeFileSync(join(work, DOC), splitIndex([first, second]).replace(anchor, orphan + anchor));
+  writeSurface(work, [DOC, PART_A, PART_B]);
+  const out = runGate();
+  const text = `${out.stdout}${out.stderr}`;
+  if (
+    out.status !== 0 &&
+    text.includes("1 duplicate legacy-anchor occurrence(s)") &&
+    text.includes("1 incomplete legacy anchor block(s)") &&
+    text.includes("97-operation-support-matrix") &&
+    text.includes("(2 problem(s))")
+  ) {
+    console.log("ok   an incomplete anchor is refused and still participates in duplicate-ID accounting");
+  } else {
+    failed += 1;
+    console.error(`FAIL incomplete anchors must be refused and counted\n  exit ${out.status}: ${text.split("\n").slice(0, 8).join("\n  ")}`);
   }
 }
 
@@ -709,11 +941,9 @@ for (const [name, title] of [
   const text = `${out.stdout}${out.stderr}`;
   if (
     out.status !== 0 &&
-    text.includes("legacy section anchor(s) missing") &&
-    text.includes("97-operation-support-matrix") &&
-    text.includes("(1 problem(s))")
+    text.includes("unsupported raw HTML block in split protocol index")
   ) {
-    console.log("ok   fenced, quoted, inline-code, and commented routes cannot replace a rendered route");
+    console.log("ok   quoted HTML IDs are refused while fenced, inline-code, and commented routes stay non-rendered");
   } else {
     failed += 1;
     console.error(`FAIL code examples must not satisfy a missing legacy route\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
@@ -735,7 +965,12 @@ for (const [name, title] of [
   writeSurface(work, [DOC, PART_A, PART_B]);
   const out = runGate();
   const text = `${out.stdout}${out.stderr}`;
-  if (out.status !== 0 && text.includes("unsupported raw HTML block in split protocol index")) {
+  if (
+    out.status !== 0 &&
+    text.includes("legacy section anchor(s) missing") &&
+    text.includes("97-operation-support-matrix") &&
+    text.includes("(1 problem(s))")
+  ) {
     console.log("ok   a full route inside multiline inline code is refused");
   } else {
     failed += 1;
