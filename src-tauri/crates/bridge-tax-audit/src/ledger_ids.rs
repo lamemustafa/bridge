@@ -24,9 +24,7 @@ use crate::book::{Book, Ledger};
 use crate::error::{AuditError, Result};
 
 fn missing_guid(what: &str) -> AuditError {
-    AuditError::Config(format!(
-        "{what} has no Tally GUID; refusing to derive a stable id from its name"
-    ))
+    AuditError::MissingGuid(what.to_string())
 }
 
 /// Trim surrounding whitespace, then lowercase (ASCII only -- a Tally GUID is hex digits and
@@ -126,13 +124,19 @@ mod tests {
 
     #[test]
     fn guid_tag_blank_refuses() {
-        assert!(guid_tag("", "ledger 'X'").is_err());
+        assert!(matches!(
+            guid_tag("", "ledger 'X'"),
+            Err(AuditError::MissingGuid(_))
+        ));
     }
 
     #[test]
     fn guid_tag_whitespace_only_refuses() {
         // Trimming must happen BEFORE the blank check, or "   " would hash as a non-blank GUID.
-        assert!(guid_tag("   ", "ledger 'X'").is_err());
+        assert!(matches!(
+            guid_tag("   ", "ledger 'X'"),
+            Err(AuditError::MissingGuid(_))
+        ));
     }
 
     #[test]
