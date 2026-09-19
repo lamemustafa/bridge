@@ -46,8 +46,8 @@ script's own auto-derivation (no `TB_SKEW` entry), so DEP-1 ties cleanly on all 
 2026-09-19: every ledger master now carries its own GUID and MASTERID (`lguid`, masterid 501+,
 distinct numbering from the voucher masterids 1-49 above), the way a real Tally export always
 does -- needed once `cash_payments_40a3`/`depreciation` derive their row ids from
-`stable_ledger_tag` (Tally GUID, bridge#510) rather than a name hash; a ledger with no GUID
-refuses (`tae/ledger_ids.py`'s `MissingGuid`, mirrored by `ledger_ids::stable_ledger_tag` here).
+`stable_ledger_tag` (Tally GUID, bridge#510) rather than a name hash; a ledger with no GUID falls
+back to a hash of its name, as the reference implementation does (`docs/tax-audit/parity-spec-v1.md` §11).
 
 Deterministic: running it twice writes identical bytes (gzip mtime is fixed at 0).
 

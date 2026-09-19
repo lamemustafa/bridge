@@ -120,7 +120,7 @@ implementation commit `84386b14b77a291c0bf5b1ae70e7e8afb9b609a3` -- the same ren
 carries no name-derived id). `synthetic-read/parts/ledgers.xml` (and its `manifest.json` sha256/
 bytes) gained a `<GUID>`/`<MASTERID>` per ledger master (`parity/generate_fixture.py`'s `lguid`,
 masterid 501+, distinct from the voucher masterids 1-49 above) -- a real Tally ledger export always
-carries one, and `stable_ledger_tag` refuses a ledger with none. `golden/synthetic.
+carries one; a ledger with none falls back to a hash of its name (`docs/tax-audit/parity-spec-v1.md` §11). `golden/synthetic.
 cash_payments_40a3.json` and `golden/synthetic.depreciation.json` were regenerated at the commit
 above (id-tag text only; every figure/finding value is byte-identical to the previous goldens).
 `golden/synthetic.cash_44ab.json` is untouched (same reason it needed no source change). Fixture
