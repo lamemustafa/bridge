@@ -142,8 +142,14 @@ class MergeGateControls(unittest.TestCase):
     def test_known_public_agent_address_in_a_well_formed_commit_trailer_is_identity_metadata(self):
         self.assert_pass("public-agent-coauthor-trailer", "review evidence names the current head")
 
+    def test_known_public_agent_address_in_a_well_formed_crlf_commit_trailer_is_identity_metadata(self):
+        self.assert_pass("public-agent-coauthor-trailer-crlf", "review evidence names the current head")
+
     def test_arbitrary_customer_address_in_a_coauthor_trailer_still_blocks(self):
         self.assert_blocked("customer-coauthor-trailer", "customer email shape")
+
+    def test_arbitrary_customer_address_in_a_crlf_coauthor_trailer_still_blocks(self):
+        self.assert_blocked("customer-coauthor-trailer-crlf", "customer email shape")
 
     def test_known_public_agent_address_outside_a_commit_trailer_still_blocks(self):
         self.assert_blocked("public-agent-email-in-pr-body", "customer email shape")
@@ -157,8 +163,17 @@ class MergeGateControls(unittest.TestCase):
     def test_coauthor_line_outside_the_trailer_footer_still_blocks(self):
         self.assert_blocked("public-agent-nonfooter", "customer email shape")
 
+    def test_crlf_coauthor_line_outside_the_trailer_footer_still_blocks(self):
+        self.assert_blocked("public-agent-nonfooter-crlf", "customer email shape")
+
+    def test_mixed_line_endings_still_block(self):
+        self.assert_blocked("public-agent-mixed-line-endings", "customer email shape")
+
     def test_malformed_coauthor_trailer_still_blocks(self):
         self.assert_blocked("public-agent-malformed-trailer", "customer email shape")
+
+    def test_malformed_crlf_coauthor_trailer_still_blocks(self):
+        self.assert_blocked("public-agent-malformed-trailer-crlf", "customer email shape")
 
     def test_coauthor_trailer_with_extra_payload_still_blocks(self):
         self.assert_blocked("public-agent-trailer-extra-payload", "customer email shape")

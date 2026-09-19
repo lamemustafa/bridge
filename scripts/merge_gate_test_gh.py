@@ -144,12 +144,30 @@ def state():
         )
         s["commits"] = [commit]
 
+    elif scenario == "public-agent-coauthor-trailer-crlf":
+        commit = dict(DEFAULT_COMMIT)
+        commit["commit"] = dict(DEFAULT_COMMIT["commit"])
+        commit["commit"]["message"] = (
+            "Keep the ledger-tag refusal typed.\r\n\r\n"
+            "Co-Authored-By: Claude Opus 5 <" + PUBLIC_AGENT_ADDRESS + ">\r\n"
+        )
+        s["commits"] = [commit]
+
     elif scenario == "customer-coauthor-trailer":
         commit = dict(DEFAULT_COMMIT)
         commit["commit"] = dict(DEFAULT_COMMIT["commit"])
         commit["commit"]["message"] = (
             "Keep the ledger-tag refusal typed.\n\n"
             "Co-Authored-By: Customer Contributor <" + CUSTOMER_ADDRESS + ">\n"
+        )
+        s["commits"] = [commit]
+
+    elif scenario == "customer-coauthor-trailer-crlf":
+        commit = dict(DEFAULT_COMMIT)
+        commit["commit"] = dict(DEFAULT_COMMIT["commit"])
+        commit["commit"]["message"] = (
+            "Keep the ledger-tag refusal typed.\r\n\r\n"
+            "Co-Authored-By: Customer Contributor <" + CUSTOMER_ADDRESS + ">\r\n"
         )
         s["commits"] = [commit]
 
@@ -185,12 +203,39 @@ def state():
         )
         s["commits"] = [commit]
 
+    elif scenario == "public-agent-nonfooter-crlf":
+        commit = dict(DEFAULT_COMMIT)
+        commit["commit"] = dict(DEFAULT_COMMIT["commit"])
+        commit["commit"]["message"] = (
+            "Co-Authored-By: Claude Opus 5 <" + PUBLIC_AGENT_ADDRESS + ">\r\n\r\n"
+            "This is ordinary commit body text, not a trailer footer.\r\n"
+        )
+        s["commits"] = [commit]
+
+    elif scenario == "public-agent-mixed-line-endings":
+        commit = dict(DEFAULT_COMMIT)
+        commit["commit"] = dict(DEFAULT_COMMIT["commit"])
+        commit["commit"]["message"] = (
+            "Keep the ledger-tag refusal typed.\n\n"
+            "Co-Authored-By: Claude Opus 5 <" + PUBLIC_AGENT_ADDRESS + ">\r\n"
+        )
+        s["commits"] = [commit]
+
     elif scenario == "public-agent-malformed-trailer":
         commit = dict(DEFAULT_COMMIT)
         commit["commit"] = dict(DEFAULT_COMMIT["commit"])
         commit["commit"]["message"] = (
             "Keep the ledger-tag refusal typed.\n\n"
             "Co-Authored-By: Claude Opus 5 <" + PUBLIC_AGENT_ADDRESS + "\n"
+        )
+        s["commits"] = [commit]
+
+    elif scenario == "public-agent-malformed-trailer-crlf":
+        commit = dict(DEFAULT_COMMIT)
+        commit["commit"] = dict(DEFAULT_COMMIT["commit"])
+        commit["commit"]["message"] = (
+            "Keep the ledger-tag refusal typed.\r\n\r\n"
+            "Co-Authored-By: Claude Opus 5 <" + PUBLIC_AGENT_ADDRESS + "\r\n"
         )
         s["commits"] = [commit]
 

@@ -261,14 +261,19 @@ def redact_public_agent_attribution_trailer(message):
     """
     if not isinstance(message, str):
         return message
-    without_trailing_newlines = message.rstrip("\n")
+    line_ending = terminal_trailer_line_ending(message)
+    if line_ending is None:
+        return message
+    without_trailing_newlines = message
+    while without_trailing_newlines.endswith(line_ending):
+        without_trailing_newlines = without_trailing_newlines[:-len(line_ending)]
     trailing_newlines = message[len(without_trailing_newlines):]
-    footer_boundary = without_trailing_newlines.rfind("\n\n")
+    footer_boundary = without_trailing_newlines.rfind(line_ending + line_ending)
     if footer_boundary < 0:
         return message
-    prefix = without_trailing_newlines[:footer_boundary + 2]
-    footer = without_trailing_newlines[footer_boundary + 2:]
-    lines = footer.split("\n")
+    prefix = without_trailing_newlines[:footer_boundary + len(line_ending + line_ending)]
+    footer = without_trailing_newlines[footer_boundary + len(line_ending + line_ending):]
+    lines = footer.split(line_ending)
     if not lines or not all(GIT_TRAILER_RE.fullmatch(line) for line in lines):
         return message
     redacted = []
@@ -280,7 +285,20 @@ def redact_public_agent_attribution_trailer(message):
             redacted.append(line[:start] + "public-agent-attribution" + line[end:])
         else:
             redacted.append(line)
-    return prefix + "\n".join(redacted) + trailing_newlines
+    return prefix + line_ending.join(redacted) + trailing_newlines
+
+
+def terminal_trailer_line_ending(message):
+    """Return the one physical line ending used by a trailer candidate.
+
+    Git accepts CRLF commit messages. Treat CRLF as a grammar delimiter only
+    when every newline is CRLF; do not normalize mixed or bare-CR text, which
+    would alter non-address bytes before deciding what is safe to redact.
+    """
+    if "\r\n" not in message:
+        return "\n" if "\r" not in message else None
+    residual = message.replace("\r\n", "")
+    return "\r\n" if "\r" not in residual and "\n" not in residual else None
 
 
 def redact_public_agent_attribution_messages(messages):
