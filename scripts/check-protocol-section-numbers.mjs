@@ -244,7 +244,8 @@ function textOutsidePairedCode(lines, visibleEntries) {
   const material = lines.map(() => "");
   for (const { line, index } of visibleEntries) material[index] = line;
   const text = material.join("\n");
-  const outside = [...text];
+  // String offsets below are UTF-16 code units, including before astral text.
+  const outside = text.split("");
   for (let index = 0; index < text.length;) {
     if (text[index] !== "`") {
       index += 1;

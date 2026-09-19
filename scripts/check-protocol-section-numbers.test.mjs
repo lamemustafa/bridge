@@ -540,6 +540,10 @@ for (const [name, title] of [
 
 for (const [name, shadow] of [
   [
+    "an HTML ID after astral text and a paired code span",
+    'Example \u{1f600}\u{1f600} `safe` <span id="97-operation-support-matrix"></span>\n\n',
+  ],
+  [
     "an unmatched backtick before an HTML ID",
     'Example ` text <span id="97-operation-support-matrix"></span>\n\n',
   ],
