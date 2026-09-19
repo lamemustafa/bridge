@@ -803,39 +803,38 @@ fn read_scalar_rejecting_nested_markup(
     name: QName<'_>,
 ) -> anyhow::Result<Option<String>> {
     let expected = name.as_ref().to_ascii_uppercase();
-    let mut parts = Vec::new();
-    loop {
-        match reader.read_event()? {
-            Event::Start(child) | Event::Empty(child) => {
-                let child = String::from_utf8_lossy(child.name().as_ref()).to_ascii_uppercase();
-                anyhow::bail!("party/ledger master scalar contained nested markup <{child}>");
-            }
-            Event::Text(text) => {
-                let decoded = text.decode()?;
-                let value = quick_xml::escape::unescape(&decoded)?;
-                let value = value.trim();
-                if !value.is_empty() {
-                    parts.push(value.to_owned());
+    with_untrimmed_text(reader, |reader| {
+        let mut current = String::new();
+        loop {
+            match reader.read_event()? {
+                Event::Start(child) | Event::Empty(child) => {
+                    let child = String::from_utf8_lossy(child.name().as_ref()).to_ascii_uppercase();
+                    anyhow::bail!("party/ledger master scalar contained nested markup <{child}>");
                 }
-            }
-            Event::CData(text) => {
-                let value = text.decode()?;
-                let value = value.trim();
-                if !value.is_empty() {
-                    parts.push(value.to_owned());
+                Event::Text(text) => {
+                    let decoded = text.decode()?;
+                    let value = quick_xml::escape::unescape(&decoded)?;
+                    current.push_str(&value);
                 }
-            }
-            Event::End(end) => {
-                if end.name().as_ref().to_ascii_uppercase() != expected {
-                    anyhow::bail!("party/ledger master field closed unexpectedly");
+                Event::GeneralRef(reference) => {
+                    current.push_str(&resolve_party_ledger_master_reference(reference)?);
                 }
-                break;
+                Event::CData(text) => {
+                    current.push_str(&text.decode()?);
+                }
+                Event::End(end) => {
+                    if end.name().as_ref().to_ascii_uppercase() != expected {
+                        anyhow::bail!("party/ledger master field closed unexpectedly");
+                    }
+                    break;
+                }
+                Event::Eof => anyhow::bail!("party/ledger master field ended before it closed"),
+                _ => {}
             }
-            Event::Eof => anyhow::bail!("party/ledger master field ended before it closed"),
-            _ => {}
         }
-    }
-    Ok((!parts.is_empty()).then(|| parts.join("\n")))
+        let trimmed = current.trim();
+        Ok((!trimmed.is_empty()).then(|| trimmed.to_owned()))
+    })
 }
 
 /// Retain a classification-driving field, refusing nested markup. See
@@ -902,41 +901,119 @@ fn read_flattened_optional_text(
     name: QName<'_>,
 ) -> anyhow::Result<Option<String>> {
     let expected = name.as_ref().to_ascii_uppercase();
-    let mut nested_depth = 0_usize;
-    let mut parts = Vec::new();
-    loop {
-        match reader.read_event()? {
-            Event::Start(_) => nested_depth = nested_depth.saturating_add(1),
-            Event::Empty(_) => {}
-            Event::Text(text) => {
-                let decoded = text.decode()?;
-                let value = quick_xml::escape::unescape(&decoded)?;
-                let value = value.trim();
-                if !value.is_empty() {
-                    parts.push(value.to_owned());
+    with_untrimmed_text(reader, |reader| {
+        let mut nested_depth = 0_usize;
+        let mut parts = Vec::new();
+        let mut current = String::new();
+        loop {
+            match reader.read_event()? {
+                Event::Start(_) => {
+                    flush_flattened_part(&mut current, &mut parts);
+                    nested_depth = nested_depth.saturating_add(1);
                 }
-            }
-            Event::CData(text) => {
-                let value = text.decode()?;
-                let value = value.trim();
-                if !value.is_empty() {
-                    parts.push(value.to_owned());
+                Event::Empty(_) => flush_flattened_part(&mut current, &mut parts),
+                Event::Text(text) => {
+                    let decoded = text.decode()?;
+                    let value = quick_xml::escape::unescape(&decoded)?;
+                    current.push_str(&value);
                 }
-            }
-            Event::End(end) => {
-                if nested_depth == 0 {
-                    if end.name().as_ref().to_ascii_uppercase() != expected {
-                        anyhow::bail!("party/ledger master field closed unexpectedly");
+                Event::GeneralRef(reference) => {
+                    current.push_str(&resolve_party_ledger_master_reference(reference)?);
+                }
+                Event::CData(text) => {
+                    current.push_str(&text.decode()?);
+                }
+                Event::End(end) => {
+                    if nested_depth == 0 {
+                        if end.name().as_ref().to_ascii_uppercase() != expected {
+                            anyhow::bail!("party/ledger master field closed unexpectedly");
+                        }
+                        flush_flattened_part(&mut current, &mut parts);
+                        break;
                     }
-                    break;
+                    flush_flattened_part(&mut current, &mut parts);
+                    nested_depth = nested_depth.saturating_sub(1);
                 }
-                nested_depth = nested_depth.saturating_sub(1);
+                Event::Eof => anyhow::bail!("party/ledger master field ended before it closed"),
+                _ => {}
             }
-            Event::Eof => anyhow::bail!("party/ledger master field ended before it closed"),
-            _ => {}
         }
+        Ok((!parts.is_empty()).then(|| parts.join("\n")))
+    })
+}
+
+/// Trims `current` and, if non-empty, moves it onto `parts` as one flattened
+/// line; always leaves `current` empty afterward.
+///
+/// Called at every element boundary (`Start`, `Empty`, and `End` of a nested
+/// child) in [`read_flattened_optional_text`], so a value is split into
+/// separate lines only where genuine nested markup separates it -- the
+/// repeated `<LEDADDRESS>` children of `LEDADDRESS.LIST` being the real case.
+/// It is never called merely because quick_xml delivered one line's text as
+/// more than one event: a `GeneralRef` or a `CData` section splits a `Text`
+/// run into several events without introducing a new line, so those pieces
+/// accumulate in `current` and are trimmed and pushed together, once, here.
+fn flush_flattened_part(current: &mut String, parts: &mut Vec<String>) {
+    let trimmed = current.trim();
+    if !trimmed.is_empty() {
+        parts.push(trimmed.to_owned());
     }
-    Ok((!parts.is_empty()).then(|| parts.join("\n")))
+    current.clear();
+}
+
+/// Resolves one `GeneralRef` event (`&amp;`, `&#8377;`, `&#x20B9;`, ...) into
+/// its character, the same way [`read_optional_text`] and
+/// [`read_identifier_text`] resolve a reference embedded in an ordinary
+/// `Text` event: by reforming `&<ref>;` and unescaping it with
+/// `quick_xml::escape::unescape`, which resolves both the five predefined
+/// XML entities and legal numeric character references.
+///
+/// quick_xml 0.41 delivers an entity or numeric character reference as its
+/// own event, separate from any surrounding `Text`/`CData` for the same
+/// logical run of text. A catch-all match arm with no `GeneralRef` case
+/// silently drops it -- the bug this function's callers close. By the time a
+/// `GeneralRef` reaches either caller,
+/// `tolerant_xml::sanitize_invalid_numeric_references_with_provenance` (see
+/// `parse_native_ledger_collection_with_evidence`) has already rewritten any
+/// reference to a code point XML 1.0 forbids into literal marker text
+/// (`TALLY_PROTOCOL_REFERENCE.md` section 1.1(d)), so a `GeneralRef` seen
+/// here is always either a predefined named entity or a legal numeric
+/// reference; `unescape` fails closed on anything else.
+fn resolve_party_ledger_master_reference(
+    reference: quick_xml::events::BytesRef<'_>,
+) -> anyhow::Result<String> {
+    let decoded = reference.decode()?;
+    Ok(quick_xml::escape::unescape(&format!("&{decoded};"))?.into_owned())
+}
+
+/// Runs `body` with the reader's automatic text trimming disabled, restoring
+/// whatever was configured before returning -- on every exit path, including
+/// an error propagated by `body`.
+///
+/// The whole document is parsed with `trim_text(true)` (`configured_reader`),
+/// which quick_xml applies independently to *every* `Text` event it emits --
+/// including the fragments immediately before and after a `GeneralRef` or a
+/// `CData` section. Concatenating those fragments without disabling this
+/// first would silently lose whitespace that sat next to the split, e.g. the
+/// spaces in `RAM &amp; SONS` (`RAM` and `SONS` each arrive already trimmed).
+/// Reading untrimmed and trimming only the fully reassembled value (done by
+/// [`read_flattened_optional_text`] and [`read_scalar_rejecting_nested_markup`])
+/// is the same approach the agent-facing read-back parsers already use for
+/// the same reason (see `trim_text(false)` in `agent_lab.rs`,
+/// `agent_voucher_parse.rs`, `agent_company_checkpoint.rs`, and
+/// `source_draft_xml.rs`).
+fn with_untrimmed_text<T>(
+    reader: &mut Reader<&[u8]>,
+    body: impl FnOnce(&mut Reader<&[u8]>) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    let config = reader.config_mut();
+    let trim_text_start = std::mem::replace(&mut config.trim_text_start, false);
+    let trim_text_end = std::mem::replace(&mut config.trim_text_end, false);
+    let result = body(reader);
+    let config = reader.config_mut();
+    config.trim_text_start = trim_text_start;
+    config.trim_text_end = trim_text_end;
+    result
 }
 
 #[cfg(test)]

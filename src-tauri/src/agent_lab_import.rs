@@ -1557,30 +1557,58 @@ fn chunked_masters(
 /// a one-shot diagnostic surfaced directly in the tool's own JSON result, not
 /// persisted evidence, so the raw text is exactly what a caller needs to act
 /// on a rejection.
+///
+/// quick_xml delivers an entity or numeric character reference (`&amp;`,
+/// `&#4;`, ...) as its own `GeneralRef` event, separate from any surrounding
+/// `Text`/`CData` for the same message. Earlier this only handled `Text`, so
+/// one `LINEERROR` whose message happened to contain a reference (e.g. a
+/// ledger name quoted in the rejection) was silently split into several
+/// entries in `errors` -- each one pushed as its own element -- which then
+/// read as multiple, garbled messages once `tally_rejection_message` joined
+/// them with `"; "`. Buffering per `LINEERROR` and flushing once at its `End`
+/// keeps one message as one entry regardless of how many events it arrives
+/// in. `trim_text(false)` (rather than `true`) is deliberate for the same
+/// reason `native_ledger_collection.rs`'s field readers disable it: quick_xml
+/// would otherwise trim each `Text` fragment independently, eating
+/// whitespace that sat next to the split.
 fn extract_line_error_texts(xml: &str) -> Vec<String> {
     let marked = mark_agent_xml(xml);
     let mut reader = quick_xml::Reader::from_str(marked.as_ref());
-    reader.config_mut().trim_text(true);
+    reader.config_mut().trim_text(false);
     let mut errors = Vec::new();
     let mut in_line_error = false;
+    let mut current = String::new();
     loop {
         match reader.read_event() {
             Ok(quick_xml::events::Event::Start(event))
                 if event.name().as_ref().eq_ignore_ascii_case(b"LINEERROR") =>
             {
                 in_line_error = true;
+                current.clear();
             }
             Ok(quick_xml::events::Event::End(event))
                 if event.name().as_ref().eq_ignore_ascii_case(b"LINEERROR") =>
             {
                 in_line_error = false;
+                let trimmed = current.trim();
+                if !trimmed.is_empty() {
+                    errors.push(trimmed.to_string());
+                }
+                current.clear();
             }
             Ok(quick_xml::events::Event::Text(text)) if in_line_error => {
                 if let Ok(value) = decoded_agent_text(text) {
-                    let trimmed = value.trim();
-                    if !trimmed.is_empty() {
-                        errors.push(trimmed.to_string());
-                    }
+                    current.push_str(&value);
+                }
+            }
+            Ok(quick_xml::events::Event::GeneralRef(reference)) if in_line_error => {
+                if let Ok(value) = decoded_agent_reference(reference) {
+                    current.push_str(&value);
+                }
+            }
+            Ok(quick_xml::events::Event::CData(text)) if in_line_error => {
+                if let Ok(value) = text.decode() {
+                    current.push_str(&value);
                 }
             }
             Ok(quick_xml::events::Event::Eof) => break,
