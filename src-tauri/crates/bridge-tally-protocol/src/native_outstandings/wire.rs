@@ -32,7 +32,9 @@ use crate::tolerant_xml::{
 use crate::{PartyLedgerMasterFieldObservation, TallyNamedMaster};
 
 use super::date::{parse_native_display_date, NativeDisplayDateRole};
-use super::model::{LedgerSnapshotEntry, NativeBillRow, NativeOutstandingsError};
+use super::model::{
+    LedgerSnapshotEntry, LedgerSnapshotObservedParentEntry, NativeBillRow, NativeOutstandingsError,
+};
 
 struct PendingBillRow {
     party: String,
@@ -421,7 +423,7 @@ pub fn parse_native_ledger_snapshot(
 ) -> Result<Vec<LedgerSnapshotEntry>, NativeOutstandingsError> {
     Ok(parse_native_ledger_snapshot_rows(xml)?
         .into_iter()
-        .map(|row| row.entry)
+        .map(|row| row.entry.into())
         .collect())
 }
 
@@ -433,6 +435,34 @@ pub fn parse_native_ledger_snapshot_for_company(
     xml: &str,
     expected_company_guid: &str,
 ) -> Result<Vec<LedgerSnapshotEntry>, NativeOutstandingsError> {
+    Ok(
+        parse_native_ledger_snapshot_rows_for_company(xml, expected_company_guid)?
+            .into_iter()
+            .map(|row| row.entry.into())
+            .collect(),
+    )
+}
+
+/// Parses a selected-company ledger snapshot for the diagnostic-only party
+/// join while retaining the exact `PARENT` observation. Existing native
+/// outstandings consumers use [`parse_native_ledger_snapshot_for_company`],
+/// whose flattened `Option<String>` contract remains unchanged.
+pub fn parse_native_ledger_snapshot_observations_for_company(
+    xml: &str,
+    expected_company_guid: &str,
+) -> Result<Vec<LedgerSnapshotObservedParentEntry>, NativeOutstandingsError> {
+    Ok(
+        parse_native_ledger_snapshot_rows_for_company(xml, expected_company_guid)?
+            .into_iter()
+            .map(|row| row.entry)
+            .collect(),
+    )
+}
+
+fn parse_native_ledger_snapshot_rows_for_company(
+    xml: &str,
+    expected_company_guid: &str,
+) -> Result<Vec<ParsedLedgerSnapshotRow>, NativeOutstandingsError> {
     let entries = parse_native_ledger_snapshot_rows(xml)?;
     for row in &entries {
         let response_company_guid = row.response_company_guid.as_deref().ok_or(
@@ -449,7 +479,7 @@ pub fn parse_native_ledger_snapshot_for_company(
             "ledger_response_company_guid_missing",
         ));
     }
-    Ok(entries.into_iter().map(|row| row.entry).collect())
+    Ok(entries)
 }
 
 fn parse_native_ledger_snapshot_rows(
@@ -813,7 +843,8 @@ fn parse_ledger_row(
     let name = attribute_value(element, b"NAME").ok_or(
         NativeOutstandingsError::InvalidResponse("ledger_name_missing"),
     )?;
-    let mut parent = None;
+    let mut parent = PartyLedgerMasterFieldObservation::NotObserved;
+    let mut parent_seen = false;
     // The outer option records whether the element was present; the inner one
     // retains Tally's observed empty-element state rather than inventing zero.
     let mut closing_balance = None;
@@ -834,12 +865,12 @@ fn parse_ledger_row(
                         // matched by exact codepoint. See
                         // `read_element_identifier_text`.
                         let text = read_element_identifier_text(reader, child.name())?;
-                        if parent.is_some() {
+                        if std::mem::replace(&mut parent_seen, true) {
                             return Err(NativeOutstandingsError::InvalidResponse(
                                 "ledger_duplicate_parent",
                             ));
                         }
-                        parent = Some((!text.trim().is_empty()).then_some(text));
+                        parent = PartyLedgerMasterFieldObservation::Returned(text);
                     }
                     b"CLOSINGBALANCE" => {
                         let text = read_element_text(reader, child.name())?;
@@ -880,6 +911,14 @@ fn parse_ledger_row(
                     _ => skip_subtree(reader)?,
                 }
             }
+            Event::Empty(child) if child.name().as_ref().eq_ignore_ascii_case(b"PARENT") => {
+                if std::mem::replace(&mut parent_seen, true) {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "ledger_duplicate_parent",
+                    ));
+                }
+                parent = PartyLedgerMasterFieldObservation::Returned(String::new());
+            }
             Event::Empty(child)
                 if child
                     .name()
@@ -903,9 +942,9 @@ fn parse_ledger_row(
         }
     }
     Ok(ParsedLedgerSnapshotRow {
-        entry: LedgerSnapshotEntry {
+        entry: LedgerSnapshotObservedParentEntry {
             name,
-            parent: parent.flatten(),
+            parent,
             closing_balance: closing_balance.ok_or(NativeOutstandingsError::InvalidResponse(
                 "ledger_closing_balance_missing",
             ))?,
@@ -921,7 +960,7 @@ fn parse_ledger_row(
 }
 
 struct ParsedLedgerSnapshotRow {
-    entry: LedgerSnapshotEntry,
+    entry: LedgerSnapshotObservedParentEntry,
     response_company_guid: Option<String>,
 }
 

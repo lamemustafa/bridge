@@ -684,6 +684,67 @@ mod through_the_tool {
         original.replace(needle, "NAME=\"Bridge Unmatched Diagnostic WR4\"")
     }
 
+    // Negative-only fault injection into the two existing captured sources.
+    // This is not evidence that a real Tally instance emits mismatched parent
+    // observations. It ensures diagnostics do not collapse returned-empty and
+    // omitted PARENT into an invented exact join.
+    fn empty_master_parent_and_missing_balance_parent() -> (String, String) {
+        let master_parent = "<PARENT TYPE=\"String\">Bridge Nested Debtors WR4</PARENT>";
+        let balance_parent = "<PARENT TYPE=\"String\">Bridge Nested Debtors WR4</PARENT>";
+        let master = masters();
+        let balance = balances();
+        assert_eq!(master.matches(master_parent).count(), 1);
+        assert_eq!(balance.matches(balance_parent).count(), 1);
+        let master = master.replace(master_parent, "<PARENT TYPE=\"String\"></PARENT>");
+        let balance = balance.replace(balance_parent, "");
+        assert!(master.contains("NAME=\"Bridge Nested Debtor WR4\""));
+        assert!(balance.contains("NAME=\"Bridge Nested Debtor WR4\""));
+        (master, balance)
+    }
+
+    #[tokio::test]
+    async fn diagnostic_mode_quarantines_empty_and_unobserved_parent_observations() {
+        let (masters, balances) = empty_master_parent_and_missing_balance_parent();
+        let (response, _) = call(
+            compliance_plans(masters, balances),
+            json!({"company_guid":GUID,"fields":"compliance_diagnostics"}),
+        )
+        .await;
+        let content = &response["structuredContent"];
+        assert_eq!(content["result"]["state"], "partial");
+        assert_eq!(
+            content["result"]["coverage"],
+            json!({
+                "master_observations":9,"balance_observations":9,"matched_pairs":8,
+                "unresolved_master_observations":1,"unresolved_balance_observations":1,
+            })
+        );
+        let rows = items(&response);
+        let master = rows.iter().find(|row| row["source"] == "master").unwrap();
+        let balance = rows.iter().find(|row| row["source"] == "balance").unwrap();
+        assert_eq!(master["name"], "Bridge Nested Debtor WR4");
+        assert_eq!(master["parent"], "");
+        assert!(balance["parent"].is_null());
+    }
+
+    #[tokio::test]
+    async fn diagnostic_masking_preserves_empty_parent_and_null_parent_distinction() {
+        let (masters, balances) = empty_master_parent_and_missing_balance_parent();
+        let (response, _) = call_with_settings(
+            compliance_plans(masters, balances),
+            json!({"company_guid":GUID,"fields":"compliance_diagnostics"}),
+            Redaction::MaskParties,
+            200_000,
+        )
+        .await;
+        let rows = items(&response);
+        let master = rows.iter().find(|row| row["source"] == "master").unwrap();
+        let balance = rows.iter().find(|row| row["source"] == "balance").unwrap();
+        assert_eq!(master["parent"], "");
+        assert!(balance["parent"].is_null());
+        assert_ne!(master["name"], "Bridge Nested Debtor WR4");
+    }
+
     #[tokio::test]
     async fn diagnostic_partial_state_is_global_even_on_matched_or_empty_pages() {
         let mut commitments = None;

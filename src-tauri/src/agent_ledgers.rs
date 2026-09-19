@@ -39,10 +39,13 @@ fn unresolved_row(observation: PartyLedgerMasterJoinUnresolved) -> Value {
         JoinReason::DuplicateBalanceDisplayKey => "duplicate_balance_display_key",
     };
     // Null is not observed; an explicitly returned empty parent stays "".
-    let parent = observation
-        .parent
-        .returned_text()
-        .map(|text| party_name(text.to_owned()));
+    // Nonempty returned values retain their party marker for recursive
+    // redaction.
+    let parent = match observation.parent.returned_text() {
+        None => Value::Null,
+        Some("") => json!(""),
+        Some(text) => json!(party_name(text.to_owned())),
+    };
     json!({
         "join_state": "unresolved", "source": source,
         "source_ordinal": observation.source_ordinal,

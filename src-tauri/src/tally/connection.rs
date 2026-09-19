@@ -38,11 +38,12 @@ use bridge_tally_protocol::outstandings::{
 };
 use bridge_tally_protocol::{
     native_outstandings::{
-        parse_native_group_snapshot_with_evidence, parse_native_ledger_snapshot_for_company,
+        parse_native_group_snapshot_with_evidence,
+        parse_native_ledger_snapshot_observations_for_company,
         render_native_group_snapshot_request, render_native_ledger_export_request,
         render_native_ledger_snapshot_request, render_native_voucher_export_request,
-        render_party_ledger_master_request, LedgerSnapshotEntry, NativeLedgerExportPeriod,
-        NativeLedgerSnapshotPeriod, NativeOutstandingsError,
+        render_party_ledger_master_request, LedgerSnapshotObservedParentEntry,
+        NativeLedgerExportPeriod, NativeLedgerSnapshotPeriod, NativeOutstandingsError,
     },
     outstandings_shared::{
         parse_company_book_extent_v2, require_master_witness, CompanyBookExtent,
@@ -65,9 +66,15 @@ use bridge_tally_transport::{
 
 pub type TallyConfig = TallyEndpointConfig;
 
-fn ledger_display_key(name: &str, parent: Option<&str>) -> String {
-    let parent = parent.unwrap_or_default();
-    format!("{}:{name}{}:{parent}", name.len(), parent.len())
+fn ledger_display_key(name: &str, parent: &PartyLedgerMasterFieldObservation) -> String {
+    match parent {
+        PartyLedgerMasterFieldObservation::Returned(parent) => {
+            format!("{}:{name}:returned:{}:{parent}", name.len(), parent.len())
+        }
+        PartyLedgerMasterFieldObservation::NotObserved => {
+            format!("{}:{name}:not_observed", name.len())
+        }
+    }
 }
 
 fn party_ledger_master_balance_snapshot_error(error: NativeOutstandingsError) -> anyhow::Error {
@@ -106,12 +113,6 @@ fn party_ledger_master_openings_agree(
     Ok(master_opening.numeric_eq(balance_opening))
 }
 
-fn balance_parent_observation(parent: Option<String>) -> PartyLedgerMasterFieldObservation {
-    parent
-        .map(PartyLedgerMasterFieldObservation::Returned)
-        .unwrap_or(PartyLedgerMasterFieldObservation::NotObserved)
-}
-
 fn unresolved_master(
     source: &ParsedSourceRecord<PartyLedgerMasterRecord>,
     source_ordinal: usize,
@@ -127,7 +128,7 @@ fn unresolved_master(
 }
 
 fn unresolved_balance(
-    balance: &LedgerSnapshotEntry,
+    balance: &LedgerSnapshotObservedParentEntry,
     source_ordinal: usize,
     reason: PartyLedgerMasterJoinUnresolvedReason,
 ) -> PartyLedgerMasterJoinUnresolved {
@@ -135,7 +136,7 @@ fn unresolved_balance(
         source: PartyLedgerMasterJoinUnresolvedSource::Balance,
         source_ordinal,
         name: balance.name.clone(),
-        parent: balance_parent_observation(balance.parent.clone()),
+        parent: balance.parent.clone(),
         reason,
     }
 }
@@ -157,7 +158,7 @@ fn master_only_bucket_reason(
 }
 
 fn balance_only_bucket_reason(
-    balances: &[(usize, LedgerSnapshotEntry)],
+    balances: &[(usize, LedgerSnapshotObservedParentEntry)],
 ) -> PartyLedgerMasterJoinUnresolvedReason {
     if balances.len() > 1 {
         PartyLedgerMasterJoinUnresolvedReason::DuplicateBalanceDisplayKey
@@ -173,7 +174,7 @@ fn balance_only_bucket_reason(
 /// first matching record would manufacture a pairing Tally did not establish.
 fn join_party_ledger_master_observations(
     masters: Vec<ParsedSourceRecord<PartyLedgerMasterRecord>>,
-    balances: Vec<LedgerSnapshotEntry>,
+    balances: Vec<LedgerSnapshotObservedParentEntry>,
 ) -> anyhow::Result<(
     Vec<PartyLedgerMasterRow>,
     Vec<PartyLedgerMasterJoinUnresolved>,
@@ -202,10 +203,7 @@ fn join_party_ledger_master_observations(
         // value is intentionally not used as a join substitute; the balance
         // comparison below still checks the exact observed master opening.
         bridge_tally_core::ExactDecimal::parse(master_opening.to_owned())?;
-        let key = ledger_display_key(
-            &source.record.ledger.name,
-            source.record.ledger.parent.nonempty_returned_text(),
-        );
+        let key = ledger_display_key(&source.record.ledger.name, &source.record.ledger.parent);
         masters_by_key.entry(key).or_insert_with(Vec::new).push((
             source_ordinal,
             source,
@@ -217,7 +215,7 @@ fn join_party_ledger_master_observations(
 
     let mut balances_by_key = BTreeMap::new();
     for (source_ordinal, balance) in balances.into_iter().enumerate() {
-        let key = ledger_display_key(&balance.name, balance.parent.as_deref());
+        let key = ledger_display_key(&balance.name, &balance.parent);
         balances_by_key
             .entry(key)
             .or_insert_with(Vec::new)
@@ -1488,9 +1486,11 @@ impl TallyClient {
                 balance_response_sha256.clone(),
                 balance_response_bytes,
             ));
-            let balances =
-                parse_native_ledger_snapshot_for_company(&balance_body, identity.company_guid())
-                    .map_err(party_ledger_master_balance_snapshot_error)?;
+            let balances = parse_native_ledger_snapshot_observations_for_company(
+                &balance_body,
+                identity.company_guid(),
+            )
+            .map_err(party_ledger_master_balance_snapshot_error)?;
             let group_pair = self
                 .fetch_native_report_paired(group_request.clone())
                 .await?;

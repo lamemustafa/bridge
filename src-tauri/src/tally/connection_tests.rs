@@ -1845,12 +1845,7 @@ fn captured_agent_party_xml(bytes: &[u8]) -> String {
     .expect("captured UTF-16LE party fixture decodes")
 }
 
-fn captured_party_join_inputs() -> (
-    Vec<bridge_tally_protocol::ParsedSourceRecord<bridge_tally_protocol::PartyLedgerMasterRecord>>,
-    Vec<bridge_tally_protocol::native_outstandings::LedgerSnapshotEntry>,
-) {
-    // Use the independently captured company collection as the identity source
-    // for these captured reports, rather than copying its GUID into test code.
+fn captured_party_company_guid() -> String {
     let companies = bridge_tally_protocol::parse_companies_from_collection(
         &captured_agent_party_xml(include_bytes!(
             "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.utf16le.xml"
@@ -1866,26 +1861,138 @@ fn captured_party_join_inputs() -> (
         1,
         "the captured synthetic company is unambiguous"
     );
-    let guid = candidates[0]
+    candidates[0]
         .guid
         .as_deref()
-        .expect("captured company GUID");
+        .expect("captured company GUID")
+        .to_owned()
+}
+
+fn captured_party_join_inputs() -> (
+    Vec<bridge_tally_protocol::ParsedSourceRecord<bridge_tally_protocol::PartyLedgerMasterRecord>>,
+    Vec<bridge_tally_protocol::native_outstandings::LedgerSnapshotObservedParentEntry>,
+) {
+    // Use the independently captured company collection as the identity source
+    // for these captured reports, rather than copying its GUID into test code.
+    let guid = captured_party_company_guid();
     let masters = super::parse_native_party_ledger_master_records_with_evidence(
         &captured_agent_party_xml(include_bytes!(
             "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-party-masters.utf16le.xml"
         )),
-        guid,
+        &guid,
     )
     .expect("existing captured party-master fixture parses")
     .records;
-    let balances = super::parse_native_ledger_snapshot_for_company(
+    let balances = super::parse_native_ledger_snapshot_observations_for_company(
         &captured_agent_party_xml(include_bytes!(
             "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-party-balances.utf16le.xml"
         )),
-        guid,
+        &guid,
     )
     .expect("existing captured party-balance fixture parses");
     (masters, balances)
+}
+
+#[test]
+fn diagnostic_balance_parser_distinguishes_empty_parent_from_absent_without_changing_legacy() {
+    let parent = "<PARENT TYPE=\"String\">Bridge Nested Debtors WR4</PARENT>";
+    let captured = captured_agent_party_xml(include_bytes!(
+        "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-party-balances.utf16le.xml"
+    ));
+    assert_eq!(captured.matches(parent).count(), 1);
+    let returned_empty = captured.replace(parent, "<PARENT TYPE=\"String\"></PARENT>");
+    let self_closing_empty = captured.replace(parent, "<PARENT/>");
+    let whitespace_empty = captured.replace(parent, "<PARENT TYPE=\"String\"> </PARENT>");
+    let not_observed = captured.replace(parent, "");
+    let repeated_after_returned = captured.replace(parent, &format!("{parent}<PARENT/>"));
+    let guid = captured_party_company_guid();
+
+    let legacy_empty =
+        bridge_tally_protocol::native_outstandings::parse_native_ledger_snapshot_for_company(
+            &returned_empty,
+            &guid,
+        )
+        .expect("legacy parser accepts captured response with returned-empty parent");
+    let legacy_absent =
+        bridge_tally_protocol::native_outstandings::parse_native_ledger_snapshot_for_company(
+            &not_observed,
+            &guid,
+        )
+        .expect("legacy parser accepts captured response with omitted parent");
+    let legacy_self_closing =
+        bridge_tally_protocol::native_outstandings::parse_native_ledger_snapshot_for_company(
+            &self_closing_empty,
+            &guid,
+        )
+        .expect("legacy parser accepts captured response with self-closing empty parent");
+    let legacy_whitespace =
+        bridge_tally_protocol::native_outstandings::parse_native_ledger_snapshot_for_company(
+            &whitespace_empty,
+            &guid,
+        )
+        .expect("legacy parser trims captured whitespace-only parent to empty");
+    let legacy_parent =
+        |rows: &[bridge_tally_protocol::native_outstandings::LedgerSnapshotEntry]| {
+            rows.iter()
+                .find(|row| row.name == "Bridge Nested Debtor WR4")
+                .expect("mutated captured row remains")
+                .parent
+                .clone()
+        };
+    assert_eq!(legacy_parent(&legacy_empty), None);
+    assert_eq!(legacy_parent(&legacy_absent), None);
+    assert_eq!(legacy_parent(&legacy_self_closing), None);
+    assert_eq!(legacy_parent(&legacy_whitespace), None);
+
+    let diagnostic_empty =
+        super::parse_native_ledger_snapshot_observations_for_company(&returned_empty, &guid)
+            .expect("diagnostic parser accepts captured response with returned-empty parent");
+    let diagnostic_absent =
+        super::parse_native_ledger_snapshot_observations_for_company(&not_observed, &guid)
+            .expect("diagnostic parser accepts captured response with omitted parent");
+    let diagnostic_self_closing =
+        super::parse_native_ledger_snapshot_observations_for_company(&self_closing_empty, &guid)
+            .expect("diagnostic parser accepts captured response with self-closing empty parent");
+    let diagnostic_whitespace =
+        super::parse_native_ledger_snapshot_observations_for_company(&whitespace_empty, &guid)
+            .expect("diagnostic parser preserves the observed parent bytes");
+    let diagnostic_parent = |rows: &[bridge_tally_protocol::native_outstandings::LedgerSnapshotObservedParentEntry]| {
+        rows.iter()
+            .find(|row| row.name == "Bridge Nested Debtor WR4")
+            .expect("mutated captured row remains")
+            .parent
+            .clone()
+    };
+    assert_eq!(
+        diagnostic_parent(&diagnostic_empty),
+        bridge_tally_protocol::PartyLedgerMasterFieldObservation::Returned(String::new())
+    );
+    assert_eq!(
+        diagnostic_parent(&diagnostic_absent),
+        bridge_tally_protocol::PartyLedgerMasterFieldObservation::NotObserved
+    );
+    assert_eq!(
+        diagnostic_parent(&diagnostic_self_closing),
+        bridge_tally_protocol::PartyLedgerMasterFieldObservation::Returned(String::new())
+    );
+    assert_eq!(
+        diagnostic_parent(&diagnostic_whitespace),
+        bridge_tally_protocol::PartyLedgerMasterFieldObservation::Returned(" ".to_string())
+    );
+    // Repeated PARENT, including a present-empty second element, is malformed
+    // for both parsers. This tightens the previously ignored empty-element
+    // shape into the same typed duplicate-parent refusal as repeated text.
+    assert!(matches!(
+        super::parse_native_ledger_snapshot_observations_for_company(
+            &repeated_after_returned,
+            &guid,
+        ),
+        Err(
+            bridge_tally_protocol::native_outstandings::NativeOutstandingsError::InvalidResponse(
+                "ledger_duplicate_parent"
+            )
+        )
+    ));
 }
 
 #[test]
@@ -2072,11 +2179,10 @@ fn missing_master_identity_remains_a_hard_failure_before_diagnostic_join() {
     let (mut masters, mut balances) = captured_party_join_inputs();
     let master_key = super::ledger_display_key(
         &masters[0].record.ledger.name,
-        masters[0].record.ledger.parent.nonempty_returned_text(),
+        &masters[0].record.ledger.parent,
     );
-    balances.retain(|balance| {
-        super::ledger_display_key(&balance.name, balance.parent.as_deref()) != master_key
-    });
+    balances
+        .retain(|balance| super::ledger_display_key(&balance.name, &balance.parent) != master_key);
     masters[0].identities.guid = None;
     let error = super::join_party_ledger_master_observations(masters, balances)
         .expect_err("missing GUID cannot be downgraded into an unresolved join observation");
@@ -2134,11 +2240,10 @@ fn duplicate_only_buckets_quarantine_every_observation_on_the_present_side() {
     let (mut masters, mut balances) = captured_party_join_inputs();
     let master_key = super::ledger_display_key(
         &masters[0].record.ledger.name,
-        masters[0].record.ledger.parent.nonempty_returned_text(),
+        &masters[0].record.ledger.parent,
     );
-    balances.retain(|balance| {
-        super::ledger_display_key(&balance.name, balance.parent.as_deref()) != master_key
-    });
+    balances
+        .retain(|balance| super::ledger_display_key(&balance.name, &balance.parent) != master_key);
     let mut duplicate_master = masters[0].clone();
     duplicate_master.identities.guid = Some("duplicate-only-master-guid".to_string());
     duplicate_master.identities.master_id = Some("duplicate-only-master-id".to_string());
@@ -2157,12 +2262,10 @@ fn duplicate_only_buckets_quarantine_every_observation_on_the_present_side() {
     );
 
     let (mut masters, mut balances) = captured_party_join_inputs();
-    let balance_key = super::ledger_display_key(&balances[0].name, balances[0].parent.as_deref());
+    let balance_key = super::ledger_display_key(&balances[0].name, &balances[0].parent);
     masters.retain(|master| {
-        super::ledger_display_key(
-            &master.record.ledger.name,
-            master.record.ledger.parent.nonempty_returned_text(),
-        ) != balance_key
+        super::ledger_display_key(&master.record.ledger.name, &master.record.ledger.parent)
+            != balance_key
     });
     balances.push(balances[0].clone());
     let (_, unresolved_balances) = super::join_party_ledger_master_observations(masters, balances)
