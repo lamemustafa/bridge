@@ -167,8 +167,9 @@ pub async fn connect_encrypted(
         .disable_statement_logging();
 
     // SQLx retries `after_connect` failures until its pool deadline and then drops their cause.
-    // Keep the first callback error in-band while it is still owned, but return an error to SQLx
-    // as well so an uninitialized connection can never enter the pool.
+    // Forward only a definitive SQLite NOTADB refusal while it is still owned. All other callback
+    // failures retain SQLx's retry behavior; a forwarded refusal still returns an error to SQLx
+    // so an uninitialized connection can never enter the pool.
     let (startup_error_sender, mut startup_error_receiver) = oneshot::channel();
     let startup_error_sender = Arc::new(Mutex::new(Some(startup_error_sender)));
     let key_for_connections = Arc::clone(&connection_key);
@@ -182,6 +183,7 @@ pub async fn connect_encrypted(
             Box::pin(async move {
                 match configure_encrypted_connection(connection, &key).await {
                     Ok(()) => Ok(()),
+                    Err(error) if !is_definitive_encrypted_open_error(&error) => Err(error),
                     Err(error) => {
                         let sender = startup_error_sender
                             .lock()
@@ -304,18 +306,31 @@ async fn validate_encrypted_connection(
 }
 
 fn encrypted_open_error(error: sqlx::Error) -> EncryptedOpenError {
-    if let sqlx::Error::Database(database_error) = &error {
-        let code = database_error
-            .code()
-            .and_then(|code| code.parse::<i32>().ok());
-        if code.is_some_and(|code| code & 0xff == libsqlite3_sys::SQLITE_NOTADB) {
-            return EncryptedOpenError::UnreadableWithSuppliedKey { source: error };
-        }
+    if is_definitive_encrypted_open_error(&error) {
+        return EncryptedOpenError::UnreadableWithSuppliedKey { source: error };
     }
     if matches!(error, sqlx::Error::PoolTimedOut) {
         return EncryptedOpenError::PoolTimedOut;
     }
     EncryptedOpenError::Storage { source: error }
+}
+
+fn is_definitive_encrypted_open_error(error: &sqlx::Error) -> bool {
+    sqlite_primary_error_code(error).is_some_and(is_definitive_encrypted_open_sqlite_code)
+}
+
+fn is_definitive_encrypted_open_sqlite_code(code: i32) -> bool {
+    code & 0xff == libsqlite3_sys::SQLITE_NOTADB
+}
+
+fn sqlite_primary_error_code(error: &sqlx::Error) -> Option<i32> {
+    let sqlx::Error::Database(database_error) = error else {
+        return None;
+    };
+    database_error
+        .code()
+        .and_then(|code| code.parse::<i32>().ok())
+        .map(|code| code & 0xff)
 }
 
 fn hex_key(key: &[u8]) -> String {

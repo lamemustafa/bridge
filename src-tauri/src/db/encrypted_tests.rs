@@ -1,7 +1,10 @@
 use super::{
-    connect_encrypted, encrypted_open_error, resolve_mirror_key, EncryptedOpenError,
-    MirrorKeyStore, MIRROR_KEY_BYTES,
+    configure_encrypted_connection, connect_encrypted, encrypted_open_error,
+    is_definitive_encrypted_open_error, is_definitive_encrypted_open_sqlite_code,
+    resolve_mirror_key, EncryptedOpenError, MirrorKeyStore, MIRROR_KEY_BYTES,
 };
+use sqlx::sqlite::SqliteConnectOptions;
+use sqlx::{ConnectOptions, Connection, SqliteConnection};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -72,6 +75,20 @@ fn assert_no_plaintext_artifacts(database: &Path) {
             );
         }
     }
+}
+
+async fn open_encrypted_connection(database: &Path, key: &[u8]) -> SqliteConnection {
+    let options = SqliteConnectOptions::new()
+        .filename(database)
+        .create_if_missing(true)
+        .disable_statement_logging();
+    let mut connection = SqliteConnection::connect_with(&options)
+        .await
+        .expect("open synthetic encrypted SQLite connection");
+    configure_encrypted_connection(&mut connection, key)
+        .await
+        .expect("configure synthetic encrypted SQLite connection");
+    connection
 }
 
 #[test]
@@ -271,10 +288,142 @@ async fn unrelated_storage_failure_is_not_a_key_refusal() {
     ));
 }
 
+#[tokio::test]
+async fn encrypted_open_retries_a_transient_sqlite_lock() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let database = directory.path().join("mirror.db");
+    let key = Zeroizing::new(vec![0x55_u8; MIRROR_KEY_BYTES]);
+    let initial_pool = connect_encrypted(&database, key.clone())
+        .await
+        .expect("create encrypted mirror for lock holder");
+    sqlx::query("CREATE TABLE lock_regression(value TEXT NOT NULL);")
+        .execute(&initial_pool)
+        .await
+        .expect("create synthetic encrypted lock-regression table");
+    sqlx::query("INSERT INTO lock_regression(value) VALUES (?1);")
+        .bind("LOCK_REGRESSION_MARKER")
+        .execute(&initial_pool)
+        .await
+        .expect("write synthetic encrypted lock-regression marker");
+    initial_pool.close().await;
+    let mut holder = open_encrypted_connection(&database, &key).await;
+    let rollback_journal = sqlx::query_scalar::<_, String>("PRAGMA journal_mode = DELETE;")
+        .fetch_one(&mut holder)
+        .await
+        .expect("use rollback journal for the exclusive-lock regression");
+    assert_eq!(rollback_journal.to_ascii_lowercase(), "delete");
+    sqlx::query("BEGIN EXCLUSIVE;")
+        .execute(&mut holder)
+        .await
+        .expect("hold synthetic exclusive lock");
+
+    let opener_path = database.clone();
+    let opener = tokio::spawn(async move { connect_encrypted(&opener_path, key).await });
+    tokio::time::sleep(Duration::from_secs(6)).await;
+
+    if opener.is_finished() {
+        let early_result = opener.await;
+        sqlx::query("COMMIT;")
+            .execute(&mut holder)
+            .await
+            .expect("release synthetic exclusive lock after early encrypted-open result");
+        holder
+            .close()
+            .await
+            .expect("close synthetic lock holder after early encrypted-open result");
+        let error = early_result
+            .expect("encrypted opener task must not panic")
+            .expect_err("transient lock must not complete encrypted open before release");
+        assert!(matches!(
+            error.downcast_ref::<EncryptedOpenError>(),
+            Some(EncryptedOpenError::Storage { source })
+                if matches!(
+                    source,
+                    sqlx::Error::Database(database_error)
+                        if database_error.code().and_then(|code| code.parse::<i32>().ok())
+                            .is_some_and(|code| {
+                                matches!(
+                                    code & 0xff,
+                                    libsqlite3_sys::SQLITE_BUSY | libsqlite3_sys::SQLITE_LOCKED
+                                )
+                            })
+                )
+        ));
+        panic!("transient SQLite lock must remain on SQLx's retry path");
+    }
+
+    sqlx::query("COMMIT;")
+        .execute(&mut holder)
+        .await
+        .expect("release synthetic exclusive lock");
+    holder.close().await.expect("close synthetic lock holder");
+
+    let opened = tokio::time::timeout(Duration::from_secs(10), opener)
+        .await
+        .expect("encrypted open must finish before SQLx's pool deadline")
+        .expect("encrypted opener task must not panic")
+        .expect("encrypted open must succeed after the lock is released");
+    let marker = sqlx::query_scalar::<_, String>("SELECT value FROM lock_regression;")
+        .fetch_one(&opened)
+        .await
+        .expect("read marker after transient encrypted-open retry");
+    assert_eq!(marker, "LOCK_REGRESSION_MARKER");
+    let cipher_log_level = sqlx::query_scalar::<_, String>("PRAGMA cipher_log_level;")
+        .fetch_one(&opened)
+        .await
+        .expect("read SQLCipher log level after transient encrypted-open retry");
+    let cipher_memory_security = sqlx::query_scalar::<_, String>("PRAGMA cipher_memory_security;")
+        .fetch_one(&opened)
+        .await
+        .expect("read SQLCipher memory security after transient encrypted-open retry");
+    let foreign_keys = sqlx::query_scalar::<_, i64>("PRAGMA foreign_keys;")
+        .fetch_one(&opened)
+        .await
+        .expect("read foreign-key setting after transient encrypted-open retry");
+    let secure_delete = sqlx::query_scalar::<_, i64>("PRAGMA secure_delete;")
+        .fetch_one(&opened)
+        .await
+        .expect("read secure-delete setting after transient encrypted-open retry");
+    let journal_mode = sqlx::query_scalar::<_, String>("PRAGMA journal_mode;")
+        .fetch_one(&opened)
+        .await
+        .expect("read journal mode after transient encrypted-open retry");
+    assert_eq!(cipher_log_level, "ERROR");
+    assert_eq!(cipher_memory_security, "1");
+    assert_eq!(foreign_keys, 1);
+    assert_eq!(secure_delete, 1);
+    assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
+    opened.close().await;
+}
+
 #[test]
 fn pool_timeout_is_not_classified_as_an_encrypted_contents_refusal() {
     assert!(matches!(
         encrypted_open_error(sqlx::Error::PoolTimedOut),
         EncryptedOpenError::PoolTimedOut
     ));
+}
+
+#[test]
+fn only_notadb_is_a_definitive_encrypted_open_refusal() {
+    assert!(!is_definitive_encrypted_open_error(
+        &sqlx::Error::PoolTimedOut
+    ));
+    assert!(is_definitive_encrypted_open_sqlite_code(
+        libsqlite3_sys::SQLITE_NOTADB
+    ));
+    for extended_code in [
+        libsqlite3_sys::SQLITE_BUSY,
+        libsqlite3_sys::SQLITE_BUSY_RECOVERY,
+        libsqlite3_sys::SQLITE_BUSY_SNAPSHOT,
+        libsqlite3_sys::SQLITE_BUSY_TIMEOUT,
+        libsqlite3_sys::SQLITE_LOCKED,
+        libsqlite3_sys::SQLITE_LOCKED_SHAREDCACHE,
+        libsqlite3_sys::SQLITE_LOCKED_VTAB,
+    ] {
+        assert!(
+            !is_definitive_encrypted_open_sqlite_code(extended_code),
+            "transient SQLite code must not be a definitive encrypted-open refusal"
+        );
+    }
 }
