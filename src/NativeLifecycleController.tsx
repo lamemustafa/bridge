@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { createDrawerFocusLifecycle, ensureDrawerFocus, trapDrawerTabKeydown } from "./evidence-drawer-focus";
+import { formatCommandErrorMessage } from "./tally-command-error";
 import "./source-draft.css";
 
 export type NativeLifecycleKind = "close" | "exit";
@@ -24,10 +25,7 @@ function sameRequest(left: NativeLifecycleRequest, right: NativeLifecycleRequest
 }
 
 function errorMessage(cause: unknown) {
-  if (cause instanceof Error) return cause.message;
-  if (typeof cause === "string") return cause;
-  if (cause && typeof cause === "object" && "message" in cause && typeof cause.message === "string") return cause.message;
-  return "Bridge could not complete the native close request.";
+  return formatCommandErrorMessage(cause, "Bridge could not complete the native close request.");
 }
 
 type Props = {
