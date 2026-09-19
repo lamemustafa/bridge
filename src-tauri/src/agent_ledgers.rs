@@ -27,6 +27,19 @@ fn compliance_row(
     (row, hop_names)
 }
 
+/// Renders an observed parent in diagnostics without turning returned-empty
+/// into a party name. The marker on nonempty names lets the common egress
+/// redactor mask it; `null` still means the source did not return `PARENT`.
+fn diagnostic_parent_value(
+    parent: &bridge_tally_protocol::PartyLedgerMasterFieldObservation,
+) -> Value {
+    match parent.returned_text() {
+        None => Value::Null,
+        Some("") => json!(""),
+        Some(text) => json!(party_name(text.to_owned())),
+    }
+}
+
 fn unresolved_row(observation: PartyLedgerMasterJoinUnresolved) -> Value {
     let source = match observation.source {
         JoinSource::Master => "master",
@@ -38,14 +51,7 @@ fn unresolved_row(observation: PartyLedgerMasterJoinUnresolved) -> Value {
         JoinReason::DuplicateMasterDisplayKey => "duplicate_master_display_key",
         JoinReason::DuplicateBalanceDisplayKey => "duplicate_balance_display_key",
     };
-    // Null is not observed; an explicitly returned empty parent stays "".
-    // Nonempty returned values retain their party marker for recursive
-    // redaction.
-    let parent = match observation.parent.returned_text() {
-        None => Value::Null,
-        Some("") => json!(""),
-        Some(text) => json!(party_name(text.to_owned())),
-    };
+    let parent = diagnostic_parent_value(&observation.parent);
     json!({
         "join_state": "unresolved", "source": source,
         "source_ordinal": observation.source_ordinal,
@@ -155,11 +161,10 @@ impl Server {
                 });
                 let group_index = GroupIndex::build(diagnostic.groups);
                 let matched = diagnostic.records.into_iter().map(|record| {
+                    let parent = diagnostic_parent_value(&record.ledger.parent);
                     let (mut row, _) = compliance_row(record, &group_index);
                     // Diagnostic observations can contain user-created parent/group names.
-                    if let Some(parent) = row["parent"].as_str() {
-                        row["parent"] = json!(party_name(parent.to_owned()));
-                    }
+                    row["parent"] = parent;
                     if let Some(hops) = row["ancestry"]["chain"].as_array_mut() {
                         for hop in hops {
                             if let Some(name) = hop["name"].as_str() {

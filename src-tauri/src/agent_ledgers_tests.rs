@@ -702,6 +702,23 @@ mod through_the_tool {
         (master, balance)
     }
 
+    // Negative-only fault injection into the matching pair in the existing
+    // captured sources. It isolates presentation of a returned-empty parent;
+    // it does not assert a live Tally response shape.
+    fn matched_empty_parent() -> (String, String) {
+        let master_parent = "<PARENT TYPE=\"String\">Bridge Nested Debtors WR4</PARENT>";
+        let balance_parent = "<PARENT TYPE=\"String\">Bridge Nested Debtors WR4</PARENT>";
+        let master = masters();
+        let balance = balances();
+        assert_eq!(master.matches(master_parent).count(), 1);
+        assert_eq!(balance.matches(balance_parent).count(), 1);
+        let master = master.replace(master_parent, "<PARENT TYPE=\"String\"></PARENT>");
+        let balance = balance.replace(balance_parent, "<PARENT TYPE=\"String\"></PARENT>");
+        assert!(master.contains("NAME=\"Bridge Nested Debtor WR4\""));
+        assert!(balance.contains("NAME=\"Bridge Nested Debtor WR4\""));
+        (master, balance)
+    }
+
     #[tokio::test]
     async fn diagnostic_mode_quarantines_empty_and_unobserved_parent_observations() {
         let (masters, balances) = empty_master_parent_and_missing_balance_parent();
@@ -743,6 +760,25 @@ mod through_the_tool {
         assert_eq!(master["parent"], "");
         assert!(balance["parent"].is_null());
         assert_ne!(master["name"], "Bridge Nested Debtor WR4");
+    }
+
+    #[tokio::test]
+    async fn diagnostic_masking_preserves_empty_parent_for_matched_rows() {
+        let (masters, balances) = matched_empty_parent();
+        let (response, _) = call_with_settings(
+            compliance_plans(masters, balances),
+            json!({"company_guid":GUID,"fields":"compliance_diagnostics"}),
+            Redaction::MaskParties,
+            200_000,
+        )
+        .await;
+        let rows = items(&response);
+        let matched_empty_parent = rows
+            .iter()
+            .find(|row| row["parent"] == "")
+            .expect("returned-empty matched parent remains empty under masking");
+        assert_eq!(matched_empty_parent["join_state"], "matched");
+        assert_ne!(matched_empty_parent["name"], "Bridge Nested Debtor WR4");
     }
 
     #[tokio::test]

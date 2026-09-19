@@ -463,7 +463,7 @@
     },
     {
       "path": "src-tauri/src/agent_ledgers.rs",
-      "sha256": "ef7f195922c4e0eef75104ff91991f218365472a7748f03aa531a5f2fe9dccd5"
+      "sha256": "e80b8ad14960ac70d26d49d4f9a35219e8e0b73d4b3b27976d660b43a7100806"
     },
     {
       "path": "src-tauri/src/agent_movement.rs",
@@ -1074,5 +1074,5 @@
       "sha256": "0ab5bfbe6d81b1e10530744c338fb91efa57fe5a66fb4bc0cfd382495eaf02a4"
     }
   ],
-  "manifest_sha256": "671dd222a27608cd091cac212eb2896f07c373e690ac620152a234e8598096b9"
+  "manifest_sha256": "3ef897715007116bf749f610fc9223251a020d43880eac7812f807500872c12b"
 }
