@@ -28,27 +28,42 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { devNull, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+const repoRoot = realpathSync(join(dirname(fileURLToPath(import.meta.url)), ".."));
 const SURFACE = "docs/tally/compatibility/compatibility-surface.json";
 const MATRIX = "docs/tally/compatibility/compatibility-matrix.json";
 const DRIVER_COMMAND = "node scripts/reseal-merge-driver.mjs %O %A %B %P %S %X %Y";
 
 // Git honours repository/config/index overrides from the environment even
-// when cwd points at the disposable clone. Drop every inherited GIT_* value,
-// then disable system/global config so ambient hooks, signing, and include
-// directives cannot redirect a scratch operation back into the source tree.
-const gitEnv = { ...process.env };
-for (const key of Object.keys(gitEnv)) {
-  if (key.startsWith("GIT_")) delete gitEnv[key];
+// when cwd points at the disposable clone. Drop every inherited GIT_* value
+// case-insensitively, then disable system/global config so ambient hooks,
+// signing, and include directives cannot redirect a scratch operation back
+// into the source tree.
+function sanitizedGitEnvironment(environment) {
+  const sanitized = { ...environment };
+  for (const key of Object.keys(sanitized)) {
+    if (key.toUpperCase().startsWith("GIT_")) delete sanitized[key];
+  }
+  sanitized.GIT_CONFIG_NOSYSTEM = "1";
+  sanitized.GIT_CONFIG_GLOBAL = devNull;
+  return sanitized;
 }
-gitEnv.GIT_CONFIG_NOSYSTEM = "1";
-gitEnv.GIT_CONFIG_GLOBAL = devNull;
+
+const gitEnv = sanitizedGitEnvironment(process.env);
+// A differently owned checkout is still a valid read-only source in CI and
+// containers. Trust only its canonical path, and only for deliberate source
+// reads and the clone command whose upload-pack child reads that source.
+const sourceGitEnv = {
+  ...gitEnv,
+  GIT_CONFIG_COUNT: "1",
+  GIT_CONFIG_KEY_0: "safe.directory",
+  GIT_CONFIG_VALUE_0: repoRoot,
+};
 
 function pinnedToolchainAvailable() {
   let tomlText;
@@ -66,18 +81,18 @@ function pinnedToolchainAvailable() {
   return { ok: true, reason: null };
 }
 
-function git(root, args, encoding = "utf8") {
+function git(root, args, { encoding = "utf8", env = gitEnv } = {}) {
   const options = {
     cwd: root,
-    env: gitEnv,
+    env,
     maxBuffer: 64 * 1024 * 1024,
   };
   if (encoding !== null) options.encoding = encoding;
   return spawnSync("git", args, options);
 }
 
-function gitOk(root, args, label) {
-  const result = git(root, args);
+function gitOk(root, args, label, env = gitEnv) {
+  const result = git(root, args, { env });
   assert.equal(result.status, 0, `${label ?? args.join(" ")} failed:\n${result.stderr}`);
   return result.stdout;
 }
@@ -91,19 +106,19 @@ function reseal(root, ...args) {
   assert.equal(result.status, 0, `scripts/reseal.sh failed:\n${result.stderr}`);
 }
 
-function repositoryState(root) {
-  const symbolicHead = git(root, ["symbolic-ref", "--quiet", "HEAD"]);
-  const localConfig = git(root, ["config", "--local", "--null", "--list"], null);
-  assert.equal(localConfig.status, 0, `capture local config failed:\n${localConfig.stderr.toString("utf8")}`);
+function repositoryState(root, env = gitEnv) {
+  const symbolicHead = git(root, ["symbolic-ref", "--quiet", "HEAD"], { env });
   assert.ok(
     symbolicHead.status === 0 || symbolicHead.status === 1,
     `capture symbolic HEAD failed:\n${symbolicHead.stderr}`,
   );
+  const localConfig = git(root, ["config", "--local", "--null", "--list"], { encoding: null, env });
+  assert.equal(localConfig.status, 0, `capture local config failed:\n${localConfig.stderr.toString("utf8")}`);
   return {
-    head: gitOk(root, ["rev-parse", "--verify", "HEAD"], "capture HEAD").trim(),
+    head: gitOk(root, ["rev-parse", "--verify", "HEAD"], "capture HEAD", env).trim(),
     symbolicHeadStatus: symbolicHead.status,
     symbolicHead: symbolicHead.stdout,
-    status: gitOk(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], "capture status"),
+    status: gitOk(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], "capture status", env),
     localConfigSha256: createHash("sha256").update(localConfig.stdout).digest("hex"),
   };
 }
@@ -115,20 +130,25 @@ const skip = toolchain.ok ? false : `pinned Rust toolchain unavailable: ${toolch
 // get different temp directories, so their Git refs, index, config, and working
 // files cannot collide.
 test("git merge driver: reconciles disjoint pinned-file changes, refuses genuine ones", { skip }, async (t) => {
-  const sourceState = repositoryState(repoRoot);
+  const sourceState = repositoryState(repoRoot, sourceGitEnv);
   const sandbox = mkdtempSync(join(tmpdir(), "bridge-reseal-driver-"));
   const fixtureRoot = join(sandbox, "repo");
 
   t.after(() => {
     rmSync(sandbox, { recursive: true, force: true });
     assert.deepEqual(
-      repositoryState(repoRoot),
+      repositoryState(repoRoot, sourceGitEnv),
       sourceState,
       "merge-driver test must preserve the source checkout's HEAD, status, and local config",
     );
   });
 
-  gitOk(sandbox, ["clone", "--quiet", "--no-local", "--no-checkout", repoRoot, fixtureRoot], "clone committed source");
+  gitOk(
+    sandbox,
+    ["clone", "--quiet", "--no-local", "--no-checkout", repoRoot, fixtureRoot],
+    "clone committed source",
+    sourceGitEnv,
+  );
   gitOk(fixtureRoot, ["checkout", "--quiet", "--detach", sourceState.head], "detach fixture at source HEAD");
   assert.equal(
     gitOk(fixtureRoot, ["rev-parse", "--abbrev-ref", "HEAD"], "verify detached fixture").trim(),
