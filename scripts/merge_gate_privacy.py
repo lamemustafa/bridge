@@ -37,6 +37,21 @@ CREDENTIAL_CONTEXT_RE = re.compile(
 )
 EMAIL_RE = re.compile(r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@([A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+)(?![A-Za-z0-9._%+-])")
 EXAMPLE_EMAIL_DOMAINS = {"example.com", "example.org", "example.net", "example.invalid"}
+# This is a single known public automated-contributor identity, not an
+# email-domain allowlist. It is eligible only in the exact Git attribution
+# trailer parsed below; PR bodies, source files, names, and all other
+# commit-message text are still privacy-scanned normally. Keep the components
+# separate so this privacy-gate change has no raw address shape in its own diff.
+PUBLIC_AGENT_ATTRIBUTION_LOCAL_PART = "noreply"
+PUBLIC_AGENT_ATTRIBUTION_DOMAIN = "anthropic.com"
+PUBLIC_AGENT_ATTRIBUTION_ADDRESS = (
+    PUBLIC_AGENT_ATTRIBUTION_LOCAL_PART + "@" + PUBLIC_AGENT_ATTRIBUTION_DOMAIN
+)
+GIT_TRAILER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9-]*:[ \t]+[^\r\n]+$")
+PUBLIC_AGENT_COAUTHOR_TRAILER_RE = re.compile(
+    r"^(?i:Co-Authored-By):[ \t]+(?P<name>\S(?:.*\S)?)[ \t]+<"
+    + re.escape(PUBLIC_AGENT_ATTRIBUTION_ADDRESS) + r">$"
+)
 CREDENTIAL_KEY_RE = r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|credential|session[_-]?token|password|passphrase|private[_-]?key)"
 CREDENTIAL_ASSIGNMENT_RE = re.compile(
     r"(?i)(?P<prefix>(?<![A-Za-z0-9_-])(?P<key_quote>['\"])?" + CREDENTIAL_KEY_RE +
@@ -236,6 +251,45 @@ def customer_email_count(text):
     return count
 
 
+def redact_public_agent_attribution_trailer(message):
+    """Redact only the known public-agent address from a terminal Git trailer.
+
+    A trailer-shaped line elsewhere in the commit message is ordinary scanned
+    content.  The entire footer must be well-formed trailers and the exact
+    address must occupy the angle-bracket email field with no trailing payload.
+    The contributor name remains in the returned text for the normal scanner.
+    """
+    if not isinstance(message, str):
+        return message
+    without_trailing_newlines = message.rstrip("\n")
+    trailing_newlines = message[len(without_trailing_newlines):]
+    footer_boundary = without_trailing_newlines.rfind("\n\n")
+    if footer_boundary < 0:
+        return message
+    prefix = without_trailing_newlines[:footer_boundary + 2]
+    footer = without_trailing_newlines[footer_boundary + 2:]
+    lines = footer.split("\n")
+    if not lines or not all(GIT_TRAILER_RE.fullmatch(line) for line in lines):
+        return message
+    redacted = []
+    for line in lines:
+        match = PUBLIC_AGENT_COAUTHOR_TRAILER_RE.fullmatch(line)
+        if match:
+            start = line.rfind("<") + 1
+            end = line.rfind(">")
+            redacted.append(line[:start] + "public-agent-attribution" + line[end:])
+        else:
+            redacted.append(line)
+    return prefix + "\n".join(redacted) + trailing_newlines
+
+
+def redact_public_agent_attribution_messages(messages):
+    """Apply the trailer-only treatment to the isolated commit-message class."""
+    if not isinstance(messages, list) or not all(isinstance(message, str) for message in messages):
+        raise ValueError("commit messages must be a JSON array of strings")
+    return [redact_public_agent_attribution_trailer(message) for message in messages]
+
+
 def nonplaceholder_count(pattern, text):
     count = 0
     for match in pattern.finditer(text):
@@ -334,7 +388,11 @@ def main(argv=None):
     parser.add_argument(
         "--redact-shapes", action="store_true",
         help="Redact identifier/digest/home-path/email shapes from stdin and "
-             "print the result. No classification; no --head required.",
+        "print the result. No classification; no --head required.",
+    )
+    parser.add_argument(
+        "--redact-public-agent-attribution-messages", action="store_true",
+        help="Read a JSON array of commit messages and redact only the known public-agent address in exact Git trailers.",
     )
     args = parser.parse_args(argv)
     if args.redact_shapes:
@@ -343,6 +401,13 @@ def main(argv=None):
         except UnicodeError:
             return 0
         sys.stdout.write(redact_shapes(text))
+        return 0
+    if args.redact_public_agent_attribution_messages:
+        try:
+            messages = json.load(sys.stdin)
+            json.dump(redact_public_agent_attribution_messages(messages), sys.stdout)
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            parser.error(str(error))
         return 0
     if not args.head or not re.fullmatch(r"[0-9A-Fa-f]{40}", args.head):
         parser.error("--head must be a full 40-hex commit SHA")

@@ -64,6 +64,8 @@ DEFAULT_COMMIT = {
     "author": {"login": "author"},
     "committer": {"login": "author"},
 }
+PUBLIC_AGENT_ADDRESS = "noreply" + "@" + "anthropic.com"
+CUSTOMER_ADDRESS = "customer" + "@" + "company.test"
 
 
 def state():
@@ -132,6 +134,92 @@ def state():
 
     elif scenario == "privacy-email-blocker":
         s["title"] = "Customer contact: customer@company.test"
+
+    elif scenario == "public-agent-coauthor-trailer":
+        commit = dict(DEFAULT_COMMIT)
+        commit["commit"] = dict(DEFAULT_COMMIT["commit"])
+        commit["commit"]["message"] = (
+            "Keep the ledger-tag refusal typed.\n\n"
+            "Co-Authored-By: Claude Opus 5 <" + PUBLIC_AGENT_ADDRESS + ">\n"
+        )
+        s["commits"] = [commit]
+
+    elif scenario == "customer-coauthor-trailer":
+        commit = dict(DEFAULT_COMMIT)
+        commit["commit"] = dict(DEFAULT_COMMIT["commit"])
+        commit["commit"]["message"] = (
+            "Keep the ledger-tag refusal typed.\n\n"
+            "Co-Authored-By: Customer Contributor <" + CUSTOMER_ADDRESS + ">\n"
+        )
+        s["commits"] = [commit]
+
+    elif scenario == "public-agent-email-in-pr-body":
+        s["body"] = DEFAULT_BODY + "Public agent contact: " + PUBLIC_AGENT_ADDRESS + "\n"
+
+    elif scenario == "public-agent-email-in-source-payload":
+        s["diff"] = (
+            "diff --git a/docs/example.md b/docs/example.md\n"
+            "new file mode 100644\n"
+            "index 0000000..1111111\n"
+            "--- /dev/null\n"
+            "+++ b/docs/example.md\n"
+            "@@ -0,0 +1 @@\n"
+            "+Public agent contact: " + PUBLIC_AGENT_ADDRESS + "\n"
+        )
+
+    elif scenario == "public-agent-spoof-header":
+        commit = dict(DEFAULT_COMMIT)
+        commit["commit"] = dict(DEFAULT_COMMIT["commit"])
+        commit["commit"]["message"] = (
+            "Keep the ledger-tag refusal typed.\n\n"
+            "X-Co-Authored-By: Claude Opus 5 <" + PUBLIC_AGENT_ADDRESS + ">\n"
+        )
+        s["commits"] = [commit]
+
+    elif scenario == "public-agent-nonfooter":
+        commit = dict(DEFAULT_COMMIT)
+        commit["commit"] = dict(DEFAULT_COMMIT["commit"])
+        commit["commit"]["message"] = (
+            "Co-Authored-By: Claude Opus 5 <" + PUBLIC_AGENT_ADDRESS + ">\n\n"
+            "This is ordinary commit body text, not a trailer footer.\n"
+        )
+        s["commits"] = [commit]
+
+    elif scenario == "public-agent-malformed-trailer":
+        commit = dict(DEFAULT_COMMIT)
+        commit["commit"] = dict(DEFAULT_COMMIT["commit"])
+        commit["commit"]["message"] = (
+            "Keep the ledger-tag refusal typed.\n\n"
+            "Co-Authored-By: Claude Opus 5 <" + PUBLIC_AGENT_ADDRESS + "\n"
+        )
+        s["commits"] = [commit]
+
+    elif scenario == "public-agent-trailer-extra-payload":
+        commit = dict(DEFAULT_COMMIT)
+        commit["commit"] = dict(DEFAULT_COMMIT["commit"])
+        commit["commit"]["message"] = (
+            "Keep the ledger-tag refusal typed.\n\n"
+            "Co-Authored-By: Claude Opus 5 <" + PUBLIC_AGENT_ADDRESS + "> extra\n"
+        )
+        s["commits"] = [commit]
+
+    elif scenario == "public-agent-email-in-author-name":
+        commit = dict(DEFAULT_COMMIT)
+        commit["commit"] = dict(DEFAULT_COMMIT["commit"])
+        commit["commit"]["message"] = (
+            "Keep the ledger-tag refusal typed.\n\n"
+            "Co-Authored-By: " + PUBLIC_AGENT_ADDRESS + " <dev@example.invalid>\n"
+        )
+        s["commits"] = [commit]
+
+    elif scenario == "customer-email-in-author-name-with-public-agent-trailer":
+        commit = dict(DEFAULT_COMMIT)
+        commit["commit"] = dict(DEFAULT_COMMIT["commit"])
+        commit["commit"]["message"] = (
+            "Keep the ledger-tag refusal typed.\n\n"
+            "Co-Authored-By: Customer " + CUSTOMER_ADDRESS + " <" + PUBLIC_AGENT_ADDRESS + ">\n"
+        )
+        s["commits"] = [commit]
 
     elif scenario == "privacy-credential-blocker":
         s["diff"] = (

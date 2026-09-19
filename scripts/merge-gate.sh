@@ -210,13 +210,26 @@ else
   # Author and committer emails were structurally validated above and are an
   # explicit identity-only source class. Do not mix them into payload/path/
   # metadata scan input, where an identical address would be customer data.
-  commit_messages=$(jq -r '(if all(.[]; type == "array") then flatten else . end)[] |
-    [.commit.message, .commit.author.name, .commit.committer.name,
-     (.author.login? // null), (.committer.login? // null)] |
-    map(select(. != null))[]' <<<"$metadata_commits")
-  privacy_metadata="$title
+  # Commit messages are their own source class. Before scanning them, redact
+  # only the one known public-agent address when it occupies an exact
+  # terminal Co-Authored-By Git trailer. The helper leaves every contributor
+  # name, other trailer, PR field, destination, and payload untouched.
+  commit_message_json=$(jq -c '(if all(.[]; type == "array") then flatten else . end) | map(.commit.message)' <<<"$metadata_commits")
+  sanitized_messages_status=0
+  sanitized_message_json=$(printf '%s' "$commit_message_json" | python3 "$script_dir/merge_gate_privacy.py" --redact-public-agent-attribution-messages) || sanitized_messages_status=$?
+  if [ "$sanitized_messages_status" -ne 0 ] || ! jq -e 'type == "array" and all(.[]; type == "string")' <<<"$sanitized_message_json" >/dev/null 2>&1; then
+    unknown "could not classify public-agent attribution trailers in complete head-bound commit metadata"
+    privacy_metadata=""
+  else
+    commit_messages=$(jq -r '.[]' <<<"$sanitized_message_json")
+    commit_identity_names=$(jq -r '(if all(.[]; type == "array") then flatten else . end)[] |
+      [.commit.author.name, .commit.committer.name, (.author.login? // null), (.committer.login? // null)] |
+      map(select(. != null))[]' <<<"$metadata_commits")
+    privacy_metadata="$title
 $raw_prbody
-$commit_messages"
+$commit_messages
+$commit_identity_names"
+  fi
 fi
 # Paginate changed files through the REST endpoint; gh pr view hard-codes a
 # first:100 GraphQL fragment in some versions. Retain the line counts as well:
