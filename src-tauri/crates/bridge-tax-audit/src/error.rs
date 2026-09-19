@@ -22,6 +22,10 @@ pub enum AuditError {
     /// corrupt read); see `ledger_ids::check_no_duplicate_ledger_guids`.
     #[error("duplicate ledger GUID: {0}")]
     DuplicateGuid(String),
+    /// A group (or a caller asking for a GUID-only tag) has no Tally GUID, so no stable id can be
+    /// derived; ledgers fall back to a name hash instead (`docs/tax-audit/parity-spec-v1.md` §11).
+    #[error("{0} has no Tally GUID; refusing to derive a stable id from its name")]
+    MissingGuid(String),
     #[error("{path}: {source}")]
     Io {
         path: String,

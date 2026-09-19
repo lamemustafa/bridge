@@ -79,7 +79,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "3d38cdf493f793db235a19a16e667ccf8c8fd39c16673458a95aa014f95aab09"
+      "sha256": "917adc4ebe83bcd2ae5be0b06ba91c878c29f7dfc4b38d5dab1a4893a7effc91"
     },
     {
       "path": "pnpm-lock.yaml",
@@ -543,7 +543,7 @@
     },
     {
       "path": "src-tauri/src/db/encrypted.rs",
-      "sha256": "7e12cbf90a308073ef5ec89156596564fa5f330ef864f23d457d8487d86fd437"
+      "sha256": "716aa574889d885cd19d0ff0e3df2a2744f2d7060b728ec32f463ec7ec37a576"
     },
     {
       "path": "src-tauri/src/db/migrations/0002_tally_mirror.sql",
@@ -919,11 +919,11 @@
     },
     {
       "path": "src/JournalPostingScreen.tsx",
-      "sha256": "362b2db96621b582df478943d8e871e7d32a5d93de9e7e93d9e7390b17da4e87"
+      "sha256": "d02613e4e411034af3c5f97a57fff3b79e10f424822e5908826751681e323d9f"
     },
     {
       "path": "src/LedgerEntriesScreen.tsx",
-      "sha256": "b9d3aa7028a6f3b5278ab30d6cffa4939e28f047f7c32323f921b1d37caa6a95"
+      "sha256": "62854a59de190869a35ed976367f3b24cce1673f5a8c3eb274a761c3d3bfa009"
     },
     {
       "path": "src/MirrorProofScreen.tsx",
@@ -931,7 +931,7 @@
     },
     {
       "path": "src/NativeLifecycleController.tsx",
-      "sha256": "92517f939dc236b5c7b552d87d477eb639c29b52d38bd8f977414daee2dc48d1"
+      "sha256": "7fc33400e7486f625ce4a9ed0e4852096a6d521f531a774d042f5b9c9ee53412"
     },
     {
       "path": "src/OutstandingsEvidencePanel.tsx",
@@ -939,11 +939,11 @@
     },
     {
       "path": "src/OutstandingsScreen.tsx",
-      "sha256": "47d1671771720f1ac4dbd0b94415dae6eb3b4c1fe884244d3e1628e36aea809c"
+      "sha256": "3030d6b234a2e16c50c9b031a1cdd102fae06e82ab80f6d4bf138a0726f38ae2"
     },
     {
       "path": "src/SourceDraftScreen.tsx",
-      "sha256": "18b991c944f6799f81a0c5dbdf58bed5650075923bf369e639db02333a278e8a"
+      "sha256": "79262f520538f91673ca3ef73f64b4e7b6f513315a6fbf176b7e86b9a7cf4976"
     },
     {
       "path": "src/TallyReadinessFlow.tsx",
@@ -951,7 +951,7 @@
     },
     {
       "path": "src/TrialBalanceScreen.tsx",
-      "sha256": "29b936442c64e196868ec9e9e6e74915a314f1989d492bba849e2447e08b26cb"
+      "sha256": "14da5ba9f9d448fa1d1495b87e6ce41006cb3d535eb67c747afc216be02eb2a2"
     },
     {
       "path": "src/client-grouping.ts",
@@ -1074,5 +1074,5 @@
       "sha256": "0ab5bfbe6d81b1e10530744c338fb91efa57fe5a66fb4bc0cfd382495eaf02a4"
     }
   ],
-  "manifest_sha256": "89e8ede6cc92eb1053a153057d08f2e05d567c001ab21aaa7169ca13a2bfd792"
+  "manifest_sha256": "aaa462366751da47cc82e1e5191f114a35e7e7cac6d9614dd6704c5273c66e6e"
 }

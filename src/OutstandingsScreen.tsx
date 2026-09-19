@@ -18,6 +18,7 @@ import {
 } from "./outstandings-as-of";
 import { companyIdentityKey, type CompanyIdentityKey } from "./company-identity";
 import { reportEvidenceDrawerEntry, type EvidenceDrawerEntry } from "./evidence-drawer-entry";
+import { formatCommandErrorMessage } from "./tally-command-error";
 
 export type OutstandingsExportNotice = {
   message: string;
@@ -1327,8 +1328,5 @@ function relativeTime(timestamp: number) {
 }
 
 function operatorMessage(cause: unknown) {
-  if (cause && typeof cause === "object" && "message" in cause && typeof cause.message === "string") {
-    return cause.message;
-  }
-  return typeof cause === "string" ? cause : "The local Tally read did not complete.";
+  return formatCommandErrorMessage(cause, "The local Tally read did not complete.");
 }

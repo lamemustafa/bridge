@@ -1,7 +1,8 @@
 use super::{
     configure_encrypted_connection, connect_encrypted, encrypted_open_error,
     is_definitive_encrypted_open_error, is_definitive_encrypted_open_sqlite_code,
-    resolve_mirror_key, EncryptedOpenError, MirrorKeyStore, MIRROR_KEY_BYTES,
+    is_forwardable_encrypted_open_sqlite_code, resolve_mirror_key, EncryptedOpenError,
+    MirrorKeyStore, MIRROR_KEY_BYTES,
 };
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{ConnectOptions, Connection, SqliteConnection};
@@ -288,6 +289,115 @@ async fn unrelated_storage_failure_is_not_a_key_refusal() {
     ));
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn readonly_directory_returns_typed_storage_without_resetting_the_mirror() {
+    use std::os::unix::fs::PermissionsExt;
+
+    struct RestoreDirectoryMode {
+        directory: PathBuf,
+        mode: u32,
+    }
+
+    impl Drop for RestoreDirectoryMode {
+        fn drop(&mut self) {
+            let _ = fs::set_permissions(&self.directory, fs::Permissions::from_mode(self.mode));
+        }
+    }
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let database = directory.path().join("mirror.db");
+    let key = Zeroizing::new(vec![0x66_u8; MIRROR_KEY_BYTES]);
+    let pool = connect_encrypted(&database, key.clone())
+        .await
+        .expect("create synthetic encrypted mirror");
+    sqlx::query("CREATE TABLE readonly_regression(value TEXT NOT NULL);")
+        .execute(&pool)
+        .await
+        .expect("create synthetic readonly-regression table");
+    sqlx::query("INSERT INTO readonly_regression(value) VALUES (?1);")
+        .bind("READONLY_DIRECTORY_MARKER")
+        .execute(&pool)
+        .await
+        .expect("write synthetic readonly-regression marker");
+    pool.close().await;
+
+    for artifact in mirror_artifacts(&database).into_iter().skip(1) {
+        if artifact.exists() {
+            fs::remove_file(artifact).expect("remove synthetic WAL artifact before restriction");
+        }
+    }
+    let before = fs::read(&database).expect("read encrypted mirror before restriction");
+    let original_mode = fs::metadata(directory.path())
+        .expect("read temporary directory mode")
+        .permissions()
+        .mode();
+    let restore_mode = RestoreDirectoryMode {
+        directory: directory.path().to_path_buf(),
+        mode: original_mode,
+    };
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o500))
+        .expect("deny writes to synthetic mirror directory");
+
+    let direct_options = SqliteConnectOptions::new()
+        .filename(&database)
+        .create_if_missing(true)
+        .disable_statement_logging();
+    let mut direct_connection = SqliteConnection::connect_with(&direct_options)
+        .await
+        .expect("open synthetic encrypted mirror before callback configuration");
+    let callback_error = configure_encrypted_connection(&mut direct_connection, &key)
+        .await
+        .expect_err("readonly directory must reject SQLCipher callback configuration");
+    direct_connection
+        .close()
+        .await
+        .expect("close synthetic direct encrypted connection");
+
+    let opened_at = Instant::now();
+    let open_error = connect_encrypted(&database, key.clone())
+        .await
+        .expect_err("readonly directory must not open the encrypted mirror");
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(original_mode))
+        .expect("restore synthetic mirror directory mode before assertions");
+    drop(restore_mode);
+
+    assert!(matches!(
+        callback_error,
+        sqlx::Error::Database(database_error)
+            if database_error.code().is_some_and(|code|
+                code == libsqlite3_sys::SQLITE_READONLY_DIRECTORY.to_string())
+    ));
+    assert!(
+        opened_at.elapsed() < Duration::from_secs(5),
+        "the verified readonly directory refusal must not wait for SQLx's pool retry deadline"
+    );
+    assert!(matches!(
+        open_error.downcast_ref::<EncryptedOpenError>(),
+        Some(EncryptedOpenError::Storage { source })
+            if matches!(
+                source,
+                sqlx::Error::Database(database_error)
+                    if database_error.code().is_some_and(|code|
+                        code == libsqlite3_sys::SQLITE_READONLY_DIRECTORY.to_string())
+            )
+    ));
+    assert_eq!(
+        fs::read(&database).expect("read encrypted mirror after readonly refusal"),
+        before,
+        "readonly refusal must not reset or overwrite the encrypted mirror"
+    );
+    let reopened = connect_encrypted(&database, key)
+        .await
+        .expect("reopen the unchanged synthetic mirror after restoring its directory");
+    let marker = sqlx::query_scalar::<_, String>("SELECT value FROM readonly_regression;")
+        .fetch_one(&reopened)
+        .await
+        .expect("read marker after readonly refusal");
+    assert_eq!(marker, "READONLY_DIRECTORY_MARKER");
+    reopened.close().await;
+}
+
 #[tokio::test]
 async fn encrypted_open_retries_a_transient_sqlite_lock() {
     let directory = tempfile::tempdir().expect("temporary directory");
@@ -405,7 +515,7 @@ fn pool_timeout_is_not_classified_as_an_encrypted_contents_refusal() {
 }
 
 #[test]
-fn only_notadb_is_a_definitive_encrypted_open_refusal() {
+fn only_notadb_is_an_unreadable_key_or_ciphertext_refusal() {
     assert!(!is_definitive_encrypted_open_error(
         &sqlx::Error::PoolTimedOut
     ));
@@ -424,6 +534,37 @@ fn only_notadb_is_a_definitive_encrypted_open_refusal() {
         assert!(
             !is_definitive_encrypted_open_sqlite_code(extended_code),
             "transient SQLite code must not be a definitive encrypted-open refusal"
+        );
+    }
+}
+
+#[test]
+fn only_verified_sqlite_codes_are_forwarded_from_encrypted_initialization() {
+    assert!(is_forwardable_encrypted_open_sqlite_code(
+        libsqlite3_sys::SQLITE_NOTADB
+    ));
+    assert!(is_forwardable_encrypted_open_sqlite_code(
+        libsqlite3_sys::SQLITE_READONLY_DIRECTORY
+    ));
+    for code in [
+        libsqlite3_sys::SQLITE_READONLY,
+        libsqlite3_sys::SQLITE_READONLY_RECOVERY,
+        libsqlite3_sys::SQLITE_READONLY_CANTLOCK,
+        libsqlite3_sys::SQLITE_READONLY_ROLLBACK,
+        libsqlite3_sys::SQLITE_READONLY_DBMOVED,
+        libsqlite3_sys::SQLITE_READONLY_CANTINIT,
+        libsqlite3_sys::SQLITE_BUSY,
+        libsqlite3_sys::SQLITE_BUSY_RECOVERY,
+        libsqlite3_sys::SQLITE_BUSY_SNAPSHOT,
+        libsqlite3_sys::SQLITE_BUSY_TIMEOUT,
+        libsqlite3_sys::SQLITE_LOCKED,
+        libsqlite3_sys::SQLITE_LOCKED_SHAREDCACHE,
+        libsqlite3_sys::SQLITE_LOCKED_VTAB,
+        libsqlite3_sys::SQLITE_PROTOCOL,
+    ] {
+        assert!(
+            !is_forwardable_encrypted_open_sqlite_code(code),
+            "unverified or transient SQLite code must remain on SQLx's retry path"
         );
     }
 }
