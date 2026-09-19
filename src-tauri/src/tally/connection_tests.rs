@@ -1849,12 +1849,32 @@ fn captured_party_join_inputs() -> (
     Vec<bridge_tally_protocol::ParsedSourceRecord<bridge_tally_protocol::PartyLedgerMasterRecord>>,
     Vec<bridge_tally_protocol::native_outstandings::LedgerSnapshotEntry>,
 ) {
-    const GUID: &str = "61c6de69-1748-461c-ad3f-162cb949df9f";
+    // Use the independently captured company collection as the identity source
+    // for these captured reports, rather than copying its GUID into test code.
+    let companies = bridge_tally_protocol::parse_companies_from_collection(
+        &captured_agent_party_xml(include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.utf16le.xml"
+        )),
+    )
+    .expect("captured company collection parses");
+    let candidates = companies
+        .iter()
+        .filter(|company| company.name == "WR2 Unicode Lab")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        candidates.len(),
+        1,
+        "the captured synthetic company is unambiguous"
+    );
+    let guid = candidates[0]
+        .guid
+        .as_deref()
+        .expect("captured company GUID");
     let masters = super::parse_native_party_ledger_master_records_with_evidence(
         &captured_agent_party_xml(include_bytes!(
             "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-party-masters.utf16le.xml"
         )),
-        GUID,
+        guid,
     )
     .expect("existing captured party-master fixture parses")
     .records;
@@ -1862,7 +1882,7 @@ fn captured_party_join_inputs() -> (
         &captured_agent_party_xml(include_bytes!(
             "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-party-balances.utf16le.xml"
         )),
-        GUID,
+        guid,
     )
     .expect("existing captured party-balance fixture parses");
     (masters, balances)
