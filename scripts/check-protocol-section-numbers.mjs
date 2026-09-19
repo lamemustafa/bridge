@@ -35,8 +35,11 @@ const compatibilitySurface = fileURLToPath(
   new URL("../docs/tally/compatibility/compatibility-surface.json", import.meta.url),
 );
 const PARTS_MARKER = /^<!-- protocol-reference-parts:\s*(.*?)\s*-->$/m;
-const LEGACY_ROUTE = /<a\s+id="([^"]+)"\s*><\/a>\s+\[([^\]]+)\]\(\.\/([^#)]+)#([^)]+)\)/g;
+const LEGACY_ROUTE_LINE = /^ {0,3}<a\s+id="([^"]+)"\s*><\/a>\s+\[([^\]]+)\]\(\.\/([^#)]+)#([^)]+)\)\s*$/;
+const LEGACY_ANCHOR_LINE = /^ {0,3}<a\s+id="([^"]+)"\s*><\/a>\s*$/;
+const LEGACY_LINK_LINE = /^ {0,3}\[([^\]]+)\]\(\.\/([^#)]+)#([^)]+)\)\s*$/;
 const LEGACY_HEADING = /^ {0,3}#{2,6}\s+(.+?)\s*#*\s*$/;
+const CANONICAL_HEADING = /^ {0,3}#{1,6}\s+(.+?)\s*#*\s*$/;
 
 // The canonical file stays at the historic path. It and the sibling parts it
 // names share one number allocation; a pre-split base has no marker and is
@@ -167,6 +170,54 @@ const NOT_A_PARAGRAPH = /^ {0,3}(?:[-*+]\s|\d{1,9}[.)]\s|>|\||#)/;
 // numbered Setext heading underneath it entirely.
 const BLOCK_BOUNDARY = /^ {0,3}(?:#{1,6}\s|`{3,}|~{3,}|(?:[-*_]\s*){3,}$)/;
 
+// Keep one fence state machine for number scanning, route-heading validation,
+// and canonical redirect extraction. Consumers still decide which visible
+// Markdown forms they admit; this iterator only establishes that a line is not
+// inside a fenced code block.
+function* unfencedLines(lines) {
+  let fence = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const rail = FENCE.exec(line);
+    if (rail) {
+      const after = line.slice(line.indexOf(rail[1]) + rail[1].length);
+      if (fence === null) {
+        // A backtick fence's info string may not contain a backtick. Such a
+        // line is neither an opener nor a route/heading source.
+        if (rail[1][0] !== "`" || !after.includes("`")) fence = rail[1];
+      } else if (
+        rail[1][0] === fence[0] &&
+        rail[1].length >= fence.length &&
+        after.trim() === ""
+      ) {
+        fence = null;
+      }
+      continue;
+    }
+    if (fence === null) yield { line, index, lines };
+  }
+}
+
+function setextHeadingAt(lines, index) {
+  if (
+    index === 0 ||
+    !SETEXT_UNDERLINE.test(lines[index]) ||
+    !lines[index - 1].trim()
+  ) return null;
+  let first = index - 1;
+  while (
+    first > 0 &&
+    lines[first - 1].trim() &&
+    !BLOCK_BOUNDARY.test(lines[first - 1]) &&
+    !NOT_A_PARAGRAPH.test(lines[first - 1])
+  ) {
+    first -= 1;
+  }
+  const text = lines[first];
+  if (!text.trim() || BLOCK_BOUNDARY.test(text) || NOT_A_PARAGRAPH.test(text)) return null;
+  return { line: first + 1, text };
+}
+
 // Diagnostics are bounded. A malformed or generated reference can carry very
 // many duplicates, or one very long heading, and CI evidence that does not fit
 // is unreadable exactly when the gate has something to say.
@@ -220,65 +271,28 @@ function titleOf(line) {
 // Scanning one document's lines into number -> occurrences. A function rather
 // than a loop, because the base revision has to be scanned the same way.
 function scan(lines, file, occurrences = new Map()) {
-  let fence = null;
   const record = (number, line, text) => {
     if (!occurrences.has(number)) occurrences.set(number, []);
     occurrences.get(number).push({ file, line, text: text.trim() });
   };
 
-  lines.forEach((line, index) => {
-    const rail = FENCE.exec(line);
-    if (rail) {
-      if (fence === null) {
-        // A backtick fence's info string may not contain a backtick — CommonMark
-        // says so, and Markdown does not open a block for one. Treating it as an
-        // opener suppressed every heading until the next bare closer, so a
-        // duplicate inside that span passed CI unseen. A tilde fence's info
-        // string may, so this is backtick-specific.
-        const info = line.slice(line.indexOf(rail[1]) + rail[1].length);
-        if (rail[1][0] === "`" && info.includes("`")) return;
-        fence = rail[1];
-        return;
-      }
-      // A closing fence carries no info string, matches the opener's character,
-      // and is at least as long.
-      const after = line.slice(line.indexOf(rail[1]) + rail[1].length);
-      if (rail[1][0] === fence[0] && rail[1].length >= fence.length && after.trim() === "") {
-        fence = null;
-      }
-      return;
-    }
-    if (fence !== null) return;
-
+  for (const { line, index } of unfencedLines(lines)) {
     // Setext: this underlines the paragraph above it, and such a heading may
     // span several lines — the number is on the *first* of them, not on the
     // line immediately above the underline.
-    if (SETEXT_UNDERLINE.test(line) && index > 0) {
-      let first = index - 1;
-      while (
-        first > 0 &&
-        lines[first - 1].trim() &&
-        !BLOCK_BOUNDARY.test(lines[first - 1]) &&
-        !NOT_A_PARAGRAPH.test(lines[first - 1])
-      ) {
-        first -= 1;
-      }
-      const heading = lines[first];
-      // An ATX heading above is a heading in its own right, and `---` under it
-      // is a thematic break. A blank line is not a heading at all.
-      if (heading.trim() && !BLOCK_BOUNDARY.test(heading) && !NOT_A_PARAGRAPH.test(heading)) {
-        // Matched against the raw line, not a trimmed copy: SETEXT_NUMBER's own
-        // {0,3} indentation limit is what rejects a four-space-indented code
-        // line beginning with a number, and trimming first threw that away.
-        const numbered = SETEXT_NUMBER.exec(heading);
-        if (numbered) record(numbered[1], first + 1, heading);
-      }
-      return;
+    const setext = setextHeadingAt(lines, index);
+    if (setext) {
+      // Matched against the raw line, not a trimmed copy: SETEXT_NUMBER's own
+      // {0,3} indentation limit is what rejects a four-space-indented code
+      // line beginning with a number, and trimming first threw that away.
+      const numbered = SETEXT_NUMBER.exec(setext.text);
+      if (numbered) record(numbered[1], setext.line, setext.text);
+      continue;
     }
 
     const found = HEADING.exec(line);
     if (found) record(found[2], index + 1, line);
-  });
+  }
   return occurrences;
 }
 
@@ -486,57 +500,213 @@ if (base) {
 // and point to its part-local GitHub fragment. Fences are excluded: a literal
 // `##` in an example is never a heading or a redirect destination.
 function anchorSeed(title) {
-  // Existing public fragments cover every punctuation form used by the current
-  // headings. Their titles contain no non-ASCII letters or digits; this keeps
-  // the established GitHub fragment spelling without introducing a dependency.
-  return title.toLowerCase().replace(/[^a-z0-9 _-]/g, "").replace(/ /g, "-");
+  // This is deliberately a bounded admitted grammar, not a general Markdown
+  // renderer. The 94 current route headings use plain ASCII plus `§`/`—`,
+  // balanced strong spans, and single-backtick code spans. Reject every other
+  // rendering construct before deriving a fragment that could disagree with
+  // GitHub's visible heading text.
+  if (title.includes("``")) {
+    throw new Error(`unsupported split protocol heading markup (multi-backtick code span): ${short(title)}`);
+  }
+  let visible = "";
+  let strong = false;
+  let code = false;
+  let codeText = "";
+  for (let index = 0; index < title.length; index += 1) {
+    const character = title[index];
+    if (character.codePointAt(0) > 0x7f && character !== "§" && character !== "—") {
+      throw new Error(
+        `unsupported Unicode character in split protocol heading (only § and — are admitted): ${short(title)}`,
+      );
+    }
+    if (code) {
+      if (character === "`") {
+        if (!codeText || /^\s|\s$/.test(codeText)) {
+          throw new Error(
+            `unsupported split protocol heading markup (empty or padded code span): ${short(title)}`,
+          );
+        }
+        visible += codeText;
+        codeText = "";
+        code = false;
+      } else {
+        codeText += character;
+      }
+      continue;
+    }
+    if (title.startsWith("**", index)) {
+      strong = !strong;
+      index += 1;
+      continue;
+    }
+    if (character === "`") {
+      code = true;
+      continue;
+    }
+    if (
+      character === "*" ||
+      character === "_" ||
+      character === "[" ||
+      character === "]" ||
+      character === "<" ||
+      character === ">" ||
+      character === "\\" ||
+      character === "~" ||
+      (character === "&" && /^&(?:#[0-9]+|#x[0-9a-f]+|[a-z][a-z0-9]+);/i.test(title.slice(index)))
+    ) {
+      throw new Error(`unsupported split protocol heading markup: ${short(title)}`);
+    }
+    visible += character;
+  }
+  if (strong || code) {
+    throw new Error(`unsupported split protocol heading markup (unbalanced delimiter): ${short(title)}`);
+  }
+  return visible.toLowerCase().replace(/[^a-z0-9 _-]/g, "").replace(/ /g, "-");
 }
 
 function headingRoutes(referenceSet) {
-  const globalCounts = new Map();
+  const globalSeeds = new Set();
   const routes = [];
   for (const { path, text } of referenceSet) {
-    const localCounts = new Map();
-    let fence = null;
-    for (const line of text.split("\n")) {
-      const rail = FENCE.exec(line);
-      if (rail) {
-        const after = line.slice(line.indexOf(rail[1]) + rail[1].length);
-        if (fence === null) {
-          if (rail[1][0] !== "`" || !after.includes("`")) fence = rail[1];
-        } else if (rail[1][0] === fence[0] && rail[1].length >= fence.length && after.trim() === "") {
-          fence = null;
-        }
-        continue;
+    const lines = text.split("\n");
+    for (const { line, index } of unfencedLines(lines)) {
+      const setext = setextHeadingAt(lines, index);
+      if (setext) {
+        throw new Error(
+          `Setext headings are unsupported in split protocol routes: ${relPath(path)}:${setext.line}`,
+        );
       }
-      if (fence !== null) continue;
       const found = LEGACY_HEADING.exec(line);
       if (!found) continue;
       const title = found[1];
       const seed = anchorSeed(title);
-      const globalCount = globalCounts.get(seed) ?? 0;
-      const localCount = localCounts.get(seed) ?? 0;
+      if (globalSeeds.has(seed)) {
+        throw new Error(`ambiguous duplicate split-route heading fragment ${short(seed)}`);
+      }
       routes.push({
-        legacy: globalCount === 0 ? seed : `${seed}-${globalCount}`,
-        target: localCount === 0 ? seed : `${seed}-${localCount}`,
+        legacy: seed,
+        target: seed,
         title,
         path: relPath(path),
       });
-      globalCounts.set(seed, globalCount + 1);
-      localCounts.set(seed, localCount + 1);
+      globalSeeds.add(seed);
     }
   }
   return routes;
 }
 
+function indexedContents(indexText) {
+  const lines = indexText.split("\n");
+  const visible = new Map();
+  let comment = false;
+  for (const { line, index } of unfencedLines(lines)) {
+    if (comment) {
+      const end = line.indexOf("-->");
+      if (end !== -1) {
+        if (line.slice(end + 3).trim()) {
+          throw new Error(
+            `unsupported content after an HTML comment in split protocol index: ` +
+              `${relPath(canonicalReference)}:${index + 1}`,
+          );
+        }
+        comment = false;
+      }
+      continue;
+    }
+    const commentStart = line.indexOf("<!--");
+    if (commentStart !== -1) {
+      if (line.slice(0, commentStart).trim()) {
+        throw new Error(
+          `unsupported inline HTML comment in split protocol index: ` +
+            `${relPath(canonicalReference)}:${index + 1}`,
+        );
+      }
+      const end = line.indexOf("-->", commentStart + 4);
+      if (end === -1) comment = true;
+      else if (line.slice(end + 3).trim()) {
+        throw new Error(
+          `unsupported content after an HTML comment in split protocol index: ` +
+            `${relPath(canonicalReference)}:${index + 1}`,
+        );
+      }
+      continue;
+    }
+    visible.set(index, line);
+  }
+  if (comment) {
+    throw new Error(`unclosed HTML comment in split protocol index: ${relPath(canonicalReference)}`);
+  }
+
+  // Every visible canonical heading also creates a GitHub fragment, including
+  // H1 navigation headings. Validate those titles with the same admitted
+  // grammar as part headings and reserve their generated IDs before accepting
+  // explicit legacy redirects. Otherwise a new `## Method note` can capture
+  // `#method-note` before the later `<a id="method-note">` is reached.
+  const visibleLines = lines.map((_, index) => visible.get(index) ?? "");
+  const headingSeeds = [];
+  const seenHeadingSeeds = new Set();
+  for (const [index, line] of visible) {
+    const setext = setextHeadingAt(visibleLines, index);
+    if (setext) {
+      throw new Error(
+        `Setext headings are unsupported in split protocol index: ` +
+          `${relPath(canonicalReference)}:${setext.line}`,
+      );
+    }
+    const heading = CANONICAL_HEADING.exec(line);
+    if (!heading) continue;
+    const seed = anchorSeed(heading[1]);
+    if (seenHeadingSeeds.has(seed)) {
+      throw new Error(`ambiguous duplicate canonical-index heading fragment ${short(seed)}`);
+    }
+    headingSeeds.push({ seed, line: index + 1 });
+    seenHeadingSeeds.add(seed);
+  }
+
+  const routes = [];
+  for (const [index, line] of visible) {
+    const sameLine = LEGACY_ROUTE_LINE.exec(line);
+    if (sameLine) {
+      routes.push({
+        legacy: sameLine[1],
+        title: sameLine[2],
+        path: `docs/tally/${sameLine[3]}`,
+        target: sameLine[4],
+      });
+      continue;
+    }
+    const anchor = LEGACY_ANCHOR_LINE.exec(line);
+    if (anchor) {
+      const blank = visible.get(index + 1);
+      const link = LEGACY_LINK_LINE.exec(visible.get(index + 2) ?? "");
+      if (blank?.trim() === "" && link) {
+        routes.push({
+          legacy: anchor[1],
+          title: link[1],
+          path: `docs/tally/${link[2]}`,
+          target: link[3],
+        });
+      }
+      continue;
+    }
+    if (/^ {0,3}</.test(line)) {
+      throw new Error(
+        `unsupported raw HTML block in split protocol index: ${relPath(canonicalReference)}:${index + 1}`,
+      );
+    }
+  }
+  return { routes, headingSeeds };
+}
+
 if (PARTS_MARKER.test(canonicalText)) {
   const indexed = new Map();
   const duplicateAnchors = new Map();
-  for (const match of canonicalText.matchAll(LEGACY_ROUTE)) {
-    if (indexed.has(match[1])) {
-      duplicateAnchors.set(match[1], (duplicateAnchors.get(match[1]) ?? 0) + 1);
+  const currentIndex = indexedContents(canonicalText);
+  for (const route of currentIndex.routes) {
+    if (indexed.has(route.legacy)) {
+      duplicateAnchors.set(route.legacy, (duplicateAnchors.get(route.legacy) ?? 0) + 1);
     }
-    indexed.set(match[1], { title: match[2], path: `docs/tally/${match[3]}`, target: match[4] });
+    indexed.set(route.legacy, route);
   }
   if (duplicateAnchors.size) {
     const duplicateOccurrences = [...duplicateAnchors.values()].reduce((total, count) => total + count, 0);
@@ -551,6 +721,19 @@ if (PARTS_MARKER.test(canonicalText)) {
           : ""),
     );
   }
+  const capturedByHeadings = currentIndex.headingSeeds.filter(({ seed }) => indexed.has(seed));
+  if (capturedByHeadings.length) {
+    failures.push(
+      `canonical index heading fragment(s) collide with required legacy anchors:\n` +
+        capturedByHeadings
+          .slice(0, MAX_REPORTED_NUMBERS)
+          .map(({ seed, line }) => `    ${short(seed)} (line ${line})`)
+          .join("\n") +
+        (capturedByHeadings.length > MAX_REPORTED_NUMBERS
+          ? `\n    ... and ${capturedByHeadings.length - MAX_REPORTED_NUMBERS} more`
+          : ""),
+    );
+  }
   const currentRoutes = headingRoutes(routeReferences(references, canonicalText));
   const required = new Map(currentRoutes.map((route) => [route.legacy, route]));
   const aliases = [];
@@ -558,13 +741,7 @@ if (PARTS_MARKER.test(canonicalText)) {
   if (base) {
     const baseRoutes = headingRoutes(routeReferences(base.references, base.indexText));
     const baseRequired = new Map(baseRoutes.map((route) => [route.legacy, route]));
-    for (const match of base.indexText.matchAll(LEGACY_ROUTE)) {
-      const route = {
-        legacy: match[1],
-        title: match[2],
-        path: `docs/tally/${match[3]}`,
-        target: match[4],
-      };
+    for (const route of indexedContents(base.indexText).routes) {
       const normal = baseRequired.get(route.legacy);
       if (
         !normal ||

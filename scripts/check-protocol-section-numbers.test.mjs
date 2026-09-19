@@ -274,6 +274,12 @@ if (/duplicate protocol-reference section numbers/.test(`${umbrella.stdout}${umb
 // A pre-split base has one document. The split index names the files that now
 // allocate one shared number namespace; the gate must catch a duplicate in a
 // second part, permit a whole section moving there, and retain the old anchor.
+// Keep BASE_DOC's Setext and repeated-title cases for the monolithic parser
+// contracts above. Split route sources deliberately use the narrower admitted
+// grammar: ATX headings with unique generated fragments.
+const SPLIT_BASE_DOC = BASE_DOC
+  .replace("77.77 Stable title\n==================", "## 77.77 Stable title")
+  .replace("### 77.72 Repeated heading", "### 77.72 Repeated heading second");
 const PART_A = "docs/tally/TALLY_PROTOCOL_REFERENCE_PART_A.md";
 const PART_B = "docs/tally/TALLY_PROTOCOL_REFERENCE_PART_B.md";
 const PART_C = "docs/tally/TALLY_PROTOCOL_REFERENCE_PART_C.md";
@@ -311,8 +317,24 @@ const runSplitGate = (first, second, omitted) => {
 };
 
 {
+  const out = runSplitGate(SPLIT_BASE_DOC, "# Part B\n");
+  const text = `${out.stdout}${out.stderr}`;
+  if (out.status !== 0 && text.includes("Setext headings are unsupported in split protocol routes")) {
+    console.log("ok   a pre-split Setext heading is refused before claiming preserved split routes");
+  } else {
+    failed += 1;
+    console.error(`FAIL a pre-split Setext route source must be refused\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+writeFileSync(join(upstream, DOC), SPLIT_BASE_DOC);
+git(upstream, "add", DOC);
+git(upstream, "commit", "-qm", "use the admitted split-heading grammar");
+git(work, "fetch", "-q", "origin");
+
+{
   const second = "# Part B\n\n## 9.7 Second claimant in another part\n\nq\n";
-  const out = runSplitGate(BASE_DOC, second);
+  const out = runSplitGate(SPLIT_BASE_DOC, second);
   const text = `${out.stdout}${out.stderr}`;
   if (out.status !== 0 && text.includes("is used 2 times") && text.includes("9.7") && text.includes("(1 problem(s))")) {
     console.log("ok   a number duplicated across declared parts is caught");
@@ -322,11 +344,140 @@ const runSplitGate = (first, second, omitted) => {
   }
 }
 
+{
+  const first = `${SPLIT_BASE_DOC}\n90 Setext route\n================\n\n`;
+  const out = runSplitGate(first, "# Part B\n");
+  const text = `${out.stdout}${out.stderr}`;
+  if (out.status !== 0 && text.includes("Setext headings are unsupported in split protocol routes")) {
+    console.log("ok   a current split part cannot claim complete routes while using Setext headings");
+  } else {
+    failed += 1;
+    console.error(`FAIL a current Setext route source must be refused\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+for (const [name, title] of [
+  ["a non-ASCII letter", "90 Café"],
+  ["a combining mark", `90 Cafe${"\u0301"}`],
+]) {
+  const first = `${SPLIT_BASE_DOC}\n## ${title}\n\nbody\n`;
+  const second = "# Part B\n";
+  writeFileSync(join(work, PART_A), first);
+  writeFileSync(join(work, PART_B), second);
+  // Keep malformed markup out of the generated fixture route itself so the
+  // refusal is proved at the heading boundary, before route completeness.
+  writeFileSync(join(work, DOC), splitIndex([SPLIT_BASE_DOC, second]));
+  writeSurface(work, [DOC, PART_A, PART_B]);
+  const out = runGate();
+  const text = `${out.stdout}${out.stderr}`;
+  if (
+    out.status !== 0 &&
+    text.includes("unsupported Unicode character in split protocol heading")
+  ) {
+    console.log(`ok   ${name} is refused before an incorrect legacy fragment is accepted`);
+  } else {
+    failed += 1;
+    console.error(`FAIL ${name} must be refused by the route grammar\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+for (const [name, title] of [
+  ["a Markdown link", "90 [Linked](./target)"],
+  ["raw inline HTML", "90 <TYPE>"],
+  ["single-star emphasis", "90 *emphasis*"],
+  ["underscore emphasis", "90 _emphasis_"],
+  ["strikethrough", "90 ~~strike~~"],
+  ["a backslash escape", String.raw`90 escaped \*star`],
+  ["an entity", "90 Copy &copy;"],
+  ["unbalanced strong markup", "90 **unbalanced"],
+  ["a padded code span", "90 ` padded `"],
+  ["a multi-backtick code span", "90 ``multi``"],
+]) {
+  const first = `${SPLIT_BASE_DOC}\n## ${title}\n\nbody\n`;
+  const second = "# Part B\n";
+  writeFileSync(join(work, PART_A), first);
+  writeFileSync(join(work, PART_B), second);
+  // Keep malformed markup out of the generated fixture route itself so the
+  // refusal is proved at the heading boundary, before route completeness.
+  writeFileSync(join(work, DOC), splitIndex([SPLIT_BASE_DOC, second]));
+  writeSurface(work, [DOC, PART_A, PART_B]);
+  const out = runGate();
+  const text = `${out.stdout}${out.stderr}`;
+  if (out.status !== 0 && text.includes("unsupported split protocol heading markup")) {
+    console.log(`ok   ${name} is refused by the bounded split-heading grammar`);
+  } else {
+    failed += 1;
+    console.error(`FAIL ${name} must be refused by the route grammar\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+{
+  const out = runSplitGate(
+    `${SPLIT_BASE_DOC}\n## 90 **Strong \`CODE\`** — §\n\nbody\n`,
+    "# Part B\n",
+  );
+  if (out.status === 0) {
+    console.log("ok   the real protocol's strong, code, §, and — heading grammar remains supported");
+  } else {
+    failed += 1;
+    console.error(`FAIL supported protocol-heading markup must pass\n  exit ${out.status}: ${`${out.stdout}${out.stderr}`.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+{
+  const first = `${SPLIT_BASE_DOC}\n## Method note\n\nbody\n`;
+  writeFileSync(join(work, PART_A), first);
+  writeFileSync(join(work, PART_B), "# Part B\n");
+  writeFileSync(
+    join(work, DOC),
+    splitIndex([first, "# Part B\n"]).replace(
+      "# Reference index\n\n",
+      "# Reference index\n\n## Method note\n\n",
+    ),
+  );
+  writeSurface(work, [DOC, PART_A, PART_B]);
+  const out = runGate();
+  const text = `${out.stdout}${out.stderr}`;
+  if (
+    out.status !== 0 &&
+    text.includes("canonical index heading fragment(s) collide with required legacy anchors") &&
+    text.includes("method-note")
+  ) {
+    console.log("ok   a canonical heading cannot capture a required legacy anchor");
+  } else {
+    failed += 1;
+    console.error(`FAIL canonical headings must not capture legacy redirects\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+{
+  const first = SPLIT_BASE_DOC;
+  const second = "# Part B\n";
+  writeFileSync(join(work, PART_A), first);
+  writeFileSync(join(work, PART_B), second);
+  writeFileSync(
+    join(work, DOC),
+    splitIndex([first, second]).replace(
+      "# Reference index\n\n",
+      "# Reference index\n\nSetext navigation\n-----------------\n\n",
+    ),
+  );
+  writeSurface(work, [DOC, PART_A, PART_B]);
+  const out = runGate();
+  const text = `${out.stdout}${out.stderr}`;
+  if (out.status !== 0 && text.includes("Setext headings are unsupported in split protocol index")) {
+    console.log("ok   a canonical Setext heading is refused before claiming preserved fragments");
+  } else {
+    failed += 1;
+    console.error(`FAIL canonical Setext headings must be refused\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
 // The canonical marker owns the protocol inventory. Every declared file must
 // also be pinned by the compatibility surface, without adding a second static
 // list to this gate.
 {
-  const first = BASE_DOC;
+  const first = SPLIT_BASE_DOC;
   const second = "# Part B\n";
   const third = "# Part C\n";
   const indexWithThirdPart = splitIndex([first, second]).replace(
@@ -390,7 +541,7 @@ const runSplitGate = (first, second, omitted) => {
 }
 
 {
-  const first = BASE_DOC;
+  const first = SPLIT_BASE_DOC;
   const second = "# Part B\n";
   writeFileSync(join(work, PART_A), first);
   writeFileSync(join(work, PART_B), second);
@@ -415,7 +566,7 @@ const runSplitGate = (first, second, omitted) => {
 
 {
   const moved = "## 9.7 Operation support matrix\n\nbody\n";
-  const first = BASE_DOC.replace(moved, "");
+  const first = SPLIT_BASE_DOC.replace(moved, "");
   const out = runSplitGate(first, `# Part B\n\n${moved}`);
   const text = `${out.stdout}${out.stderr}`;
   if (out.status === 0) {
@@ -430,7 +581,7 @@ const runSplitGate = (first, second, omitted) => {
 // this fault and its total count without allowing the diagnostic to scale with
 // every repeated ID.
 {
-  const first = BASE_DOC;
+  const first = SPLIT_BASE_DOC;
   const second = "# Part B\n";
   const repeats = Array.from({ length: 80 }, (_, index) => {
     const anchor = `duplicate-route-${String(index).padStart(2, "0")}-${"x".repeat(300)}`;
@@ -461,7 +612,7 @@ const runSplitGate = (first, second, omitted) => {
 }
 
 {
-  const first = BASE_DOC.replace("## 9.7 Operation support matrix", "## 9.8 Renumbered section");
+  const first = SPLIT_BASE_DOC.replace("## 9.7 Operation support matrix", "## 9.8 Renumbered section");
   const second = "# Part B\n";
   writeFileSync(join(work, PART_A), first);
   writeFileSync(join(work, PART_B), second);
@@ -483,7 +634,7 @@ const runSplitGate = (first, second, omitted) => {
 
 {
   const moved = "## 9.7 Operation support matrix\n\nbody\n";
-  const first = BASE_DOC.replace(moved, "");
+  const first = SPLIT_BASE_DOC.replace(moved, "");
   const out = runSplitGate(first, `# Part B\n\n${moved}`, new Set(["97-operation-support-matrix"]));
   const text = `${out.stdout}${out.stderr}`;
   if (out.status !== 0 && text.includes("legacy section anchor(s) missing") && text.includes("97-operation-support-matrix") && text.includes("(1 problem(s))")) {
@@ -494,11 +645,63 @@ const runSplitGate = (first, second, omitted) => {
   }
 }
 
+{
+  const moved = "## 9.7 Operation support matrix\n\nbody\n";
+  const first = SPLIT_BASE_DOC.replace(moved, "");
+  const second = `# Part B\n\n${moved}`;
+  const fakeRoute = '<a id="97-operation-support-matrix"></a> [9.7 Operation support matrix](./TALLY_PROTOCOL_REFERENCE_PART_B.md#97-operation-support-matrix)';
+  writeFileSync(join(work, PART_A), first);
+  writeFileSync(join(work, PART_B), second);
+  writeFileSync(
+    join(work, DOC),
+    splitIndex([first, second], new Set(["97-operation-support-matrix"])) +
+      `\n\`\`\`md\n${fakeRoute}\n\`\`\`\n> ${fakeRoute}\n\`${fakeRoute}\`\n<!--\n${fakeRoute}\n-->\n`,
+  );
+  writeSurface(work, [DOC, PART_A, PART_B]);
+  const out = runGate();
+  const text = `${out.stdout}${out.stderr}`;
+  if (
+    out.status !== 0 &&
+    text.includes("legacy section anchor(s) missing") &&
+    text.includes("97-operation-support-matrix") &&
+    text.includes("(1 problem(s))")
+  ) {
+    console.log("ok   fenced, quoted, inline-code, and commented routes cannot replace a rendered route");
+  } else {
+    failed += 1;
+    console.error(`FAIL code examples must not satisfy a missing legacy route\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+
+{
+  const moved = "## 9.7 Operation support matrix\n\nbody\n";
+  const first = SPLIT_BASE_DOC.replace(moved, "");
+  const second = `# Part B\n\n${moved}`;
+  const fakeRoute = '<a id="97-operation-support-matrix"></a> [9.7 Operation support matrix](./TALLY_PROTOCOL_REFERENCE_PART_B.md#97-operation-support-matrix)';
+  writeFileSync(join(work, PART_A), first);
+  writeFileSync(join(work, PART_B), second);
+  writeFileSync(
+    join(work, DOC),
+    splitIndex([first, second], new Set(["97-operation-support-matrix"])) +
+      `\n<div>\n${fakeRoute}\n</div>\n`,
+  );
+  writeSurface(work, [DOC, PART_A, PART_B]);
+  const out = runGate();
+  const text = `${out.stdout}${out.stderr}`;
+  if (out.status !== 0 && text.includes("unsupported raw HTML block in split protocol index")) {
+    console.log("ok   a raw HTML block cannot hide a route example from Markdown rendering");
+  } else {
+    failed += 1;
+    console.error(`FAIL raw HTML route blocks must be refused\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
 // Run the entire gate with Windows-style relative paths while retaining the
 // host filesystem resolver. This exercises both Git tree lookups and Markdown
 // route comparison on any CI host; it is not a Windows-host qualification.
 {
-  runSplitGate(BASE_DOC, "# Part B\n");
+  runSplitGate(SPLIT_BASE_DOC, "# Part B\n");
   const gatePath = join(work, "scripts/check-protocol-section-numbers.mjs");
   const original = readFileSync(gatePath, "utf8");
   const importLine = 'import { relative, resolve, sep } from "node:path";';
@@ -524,7 +727,7 @@ const sep = "\\";`);
 // Retitling keeps a section number allocated. Its old URL becomes an alias to
 // the new heading, including on later PRs whose base is already split/retitled.
 {
-  const first = BASE_DOC.replace("## 10 Alpha", "## 10 Alpha revised");
+  const first = SPLIT_BASE_DOC.replace("## 10 Alpha", "## 10 Alpha revised");
   const second = "# Part B\n";
   const index = splitIndex([first, second]);
   const alias = '<a id="10-alpha"></a> [10 Alpha](./TALLY_PROTOCOL_REFERENCE_PART_A.md#10-alpha-revised)\n';
@@ -554,9 +757,16 @@ const sep = "\\";`);
   writeFileSync(join(work, PART_A), splitBaseFirst);
   writeFileSync(join(upstream, PART_A), splitBaseFirst);
   writeFileSync(join(upstream, PART_B), second);
-  writeFileSync(join(upstream, DOC), splitBaseContent);
+  const fencedBaseExample = '\n```md\n<a id="example-only"></a> [example](./TALLY_PROTOCOL_REFERENCE_PART_A.md#method-note-revised)\n```\n';
+  writeFileSync(join(upstream, DOC), splitBaseContent + fencedBaseExample);
   git(upstream, "add", "-A");
-  git(upstream, "commit", "-qm", "split reference with a retained retitle alias");
+  git(upstream, "commit", "-qm", "split reference with a fenced route example");
+  git(work, "fetch", "-q", "origin");
+  expectRoute("a fenced route example in the base does not become an inherited alias", splitBaseContent);
+
+  writeFileSync(join(upstream, DOC), splitBaseContent);
+  git(upstream, "add", DOC);
+  git(upstream, "commit", "-qm", "retain only rendered split routes");
   git(work, "fetch", "-q", "origin");
   expectRoute("an inherited alias remains valid on a later split-base edit", splitBaseContent);
   expectRoute("a later split-base edit cannot drop its inherited alias", splitBaseIndex, "legacy section anchor(s) missing");
@@ -577,6 +787,25 @@ const sep = "\\";`);
     "an inherited alias may follow a legitimate second retitle",
     retitledAgainIndex + alias + revisedAlias + methodAlias.replace("#method-note-revised)", "#method-note-final)"),
   );
+
+  const duplicateFirst = splitBaseFirst.replace(
+    "## Method note revised",
+    "## Method note revised\n\nnew earlier section\n\n## Method note revised",
+  );
+  writeFileSync(join(work, PART_A), duplicateFirst);
+  writeFileSync(join(work, DOC), splitIndex([duplicateFirst, second]) + alias + methodAlias);
+  const duplicateOut = runGate();
+  const duplicateText = `${duplicateOut.stdout}${duplicateOut.stderr}`;
+  if (
+    duplicateOut.status !== 0 &&
+    duplicateText.includes("ambiguous duplicate split-route heading fragment") &&
+    duplicateText.includes("method-note-revised")
+  ) {
+    console.log("ok   a duplicate heading insertion cannot steal an ordinary base fragment");
+  } else {
+    failed += 1;
+    console.error(`FAIL a duplicate heading insertion must be refused\n  exit ${duplicateOut.status}: ${duplicateText.split("\n").slice(0, 6).join("\n  ")}`);
+  }
 
   const collisionFirst = `${splitBaseFirst}\n## Method note\n\nnew section\n`;
   writeFileSync(join(work, PART_A), collisionFirst);
