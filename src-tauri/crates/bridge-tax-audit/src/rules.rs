@@ -1,9 +1,10 @@
 //! Rule values as data, read from the vendored excerpt of the reference Python implementation's
 //! rules table.
 //!
-//! Provenance: `rules/ay2026-27.s44ab.toml` holds four byte-for-byte verbatim blocks of the
+//! Provenance: `rules/ay2026-27.s44ab.toml` holds five byte-for-byte verbatim blocks of the
 //! reference implementation's own AY 2026-27 rules file -- `[meta]` through the end of `[s44ab]`,
-//! then `[s40a3]` in full, then the first three lines each of `[s269st]` and `[s269ss_269t]` --
+//! then `[s40a3]` in full, then the first three lines each of `[s269st]` and `[s269ss_269t]`,
+//! then `[depreciation]` in full with its three `[depreciation.blocks.<key>]` sub-tables --
 //! under a header explaining why each block stops where it does (see the file itself). The
 //! source file had sha256 [`SOURCE_SHA256`] when it was read at reference commit
 //! [`SOURCE_COMMIT`]. The local parity example re-checks, against a local copy of the reference
@@ -13,11 +14,13 @@
 //! [`VENDORED_SHA256`] is the vendored file's own hash; a unit test fails if the file changes
 //! without that constant (and so without a reviewer seeing the provenance above) changing too.
 
+use std::collections::BTreeMap;
+
 use crate::error::{AuditError, Result};
 
 pub const VENDORED: &str = include_str!("../rules/ay2026-27.s44ab.toml");
 pub const VENDORED_SHA256: &str =
-    "982c49dba3f9fab8b729bcdb6a3aef8edd245975f6c1536228d022f05cf36c94";
+    "eeb1a1401861da2b22ea41f944fad5f24c3d7bf149987fe4dc2d126318f67130";
 pub const SOURCE_PATH: &str = "the reference Python implementation's AY 2026-27 rules file";
 pub const SOURCE_SHA256: &str = "8a6ec80cd5d19da34392e93024dc9a43a98982b09fb457c662f627174acedf2d";
 pub const SOURCE_COMMIT: &str = "dd376ed014d922a1e2b12052763af36a565402ec";
@@ -40,6 +43,12 @@ pub struct Rules {
     pub s269st_limit_per_person_per_day_paise: i64,
     /// `[s269ss_269t].limit_paise`.
     pub s269ss_269t_limit_paise: i64,
+    /// `[depreciation].half_rate_days_threshold`.
+    pub depreciation_half_rate_days_threshold: i64,
+    /// `[depreciation].cash_addition_limit_paise`.
+    pub depreciation_cash_addition_limit_paise: i64,
+    /// `[depreciation.blocks.<key>].rate_bp`, keyed by block key.
+    pub depreciation_block_rate_bp: BTreeMap<String, i64>,
 }
 
 impl Rules {
@@ -53,12 +62,13 @@ impl Rules {
                 .and_then(toml::Value::as_table)
                 .ok_or_else(|| AuditError::Config(format!("rules: no [{name}] table")))
         };
-        let (meta, s44ab, s40a3, s269st, s269ss_269t) = (
+        let (meta, s44ab, s40a3, s269st, s269ss_269t, depreciation) = (
             section("meta")?,
             section("s44ab")?,
             section("s40a3")?,
             section("s269st")?,
             section("s269ss_269t")?,
+            section("depreciation")?,
         );
         let int_in = |t: &toml::Table, table_name: &str, key: &str| {
             t.get(key).and_then(toml::Value::as_integer).ok_or_else(|| {
@@ -107,6 +117,39 @@ impl Rules {
                 "limit_per_person_per_day_paise",
             )?,
             s269ss_269t_limit_paise: int_in(s269ss_269t, "s269ss_269t", "limit_paise")?,
+            depreciation_half_rate_days_threshold: int_in(
+                depreciation,
+                "depreciation",
+                "half_rate_days_threshold",
+            )?,
+            depreciation_cash_addition_limit_paise: int_in(
+                depreciation,
+                "depreciation",
+                "cash_addition_limit_paise",
+            )?,
+            depreciation_block_rate_bp: {
+                let blocks = depreciation
+                    .get("blocks")
+                    .and_then(toml::Value::as_table)
+                    .ok_or_else(|| {
+                        AuditError::Config(
+                            "rules: [depreciation.blocks] is not a table".to_string(),
+                        )
+                    })?;
+                blocks
+                    .iter()
+                    .map(|(key, value)| {
+                        let block = value.as_table().ok_or_else(|| {
+                            AuditError::Config(format!(
+                                "rules: [depreciation.blocks.{key}] is not a table"
+                            ))
+                        })?;
+                        let rate_bp =
+                            int_in(block, &format!("depreciation.blocks.{key}"), "rate_bp")?;
+                        Ok((key.clone(), rate_bp))
+                    })
+                    .collect::<Result<BTreeMap<String, i64>>>()?
+            },
         })
     }
 
@@ -157,5 +200,22 @@ mod tests {
         );
         assert_eq!(rules.s269st_limit_per_person_per_day_paise, 20_000_000);
         assert_eq!(rules.s269ss_269t_limit_paise, 2_000_000);
+    }
+
+    #[test]
+    fn vendored_rules_carry_the_depreciation_values() {
+        let rules = Rules::vendored().unwrap();
+        assert_eq!(rules.depreciation_half_rate_days_threshold, 180);
+        assert_eq!(rules.depreciation_cash_addition_limit_paise, 1_000_000);
+        assert_eq!(
+            rules.depreciation_block_rate_bp,
+            [
+                ("furniture_10".to_string(), 1000),
+                ("plant_machinery_15".to_string(), 1500),
+                ("computers_40".to_string(), 4000),
+            ]
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>()
+        );
     }
 }

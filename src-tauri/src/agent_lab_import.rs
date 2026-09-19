@@ -389,12 +389,8 @@ fn find_readback_row<'a>(
         .find(|row| canonical_master_key(row.get("NAME").map(String::as_str).unwrap_or("")) == key)
 }
 
-/// The raw control character Tally's reserved-root marker begins with when
-/// an XML numeric character reference (`&#4;`) has been decoded to its
-/// literal Unicode scalar value -- exactly what this module's own
-/// `decoded_agent_reference`-based read-back parsers now produce, since the
-/// 2026-09-14 entity-decoding fix (`extract_line_error_texts`'s sibling
-/// arms in `agent_lab.rs`/`agent_lab_import.rs`).
+/// The raw control character behind Tally's `&#4;`, as a book value may
+/// carry it.
 const RESERVED_ROOT_RAW_MARKER: char = '\u{4}';
 
 /// The literal, undecoded XML numeric-character-reference text for the same
@@ -403,33 +399,43 @@ const RESERVED_ROOT_RAW_MARKER: char = '\u{4}';
 /// point; see `build_book.py`'s own widened `is_tally_reserved_root`).
 const RESERVED_ROOT_UNDECODED_MARKER: &str = "&#4;";
 
-/// Whether `value` names Tally's reserved top-level root under *any*
-/// spelling this codebase has been observed to produce for it (found live,
-/// second 2026-09-14 rehearsal: the target's `Profit & Loss A/c` read back
-/// with `PARENT` as the raw control character, and `book.json` separately
-/// carries the sanitized placeholder, causing a false
-/// `lab_master_already_exists` refusal on a ledger that is in fact Tally's
-/// own recognised default). Deliberately wider than
-/// [`bridge_tally_protocol::is_tally_reserved_root`] itself: that function's
-/// narrower definition (only the sanitized placeholder) is a considered,
-/// tested choice for the production group-ancestry walk -- an unrecognised
-/// raw marker there safely resolves as an absent group, pinned by
-/// `group_ancestry.rs`'s own
-/// `every_refusal_is_distinguishable_and_none_is_an_answer` test -- and must
-/// not be widened for every one of that function's other consumers just to
-/// fix this lab-only default-master detection gap (widening a shared
-/// function changes behaviour for every consumer silently). This wrapper
-/// strips the two extra spellings first and falls through to the shared
-/// function for everything else, so the two stay in agreement on whatever
-/// the shared function already recognises.
-fn is_reserved_root_any_spelling(value: &str) -> bool {
+/// Whether a *book* value names Tally's reserved top-level root.
+///
+/// Only `book.json` needs this. Every Tally read-back in this module goes
+/// through the agent parsers, which read `&#4; Primary` as the marked
+/// `U+FFFD#4; Primary` (`TALLY_PROTOCOL_REFERENCE.md` §1.1(d)), so an observed
+/// value is tested with [`bridge_tally_protocol::is_tally_reserved_root`]
+/// alone. A book is written by a separate codebase and has been seen to carry
+/// the root three ways besides the marker: the raw U+0004 (found live in the
+/// second 2026-09-14 rehearsal, where it caused a false
+/// `lab_master_already_exists` refusal), the undecoded `&#4;` text, and the
+/// bare word `Primary`, which is also what [`render_ledger_xml`] and its
+/// siblings write for the root. On the write side `Primary` means the root,
+/// so a book's bare `Primary` is the root here; on the read side it is a
+/// group of that name, which is why the shared function refuses it.
+fn book_names_reserved_root(value: &str) -> bool {
     let trimmed = value.trim();
     let stripped = trimmed
         .strip_prefix(RESERVED_ROOT_RAW_MARKER)
         .or_else(|| trimmed.strip_prefix(RESERVED_ROOT_UNDECODED_MARKER));
     match stripped {
         Some(rest) => rest.trim().eq_ignore_ascii_case("primary"),
-        None => is_tally_reserved_root(trimmed),
+        None => trimmed.eq_ignore_ascii_case("primary") || is_tally_reserved_root(trimmed),
+    }
+}
+
+/// Whether an observed read-back `PARENT` is the parent the book asked for.
+///
+/// The §9.4d fold compares two group names. The reserved root is not a group
+/// name: Tally returns it as the marked `U+FFFD#4; Primary` while the book
+/// writes it in any of the spellings [`book_names_reserved_root`] accepts, so
+/// that pair is matched by meaning. A bare `Primary` on the read side is a
+/// group of that name and is compared by the fold like any other.
+fn lab_parent_matches(expected: &str, observed: &str) -> bool {
+    if is_tally_reserved_root(observed) {
+        book_names_reserved_root(expected)
+    } else {
+        canonical_master_key(expected) == canonical_master_key(observed)
     }
 }
 
@@ -480,9 +486,7 @@ fn is_default_ledger(name: &str, observed_parent: &str) -> bool {
         Some(DefaultLedgerParent::ReservedGroup(expected)) => {
             canonical_master_key(observed_parent) == canonical_master_key(expected)
         }
-        Some(DefaultLedgerParent::ReservedPrimary) => {
-            is_reserved_root_any_spelling(observed_parent)
-        }
+        Some(DefaultLedgerParent::ReservedPrimary) => is_tally_reserved_root(observed_parent),
         None => false,
     }
 }
@@ -506,7 +510,7 @@ fn is_default_group(row: &BTreeMap<String, String>) -> bool {
 fn ledger_parent_mismatch(book: &BookLedger, row: &BTreeMap<String, String>) -> Option<String> {
     let expected = book.parent.as_deref()?;
     let observed = row.get("PARENT").map(String::as_str).unwrap_or("");
-    if canonical_master_key(expected) != canonical_master_key(observed) {
+    if !lab_parent_matches(expected, observed) {
         Some(format!(
             "ledger {}: parent expected {expected:?}, observed {observed:?}",
             book.name
@@ -807,7 +811,7 @@ fn diff_parented(tag: &str, item: &BookNamedParent, row: &BTreeMap<String, Strin
     let mut mismatches = Vec::new();
     if let Some(expected) = item.parent.as_deref() {
         let observed = row.get("PARENT").map(String::as_str).unwrap_or("");
-        if canonical_master_key(expected) != canonical_master_key(observed) {
+        if !lab_parent_matches(expected, observed) {
             mismatches.push(format!(
                 "{tag} {}: parent expected {expected:?}, observed {observed:?}",
                 item.name
@@ -821,7 +825,7 @@ fn diff_ledger(l: &BookLedger, row: &BTreeMap<String, String>) -> Vec<String> {
     let mut mismatches = Vec::new();
     if let Some(expected) = l.parent.as_deref() {
         let observed = row.get("PARENT").map(String::as_str).unwrap_or("");
-        if canonical_master_key(expected) != canonical_master_key(observed) {
+        if !lab_parent_matches(expected, observed) {
             mismatches.push(format!(
                 "ledger {}: parent expected {expected:?}, observed {observed:?}",
                 l.name
@@ -852,7 +856,7 @@ fn diff_stock_item(s: &BookStockItem, row: &BTreeMap<String, String>) -> Vec<Str
     let mut mismatches = Vec::new();
     if let Some(expected) = s.parent.as_deref() {
         let observed = row.get("PARENT").map(String::as_str).unwrap_or("");
-        if canonical_master_key(expected) != canonical_master_key(observed) {
+        if !lab_parent_matches(expected, observed) {
             mismatches.push(format!(
                 "stock item {}: parent expected {expected:?}, observed {observed:?}",
                 s.name
@@ -1045,9 +1049,9 @@ pub(in crate::agent) async fn lab_import_masters(
         let rows = parse_lab_master_rows(&xml, kind.tally_type())
             .map_err(|code| ToolFailure::from(code).with_prior_evidence(evidence.clone()))?;
         for name in &requested {
-            if kind == MasterKind::Group && is_reserved_root_any_spelling(name) {
+            if kind == MasterKind::Group && book_names_reserved_root(name) {
                 // A requested Group named as Tally's own reserved-primary
-                // marker (raw or sanitized `\u{4}`/`\u{fffd}#4;` prefix) is
+                // root (any spelling `book_names_reserved_root` accepts) is
                 // never a real master to create: it *is* the root every
                 // company already has. It also never collision-matches by
                 // name -- Tally's own row is plainly "Primary", not the
@@ -1553,29 +1557,58 @@ fn chunked_masters(
 /// a one-shot diagnostic surfaced directly in the tool's own JSON result, not
 /// persisted evidence, so the raw text is exactly what a caller needs to act
 /// on a rejection.
+///
+/// quick_xml delivers an entity or numeric character reference (`&amp;`,
+/// `&#4;`, ...) as its own `GeneralRef` event, separate from any surrounding
+/// `Text`/`CData` for the same message. Earlier this only handled `Text`, so
+/// one `LINEERROR` whose message happened to contain a reference (e.g. a
+/// ledger name quoted in the rejection) was silently split into several
+/// entries in `errors` -- each one pushed as its own element -- which then
+/// read as multiple, garbled messages once `tally_rejection_message` joined
+/// them with `"; "`. Buffering per `LINEERROR` and flushing once at its `End`
+/// keeps one message as one entry regardless of how many events it arrives
+/// in. `trim_text(false)` (rather than `true`) is deliberate for the same
+/// reason `native_ledger_collection.rs`'s field readers disable it: quick_xml
+/// would otherwise trim each `Text` fragment independently, eating
+/// whitespace that sat next to the split.
 fn extract_line_error_texts(xml: &str) -> Vec<String> {
-    let mut reader = quick_xml::Reader::from_str(xml);
-    reader.config_mut().trim_text(true);
+    let marked = mark_agent_xml(xml);
+    let mut reader = quick_xml::Reader::from_str(marked.as_ref());
+    reader.config_mut().trim_text(false);
     let mut errors = Vec::new();
     let mut in_line_error = false;
+    let mut current = String::new();
     loop {
         match reader.read_event() {
             Ok(quick_xml::events::Event::Start(event))
                 if event.name().as_ref().eq_ignore_ascii_case(b"LINEERROR") =>
             {
                 in_line_error = true;
+                current.clear();
             }
             Ok(quick_xml::events::Event::End(event))
                 if event.name().as_ref().eq_ignore_ascii_case(b"LINEERROR") =>
             {
                 in_line_error = false;
+                let trimmed = current.trim();
+                if !trimmed.is_empty() {
+                    errors.push(trimmed.to_string());
+                }
+                current.clear();
             }
             Ok(quick_xml::events::Event::Text(text)) if in_line_error => {
                 if let Ok(value) = decoded_agent_text(text) {
-                    let trimmed = value.trim();
-                    if !trimmed.is_empty() {
-                        errors.push(trimmed.to_string());
-                    }
+                    current.push_str(&value);
+                }
+            }
+            Ok(quick_xml::events::Event::GeneralRef(reference)) if in_line_error => {
+                if let Ok(value) = decoded_agent_reference(reference) {
+                    current.push_str(&value);
+                }
+            }
+            Ok(quick_xml::events::Event::CData(text)) if in_line_error => {
+                if let Ok(value) = text.decode() {
+                    current.push_str(&value);
                 }
             }
             Ok(quick_xml::events::Event::Eof) => break,
@@ -1924,6 +1957,8 @@ struct ObservedVoucher {
 /// for `ALLINVENTORYENTRIES.LIST` -- generalised here to the ledger-entry
 /// list every non-invoice write in this document uses.
 fn parse_voucher_readback_nested(xml: &str) -> Result<Vec<ObservedVoucher>, String> {
+    let marked = mark_agent_xml(xml);
+    let xml = marked.as_ref();
     validate_agent_envelope(xml)?;
     let mut reader = quick_xml::Reader::from_str(xml);
     reader.config_mut().trim_text(false);

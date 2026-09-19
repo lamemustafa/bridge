@@ -1,4 +1,4 @@
-# Vendored excerpt of the reference Python implementation's rules table for AY 2026-27, as four
+# Vendored excerpt of the reference Python implementation's rules table for AY 2026-27, as five
 # separate byte-for-byte verbatim blocks (each checked independently against the live source by
 # the local parity example, since the blocks are not contiguous in the source file):
 #   1. [meta] through the end of [s44ab] ("status = \"verified\"") -- excludes the [s44ab.turnover]
@@ -7,11 +7,16 @@
 #   3. [s269st]'s first three lines only (limit_per_person_per_day_paise, authority, status) --
 #      excludes the table's Circular 22/2017 discussion further down, which cites a private
 #      research note and is not read by any ported test.
-#   4. [s269ss_269t]'s first three lines only (limit_paise, authority, status) -- excludes the
-#      table's exempt-lender-type discussion further down, which cites private research notes and
-#      is not read by any ported test (that discussion is for loans_interest.py, not yet ported).
+#   4. [s269ss_269t]'s first three lines only (limit_paise, authority, status) --
+#      excludes the table's exempt-lender-type discussion further down, which cites private
+#      research notes and is not read by any ported test (that discussion is for loans_interest.py,
+#      not yet ported).
+#   5. [depreciation] in full, plus its three [depreciation.blocks.<key>] sub-tables
+#      (furniture_10, plant_machinery_15, computers_40) -- depreciation.rs reads every key in all
+#      four; excludes [s43b]/[s36_1_va] immediately after it in the source, unrelated to this test.
 # The source file's sha256 and the reference commit are recorded in src/rules.rs. This file's own
-# name predates the [s40a3]/[s269st]/[s269ss_269t] additions; kept as-is rather than renamed.
+# name predates the [s40a3]/[s269st]/[s269ss_269t]/[depreciation] additions; kept as-is rather than
+# renamed.
 
 [meta]
 assessment_year = "2026-27"
@@ -42,3 +47,21 @@ status = "verified"
 limit_paise = 20_000_00
 authority = "s.269SS, s.269T"
 status = "verified"
+
+[depreciation]
+half_rate_days_threshold = 180                      # put to use for less than 180 days: half the rate
+cash_addition_limit_paise = 10_000_00               # s.43(1) second proviso; no Rule 6DD exception
+authority = "s.32(1) second proviso; s.43(1) second proviso; Appendix I to the Income-tax Rules, 1962"
+status = "verified"
+
+[depreciation.blocks.furniture_10]
+rate_bp = 1000
+label = "Furniture and fittings"
+
+[depreciation.blocks.plant_machinery_15]
+rate_bp = 1500
+label = "Plant and machinery, general rate (includes motor cars not used in a hiring business)"
+
+[depreciation.blocks.computers_40]
+rate_bp = 4000
+label = "Computers including computer software"

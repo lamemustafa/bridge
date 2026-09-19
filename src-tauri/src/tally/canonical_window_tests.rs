@@ -40,7 +40,7 @@ fn context() -> RequestContext {
 
 fn groups() -> ParsedExport<ParsedSourceRecord<TallyNamedMaster>> {
     parse_group_source_records_with_evidence(&format!(
-        r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYCONTEXT SCHEMA="{}" OBJECTTYPE="GROUP" NAME="BRIDGE SYNTHETIC BOOK" GUID="synthetic-company-guid" RECORDCOUNT="1"/><GROUP NAME="Assets" GUID="group-guid" MASTERID="1" ALTERID="5"><PARENT>Primary</PARENT></GROUP></BODY></ENVELOPE>"#,
+        r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYCONTEXT SCHEMA="{}" OBJECTTYPE="GROUP" NAME="BRIDGE SYNTHETIC BOOK" GUID="synthetic-company-guid" RECORDCOUNT="1"/><GROUP NAME="Assets" GUID="group-guid" MASTERID="1" ALTERID="5"><PARENT>&#4; Primary</PARENT></GROUP></BODY></ENVELOPE>"#,
         BRIDGE_GROUP_EXPORT_SCHEMA
     ))
     .unwrap()
@@ -166,7 +166,7 @@ fn marker_carrying_parent_policy_fails_closed_for_unobserved_non_root_references
 
     for value in [
         format!("{TALLY_SANITIZED_ROOT_MARKER} Primary"),
-        "Primary".to_string(),
+        format!("  {TALLY_SANITIZED_ROOT_MARKER}  primary "),
     ] {
         assert_eq!(
             resolve_group_parent(Some(&value), &group_ids_by_name, "group_parent_missing").unwrap(),
@@ -190,7 +190,11 @@ fn marker_carrying_parent_policy_fails_closed_for_unobserved_non_root_references
     // `&#4; Resave`. The policy fails closed: the old starts-with rule silently turned an
     // unrecognised marker-prefixed value into a `None` parent, whereas this rule surfaces it
     // as a missing reference.
+    // A bare `Primary` names a group a user called that
+    // (`TALLY_PROTOCOL_REFERENCE.md` §1.1(d), §8.2b): with no such group
+    // observed it is a missing reference, never the root.
     for value in [
+        "Primary".to_string(),
         format!("{TALLY_SANITIZED_ROOT_MARKER} Resave"),
         format!("{TALLY_SANITIZED_ROOT_MARKER} Anything"),
         format!("{TALLY_SANITIZED_ROOT_MARKER}{TALLY_SANITIZED_ROOT_MARKER} Primary"),
@@ -208,6 +212,23 @@ fn marker_carrying_parent_policy_fails_closed_for_unobserved_non_root_references
             Err(TallyError::InvalidData { code }) if code == "ledger_parent_group_missing"
         ));
     }
+
+    // And when such a group is observed, a bare `Primary` resolves to it.
+    let with_primary_group =
+        BTreeMap::from([("Primary".to_string(), "user-primary-guid".to_string())]);
+    assert_eq!(
+        resolve_group_parent(Some("Primary"), &with_primary_group, "group_parent_missing").unwrap(),
+        Some("user-primary-guid".to_string())
+    );
+    assert_eq!(
+        resolve_optional_reference(
+            Some("Primary"),
+            &with_primary_group,
+            "ledger_parent_group_missing"
+        )
+        .unwrap(),
+        Some("user-primary-guid".to_string())
+    );
 }
 
 #[test]
@@ -215,7 +236,7 @@ fn marker_prefixed_real_master_name_resolves_by_its_raw_name() {
     let marked_name = format!("{TALLY_SANITIZED_ROOT_MARKER} Resave");
     let groups = padded_native_two_group_export(
         &marked_name,
-        "Primary",
+        "&#4; Primary",
         "Synthetic Child Group",
         &marked_name,
     );
@@ -530,7 +551,7 @@ fn padded_native_voucher_export(
 #[test]
 fn padded_ledger_name_and_its_ledgername_reference_resolve_together() {
     let padded_ledger_name = " Padded Cash Ledger ";
-    let groups = padded_native_group_export("Assets", "Primary");
+    let groups = padded_native_group_export("Assets", "&#4; Primary");
     let ledgers = padded_native_ledger_export(padded_ledger_name, "Assets");
     let voucher_types = padded_native_voucher_type_export("Receipt");
     let vouchers = padded_native_voucher_export("Receipt", padded_ledger_name);
@@ -555,7 +576,7 @@ fn padded_group_name_and_a_sibling_groups_parent_reference_resolve_together() {
     let padded_group_name = " Padded Parent Group ";
     let groups = padded_native_two_group_export(
         padded_group_name,
-        "Primary",
+        "&#4; Primary",
         "Child Group",
         padded_group_name,
     );
@@ -590,7 +611,7 @@ fn padded_group_name_and_a_sibling_groups_parent_reference_resolve_together() {
 #[test]
 fn padded_voucher_type_name_and_its_vouchertypename_reference_resolve_together() {
     let padded_voucher_type_name = " Padded Receipt Type ";
-    let groups = padded_native_group_export("Assets", "Primary");
+    let groups = padded_native_group_export("Assets", "&#4; Primary");
     let ledgers = padded_native_ledger_export("Cash", "Assets");
     let voucher_types = padded_native_voucher_type_export(padded_voucher_type_name);
     let vouchers = padded_native_voucher_export(padded_voucher_type_name, "Cash");

@@ -1483,18 +1483,35 @@ fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
                 return Err("narration_reserved_marker".to_string());
             }
         }
-        for text in [
-            voucher.narration.as_deref(),
-            voucher.reference.as_deref(),
-            voucher.voucher_number.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
+        for text in [voucher.narration.as_deref(), voucher.reference.as_deref()]
+            .into_iter()
+            .flatten()
         {
             // JSON Schema minLength/maxLength count Unicode code points, not UTF-8 bytes.
+            //
+            // No `reads_back_as_other_text` check here: `voucher_diffs`
+            // (agent_import_verification.rs) never compares narration or
+            // reference text, and attribution only searches narration for
+            // the `[BRIDGE:...]` tag, which the marker check above leaves
+            // untouched. A rewrite verification cannot see is not refused —
+            // see `reads_back_as_other_text`'s doc comment for which fields
+            // this refusal actually protects.
             if text.is_empty()
                 || text.chars().count() > MAX_TEXT_CHARS
                 || text.chars().any(char::is_control)
+            {
+                return Err("voucher_text_invalid".to_string());
+            }
+        }
+        if let Some(number) = voucher.voucher_number.as_deref() {
+            // Unlike narration/reference, `voucher_diffs` compares the
+            // voucher number verbatim, so a value that would read back
+            // rewritten must be refused here — verification could never
+            // confirm it as posted.
+            if number.is_empty()
+                || number.chars().count() > MAX_TEXT_CHARS
+                || number.chars().any(char::is_control)
+                || reads_back_as_other_text(number)
             {
                 return Err("voucher_text_invalid".to_string());
             }
@@ -1510,6 +1527,7 @@ fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
             if entry.ledger.trim().is_empty()
                 || entry.ledger.chars().count() > MAX_MASTER_NAME_CHARS
                 || entry.ledger.chars().any(char::is_control)
+                || reads_back_as_other_text(&entry.ledger)
                 || !valid_2dp_amount(&entry.amount)
             {
                 return Err("voucher_entry_invalid".to_string());
@@ -1714,6 +1732,33 @@ fn cash_bank_refusals(
         ledgers,
         legs,
     }
+}
+
+/// Whether a value Bridge writes would read back as different text.
+///
+/// Every agent reader marks forbidden numeric references before parsing
+/// (`TALLY_PROTOCOL_REFERENCE.md` §1.1(d)), and to keep that rewrite
+/// reversible it also rewrites a literal U+FFFD directly followed by `#`,
+/// digits and `;` to `U+FFFD#65533;`. A posted ledger name or voucher number
+/// holding that sequence would therefore read back changed.
+///
+/// Call this only on a field `voucher_diffs`
+/// (agent_import_verification.rs) actually compares — today that is a
+/// ledger name (checked in `validate_payload`'s entry loop) and the voucher
+/// number (checked above). Narration and reference are never compared there:
+/// attribution only searches narration for the `[BRIDGE:...]` tag, which the
+/// reserved-marker check above already protects, and a rewrite elsewhere in
+/// the text is invisible to verification either way. Calling this on
+/// narration or reference would refuse a value nothing downstream would ever
+/// notice as changed, so `validate_payload` does not.
+///
+/// The value is escaped as the writer escapes it, so a literal `&#4;` in it
+/// is text, not a reference, and is not refused.
+fn reads_back_as_other_text(value: &str) -> bool {
+    matches!(
+        bridge_tally_protocol::mark_forbidden_numeric_references(&quick_xml::escape::escape(value)),
+        std::borrow::Cow::Owned(_)
+    )
 }
 
 fn contains_reserved_marker(value: &str) -> bool {

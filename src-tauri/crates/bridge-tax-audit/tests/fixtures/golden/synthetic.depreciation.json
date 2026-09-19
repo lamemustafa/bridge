@@ -1,0 +1,829 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "depreciation",
+  "test_version": "1",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "7550c0dd3b642e0f",
+  "population_note_text": "Books population (optional, cancelled and post-dated vouchers excluded). Put to use assumed = purchase/voucher date unless put_to_use_by_voucher overrides.",
+  "figures": [
+    {
+      "id": "depreciation.act_dep_total",
+      "value": 15862500,
+      "unit": "paise",
+      "definition_sha256_16": "6b626cb4b3433b43",
+      "definition_text": "Total Income-tax Act depreciation across every mapped block, INCLUDING additions the books show as paid in cash; the Act figure only if that payment mode is shown not to be cash.",
+      "evidence": []
+    },
+    {
+      "id": "depreciation.act_dep_total_applying_s43_1_proviso",
+      "value": 9525000,
+      "unit": "paise",
+      "definition_sha256_16": "04e4e068ef846f39",
+      "definition_text": "Total Income-tax Act depreciation applying the s.43(1) second proviso to every addition the books show as paid in cash: the Act figure on the books as recorded. Equal to act_dep_total when none is flagged.",
+      "evidence": []
+    },
+    {
+      "id": "depreciation.additions_ge180_computers_40",
+      "value": 35000000,
+      "unit": "paise",
+      "definition_sha256_16": "cf482873abcd5119",
+      "definition_text": "Additions to block 'computers_40' put to use >= 180 days before period end (full rate).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Computers",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Reception Computers",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.additions_ge180_furniture_10",
+      "value": 10000000,
+      "unit": "paise",
+      "definition_sha256_16": "ae1d6d7a2866b201",
+      "definition_text": "Additions to block 'furniture_10' put to use >= 180 days before period end (full rate).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Furniture",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Showroom Furniture",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.additions_ge180_plant_machinery_15",
+      "value": 4500000,
+      "unit": "paise",
+      "definition_sha256_16": "16b74b094ebb7048",
+      "definition_text": "Additions to block 'plant_machinery_15' put to use >= 180 days before period end (full rate).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Delivery Van",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Factory Machine",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.additions_lt180_computers_40",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "4912e790142dc00a",
+      "definition_text": "Additions to block 'computers_40' put to use < 180 days before period end (half rate, s.32(1) second proviso).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Computers",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Reception Computers",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.additions_lt180_furniture_10",
+      "value": 6000000,
+      "unit": "paise",
+      "definition_sha256_16": "5a44edc14b2bc86f",
+      "definition_text": "Additions to block 'furniture_10' put to use < 180 days before period end (half rate, s.32(1) second proviso).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Furniture",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Showroom Furniture",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.additions_lt180_plant_machinery_15",
+      "value": 8000000,
+      "unit": "paise",
+      "definition_sha256_16": "d80137a349bb9b62",
+      "definition_text": "Additions to block 'plant_machinery_15' put to use < 180 days before period end (half rate, s.32(1) second proviso).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Delivery Van",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Factory Machine",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.book_dep_computers_40",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "157c8bef49dcb2ea",
+      "definition_text": "Book depreciation credited to block 'computers_40''s asset ledgers in depreciation-journal vouchers (voucher-level; cross-checked against the Trial Balance total by book_dep_tie_diff_paise below).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Computers",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Reception Computers",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.book_dep_furniture_10",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20533aa3c006bcec",
+      "definition_text": "Book depreciation credited to block 'furniture_10''s asset ledgers in depreciation-journal vouchers (voucher-level; cross-checked against the Trial Balance total by book_dep_tie_diff_paise below).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Furniture",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Showroom Furniture",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.book_dep_plant_machinery_15",
+      "value": 4500000,
+      "unit": "paise",
+      "definition_sha256_16": "954b61b70d8c5136",
+      "definition_text": "Book depreciation credited to block 'plant_machinery_15''s asset ledgers in depreciation-journal vouchers (voucher-level; cross-checked against the Trial Balance total by book_dep_tie_diff_paise below).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Delivery Van",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Factory Machine",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.book_dep_tie_diff_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "03b864a5768d2043",
+      "definition_text": "Tie check: sum of book depreciation credited to asset ledgers in depreciation-journal vouchers, minus the Trial Balance movement of dep_expense_ledgers. Non-zero means the depreciation journals do not fully explain the expense ledger's TB movement.",
+      "evidence": []
+    },
+    {
+      "id": "depreciation.book_dep_total",
+      "value": 4500000,
+      "unit": "paise",
+      "definition_sha256_16": "7da30463155e665c",
+      "definition_text": "Book depreciation for the year: Trial Balance movement of dep_expense_ledgers (never summed from vouchers).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Depreciation A/c",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.book_vs_act_computers_40",
+      "value": -14000000,
+      "unit": "paise",
+      "definition_sha256_16": "bb4da8e207e849b6",
+      "definition_text": "Book depreciation minus Income-tax Act depreciation for block 'computers_40'.",
+      "evidence": []
+    },
+    {
+      "id": "depreciation.book_vs_act_difference_total",
+      "value": -11362500,
+      "unit": "paise",
+      "definition_sha256_16": "57e542191e7be054",
+      "definition_text": "book_dep_total minus act_dep_total.",
+      "evidence": []
+    },
+    {
+      "id": "depreciation.book_vs_act_furniture_10",
+      "value": -1300000,
+      "unit": "paise",
+      "definition_sha256_16": "ccef37ffa7fa3049",
+      "definition_text": "Book depreciation minus Income-tax Act depreciation for block 'furniture_10'.",
+      "evidence": []
+    },
+    {
+      "id": "depreciation.book_vs_act_plant_machinery_15",
+      "value": 3937500,
+      "unit": "paise",
+      "definition_sha256_16": "824eab6d047937d3",
+      "definition_text": "Book depreciation minus Income-tax Act depreciation for block 'plant_machinery_15'.",
+      "evidence": []
+    },
+    {
+      "id": "depreciation.cash_flagged_addition_29bb74708d7d_6275c86d",
+      "value": 4500000,
+      "unit": "paise",
+      "definition_sha256_16": "97276a2d11cafc55",
+      "definition_text": "Addition to a Fixed Assets ledger (tag 6275c86d) on 2025-06-19 where the payment side shows cash of 4500000 paise (cash ledger credited in the same voucher), over rules_dep.cash_addition_limit_paise.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000001b",
+          "label": "Payment P/16 on 2025-06-19"
+        }
+      ]
+    },
+    {
+      "id": "depreciation.cash_flagged_addition_93c837cdc45a_8b2d0431",
+      "value": 15000000,
+      "unit": "paise",
+      "definition_sha256_16": "1597fe4014be3bc5",
+      "definition_text": "Addition to a Fixed Assets ledger (tag 8b2d0431) on 2025-04-01 where the payment side shows cash of 1000001 paise (cash ledger credited in the same voucher), over rules_dep.cash_addition_limit_paise.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002c",
+          "label": "Purchase PU/4 on 2025-04-01"
+        }
+      ]
+    },
+    {
+      "id": "depreciation.closing_wdv_computers_40",
+      "value": 21000000,
+      "unit": "paise",
+      "definition_sha256_16": "e6c19f4f5c6def00",
+      "definition_text": "Closing Income-tax Act WDV for block 'computers_40'.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Computers",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Reception Computers",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.closing_wdv_furniture_10",
+      "value": 14700000,
+      "unit": "paise",
+      "definition_sha256_16": "0bc74d332acfbd30",
+      "definition_text": "Closing Income-tax Act WDV for block 'furniture_10'.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Furniture",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Showroom Furniture",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.closing_wdv_plant_machinery_15",
+      "value": 6937500,
+      "unit": "paise",
+      "definition_sha256_16": "17ff42c1530929f8",
+      "definition_text": "Closing Income-tax Act WDV for block 'plant_machinery_15'.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Delivery Van",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Factory Machine",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.deletions_computers_40",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "97b93f2dd74e2c51",
+      "definition_text": "Deletions from block 'computers_40' (credit lines on its asset ledgers outside a depreciation journal).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Computers",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Reception Computers",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.deletions_furniture_10",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "7a241d675c14c368",
+      "definition_text": "Deletions from block 'furniture_10' (credit lines on its asset ledgers outside a depreciation journal).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Furniture",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Showroom Furniture",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.deletions_plant_machinery_15",
+      "value": 55000000,
+      "unit": "paise",
+      "definition_sha256_16": "35aeb4a35b8a1696",
+      "definition_text": "Deletions from block 'plant_machinery_15' (credit lines on its asset ledgers outside a depreciation journal).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Delivery Van",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Factory Machine",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.dep_expense_ledgers_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "729968eaf534bded",
+      "definition_text": "Ledgers whose debit is the client's own book depreciation charge (the other side of the voucher that credits each asset ledger for its year's book depreciation).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Depreciation A/c",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.dep_total_act_computers_40",
+      "value": 14000000,
+      "unit": "paise",
+      "definition_sha256_16": "dbda51864f57e88b",
+      "definition_text": "Income-tax Act depreciation for block 'computers_40': full rate on (opening + >= threshold additions - deletions, floor 0), half rate on < threshold additions net of any deletion spill (s.43(6)).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Computers",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Reception Computers",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.dep_total_act_furniture_10",
+      "value": 1300000,
+      "unit": "paise",
+      "definition_sha256_16": "c16e665fca410298",
+      "definition_text": "Income-tax Act depreciation for block 'furniture_10': full rate on (opening + >= threshold additions - deletions, floor 0), half rate on < threshold additions net of any deletion spill (s.43(6)).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Furniture",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Showroom Furniture",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.dep_total_act_plant_machinery_15",
+      "value": 562500,
+      "unit": "paise",
+      "definition_sha256_16": "c6b0b71045f5ee08",
+      "definition_text": "Income-tax Act depreciation for block 'plant_machinery_15': full rate on (opening + >= threshold additions - deletions, floor 0), half rate on < threshold additions net of any deletion spill (s.43(6)).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Delivery Van",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Factory Machine",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.dep_total_act_sensitivity_excl_cash_computers_40",
+      "value": 8000000,
+      "unit": "paise",
+      "definition_sha256_16": "d9dfbadb4d0a534d",
+      "definition_text": "Income-tax Act depreciation for block 'computers_40' applying the s.43(1) second proviso to every addition the books show as paid in cash (excluded from actual cost; the proviso is mandatory and has no Rule 6DD-style exception). This is the Act figure unless the payment mode is shown not to be cash.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Computers",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Reception Computers",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.dep_total_act_sensitivity_excl_cash_plant_machinery_15",
+      "value": 225000,
+      "unit": "paise",
+      "definition_sha256_16": "739cd4af6a69f314",
+      "definition_text": "Income-tax Act depreciation for block 'plant_machinery_15' applying the s.43(1) second proviso to every addition the books show as paid in cash (excluded from actual cost; the proviso is mandatory and has no Rule 6DD-style exception). This is the Act figure unless the payment mode is shown not to be cash.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Delivery Van",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Factory Machine",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.gst_tcs_addition_lines_seen_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "43d6a92deef6c021",
+      "definition_text": "GST input tax / TCS ledger lines observed alongside a fixed-asset addition line in the same voucher, confirmed to be separate ledger lines never summed into the asset ledger's own debit amount -- verified on data, not merely asserted.",
+      "evidence": []
+    },
+    {
+      "id": "depreciation.ledger_block_073c3b97",
+      "value": "furniture_10",
+      "unit": "text",
+      "definition_sha256_16": "1493ea3aea5eb25e",
+      "definition_text": "Depreciation block this Fixed Assets ledger (tag 073c3b97) is mapped to, or 'unmapped'.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Furniture",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.ledger_block_417e434b",
+      "value": "computers_40",
+      "unit": "text",
+      "definition_sha256_16": "b5c12e8a3f6d9586",
+      "definition_text": "Depreciation block this Fixed Assets ledger (tag 417e434b) is mapped to, or 'unmapped'.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Computers",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.ledger_block_6275c86d",
+      "value": "plant_machinery_15",
+      "unit": "text",
+      "definition_sha256_16": "4ab820390aa2cdac",
+      "definition_text": "Depreciation block this Fixed Assets ledger (tag 6275c86d) is mapped to, or 'unmapped'.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Delivery Van",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.ledger_block_8b2d0431",
+      "value": "computers_40",
+      "unit": "text",
+      "definition_sha256_16": "bef15af7f53199d2",
+      "definition_text": "Depreciation block this Fixed Assets ledger (tag 8b2d0431) is mapped to, or 'unmapped'.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Reception Computers",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.ledger_block_ee2e9b74",
+      "value": "furniture_10",
+      "unit": "text",
+      "definition_sha256_16": "8419242a9c33655b",
+      "definition_text": "Depreciation block this Fixed Assets ledger (tag ee2e9b74) is mapped to, or 'unmapped'.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Showroom Furniture",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.ledger_block_fce450ac",
+      "value": "plant_machinery_15",
+      "unit": "text",
+      "definition_sha256_16": "2aa751a1f4d23c48",
+      "definition_text": "Depreciation block this Fixed Assets ledger (tag fce450ac) is mapped to, or 'unmapped'.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Factory Machine",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.opening_wdv_computers_40",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "1c1e72c8eb0dbda4",
+      "definition_text": "Opening (1-4) Income-tax Act WDV for block 'computers_40'.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Computers",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Reception Computers",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.opening_wdv_furniture_10",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "4442922132c82b17",
+      "definition_text": "Opening (1-4) Income-tax Act WDV for block 'furniture_10'.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Office Furniture",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Showroom Furniture",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "depreciation.opening_wdv_plant_machinery_15",
+      "value": 50000000,
+      "unit": "paise",
+      "definition_sha256_16": "f0e7f769f77f5842",
+      "definition_text": "Opening (1-4) Income-tax Act WDV for block 'plant_machinery_15'.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Delivery Van",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Factory Machine",
+          "label": ""
+        }
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "depreciation/book_vs_act",
+      "clauses": [
+        "s.32",
+        "3CD-18"
+      ],
+      "confidence": "computed",
+      "facts": [
+        {
+          "name": "act_computers_40",
+          "figure_id": "depreciation.dep_total_act_computers_40"
+        },
+        {
+          "name": "act_furniture_10",
+          "figure_id": "depreciation.dep_total_act_furniture_10"
+        },
+        {
+          "name": "act_plant_machinery_15",
+          "figure_id": "depreciation.dep_total_act_plant_machinery_15"
+        },
+        {
+          "name": "act_total",
+          "figure_id": "depreciation.act_dep_total"
+        },
+        {
+          "name": "book_computers_40",
+          "figure_id": "depreciation.book_dep_computers_40"
+        },
+        {
+          "name": "book_furniture_10",
+          "figure_id": "depreciation.book_dep_furniture_10"
+        },
+        {
+          "name": "book_plant_machinery_15",
+          "figure_id": "depreciation.book_dep_plant_machinery_15"
+        },
+        {
+          "name": "book_total",
+          "figure_id": "depreciation.book_dep_total"
+        },
+        {
+          "name": "difference_computers_40",
+          "figure_id": "depreciation.book_vs_act_computers_40"
+        },
+        {
+          "name": "difference_furniture_10",
+          "figure_id": "depreciation.book_vs_act_furniture_10"
+        },
+        {
+          "name": "difference_plant_machinery_15",
+          "figure_id": "depreciation.book_vs_act_plant_machinery_15"
+        },
+        {
+          "name": "difference_total",
+          "figure_id": "depreciation.book_vs_act_difference_total"
+        }
+      ],
+      "evidence": [],
+      "title_sha256_16": "0dbcc88cae0ce011",
+      "title_text": "Book depreciation differs from Income-tax Act depreciation",
+      "limits_sha256_16": "f31eb17ebd747cc9",
+      "limits_text": [
+        "Put-to-use date is assumed = purchase/voucher date for every addition not overridden in put_to_use_by_voucher; no separate commissioning/technical-person certificate is visible in Tally.",
+        "Opening WDV per block is a supplied constant (opening_wdv_paise), not re-derived from an AY 2025-26 tax computation the books do not carry; confirm it against the filed return/Form 3CD Clause 18(f) for the prior year."
+      ],
+      "ask_client_sha256_16": "e3b0c44298fc1c14",
+      "ask_client_text": []
+    },
+    {
+      "id": "depreciation/s43_1/29bb74708d7d_6275c86d",
+      "clauses": [
+        "s.43(1) second proviso",
+        "3CD-18"
+      ],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "amount",
+          "figure_id": "depreciation.cash_flagged_addition_29bb74708d7d_6275c86d"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000001b",
+          "label": "Payment P/16 on 2025-06-19"
+        }
+      ],
+      "title_sha256_16": "e8b34fef46305f90",
+      "title_text": "Fixed-asset addition paid in cash over the s.43(1) second proviso limit",
+      "limits_sha256_16": "999c1e4f58f90651",
+      "limits_text": [
+        "Books only: the second proviso excludes such payment from actual cost outright, with no Rule 6DD-style exception; confirm no part of the payment was by account payee cheque/draft or ECS before treating the whole addition as cash-paid.",
+        "If flagged only via a same-day cash payment to the supplier ledger (not a cash line on this voucher itself), that same-day total may cover more than this one invoice; confirm before excluding.",
+        "Both figures are shown: depreciation under the Act applying the proviso (the Act figure if the books' record of cash payment is right), and depreciation including this addition (the Act figure only if the payment is shown not to have been in cash)."
+      ],
+      "ask_client_sha256_16": "5e76d63bc82934dc",
+      "ask_client_text": [
+        "Confirm the mode of payment for this addition in full.",
+        "Confirm whether any exception to the second proviso applies."
+      ]
+    },
+    {
+      "id": "depreciation/s43_1/93c837cdc45a_8b2d0431",
+      "clauses": [
+        "s.43(1) second proviso",
+        "3CD-18"
+      ],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "amount",
+          "figure_id": "depreciation.cash_flagged_addition_93c837cdc45a_8b2d0431"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002c",
+          "label": "Purchase PU/4 on 2025-04-01"
+        }
+      ],
+      "title_sha256_16": "e8b34fef46305f90",
+      "title_text": "Fixed-asset addition paid in cash over the s.43(1) second proviso limit",
+      "limits_sha256_16": "999c1e4f58f90651",
+      "limits_text": [
+        "Books only: the second proviso excludes such payment from actual cost outright, with no Rule 6DD-style exception; confirm no part of the payment was by account payee cheque/draft or ECS before treating the whole addition as cash-paid.",
+        "If flagged only via a same-day cash payment to the supplier ledger (not a cash line on this voucher itself), that same-day total may cover more than this one invoice; confirm before excluding.",
+        "Both figures are shown: depreciation under the Act applying the proviso (the Act figure if the books' record of cash payment is right), and depreciation including this addition (the Act figure only if the payment is shown not to have been in cash)."
+      ],
+      "ask_client_sha256_16": "5e76d63bc82934dc",
+      "ask_client_text": [
+        "Confirm the mode of payment for this addition in full.",
+        "Confirm whether any exception to the second proviso applies."
+      ]
+    }
+  ],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3"
+  ],
+  "book_invariant_violations": [
+    {
+      "invariant": "MAP-1",
+      "subject": "Unmapped Holding",
+      "detail": "chain incomplete: Legacy Holding"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Electricity",
+      "detail": "vouchers 365050 vs TB movement 365550 paise"
+    },
+    {
+      "invariant": "POP-2",
+      "subject": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000000c",
+      "detail": "Journal J/1 2025-09-28 lines sum 200"
+    },
+    {
+      "invariant": "POP-3",
+      "subject": "closing_paise",
+      "detail": "TB closing_paise sums to 700 paise"
+    }
+  ],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [],
+  "module_invariants_evaluated": [
+    "depreciation.check_invariants"
+  ],
+  "module_invariant_violations": []
+}

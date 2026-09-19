@@ -32,13 +32,13 @@
   "status": "unchanged",
   "attempts": 1,
   "before": {
-   "alter_voucher_id": 142,
+   "alter_voucher_id": 149,
    "alter_master_id": 57,
    "observed_at": null,
    "part": "high-water-before"
   },
   "after": {
-   "alter_voucher_id": 142,
+   "alter_voucher_id": 149,
    "alter_master_id": 57,
    "observed_at": null,
    "part": "high-water-after"
@@ -55,9 +55,9 @@
    "response": {
     "path": "parts/high_water_before.xml",
     "storage": "identity",
-    "stored_sha256": "737c8f46527674e4075f2c1c6d0754e0c3edfd16e2a9096ee675af6bdfc3cecf",
+    "stored_sha256": "f4d7380ecb17a3d8d67ef205161aa8b15cbc440789d77090113197671fdb2e60",
     "stored_bytes": 643,
-    "sha256": "737c8f46527674e4075f2c1c6d0754e0c3edfd16e2a9096ee675af6bdfc3cecf",
+    "sha256": "f4d7380ecb17a3d8d67ef205161aa8b15cbc440789d77090113197671fdb2e60",
     "bytes": 643,
     "media_type": "application/xml",
     "text_encoding": "utf-8",
@@ -127,10 +127,10 @@
    "response": {
     "path": "parts/ledgers.xml",
     "storage": "identity",
-    "stored_sha256": "b081ef22bceeb4e0f8f174a4994a0202b725bf59765689bd45b868b3ee0ddaf0",
-    "stored_bytes": 11306,
-    "sha256": "b081ef22bceeb4e0f8f174a4994a0202b725bf59765689bd45b868b3ee0ddaf0",
-    "bytes": 11306,
+    "stored_sha256": "1b54f883ce5202c837906f754a0bc477759d4a23063cae2650c6303821510415",
+    "stored_bytes": 14088,
+    "sha256": "1b54f883ce5202c837906f754a0bc477759d4a23063cae2650c6303821510415",
+    "bytes": 14088,
     "media_type": "application/xml",
     "text_encoding": "utf-16le",
     "wire_exact": false,
@@ -151,10 +151,10 @@
    "response": {
     "path": "parts/tb_fy.xml",
     "storage": "identity",
-    "stored_sha256": "6efdefbc8aeb7709bc9c314012ebbeb30732d9075f957f34bc5d40a94df6cbb6",
-    "stored_bytes": 8752,
-    "sha256": "6efdefbc8aeb7709bc9c314012ebbeb30732d9075f957f34bc5d40a94df6cbb6",
-    "bytes": 8752,
+    "stored_sha256": "e68556a5dc2ac071300c97285f9324377cc1c1622847c05ee3badd751ec842f0",
+    "stored_bytes": 10997,
+    "sha256": "e68556a5dc2ac071300c97285f9324377cc1c1622847c05ee3badd751ec842f0",
+    "bytes": 10997,
     "media_type": "application/xml",
     "text_encoding": "utf-8",
     "wire_exact": false,
@@ -203,10 +203,10 @@
    "response": {
     "path": "parts/vouchers_h1.xml",
     "storage": "identity",
-    "stored_sha256": "1660ff7e5aff5c3c17b6cdfc70457733fbebc5117e10490949399da9d2565591",
-    "stored_bytes": 42016,
-    "sha256": "1660ff7e5aff5c3c17b6cdfc70457733fbebc5117e10490949399da9d2565591",
-    "bytes": 42016,
+    "stored_sha256": "286698675efad21064cb78d53c8a5dba27a1f19e3a6e371223a73d16c012bb65",
+    "stored_bytes": 46156,
+    "sha256": "286698675efad21064cb78d53c8a5dba27a1f19e3a6e371223a73d16c012bb65",
+    "bytes": 46156,
     "media_type": "application/xml",
     "text_encoding": "utf-8",
     "wire_exact": false,
@@ -221,8 +221,8 @@
     "from": "2025-04-01",
     "to": "2025-09-30"
    },
-   "rows": 36,
-   "alter_id_max": 142
+   "rows": 39,
+   "alter_id_max": 148
   },
   {
    "id": "vouchers-2025-10-01",
@@ -233,10 +233,10 @@
    "response": {
     "path": "parts/vouchers_h2.xml.gz",
     "storage": "gzip",
-    "stored_sha256": "d2561801c2c360a29c658db2dcce389b05014f05d4766c48592249a28be5f4fb",
-    "stored_bytes": 913,
-    "sha256": "63fe8c0e502767e1a7ebd99f9ca3c5959d8e09542cb402b40b5f85c16fca4946",
-    "bytes": 6411,
+    "stored_sha256": "cd9cb1f339141bc1af8585fd16c445f21016dccbbccd5cd21d1bd82c1feb41b1",
+    "stored_bytes": 1156,
+    "sha256": "39bf6c79cea8c92683d0c4a6f7df2d37f7f84c3ee2bb9e43f5a7c9cbc1899386",
+    "bytes": 10442,
     "media_type": "application/xml",
     "text_encoding": "utf-8",
     "wire_exact": false,
@@ -251,8 +251,8 @@
     "from": "2025-10-01",
     "to": "2026-03-31"
    },
-   "rows": 6,
-   "alter_id_max": 118
+   "rows": 10,
+   "alter_id_max": 149
   },
   {
    "id": "voucher-status-list",
@@ -292,9 +292,9 @@
    "response": {
     "path": "parts/high_water_after.xml",
     "storage": "identity",
-    "stored_sha256": "737c8f46527674e4075f2c1c6d0754e0c3edfd16e2a9096ee675af6bdfc3cecf",
+    "stored_sha256": "f4d7380ecb17a3d8d67ef205161aa8b15cbc440789d77090113197671fdb2e60",
     "stored_bytes": 643,
-    "sha256": "737c8f46527674e4075f2c1c6d0754e0c3edfd16e2a9096ee675af6bdfc3cecf",
+    "sha256": "f4d7380ecb17a3d8d67ef205161aa8b15cbc440789d77090113197671fdb2e60",
     "bytes": 643,
     "media_type": "application/xml",
     "text_encoding": "utf-8",

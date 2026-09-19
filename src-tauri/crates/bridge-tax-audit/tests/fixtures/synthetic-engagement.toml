@@ -29,3 +29,26 @@ round_off_ledgers = ["Round Off"]
 [loans.loan_ledgers."Sunrise NBFC Loan"]
 lender = "invented NBFC, not a real entity"
 lender_type = "nbfc"
+
+# depreciation only: block_by_ledger, opening_wdv_paise and dep_expense_ledgers are all REQUIRED
+# by the reference engine's depreciation_config (unlike round_off_ledgers/loan_ledgers above).
+# put_to_use_by_voucher is left unconfigured -- no shipped client config uses it either.
+[depreciation]
+dep_expense_ledgers = ["Depreciation A/c"]
+
+[depreciation.block_by_ledger]
+"Office Furniture" = "furniture_10"
+"Showroom Furniture" = "furniture_10"
+"Factory Machine" = "plant_machinery_15"
+# "Delivery Van" already exists in the shared fixture (cash_payments_40a3's own fixed_assets
+# exclusion case, masterid 27): a motor vehicle not used in a hiring business shares the general
+# Plant & Machinery block (module docstring), so it belongs here too, or this Fixed Assets ledger
+# would be "unmapped" and depreciation would fail loud for the whole book.
+"Delivery Van" = "plant_machinery_15"
+"Office Computers" = "computers_40"
+"Reception Computers" = "computers_40"
+
+[depreciation.opening_wdv_paise]
+furniture_10 = 0
+plant_machinery_15 = 50000000
+computers_40 = 0

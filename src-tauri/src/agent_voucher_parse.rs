@@ -114,6 +114,8 @@ fn parse_voucher_rows(
     // Tally's collection XML varies by release; use a deliberately conservative
     // extractor and never infer a missing field. Malformed rows fail before
     // optional selectors can hide them as an apparently complete empty result.
+    let marked = mark_agent_xml(xml);
+    let xml = marked.as_ref();
     let mut reader = quick_xml::Reader::from_str(xml);
     reader.config_mut().trim_text(false);
     let mut rows = Vec::new();
@@ -508,6 +510,18 @@ fn claim_voucher_scalar(
         claim_agent_scalar(row, field)?;
     }
     Ok(())
+}
+
+/// The one rule every agent-facing parser applies to a Tally response before
+/// reading it: forbidden numeric references are marked, then the XML reader
+/// unescapes what is left (`docs/tally/TALLY_PROTOCOL_REFERENCE.md` §1.1(d)).
+/// `&#4; Primary` therefore reads as `U+FFFD#4; Primary` here exactly as it
+/// does in `bridge-tally-protocol`'s native parsers, never as a raw U+0004,
+/// and [`decoded_agent_reference`] only sees references the rule leaves
+/// alone. A literal U+FFFD followed by `#`, digits and `;` reads as
+/// `U+FFFD#65533;` and the rest, which keeps the rewrite reversible.
+pub(super) fn mark_agent_xml(xml: &str) -> std::borrow::Cow<'_, str> {
+    bridge_tally_protocol::mark_forbidden_numeric_references(xml)
 }
 
 pub(super) fn decoded_agent_text(text: quick_xml::events::BytesText<'_>) -> Result<String, String> {

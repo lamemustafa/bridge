@@ -438,7 +438,7 @@ fn renamed_sundry_creditors_group_still_classifies_its_ledgers_by_reservedname()
 fn user_created_group_merely_named_sundry_debtors_is_not_treated_as_predefined() {
     let group_xml = format!(
         r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>
-        <GROUP NAME="Sundry Debtors" RESERVEDNAME=""><GUID>{guid}-00000001</GUID><PARENT>Primary</PARENT></GROUP>
+        <GROUP NAME="Sundry Debtors" RESERVEDNAME=""><GUID>{guid}-00000001</GUID><PARENT>&#4; Primary</PARENT></GROUP>
         </COLLECTION></DATA></BODY></ENVELOPE>"#,
         guid = RESERVEDNAME_TESTS_COMPANY_GUID,
     );

@@ -47,8 +47,8 @@ fn synthetic_read_matches_the_python_golden() {
         differences.join("\n")
     );
     // Anchor the pass to content, so an empty or trivial dump cannot be what passed.
-    assert_eq!(rust["figures"].as_array().unwrap().len(), 49);
-    assert_eq!(rust["findings"].as_array().unwrap().len(), 21);
+    assert_eq!(rust["figures"].as_array().unwrap().len(), 50);
+    assert_eq!(rust["findings"].as_array().unwrap().len(), 22);
     assert_eq!(rust["rules_version"], "2026-09-17.1");
     assert_eq!(
         figure_mut(

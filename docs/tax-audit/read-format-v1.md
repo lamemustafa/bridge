@@ -264,17 +264,25 @@ The rule, in order:
    - A `U+FFFD` already in the document, literal or written as a legal reference, that is directly
      followed by `#`, one to ten ASCII digits and `;` is replaced by `U+FFFD` `#65533;`. The
      rewrite is therefore injective: every decoded value maps back to the code points Tally sent.
-   - The scan for a reference's `;` covers at most twelve bytes, starting at its `#`. The rewrite
-     ends at a `&#` whose `;` lies further on; what follows is left to the XML parser, which
-     refuses any reference to a forbidden code point.
-   - This is the rewrite `bridge-tally-protocol` already applies before its native group, ledger,
-     voucher, trial-balance and outstandings parsers read a response (`tolerant_xml`), and
-     `TALLY_SANITIZED_ROOT_MARKER` in that crate is the `U+FFFD#4;` prefix.
+   - The scan for a reference's `;` covers at most twelve bytes, starting at its `#`. A `&#` whose
+     `;` lies further on than that is left exactly as written, and the scan continues past it, so
+     a later, well-terminated forbidden reference in the same document is still marked. Whatever
+     is left unmarked (that one `&#`, and any raw forbidden character) is left to the XML parser
+     to accept or refuse.
+   - This is `bridge-tally-protocol`'s public `mark_forbidden_numeric_references`
+     (`tolerant_xml`), which its native group, ledger, voucher, trial-balance and outstandings
+     parsers apply before reading a response too; `TALLY_SANITIZED_ROOT_MARKER` in that crate is
+     the `U+FFFD#4;` prefix. The rule itself is recorded in
+     `docs/tally/TALLY_PROTOCOL_REFERENCE.md` §1.1(d).
 4. **Raw characters are kept.** Every raw character stays as itself, C0 controls included, in
    element text and attribute values. `PARENTSTRUCTURE` keeps its `U+0003` separators. A raw
    `U+0000`, `U+FFFE` or `U+FFFF` is refused: Tally has not been seen to send one, and a NUL
-   usually means the bytes were decoded with the wrong encoding. Legal character references and
-   the five predefined entities resolve as XML 1.0 says.
+   usually means the bytes were decoded with the wrong encoding. A numeric reference to one of
+   those three, to a surrogate, or beyond `U+10FFFF` is refused the same way -- but not by
+   quick-xml itself, which only refuses a reference to `U+0000`, a surrogate or beyond `U+10FFFF`;
+   a reference it resolves to a raw C0 control, `U+FFFE` or `U+FFFF` reaches `bridge-tax-audit`'s
+   own check afterwards. Legal references and the five predefined entities resolve as XML 1.0
+   says.
 5. **Nothing else is transformed.** No value is trimmed, case-folded or normalised while it is
    decoded. A test that needs a trimmed view (is this empty? is this the root?) trims a copy.
 
@@ -302,7 +310,8 @@ on every `PARENT` spelled from up to four of fifteen reference and marker atoms.
 
 **Where Bridge's own decoders differ from this rule today.** The rule follows
 `bridge-tally-protocol`, because it is the decoder in front of that crate's native collection
-parsers and it is lossless. Bridge's agent-facing parsers resolve `&#4;` with a plain XML
-unescape, to the raw `U+0004` character, so the same wire text has two spellings inside Bridge.
-The protocol crate's `is_tally_reserved_root` also accepts a plain `Primary`. A consumer of a
-read follows this section, not either of those behaviours.
+parsers and it is lossless. Bridge's agent-facing parsers, the standard ledger catalogue and the
+Bridge-schema group parser apply the same marking first, and the protocol crate's
+`is_tally_reserved_root` accepts only the marked form, as the reserved-root rule above does. The
+parsers `TALLY_PROTOCOL_REFERENCE.md` §1.1(d) lists as not yet covered still resolve `&#4;` to the
+raw `U+0004` character. A consumer of a read follows this section, not those parsers.

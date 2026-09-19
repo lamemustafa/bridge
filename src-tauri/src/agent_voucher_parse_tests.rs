@@ -1144,3 +1144,146 @@ fn reference_is_invoice_and_party_gstin_are_optional_and_non_conflated() {
     let rows = parse_agent_rows(&empty_gstin, CAPTURED_VOUCHER_COMPANY_GUID).unwrap();
     assert!(rows[0].get("party_gstin").is_none());
 }
+
+fn captured_utf16le(bytes: &[u8]) -> String {
+    String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap()
+}
+
+/// `TALLY_PROTOCOL_REFERENCE.md` §1.1(d): the agent parsers read `&#4;` as
+/// the marker the protocol crate's native parsers produce, not as U+0004.
+const MARKED_ROOT: &str = "\u{fffd}#4; Primary";
+
+#[test]
+fn a_captured_group_parent_reads_as_the_marker_in_the_changed_master_feed() {
+    // The captured Group collection carries `&#4; Primary` in PARENT. It was
+    // fetched without a NAME element, which the changed-master reader
+    // requires, so each row's own NAME attribute is copied into one; nothing
+    // else in the capture is touched.
+    let captured = captured_utf16le(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-party-groups.utf16le.xml"
+    ));
+    let company_guid = "61c6de69-1748-461c-ad3f-162cb949df9f";
+    let named = captured
+        .split("<GROUP NAME=\"")
+        .enumerate()
+        .map(|(index, part)| {
+            if index == 0 {
+                return part.to_string();
+            }
+            let name = part.split('"').next().unwrap();
+            let open_end = part.find('>').unwrap() + 1;
+            format!(
+                "<GROUP NAME=\"{}<NAME>{name}</NAME>{}",
+                &part[..open_end],
+                &part[open_end..]
+            )
+        })
+        .collect::<String>();
+    let rows = parse_agent_changed_masters(&named).expect("captured groups parse");
+    let native = bridge_tally_protocol::native_outstandings::parse_native_group_snapshot(
+        &captured,
+        company_guid,
+    )
+    .expect("the same capture parses natively");
+    let root_rows = rows
+        .iter()
+        .filter(|row| row["parent"] == MARKED_ROOT)
+        .count();
+    assert_eq!(
+        root_rows,
+        captured
+            .matches("<PARENT TYPE=\"String\">&#4; Primary</PARENT>")
+            .count()
+    );
+    assert!(root_rows > 0);
+    assert!(!rows.iter().any(|row| row["parent"]
+        .as_str()
+        .is_some_and(|parent| parent.contains('\u{4}'))));
+    for row in &rows {
+        let group = native
+            .iter()
+            .find(|group| row["name"] == group.name.as_str())
+            .expect("both readers see the same groups");
+        assert_eq!(row["parent"].as_str(), group.parent.returned_text());
+    }
+}
+
+#[test]
+fn a_captured_forbidden_reference_in_voucher_text_reads_as_the_marker() {
+    // No captured voucher carries `&#4;` in a field this reader keeps; it
+    // appears on GST fields the reader skips. The captured atom is moved into
+    // the first captured NARRATION, and the rest of the capture must read
+    // exactly as it did.
+    let captured = captured_entry_wildcard_vouchers();
+    let atom = "&#4; Not Applicable";
+    assert!(captured.contains(&format!(">{atom}</GSTCLASS>")));
+    // The capture's first non-empty narration, whatever it says.
+    let open = "<NARRATION TYPE=\"String\">";
+    let start = captured
+        .find(open)
+        .expect("the capture carries a narration")
+        + open.len();
+    let narration = &captured[start..start + captured[start..].find('<').unwrap()];
+    let derived = format!(
+        "{}{}{}",
+        &captured[..start],
+        atom,
+        &captured[start + narration.len()..]
+    );
+    assert_ne!(derived, captured);
+    let before = parse_agent_rows(&captured, WILDCARD_ALLOCATION_COMPANY_GUID).unwrap();
+    let mut after = parse_agent_rows(&derived, WILDCARD_ALLOCATION_COMPANY_GUID).unwrap();
+    let changed = after
+        .iter()
+        .position(|row| {
+            row["narration"] != json!(narration)
+                && row["narration"]
+                    .as_str()
+                    .is_some_and(|n| n.contains("Not Applicable"))
+        })
+        .expect("the moved atom is read");
+    assert_eq!(
+        after[changed]["narration"],
+        json!("\u{fffd}#4; Not Applicable")
+    );
+    after[changed]["narration"] = json!(narration);
+    assert_eq!(after, before);
+    // The import-verification reader is the same reader with one more field.
+    let verification =
+        parse_import_verification_rows(&derived, WILDCARD_ALLOCATION_COMPANY_GUID).unwrap();
+    assert_eq!(
+        verification[changed]["narration"],
+        json!("\u{fffd}#4; Not Applicable")
+    );
+}
+
+#[test]
+fn a_literal_replacement_character_that_looks_like_a_marker_reads_back_escaped() {
+    // The rule keeps its rewrite reversible by escaping a literal U+FFFD that
+    // is followed by `#`, digits and `;`. A voucher Bridge posted with such
+    // text would read back as other text; `validate_payload` refuses it.
+    let captured = captured_entry_wildcard_vouchers();
+    // The capture's first non-empty narration, whatever it says.
+    let open = "<NARRATION TYPE=\"String\">";
+    let start = captured
+        .find(open)
+        .expect("the capture carries a narration")
+        + open.len();
+    let narration = &captured[start..start + captured[start..].find('<').unwrap()];
+    let derived = format!(
+        "{}{}{}",
+        &captured[..start],
+        "A\u{fffd}#5;",
+        &captured[start + narration.len()..]
+    );
+    let rows = parse_import_verification_rows(&derived, WILDCARD_ALLOCATION_COMPANY_GUID).unwrap();
+    assert!(rows
+        .iter()
+        .any(|row| row["narration"] == json!("A\u{fffd}#65533;#5;")));
+}

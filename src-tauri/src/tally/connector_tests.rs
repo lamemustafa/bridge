@@ -78,7 +78,7 @@ fn observed_identity(
 
 fn native_groups(company_guid: &str, groups: &[(&str, &str)]) -> String {
     let groups = if groups.is_empty() {
-        &[("Primary", "Primary")][..]
+        &[("Primary", "&#4; Primary")][..]
     } else {
         groups
     };
@@ -98,7 +98,7 @@ fn native_groups(company_guid: &str, groups: &[(&str, &str)]) -> String {
 
 fn native_ledgers(company_guid: &str) -> String {
     format!(
-        r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><LEDGER NAME="Synthetic Ledger"><GUID TYPE="String">{company_guid}-00000001</GUID><PARENT TYPE="String">Primary</PARENT><ALTERID TYPE="Number">1</ALTERID><MASTERID TYPE="Number">1</MASTERID><OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>"#
+        r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><LEDGER NAME="Synthetic Ledger"><GUID TYPE="String">{company_guid}-00000001</GUID><PARENT TYPE="String">&#4; Primary</PARENT><ALTERID TYPE="Number">1</ALTERID><MASTERID TYPE="Number">1</MASTERID><OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>"#
     )
 }
 
@@ -1165,7 +1165,7 @@ async fn same_context_snapshot_read_does_not_reuse_pre_run_canary_rows() {
     let company_guid = "synthetic-company-guid";
     let identity = observed_identity("Synthetic Company", company_guid, "100001", "20240101");
     let empty_native_groups = native_groups(company_guid, &[]);
-    let second_group = native_groups(company_guid, &[("Post-start Assets", "Primary")]);
+    let second_group = native_groups(company_guid, &[("Post-start Assets", "&#4; Primary")]);
     let plans = [
         company_extent("Synthetic Company", company_guid),
         company_extent("Synthetic Company", company_guid),

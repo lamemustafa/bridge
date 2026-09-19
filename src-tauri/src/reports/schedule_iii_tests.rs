@@ -4,6 +4,10 @@ use bridge_tally_protocol::{PartyLedgerMasterFieldObservation, PartyLedgerMaster
 use super::*;
 use crate::tally::OutstandingsCurrencyAssertion;
 
+/// Tally's reserved root as every Bridge reader returns it
+/// (`TALLY_PROTOCOL_REFERENCE.md` §1.1(d)); a bare `Primary` would name a group.
+const RESERVED_ROOT: &str = "\u{fffd}#4; Primary";
+
 fn row(name: &str, parent: &str, balance: &str) -> PartyLedgerMasterRow {
     PartyLedgerMasterRow {
         name: name.to_string(),
@@ -48,12 +52,12 @@ fn maps_only_immutable_group_evidence_and_lists_everything_else() {
             },
             TallyNamedMaster {
                 name: "Renamed debtor root".to_string(),
-                parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
+                parent: PartyLedgerMasterFieldObservation::Returned(RESERVED_ROOT.to_string()),
                 reserved_name: Some("Sundry Debtors".to_string()),
             },
             TallyNamedMaster {
                 name: "Custom".to_string(),
-                parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
+                parent: PartyLedgerMasterFieldObservation::Returned(RESERVED_ROOT.to_string()),
                 reserved_name: Some("".to_string()),
             },
         ],
@@ -88,7 +92,7 @@ fn contra_signed_sundry_debtor_is_excluded_not_netted_against_its_group_subtotal
         group_response_bytes: 1,
         groups: vec![TallyNamedMaster {
             name: "Sundry Debtors".to_string(),
-            parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
+            parent: PartyLedgerMasterFieldObservation::Returned(RESERVED_ROOT.to_string()),
             reserved_name: Some("Sundry Debtors".to_string()),
         }],
     };
@@ -125,7 +129,7 @@ fn contra_signed_sundry_creditor_is_excluded_not_netted_against_its_group_subtot
         group_response_bytes: 1,
         groups: vec![TallyNamedMaster {
             name: "Sundry Creditors".to_string(),
-            parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
+            parent: PartyLedgerMasterFieldObservation::Returned(RESERVED_ROOT.to_string()),
             reserved_name: Some("Sundry Creditors".to_string()),
         }],
     };
@@ -163,12 +167,12 @@ fn cash_in_hand_and_bank_accounts_keep_separate_group_subtotals_and_totals() {
         groups: vec![
             TallyNamedMaster {
                 name: "Bank Accounts".to_string(),
-                parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
+                parent: PartyLedgerMasterFieldObservation::Returned(RESERVED_ROOT.to_string()),
                 reserved_name: Some("Bank Accounts".to_string()),
             },
             TallyNamedMaster {
                 name: "Cash-in-Hand".to_string(),
-                parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
+                parent: PartyLedgerMasterFieldObservation::Returned(RESERVED_ROOT.to_string()),
                 reserved_name: Some("Cash-in-Hand".to_string()),
             },
         ],
@@ -214,12 +218,12 @@ fn contra_signed_bank_account_is_excluded_not_netted_against_its_group_subtotal(
         groups: vec![
             TallyNamedMaster {
                 name: "Bank Accounts".to_string(),
-                parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
+                parent: PartyLedgerMasterFieldObservation::Returned(RESERVED_ROOT.to_string()),
                 reserved_name: Some("Bank Accounts".to_string()),
             },
             TallyNamedMaster {
                 name: "Cash-in-Hand".to_string(),
-                parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
+                parent: PartyLedgerMasterFieldObservation::Returned(RESERVED_ROOT.to_string()),
                 reserved_name: Some("Cash-in-Hand".to_string()),
             },
         ],

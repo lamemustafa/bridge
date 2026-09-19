@@ -186,5 +186,5 @@ fn unknown_voucher_status_refuses_the_population() {
         .retain(|p| p["kind"] != "voucher_status_list");
     scratch.set_manifest(&m);
     let err = common::run(&scratch.dir, false).unwrap_err();
-    assert!(matches!(err, AuditError::UnknownVoucherStatus(6)), "{err}");
+    assert!(matches!(err, AuditError::UnknownVoucherStatus(10)), "{err}");
 }

@@ -1143,13 +1143,18 @@ fn is_default_ledger_recognises_cash_under_cash_in_hand() {
 
 #[test]
 fn is_default_ledger_recognises_profit_and_loss_under_the_reserved_primary() {
-    // Sanitized form `tolerant_xml` actually produces for the raw U+0004
-    // metadata prefix (see `bridge_tally_protocol::TALLY_SANITIZED_ROOT_MARKER`).
+    // The read-back reaches this through the agent parsers, which read
+    // `&#4; Primary` as the marked form (`TALLY_PROTOCOL_REFERENCE.md`
+    // §1.1(d)); that is the only observed spelling of the root.
     assert!(is_default_ledger(
         "Profit & Loss A/c",
         "\u{fffd}#4; Primary"
     ));
-    assert!(is_default_ledger("Profit & Loss A/c", "Primary"));
+    // A bare `Primary` observed PARENT is a group a user named that, so a
+    // same-name ledger under it is a collision, not Tally's default. A raw
+    // U+0004 is text no Bridge decoder produces any longer.
+    assert!(!is_default_ledger("Profit & Loss A/c", "Primary"));
+    assert!(!is_default_ledger("Profit & Loss A/c", "\u{4} Primary"));
 }
 
 #[test]
@@ -1177,40 +1182,118 @@ fn a_requested_group_named_as_the_reserved_root_marker_is_recognised_as_such() {
     // The exact defect this pre-flight caught in the rehearsal book: a
     // requested Group literally named with Tally's sanitized U+0004 marker
     // (the self-referential root) must be recognised so the caller can
-    // refuse it, rather than silently Creating a garbled-name group -- it
-    // never collision-matches Tally's own plainly-named "Primary" row.
+    // refuse it, rather than silently Creating a garbled-name group. The book
+    // side accepts the bare word too, because that is how Bridge writes the
+    // root; the shared read-side test does not.
+    assert!(book_names_reserved_root("\u{fffd}#4; Primary"));
+    assert!(book_names_reserved_root("Primary"));
+    assert!(!book_names_reserved_root("Sundry Debtors"));
     assert!(is_tally_reserved_root("\u{fffd}#4; Primary"));
-    assert!(is_tally_reserved_root("Primary"));
-    assert!(!is_tally_reserved_root("Sundry Debtors"));
+    assert!(!is_tally_reserved_root("Primary"));
 }
 
 #[test]
-fn is_reserved_root_any_spelling_recognises_every_observed_form() {
-    // Live, second 2026-09-14 rehearsal: the target's `Profit & Loss A/c`
-    // read back with PARENT as the raw control character (this module's own
-    // decoded_agent_reference-based parsers produce this since the
-    // entity-decoding fix), while book.json separately carries the
-    // sanitized placeholder -- three spellings, one marker.
-    assert!(is_reserved_root_any_spelling("\u{4} Primary")); // raw control character
-    assert!(is_reserved_root_any_spelling("\u{fffd}#4; Primary")); // sanitized placeholder
-    assert!(is_reserved_root_any_spelling("&#4; Primary")); // undecoded XML numeric reference
-    assert!(is_reserved_root_any_spelling("Primary")); // bare word (report rendering)
-    assert!(!is_reserved_root_any_spelling("Sundry Debtors"));
-    assert!(!is_reserved_root_any_spelling(""));
+fn book_names_reserved_root_recognises_every_book_spelling() {
+    // book.json is written by a separate codebase and has carried the root
+    // as the raw control character, the sanitized placeholder, the undecoded
+    // reference and the bare word -- four spellings, one root.
+    assert!(book_names_reserved_root("\u{4} Primary")); // raw control character
+    assert!(book_names_reserved_root("\u{fffd}#4; Primary")); // sanitized placeholder
+    assert!(book_names_reserved_root("&#4; Primary")); // undecoded XML numeric reference
+    assert!(book_names_reserved_root("Primary")); // bare word, as Bridge writes it
+    assert!(!book_names_reserved_root("Sundry Debtors"));
+    assert!(!book_names_reserved_root(""));
+    assert!(!book_names_reserved_root("\u{fffd}#4; Resave"));
 }
 
 #[test]
-fn is_reserved_root_any_spelling_agrees_with_the_shared_function_where_it_recognises_anything() {
-    // Deliberately wider, never narrower: everything the shared
-    // `bridge_tally_protocol::is_tally_reserved_root` recognises, this does
-    // too.
-    for value in ["\u{fffd}#4; Primary", "Primary", "primary", "  Primary  "] {
-        assert_eq!(
-            is_reserved_root_any_spelling(value),
-            is_tally_reserved_root(value),
-            "{value:?}"
-        );
+fn book_names_reserved_root_is_wider_than_the_shared_function_never_narrower() {
+    // Everything the shared read-side test recognises, the book test does
+    // too; the bare word is the one book spelling the shared test refuses.
+    for value in ["\u{fffd}#4; Primary", "  \u{fffd}#4;  primary  "] {
+        assert!(is_tally_reserved_root(value), "{value:?}");
+        assert!(book_names_reserved_root(value), "{value:?}");
     }
+    for value in ["Primary", "primary", "  Primary  "] {
+        assert!(!is_tally_reserved_root(value), "{value:?}");
+        assert!(book_names_reserved_root(value), "{value:?}");
+    }
+}
+
+#[test]
+fn a_captured_top_level_group_read_back_matches_a_book_that_writes_the_root() {
+    // The captured Group collection carries `&#4; Primary` in PARENT. Read
+    // through the lab's own master-row reader, a top-level group created from
+    // a book whose parent is the root must not report a parent mismatch. Read
+    // as a raw U+0004, every such group reported one.
+    let bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-party-groups.utf16le.xml"
+    );
+    let xml = String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let rows = super::super::parse_lab_master_rows(&xml, "GROUP").expect("captured groups parse");
+    let top_level = rows
+        .iter()
+        .filter(|row| {
+            row.get("PARENT")
+                .is_some_and(|parent| is_tally_reserved_root(parent))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        top_level.len(),
+        xml.matches("<PARENT TYPE=\"String\">&#4; Primary</PARENT>")
+            .count()
+    );
+    assert!(!top_level.is_empty());
+    for row in top_level {
+        assert_eq!(row["PARENT"], "\u{fffd}#4; Primary");
+        for book_parent in [
+            "Primary",
+            "\u{fffd}#4; Primary",
+            "\u{4} Primary",
+            "&#4; Primary",
+        ] {
+            let item = BookNamedParent {
+                name: row["NAME"].clone(),
+                parent: Some(book_parent.to_string()),
+            };
+            assert!(
+                diff_parented("group", &item, row).is_empty(),
+                "{book_parent:?} against {:?}",
+                row["PARENT"]
+            );
+        }
+        // A book naming an ordinary group is still a mismatch.
+        let item = BookNamedParent {
+            name: row["NAME"].clone(),
+            parent: Some("Current Assets".to_string()),
+        };
+        assert!(!diff_parented("group", &item, row).is_empty());
+    }
+}
+
+#[test]
+fn a_read_back_group_named_primary_is_compared_as_a_group() {
+    // Only the marked root is matched by meaning. An observed bare `Primary`
+    // is a group of that name, so a book asking for the root does not match
+    // it through the root rule -- only the ordinary fold, which a book's
+    // bare `Primary` happens to satisfy and its marked spelling does not.
+    let observed = row(&[("PARENT", "Primary")]);
+    let marked = BookNamedParent {
+        name: "House".into(),
+        parent: Some("\u{fffd}#4; Primary".into()),
+    };
+    assert!(!diff_parented("group", &marked, &observed).is_empty());
+    let bare = BookNamedParent {
+        name: "House".into(),
+        parent: Some("Primary".into()),
+    };
+    assert!(diff_parented("group", &bare, &observed).is_empty());
 }
 
 #[test]
@@ -1740,6 +1823,26 @@ Vch/Ledger deletion/alteration is not permitted"
 }
 
 #[test]
+fn extract_line_error_texts_keeps_one_message_split_by_a_reference_as_one_entry() {
+    // Regression: quick_xml delivers `&amp;` as its own `GeneralRef` event,
+    // separate from the surrounding `Text`. Before buffering per `LINEERROR`,
+    // a single message containing a reference -- e.g. quoting a ledger name
+    // with an ampersand, invented here as "RAM & SONS" -- was silently split
+    // into multiple entries in `errors`, then read back as several garbled
+    // messages once joined with `"; "`.
+    let response = "<RESPONSE><CREATED>0</CREATED><ALTERED>0</ALTERED><DELETED>0</DELETED>\
+<LASTVCHID>0</LASTVCHID><LASTMID>0</LASTMID><COMBINED>0</COMBINED><IGNORED>0</IGNORED>\
+<ERRORS>0</ERRORS><CANCELLED>0</CANCELLED><EXCEPTIONS>1</EXCEPTIONS>\
+<LINEERROR>Ledger &quot;RAM &amp; SONS&quot; already exists</LINEERROR></RESPONSE>";
+    let errors = extract_line_error_texts(response);
+    assert_eq!(
+        errors,
+        vec!["Ledger \"RAM & SONS\" already exists".to_string()],
+        "a reference-split message must stay one entry, not several"
+    );
+}
+
+#[test]
 fn tally_import_counters_json_surfaces_every_counter() {
     let outcome = bridge_tally_protocol::parse_import_outcome(REHEARSAL_REJECTION_RESPONSE)
         .expect("valid RESPONSE shape");
@@ -1747,4 +1850,68 @@ fn tally_import_counters_json_surfaces_every_counter() {
     assert_eq!(json["created"], 0);
     assert_eq!(json["errors"], 0);
     assert_eq!(json["exceptions"], 17);
+}
+
+#[test]
+fn a_captured_forbidden_reference_in_voucher_read_back_reads_as_the_marker() {
+    // No captured voucher carries `&#4;` in a field the read-back keeps; the
+    // entry-wildcard capture has it on GST fields. The captured atom is moved
+    // into the first captured NARRATION, and every other voucher must read
+    // exactly as it did.
+    let bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-entry-wildcard-allocations.utf16le.xml"
+    );
+    let captured = String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let atom = "&#4; Not Applicable";
+    assert!(captured.contains(&format!(">{atom}</GSTCLASS>")));
+    // The capture's first non-empty narration, whatever it says.
+    let open = "<NARRATION TYPE=\"String\">";
+    let start = captured
+        .find(open)
+        .expect("the capture carries a narration")
+        + open.len();
+    let narration = &captured[start..start + captured[start..].find('<').unwrap()];
+    let derived = format!(
+        "{}{}{}",
+        &captured[..start],
+        atom,
+        &captured[start + narration.len()..]
+    );
+    assert_ne!(derived, captured);
+    let before = parse_voucher_readback_nested(&captured).expect("capture parses");
+    let after = parse_voucher_readback_nested(&derived).expect("derived capture parses");
+    assert_eq!(before.len(), after.len());
+    let changed = before
+        .iter()
+        .position(|voucher| voucher.narration.as_deref() == Some(narration))
+        .expect("the capture's narration is read");
+    assert_eq!(
+        after[changed].narration.as_deref(),
+        Some("\u{fffd}#4; Not Applicable")
+    );
+    for (index, (was, now)) in before.iter().zip(&after).enumerate() {
+        if index != changed {
+            assert_eq!(was.narration, now.narration);
+        }
+        assert_eq!(was.voucher_number, now.voucher_number);
+        assert_eq!(was.ledger_entries, now.ledger_entries);
+    }
+}
+
+#[test]
+fn line_error_text_keeps_a_forbidden_reference_as_the_marker() {
+    // Synthetic: no committed import response carries `&#4;` in a LINEERROR.
+    // Before the one rule, the reference arrived as its own event and this
+    // diagnostic dropped it; now it reads as the marker the other readers use.
+    let xml = "<RESPONSE><LINEERROR>Group &#4; Primary cannot be altered</LINEERROR></RESPONSE>";
+    assert_eq!(
+        extract_line_error_texts(xml),
+        vec!["Group \u{fffd}#4; Primary cannot be altered".to_string()]
+    );
 }
