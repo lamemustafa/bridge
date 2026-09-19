@@ -983,9 +983,8 @@ for (const [name, inventory, diagnostic] of [
   const text = `${out.stdout}${out.stderr}`;
   if (
     out.status !== 0 &&
-    text.includes("legacy section anchor(s) missing") &&
-    text.includes("97-operation-support-matrix") &&
-    text.includes("(1 problem(s))")
+    text.includes("unsupported raw HTML block in split protocol index") &&
+    text.includes("docs/tally/TALLY_PROTOCOL_REFERENCE.md:")
   ) {
     console.log("ok   a full route inside multiline inline code is refused");
   } else {
