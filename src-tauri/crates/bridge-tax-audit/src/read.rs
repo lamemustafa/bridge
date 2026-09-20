@@ -1564,4 +1564,46 @@ mod tests {
             assert_eq!(store.opens.get(), 2);
         }
     }
+
+    #[test]
+    fn a_second_gzip_prefix_then_transport_failure_is_not_a_stored_mismatch() {
+        let content = b"gzip prefix";
+        let stored = gzip(content);
+        let blob = gzip_blob("parts/prefix.xml.gz", &stored, content);
+        let store = ScriptedStore {
+            reads: vec![
+                StoredRead::Bytes(stored.clone()),
+                StoredRead::BytesThenError(
+                    stored[..stored.len() / 2].to_vec(),
+                    io::ErrorKind::TimedOut,
+                ),
+            ],
+            opens: Cell::new(0),
+        };
+
+        assert_io_kind(
+            verified_blob_from(&store, &blob, "prefix", 1_024).unwrap_err(),
+            io::ErrorKind::TimedOut,
+        );
+        assert_eq!(store.opens.get(), 2);
+    }
+
+    #[test]
+    fn a_drain_transport_failure_wins_over_matching_malformed_gzip() {
+        let stored = b"not a gzip stream".to_vec();
+        let blob = gzip_blob("parts/drain.xml.gz", &stored, b"valid");
+        let store = ScriptedStore {
+            reads: vec![
+                StoredRead::Bytes(stored.clone()),
+                StoredRead::BytesThenError(stored, io::ErrorKind::ConnectionReset),
+            ],
+            opens: Cell::new(0),
+        };
+
+        assert_io_kind(
+            verified_blob_from(&store, &blob, "drain", 1_024).unwrap_err(),
+            io::ErrorKind::ConnectionReset,
+        );
+        assert_eq!(store.opens.get(), 2);
+    }
 }
