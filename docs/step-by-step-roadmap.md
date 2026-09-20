@@ -91,7 +91,9 @@ pending consented synthetic live qualification.
    transaction are still required to remove the remaining full decoded string
    and per-record durable-state rewrite.
 4. Establish incremental checkpoints only from verified full snapshots plus an immutable exact-scope coverage and source-high-watermark receipt.
-5. Connect the versioned AXAL destination contract without guessing endpoints.
+5. Deferred by the 2026-09-20 [retention decision](#deliberately-dormant-foundations):
+   retain the versioned destination contract pending an explicit product decision
+   and reviewed contract. No AXAL connection or endpoint is committed.
 6. The read-side operator console now provides stable-company selection,
    offline persisted profiles, separate verified-baseline/latest-attempt
    states, phase/window progress, explicit cancellation, company/pack-scoped
@@ -205,13 +207,11 @@ pending consented synthetic live qualification.
 
 ### Deliberately dormant foundations
 
-**2026-09-20 deviation — retention decision.** A repository reachability review
-found no current compiled consumer for these three portable foundations. They
-remain because deleting them would silently withdraw accepted or deferred
-roadmap groundwork, not because they establish a runtime, support, or
-qualification claim. This records the retention rationale only; it neither
-sets an activation schedule nor replaces the linked plans and ADR, which remain
-the authoritative, non-exhaustive gates.
+**2026-09-20 deviation — retention decision.** Retain these three portable
+foundations as accepted or deferred roadmap groundwork. This decision amends
+item 5 to defer destination activation. It establishes no runtime, support, or
+qualification claim and sets no activation schedule. The summary below is
+non-exhaustive; the linked plans and ADR remain the authoritative gates.
 
 - `bills_reconciliation` retains the item 15 fail-closed, exact-arithmetic
   Bills & Payments foundation governed by [ADR 0013](./adr/0013-tally-party-outstanding-confidence-authority.md)
