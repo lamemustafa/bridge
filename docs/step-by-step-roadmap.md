@@ -203,6 +203,29 @@ pending consented synthetic live qualification.
 19. Record Windows and macOS installer evidence before a supported release
     claim.
 
+### Deliberately dormant foundations
+
+The following portable foundations are deliberately retained. They do not
+establish a runtime, support, or qualification claim, and must not be deleted
+or wired without an explicit roadmap or ADR decision and the activation evidence
+named here.
+
+- `bills_reconciliation` retains the item 15 fail-closed, exact-arithmetic
+  Bills & Payments foundation governed by [ADR 0013](./adr/0013-tally-party-outstanding-confidence-authority.md).
+  Future activation must supply the ADR's exact-profile live receipt and
+  complete the missing request, native runtime, mirror and UI wiring with
+  qualified Education semantics; until then the pack remains unknown and unsupported.
+- `transport_qualification` retains item 7's JSONEX semantic-shadowing
+  foundation. Runtime enablement still requires the exact TallyPrime 7.0+
+  release/mode and Education profile, encoding/nested-shape/range-filter
+  evidence, repeated XML parity, and measured operational benefit.
+- `destination` retains a versioned destination-contract boundary for an open
+  product decision. It does not commit Bridge to Tally-to-AXAL delivery or imply
+  that an endpoint exists. Retention can be revisited if a product decision and
+  a reviewed versioned contract meet the [privacy model](./tally/privacy-model.md)
+  and the [evidence-layer-first hook](./tally/IMPROVEMENT_PLAN_2026H2.md#explicitly-deferred-hooks-design-compatible-no-code-now);
+  until then no endpoint is guessed or used.
+
 ## Managed repository controls
 
 1. Require pull requests and the required checks on `master`.
