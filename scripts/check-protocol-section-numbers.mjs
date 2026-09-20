@@ -118,6 +118,7 @@ function leadingSpaces(line) {
 function listFenceClosesBeforeDedent(lines, openerIndex, opening, listIndent) {
   for (let index = openerIndex + 1; index < lines.length; index += 1) {
     const line = lines[index];
+    if (line.trim() && leadingSpaces(line) < listIndent) return false;
     const rail = fenceRail(line);
     if (
       rail &&
@@ -127,7 +128,6 @@ function listFenceClosesBeforeDedent(lines, openerIndex, opening, listIndent) {
     ) {
       return true;
     }
-    if (line.trim() && leadingSpaces(line) < listIndent) return false;
   }
   return false;
 }

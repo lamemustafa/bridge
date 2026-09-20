@@ -1408,6 +1408,22 @@ for (const [name, continuation] of [
   }
 }
 
+{
+  const first = `${SPLIT_BASE_DOC}\n- continuation context\n  \`\`\`md\n  ## 9.7 example only\n\`\`\`\n## 9.7 live duplicate\n`;
+  const out = runSplitGate(first, "# Part B\n");
+  const text = `${out.stdout}${out.stderr}`;
+  if (
+    out.status !== 0 &&
+    text.includes("list-continuation fenced code block is unsupported in split protocol part") &&
+    text.includes(PART_A)
+  ) {
+    console.log("ok   a dedented matching rail cannot close a list-continuation fence");
+  } else {
+    failed += 1;
+    console.error(`FAIL a dedented matching rail must refuse the list-continuation opener\n  exit ${out.status}: ${text.split("\\n").slice(0, 8).join("\\n  ")}`);
+  }
+}
+
 // The real document must satisfy its own gate, and the fixture above is not
 // evidence of that — it shares none of the real headings, so it exercises the
 // rules but not the *parser* against 2,000 lines of fences, tables and Setext.
