@@ -31,7 +31,7 @@
     },
     {
       "path": "docs/step-by-step-roadmap.md",
-      "sha256": "2904bb2972454b610692e57dcb5be2f7e1dbf908fd41602d544f4631cb49abf3"
+      "sha256": "d64e04c2a17ae5c44ae1b9c65721a65d6e0ff7c88271555edb7e7b3642a391e5"
     },
     {
       "path": "docs/tally/TALLY_INTEGRATION_RESEARCH_AND_CODEX_PLAN.md",
@@ -1098,5 +1098,5 @@
       "sha256": "0ab5bfbe6d81b1e10530744c338fb91efa57fe5a66fb4bc0cfd382495eaf02a4"
     }
   ],
-  "manifest_sha256": "1ac0a83640f1104d5b0360ef1a26435580ceaee929765b6718887a8d8fc17df2"
+  "manifest_sha256": "35d36dd9ba62a74bbfa17ae4b3671c4c83490e97fc7e1cadd0d4d0a16c672553"
 }
