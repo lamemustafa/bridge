@@ -631,6 +631,7 @@ for (const [name, shadow] of [
 for (const [name, example] of [
   ["an inline-code HTML ID example", '`<a id="example-only"></a>`'],
   ["an inline-code HTML ID example ending in a literal backslash", '`<a id="example-only"></a> \\`'],
+  ["an inline-code HTML comment example", '`<!-- example only -->`'],
 ]) {
   const first = `${SPLIT_BASE_DOC}\nparagraph ${example}\n`;
   const out = runSplitGate(first, "# Part B\n");
@@ -1131,6 +1132,12 @@ const sep = "\\";`);
   expectRoute(
     "an inherited alias may follow a legitimate second retitle",
     retitledAgainIndex + alias + revisedAlias + methodAlias.replace("#method-note-revised)", "#method-note-final)"),
+  );
+  expectRoute(
+    "an inherited alias cannot leave a legitimate second-retitle chain",
+    retitledAgainIndex + alias + revisedAlias + methodAlias.replace("#method-note-revised)", "#10-alpha-revised)"),
+    "changed their still-live destination or retitle chain",
+    "method-note",
   );
 
   const duplicateFirst = splitBaseFirst.replace(

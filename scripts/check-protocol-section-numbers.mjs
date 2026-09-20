@@ -307,6 +307,10 @@ function hasUnsupportedHtml(lines, index) {
 // Mixed comment/content lines are outside the admitted protocol grammar and
 // fail closed rather than asking this gate to become a general Markdown parser.
 function* visibleMarkdownLines(lines, origin, htmlMode = "allow") {
+  const outsideCode = textOutsidePairedCode(
+    lines,
+    lines.map((line, index) => ({ line, index })),
+  );
   const visibleEntries = [];
   let fence = null;
   let comment = false;
@@ -342,7 +346,11 @@ function* visibleMarkdownLines(lines, origin, htmlMode = "allow") {
       if (rail[1][0] !== "`" || !after.includes("`")) fence = rail[1];
       continue;
     }
-    const start = line.indexOf("<!--");
+    // A same-line paired code span is visible text, but its literal comment
+    // delimiters do not begin an HTML comment. Use the offset-preserving mask
+    // only to locate an opener; once one is real, HTML owns its raw closing
+    // delimiter and the existing mixed-content refusal still applies.
+    const start = outsideCode[index].indexOf("<!--");
     if (start !== -1) {
       if (line.slice(0, start).trim()) {
         throw new Error(`unsupported content before an HTML comment in ${short(origin)}:${index + 1}`);
@@ -970,27 +978,41 @@ if (PARTS_MARKER.test(canonicalText)) {
     return actual && (actual.title !== route.title || actual.path !== route.path || actual.target !== route.target);
   });
   const destinations = new Set(currentRoutes.map((route) => `${route.path}#${route.target}`));
-  const retargetedLiveAliases = inheritedAliases.filter((route) => {
-    const priorDestination = `${route.path}#${route.target}`;
+  // When the prior destination was retitled again, its current canonical
+  // redirect is the next link. Resolve until reaching a live part heading.
+  const resolveInheritedDestination = (route) => {
+    let next = route;
+    const seen = new Set();
+    while (true) {
+      const destination = `${next.path}#${next.target}`;
+      if (destinations.has(destination)) return destination;
+      if (seen.has(next.target)) return null;
+      seen.add(next.target);
+      next = indexed.get(next.target);
+      if (!next) return null;
+    }
+  };
+  const retargetedInheritedAliases = inheritedAliases.filter((route) => {
+    const expectedDestination = resolveInheritedDestination(route);
     const actual = indexed.get(route.legacy);
     const actualDestination = actual && `${actual.path}#${actual.target}`;
     return (
       !required.has(route.legacy) &&
-      destinations.has(priorDestination) &&
+      expectedDestination &&
       actualDestination &&
       destinations.has(actualDestination) &&
-      actualDestination !== priorDestination
+      actualDestination !== expectedDestination
     );
   });
-  if (retargetedLiveAliases.length) {
+  if (retargetedInheritedAliases.length) {
     failures.push(
-      `inherited legacy anchor(s) changed their still-live destination:\n` +
-        retargetedLiveAliases
+      `inherited legacy anchor(s) changed their still-live destination or retitle chain:\n` +
+        retargetedInheritedAliases
           .slice(0, MAX_REPORTED_NUMBERS)
           .map((route) => `    ${short(route.legacy)}`)
           .join("\n") +
-        (retargetedLiveAliases.length > MAX_REPORTED_NUMBERS
-          ? `\n    ... and ${retargetedLiveAliases.length - MAX_REPORTED_NUMBERS} more`
+        (retargetedInheritedAliases.length > MAX_REPORTED_NUMBERS
+          ? `\n    ... and ${retargetedInheritedAliases.length - MAX_REPORTED_NUMBERS} more`
           : ""),
     );
   }
