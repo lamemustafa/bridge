@@ -608,25 +608,33 @@ test("source state leaves index bytes unchanged after a stat-only file change", 
 });
 
 test("toolchain preflight reads the captured revision despite dirty or missing source file", (t) => {
-  const root = sourceReadFixture(t);
+  const originalChannel = "bridge-unavailable-regression-toolchain";
+  const alternateChannel = "bridge-installed-regression-toolchain";
+  const root = sourceReadFixture(t, originalChannel);
   const revision = gitOk(root, ["rev-parse", "HEAD"]).trim();
+  const localRustup = localRustupFixture(t, [alternateChannel]);
   const file = join(root, "rust-toolchain.toml");
-  const committed = pinnedToolchainAvailable(root, revision);
+  const committed = pinnedToolchainAvailable(root, revision, localRustup.env);
   assert.equal(committed.ok, false);
-  assert.match(committed.reason, /bridge-unavailable-regression-toolchain/);
-  writeFileSync(file, '[toolchain]\nchannel = "1.96.0"\n');
-  assert.deepEqual(pinnedToolchainAvailable(root, revision), committed);
+  assert.match(committed.reason, new RegExp(originalChannel));
+  writeFileSync(file, `[toolchain]\nchannel = "${alternateChannel}"\n`);
+  assert.deepEqual(pinnedToolchainAvailable(root, revision, localRustup.env), committed);
   rmSync(file);
-  assert.deepEqual(pinnedToolchainAvailable(root, revision), committed);
+  assert.deepEqual(pinnedToolchainAvailable(root, revision, localRustup.env), committed);
 
-  writeFileSync(file, '[toolchain]\nchannel = "1.96.0"\n');
+  writeFileSync(file, `[toolchain]\nchannel = "${alternateChannel}"\n`);
   gitOk(root, ["add", "rust-toolchain.toml"]);
   gitOk(root, ["-c", "commit.gpgSign=false", "commit", "--quiet", "-m", "alternate toolchain"]);
   const alternateRevision = gitOk(root, ["rev-parse", "HEAD"]).trim();
-  const alternate = pinnedToolchainAvailable(root, alternateRevision);
-  writeFileSync(file, '[toolchain]\nchannel = "bridge-unavailable-regression-toolchain"\n');
-  assert.deepEqual(pinnedToolchainAvailable(root, alternateRevision), alternate);
-  assert.deepEqual(pinnedToolchainAvailable(root, revision), committed, "captured revision remains authoritative after HEAD moves");
+  const alternate = pinnedToolchainAvailable(root, alternateRevision, localRustup.env);
+  assert.deepEqual(alternate, { ok: true, reason: null });
+  writeFileSync(file, `[toolchain]\nchannel = "${originalChannel}"\n`);
+  assert.deepEqual(pinnedToolchainAvailable(root, alternateRevision, localRustup.env), alternate);
+  assert.deepEqual(
+    pinnedToolchainAvailable(root, revision, localRustup.env),
+    committed,
+    "captured revision remains authoritative after HEAD moves",
+  );
 });
 
 
