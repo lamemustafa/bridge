@@ -281,7 +281,7 @@ test("source state leaves index bytes unchanged after a stat-only file change", 
   const file = join(root, "rust-toolchain.toml");
   const index = join(root, ".git", "index");
   const before = readFileSync(index);
-  utimesSync(file, new Date(1000000000000), new Date(1000000000000));
+  utimesSync(file, new Date("2001-09-09T01:46:40Z"), new Date("2001-09-09T01:46:40Z"));
   const state = repositoryState(root);
   assert.equal(state.status, "");
   assert.deepEqual(readFileSync(index), before, "source status must not refresh index bytes");
