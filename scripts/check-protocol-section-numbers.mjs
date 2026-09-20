@@ -37,6 +37,7 @@ const compatibilitySurface = fileURLToPath(
 const PARTS_MARKER = /^<!-- protocol-reference-parts:\s*(.*?)\s*-->$/m;
 const LEGACY_ANCHOR_LINE = /^ {0,3}<a\s+id="([^"]+)"\s*><\/a>\s*$/;
 const ATX_HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*)|[ \t]*)$/;
+const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 
 // Bound both per-item diagnostics and inventories before parsing any
 // input-derived path. Besides keeping CI evidence retrievable, the name limit
@@ -65,16 +66,86 @@ function atxHeading(line) {
   return { level: found[1].length, title };
 }
 
+// Split-route headings are deliberately admitted only at the top level. A
+// heading nested in a quote or list has a GitHub fragment too, but this gate
+// cannot safely derive its document structure without becoming a Markdown
+// parser. Refuse it rather than silently omitting it from number and route
+// checks. Container-scoped fences are refused too: their implicit Markdown
+// closure rules would otherwise make a later bare heading disappear.
+function stripContainerPrefix(line) {
+  let remainder = line;
+  let found = false;
+  while (true) {
+    const prefix = /^ {0,3}(?:> ?|(?:[-*+]|\d{1,9}[.)])[ \t]+)/.exec(remainder);
+    if (!prefix) return found ? remainder : null;
+    found = true;
+    remainder = remainder.slice(prefix[0].length);
+  }
+}
+
+function containerAtxHeading(line) {
+  const remainder = stripContainerPrefix(line);
+  return remainder === null ? null : atxHeading(remainder);
+}
+
+function fenceRail(line) {
+  const direct = FENCE.exec(line);
+  if (!direct) return null;
+  const delimiterOffset = line.indexOf(direct[1], direct.index);
+  return { delimiter: direct[1], after: line.slice(delimiterOffset + direct[1].length) };
+}
+
+function containerFence(line) {
+  const remainder = stripContainerPrefix(line);
+  if (remainder === null) return null;
+  return FENCE.exec(remainder);
+}
+
+// The inventory is a top-level HTML-comment control, not a prose convention.
+// A monolithic historical reference has none; a split reference has exactly
+// one. Marker-looking examples are allowed only inside a fenced code block.
+function partInventoryMarkers(indexText) {
+  const markers = [];
+  let fence = null;
+  for (const [index, line] of indexText.split("\n").entries()) {
+    const rail = fenceRail(line);
+    if (fence !== null) {
+      if (
+        rail &&
+        rail.delimiter[0] === fence[0] &&
+        rail.delimiter.length >= fence.length &&
+        rail.after.trim() === ""
+      ) {
+        fence = null;
+      }
+      continue;
+    }
+    if (rail) {
+      if (rail.delimiter[0] !== "`" || !rail.after.includes("`")) fence = rail.delimiter;
+      continue;
+    }
+    const marker = PARTS_MARKER.exec(line);
+    if (marker) markers.push({ value: marker[1], line: index + 1 });
+  }
+  return markers;
+}
+
 // The canonical file stays at the historic path. It and the sibling parts it
 // names share one number allocation; a pre-split base has no marker and is
 // scanned as the single original document. Keeping this inventory in the
 // canonical index makes the split explicit and prevents either the index or a
 // new part from being silently outside the duplicate/renumber gate.
 function referencePaths(indexText, origin) {
-  const marker = PARTS_MARKER.exec(indexText);
-  if (!marker) return [canonicalReference];
+  const markers = partInventoryMarkers(indexText);
+  if (!markers.length) return [canonicalReference];
+  if (markers.length !== 1) {
+    throw new Error(
+      `multiple protocol-reference part inventories (${markers.length}) in ${short(origin)}`,
+    );
+  }
+  const marker = markers[0];
   let declaredCount = 1;
-  for (const character of marker[1]) {
+  for (const character of marker.value) {
     if (character === "|") declaredCount += 1;
     if (declaredCount > MAX_DECLARED_PARTS) {
       throw new Error(
@@ -82,7 +153,7 @@ function referencePaths(indexText, origin) {
       );
     }
   }
-  const parts = marker[1].split("|").map((part) => part.trim());
+  const parts = marker.value.split("|").map((part) => part.trim());
   if (!parts.length || parts.some((part) => !part) || new Set(parts).size !== parts.length) {
     throw new Error(`invalid protocol-reference part inventory in ${short(origin)}`);
   }
@@ -183,7 +254,7 @@ const references = referencePaths(canonicalText, relPath(canonicalReference)).ma
 // are navigation and never generated legacy routes. Before the split, the
 // canonical document is both the number source and the route source.
 function routeReferences(referenceSet, indexText) {
-  if (!PARTS_MARKER.test(indexText)) return referenceSet;
+  if (!partInventoryMarkers(indexText).length) return referenceSet;
   return referenceSet.filter(({ path }) => path !== canonicalReference);
 }
 
@@ -196,7 +267,6 @@ function routeReferences(referenceSet, indexText) {
 // four or more make an indented code block. A `##` inside a fenced block is not
 // a heading at all, and counting one there fails CI over an example.
 const SECTION_NUMBER = /^((?:\d+[a-z]?)(?:\.\d+[a-z]?)*)(?=[\s.:—-]|$)/;
-const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 // A Setext heading is a line of text with `===` or `---` under it, and it is a
 // heading at levels 1 and 2. Ignoring the form entirely would let
 // `9.14 New section` + an underline duplicate an existing number while this
@@ -316,14 +386,13 @@ function* visibleMarkdownLines(lines, origin, htmlMode = "allow") {
   let comment = false;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    const rail = FENCE.exec(line);
+    const rail = fenceRail(line);
     if (fence !== null) {
       if (!rail) continue;
-      const after = line.slice(line.indexOf(rail[1]) + rail[1].length);
       if (
-        rail[1][0] === fence[0] &&
-        rail[1].length >= fence.length &&
-        after.trim() === ""
+        rail.delimiter[0] === fence[0] &&
+        rail.delimiter.length >= fence.length &&
+        rail.after.trim() === ""
       ) {
         fence = null;
       }
@@ -340,10 +409,9 @@ function* visibleMarkdownLines(lines, origin, htmlMode = "allow") {
       continue;
     }
     if (rail) {
-      const after = line.slice(line.indexOf(rail[1]) + rail[1].length);
       // A backtick fence's info string may not contain a backtick. Such a line
       // is neither an opener nor a route/heading source.
-      if (rail[1][0] !== "`" || !after.includes("`")) fence = rail[1];
+      if (rail.delimiter[0] !== "`" || !rail.after.includes("`")) fence = rail.delimiter;
       continue;
     }
     // A same-line paired code span is visible text, but its literal comment
@@ -785,6 +853,19 @@ function headingRoutes(referenceSet) {
           `Setext headings are unsupported in split protocol routes: ${short(origin)}:${setext.line}`,
         );
       }
+      if (containerFence(line)) {
+        throw new Error(
+          `container-prefixed fenced code block is unsupported in split protocol routes: ` +
+            `${short(origin)}:${index + 1}`,
+        );
+      }
+      const container = containerAtxHeading(line);
+      if (container) {
+        throw new Error(
+          `container-prefixed ATX heading is unsupported in split protocol routes: ` +
+            `${short(origin)}:${index + 1}`,
+        );
+      }
       const found = atxHeading(line);
       if (!found || !found.title) continue;
       const title = found.title;
@@ -900,7 +981,7 @@ function legacyIndexFailures(contents, origin) {
   return messages;
 }
 
-if (PARTS_MARKER.test(canonicalText)) {
+if (partInventoryMarkers(canonicalText).length) {
   const indexed = new Map();
   const currentIndex = indexedContents(canonicalText);
   failures.push(...legacyIndexFailures(currentIndex, relPath(canonicalReference)));
@@ -923,6 +1004,7 @@ if (PARTS_MARKER.test(canonicalText)) {
   const currentRoutes = headingRoutes(routeReferences(references, canonicalText));
   const required = new Map(currentRoutes.map((route) => [route.legacy, route]));
   const aliases = [];
+  const newlyCreatedAliases = [];
   const inheritedAliases = [];
   if (base) {
     const baseRoutes = headingRoutes(routeReferences(base.references, base.indexText));
@@ -958,7 +1040,10 @@ if (PARTS_MARKER.test(canonicalText)) {
     }
 
     for (const route of baseRoutes) {
-      if (!required.has(route.legacy)) aliases.push(route);
+      if (!required.has(route.legacy)) {
+        aliases.push(route);
+        newlyCreatedAliases.push(route);
+      }
     }
     // A prior split base may already contain aliases for headings retitled
     // before this change. Keep those historic fragments alive too, reserving
@@ -978,6 +1063,31 @@ if (PARTS_MARKER.test(canonicalText)) {
     return actual && (actual.title !== route.title || actual.path !== route.path || actual.target !== route.target);
   });
   const destinations = new Set(currentRoutes.map((route) => `${route.path}#${route.target}`));
+  const sectionNumberForRoute = (route) => SECTION_NUMBER.exec(visibleHeadingTitle(route.title))?.[1] ?? null;
+  const newlyCreatedRetargeted = newlyCreatedAliases.filter((route) => {
+    const actual = indexed.get(route.legacy);
+    if (!actual || !destinations.has(`${actual.path}#${actual.target}`)) return false;
+    const number = sectionNumberForRoute(route);
+    if (!number) return true;
+    const destinationsForNumber = currentRoutes.filter(
+      (current) => sectionNumberForRoute(current) === number,
+    );
+    if (destinationsForNumber.length !== 1) return true;
+    return actual.path !== destinationsForNumber[0].path || actual.target !== destinationsForNumber[0].target;
+  });
+  if (newlyCreatedRetargeted.length) {
+    failures.push(
+      "newly-created legacy anchor(s) do not resolve to their original numbered section; " +
+        "unnumbered route sources require an explicit reviewed mapping:\n" +
+        newlyCreatedRetargeted
+          .slice(0, MAX_REPORTED_NUMBERS)
+          .map((route) => `    ${short(route.legacy)}`)
+          .join("\n") +
+        (newlyCreatedRetargeted.length > MAX_REPORTED_NUMBERS
+          ? `\n    ... and ${newlyCreatedRetargeted.length - MAX_REPORTED_NUMBERS} more`
+          : ""),
+    );
+  }
   // When the prior destination was retitled again, its current canonical
   // redirect is the next link. Resolve until reaching a live part heading.
   const resolveInheritedDestination = (route) => {
