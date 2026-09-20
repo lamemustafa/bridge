@@ -1316,6 +1316,61 @@ const sep = "\\";`);
   rmSync(join(work, PART_B));
 }
 
+// --- #533 container visibility gaps -----------------------------------------
+// Reset the disposable two-repository fixture to one split base. These controls
+// exercise the actual base comparison so a convenient fixture-only failure
+// cannot stand in for the gate's refusal.
+{
+  const first = SPLIT_BASE_DOC;
+  const second = "# Part B\n";
+  writeFileSync(join(upstream, PART_A), first);
+  writeFileSync(join(upstream, PART_B), second);
+  writeFileSync(join(upstream, DOC), splitIndex([first, second]));
+  writeSurface(upstream, [DOC, PART_A, PART_B]);
+  git(upstream, "add", "-A");
+  git(upstream, "commit", "-qm", "reset split fixture for container controls");
+  git(work, "fetch", "-q", "origin");
+
+  writeFileSync(join(work, PART_A), first);
+  writeFileSync(join(work, PART_B), second);
+  writeFileSync(
+    join(work, DOC),
+    splitIndex([first, second]).replace(
+      "# Reference index\n\n",
+      "# Reference index\n\n> ## Method note\n\n",
+    ),
+  );
+  writeSurface(work, [DOC, PART_A, PART_B]);
+  const out = runGate();
+  const text = `${out.stdout}${out.stderr}`;
+  if (
+    out.status !== 0 &&
+    text.includes("container-prefixed ATX heading is unsupported in split protocol index") &&
+    text.includes(DOC)
+  ) {
+    console.log("ok   a blockquote index heading cannot shadow a legacy fragment");
+  } else {
+    failed += 1;
+    console.error(`FAIL a blockquote index heading must be refused before it shadows a legacy fragment\n  exit ${out.status}: ${text.split("\\n").slice(0, 6).join("\\n  ")}`);
+  }
+}
+
+{
+  const first = `${SPLIT_BASE_DOC}\n- continuation context\n  \`\`\`md\n  ## 9.7 example only\n\n## 9.7 live duplicate\n`;
+  const out = runSplitGate(first, "# Part B\n");
+  const text = `${out.stdout}${out.stderr}`;
+  if (
+    out.status !== 0 &&
+    text.includes("list-continuation fenced code block is unsupported in split protocol part") &&
+    text.includes(PART_A)
+  ) {
+    console.log("ok   an unclosed list-continuation fence cannot mask a dedented live duplicate");
+  } else {
+    failed += 1;
+    console.error(`FAIL an unclosed list-continuation fence must be refused before it masks a live duplicate\n  exit ${out.status}: ${text.split("\\n").slice(0, 6).join("\\n  ")}`);
+  }
+}
+
 // The real document must satisfy its own gate, and the fixture above is not
 // evidence of that — it shares none of the real headings, so it exercises the
 // rules but not the *parser* against 2,000 lines of fences, tables and Setext.

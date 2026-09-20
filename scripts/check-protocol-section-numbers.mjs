@@ -101,6 +101,18 @@ function containerFence(line) {
   return FENCE.exec(remainder);
 }
 
+// This is deliberately narrower than Markdown list parsing: reject the
+// unambiguous continuation-fence form directly below a list item. Its implicit
+// closing rules can hide a later top-level heading, and the checker must not
+// treat that heading as safely absent. More elaborate list nesting remains
+// outside the admitted grammar rather than being guessed at here.
+function listContinuationFence(lines, index) {
+  return (
+    /^ {2,3}(?:`{3,}|~{3,})/.test(lines[index]) &&
+    /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)/.test(lines[index - 1] ?? "")
+  );
+}
+
 // The inventory is a top-level HTML-comment control, not a prose convention.
 // A monolithic historical reference has none; a split reference has exactly
 // one. Marker-looking examples are allowed only inside a fenced code block.
@@ -407,6 +419,12 @@ function* visibleMarkdownLines(lines, origin, htmlMode = "allow") {
         comment = false;
       }
       continue;
+    }
+    if (htmlMode !== "allow" && listContinuationFence(lines, index)) {
+      throw new Error(
+        `list-continuation fenced code block is unsupported in split protocol ${htmlMode}: ` +
+          `${short(origin)}:${index + 1}`,
+      );
     }
     if (rail) {
       // A backtick fence's info string may not contain a backtick. Such a line
@@ -912,6 +930,18 @@ function indexedContents(indexText, origin = relPath(canonicalReference)) {
       throw new Error(
         `Setext headings are unsupported in split protocol index: ` +
           `${short(origin)}:${setext.line}`,
+      );
+    }
+    if (containerFence(line)) {
+      throw new Error(
+        `container-prefixed fenced code block is unsupported in split protocol index: ` +
+          `${short(origin)}:${index + 1}`,
+      );
+    }
+    if (containerAtxHeading(line)) {
+      throw new Error(
+        `container-prefixed ATX heading is unsupported in split protocol index: ` +
+          `${short(origin)}:${index + 1}`,
       );
     }
     const heading = atxHeading(line);
