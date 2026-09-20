@@ -150,8 +150,7 @@ fn decoded_hash_and_length_mismatches_are_refused() {
     let bytes = part_mut(&mut length_manifest, "vouchers-2025-04-01")["response"]["bytes"]
         .as_u64()
         .unwrap();
-    part_mut(&mut length_manifest, "vouchers-2025-04-01")["response"]["bytes"] =
-        json!(bytes + 1);
+    part_mut(&mut length_manifest, "vouchers-2025-04-01")["response"]["bytes"] = json!(bytes + 1);
     length_store.set_manifest(&length_manifest);
     assert_eq!(code(open(&length_store)), "C3-content-hash");
 }
