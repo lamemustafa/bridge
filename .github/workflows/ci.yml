@@ -139,7 +139,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: 1.96.0
+      - name: Require pinned Rust for reseal regressions
+        run: rustup which --toolchain 1.96.0 rustc
       - run: node scripts/check-ci-workflow-consistency.mjs
+      - name: Test reseal and merge-driver regressions
+        run: node --test scripts/reseal.test.mjs scripts/reseal-merge-driver.test.mjs
       - run: node scripts/check-protocol-section-numbers.mjs
       - run: node scripts/check-protocol-section-numbers.test.mjs
       - run: node --test scripts/prune-package-compiler-cache.test.mjs

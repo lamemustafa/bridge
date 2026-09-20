@@ -16,6 +16,33 @@ const workflow = readFileSync(workflowPath, "utf8");
 const failures = [];
 const metadataByWorkspace = new Map();
 
+// These suites may skip in the frontend job, which intentionally has no Rust.
+// Bind their real execution to an existing required job with the pinned toolchain.
+const workflowConsistency = jobBlock(workflow, "workflow-consistency");
+const toolchain = readFileSync(resolve(repositoryRoot, "rust-toolchain.toml"), "utf8").match(/^channel *= *"([^"]+)"/m)?.[1];
+if (!toolchain) throw new Error("could not read [toolchain].channel from rust-toolchain.toml");
+const pinnedRustPreflight = `rustup which --toolchain ${toolchain} rustc`;
+const resealRegressions = "node --test scripts/reseal.test.mjs scripts/reseal-merge-driver.test.mjs";
+const pinnedRustSetup = new RegExp(
+  `^      - uses: dtolnay/rust-toolchain@[^\\n]+\\n        with:\\n          toolchain: ${escapeRegex(toolchain)}$`,
+  "m",
+);
+if (!pinnedRustSetup.test(workflowConsistency)) {
+  failures.push("workflow-consistency must install the repository's pinned Rust toolchain");
+}
+const preflightOffset = exactRunStepOffset(workflowConsistency, "Require pinned Rust for reseal regressions", pinnedRustPreflight);
+const regressionOffset = exactRunStepOffset(workflowConsistency, "Test reseal and merge-driver regressions", resealRegressions);
+if (preflightOffset === -1) failures.push("workflow-consistency must fail when pinned Rust is unavailable");
+if (regressionOffset === -1) failures.push("workflow-consistency must run the reseal regression suites");
+if (preflightOffset !== -1 && regressionOffset !== -1 && preflightOffset > regressionOffset) {
+  failures.push("workflow-consistency must require pinned Rust before running reseal regressions");
+}
+
+const requiredChecks = jobBlock(workflow, "required-checks");
+if (!/^    needs: \[[^\n]*\bworkflow-consistency\b[^\n]*\]$/m.test(requiredChecks)) {
+  failures.push("required-checks must propagate workflow-consistency failures");
+}
+
 for (const step of parseWorkflowSteps(workflow)) {
   for (const command of cargoCommands(step.run)) {
     const packages = [...command.matchAll(/(?:^|\s)-p\s+([A-Za-z0-9_.-]+)/g)].map((match) => match[1]);
@@ -49,7 +76,7 @@ if (failures.length) {
   throw new Error(`CI workflow references do not resolve:\n${failures.join("\n")}`);
 }
 
-console.log("CI workflow package and feature references resolve.");
+console.log("CI workflow references and required execution contracts resolve.");
 
 function parseWorkflowSteps(source) {
   const steps = [];
@@ -82,6 +109,30 @@ function parseWorkflowSteps(source) {
     if (step.run) steps.push(step);
   }
   return steps;
+}
+
+function jobBlock(source, jobName) {
+  const lines = source.split(/\r?\n/);
+  const start = lines.findIndex((line) => line === `  ${jobName}:`);
+  if (start === -1) {
+    failures.push(`CI workflow is missing job ${jobName}`);
+    return "";
+  }
+  let end = start + 1;
+  while (end < lines.length && !/^  [A-Za-z0-9_-]+:\s*$/.test(lines[end])) end += 1;
+  return lines.slice(start, end).join("\n");
+}
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function exactRunStepOffset(job, name, command) {
+  const expected = `      - name: ${name}\n        run: ${command}`;
+  const offset = job.indexOf(expected);
+  if (offset === -1) return -1;
+  const suffix = job.slice(offset + expected.length);
+  return suffix === "" || suffix.startsWith("\n      - ") ? offset : -1;
 }
 
 function cargoCommands(run) {
