@@ -66,12 +66,8 @@ const sourceGitEnv = {
 };
 
 function pinnedToolchainAvailable(root, revision, env = gitEnv) {
-  let tomlText;
-  try {
-    tomlText = gitOk(root, ["show", `${revision}:rust-toolchain.toml`], "read committed toolchain", env);
-  } catch {
-    return { ok: false, reason: "rust-toolchain.toml not found" };
-  }
+  // A failed source read is a test failure, never evidence that Rust is unavailable.
+  const tomlText = gitOk(root, ["show", `${revision}:rust-toolchain.toml`], "read committed toolchain", env);
   const match = /^channel *= *"(.*)"/m.exec(tomlText);
   if (!match) return { ok: false, reason: "could not read [toolchain].channel" };
   const which = spawnSync("rustup", ["which", "--toolchain", match[1], "rustc"], { encoding: "utf8" });
@@ -307,4 +303,13 @@ test("toolchain preflight reads the captured revision despite dirty or missing s
   writeFileSync(file, '[toolchain]\nchannel = "bridge-unavailable-regression-toolchain"\n');
   assert.deepEqual(pinnedToolchainAvailable(root, alternateRevision), alternate);
   assert.deepEqual(pinnedToolchainAvailable(root, revision), committed, "captured revision remains authoritative after HEAD moves");
+});
+
+
+test("a failed committed-toolchain read fails instead of skipping the suite", (t) => {
+  const root = sourceReadFixture(t);
+  assert.throws(
+    () => pinnedToolchainAvailable(root, "missing-revision"),
+    /read committed toolchain failed/,
+  );
 });
