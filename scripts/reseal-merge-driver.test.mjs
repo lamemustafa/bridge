@@ -28,7 +28,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { devNull, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -65,10 +65,10 @@ const sourceGitEnv = {
   GIT_CONFIG_VALUE_0: repoRoot,
 };
 
-function pinnedToolchainAvailable() {
+function pinnedToolchainAvailable(root, revision, env = gitEnv) {
   let tomlText;
   try {
-    tomlText = readFileSync(join(repoRoot, "rust-toolchain.toml"), "utf8");
+    tomlText = gitOk(root, ["show", `${revision}:rust-toolchain.toml`], "read committed toolchain", env);
   } catch {
     return { ok: false, reason: "rust-toolchain.toml not found" };
   }
@@ -118,19 +118,22 @@ function repositoryState(root, env = gitEnv) {
     head: gitOk(root, ["rev-parse", "--verify", "HEAD"], "capture HEAD", env).trim(),
     symbolicHeadStatus: symbolicHead.status,
     symbolicHead: symbolicHead.stdout,
-    status: gitOk(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], "capture status", env),
+    status: gitOk(root, ["--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all"], "capture status", env),
     localConfigSha256: createHash("sha256").update(localConfig.stdout).digest("hex"),
   };
 }
 
-const toolchain = pinnedToolchainAvailable();
-const skip = toolchain.ok ? false : `pinned Rust toolchain unavailable: ${toolchain.reason}`;
 
 // A single suite shares one unique clone. Different scripts/*.test.mjs workers
 // get different temp directories, so their Git refs, index, config, and working
 // files cannot collide.
-test("git merge driver: reconciles disjoint pinned-file changes, refuses genuine ones", { skip }, async (t) => {
+test("git merge driver: reconciles disjoint pinned-file changes, refuses genuine ones", async (t) => {
   const sourceState = repositoryState(repoRoot, sourceGitEnv);
+  const toolchain = pinnedToolchainAvailable(repoRoot, sourceState.head, sourceGitEnv);
+  if (!toolchain.ok) {
+    t.skip(`pinned Rust toolchain unavailable: ${toolchain.reason}`);
+    return;
+  }
   const sandbox = mkdtempSync(join(tmpdir(), "bridge-reseal-driver-"));
   const fixtureRoot = join(sandbox, "repo");
 
@@ -258,3 +261,41 @@ function hashMismatches(root) {
   }
   return mismatches;
 }
+
+
+// Small real Git repositories exercise source reads even without Rust installed.
+function sourceReadFixture(t) {
+  const root = mkdtempSync(join(tmpdir(), "bridge-reseal-source-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  gitOk(root, ["init", "--quiet"]);
+  gitOk(root, ["config", "user.name", "Source read test"]);
+  gitOk(root, ["config", "user.email", "source-read@example.invalid"]);
+  writeFileSync(join(root, "rust-toolchain.toml"), '[toolchain]\nchannel = "bridge-unavailable-regression-toolchain"\n');
+  gitOk(root, ["add", "rust-toolchain.toml"]);
+  gitOk(root, ["-c", "commit.gpgSign=false", "commit", "--quiet", "-m", "source fixture"]);
+  return root;
+}
+
+test("source state leaves index bytes unchanged after a stat-only file change", (t) => {
+  const root = sourceReadFixture(t);
+  const file = join(root, "rust-toolchain.toml");
+  const index = join(root, ".git", "index");
+  const before = readFileSync(index);
+  utimesSync(file, new Date(1000000000000), new Date(1000000000000));
+  const state = repositoryState(root);
+  assert.equal(state.status, "");
+  assert.deepEqual(readFileSync(index), before, "source status must not refresh index bytes");
+});
+
+test("toolchain preflight reads the captured revision despite dirty or missing source file", (t) => {
+  const root = sourceReadFixture(t);
+  const revision = gitOk(root, ["rev-parse", "HEAD"]).trim();
+  const file = join(root, "rust-toolchain.toml");
+  const committed = pinnedToolchainAvailable(root, revision);
+  assert.equal(committed.ok, false);
+  assert.match(committed.reason, /bridge-unavailable-regression-toolchain/);
+  writeFileSync(file, '[toolchain]\nchannel = "1.96.0"\n');
+  assert.deepEqual(pinnedToolchainAvailable(root, revision), committed);
+  rmSync(file);
+  assert.deepEqual(pinnedToolchainAvailable(root, revision), committed);
+});
