@@ -101,16 +101,35 @@ function containerFence(line) {
   return FENCE.exec(remainder);
 }
 
-// This is deliberately narrower than Markdown list parsing: reject the
-// unambiguous continuation-fence form directly below a list item. Its implicit
-// closing rules can hide a later top-level heading, and the checker must not
-// treat that heading as safely absent. More elaborate list nesting remains
-// outside the admitted grammar rather than being guessed at here.
-function listContinuationFence(lines, index) {
-  return (
-    /^ {2,3}(?:`{3,}|~{3,})/.test(lines[index]) &&
-    /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)/.test(lines[index - 1] ?? "")
-  );
+// This is deliberately narrower than Markdown list parsing. It tracks the
+// content indentation of a visible list item so that a continuation fence after
+// blank or ordinary indented continuation lines is refused before Markdown's
+// implicit fence/list closure can hide a later top-level heading. A visible
+// dedent ends this admitted container state; deeper list grammar is not guessed.
+function listContinuationIndent(line) {
+  const marker = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)/.exec(line);
+  return marker ? marker[0].length : null;
+}
+
+function leadingSpaces(line) {
+  return /^ */.exec(line)[0].length;
+}
+
+function listFenceClosesBeforeDedent(lines, openerIndex, opening, listIndent) {
+  for (let index = openerIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    const rail = fenceRail(line);
+    if (
+      rail &&
+      rail.delimiter[0] === opening.delimiter[0] &&
+      rail.delimiter.length >= opening.delimiter.length &&
+      rail.after.trim() === ""
+    ) {
+      return true;
+    }
+    if (line.trim() && leadingSpaces(line) < listIndent) return false;
+  }
+  return false;
 }
 
 // The inventory is a top-level HTML-comment control, not a prose convention.
@@ -396,6 +415,7 @@ function* visibleMarkdownLines(lines, origin, htmlMode = "allow") {
   const visibleEntries = [];
   let fence = null;
   let comment = false;
+  let listIndent = null;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     const rail = fenceRail(line);
@@ -420,7 +440,20 @@ function* visibleMarkdownLines(lines, origin, htmlMode = "allow") {
       }
       continue;
     }
-    if (htmlMode !== "allow" && listContinuationFence(lines, index)) {
+    const markerIndent = listContinuationIndent(line);
+    if (markerIndent !== null) {
+      listIndent = markerIndent;
+    } else if (listIndent !== null && line.trim() && leadingSpaces(line) < listIndent) {
+      listIndent = null;
+    }
+    const opensFence = rail && (rail.delimiter[0] !== "`" || !rail.after.includes("`"));
+    if (
+      htmlMode !== "allow" &&
+      opensFence &&
+      listIndent !== null &&
+      leadingSpaces(line) >= listIndent &&
+      !listFenceClosesBeforeDedent(lines, index, rail, listIndent)
+    ) {
       throw new Error(
         `list-continuation fenced code block is unsupported in split protocol ${htmlMode}: ` +
           `${short(origin)}:${index + 1}`,
@@ -429,7 +462,7 @@ function* visibleMarkdownLines(lines, origin, htmlMode = "allow") {
     if (rail) {
       // A backtick fence's info string may not contain a backtick. Such a line
       // is neither an opener nor a route/heading source.
-      if (rail.delimiter[0] !== "`" || !rail.after.includes("`")) fence = rail.delimiter;
+      if (opensFence) fence = rail.delimiter;
       continue;
     }
     // A same-line paired code span is visible text, but its literal comment

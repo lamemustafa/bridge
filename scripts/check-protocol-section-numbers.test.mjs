@@ -1371,6 +1371,43 @@ const sep = "\\";`);
   }
 }
 
+{
+  const first = `${SPLIT_BASE_DOC}\n- continuation context\n  \`\`\`md\n  ## 9.7 safe example\n  \`\`\`\n`;
+  const second = "# Part B\n";
+  writeFileSync(join(work, PART_A), first);
+  writeFileSync(join(work, PART_B), second);
+  // The index deliberately lists only rendered headings. The fenced example
+  // must stay inert while the matching closer makes the list fence safe.
+  writeFileSync(join(work, DOC), splitIndex([SPLIT_BASE_DOC, second]));
+  writeSurface(work, [DOC, PART_A, PART_B]);
+  const out = runGate();
+  if (out.status === 0) {
+    console.log("ok   a closed list-continuation fence remains an ordinary safe example");
+  } else {
+    failed += 1;
+    console.error(`FAIL a closed list-continuation fence must remain allowed\n  exit ${out.status}: ${`${out.stdout}${out.stderr}`.split("\\n").slice(0, 6).join("\\n  ")}`);
+  }
+}
+
+for (const [name, continuation] of [
+  ["a blank line", "\n\n"],
+  ["ordinary indented continuation text", "\n  ordinary continuation text\n"],
+]) {
+  const first = `${SPLIT_BASE_DOC}\n- continuation context${continuation}  \`\`\`md\n  ## 9.7 example only\n\n## 9.7 live duplicate\n`;
+  const out = runSplitGate(first, "# Part B\n");
+  const text = `${out.stdout}${out.stderr}`;
+  if (
+    out.status !== 0 &&
+    text.includes("list-continuation fenced code block is unsupported in split protocol part") &&
+    text.includes(PART_A)
+  ) {
+    console.log(`ok   ${name} cannot leave a list-continuation fence masking a dedented live duplicate`);
+  } else {
+    failed += 1;
+    console.error(`FAIL ${name} must not let a list-continuation fence mask a live duplicate\n  exit ${out.status}: ${text.split("\\n").slice(0, 6).join("\\n  ")}`);
+  }
+}
+
 // The real document must satisfy its own gate, and the fixture above is not
 // evidence of that — it shares none of the real headings, so it exercises the
 // rules but not the *parser* against 2,000 lines of fences, tables and Setext.
