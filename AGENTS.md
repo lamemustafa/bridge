@@ -50,8 +50,8 @@ bullet.
 **The test for "sensitive":** would publishing it let someone **harm a user or a Tally
 instance**, or hand a competitor something they **could not measure themselves in an
 afternoon**? If yes, it goes in the hub and only a de-fanged rule stays here. Ordinary
-request/response behaviour, field semantics and protocol invariants belong in
-`docs/tally/TALLY_PROTOCOL_REFERENCE.md`, which exists for exactly that.
+request/response behaviour, field semantics and protocol invariants belong in the appropriate
+topic part declared by `docs/tally/TALLY_PROTOCOL_REFERENCE.md`, which remains the canonical index.
 
 This distinction matters because source comments cite that reference by section. **A citation
 into a private document is worse than no citation** — it looks auditable and is not.
@@ -181,8 +181,20 @@ Keep the existing crate layering intent, and enforce it:
 
 ### P9. Documentation lives with the decision, not in a wiki
 
-A behavioural discovery goes into `TALLY_PROTOCOL_REFERENCE.md`; a build rule goes into
-`IMPLEMENTATION_GUIDE.md`; a plan change goes into the plan with a dated deviation note. A
+A behavioural discovery goes into the appropriate declared topic part linked from
+`docs/tally/TALLY_PROTOCOL_REFERENCE.md`. Keep that canonical file as the navigation and
+legacy-link index; retain its section redirects and update them when adding or moving a
+heading. Use unique ATX section headings in the declared parts. The route gate supports ASCII
+text, `§`/`—` punctuation, `**bold**` and single-backtick inline code; unsupported heading or redirect
+markup is refused rather than approximated. Raw HTML blocks and inline HTML IDs are unsupported
+in the split index and declared parts, except for the canonical index’s complete standalone
+legacy-anchor lines. Each redirect uses one anchor line, one blank line and one standalone link
+line; orphan or duplicate anchor IDs are refused. Setext section headings are not supported in
+the split reference. Literal HTML examples must use fenced blocks or same-line paired inline
+code; indented and multiline inline-code HTML examples are outside this gate’s admitted format.
+The index and every declared part are compatibility-pinned sources, so follow
+`docs/release-process.md` after edits. A build rule goes into `IMPLEMENTATION_GUIDE.md`;
+a plan change goes into the plan with a dated deviation note. A
 finding that exists only in a conversation is lost. If code encodes a non-obvious external
 behaviour, the comment cites the reference section rather than restating it.
 
