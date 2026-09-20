@@ -47,9 +47,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { devNull, tmpdir } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, parse } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repoRoot = realpathSync(join(dirname(fileURLToPath(import.meta.url)), ".."));
 const SURFACE = "docs/tally/compatibility/compatibility-surface.json";
@@ -88,12 +88,17 @@ const gitEnv = sanitizedGitEnvironment(process.env);
 // containers. Trust only its canonical path, and only for deliberate source
 // reads and the clone command whose upload-pack child reads that source.
 function sourceGitEnvironment(sourceRoot, environment = gitEnv) {
-  return {
-    ...environment,
-    GIT_CONFIG_COUNT: "1",
-    GIT_CONFIG_KEY_0: "safe.directory",
-    GIT_CONFIG_VALUE_0: realpathSync(sourceRoot),
-  };
+  const canonicalRoot = realpathSync(sourceRoot);
+  let scoped = withGitConfig(environment, "safe.directory", canonicalRoot);
+  const gitDirectory = realpathSync(
+    gitOk(canonicalRoot, ["rev-parse", "--absolute-git-dir"], "resolve source Git directory", scoped).trim(),
+  );
+  const commonValue = gitOk(canonicalRoot, ["rev-parse", "--git-common-dir"], "resolve source common Git directory", scoped).trim();
+  const commonDirectory = realpathSync(isAbsolute(commonValue) ? commonValue : join(canonicalRoot, commonValue));
+  for (const directory of new Set([gitDirectory, commonDirectory])) {
+    scoped = withGitConfig(scoped, "safe.directory", directory);
+  }
+  return scoped;
 }
 
 const sourceGitEnv = sourceGitEnvironment(repoRoot);
@@ -104,11 +109,12 @@ function pinnedToolchainAvailable(root, revision, env = gitEnv) {
   const match = /^channel *= *"(.*)"/m.exec(tomlText);
   assert.ok(match, "committed rust-toolchain.toml has no parseable channel");
   const channel = match[1];
+  const rustupCwd = parse(realpathSync(root)).root;
   // `rustup which --toolchain <channel>` may synchronize a missing named
   // channel. Check the local inventory first and only resolve a toolchain that
   // is already installed. The required CI job separately installs the real
   // pinned channel before invoking this suite.
-  const listed = spawnSync("rustup", ["toolchain", "list"], { encoding: "utf8", env });
+  const listed = spawnSync("rustup", ["toolchain", "list"], { cwd: rustupCwd, encoding: "utf8", env });
   if (listed.error || listed.status !== 0) {
     return { ok: false, reason: "rustup could not list installed toolchains" };
   }
@@ -125,7 +131,11 @@ function pinnedToolchainAvailable(root, revision, env = gitEnv) {
   }
   // Resolve the exact installed inventory entry, never the uninstalled channel
   // spelling. This keeps the lookup local even for host-qualified toolchains.
-  const which = spawnSync("rustup", ["which", "--toolchain", installedName, "rustc"], { encoding: "utf8", env });
+  const which = spawnSync("rustup", ["which", "--toolchain", installedName, "rustc"], {
+    cwd: rustupCwd,
+    encoding: "utf8",
+    env,
+  });
   if (which.error || which.status !== 0) {
     return { ok: false, reason: `rustup toolchain ${channel} is not installed` };
   }
@@ -220,11 +230,11 @@ function checkoutCapturedSource(
   env = sourceGitEnvironment(sourceRoot),
 ) {
   gitOk(dirname(fixtureRoot), ["init", "--quiet", `--template=${emptyTemplate}`, fixtureRoot], "initialize fixture", env);
+  const fixtureTrust = ["-c", `safe.directory=${realpathSync(fixtureRoot)}`];
   gitOk(
     fixtureRoot,
     [
-      "-c",
-      `safe.directory=${realpathSync(fixtureRoot)}`,
+      ...fixtureTrust,
       "fetch",
       "--quiet",
       "--no-tags",
@@ -235,9 +245,9 @@ function checkoutCapturedSource(
     "fetch captured source",
     env,
   );
-  gitOk(fixtureRoot, ["checkout", "--quiet", "--detach", captured.head], "detach fixture at source HEAD");
-  assert.equal(gitOk(fixtureRoot, ["rev-parse", "HEAD"], "verify captured commit").trim(), captured.head);
-  assert.equal(gitOk(fixtureRoot, ["rev-parse", "HEAD^{tree}"], "verify captured tree").trim(), captured.tree);
+  gitOk(fixtureRoot, [...fixtureTrust, "checkout", "--quiet", "--detach", captured.head], "detach fixture at source HEAD", env);
+  assert.equal(gitOk(fixtureRoot, [...fixtureTrust, "rev-parse", "HEAD"], "verify captured commit", env).trim(), captured.head);
+  assert.equal(gitOk(fixtureRoot, [...fixtureTrust, "rev-parse", "HEAD^{tree}"], "verify captured tree", env).trim(), captured.tree);
 }
 
 
@@ -404,11 +414,13 @@ function localRustupFixture(t, installedToolchains = []) {
   const sandbox = makeSandbox("bridge-local-rustup-");
   const bin = join(sandbox, "bin");
   const log = join(sandbox, "rustup.log");
+  const cwdLog = join(sandbox, "rustup-cwd.log");
   mkdirSync(bin);
   writeFileSync(
     join(bin, "rustup"),
     `#!/bin/sh
 printf '%s\\n' "$*" >> "$BRIDGE_RUSTUP_LOG"
+printf '%s\\n' "$PWD" >> "$BRIDGE_RUSTUP_CWD_LOG"
 if [ "$1 $2" = "toolchain list" ]; then
   printf '%s\\n' "$BRIDGE_RUSTUP_TOOLCHAINS"
   exit 0
@@ -422,14 +434,17 @@ exit 97
   );
   chmodSync(join(bin, "rustup"), 0o755);
   writeFileSync(log, "");
+  writeFileSync(cwdLog, "");
   t.after(() => rmSync(sandbox, { recursive: true, force: true }));
   return {
     env: {
       ...gitEnv,
       PATH: `${bin}:${process.env.PATH ?? ""}`,
       BRIDGE_RUSTUP_LOG: log,
+      BRIDGE_RUSTUP_CWD_LOG: cwdLog,
       BRIDGE_RUSTUP_TOOLCHAINS: installedToolchains.join("\n"),
     },
+    cwdLog,
     log,
   };
 }
@@ -529,6 +544,60 @@ test("a locally installed committed toolchain resolves only after the inventory 
   ]);
 });
 
+test("source trust covers the exact worktree and Git directory", (t) => {
+  const source = sourceReadFixture(t);
+  const environment = sourceGitEnvironment(source);
+  const count = Number(environment.GIT_CONFIG_COUNT);
+  const safeDirectories = Array.from({ length: count }, (_, index) =>
+    environment[`GIT_CONFIG_KEY_${index}`] === "safe.directory"
+      ? environment[`GIT_CONFIG_VALUE_${index}`]
+      : null,
+  ).filter(Boolean);
+  const gitDirectory = realpathSync(gitOk(source, ["rev-parse", "--absolute-git-dir"], null, environment).trim());
+  assert.deepEqual(safeDirectories, [realpathSync(source), gitDirectory]);
+});
+
+test("rustup inventory and resolution run outside the pinned checkout", (t) => {
+  const channel = "bridge-installed-neutral-cwd-toolchain";
+  const root = sourceReadFixture(t, channel);
+  const revision = gitOk(root, ["rev-parse", "HEAD"]).trim();
+  const localRustup = localRustupFixture(t, [channel]);
+  assert.deepEqual(pinnedToolchainAvailable(root, revision, localRustup.env), { ok: true, reason: null });
+  assert.deepEqual(
+    readFileSync(localRustup.cwdLog, "utf8").trim().split("\n"),
+    [parse(realpathSync(root)).root, parse(realpathSync(root)).root],
+  );
+});
+
+test("real rustup inventory stays local with an empty controlled home", (t) => {
+  const root = sourceReadFixture(t);
+  const revision = gitOk(root, ["rev-parse", "HEAD"]).trim();
+  const sandbox = makeSandbox("bridge-real-rustup-");
+  const rustupHome = join(sandbox, "rustup-home");
+  mkdirSync(rustupHome);
+  t.after(() => rmSync(sandbox, { recursive: true, force: true }));
+  const environment = {
+    ...gitEnv,
+    RUSTUP_HOME: rustupHome,
+    RUSTUP_DIST_SERVER: pathToFileURL(join(sandbox, "offline-dist")).href,
+    RUSTUP_UPDATE_ROOT: pathToFileURL(join(sandbox, "offline-update")).href,
+  };
+  const available = spawnSync("rustup", ["--version"], {
+    cwd: parse(realpathSync(root)).root,
+    encoding: "utf8",
+    env: environment,
+  });
+  if (available.error?.code === "ENOENT") {
+    t.skip("rustup executable unavailable");
+    return;
+  }
+  assert.equal(available.status, 0, `rustup --version failed:\n${available.stderr}`);
+  assert.deepEqual(pinnedToolchainAvailable(root, revision, environment), {
+    ok: false,
+    reason: "rustup toolchain bridge-unavailable-regression-toolchain is not installed",
+  });
+});
+
 test("captured checkout remains bound after the source branch advances", (t) => {
   const source = sourceReadFixture(t);
   const captured = repositoryState(source);
@@ -557,7 +626,7 @@ test("captured checkout trusts only its differently-owned source path", (t) => {
   checkoutCapturedSource(source, join(sandbox, "fixture"), before, emptyTemplate, trusted);
   assert.deepEqual(repositoryState(source, trusted), before);
 
-  const wrongTrust = sourceGitEnvironment(sandbox, ownerSimulation);
+  const wrongTrust = withGitConfig(ownerSimulation, "safe.directory", realpathSync(sandbox));
   const refused = git(source, ["rev-parse", "HEAD"], { env: wrongTrust });
   assert.notEqual(refused.status, 0);
   assert.match(refused.stderr, /dubious ownership/);
