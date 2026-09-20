@@ -517,6 +517,45 @@ for (const [name, title] of [
   }
 }
 
+for (const [name, heading] of [
+  ["a blockquote heading", "> ## 9.7 Second claimant inside a quote\n"],
+  ["a nested blockquote/list heading", "> - ## 9.7 Second claimant inside a list\n"],
+]) {
+  const first = `${SPLIT_BASE_DOC}\n${heading}`;
+  const out = runSplitGate(first, "# Part B\n");
+  const text = `${out.stdout}${out.stderr}`;
+  if (out.status !== 0 && text.includes("container-prefixed ATX heading") && text.includes(PART_A)) {
+    console.log(`ok   ${name} is refused before it can evade split-route validation`);
+  } else {
+    failed += 1;
+    console.error(`FAIL ${name} must be refused\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+{
+  const first = `${SPLIT_BASE_DOC}\n> \`\`\`md\n> ## 9.7 example only\n> \`\`\`\n`;
+  const out = runSplitGate(first, "# Part B\n");
+  const text = `${out.stdout}${out.stderr}`;
+  if (out.status !== 0 && text.includes("container-prefixed fenced code block") && text.includes(PART_A)) {
+    console.log("ok   a container-fenced heading example is refused instead of changing fence scope");
+  } else {
+    failed += 1;
+    console.error(`FAIL a container-fenced heading example must be refused\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+{
+  const first = `${SPLIT_BASE_DOC}\n  \`\`\`md\n  ## 9.7 example only\n  \`\`\`\n\n## 9.7 live duplicate\n`;
+  const out = runSplitGate(first, "# Part B\n");
+  const text = `${out.stdout}${out.stderr}`;
+  if (out.status !== 0 && text.includes("section 9.7 is used 2 times") && text.includes("live duplicate")) {
+    console.log("ok   an indented fence hides its example while the following live heading is checked");
+  } else {
+    failed += 1;
+    console.error(`FAIL an indented fence must close before a following live heading\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
 {
   const first = SPLIT_BASE_DOC;
   const second = "# Part B\n";
@@ -756,6 +795,39 @@ for (const [name, example] of [
   } else {
     failed += 1;
     console.error(`FAIL a pinned declared part must pass\n  exit ${out.status}: ${`${out.stdout}${out.stderr}`.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+}
+
+{
+  const first = SPLIT_BASE_DOC;
+  const second = "# Part B\n";
+  const markerLookingExample =
+    "\n\`\`\`md\n<!-- protocol-reference-parts: TALLY_PROTOCOL_REFERENCE_ABSENT.md -->\n\`\`\`\n";
+  writeFileSync(join(work, PART_A), first);
+  writeFileSync(join(work, PART_B), second);
+  writeFileSync(
+    join(work, DOC),
+    splitIndex([first, second]) +
+      "\n<!-- protocol-reference-parts: TALLY_PROTOCOL_REFERENCE_ABSENT.md -->\n",
+  );
+  writeSurface(work, [DOC, PART_A, PART_B]);
+  let out = runGate();
+  let text = `${out.stdout}${out.stderr}`;
+  if (out.status !== 0 && text.includes("multiple protocol-reference part inventories")) {
+    console.log("ok   a second protocol inventory is refused even when it names an absent part");
+  } else {
+    failed += 1;
+    console.error(`FAIL a second protocol inventory must be refused\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
+  }
+
+  writeFileSync(join(work, DOC), splitIndex([first, second]) + markerLookingExample);
+  out = runGate();
+  text = `${out.stdout}${out.stderr}`;
+  if (out.status === 0) {
+    console.log("ok   a fenced marker-looking example does not declare a second protocol inventory");
+  } else {
+    failed += 1;
+    console.error(`FAIL a fenced marker-looking example must remain inert\n  exit ${out.status}: ${text.split("\n").slice(0, 6).join("\n  ")}`);
   }
 }
 
@@ -1078,16 +1150,65 @@ const sep = "\\";`);
     }
   };
   expectRoute("split retitle preserves the old fragment as a working alias", index + alias);
+  expectRoute(
+    "a first-generation retitle alias cannot target an unrelated current section",
+    index + alias.replace("#10-alpha-revised)", "#20-beta)"),
+    "legacy anchor",
+  );
+
+  const unnumberedBase = `${SPLIT_BASE_DOC}\n## Method note\n\nmethod\n`;
+  writeFileSync(join(upstream, DOC), unnumberedBase);
+  git(upstream, "add", DOC);
+  git(upstream, "commit", "-qm", "add an unnumbered route source");
+  git(work, "fetch", "-q", "origin");
+  expectRoute(
+    "a first-generation unnumbered alias is refused instead of guessing a destination",
+    index + alias + routeBlock({
+      anchor: "method-note",
+      title: "Method note",
+      path: PART_A,
+      target: "10-alpha-revised",
+    }) + "\n",
+    "legacy anchor",
+    "method-note",
+  );
+  writeFileSync(join(upstream, DOC), SPLIT_BASE_DOC);
+  git(upstream, "add", DOC);
+  git(upstream, "commit", "-qm", "restore the numbered route fixture");
+  git(work, "fetch", "-q", "origin");
   expectRoute("legacy aliases cannot target a nonexistent heading",
     index + alias.replace("#10-alpha-revised)", "#missing-heading)"), "do not resolve");
 
-  const splitBaseFirst = `${first}\n## Method note revised\n\nmethod\n`;
+  const splitBaseNewAliasFirst = `${SPLIT_BASE_DOC}\n## 30 Plain source\n\nbody\n`;
+  const splitBaseNewAliasIndex = splitIndex([splitBaseNewAliasFirst, second]);
+  writeFileSync(join(upstream, PART_A), splitBaseNewAliasFirst);
+  writeFileSync(join(upstream, PART_B), second);
+  writeFileSync(join(upstream, DOC), splitBaseNewAliasIndex);
+  git(upstream, "add", "-A");
+  git(upstream, "commit", "-qm", "split reference before a new retitle");
+  git(work, "fetch", "-q", "origin");
+  const splitRetitledFirst = splitBaseNewAliasFirst.replace("## 30 Plain source", "## 30 Retitled source");
+  writeFileSync(join(work, PART_A), splitRetitledFirst);
+  writeFileSync(join(work, PART_B), second);
+  expectRoute(
+    "a split-base retitle cannot redirect its newly created alias to an unrelated live section",
+    splitIndex([splitRetitledFirst, second]) + routeBlock({
+      anchor: "30-plain-source",
+      title: "30 Plain source",
+      path: PART_A,
+      target: "20-beta",
+    }) + "\n",
+    "legacy anchor",
+    "30-plain-source",
+  );
+
+  const splitBaseFirst = `${first}\n## 30 Method note revised\n\nmethod\n`;
   const splitBaseIndex = splitIndex([splitBaseFirst, second]);
   const methodAlias = routeBlock({
     anchor: "method-note",
     title: "Method note",
     path: PART_A,
-    target: "method-note-revised",
+    target: "30-method-note-revised",
   }) + "\n";
   const splitBaseContent = splitBaseIndex + alias + methodAlias;
   writeFileSync(join(work, PART_A), splitBaseFirst);
@@ -1097,7 +1218,7 @@ const sep = "\\";`);
     anchor: "example-only",
     title: "example",
     path: PART_A,
-    target: "method-note-revised",
+      target: "30-method-note-revised",
   })}\n\`\`\`\n`;
   writeFileSync(join(upstream, DOC), splitBaseContent + fencedBaseExample);
   git(upstream, "add", "-A");
@@ -1115,34 +1236,33 @@ const sep = "\\";`);
     splitBaseIndex + alias.replace("#10-alpha-revised)", "#missing-heading)") + methodAlias, "do not resolve");
   expectRoute(
     "an inherited alias cannot change its still-live destination",
-    splitBaseIndex + alias + methodAlias.replace("#method-note-revised)", "#10-alpha-revised)"),
+    splitBaseIndex + alias + methodAlias.replace("#30-method-note-revised)", "#10-alpha-revised)"),
     "changed their still-live destination",
     "method-note",
   );
 
-  const retitledAgainFirst = splitBaseFirst.replace("## Method note revised", "## Method note final");
+  const retitledAgainFirst = splitBaseFirst.replace("## 30 Method note revised", "## 30 Method note final");
   const retitledAgainIndex = splitIndex([retitledAgainFirst, second]);
   const revisedAlias = routeBlock({
-    anchor: "method-note-revised",
-    title: "Method note revised",
+    anchor: "30-method-note-revised",
+    title: "30 Method note revised",
     path: PART_A,
-    target: "method-note-final",
+    target: "30-method-note-final",
   }) + "\n";
   writeFileSync(join(work, PART_A), retitledAgainFirst);
   expectRoute(
     "an inherited alias may follow a legitimate second retitle",
-    retitledAgainIndex + alias + revisedAlias + methodAlias.replace("#method-note-revised)", "#method-note-final)"),
+    retitledAgainIndex + alias + revisedAlias + methodAlias.replace("#30-method-note-revised)", "#30-method-note-final)"),
   );
   expectRoute(
     "an inherited alias cannot leave a legitimate second-retitle chain",
-    retitledAgainIndex + alias + revisedAlias + methodAlias.replace("#method-note-revised)", "#10-alpha-revised)"),
+    retitledAgainIndex + alias + revisedAlias + methodAlias.replace("#30-method-note-revised)", "#10-alpha-revised)"),
     "changed their still-live destination or retitle chain",
     "method-note",
   );
-
   const duplicateFirst = splitBaseFirst.replace(
-    "## Method note revised",
-    "## Method note revised\n\nnew earlier section\n\n## Method note revised",
+    "## 30 Method note revised",
+    "## 30 Method note revised\n\nnew earlier section\n\n## 30 Method note revised",
   );
   writeFileSync(join(work, PART_A), duplicateFirst);
   writeFileSync(join(work, DOC), splitIndex([duplicateFirst, second]) + alias + methodAlias);
@@ -1151,7 +1271,7 @@ const sep = "\\";`);
   if (
     duplicateOut.status !== 0 &&
     duplicateText.includes("ambiguous duplicate file-local heading fragment") &&
-    duplicateText.includes("method-note-revised")
+    duplicateText.includes("30-method-note-revised")
   ) {
     console.log("ok   a duplicate heading insertion cannot steal an ordinary base fragment");
   } else {
