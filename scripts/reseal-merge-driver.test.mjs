@@ -298,4 +298,13 @@ test("toolchain preflight reads the captured revision despite dirty or missing s
   assert.deepEqual(pinnedToolchainAvailable(root, revision), committed);
   rmSync(file);
   assert.deepEqual(pinnedToolchainAvailable(root, revision), committed);
+
+  writeFileSync(file, '[toolchain]\nchannel = "1.96.0"\n');
+  gitOk(root, ["add", "rust-toolchain.toml"]);
+  gitOk(root, ["-c", "commit.gpgSign=false", "commit", "--quiet", "-m", "alternate toolchain"]);
+  const alternateRevision = gitOk(root, ["rev-parse", "HEAD"]).trim();
+  const alternate = pinnedToolchainAvailable(root, alternateRevision);
+  writeFileSync(file, '[toolchain]\nchannel = "bridge-unavailable-regression-toolchain"\n');
+  assert.deepEqual(pinnedToolchainAvailable(root, alternateRevision), alternate);
+  assert.deepEqual(pinnedToolchainAvailable(root, revision), committed, "captured revision remains authoritative after HEAD moves");
 });
