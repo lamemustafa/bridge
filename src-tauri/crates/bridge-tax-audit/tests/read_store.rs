@@ -4,6 +4,7 @@
 
 mod common;
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
@@ -67,6 +68,50 @@ impl ReadStore for MemoryStore {
     }
 }
 
+struct ExclusiveManifest<'a> {
+    inner: Cursor<Vec<u8>>,
+    held: &'a Cell<bool>,
+}
+
+impl std::io::Read for ExclusiveManifest<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        std::io::Read::read(&mut self.inner, buffer)
+    }
+}
+
+impl Drop for ExclusiveManifest<'_> {
+    fn drop(&mut self) {
+        self.held.set(false);
+    }
+}
+
+struct ExclusiveStore {
+    inner: MemoryStore,
+    manifest_held: Cell<bool>,
+}
+
+impl ReadStore for ExclusiveStore {
+    fn manifest_bytes(&self) -> Result<Box<dyn std::io::Read + '_>> {
+        assert!(
+            !self.manifest_held.replace(true),
+            "the manifest resource must be released before it is reopened"
+        );
+        Ok(Box::new(ExclusiveManifest {
+            inner: Cursor::new(self.inner.manifest.clone()),
+            held: &self.manifest_held,
+        }))
+    }
+
+    fn stored_blob(&self, path: &str) -> Result<Option<Box<dyn std::io::Read + '_>>> {
+        if self.manifest_held.get() {
+            return Err(bridge_tax_audit::AuditError::Config(
+                "manifest resource is still held".to_string(),
+            ));
+        }
+        self.inner.stored_blob(path)
+    }
+}
+
 fn hex(bytes: &[u8]) -> String {
     bridge_tax_audit::canonical::hex(&Sha256::digest(bytes))
 }
@@ -97,6 +142,17 @@ fn open(store: &MemoryStore) -> Result<Read> {
 #[test]
 fn an_in_memory_store_admits_the_same_synthetic_read_as_the_directory_adapter() {
     assert!(open(&MemoryStore::synthetic()).is_ok());
+}
+
+#[test]
+fn manifest_reader_is_released_before_the_store_opens_blobs() {
+    let store = ExclusiveStore {
+        inner: MemoryStore::synthetic(),
+        manifest_held: Cell::new(false),
+    };
+    let (read_id, manifest_sha256) = store.inner.handle();
+    assert!(Read::open_from(&store, &read_id, &manifest_sha256).is_ok());
+    assert!(!store.manifest_held.get());
 }
 
 #[test]

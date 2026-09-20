@@ -571,6 +571,7 @@ struct HashingReader<R> {
     hasher: Sha256,
     bytes: u64,
     max_bytes: u64,
+    latched_source_error: Option<io::Error>,
 }
 
 impl<R> HashingReader<R> {
@@ -583,11 +584,16 @@ impl<R> HashingReader<R> {
             // without following an unbounded corrupt stream. `u64::MAX` has no representable
             // successor, so it remains its own cap.
             max_bytes: declared_bytes.saturating_add(1),
+            latched_source_error: None,
         }
     }
 
     fn finish(self) -> (u64, String) {
         (self.bytes, crate::canonical::hex(&self.hasher.finalize()))
+    }
+
+    fn take_source_error(&mut self) -> Option<io::Error> {
+        self.latched_source_error.take()
     }
 }
 
@@ -599,7 +605,19 @@ impl<R: io::Read> io::Read for HashingReader<R> {
         }
         let allowed = usize::try_from(remaining.min(buf.len() as u64))
             .expect("the buffer length bounds this conversion");
-        let read = self.inner.read(&mut buf[..allowed])?;
+        if self.latched_source_error.is_some() {
+            return Err(io::Error::other("stored reader failed"));
+        }
+        let read = loop {
+            match self.inner.read(&mut buf[..allowed]) {
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => {
+                    self.latched_source_error = Some(error);
+                    return Err(io::Error::other("stored reader failed"));
+                }
+                Ok(read) => break read,
+            }
+        };
         self.hasher.update(&buf[..read]);
         self.bytes = self.bytes.saturating_add(read as u64);
         Ok(read)
@@ -639,10 +657,12 @@ fn open_stored_blob<'a>(
 fn verify_stored_blob(store: &dyn ReadStore, blob: &Blob, what: &str) -> Result<()> {
     let stored_reader = open_stored_blob(store, blob, what)?;
     let mut hashing_reader = HashingReader::new(stored_reader, blob.stored_bytes);
-    io::copy(&mut hashing_reader, &mut io::sink()).map_err(|source| AuditError::Io {
-        path: blob.path.clone(),
-        source,
-    })?;
+    if let Err(error) = io::copy(&mut hashing_reader, &mut io::sink()) {
+        return Err(AuditError::Io {
+            path: blob.path.clone(),
+            source: hashing_reader.take_source_error().unwrap_or(error),
+        });
+    }
     let (stored_bytes, stored_sha256) = hashing_reader.finish();
     ensure_stored(blob, what, stored_bytes, &stored_sha256)
 }
@@ -701,6 +721,12 @@ fn verified_blob_from(
         let hashing_reader =
             HashingReader::new(open_stored_blob(store, blob, what)?, blob.stored_bytes);
         let mut gzip_decoder = flate2::read::MultiGzDecoder::new(hashing_reader);
+        if let Some(source) = gzip_decoder.get_mut().take_source_error() {
+            return Err(AuditError::Io {
+                path: blob.path.clone(),
+                source,
+            });
+        }
         let decoded_result =
             collect_content(&mut gzip_decoder, what, Some(max_content_bytes), |error| {
                 AuditError::refused(
@@ -709,28 +735,45 @@ fn verified_blob_from(
                 )
             });
         let mut hashing_reader = gzip_decoder.into_inner();
+        if let Some(source) = hashing_reader.take_source_error() {
+            return Err(AuditError::Io {
+                path: blob.path.clone(),
+                source,
+            });
+        }
         let drain = io::copy(&mut hashing_reader, &mut io::sink());
+        let source_error = hashing_reader.take_source_error();
         let (stored_bytes, stored_sha256) = hashing_reader.finish();
-        ensure_stored(blob, what, stored_bytes, &stored_sha256)?;
-        drain.map_err(|error| {
-            AuditError::refused(
-                "C3-content-hash",
-                format!("{what}: gzip does not decode: {error}"),
-            )
+        if let Some(source) = source_error {
+            return Err(AuditError::Io {
+                path: blob.path.clone(),
+                source,
+            });
+        }
+        drain.map_err(|source| AuditError::Io {
+            path: blob.path.clone(),
+            source,
         })?;
+        ensure_stored(blob, what, stored_bytes, &stored_sha256)?;
         let (content, content_bytes, content_sha256) = decoded_result?;
         (content, content_bytes, content_sha256)
     } else {
         let mut hashing_reader =
             HashingReader::new(open_stored_blob(store, blob, what)?, blob.stored_bytes);
-        let (content, content_bytes, content_sha256) =
+        let content_result =
             collect_content(&mut hashing_reader, what, None, |source| AuditError::Io {
                 path: blob.path.clone(),
                 source,
-            })?;
+            });
+        if let Some(source) = hashing_reader.take_source_error() {
+            return Err(AuditError::Io {
+                path: blob.path.clone(),
+                source,
+            });
+        }
         let (stored_bytes, stored_sha256) = hashing_reader.finish();
         ensure_stored(blob, what, stored_bytes, &stored_sha256)?;
-        (content, content_bytes, content_sha256)
+        content_result?
     };
     if content_bytes != blob.bytes || content_sha256 != blob.sha256 {
         return Err(AuditError::refused(
@@ -765,14 +808,17 @@ impl Read {
         root: PathBuf,
         handle: Option<(&str, &str)>,
     ) -> Result<Self> {
-        let mut manifest_reader = store.manifest_bytes()?;
-        let mut manifest_bytes = Vec::new();
-        manifest_reader
-            .read_to_end(&mut manifest_bytes)
-            .map_err(|source| AuditError::Io {
-                path: "manifest.json".to_string(),
-                source,
-            })?;
+        let manifest_bytes = {
+            let mut manifest_reader = store.manifest_bytes()?;
+            let mut manifest_bytes = Vec::new();
+            manifest_reader
+                .read_to_end(&mut manifest_bytes)
+                .map_err(|source| AuditError::Io {
+                    path: "manifest.json".to_string(),
+                    source,
+                })?;
+            manifest_bytes
+        };
         if let Some((expected_read_id, expected_manifest_sha256)) = handle {
             if !is_sha256(expected_manifest_sha256)
                 || crate::canonical::hex(&Sha256::digest(&manifest_bytes))
@@ -1231,6 +1277,88 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
+    enum StoredRead {
+        Bytes(Vec<u8>),
+        InterruptedOnce(Vec<u8>),
+        BytesThenError(Vec<u8>, io::ErrorKind),
+        Error(io::ErrorKind),
+    }
+
+    struct InterruptedOnceReader {
+        inner: Cursor<Vec<u8>>,
+        interrupted: bool,
+    }
+
+    impl io::Read for InterruptedOnceReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if !self.interrupted {
+                self.interrupted = true;
+                return Err(io::Error::from(io::ErrorKind::Interrupted));
+            }
+            self.inner.read(buf)
+        }
+    }
+
+    struct ErrorReader(io::ErrorKind);
+
+    impl io::Read for ErrorReader {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::from(self.0))
+        }
+    }
+
+    struct BytesThenErrorReader {
+        inner: Cursor<Vec<u8>>,
+        error: io::ErrorKind,
+    }
+
+    impl io::Read for BytesThenErrorReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let read = self.inner.read(buf)?;
+            if read == 0 {
+                Err(io::Error::from(self.error))
+            } else {
+                Ok(read)
+            }
+        }
+    }
+
+    struct ScriptedStore {
+        reads: Vec<StoredRead>,
+        opens: Cell<usize>,
+    }
+
+    impl ReadStore for ScriptedStore {
+        fn manifest_bytes(&self) -> Result<Box<dyn io::Read + '_>> {
+            Err(AuditError::Config("not used by this unit test".to_string()))
+        }
+
+        fn stored_blob(&self, _path: &str) -> Result<Option<Box<dyn io::Read + '_>>> {
+            let open = self.opens.get();
+            self.opens.set(open + 1);
+            let read = self.reads.get(open).unwrap_or_else(|| {
+                panic!(
+                    "unexpected stored-blob open {open}; expected {}",
+                    self.reads.len()
+                )
+            });
+            let reader: Box<dyn io::Read> = match read {
+                StoredRead::Bytes(bytes) => Box::new(Cursor::new(bytes.clone())),
+                StoredRead::InterruptedOnce(bytes) => Box::new(InterruptedOnceReader {
+                    inner: Cursor::new(bytes.clone()),
+                    interrupted: false,
+                }),
+                StoredRead::BytesThenError(bytes, error) => Box::new(BytesThenErrorReader {
+                    inner: Cursor::new(bytes.clone()),
+                    error: *error,
+                }),
+                StoredRead::Error(kind) => Box::new(ErrorReader(*kind)),
+            };
+            Ok(Some(reader))
+        }
+    }
+
     fn gzip(content: &[u8]) -> Vec<u8> {
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
         encoder.write_all(content).unwrap();
@@ -1245,6 +1373,24 @@ mod tests {
             stored_bytes: stored.len() as u64,
             sha256: crate::canonical::hex(&Sha256::digest(content)),
             bytes: content.len() as u64,
+        }
+    }
+
+    fn identity_blob(path: &str, content: &[u8]) -> Blob {
+        Blob {
+            path: path.to_string(),
+            gzip: false,
+            stored_sha256: crate::canonical::hex(&Sha256::digest(content)),
+            stored_bytes: content.len() as u64,
+            sha256: crate::canonical::hex(&Sha256::digest(content)),
+            bytes: content.len() as u64,
+        }
+    }
+
+    fn assert_io_kind(error: AuditError, expected: io::ErrorKind) {
+        match error {
+            AuditError::Io { source, .. } => assert_eq!(source.kind(), expected),
+            other => panic!("expected a typed I/O error, got {other:?}"),
         }
     }
 
@@ -1278,6 +1424,18 @@ mod tests {
             1,
             "decoder must not open an unverified blob"
         );
+    }
+
+    #[test]
+    fn malformed_gzip_after_a_matching_stored_check_is_content_refusal() {
+        let stored = b"not a gzip stream".to_vec();
+        let blob = gzip_blob("parts/malformed.xml.gz", &stored, b"valid");
+        let store = MemoryStore {
+            blobs: BTreeMap::from([(blob.path.clone(), stored)]),
+        };
+
+        let error = verified_blob_from(&store, &blob, "malformed", 1_024).unwrap_err();
+        assert_eq!(error.code(), Some("C3-content-hash"));
     }
 
     #[test]
@@ -1340,5 +1498,70 @@ mod tests {
             verified_blob_from(&store, &blob, "multi", 1_024).unwrap(),
             content
         );
+    }
+
+    #[test]
+    fn interrupted_stored_reads_retry_for_identity_and_gzip() {
+        let identity_content = b"identity";
+        let identity = identity_blob("parts/identity.xml", identity_content);
+        let identity_store = ScriptedStore {
+            reads: vec![StoredRead::InterruptedOnce(identity_content.to_vec())],
+            opens: Cell::new(0),
+        };
+        assert_eq!(
+            verified_blob_from(&identity_store, &identity, "identity", 1_024).unwrap(),
+            identity_content
+        );
+
+        let gzip_content = b"gzip";
+        let gzip_stored = gzip(gzip_content);
+        let gzip = gzip_blob("parts/retry.xml.gz", &gzip_stored, gzip_content);
+        let gzip_store = ScriptedStore {
+            reads: vec![
+                StoredRead::InterruptedOnce(gzip_stored.clone()),
+                StoredRead::InterruptedOnce(gzip_stored),
+            ],
+            opens: Cell::new(0),
+        };
+        assert_eq!(
+            verified_blob_from(&gzip_store, &gzip, "gzip", 1_024).unwrap(),
+            gzip_content
+        );
+        assert_eq!(gzip_store.opens.get(), 2);
+    }
+
+    #[test]
+    fn persistent_noninterrupted_stored_read_is_a_typed_io_error() {
+        let blob = identity_blob("parts/unavailable.xml", b"unavailable");
+        let store = ScriptedStore {
+            reads: vec![StoredRead::Error(io::ErrorKind::PermissionDenied)],
+            opens: Cell::new(0),
+        };
+
+        assert_io_kind(
+            verified_blob_from(&store, &blob, "unavailable", 1_024).unwrap_err(),
+            io::ErrorKind::PermissionDenied,
+        );
+    }
+
+    #[test]
+    fn a_second_gzip_stream_transport_failure_is_a_typed_io_error() {
+        let content = b"gzip transport";
+        let stored = gzip(content);
+        let blob = gzip_blob("parts/transport.xml.gz", &stored, content);
+        for kind in [io::ErrorKind::TimedOut, io::ErrorKind::ConnectionReset] {
+            let store = ScriptedStore {
+                reads: vec![
+                    StoredRead::Bytes(stored.clone()),
+                    StoredRead::BytesThenError(stored.clone(), kind),
+                ],
+                opens: Cell::new(0),
+            };
+            assert_io_kind(
+                verified_blob_from(&store, &blob, "transport", 1_024).unwrap_err(),
+                kind,
+            );
+            assert_eq!(store.opens.get(), 2);
+        }
     }
 }
