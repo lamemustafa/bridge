@@ -1361,7 +1361,7 @@ const sep = "\\";`);
   const text = `${out.stdout}${out.stderr}`;
   if (
     out.status !== 0 &&
-    text.includes("list-continuation fenced code block is unsupported in split protocol part") &&
+    text.includes("indented fenced code block must close before a visible dedent in split protocol part") &&
     text.includes(PART_A)
   ) {
     console.log("ok   an unclosed list-continuation fence cannot mask a dedented live duplicate");
@@ -1398,7 +1398,7 @@ for (const [name, continuation] of [
   const text = `${out.stdout}${out.stderr}`;
   if (
     out.status !== 0 &&
-    text.includes("list-continuation fenced code block is unsupported in split protocol part") &&
+    text.includes("indented fenced code block must close before a visible dedent in split protocol part") &&
     text.includes(PART_A)
   ) {
     console.log(`ok   ${name} cannot leave a list-continuation fence masking a dedented live duplicate`);
@@ -1414,13 +1414,36 @@ for (const [name, continuation] of [
   const text = `${out.stdout}${out.stderr}`;
   if (
     out.status !== 0 &&
-    text.includes("list-continuation fenced code block is unsupported in split protocol part") &&
+    text.includes("indented fenced code block must close before a visible dedent in split protocol part") &&
     text.includes(PART_A)
   ) {
     console.log("ok   a dedented matching rail cannot close a list-continuation fence");
   } else {
     failed += 1;
     console.error(`FAIL a dedented matching rail must refuse the list-continuation opener\n  exit ${out.status}: ${text.split("\\n").slice(0, 8).join("\\n  ")}`);
+  }
+}
+
+{
+  const first = `${SPLIT_BASE_DOC}\n- continuation context\nlazy unindented paragraph continuation\n  \`\`\`md\n  ## 9.7 example only\n\n## 9.7 live duplicate\n`;
+  const second = "# Part B\n";
+  writeFileSync(join(work, PART_A), first);
+  writeFileSync(join(work, PART_B), second);
+  // The rendered index cannot route the heading hidden by the unclosed fence.
+  // Omitting it proves the gate itself must refuse the ambiguous opener.
+  writeFileSync(join(work, DOC), splitIndex([SPLIT_BASE_DOC, second]));
+  writeSurface(work, [DOC, PART_A, PART_B]);
+  const out = runGate();
+  const text = `${out.stdout}${out.stderr}`;
+  if (
+    out.status !== 0 &&
+    text.includes("indented fenced code block must close before a visible dedent in split protocol part") &&
+    text.includes(PART_A)
+  ) {
+    console.log("ok   a lazy list paragraph cannot let an indented fence hide a live heading");
+  } else {
+    failed += 1;
+    console.error(`FAIL a lazy list paragraph must refuse an unclosed indented fence\n  exit ${out.status}: ${text.split("\\n").slice(0, 8).join("\\n  ")}`);
   }
 }
 

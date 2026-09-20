@@ -101,24 +101,21 @@ function containerFence(line) {
   return FENCE.exec(remainder);
 }
 
-// This is deliberately narrower than Markdown list parsing. It tracks the
-// content indentation of a visible list item so that a continuation fence after
-// blank or ordinary indented continuation lines is refused before Markdown's
-// implicit fence/list closure can hide a later top-level heading. A visible
-// dedent ends this admitted container state; deeper list grammar is not guessed.
-function listContinuationIndent(line) {
-  const marker = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)/.exec(line);
-  return marker ? marker[0].length : null;
-}
-
+// The split checker admits an indented fence only when its matching closer
+// arrives before the first nonblank dedent below the opener. That conservative
+// structural rule covers list continuation without tracking Markdown list or
+// lazy-paragraph state, and prevents an implicit container close from hiding a
+// later top-level heading. Top-level fences remain governed by the existing
+// fence state machine.
 function leadingSpaces(line) {
   return /^ */.exec(line)[0].length;
 }
 
-function listFenceClosesBeforeDedent(lines, openerIndex, opening, listIndent) {
+function indentedFenceClosesBeforeDedent(lines, openerIndex, opening) {
+  const openerIndent = leadingSpaces(lines[openerIndex]);
   for (let index = openerIndex + 1; index < lines.length; index += 1) {
     const line = lines[index];
-    if (line.trim() && leadingSpaces(line) < listIndent) return false;
+    if (line.trim() && leadingSpaces(line) < openerIndent) return false;
     const rail = fenceRail(line);
     if (
       rail &&
@@ -415,7 +412,6 @@ function* visibleMarkdownLines(lines, origin, htmlMode = "allow") {
   const visibleEntries = [];
   let fence = null;
   let comment = false;
-  let listIndent = null;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     const rail = fenceRail(line);
@@ -440,22 +436,15 @@ function* visibleMarkdownLines(lines, origin, htmlMode = "allow") {
       }
       continue;
     }
-    const markerIndent = listContinuationIndent(line);
-    if (markerIndent !== null) {
-      listIndent = markerIndent;
-    } else if (listIndent !== null && line.trim() && leadingSpaces(line) < listIndent) {
-      listIndent = null;
-    }
     const opensFence = rail && (rail.delimiter[0] !== "`" || !rail.after.includes("`"));
     if (
       htmlMode !== "allow" &&
       opensFence &&
-      listIndent !== null &&
-      leadingSpaces(line) >= listIndent &&
-      !listFenceClosesBeforeDedent(lines, index, rail, listIndent)
+      leadingSpaces(line) > 0 &&
+      !indentedFenceClosesBeforeDedent(lines, index, rail)
     ) {
       throw new Error(
-        `list-continuation fenced code block is unsupported in split protocol ${htmlMode}: ` +
+        `indented fenced code block must close before a visible dedent in split protocol ${htmlMode}: ` +
           `${short(origin)}:${index + 1}`,
       );
     }
