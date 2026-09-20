@@ -670,11 +670,11 @@ jobs:
   required-checks:
     name: Required checks
     # Always runs so it can report a single, stable required status for branch
-    # protection. Passes when every upstream job either succeeded or was
-    # legitimately skipped (e.g. native/bundle skip on docs-only PRs), and fails
-    # if any upstream job failed or was cancelled. Point branch protection at
-    # this context instead of the individual matrix jobs so docs-only PRs are
-    # not blocked by skipped native/bundle checks.
+    # protection. Workflow consistency is unconditional and must succeed. Other
+    # upstream jobs may be legitimately skipped (e.g. native/bundle on docs-only
+    # PRs), but any failure or cancellation fails this job. Point branch
+    # protection at this context instead of the individual matrix jobs so
+    # docs-only PRs are not blocked by skipped native/bundle checks.
     if: ${{ always() }}
     needs: [changes, frontend, rust-format, workflow-consistency, tally-portable, native, bundle-smoke, compiler-cache-retention]
     runs-on: ubuntu-latest
@@ -691,7 +691,7 @@ jobs:
           printf '%s\n' "$NEEDS_JSON"
           failed="$(
             printf '%s' "$NEEDS_JSON" \
-              | python3 -c "import json,sys; d=json.load(sys.stdin); print(' '.join(k for k,v in d.items() if v.get('result') in ('failure','cancelled')))"
+              | python3 -c "import json,sys; d=json.load(sys.stdin); failed=[k for k,v in d.items() if v.get('result') in ('failure','cancelled')]; failed += [] if d.get('workflow-consistency', {}).get('result') == 'success' else ['workflow-consistency']; print(' '.join(dict.fromkeys(failed)))"
           )"
           if [[ -n "$failed" ]]; then
             echo "Required jobs did not pass: $failed"
