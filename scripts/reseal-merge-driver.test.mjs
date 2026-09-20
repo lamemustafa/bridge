@@ -69,7 +69,7 @@ function pinnedToolchainAvailable(root, revision, env = gitEnv) {
   // A failed source read is a test failure, never evidence that Rust is unavailable.
   const tomlText = gitOk(root, ["show", `${revision}:rust-toolchain.toml`], "read committed toolchain", env);
   const match = /^channel *= *"(.*)"/m.exec(tomlText);
-  if (!match) return { ok: false, reason: "could not read [toolchain].channel" };
+  assert.ok(match, "committed rust-toolchain.toml has no parseable channel");
   const which = spawnSync("rustup", ["which", "--toolchain", match[1], "rustc"], { encoding: "utf8" });
   if (which.error || which.status !== 0) {
     return { ok: false, reason: `rustup toolchain ${match[1]} is not installed` };
@@ -312,4 +312,14 @@ test("a failed committed-toolchain read fails instead of skipping the suite", (t
     () => pinnedToolchainAvailable(root, "missing-revision"),
     /read committed toolchain failed/,
   );
+});
+
+
+test("a malformed committed toolchain fails instead of skipping the suite", (t) => {
+  const root = sourceReadFixture(t);
+  writeFileSync(join(root, "rust-toolchain.toml"), "[toolchain]\n");
+  gitOk(root, ["add", "rust-toolchain.toml"]);
+  gitOk(root, ["-c", "commit.gpgSign=false", "commit", "--quiet", "-m", "malformed toolchain"]);
+  const revision = gitOk(root, ["rev-parse", "HEAD"]).trim();
+  assert.throws(() => pinnedToolchainAvailable(root, revision), /no parseable channel/);
 });
