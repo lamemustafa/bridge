@@ -610,7 +610,7 @@ impl<R: io::Read> io::Read for HashingReader<R> {
         }
         let read = loop {
             match self.inner.read(&mut buf[..allowed]) {
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
                 Err(error) => {
                     self.latched_source_error = Some(error);
                     return Err(io::Error::other("stored reader failed"));
