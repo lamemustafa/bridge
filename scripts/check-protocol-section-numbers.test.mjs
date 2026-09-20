@@ -1316,6 +1316,137 @@ const sep = "\\";`);
   rmSync(join(work, PART_B));
 }
 
+// --- #533 container visibility gaps -----------------------------------------
+// Reset the disposable two-repository fixture to one split base. These controls
+// exercise the actual base comparison so a convenient fixture-only failure
+// cannot stand in for the gate's refusal.
+{
+  const first = SPLIT_BASE_DOC;
+  const second = "# Part B\n";
+  writeFileSync(join(upstream, PART_A), first);
+  writeFileSync(join(upstream, PART_B), second);
+  writeFileSync(join(upstream, DOC), splitIndex([first, second]));
+  writeSurface(upstream, [DOC, PART_A, PART_B]);
+  git(upstream, "add", "-A");
+  git(upstream, "commit", "-qm", "reset split fixture for container controls");
+  git(work, "fetch", "-q", "origin");
+
+  writeFileSync(join(work, PART_A), first);
+  writeFileSync(join(work, PART_B), second);
+  writeFileSync(
+    join(work, DOC),
+    splitIndex([first, second]).replace(
+      "# Reference index\n\n",
+      "# Reference index\n\n> ## Method note\n\n",
+    ),
+  );
+  writeSurface(work, [DOC, PART_A, PART_B]);
+  const out = runGate();
+  const text = `${out.stdout}${out.stderr}`;
+  if (
+    out.status !== 0 &&
+    text.includes("container-prefixed ATX heading is unsupported in split protocol index") &&
+    text.includes(DOC)
+  ) {
+    console.log("ok   a blockquote index heading cannot shadow a legacy fragment");
+  } else {
+    failed += 1;
+    console.error(`FAIL a blockquote index heading must be refused before it shadows a legacy fragment\n  exit ${out.status}: ${text.split("\\n").slice(0, 6).join("\\n  ")}`);
+  }
+}
+
+{
+  const first = `${SPLIT_BASE_DOC}\n- continuation context\n  \`\`\`md\n  ## 9.7 example only\n\n## 9.7 live duplicate\n`;
+  const out = runSplitGate(first, "# Part B\n");
+  const text = `${out.stdout}${out.stderr}`;
+  if (
+    out.status !== 0 &&
+    text.includes("indented fenced code block must close before a visible dedent in split protocol part") &&
+    text.includes(PART_A)
+  ) {
+    console.log("ok   an unclosed list-continuation fence cannot mask a dedented live duplicate");
+  } else {
+    failed += 1;
+    console.error(`FAIL an unclosed list-continuation fence must be refused before it masks a live duplicate\n  exit ${out.status}: ${text.split("\\n").slice(0, 6).join("\\n  ")}`);
+  }
+}
+
+{
+  const first = `${SPLIT_BASE_DOC}\n- continuation context\n  \`\`\`md\n  ## 9.7 safe example\n  \`\`\`\n`;
+  const second = "# Part B\n";
+  writeFileSync(join(work, PART_A), first);
+  writeFileSync(join(work, PART_B), second);
+  // The index deliberately lists only rendered headings. The fenced example
+  // must stay inert while the matching closer makes the list fence safe.
+  writeFileSync(join(work, DOC), splitIndex([SPLIT_BASE_DOC, second]));
+  writeSurface(work, [DOC, PART_A, PART_B]);
+  const out = runGate();
+  if (out.status === 0) {
+    console.log("ok   a closed list-continuation fence remains an ordinary safe example");
+  } else {
+    failed += 1;
+    console.error(`FAIL a closed list-continuation fence must remain allowed\n  exit ${out.status}: ${`${out.stdout}${out.stderr}`.split("\\n").slice(0, 6).join("\\n  ")}`);
+  }
+}
+
+for (const [name, continuation] of [
+  ["a blank line", "\n\n"],
+  ["ordinary indented continuation text", "\n  ordinary continuation text\n"],
+]) {
+  const first = `${SPLIT_BASE_DOC}\n- continuation context${continuation}  \`\`\`md\n  ## 9.7 example only\n\n## 9.7 live duplicate\n`;
+  const out = runSplitGate(first, "# Part B\n");
+  const text = `${out.stdout}${out.stderr}`;
+  if (
+    out.status !== 0 &&
+    text.includes("indented fenced code block must close before a visible dedent in split protocol part") &&
+    text.includes(PART_A)
+  ) {
+    console.log(`ok   ${name} cannot leave a list-continuation fence masking a dedented live duplicate`);
+  } else {
+    failed += 1;
+    console.error(`FAIL ${name} must not let a list-continuation fence mask a live duplicate\n  exit ${out.status}: ${text.split("\\n").slice(0, 6).join("\\n  ")}`);
+  }
+}
+
+{
+  const first = `${SPLIT_BASE_DOC}\n- continuation context\n  \`\`\`md\n  ## 9.7 example only\n\`\`\`\n## 9.7 live duplicate\n`;
+  const out = runSplitGate(first, "# Part B\n");
+  const text = `${out.stdout}${out.stderr}`;
+  if (
+    out.status !== 0 &&
+    text.includes("indented fenced code block must close before a visible dedent in split protocol part") &&
+    text.includes(PART_A)
+  ) {
+    console.log("ok   a dedented matching rail cannot close a list-continuation fence");
+  } else {
+    failed += 1;
+    console.error(`FAIL a dedented matching rail must refuse the list-continuation opener\n  exit ${out.status}: ${text.split("\\n").slice(0, 8).join("\\n  ")}`);
+  }
+}
+
+{
+  const first = `${SPLIT_BASE_DOC}\n- continuation context\nlazy unindented paragraph continuation\n  \`\`\`md\n  ## 9.7 example only\n\n## 9.7 live duplicate\n`;
+  const second = "# Part B\n";
+  writeFileSync(join(work, PART_A), first);
+  writeFileSync(join(work, PART_B), second);
+  // The rendered index cannot route the heading hidden by the unclosed fence.
+  // Omitting it proves the gate itself must refuse the ambiguous opener.
+  writeFileSync(join(work, DOC), splitIndex([SPLIT_BASE_DOC, second]));
+  writeSurface(work, [DOC, PART_A, PART_B]);
+  const out = runGate();
+  const text = `${out.stdout}${out.stderr}`;
+  if (
+    out.status !== 0 &&
+    text.includes("indented fenced code block must close before a visible dedent in split protocol part") &&
+    text.includes(PART_A)
+  ) {
+    console.log("ok   a lazy list paragraph cannot let an indented fence hide a live heading");
+  } else {
+    failed += 1;
+    console.error(`FAIL a lazy list paragraph must refuse an unclosed indented fence\n  exit ${out.status}: ${text.split("\\n").slice(0, 8).join("\\n  ")}`);
+  }
+}
+
 // The real document must satisfy its own gate, and the fixture above is not
 // evidence of that — it shares none of the real headings, so it exercises the
 // rules but not the *parser* against 2,000 lines of fences, tables and Setext.

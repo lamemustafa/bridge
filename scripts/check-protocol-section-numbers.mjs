@@ -101,6 +101,34 @@ function containerFence(line) {
   return FENCE.exec(remainder);
 }
 
+// The split checker admits an indented fence only when its matching closer
+// arrives before the first nonblank dedent below the opener. That conservative
+// structural rule covers list continuation without tracking Markdown list or
+// lazy-paragraph state, and prevents an implicit container close from hiding a
+// later top-level heading. Top-level fences remain governed by the existing
+// fence state machine.
+function leadingSpaces(line) {
+  return /^ */.exec(line)[0].length;
+}
+
+function indentedFenceClosesBeforeDedent(lines, openerIndex, opening) {
+  const openerIndent = leadingSpaces(lines[openerIndex]);
+  for (let index = openerIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.trim() && leadingSpaces(line) < openerIndent) return false;
+    const rail = fenceRail(line);
+    if (
+      rail &&
+      rail.delimiter[0] === opening.delimiter[0] &&
+      rail.delimiter.length >= opening.delimiter.length &&
+      rail.after.trim() === ""
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // The inventory is a top-level HTML-comment control, not a prose convention.
 // A monolithic historical reference has none; a split reference has exactly
 // one. Marker-looking examples are allowed only inside a fenced code block.
@@ -408,10 +436,22 @@ function* visibleMarkdownLines(lines, origin, htmlMode = "allow") {
       }
       continue;
     }
+    const opensFence = rail && (rail.delimiter[0] !== "`" || !rail.after.includes("`"));
+    if (
+      htmlMode !== "allow" &&
+      opensFence &&
+      leadingSpaces(line) > 0 &&
+      !indentedFenceClosesBeforeDedent(lines, index, rail)
+    ) {
+      throw new Error(
+        `indented fenced code block must close before a visible dedent in split protocol ${htmlMode}: ` +
+          `${short(origin)}:${index + 1}`,
+      );
+    }
     if (rail) {
       // A backtick fence's info string may not contain a backtick. Such a line
       // is neither an opener nor a route/heading source.
-      if (rail.delimiter[0] !== "`" || !rail.after.includes("`")) fence = rail.delimiter;
+      if (opensFence) fence = rail.delimiter;
       continue;
     }
     // A same-line paired code span is visible text, but its literal comment
@@ -912,6 +952,18 @@ function indexedContents(indexText, origin = relPath(canonicalReference)) {
       throw new Error(
         `Setext headings are unsupported in split protocol index: ` +
           `${short(origin)}:${setext.line}`,
+      );
+    }
+    if (containerFence(line)) {
+      throw new Error(
+        `container-prefixed fenced code block is unsupported in split protocol index: ` +
+          `${short(origin)}:${index + 1}`,
+      );
+    }
+    if (containerAtxHeading(line)) {
+      throw new Error(
+        `container-prefixed ATX heading is unsupported in split protocol index: ` +
+          `${short(origin)}:${index + 1}`,
       );
     }
     const heading = atxHeading(line);
