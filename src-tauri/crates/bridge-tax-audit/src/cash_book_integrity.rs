@@ -20,6 +20,7 @@ use crate::findings::{Confidence, EvidenceRef, Finding, TestResult, Unit, Value}
 use crate::ledger_ids::stable_ledger_tag;
 use crate::read::iso;
 use crate::rules::Rules;
+use crate::support;
 use crate::xml::{is_py_space, py_strip};
 
 pub const TEST_ID: &str = "cash_book_integrity";
@@ -29,24 +30,14 @@ pub const VERSION: &str = "1";
 const EXPENSE_GROUPS: [&str; 2] = ["Direct Expenses", "Indirect Expenses"];
 
 fn overflow() -> AuditError {
-    AuditError::Config(format!("{TEST_ID}: a total overflowed i64 paise"))
-}
-
-fn label(v: &Voucher) -> String {
-    let num = if v.number.is_empty() {
-        let cut = v.guid.len().saturating_sub(12);
-        &v.guid[cut..]
-    } else {
-        v.number.as_str()
-    };
-    format!("{} {} on {}", v.vtype, num, iso(&v.date))
+    support::overflow(TEST_ID)
 }
 
 /// The reference's `_ev`: one reference per distinct voucher, ordered by id.
 fn ev<'a>(vouchers: impl IntoIterator<Item = &'a Voucher>) -> Vec<EvidenceRef> {
     let refs: BTreeSet<(String, String)> = vouchers
         .into_iter()
-        .map(|v| (v.guid.clone(), label(v)))
+        .map(|v| (v.guid.clone(), support::voucher_label(v)))
         .collect();
     refs.into_iter()
         .map(|(id, l)| EvidenceRef::with_label("voucher", &id, &l))
@@ -54,7 +45,7 @@ fn ev<'a>(vouchers: impl IntoIterator<Item = &'a Voucher>) -> Vec<EvidenceRef> {
 }
 
 fn count(n: usize) -> Result<Value> {
-    Ok(Value::Int(i64::try_from(n).map_err(|_| overflow())?))
+    support::count(TEST_ID, n)
 }
 
 fn add(a: i64, b: i64) -> Result<i64> {

@@ -8,7 +8,7 @@
 //! entry is one population voucher's own line(s) on one ledger, summed to a single net Dr+/Cr-
 //! amount. Every figure is a plain books fact; every finding is indicative only.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 
 use bridge_tally_primitives::TallyDate;
 
@@ -19,6 +19,7 @@ use crate::findings::{pct_bp, Confidence, EvidenceRef, Finding, TestResult, Unit
 use crate::ledger_ids::stable_ledger_tag;
 use crate::read::{iso, Window};
 use crate::rules::Rules;
+use crate::support;
 
 pub const TEST_ID: &str = "ledger_scrutiny";
 pub const VERSION: &str = "1";
@@ -51,24 +52,10 @@ struct Row<'a> {
     non_journal: BTreeSet<String>,
 }
 
-fn guid_tail12(guid: &str) -> &str {
-    let cut = guid.len().saturating_sub(12);
-    &guid[cut..]
-}
-
-fn voucher_label(v: &Voucher) -> String {
-    let num = if v.number.is_empty() {
-        guid_tail12(&v.guid)
-    } else {
-        v.number.as_str()
-    };
-    format!("{} {} on {}", v.vtype, num, iso(&v.date))
-}
-
 fn evidence(entries: &Entries) -> Vec<EvidenceRef> {
     entries
         .iter()
-        .map(|(g, (v, _))| EvidenceRef::with_label("voucher", g, &voucher_label(v)))
+        .map(|(g, (v, _))| EvidenceRef::with_label("voucher", g, &support::voucher_label(v)))
         .collect()
 }
 
@@ -114,7 +101,7 @@ pub fn run(
 excluded). One entry = one voucher's own line(s) on one ledger, summed to a single net Dr+/Cr- \
 amount per voucher."
         .to_string();
-    let overflow = || AuditError::Config(format!("{TEST_ID}: a total overflowed i64 paise"));
+    let overflow = || support::overflow(TEST_ID);
     let large_entry_paise = rules
         .ledger_scrutiny_large_entry_paise
         .unwrap_or(DEFAULT_LARGE_ENTRY_PAISE);
@@ -186,7 +173,7 @@ amount per voucher."
 
     r.fig(
         "expense_ledger_count",
-        Value::Int(i64::try_from(expense_ledgers.len()).map_err(|_| overflow())?),
+        support::count(TEST_ID, expense_ledgers.len())?,
         Unit::Count,
         &format!(
             "Ledgers under Tally's '{DIRECT_EXPENSES_GROUP}' or '{INDIRECT_EXPENSES_GROUP}' groups."
@@ -198,8 +185,7 @@ amount per voucher."
         e.values()
             .try_fold(0i64, |acc, (_, n)| acc.checked_add(*n).ok_or_else(overflow))
     };
-    let count =
-        |n: usize| -> Result<Value> { Ok(Value::Int(i64::try_from(n).map_err(|_| overflow())?)) };
+    let count = |n: usize| support::count(TEST_ID, n);
     let mut flagged: i64 = 0;
     for (name, d) in &rows {
         if d.entries.is_empty() {
@@ -426,13 +412,7 @@ above.",
 /// subset of them), within Re 1.
 pub fn check_invariants(book: &Book, result: &TestResult) -> Result<Vec<String>> {
     let mut out = Vec::new();
-    // Tags are GUID-derived; a GUID-less ledger's falls back to a name hash. If two ledgers ever
-    // shared a tag, this map keeps the last in name order, where the reference's dict keeps the last
-    // in read order -- reviewer-only, and not reachable while tags are unique.
-    let mut tag_to_name: HashMap<String, &String> = HashMap::new();
-    for name in book.ledgers.keys() {
-        tag_to_name.insert(stable_ledger_tag(book, name)?, name);
-    }
+    let tag_to_name = support::ledgers_by_tag(book)?;
     let marker = format!("{}.total_debit_paise_", result.test_id);
     let mut figs: Vec<_> = result
         .figures

@@ -45,6 +45,7 @@ pub mod ledger_scrutiny;
 pub mod read;
 pub mod rules;
 pub mod stale_balances_41_1;
+mod support;
 pub mod trial_balance;
 pub mod xml;
 

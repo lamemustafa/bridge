@@ -172,8 +172,9 @@ fn check(name: &str) {
                     .map(|f| f.id.as_str())
                     .filter(|id| id.starts_with("trial_balance.tb_group_"))
                     .collect();
-                let want: Vec<String> =
-                    strs(&common::golden_named(&format!("edge.{name}.trial_balance.order")));
+                let want: Vec<String> = strs(&common::golden_named(&format!(
+                    "edge.{name}.trial_balance.order"
+                )));
                 assert_eq!(order, want, "{name}: trial_balance row order");
                 let c = trial_balance::check_invariants(&book, &r).unwrap();
                 (r, c)

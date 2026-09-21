@@ -12,6 +12,7 @@ use crate::error::{AuditError, Result};
 use crate::findings::{EvidenceRef, TestResult, Unit, Value};
 use crate::ledger_ids::stable_ledger_tag;
 use crate::rules::Rules;
+use crate::support;
 use crate::xml::reserved_value;
 
 pub const TEST_ID: &str = "trial_balance";
@@ -38,7 +39,7 @@ pub fn run(book: &Book, rules: &Rules) -> Result<TestResult> {
     let mut r = TestResult::new(TEST_ID, VERSION, &rules.version);
     r.population_note =
         "Tally's own Trial Balance export for the period; no voucher is re-read here.".to_string();
-    let overflow = || AuditError::Config("trial_balance: a total overflowed i64 paise".to_string());
+    let overflow = || support::overflow(TEST_ID);
     let (mut opening, mut debit, mut credit, mut closing) = (0i64, 0i64, 0i64, 0i64);
     let mut rows = 0i64;
     let mut names: Vec<&str> = book.tb.keys().map(String::as_str).collect();

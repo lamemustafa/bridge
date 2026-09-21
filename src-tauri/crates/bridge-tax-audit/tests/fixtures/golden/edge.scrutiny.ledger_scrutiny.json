@@ -37,6 +37,14 @@
       "evidence": []
     },
     {
+      "id": "ledger_scrutiny.cash_paid_paise_1f28610d",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "8406b2a4c0e221f2",
+      "definition_text": "Of this ledger's (tag 1f28610d) debit entries, the sum where the same voucher also carries a nonzero line on a configured cash ledger.",
+      "evidence": []
+    },
+    {
       "id": "ledger_scrutiny.cash_paid_paise_2a23219e",
       "value": 0,
       "unit": "paise",
@@ -126,6 +134,14 @@
       "unit": "bp",
       "definition_sha256_16": "9702ecf1ea49d7d4",
       "definition_text": "cash_paid_paise_0fcc5141 / total_debit_paise_0fcc5141 (0 when the ledger has no debit entries at all).",
+      "evidence": []
+    },
+    {
+      "id": "ledger_scrutiny.cash_share_bp_1f28610d",
+      "value": 0,
+      "unit": "bp",
+      "definition_sha256_16": "1bc7b139116fe585",
+      "definition_text": "cash_paid_paise_1f28610d / total_debit_paise_1f28610d (0 when the ledger has no debit entries at all).",
       "evidence": []
     },
     {
@@ -222,6 +238,20 @@
         {
           "kind": "ledger",
           "id": "Zero Close",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "ledger_scrutiny.closing_paise_1f28610d",
+      "value": 6000000,
+      "unit": "paise",
+      "definition_sha256_16": "2abdb3e25a72ae0e",
+      "definition_text": "TB closing balance of this ledger (tag 1f28610d), Dr+/Cr-.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Unnumbered",
           "label": ""
         }
       ]
@@ -349,6 +379,14 @@
       "evidence": []
     },
     {
+      "id": "ledger_scrutiny.contra_nature_closing_1f28610d",
+      "value": "no",
+      "unit": "text",
+      "definition_sha256_16": "6b44b627d5823f23",
+      "definition_text": "Whether this expense ledger's (tag 1f28610d) TB closing balance is a credit (unusual on an expense ledger).",
+      "evidence": []
+    },
+    {
       "id": "ledger_scrutiny.contra_nature_closing_2a23219e",
       "value": "no",
       "unit": "text",
@@ -406,7 +444,7 @@
     },
     {
       "id": "ledger_scrutiny.expense_ledger_count",
-      "value": 10,
+      "value": 11,
       "unit": "count",
       "definition_sha256_16": "de10662f8bc0ffb5",
       "definition_text": "Ledgers under Tally's 'Direct Expenses' or 'Indirect Expenses' groups.",
@@ -414,7 +452,7 @@
     },
     {
       "id": "ledger_scrutiny.flagged_ledger_count",
-      "value": 7,
+      "value": 8,
       "unit": "count",
       "definition_sha256_16": "3f2ae887318416d9",
       "definition_text": "Expense ledgers (of expense_ledger_count) with at least one scrutiny indicator triggered above.",
@@ -442,6 +480,14 @@
       "unit": "text",
       "definition_sha256_16": "73387a23db26c7c0",
       "definition_text": "Whether every population voucher touching this ledger (tag 0fcc5141) has base type 'Journal' (and at least one does).",
+      "evidence": []
+    },
+    {
+      "id": "ledger_scrutiny.journal_only_1f28610d",
+      "value": "yes",
+      "unit": "text",
+      "definition_sha256_16": "0552b4229eb8b683",
+      "definition_text": "Whether every population voucher touching this ledger (tag 1f28610d) has base type 'Journal' (and at least one does).",
       "evidence": []
     },
     {
@@ -523,6 +569,20 @@
       "definition_sha256_16": "bf7f391b412c3f7a",
       "definition_text": "Entries on this ledger (tag 0fcc5141) with abs(net amount) over the large-entry threshold.",
       "evidence": []
+    },
+    {
+      "id": "ledger_scrutiny.large_entry_count_1f28610d",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "f208bc7b831bbd5d",
+      "definition_text": "Entries on this ledger (tag 1f28610d) with abs(net amount) over the large-entry threshold.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "edge-guid-lsééééééa",
+          "label": "Journal id-lsééééééa on 2025-06-15"
+        }
+      ]
     },
     {
       "id": "ledger_scrutiny.large_entry_count_2a23219e",
@@ -619,6 +679,14 @@
       "evidence": []
     },
     {
+      "id": "ledger_scrutiny.large_entry_total_paise_1f28610d",
+      "value": 6000000,
+      "unit": "paise",
+      "definition_sha256_16": "5f8aadf70477a084",
+      "definition_text": "Sum of net amounts across the large entries above (tag 1f28610d).",
+      "evidence": []
+    },
+    {
       "id": "ledger_scrutiny.large_entry_total_paise_2a23219e",
       "value": 0,
       "unit": "paise",
@@ -696,6 +764,14 @@
       "unit": "count",
       "definition_sha256_16": "b5c5a66cb8ca647e",
       "definition_text": "Entries on this ledger (tag 0fcc5141) dated in the last 7 days of the period (2026-03-25 to 2026-03-31).",
+      "evidence": []
+    },
+    {
+      "id": "ledger_scrutiny.last_days_count_1f28610d",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "515e88efb8b49af9",
+      "definition_text": "Entries on this ledger (tag 1f28610d) dated in the last 7 days of the period (2026-03-25 to 2026-03-31).",
       "evidence": []
     },
     {
@@ -790,6 +866,14 @@
       "evidence": []
     },
     {
+      "id": "ledger_scrutiny.last_days_total_paise_1f28610d",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "9cd7245b0e0a9d53",
+      "definition_text": "Sum of net amounts across the last-days entries above (tag 1f28610d).",
+      "evidence": []
+    },
+    {
       "id": "ledger_scrutiny.last_days_total_paise_2a23219e",
       "value": 0,
       "unit": "paise",
@@ -868,6 +952,20 @@
       "definition_sha256_16": "c7b9a1e327bc0ebc",
       "definition_text": "Entries on this ledger (tag 0fcc5141) whose net amount is an exact, nonzero multiple of ₹1,000.",
       "evidence": []
+    },
+    {
+      "id": "ledger_scrutiny.round_sum_count_1f28610d",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "d26543ad06f0696a",
+      "definition_text": "Entries on this ledger (tag 1f28610d) whose net amount is an exact, nonzero multiple of ₹1,000.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "edge-guid-lsééééééa",
+          "label": "Journal id-lsééééééa on 2025-06-15"
+        }
+      ]
     },
     {
       "id": "ledger_scrutiny.round_sum_count_2a23219e",
@@ -967,6 +1065,14 @@
       "evidence": []
     },
     {
+      "id": "ledger_scrutiny.round_sum_total_paise_1f28610d",
+      "value": 6000000,
+      "unit": "paise",
+      "definition_sha256_16": "0fd4dac21db632c7",
+      "definition_text": "Sum of net amounts across the round-sum entries above (tag 1f28610d).",
+      "evidence": []
+    },
+    {
       "id": "ledger_scrutiny.round_sum_total_paise_2a23219e",
       "value": 0,
       "unit": "paise",
@@ -1060,6 +1166,20 @@
         {
           "kind": "ledger",
           "id": "Zero Close",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "ledger_scrutiny.total_debit_paise_1f28610d",
+      "value": 6000000,
+      "unit": "paise",
+      "definition_sha256_16": "2e100a4a7833fc98",
+      "definition_text": "Sum of positive (debit/expense) population entries on one ledger (tag 1f28610d).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Unnumbered",
           "label": ""
         }
       ]
@@ -1320,6 +1440,84 @@
       ],
       "title_sha256_16": "a2317fd421ffcf4b",
       "title_text": "Ledger scrutiny indicators on one expense ledger: moved only by journal voucher all year",
+      "limits_sha256_16": "1988ce2fd4e766aa",
+      "limits_text": [
+        "Each indicator is a structural, entry-level fact only; it is not, by itself, evidence of a wrong classification, a disallowable expense or a TDS default -- the ledger's own name and nature still need the CA's own reading, never a keyword match on the ledger name.",
+        "A round or large entry, one near year end, or a cash-paid share, can all have an entirely ordinary explanation (a lump annual payment, a year-end provision, a genuinely cash-heavy trade)."
+      ],
+      "ask_client_sha256_16": "1b8d4e4ecc40eff0",
+      "ask_client_text": [
+        "For each flagged ledger, confirm the nature and supporting document for the large/round-sum/last-days entries listed."
+      ]
+    },
+    {
+      "id": "ledger_scrutiny/flags/1f28610d",
+      "clauses": [],
+      "confidence": "indicative",
+      "facts": [
+        {
+          "name": "cash_paid",
+          "figure_id": "ledger_scrutiny.cash_paid_paise_1f28610d"
+        },
+        {
+          "name": "cash_share_bp",
+          "figure_id": "ledger_scrutiny.cash_share_bp_1f28610d"
+        },
+        {
+          "name": "closing",
+          "figure_id": "ledger_scrutiny.closing_paise_1f28610d"
+        },
+        {
+          "name": "contra_nature",
+          "figure_id": "ledger_scrutiny.contra_nature_closing_1f28610d"
+        },
+        {
+          "name": "journal_only",
+          "figure_id": "ledger_scrutiny.journal_only_1f28610d"
+        },
+        {
+          "name": "large_entry_count",
+          "figure_id": "ledger_scrutiny.large_entry_count_1f28610d"
+        },
+        {
+          "name": "large_entry_total",
+          "figure_id": "ledger_scrutiny.large_entry_total_paise_1f28610d"
+        },
+        {
+          "name": "last_days_count",
+          "figure_id": "ledger_scrutiny.last_days_count_1f28610d"
+        },
+        {
+          "name": "last_days_total",
+          "figure_id": "ledger_scrutiny.last_days_total_paise_1f28610d"
+        },
+        {
+          "name": "round_sum_count",
+          "figure_id": "ledger_scrutiny.round_sum_count_1f28610d"
+        },
+        {
+          "name": "round_sum_total",
+          "figure_id": "ledger_scrutiny.round_sum_total_paise_1f28610d"
+        },
+        {
+          "name": "total_debit",
+          "figure_id": "ledger_scrutiny.total_debit_paise_1f28610d"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Unnumbered",
+          "label": ""
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-guid-lsééééééa",
+          "label": "Journal id-lsééééééa on 2025-06-15"
+        }
+      ],
+      "title_sha256_16": "2905d893341c4f73",
+      "title_text": "Ledger scrutiny indicators on one expense ledger: 1 large single entry; 1 round-sum entry; moved only by journal voucher all year",
       "limits_sha256_16": "1988ce2fd4e766aa",
       "limits_text": [
         "Each indicator is a structural, entry-level fact only; it is not, by itself, evidence of a wrong classification, a disallowable expense or a TDS default -- the ledger's own name and nature still need the CA's own reading, never a keyword match on the ledger name.",
@@ -1749,7 +1947,7 @@
     {
       "invariant": "POP-1",
       "subject": "Suspense",
-      "detail": "vouchers -5309804 vs TB movement 0 paise"
+      "detail": "vouchers -11309804 vs TB movement 0 paise"
     },
     {
       "invariant": "POP-1",
@@ -1759,7 +1957,7 @@
     {
       "invariant": "POP-3",
       "subject": "closing_paise",
-      "detail": "TB closing_paise sums to 5308804 paise"
+      "detail": "TB closing_paise sums to 11308804 paise"
     }
   ],
   "result_invariants_evaluated": [

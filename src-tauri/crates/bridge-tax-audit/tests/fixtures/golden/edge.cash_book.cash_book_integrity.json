@@ -8,7 +8,7 @@
   "figures": [
     {
       "id": "cash_book_integrity.expense_credit_count_680a9416",
-      "value": 1,
+      "value": 2,
       "unit": "count",
       "definition_sha256_16": "0ee12a0664252d30",
       "definition_text": "Entries in that total (ledger tag 680a9416).",
@@ -16,11 +16,16 @@
     },
     {
       "id": "cash_book_integrity.expense_credit_total_680a9416",
-      "value": 900,
+      "value": 970,
       "unit": "paise",
       "definition_sha256_16": "2d9870a28ae712ca",
       "definition_text": "Money received into cash or bank credited to expense ledger (tag 680a9416).",
       "evidence": [
+        {
+          "kind": "voucher",
+          "id": "edge-guid-cbiééééééa",
+          "label": "Receipt d-cbiééééééa on 2025-08-03"
+        },
         {
           "kind": "voucher",
           "id": "p1",
@@ -30,7 +35,7 @@
     },
     {
       "id": "cash_book_integrity.expense_credit_total_all",
-      "value": 900,
+      "value": 970,
       "unit": "paise",
       "definition_sha256_16": "559e74699c35238c",
       "definition_text": "Sum of money received credited to any expense ledger.",
@@ -534,6 +539,11 @@
         },
         {
           "kind": "voucher",
+          "id": "edge-guid-cbiééééééa",
+          "label": "Receipt d-cbiééééééa on 2025-08-03"
+        },
+        {
+          "kind": "voucher",
           "id": "p1",
           "label": "Receipt p1 on 2025-08-01"
         }
@@ -966,7 +976,7 @@
     {
       "invariant": "POP-1",
       "subject": "Bank",
-      "detail": "vouchers 790 vs TB movement 0 paise"
+      "detail": "vouchers 860 vs TB movement 0 paise"
     },
     {
       "invariant": "POP-1",
@@ -976,7 +986,7 @@
     {
       "invariant": "POP-1",
       "subject": "Rent",
-      "detail": "vouchers -910 vs TB movement 0 paise"
+      "detail": "vouchers -980 vs TB movement 0 paise"
     },
     {
       "invariant": "POP-1",

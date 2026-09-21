@@ -1,5 +1,5 @@
 {
- "comment": "cash_book_integrity, all five parts. 1: two cash ledgers; negative days with several vouchers (M28), two days tied at the lowest (first wins), a day whose worst case is exactly nil (M27); a cash ledger closing nil in the TB (M26) and one closing negative with no negative day (CBI-2 fires). 2: openings that do not sum to nil, with some nil openings (M22). 3: own-account terms differing in case (M18), an empty term (M21) and a blank term; Contra withdrawal and deposit (M20); a matching narration on a Payment (M19). 4: a receipt through bank crediting an expense (M16), and a journal crediting an expense with no positive cash/bank line (M15). 5: journal cash to an expense with narrations equal only after whitespace/case folding and straße/STRASSE (M24), a pair (M25), a blank-only narration (M23), and a journal whose cash leg is a debit (M17). Also: 'Float' falls to the same lowest balance on two days, and the first is reported (B12); 'Drawer' closes negative in the TB with no voucher at all, so CBI-2 fires (B15).",
+ "comment": "cash_book_integrity, all five parts. 1: two cash ledgers; negative days with several vouchers (M28), two days tied at the lowest (first wins), a day whose worst case is exactly nil (M27); a cash ledger closing nil in the TB (M26) and one closing negative with no negative day (CBI-2 fires). 2: openings that do not sum to nil, with some nil openings (M22). 3: own-account terms differing in case (M18), an empty term (M21) and a blank term; Contra withdrawal and deposit (M20); a matching narration on a Payment (M19). 4: a receipt through bank crediting an expense (M16), and a journal crediting an expense with no positive cash/bank line (M15). 5: journal cash to an expense with narrations equal only after whitespace/case folding and straße/STRASSE (M24), a pair (M25), a blank-only narration (M23), and a journal whose cash leg is a debit (M17). Also: 'Float' falls to the same lowest balance on two days, and the first is reported (B12); 'Drawer' closes negative in the TB with no voucher at all, so CBI-2 fires (B15). A receipt with no number and a non-ASCII GUID is labelled by the GUID's last 12 characters.",
  "groups": {
   "Current Assets": null,
   "Cash-in-Hand": "Current Assets",
@@ -550,6 +550,22 @@
     [
      "Suspense",
      50
+    ]
+   ]
+  },
+  {
+   "guid": "edge-guid-cbiééééééa",
+   "date": "2025-08-03",
+   "base_type": "Receipt",
+   "number": "",
+   "lines": [
+    [
+     "Bank",
+     70
+    ],
+    [
+     "Rent",
+     -70
     ]
    ]
   }

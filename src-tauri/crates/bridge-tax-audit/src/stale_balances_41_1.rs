@@ -9,13 +9,14 @@
 //! period movements are nil. Every s.41(1) reading is judgement-required, never a conclusion that
 //! a liability has ceased.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::book::{Book, TbRow};
-use crate::error::{AuditError, Result};
+use crate::error::Result;
 use crate::findings::{Confidence, EvidenceRef, Finding, TestResult, Unit, Value};
 use crate::ledger_ids::stable_ledger_tag;
 use crate::rules::Rules;
+use crate::support;
 
 pub const TEST_ID: &str = "stale_balances_41_1";
 pub const VERSION: &str = "1";
@@ -34,7 +35,7 @@ pub fn run(book: &Book, rules: &Rules) -> Result<TestResult> {
     r.population_note = "Figures in this test are read directly from the Trial Balance (TOT-1); \
 no voucher population walk is used to compute them."
         .to_string();
-    let overflow = || AuditError::Config(format!("{TEST_ID}: a total overflowed i64 paise"));
+    let overflow = || support::overflow(TEST_ID);
 
     for (role, group) in [("debtor", DEBTOR_GROUP), ("creditor", CREDITOR_GROUP)] {
         let ledgers = book.ledgers_under_any(&[group.to_string()]);
@@ -60,14 +61,14 @@ no voucher population walk is used to compute them."
 
         r.fig(
             &format!("{role}_ledger_count"),
-            Value::Int(i64::try_from(ledgers.len()).map_err(|_| overflow())?),
+            support::count(TEST_ID, ledgers.len())?,
             Unit::Count,
             &format!("Ledgers under Tally's '{group}' group."),
             Vec::new(),
         );
         r.fig(
             &format!("{role}_active_count"),
-            Value::Int(i64::try_from(active.len()).map_err(|_| overflow())?),
+            support::count(TEST_ID, active.len())?,
             Unit::Count,
             &format!("Of those, ledgers with abs(TB closing) over {ACTIVE_TOL_PAISE} paise."),
             ledger_refs(active.keys().copied()),
@@ -81,7 +82,7 @@ no voucher population walk is used to compute them."
         );
         let f_stale_count = r.fig(
             &format!("{role}_stale_count"),
-            Value::Int(i64::try_from(stale.len()).map_err(|_| overflow())?),
+            support::count(TEST_ID, stale.len())?,
             Unit::Count,
             &format!(
                 "Of the active {role} ledgers, those with TB period debit and credit movement \
@@ -181,13 +182,7 @@ been written off or is expected to be."
 /// amount to it, re-derived by walking the population directly.
 pub fn check_invariants(book: &Book, result: &TestResult) -> Result<Vec<String>> {
     let mut out = Vec::new();
-    // Tags are GUID-derived; a GUID-less ledger's falls back to a name hash. If two ledgers ever
-    // shared a tag, this map keeps the last in name order, where the reference's dict keeps the last
-    // in read order -- reviewer-only, and not reachable while tags are unique.
-    let mut tag_to_name: HashMap<String, &String> = HashMap::new();
-    for name in book.ledgers.keys() {
-        tag_to_name.insert(stable_ledger_tag(book, name)?, name);
-    }
+    let tag_to_name = support::ledgers_by_tag(book)?;
     let mut touched: BTreeSet<&str> = BTreeSet::new();
     for v in book.population()? {
         for l in &v.lines {

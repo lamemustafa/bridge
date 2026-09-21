@@ -1,5 +1,5 @@
 {
- "comment": "ledger_scrutiny: large is over Rs 50,000 (exactly is not); round sums; the last-days window is 7 days inclusive of its first day (2026-03-25 in, 2026-03-24 out: M08); a cash share of exactly 30% is flagged (M10) and 33.33% prints two decimals (M14); a zero cash line is not a cash leg (M09); a credit entry with a cash leg is not cash-paid; a zero-net non-journal voucher still marks a ledger as not journal-only (M12), and a journal plus a non-journal ledger is not journal-only (M11); a credit closing is contra-nature and a zero closing is not (M13); LSC-1 fires when the walk exceeds the TB debit by more than Re 1 and not at exactly Re 1 (M30).",
+ "comment": "ledger_scrutiny: large is over Rs 50,000 (exactly is not); round sums; the last-days window is 7 days inclusive of its first day (2026-03-25 in, 2026-03-24 out: M08); a cash share of exactly 30% is flagged (M10) and 33.33% prints two decimals (M14); a zero cash line is not a cash leg (M09); a credit entry with a cash leg is not cash-paid; a zero-net non-journal voucher still marks a ledger as not journal-only (M12), and a journal plus a non-journal ledger is not journal-only (M11); a credit closing is contra-nature and a zero closing is not (M13); LSC-1 fires when the walk exceeds the TB debit by more than Re 1 and not at exactly Re 1 (M30). A voucher with no number and a non-ASCII GUID is labelled by the GUID's last 12 characters, not bytes (the byte cut would split a character).",
  "groups": {
   "Current Assets": null,
   "Cash-in-Hand": "Current Assets",
@@ -96,6 +96,13 @@
     "Suspense A/c"
    ],
    "guid": "edge-suspense"
+  },
+  {
+   "name": "Unnumbered",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-unnumbered"
   }
  ],
  "tb": [
@@ -175,6 +182,13 @@
    "debit": 200000,
    "credit": 5003001,
    "closing": -4803001
+  },
+  {
+   "ledger": "Unnumbered",
+   "opening": 0,
+   "debit": 6000000,
+   "credit": 0,
+   "closing": 6000000
   }
  ],
  "vouchers": [
@@ -434,6 +448,22 @@
     [
      "Suspense",
      -1000
+    ]
+   ]
+  },
+  {
+   "guid": "edge-guid-lsééééééa",
+   "date": "2025-06-15",
+   "base_type": "Journal",
+   "number": "",
+   "lines": [
+    [
+     "Unnumbered",
+     6000000
+    ],
+    [
+     "Suspense",
+     -6000000
     ]
    ]
   }
