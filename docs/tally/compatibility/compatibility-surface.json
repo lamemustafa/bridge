@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "d71e28ab62d71e5101137df64e3f7737ee7d74a55879b4de9b6e67e3e43122f8"
+      "sha256": "545572faa187a63a6256a5fcc93dc76f2a2f44085d3041cb3937fca1705a06cf"
     },
     {
       "path": ".github/workflows/dependency-security-scheduled.yml",
@@ -15,7 +15,7 @@
     },
     {
       "path": "docs/adr/0004-tally-write-safety.md",
-      "sha256": "011c01eb099b6ab354f31a895d13857c01965e9c0a923ada7bfff14e2e5b900b"
+      "sha256": "a5ab94e307eeef635ba6c6fa7a232248f8534716d9cbd2c2616e6854576a65d2"
     },
     {
       "path": "docs/adr/0005-tally-snapshot-recovery.md",
@@ -411,7 +411,7 @@
     },
     {
       "path": "src-tauri/crates/tally-protocol-simulator/src/server.rs",
-      "sha256": "90b157d547b760c52c086fd4c2936254a53d8134223756769b7e569f9de47c9e"
+      "sha256": "75c8a3c25599ec6b7196778bbcb8e5d555a1f686c2bb4c27c162db577ff37898"
     },
     {
       "path": "src-tauri/crates/tally-protocol-simulator/tests/protocol_simulator.rs",
@@ -479,7 +479,7 @@
     },
     {
       "path": "src-tauri/src/agent_import_post.rs",
-      "sha256": "5431fe3792c5edf2733cd78c2ce3b5944cfd3542d7349f362814eb94cbf92b11"
+      "sha256": "1e593c14edb9a74907b8d243135a2a2eed872556a0c1ffc00a92c6dd8eefd46b"
     },
     {
       "path": "src-tauri/src/agent_import_verification.rs",
@@ -863,7 +863,7 @@
     },
     {
       "path": "src-tauri/src/tally/approved_import.rs",
-      "sha256": "f8d2aa13f205f6a6443a21e3b5bdb127ca11ca024290c486edf675653e813aec"
+      "sha256": "99f5be816acecfbea8e2ca6d9370f4fb4adca3efe9539a004e19f857aa3bb831"
     },
     {
       "path": "src-tauri/src/tally/canonical_window.rs",
@@ -1102,5 +1102,5 @@
       "sha256": "0ab5bfbe6d81b1e10530744c338fb91efa57fe5a66fb4bc0cfd382495eaf02a4"
     }
   ],
-  "manifest_sha256": "9b4e7da1fef6fbd286445c9cc0d92bc710805530f45ea2d4ed1517af841e04fc"
+  "manifest_sha256": "de3dfea2ddc74ebffffe22aa649200ce62afe21e953b53a2d261e953a689101b"
 }

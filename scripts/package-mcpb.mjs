@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { access, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { assertNoTestSeam } from "./check-no-test-seam.mjs";
 import { arch, platform } from "node:os";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -141,6 +142,9 @@ async function main() {
   } catch {
     throw new Error(`MCPB binary is missing: ${sourceBinary}`);
   }
+  // Every MCPB, from CI, a release or a local build, is staged here: refuse a
+  // binary compiled with the test-only approval seam (bridge#583).
+  assertNoTestSeam([sourceBinary]);
 
   const stageDirectory = resolve(root, "packaging", "mcpb", "stage");
   await rm(stageDirectory, { recursive: true, force: true });
