@@ -83,6 +83,8 @@ pub struct AgentRead {
     pub body: String,
     pub encoded_bytes: usize,
     pub encoded_sha256: String,
+    /// The date-boundary profile the read's opening identity bracket observed.
+    pub boundary_profile: DateBoundaryProfile,
 }
 
 async fn fetch_admitted_agent_read(
@@ -90,7 +92,10 @@ async fn fetch_admitted_agent_read(
     identity: &VerifiedCompanyIdentity,
     request: super::agent_read_request::AgentReadRequest,
 ) -> anyhow::Result<(AgentRead, RuntimeReadEvidence)> {
-    bracket_verified_company_identity(client, identity).await?;
+    let profile = bracket_verified_company_identity_observing_mode(client, identity).await?;
+    if !request.window_accepted_by(profile) {
+        return Err(EducationBoundaryRefusal.into());
+    }
     let request_xml = request.into_xml();
     let (body, encoded_bytes, encoded_sha256) = client
         .fetch_native_report_paired_with_evidence(request_xml.clone())
@@ -104,6 +109,7 @@ async fn fetch_admitted_agent_read(
             body,
             encoded_bytes,
             encoded_sha256,
+            boundary_profile: profile,
         },
         evidence,
     ))
@@ -248,6 +254,32 @@ async fn bracket_verified_company_identity(
     let companies = client.fetch_companies().await?;
     admit_company_identity(&companies, identity)
 }
+
+/// As [`bracket_verified_company_identity`], also returning the date-boundary
+/// profile the same company-list response reports. Education mode is read from
+/// the `EDUMODE` field every `CompanyListV2` row carries, so observing it here
+/// costs no request. A response whose mode facts do not parse keeps the
+/// mode-agnostic profile, as that parser's contract requires.
+async fn bracket_verified_company_identity_observing_mode(
+    client: &TallyClient,
+    identity: &VerifiedCompanyIdentity,
+) -> anyhow::Result<DateBoundaryProfile> {
+    let (companies, _, gateway) = client.fetch_companies_observing_gateway().await?;
+    admit_company_identity(&companies, identity)?;
+    Ok(match gateway {
+        Some(gateway) if gateway.educational_mode => DateBoundaryProfile::EducationRestricted,
+        _ => DateBoundaryProfile::ModeAgnostic,
+    })
+}
+
+/// An agent read was refused before it was sent: the endpoint reported
+/// Education mode, and the read's `SVFROMDATE`/`SVTODATE` is not a day that
+/// mode honours (the 1st, 2nd or 31st). Education answers such a read with a
+/// well-formed empty collection, not an error, so sending it could only
+/// produce a false empty (bridge#581).
+#[derive(Debug, thiserror::Error)]
+#[error("window_part_boundary_unsupported_in_education")]
+pub(crate) struct EducationBoundaryRefusal;
 
 fn admit_company_identity(
     companies: &[TallyCompany],

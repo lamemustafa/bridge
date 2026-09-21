@@ -2571,3 +2571,367 @@ async fn a_read_whose_withdrawal_never_comes_reads_every_part() {
     );
     assert_eq!(observed.len(), 18);
 }
+
+// --- Education date boundaries (#581) ---------------------------------------
+
+/// The captured licensed company list with Tally's `EDUMODE` flag set, which
+/// is how the list reports an instance in Education mode. A deliberate
+/// synthetic mutation of the captured bytes; the flag is the only change.
+fn education_company_plan() -> ScenarioPlan {
+    let licensed = captured_utf16(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-companies.utf16le.xml"
+    ));
+    let education = licensed.replace(
+        "<EDUMODE TYPE=\"Logical\">No</EDUMODE>",
+        "<EDUMODE TYPE=\"Logical\">Yes</EDUMODE>",
+    );
+    assert_ne!(education, licensed);
+    xml_plan(education)
+}
+
+/// Lane A's capture: what Education serves a movement or voucher read that
+/// starts on a day other than the 1st, 2nd or 31st (an empty collection).
+fn education_empty_part_plan() -> ScenarioPlan {
+    xml_plan(captured_utf16(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-education-empty-movement-part.utf16le.xml"
+    )))
+}
+
+/// One paired, identity-bracketed read with the Education company list.
+fn education_paired(body: &ScenarioPlan) -> Vec<ScenarioPlan> {
+    vec![
+        education_company_plan(),
+        body.clone(),
+        status_plan(),
+        body.clone(),
+        status_plan(),
+        education_company_plan(),
+    ]
+}
+
+/// The vouchers tool over a window Education cannot serve: it starts on the
+/// 5th. Before bridge#581 the part was sent, Education answered it with its
+/// captured empty collection, and the tool reported an empty window marked
+/// `partial / empty_uncorroborated` after 28 requests. Now the mark read's own
+/// identity bracket reports Education, and the plan is refused by name before
+/// anything of the part is sent.
+#[tokio::test]
+async fn education_refuses_a_window_starting_on_an_unaccepted_day_before_sending_it() {
+    let mut plans = vec![
+        education_company_plan(),
+        status_plan(),
+        education_company_plan(),
+        status_plan(),
+    ];
+    plans.extend(education_paired(&mark(3)));
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let response = server
+        .call_tool(
+            "vouchers",
+            json!({"company_guid": GUID, "from": "20260405", "to": "20260405"}),
+        )
+        .await;
+    simulator.cancel();
+    let observed = simulator
+        .finish()
+        .unwrap()
+        .into_iter()
+        .filter(|request| !request.method.is_empty())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"],
+        "window_part_boundary_unsupported_in_education",
+        "{response}"
+    );
+    assert_eq!(observed.len(), 10);
+    let part = [
+        render_agent_vouchers(&company(), "20260405", "20260405", None).unwrap(),
+        render_agent_vouchers_in_span(&company(), "20260405", "20260405", None).unwrap(),
+    ];
+    assert!(observed.iter().all(|request| part
+        .iter()
+        .all(|xml| request.request_body_sha256 != request_sha(xml))));
+}
+
+/// The control: the same read on a licensed endpoint is sent as before, and
+/// its empty window is corroborated as it always was.
+#[tokio::test]
+async fn a_licensed_endpoint_still_reads_a_window_starting_on_any_day() {
+    let empty = education_empty_part_plan();
+    let mut plans = vec![company_plan(), status_plan(), company_plan(), status_plan()];
+    plans.extend(paired(&mark(3)));
+    plans.extend(paired(&empty));
+    plans.extend(paired(&empty));
+    plans.extend(paired(&mark(3)));
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let response = server
+        .call_tool(
+            "vouchers",
+            json!({"company_guid": GUID, "from": "20260405", "to": "20260405"}),
+        )
+        .await;
+    simulator.cancel();
+    let sent = simulator
+        .finish()
+        .unwrap()
+        .iter()
+        .filter(|request| !request.method.is_empty())
+        .count();
+    assert_eq!(sent, 28);
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(result["state"], "partial", "{response}");
+    assert_eq!(result["reason"], "empty_uncorroborated");
+}
+
+/// A divided plan is refused whole, before its first part (bridge#581). The
+/// census counts one voucher on each of the 1st, 2nd and 10th and one voucher
+/// fits a read, so the plan is 1st, 2nd to 9th, 10th to 31st. Its first part
+/// is one Education serves; its second is not. Checking only as each part is
+/// sent would read the first part and then refuse; the census's own bracket
+/// has already reported Education, so nothing is read.
+#[tokio::test]
+async fn an_education_plan_with_an_unaccepted_part_boundary_is_refused_before_any_part() {
+    let census = relabelled(
+        &three_vouchers(),
+        &[(1, "20260801"), (2, "20260802"), (3, "20260810")],
+    );
+    let (outcome, observed) = read_window(
+        education_paired(&xml_plan(census)),
+        ("20260801", "20260831"),
+        VoucherReadShape::EntryWildcard,
+        WindowPlanSource::Estimate {
+            known_marks: Some(marks_of(3)),
+        },
+        three_a_read(),
+    )
+    .await;
+    let failure = outcome.err().expect("the plan is refused");
+    assert_eq!(failure.code, EDUCATION_BOUNDARY_UNSUPPORTED);
+    assert!(failure.evidence.is_some(), "the census is accounted for");
+    assert_eq!(observed.len(), 6);
+    assert_requests(
+        &observed,
+        &[1],
+        &[render_agent_voucher_census(&company(), "20260801", "20260831", None).unwrap()],
+    );
+}
+
+/// The same census on a licensed endpoint plans the parts the Education test
+/// refuses, and reads them: the control that the refusal is the mode's.
+#[test]
+fn the_refused_education_plan_divides_on_days_education_does_not_honour() {
+    let limits = three_a_read();
+    let plan = plan_window_reads(
+        day("20260801"),
+        day("20260831"),
+        &census_of(&[("20260801", 1), ("20260802", 1), ("20260810", 1)]),
+        None,
+        3,
+        limits.default_bytes_per_voucher,
+        limits.budget_bytes,
+        limits.max_reads,
+    )
+    .unwrap();
+    assert_eq!(
+        stack_of(&plan).into_iter().rev().collect::<Vec<_>>(),
+        [
+            part("20260801", "20260801", None),
+            part("20260802", "20260809", None),
+            part("20260810", "20260831", None),
+        ]
+    );
+}
+
+/// Without a preflight read the executor has not yet observed the mode, so the
+/// runtime refuses the part itself: after its opening identity bracket reports
+/// Education and before its data request is sent.
+#[tokio::test]
+async fn the_runtime_refuses_an_education_read_the_executor_could_not_check() {
+    let (outcome, observed) = read_window(
+        vec![education_company_plan()],
+        ("20260805", "20260805"),
+        VoucherReadShape::EntryWildcard,
+        WindowPlanSource::Counted(census_of(&[("20260805", 1)])),
+        three_a_read(),
+    )
+    .await;
+    let failure = outcome.err().expect("the read is refused");
+    assert_eq!(failure.code, EDUCATION_BOUNDARY_UNSUPPORTED);
+    assert_eq!(
+        observed
+            .iter()
+            .filter(|request| !request.method.is_empty())
+            .count(),
+        1
+    );
+}
+
+/// Education seen on any read of a window holds for the rest of it; a later
+/// licensed observation never relaxes it.
+#[test]
+fn an_observed_education_profile_is_never_relaxed_within_a_window() {
+    use DateBoundaryProfile::{EducationRestricted, ModeAgnostic};
+    for (observations, expected) in [
+        (vec![], None),
+        (vec![ModeAgnostic], Some(ModeAgnostic)),
+        (vec![EducationRestricted], Some(EducationRestricted)),
+        (
+            vec![ModeAgnostic, EducationRestricted],
+            Some(EducationRestricted),
+        ),
+        (
+            vec![EducationRestricted, ModeAgnostic],
+            Some(EducationRestricted),
+        ),
+    ] {
+        let mut boundary = None;
+        for observed in observations.iter().copied() {
+            observe_boundary(&mut boundary, observed);
+        }
+        assert_eq!(boundary, expected, "{observations:?}");
+    }
+}
+
+/// The end of a part is held to the rule as well as its start. Education's
+/// treatment of an end day is not measured, so a whole-month window ending on
+/// the 30th is refused: the accepted price of admitting only measured
+/// boundaries (bridge#581).
+#[tokio::test]
+async fn an_education_window_ending_on_an_unaccepted_day_is_refused_before_it_is_sent() {
+    let (outcome, observed) = read_window(
+        education_paired(&mark(1)),
+        ("20260901", "20260930"),
+        VoucherReadShape::EntryWildcard,
+        WindowPlanSource::Estimate { known_marks: None },
+        three_a_read(),
+    )
+    .await;
+    let failure = outcome.err().expect("the window is refused");
+    assert_eq!(failure.code, EDUCATION_BOUNDARY_UNSUPPORTED);
+    assert_eq!(observed.len(), 6, "only the mark read is sent");
+}
+
+/// Each way a part fails admission is named beside `voucher_window_part_not_admitted`
+/// (bridge#581), and a census disagreement carries its counts: an Education
+/// part served empty reads as "returned 0 of 2", not as a bare refusal.
+#[test]
+fn a_part_not_admitted_names_its_cause_and_a_census_mismatch_its_counts() {
+    // AlterIDs 1 and 2 on the 1st, 3 on the 2nd.
+    let census = census_of(&[("20260801", 2), ("20260802", 1)]);
+    let row = |alter_id: u64, date: &str| json!({"date": date, "alter_id": alter_id});
+    let day_one = part("20260801", "20260801", None);
+    let first_only = part(
+        "20260801",
+        "20260801",
+        Some(AlterIdSpan {
+            after: 0,
+            through: 1,
+        }),
+    );
+    let window = (day("20260801"), day("20260802"));
+    for (part, rows, expected) in [
+        (&day_one, vec![], Err((PART_CENSUS_MISMATCH, Some((0, 2))))),
+        (
+            &day_one,
+            vec![row(1, "20260801"), row(2, "20260801")],
+            Ok(()),
+        ),
+        (
+            &day_one,
+            vec![row(1, "20260801"), row(2, "20260801"), row(4, "20260801")],
+            Err((PART_CENSUS_MISMATCH, Some((3, 2)))),
+        ),
+        (
+            &day_one,
+            vec![row(1, "20260801"), row(9, "20260801")],
+            Err((PART_CENSUS_MISMATCH, Some((2, 2)))),
+        ),
+        (
+            &day_one,
+            vec![json!({"alter_id": 1})],
+            Err((PART_ROW_UNREADABLE, None)),
+        ),
+        (
+            &day_one,
+            vec![json!({"date": "20260801"})],
+            Err((PART_ROW_UNREADABLE, None)),
+        ),
+        (
+            &day_one,
+            vec![row(1, "20260801"), row(3, "20260802")],
+            Err((PART_ROW_OUTSIDE_DATES, None)),
+        ),
+        (
+            &day_one,
+            vec![row(1, "20260801"), row(1, "20260801")],
+            Err((PART_ROW_DUPLICATED, None)),
+        ),
+        (
+            &first_only,
+            vec![row(2, "20260801")],
+            Err((PART_ROW_OUTSIDE_ALTER_ID_SPAN, None)),
+        ),
+    ] {
+        let outcome = admit_part(part, window, &rows, Some(&census)).map_err(|failure| {
+            assert_eq!(failure.code, PART_NOT_ADMITTED);
+            (
+                failure.cause.expect("a named cause"),
+                failure
+                    .counts
+                    .map(|counts| (counts.returned, counts.counted)),
+            )
+        });
+        assert_eq!(outcome, expected, "{rows:?}");
+    }
+}
+
+/// The counts reach the caller beside the cause, through the tool's own error.
+#[tokio::test]
+async fn a_census_mismatch_reaches_the_caller_with_its_counts() {
+    // A census of 50 vouchers on one day, more than one read carries at the
+    // shipped limits, so the plan's first part is an AlterID span. Tally
+    // answers it empty.
+    let limits = WindowReadLimits::for_shape(VoucherReadShape::EntryWildcard);
+    let per_read = limits.budget_bytes / limits.default_bytes_per_voucher;
+    let total = per_read + 8;
+    let one = vouchers_kept(1);
+    let start = one.find("<VOUCHER ").unwrap();
+    let end = start + one[start..].find("</VOUCHER>").unwrap() + "</VOUCHER>".len();
+    let many = format!(
+        "{}{}{}",
+        &one[..start],
+        one[start..end].repeat(total as usize),
+        &one[end..]
+    );
+    let ids = (1..=total).map(|id| (id, "20260801")).collect::<Vec<_>>();
+    let census = relabelled(&many, &ids);
+    let mut plans = vec![company_plan(), status_plan(), company_plan(), status_plan()];
+    plans.extend(paired(&marks_plan(total, 7)));
+    plans.extend(paired(&xml_plan(census)));
+    plans.extend(paired(&xml_plan(empty_collection())));
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let response = server
+        .call_tool(
+            "vouchers",
+            json!({"company_guid": GUID, "from": "20260801", "to": "20260801"}),
+        )
+        .await;
+    simulator.cancel();
+    let sent = simulator
+        .finish()
+        .unwrap()
+        .iter()
+        .filter(|request| !request.method.is_empty())
+        .count();
+    assert_eq!(sent, 22);
+    let error = &response["structuredContent"]["result"]["error"];
+    assert_eq!(error["code"], PART_NOT_ADMITTED, "{response}");
+    assert_eq!(error["cause"], PART_CENSUS_MISMATCH);
+    assert_eq!(error["counts"], json!({"returned": 0, "counted": per_read}));
+}
