@@ -829,3 +829,43 @@ fn queued_absence_recheck_distinguishes_an_attributed_journal_from_a_new_candida
     )
     .expect("paired captured source establishes absence of the new candidate");
 }
+
+#[test]
+fn the_whole_window_pre_post_request_is_admitted_on_the_verification_measurement() {
+    // Review of #520. The request sent whole inside the dispatch lease is
+    // admitted on what verify_import's read of the same window measured.
+    let evidence = |bytes: usize| Evidence {
+        request_sha256: String::new(),
+        response_sha256: String::new(),
+        bytes,
+        state: "complete",
+        read_at: None,
+        duration_ms: None,
+        reason_code: None,
+    };
+    let divided = [
+        crate::agent::WindowPart {
+            from: "20260801".into(),
+            to: "20260815".into(),
+            span: None,
+        },
+        crate::agent::WindowPart {
+            from: "20260816".into(),
+            to: "20260831".into(),
+            span: None,
+        },
+    ];
+    let budget = usize::try_from(crate::agent::WINDOW_READ_BUDGET_BYTES).unwrap();
+    let light = crate::agent::WindowServed::of(&divided, &evidence(2 * budget));
+    let heavy = crate::agent::WindowServed::of(&divided, &evidence(2 * budget + 2));
+    assert_eq!(admit_post_window(Some(light)), Ok(()));
+    assert_eq!(
+        admit_post_window(Some(heavy)),
+        Err(IMPORT_POST_WINDOW_NOT_BOUNDED.to_string())
+    );
+    // A verification that reported nothing is refused, not assumed small.
+    assert_eq!(
+        admit_post_window(None),
+        Err(IMPORT_POST_WINDOW_NOT_BOUNDED.to_string())
+    );
+}

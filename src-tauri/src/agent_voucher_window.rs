@@ -127,9 +127,9 @@ impl VoucherReadShape {
 }
 
 /// An AlterID range `(after, through]`. Within one day it divides a day too
-/// heavy for one read; in a census of one day it bounds the census by
+/// heavy for one read; in a census it bounds each census request by
 /// construction, since with distinct AlterIDs it cannot return more than
-/// `through - after` rows.
+/// `through - after` rows (see [`census_spans`]).
 ///
 /// Dividing a day by spans predicts each span's size from the census, so that
 /// prediction is only as good as the census is current: a voucher created or
@@ -635,6 +635,40 @@ pub(super) enum WindowPlanSource {
     },
 }
 
+impl WindowPlanSource {
+    /// The corroborating replay of a read: exactly its parts, with its witness.
+    pub(super) fn replay_of(parts: Vec<WindowPart>, witness: Option<WindowWitness>) -> Self {
+        Self::Replay { parts, witness }
+    }
+}
+
+/// What one window read cost Tally, for a caller that must later send the same
+/// window as one request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct WindowServed {
+    pub(super) divided: bool,
+    /// One copy of every data response, summed: `post_read` reports both bodies
+    /// of a paired read, so half of its evidence bytes.
+    pub(super) data_bytes: u64,
+}
+
+impl WindowServed {
+    pub(super) fn of(reads: &[WindowPart], data: &Evidence) -> Self {
+        Self {
+            divided: is_divided(reads),
+            data_bytes: u64::try_from(data.bytes / 2).unwrap_or(u64::MAX),
+        }
+    }
+
+    /// Whether one request of the whole window is within the budget, on what the
+    /// read measured rather than on the pre-flight's prediction: an undivided
+    /// read was that request, and a divided read's parts together were the
+    /// window's whole response.
+    pub(super) fn fits_one_request(self) -> bool {
+        !self.divided || self.data_bytes <= WINDOW_READ_BUDGET_BYTES
+    }
+}
+
 /// The per-call limits a window read plans under.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct WindowReadLimits {
@@ -861,6 +895,10 @@ impl Server {
         let mut bytes_per_voucher = limits.default_bytes_per_voucher;
         // A stack whose pops are in order and whose parts always tile the part
         // of the window not yet read, so the rows arrive in order.
+        // A replay reads exactly the parts it was given: it never re-plans from
+        // a measurement, which could merge parts back into a request the first
+        // read already found Tally could not serve.
+        let replaying = matches!(source, WindowPlanSource::Replay { .. });
         let mut pending: Vec<WindowPart> = match source {
             WindowPlanSource::Replay { parts, witness } => {
                 for part in &parts {
@@ -999,6 +1037,9 @@ impl Server {
                         // first measurement replaces the default, and a later,
                         // heavier part raises it. A lighter part never lowers
                         // it again, so one light part cannot loosen the plan.
+                        if replaying {
+                            continue;
+                        }
                         let (Some(counted), Some(observed)) = (census.as_ref(), observed) else {
                             continue;
                         };
@@ -1079,7 +1120,12 @@ impl Server {
         // admitted on its own by its parser; only here can a voucher returned by
         // two parts — re-dated between them, or served by a filter Tally did not
         // honour — be seen.
-        admit_union(&rows).map_err(|code| with_prior(code.into(), &preflight, &evidence))?;
+        //
+        // Import verification admits its own union under its own refusal code
+        // (`ImportReadSource::admit`), which is kept rather than preempted here.
+        if shape != VoucherReadShape::ImportVerification {
+            admit_union(&rows).map_err(|code| with_prior(code.into(), &preflight, &evidence))?;
+        }
         // Close the bracket on a divided read, whether it was planned divided,
         // divided after Tally could not serve a part, or replayed. One undivided
         // request is one observation, exactly as before the bound.
@@ -1110,40 +1156,6 @@ impl Server {
             reads,
             witness: opening.map(|marks| WindowWitness { marks, census }),
         })
-    }
-
-    /// Whether a window of `shape` would be read as one request, established by
-    /// the same pre-flight a read of it would run, without reading it.
-    ///
-    /// For a caller that must send the undivided request itself — the pre-post
-    /// check inside the dispatch lease sends the whole verification window — and
-    /// so must refuse beforehand a window the bound would have divided.
-    pub(super) async fn window_reads_whole(
-        &self,
-        identity: &VerifiedCompanyIdentity,
-        company: &str,
-        (from, to): (&str, &str),
-        shape: VoucherReadShape,
-    ) -> Result<(bool, Option<Evidence>), ToolFailure> {
-        let (first, last) = (parse_day(from)?, parse_day(to)?);
-        if first > last {
-            return Err("invalid_date_range".to_string().into());
-        }
-        let mut preflight = None;
-        let mut marks = None;
-        let estimate = self
-            .estimate_window_volume(
-                identity,
-                company,
-                (first, last),
-                None,
-                WindowReadLimits::for_shape(shape),
-                &mut preflight,
-                &mut marks,
-            )
-            .await
-            .map_err(|failure| with_prior(failure, &preflight, &None))?;
-        Ok((matches!(estimate, Preflight::Whole), preflight))
     }
 
     async fn read_marks(
@@ -1223,17 +1235,37 @@ impl Server {
                 Err(failure) if census_failure(&failure.code) == CensusFailure::Refuse => {
                     // A census bounded by construction that Tally still could not
                     // serve is not divided further or retried: the gateway may
-                    // still be building it. Keep what the attempt observed.
+                    // still be building it. Keep what the attempt observed, and
+                    // which of the two it was.
                     let mut refused = unestimated();
+                    refused.cause = census_refusal_cause(&failure.code);
                     refused.evidence = failure.evidence;
                     return Err(refused);
                 }
                 Err(failure) => return Err(failure),
             };
             fold_evidence(preflight, evidence);
-            rows.extend(parse_voucher_census(&xml, (&from, &to), span).map_err(|_| unestimated())?);
+            rows.extend(
+                parse_voucher_census(&xml, (&from, &to), span).map_err(|code| {
+                    let mut refused = unestimated();
+                    refused.cause = census_refusal_cause(&code);
+                    refused
+                })?,
+            );
         }
         Ok(rows)
+    }
+}
+
+/// Why a census refused its window as unestimated, as a data-free cause beside
+/// [`VOLUME_UNESTIMATED`].
+fn census_refusal_cause(code: &str) -> Option<&'static str> {
+    match code {
+        "window_not_honoured" => Some("census_window_not_honoured"),
+        "agent_read_protocol_invalid" => Some("census_protocol_invalid"),
+        "response_size_limit_exceeded" => Some("census_response_too_large"),
+        _ if is_window_too_large_code(code) => Some("census_deadline_exceeded"),
+        _ => None,
     }
 }
 

@@ -63,10 +63,7 @@ impl Server {
                     &identity,
                     &company.name,
                     (from, to),
-                    WindowPlanSource::Replay {
-                        parts: opening_read.reads,
-                        witness: opening_read.witness,
-                    },
+                    WindowPlanSource::replay_of(opening_read.reads, opening_read.witness),
                     marks,
                 )
                 .await?;

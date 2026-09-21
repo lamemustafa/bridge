@@ -779,20 +779,36 @@ impl Server {
     }
 
     pub(super) async fn verify_import(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
-        self.verify_import_with_dispatch(args, false).await
+        self.verify_import_with_dispatch(args, false, &mut None)
+            .await
+    }
+
+    /// [`Self::verify_import`], also reporting what its window read cost, for
+    /// `post_import`'s pre-approval check of the whole-window request it sends.
+    pub(super) async fn verify_import_measuring(
+        &self,
+        args: &Value,
+    ) -> Result<(ToolOutcome, Option<super::WindowServed>), ToolFailure> {
+        let mut served = None;
+        let outcome = self
+            .verify_import_with_dispatch(args, false, &mut served)
+            .await?;
+        Ok((outcome, served))
     }
 
     pub(in crate::agent) async fn verify_import_after_current_dispatch(
         &self,
         args: &Value,
     ) -> Result<ToolOutcome, ToolFailure> {
-        self.verify_import_with_dispatch(args, true).await
+        self.verify_import_with_dispatch(args, true, &mut None)
+            .await
     }
 
     async fn verify_import_with_dispatch(
         &self,
         args: &Value,
         current_dispatch: bool,
+        served: &mut Option<super::WindowServed>,
     ) -> Result<ToolOutcome, ToolFailure> {
         let guid = required_string(args, "company_guid")?;
         let batch_id = required_string(args, "batch_id")?;
@@ -832,6 +848,10 @@ impl Server {
             if let Some(preflight) = observed_read.preflight_evidence {
                 accumulated = combine_evidence(accumulated.clone(), preflight);
             }
+            *served = Some(super::WindowServed::of(
+                &observed_read.reads,
+                &observed_read.evidence,
+            ));
             let (observed, observed_evidence) = (observed_read.source, observed_read.evidence);
             accumulated = combine_evidence(accumulated.clone(), observed_evidence.clone());
             if let Some(closing) = observed_read.closing_evidence {
@@ -844,10 +864,7 @@ impl Server {
                     &identity,
                     &company.name,
                     window,
-                    super::WindowPlanSource::Replay {
-                        parts: observed_read.reads,
-                        witness: observed_read.witness,
-                    },
+                    super::WindowPlanSource::replay_of(observed_read.reads, observed_read.witness),
                 )
                 .await?;
             let (corroboration, corroboration_evidence) =

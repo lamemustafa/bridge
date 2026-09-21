@@ -10,6 +10,17 @@ use bridge_tally_protocol::{parse_import_outcome, TallyImportApplicationStatus};
 /// narrower window.
 pub(super) const IMPORT_POST_WINDOW_NOT_BOUNDED: &str = "import_post_window_not_bounded";
 
+/// Admit the whole-window pre-post request on what the verification read of
+/// the same window measured: an undivided read was that request, and a divided
+/// read's parts together are its size. A verification that reported nothing is
+/// refused, not assumed small.
+pub(super) fn admit_post_window(served: Option<crate::agent::WindowServed>) -> Result<(), String> {
+    match served {
+        Some(served) if served.fits_one_request() => Ok(()),
+        _ => Err(IMPORT_POST_WINDOW_NOT_BOUNDED.to_string()),
+    }
+}
+
 impl Server {
     /// The response path runs only after its interrupted post future is gone.
     /// It may therefore use the endpoint lease to distinguish a locally empty
@@ -109,7 +120,7 @@ impl Server {
             let preview = admit_fresh_saved_journal(&line, &self.settings.endpoint)?;
             // Number matching precedence is not qualified for native Create.
             // Previously dispatched numbered batches remain reconcilable above.
-            let before = self.verify_import(args).await?;
+            let (before, served) = self.verify_import_measuring(args).await?;
             accumulated = combine_evidence(accumulated.clone(), before.evidence);
             require_absent_verification_result(&before.payload["result"])?;
             let payload = ImportPayload {
@@ -165,25 +176,11 @@ impl Server {
             let mode = self.qualified_import_profile().await?;
             validate_post_profile_with_evidence(&payload, &mode, &mut accumulated)?;
             // The pre-post check inside the dispatch lease sends the whole
-            // verification window as one request. `verify_import` may have read
-            // that window in parts under the pre-flight bound (§11c), so the
-            // same bound decides here, before approval, whether one request of
-            // it is predicted within budget; a window it would divide is refused
-            // rather than sent whole inside the lease.
-            let (whole, bound_evidence) = self
-                .window_reads_whole(
-                    &identity,
-                    &company.name,
-                    (&line.date_from, &line.date_to),
-                    crate::agent::VoucherReadShape::ImportVerification,
-                )
-                .await?;
-            if let Some(bound) = bound_evidence {
-                accumulated = combine_evidence(accumulated.clone(), bound);
-            }
-            if !whole {
-                return Err(IMPORT_POST_WINDOW_NOT_BOUNDED.to_string().into());
-            }
+            // verification window as one request. `verify_import` just read that
+            // window under the pre-flight bound (§11c), possibly in parts; the
+            // whole request is admitted on what that read measured, and refused
+            // here, before approval, when it could not be one request.
+            admit_post_window(served)?;
             let request = ApprovedImport::confirm(
                 xml,
                 &preview,

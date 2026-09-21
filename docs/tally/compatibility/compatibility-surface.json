@@ -51,7 +51,7 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md",
-      "sha256": "cf4531b12264c15e6a6451eebe9ca84811c0092051cabb18377436ee84eb1602"
+      "sha256": "67983221f2331a101ebeb55b80e7d8abe850d9e60b5a4c9281f6e086f0257321"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_READS_AND_DATES.md",
@@ -455,7 +455,7 @@
     },
     {
       "path": "src-tauri/src/agent_import.rs",
-      "sha256": "b6aafdc52d3a11db17769c8a2e23d7425cca7de6239f18ac3950fe9e2dc3548c"
+      "sha256": "c55ac4b69b6775baee798da29a7d29738766416e10d92e4e96fd29e790e139eb"
     },
     {
       "path": "src-tauri/src/agent_import_amend.rs",
@@ -479,7 +479,7 @@
     },
     {
       "path": "src-tauri/src/agent_import_post.rs",
-      "sha256": "4fd19fd985e53539e7805eb26e2f6ea03f69361d0cef729eff90ce924eb89386"
+      "sha256": "6c0ec362b0fa6c9cd3a67e4fb1104e76a561b2d0ecc10c52a85d819b89e71d4c"
     },
     {
       "path": "src-tauri/src/agent_import_verification.rs",
@@ -491,7 +491,7 @@
     },
     {
       "path": "src-tauri/src/agent_movement.rs",
-      "sha256": "ed245cf754558ecde31e83b5e3be921e1d7fe87c16720652e3f21c176ab88160"
+      "sha256": "89fdeefbb007e7b360bcec0fef7831700098ae96ab46f2ac10a7c5046571b98e"
     },
     {
       "path": "src-tauri/src/agent_movement_math.rs",
@@ -515,7 +515,7 @@
     },
     {
       "path": "src-tauri/src/agent_read_profiles.rs",
-      "sha256": "30d3f5c1032642834301a86877c9ca5ace4d861c9d358f3f30307b2bf4617a7f"
+      "sha256": "d5a7a72c8fdd4a848d6a9464d6b22a8149129b58181fce81a254fa76be605800"
     },
     {
       "path": "src-tauri/src/agent_read_validation.rs",
@@ -551,7 +551,7 @@
     },
     {
       "path": "src-tauri/src/agent_voucher_window.rs",
-      "sha256": "232721cf43b2c82c41c48e4bf70689dff69eaea3ffc95dd1f349a1441beb09a6"
+      "sha256": "ffe28b6b586b0a4212ca328c3e7ff5749af66c126e4910b88356578f4fd4b278"
     },
     {
       "path": "src-tauri/src/agent_vouchers.rs",
@@ -1102,5 +1102,5 @@
       "sha256": "0ab5bfbe6d81b1e10530744c338fb91efa57fe5a66fb4bc0cfd382495eaf02a4"
     }
   ],
-  "manifest_sha256": "48abb7ac52239aaed218b27a38484a8c4c9ec3006bf7ba73871f473001e2fba2"
+  "manifest_sha256": "b1f4b96c7a1eca02c95527bd0f127fa5c79eb6260a98ac32eaa65ea1f0fe6fa5"
 }

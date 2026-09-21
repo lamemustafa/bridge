@@ -187,7 +187,7 @@ request is predicted over a budget well below the cap.
 2. **Vouchers in the window, cheapest estimate first.**
    - The company's voucher high-water mark, `ALTVCHID` (§10), bounds the whole book: every voucher
      carries an AlterID no greater than it. If the mark times the shape's conservative per-voucher
-     cost fits the budget, no window of the book can exceed it, and the window is sent **undivided,
+     cost fits the budget, no window of the book is predicted to exceed it, and the window is sent **undivided,
      exactly as before**. A company that has never held a voucher omits `ALTVCHID`; that is a zero.
    - Otherwise, a **census** of the window: one row per voucher carrying only `GUID`, `ALTERID` and
      `DATE` (the §12.7 witness fetch), **every census request bounded before it is sent**. A date
@@ -249,26 +249,32 @@ request is predicted over a budget well below the cap.
    every voucher export. A read bracketed on `ALTVCHID` alone returned `complete` across a rename
    made between two of its parts. Every divided read is bracketed — including one planned whole and
    divided only after Tally could not serve it. An undivided read is one observation, as before.
-8. **A corroborating second read replays the first read's parts and carries its witness** — the
-   marks it opened and closed on, and the census its parts were admitted against. The replay is
-   admitted against that census and closes against those marks. Without them, a replay of
+8. **A corroborating second read replays exactly the first read's parts and carries its witness** —
+   it never re-plans from a measurement, which could merge parts back into a request the first read
+   found Tally could not serve. The witness is the marks the first read opened and closed on, and
+   the census its parts were admitted against. The replay is admitted against that census and
+   closes against those marks. Without them, a replay of
    AlterID-limited parts reads only up to the first read's ceilings: a voucher posted in the window
    between the two reads takes an AlterID above them, both reads miss it, and their responses match
    byte for byte. A replay of a divided read without a witness is refused as
    `voucher_window_replay_unwitnessed`.
-9. **A caller that must send the undivided request itself decides with the same pre-flight.** The
+9. **A caller that must send the undivided request itself decides on what was measured.** The
    pre-post check inside the import dispatch lease sends the whole verification window as one
-   request. Before approval, the same estimate decides whether one request of it is within budget; a
-   window it would divide is refused as `import_post_window_not_bounded`.
+   request. Before approval it is admitted on the `verify_import` read of the same window that runs
+   just before: an undivided read was that request, and a divided read's parts together (one copy of
+   each response) are its size, which must be within the budget. Otherwise the batch is refused as
+   `import_post_window_not_bounded`. The book can still grow between that read and the lease; the
+   transport cap is the backstop there.
 10. **The transport cap remains the final safeguard.** Where a caller already divided a window after
    a deadline or an oversized response (#485, the import-verification read), it still does: by date,
    then, for a single day, by the day's counted AlterIDs.
 
 ### 11c.4 What this does not establish
 
-- **The rectified bound has not been run end to end live.** The request shapes it sends were
-  (§11c.5); the executor that sends them changed after that run (#520). Its behaviour is established
-  by simulator regressions only.
+- **The rectified bound was run end to end live only twice.** A build of the tree committed as
+  `986c1d77` made the two calls timed below (§11c.5). Two changes made after review — a replay
+  that no longer re-plans, and the measured pre-post admission — are established by simulator and
+  unit regressions only.
 - **Latency on a large book.** Measured end to end on the rectified bound (§11c.5), on an
   inventory-heavy book with a mark of about 250,000 (31 census spans): a one-day `vouchers` call took
   34 s (7.5 s before the rectify) and a one-month `ledger_movement` 105 s (53 s before). The MCP
@@ -285,8 +291,11 @@ request is predicted over a budget well below the cap.
 - **A mark that is loose as a density prior.** On the inventory-heavy book the mark was ten times the
   voucher count. It is still a correct upper bound; it only makes the whole-book shortcut rarer.
 - **The empty-window corroboration reuses the first read's marks.** Its widened read (±1 day) opens
-  its bracket on the marks the window's own read observed, so a change anywhere in the company between
-  the two reads refuses it. That refusal is loud and safe.
+  on the marks the window's own read observed. Only when that widened read is itself divided is it
+  bracketed, and then a change anywhere in the company between the two reads refuses it. An undivided
+  widened read is not bracketed; there, a voucher in the window refuses the read as
+  `window_contradicted`, and otherwise the empty result is corroborated or reported partial by the
+  existing empty-window control, exactly as before the bound.
 - **AlterID 0.** Every span starts above an exclusive lower bound of 0, so a voucher with AlterID 0
   could not be read by a divided day. None has been observed; a census row carrying AlterID 0 is
   refused rather than planned around.
@@ -307,7 +316,7 @@ book (read-only there). The request strings were the branch's own at `cf618c00`.
 | `ALTVCHID` on each change (gateway writes, synthetic company) | create +1; alter (re-post with the same client `REMOTEID`) +1; cancel (official `TAGNAME` shape; the counter that moves is `ALTERED`) +1; re-date +1; delete +2; a no-op re-post +1. A ledger rename: `ALTVCHID` +0, `ALTMSTID` +1 |
 | End to end (`bridge_mcp` @ `cf618c00`, before #520) | whole-FY, one-day and one-month `vouchers`, a quarter and a month of `ledger_movement`, on three books: complete, every part under 16 MiB and 2 s. A voucher created between two parts refused the read as `voucher_window_changed_during_read`; a ledger renamed between two parts did not (fixed by rule 7) |
 | Paired reads | every Tally request is sent twice, back to back (the repeated-source read), so wire traffic is about twice the data |
-| End to end after the #520 rectify (census spans of 8,192) | inventory-heavy book, mark ~250,000: one-day `vouchers` complete in 34.3 s (31 census spans, 2 data parts); one-month `ledger_movement` complete in 104.7 s (31 census spans, 5 data parts of at most 6.6 MB, and the replay closed against the first read's marks). Every request under 16 MiB and 2 s |
+| End to end after the #520 rectify (census spans of 8,192; a build of the tree committed as `986c1d77`) | inventory-heavy book, mark ~250,000: one-day `vouchers` complete in 34.3 s (31 census spans, 2 data parts); one-month `ledger_movement` complete in 104.7 s (31 census spans, 5 data parts of at most 6.6 MB, and the replay closed against the first read's marks). Every request under 16 MiB and 2 s |
 
 ## 11a. Scale measurements — 11,287-voucher corpus
 

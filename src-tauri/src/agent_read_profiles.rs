@@ -118,10 +118,10 @@ pub(super) fn render_agent_vouchers_in_span(
 ///
 /// The `FETCH` is the one §12.7 qualified for the empty-partition witness, and
 /// the AlterID range is the segment filter the outstandings scanner sends. The
-/// date window is what keeps a census cheap; a span is used only to count one
-/// day too dense for a date census, where it bounds the response by
-/// construction: with distinct AlterIDs it cannot return more than
-/// `span.through - span.after` rows.
+/// date window keeps a census cheap; the span bounds the response by
+/// construction — with distinct AlterIDs it cannot return more than
+/// `span.through - span.after` rows — and is used whenever the book's mark is
+/// larger than one census (protocol reference §11c.3).
 pub(super) fn render_agent_voucher_census(
     company: &str,
     from: &str,

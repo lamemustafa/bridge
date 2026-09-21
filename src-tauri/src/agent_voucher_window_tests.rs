@@ -1365,6 +1365,7 @@ async fn a_census_the_transport_refuses_is_not_divided_but_refused() {
     .await;
     let failure = outcome.err().expect("refused");
     assert_eq!(failure.code, VOLUME_UNESTIMATED);
+    assert_eq!(failure.cause, Some("census_response_too_large"));
     assert_eq!(observed.len(), 2);
     assert_requests(
         &observed,
@@ -1855,6 +1856,7 @@ async fn a_census_that_times_out_refuses_the_window_and_sends_nothing_more() {
         .err()
         .expect("a census deadline refuses the window");
     assert_eq!(failure.code, VOLUME_UNESTIMATED);
+    assert_eq!(failure.cause, Some("census_deadline_exceeded"));
     simulator.cancel();
     let observed = simulator.finish().unwrap();
     assert_eq!(
@@ -2261,56 +2263,54 @@ async fn a_divided_reads_evidence_is_folded_in_the_order_it_was_sent() {
     assert_ne!(in_order.request_sha256, out_of_order.request_sha256);
 }
 
-/// `count` vouchers on `date`, AlterIDs `ids`, each a relabelled copy of the
-/// captured response's first voucher.
-fn many_on(ids: std::ops::RangeInclusive<u64>, date: &str) -> String {
-    let original = three_vouchers();
-    let start = original.find("<VOUCHER ").unwrap();
-    let end = start + original[start..].find("</VOUCHER>").unwrap() + "</VOUCHER>".len();
-    let last = original.rfind("</VOUCHER>").unwrap() + "</VOUCHER>".len();
-    let template = &original[start..end];
-    let body: String = ids.map(|id| relabelled(template, &[(id, date)])).collect();
-    format!("{}{body}{}", &original[..start], &original[last..])
+#[test]
+fn the_pre_post_request_is_admitted_on_what_verification_measured() {
+    // Review of #520: the whole-window pre-post request is admitted on the
+    // verification read's own measurement, not the pre-flight's default-cost
+    // prediction — which refused any window already holding 171 vouchers in
+    // the verification shape, however light the book.
+    let evidence = |bytes: usize| Evidence {
+        request_sha256: String::new(),
+        response_sha256: String::new(),
+        bytes,
+        state: "complete",
+        read_at: None,
+        duration_ms: None,
+        reason_code: None,
+    };
+    let whole = [part("20260801", "20260831", None)];
+    let divided = [
+        part("20260801", "20260815", None),
+        part("20260816", "20260831", None),
+    ];
+    let budget = usize::try_from(WINDOW_READ_BUDGET_BYTES).unwrap();
+    // Undivided: that read was the whole request, whatever its size.
+    assert!(WindowServed::of(&whole, &evidence(4 * budget)).fits_one_request());
+    // Divided, a light book: both parts together (one copy each) fit.
+    let light = WindowServed::of(&divided, &evidence(2 * budget));
+    assert_eq!(light.data_bytes, WINDOW_READ_BUDGET_BYTES);
+    assert!(light.fits_one_request());
+    // Divided, and one byte more than the budget: refused.
+    assert!(!WindowServed::of(&divided, &evidence(2 * budget + 2)).fits_one_request());
 }
 
 #[tokio::test]
-async fn the_pre_post_check_refuses_a_verification_window_the_bound_would_divide() {
-    // #520 P2 / review: `post_import` sends the whole verification window as one
-    // request inside the dispatch lease. Before approval it now asks the same
-    // pre-flight whether that one request is within budget. A day of 200
-    // vouchers is over one read at the verification default (170), so it is
-    // refused before approval; a book of three is not.
-    let shape = VoucherReadShape::ImportVerification;
-    for (plans, whole) in [
-        (paired(&mark(3)), true),
-        (
-            {
-                let mut plans = paired(&mark(200));
-                plans.extend(paired(&xml_plan(many_on(1..=200, "20260801"))));
-                plans
-            },
-            false,
-        ),
-    ] {
-        let simulator = SequenceSimulator::spawn(plans).unwrap();
-        let directory = tempfile::tempdir().unwrap();
-        let server = server_at(simulator.address(), directory.path());
-        let identity = identity();
-        let (reads_whole, evidence) = server
-            .window_reads_whole(
-                &identity,
-                identity.display_name(),
-                ("20260801", "20260801"),
-                shape,
-            )
-            .await
-            .unwrap();
-        assert_eq!(reads_whole, whole);
-        assert!(evidence.is_some(), "the pre-flight reads are accounted for");
-        simulator.finish().unwrap();
+async fn a_corroborating_replay_carries_the_first_reads_witness() {
+    // Review of #520: verify_import's corroboration builds its replay with
+    // `replay_of`; dropping the witness there went unnoticed by every test.
+    let first = first_read().await;
+    let witness = first.witness.clone().expect("a divided read has a witness");
+    match WindowPlanSource::replay_of(first.reads.clone(), first.witness) {
+        WindowPlanSource::Replay {
+            parts,
+            witness: Some(carried),
+        } => {
+            assert_eq!(parts, first.reads);
+            assert_eq!(carried, witness);
+        }
+        _ => panic!("the replay must carry the witness"),
     }
 }
-
 #[test]
 fn a_bound_refusal_with_a_concrete_next_step_names_it() {
     // The too-large book must say that narrowing the window does not help —
@@ -2324,5 +2324,107 @@ fn a_bound_refusal_with_a_concrete_next_step_names_it() {
     assert!(
         post.contains("Build the batch again over fewer days"),
         "{post}"
+    );
+}
+
+#[tokio::test]
+async fn a_replay_reads_exactly_the_parts_it_was_given() {
+    // Review of #520: the first read counted one voucher on each of days 1-3,
+    // read day 1, planned days 2-4 as one part, and divided it into 2-3 and 4
+    // after Tally could not serve it. Before this, the replay re-planned from
+    // its first measurement and sent the 2-4 request the first read had just
+    // found unservable. It now reads the first read's parts, in order.
+    let shape = VoucherReadShape::ImportVerification;
+    let window = ("20260801", "20260804");
+    let census = relabelled(
+        &three_vouchers(),
+        &[(1, "20260801"), (2, "20260802"), (3, "20260803")],
+    );
+    let d1 = xml_plan(relabelled(&vouchers_kept(1), &[(1, "20260801")]));
+    let d23 = xml_plan(relabelled(
+        &vouchers_kept(2),
+        &[(2, "20260802"), (3, "20260803")],
+    ));
+    let mut plans = paired(&xml_plan(census));
+    plans.extend(paired(&d1));
+    plans.extend(oversized());
+    plans.extend(paired(&d23));
+    plans.extend(paired(&xml_plan(empty_collection())));
+    plans.extend(paired(&mark(3)));
+    let (first, _) = read_window(
+        plans,
+        window,
+        shape,
+        WindowPlanSource::Estimate {
+            known_marks: Some(marks_of(3)),
+        },
+        three_a_read(),
+    )
+    .await;
+    let first = first.unwrap();
+    assert_eq!(
+        first.reads,
+        [
+            part("20260801", "20260801", None),
+            part("20260802", "20260803", None),
+            part("20260804", "20260804", None),
+        ]
+    );
+    let mut plans = paired(&d1);
+    plans.extend(paired(&d23));
+    plans.extend(paired(&xml_plan(empty_collection())));
+    plans.extend(paired(&mark(3)));
+    let (replay, observed) = read_window(
+        plans,
+        window,
+        shape,
+        WindowPlanSource::Replay {
+            parts: first.reads.clone(),
+            witness: first.witness.clone(),
+        },
+        three_a_read(),
+    )
+    .await;
+    assert_eq!(replay.unwrap().reads, first.reads);
+    assert_requests(
+        &observed,
+        &[1, 7, 13],
+        &first
+            .reads
+            .iter()
+            .map(|read| {
+                shape
+                    .render(&company(), &read.from, &read.to, read.span)
+                    .unwrap()
+            })
+            .collect::<Vec<_>>(),
+    );
+}
+
+#[tokio::test]
+async fn a_replay_refuses_a_master_mark_that_moved_since_the_first_read() {
+    // A ledger renamed between the first read and its replay changes the
+    // replayed exports only through names; the master mark is what shows it.
+    let first = first_read().await;
+    let (_, parts) = divided_first_read();
+    let mut plans = Vec::new();
+    for part in &parts {
+        plans.extend(paired(part));
+    }
+    plans.extend(paired(&marks_plan(3, 8)));
+    let (outcome, _) = read_window(
+        plans,
+        ("20260801", "20260802"),
+        VoucherReadShape::EntryWildcard,
+        WindowPlanSource::Replay {
+            parts: first.reads,
+            witness: first.witness,
+        },
+        three_a_read(),
+    )
+    .await;
+    assert_eq!(
+        outcome.err().map(|failure| failure.code).as_deref(),
+        Some(WINDOW_CHANGED_DURING_READ)
     );
 }
