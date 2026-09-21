@@ -721,12 +721,18 @@ fn parse_company_gateway_capability_row(
 /// so for this one question an uncertain `EDUMODE` counts as Education. A
 /// response with no `EDUMODE` field at all returns `false`: nothing in it
 /// speaks to the mode. `IsEducationalMode=Yes` has not been captured live.
+///
+/// Only fields inside the collection's `DATA` are read, as the strict parser
+/// reads rows only beneath `ENVELOPE/BODY/DATA/COLLECTION`: the `DESC/CMPINFO`
+/// counter block is never taken for a company row.
 pub fn company_list_may_be_in_educational_mode(xml: &str) -> bool {
     let mut reader = configured_reader(xml);
+    let mut path = Vec::<Vec<u8>>::new();
     loop {
+        let in_data = path.iter().any(|name| name.as_slice() == b"DATA");
         match reader.read_event() {
             Ok(Event::Start(element))
-                if element.name().as_ref().eq_ignore_ascii_case(b"EDUMODE") =>
+                if in_data && element.name().as_ref().eq_ignore_ascii_case(b"EDUMODE") =>
             {
                 let licensed = reader
                     .read_text(element.name())
@@ -742,9 +748,13 @@ pub fn company_list_may_be_in_educational_mode(xml: &str) -> bool {
                 }
             }
             Ok(Event::Empty(element))
-                if element.name().as_ref().eq_ignore_ascii_case(b"EDUMODE") =>
+                if in_data && element.name().as_ref().eq_ignore_ascii_case(b"EDUMODE") =>
             {
                 return true;
+            }
+            Ok(Event::Start(element)) => path.push(element.name().as_ref().to_ascii_uppercase()),
+            Ok(Event::End(_)) => {
+                path.pop();
             }
             Ok(Event::Eof) | Err(_) => return false,
             _ => {}

@@ -83,7 +83,8 @@ pub struct AgentRead {
     pub body: String,
     pub encoded_bytes: usize,
     pub encoded_sha256: String,
-    /// The date-boundary profile the read's opening identity bracket observed.
+    /// The stricter of the date-boundary profiles the read's opening and
+    /// closing identity brackets observed: Education if either reported it.
     pub boundary_profile: DateBoundaryProfile,
 }
 

@@ -139,6 +139,16 @@ fn an_uncertain_edumode_counts_as_education_and_an_absent_one_as_unknown() {
             empty_silver.replace(licensed, r#"<EDUMODE TYPE="Logical">Yes</EDUMODE>"#),
             true,
         ),
+        // Outside the collection's DATA, as in the CMPINFO counter block, a
+        // field is not a company row's.
+        (
+            captured.replacen(
+                "<DESC>",
+                r#"<DESC><EDUMODE TYPE="Logical">Yes</EDUMODE>"#,
+                1,
+            ),
+            false,
+        ),
     ] {
         assert_eq!(company_list_may_be_in_educational_mode(&xml), education);
     }
