@@ -113,13 +113,17 @@ mod tests {
     use std::collections::BTreeMap;
 
     // Pinned against the reference implementation's tae.ledger_ids (computed with the Python
-    // function itself, 2026-09-19): guid_tag("abc") and stable_ledger_tag on a book with one
+    // function itself, 2026-09-19; the synthetic all-zero GUID's tag was computed with that same
+    // function on 2026-09-21): guid_tag("abc") and stable_ledger_tag on a book with one
     // real ledger, "ROUND OFF"/guid "g-1", plus a name that is not a book ledger at all.
     #[test]
     fn guid_tag_matches_the_reference_implementation() {
         assert_eq!(guid_tag("abc", "x").unwrap(), "a9993e36");
         assert_eq!(guid_tag("g-1", "x").unwrap(), "6d5494d3");
-        assert_eq!(guid_tag("1753bdf6-000000b1", "x").unwrap(), "f9c58209");
+        assert_eq!(
+            guid_tag("00000000-0000-4000-8000-0000000000b1", "x").unwrap(),
+            "d2101a72"
+        );
     }
 
     #[test]
@@ -142,21 +146,24 @@ mod tests {
     #[test]
     fn guid_tag_normalises_mixed_case_before_hashing() {
         // Pinned against the reference implementation: guid_tag of the lowercase form is the
-        // same "f9c58209" as guid_tag_matches_the_reference_implementation below pins for the
+        // same "d2101a72" as guid_tag_matches_the_reference_implementation below pins for the
         // already-lowercase GUID -- a mixed-case export of the same identity must produce the
         // identical tag, not a different one.
         assert_eq!(
-            guid_tag("1753BDF6-000000B1", "x").unwrap(),
-            guid_tag("1753bdf6-000000b1", "x").unwrap()
+            guid_tag("00000000-0000-4000-8000-0000000000B1", "x").unwrap(),
+            guid_tag("00000000-0000-4000-8000-0000000000b1", "x").unwrap()
         );
-        assert_eq!(guid_tag("1753BDF6-000000B1", "x").unwrap(), "f9c58209");
+        assert_eq!(
+            guid_tag("00000000-0000-4000-8000-0000000000B1", "x").unwrap(),
+            "d2101a72"
+        );
     }
 
     #[test]
     fn guid_tag_trims_surrounding_whitespace_before_hashing() {
         assert_eq!(
-            guid_tag("  1753bdf6-000000b1  ", "x").unwrap(),
-            guid_tag("1753bdf6-000000b1", "x").unwrap()
+            guid_tag("  00000000-0000-4000-8000-0000000000b1  ", "x").unwrap(),
+            guid_tag("00000000-0000-4000-8000-0000000000b1", "x").unwrap()
         );
     }
 
