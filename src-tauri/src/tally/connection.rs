@@ -138,6 +138,30 @@ pub(crate) enum PartyLedgerMasterSourceValidationError {
     },
 }
 
+impl PartyLedgerMasterSourceValidationError {
+    /// A stable, data-free name for this refusal, safe to return to an agent.
+    pub(crate) fn safe_code(&self) -> &'static str {
+        match self {
+            Self::MasterPeriod => "master_period_unsupported",
+            Self::BalancePeriod => "balance_period_unsupported",
+            Self::MasterGuid => "master_guid_missing",
+            Self::MasterId => "master_id_missing",
+            Self::MasterAlterId => "master_alter_id_missing",
+            Self::MasterOpeningBalance => "master_opening_balance_missing",
+            Self::DuplicateMasterIdentity => "duplicate_master_identity",
+            Self::BalanceMissingMasterLedger => "balance_missing_master_ledger",
+            Self::OpeningBalancesDisagreed => "opening_balances_disagreed",
+            Self::BalanceLedgerAbsentFromMasterEvidence => {
+                "balance_ledger_absent_from_master_evidence"
+            }
+            Self::DuplicateBalanceDisplayKey => "duplicate_balance_display_key",
+            Self::BalanceCompanyIdentityUnverified => "balance_company_identity_unverified",
+            Self::GroupCompanyIdentityUnverified => "group_company_identity_unverified",
+            Self::MasterResponseInvalid { .. } => "master_response_invalid",
+        }
+    }
+}
+
 /// A paired or bracketed read observed movement in the endpoint's data. This
 /// is response validation, not an endpoint failure: Tally answered, but
 /// Bridge must withhold the unstable result.
@@ -163,6 +187,24 @@ pub(crate) enum PairedReadValidationError {
     CurrencyExtent,
     #[error("Tally company changed between the currency read and the master read")]
     CurrencyToMasterExtent,
+}
+
+impl PairedReadValidationError {
+    /// A stable, data-free name for this refusal, safe to return to an agent.
+    pub(crate) fn safe_code(&self) -> &'static str {
+        match self {
+            Self::NativeLedgerCollection => "native_ledger_collection_changed",
+            Self::NativeLedgerExtent => "native_ledger_extent_changed",
+            Self::PartyLedgerMaster => "party_ledger_master_changed",
+            Self::PartyLedgerBalance => "party_ledger_balance_changed",
+            Self::PartyLedgerGroup => "party_ledger_group_changed",
+            Self::PartyLedgerExtent => "party_ledger_extent_changed",
+            Self::CompanyBookExtent => "company_book_extent_changed",
+            Self::CurrencyMaster => "currency_master_changed",
+            Self::CurrencyExtent => "currency_extent_changed",
+            Self::CurrencyToMasterExtent => "currency_to_master_extent_changed",
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
