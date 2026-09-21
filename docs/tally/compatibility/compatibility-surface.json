@@ -39,11 +39,11 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE.md",
-      "sha256": "da868300b71e6817e28e6fe2bd410e36b702b4f610512ed9c17e67a6bcb67629"
+      "sha256": "d69adbe3024fb126b54ce0db5c7d6cbf089d272650cb591c425ae5caf0796764"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_COMPANY_IDENTITY_AND_CREATION.md",
-      "sha256": "591154896360993e070bd0c4c444034aedad1ee69b5658097bf481f7404c83ed"
+      "sha256": "ad9a20c89e0d84f7c3ab4e6a42d7939a04c028aa24f2f3871e1cdf3073a8423a"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_ENVIRONMENT_AND_REQUESTS.md",
@@ -271,7 +271,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/lib.rs",
-      "sha256": "8aaf91cd3c42ee88e03be18bb979ed7661646c9892cf68df45e9483f40ad570b"
+      "sha256": "15af6e725b0a57f9474503e326ce99fddd7aaa130b462a44df2b73ce52874d1b"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_ledger_collection.rs",
@@ -363,7 +363,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/xml_read_profiles.rs",
-      "sha256": "c8d2be1cf587705d583a1c830fe9e4369d08955944323a7715a6ca6429a3cd33"
+      "sha256": "862535de49cf3566d195d58edbfe8d1a0f591eae97e674fd3c0aa65f7beb1d6c"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/tests/fixtures/native/master_fields_lab_partial_alter_before.response.xml",
@@ -531,7 +531,7 @@
     },
     {
       "path": "src-tauri/src/agent_tests.rs",
-      "sha256": "4e44e1530e73d0c1542e82dc0f47d41f96830121fcd1d628e1f616bcd3cfd40d"
+      "sha256": "aed1945f281c12b4f57d0b9121e37c0eab799d74c54131a7a21bafab7d9bfa6e"
     },
     {
       "path": "src-tauri/src/agent_trial_balance.rs",
@@ -859,7 +859,7 @@
     },
     {
       "path": "src-tauri/src/tally/agent_read_request.rs",
-      "sha256": "a2e02bb67bfd126f8a6629e8ce44a9a7858a1aa3c5b165db5f57be271012531f"
+      "sha256": "9ee9da91d139c32490f2f273ab20e2f4a4742664ec5c7519b49697d346e2a623"
     },
     {
       "path": "src-tauri/src/tally/approved_import.rs",
@@ -1102,5 +1102,5 @@
       "sha256": "0ab5bfbe6d81b1e10530744c338fb91efa57fe5a66fb4bc0cfd382495eaf02a4"
     }
   ],
-  "manifest_sha256": "2ade56ce140b874f5e6e206ef149939c7eb36b8f83fbe006a39bdae38901fb85"
+  "manifest_sha256": "2976d6318a9076ca9784777323f6c673a593dcfe36dc74326bc559a99b00a8d8"
 }
