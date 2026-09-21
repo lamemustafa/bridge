@@ -662,6 +662,27 @@ mod through_the_tool {
         plans
     }
 
+    /// Identity, then a currency pair whose second read disagrees with its
+    /// first: the paired-read stability check refuses before admission.
+    fn drifting_currency_plans() -> Vec<ScenarioPlan> {
+        let company = xml(companies());
+        let extent = xml(include_str!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+        )
+        .to_owned());
+        let single = xml(captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+        )));
+        let multi = xml(captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/currency_multi_live.utf16le.xml"
+        )));
+        let mut plans = identity_plans();
+        plans.push(company);
+        pair(&mut plans, extent);
+        plans.extend([single, status(), multi, status()]);
+        plans
+    }
+
     fn refusal(response: &Value) -> &Value {
         assert_eq!(response["isError"], true, "{response}");
         &response["structuredContent"]["result"]["error"]
@@ -693,6 +714,18 @@ mod through_the_tool {
         let error = refusal(&response);
         assert_eq!(error["code"], "party_ledger_master_read_failed");
         assert_eq!(error["cause"], "balance_missing_master_ledger");
+    }
+
+    #[tokio::test]
+    async fn paired_read_drift_names_the_changed_source_as_its_cause() {
+        let (response, _) = call(
+            drifting_currency_plans(),
+            json!({"company_guid":GUID,"fields":"compliance"}),
+        )
+        .await;
+        let error = refusal(&response);
+        assert_eq!(error["code"], "party_ledger_master_read_failed");
+        assert_eq!(error["cause"], "currency_master_changed");
     }
 
     #[tokio::test]

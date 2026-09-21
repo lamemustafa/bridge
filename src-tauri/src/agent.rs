@@ -703,17 +703,17 @@ impl Server {
                 // these ~250 extra bytes could cost the caller the one thing it
                 // most needs, leaving it worse off than before this field existed.
                 // Guidance is a convenience; the refusal code is not.
+                if let Some(remediation) = refusal_remediation(&code) {
+                    if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
+                        error["remediation"] = json!(remediation);
+                    }
+                }
                 // Same budget rule as `remediation`: at a deliberately small cap
                 // the refusal code must survive, so the cause is only added
                 // where there is room for it.
                 if let Some(cause) = cause {
                     if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
                         error["cause"] = json!(cause);
-                    }
-                }
-                if let Some(remediation) = refusal_remediation(&code) {
-                    if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
-                        error["remediation"] = json!(remediation);
                     }
                 }
                 ToolOutcome {
