@@ -80,6 +80,8 @@ byte count, completeness reason, and truncation state. A refused call returns
 `result.error` with `code`, which names what failed, and `message`. Where a runtime
 refusal has a typed, data-free reason, the error also carries `cause`, which names why
 (for example `company_base_currency_undetermined` beside `party_ledger_master_read_failed`).
+A read whose two paired halves differ, because the book changed while Bridge was reading it,
+carries `native_report_pair_changed`.
 Like `remediation`, `cause` is omitted when `BRIDGE_AGENT_MAX_BYTES` is below 4,096, so
 that the code always fits. Before a tool response is written, Bridge appends a metadata-only
 `response_prepared` record to `agent-egress.jsonl`, including a unique `receipt_id`.
