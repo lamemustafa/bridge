@@ -375,11 +375,15 @@ response metadata helps distinguish clean counters from readback alone.
 Posting binds the saved batch to its loopback endpoint and full company tuple.
 Legacy batches without that endpoint binding remain readable/verifiable but
 cannot be posted. Only a uniquely selectable loaded company is admitted.
-Existing batch files and proofs retain their formats with additive optional
-journal metadata; no database migration or background queue is introduced.
+Existing batch files and proofs keep their formats; new journal fields are
+optional on read, and no database migration or background queue is introduced.
 Disabling the switch and restarting the connector removes posting from tool
-availability without deleting reconciliation evidence. Retain this connector
-version for recovery: older binaries may refuse the new dispatch journal records.
+availability without deleting reconciliation evidence.
+**Keep this connector version for recovery.** The journal reader refuses any
+record carrying a field it does not know. So after a native post, an older
+connector refuses the whole journal, including reconciliation of batches it
+wrote itself. Since bridge#579, each native dispatch intent records the
+REMOTEID it sent, which 0.2.0 and earlier do not know.
 
 This is a bounded first posting slice, not blanket host/licence qualification.
 A ledger mapper is unnecessary for exact existing names: `validate_masters`

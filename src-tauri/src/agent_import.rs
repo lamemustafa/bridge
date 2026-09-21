@@ -2177,13 +2177,21 @@ fn render_import_xml(company: &str, vouchers: &[ImportVoucher], batch_id: &str) 
     render_import_envelope(company, &messages)
 }
 
-fn render_native_journal_xml(company: &str, voucher: &ImportVoucher, batch_id: &str) -> String {
-    // A public file may already have been imported and edited. Never reuse its
-    // client REMOTEID for a native Create, which Tally can treat as an upsert.
-    // The stable narration tag remains the batch attribution used by readback.
+/// The native post's request. `remote_id` must be fresh for every attempt: a
+/// public file may already have been imported and edited, and reusing its
+/// client REMOTEID for a native Create can make Tally treat it as an upsert.
+/// The caller records `remote_id` with the dispatch intent before sending,
+/// because Tally deletes only by it and never exports it (bridge#579). The
+/// stable narration tag remains the batch attribution used by readback.
+fn render_native_journal_xml(
+    company: &str,
+    voucher: &ImportVoucher,
+    batch_id: &str,
+    remote_id: Uuid,
+) -> String {
     let messages = render_voucher_xml(
         voucher,
-        Uuid::new_v4(),
+        remote_id,
         import_identity(batch_id, &voucher.bridge_txn_id),
     );
     render_import_envelope(company, &messages)

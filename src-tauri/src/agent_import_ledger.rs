@@ -26,6 +26,12 @@ pub(in crate::agent) struct StatusRecord {
     response: Option<DispatchResponse>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     native_request_sha256: Option<String>,
+    /// The REMOTEID the native post sends. Tally deletes a voucher only by the
+    /// client REMOTEID it was created with, and exports its own GUID in that
+    /// attribute instead, so this record is the only place it survives
+    /// (bridge#579). Written with the dispatch intent, before the POST.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    native_remote_id: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -40,12 +46,17 @@ pub(super) struct DispatchResponse {
 impl StatusRecord {
     #[cfg(test)]
     pub(in crate::agent) fn dispatch(batch: &ImportLedgerLine) -> Self {
-        let mut record = Self::dispatch_native(batch, String::new());
+        let mut record = Self::dispatch_native(batch, String::new(), Uuid::nil());
         record.native_request_sha256 = None;
+        record.native_remote_id = None;
         record
     }
 
-    pub(super) fn dispatch_native(batch: &ImportLedgerLine, request_sha256: String) -> Self {
+    pub(super) fn dispatch_native(
+        batch: &ImportLedgerLine,
+        request_sha256: String,
+        remote_id: Uuid,
+    ) -> Self {
         Self {
             record_type: StatusKind::DispatchIntent,
             batch_id: batch.batch_id.clone(),
@@ -53,8 +64,19 @@ impl StatusRecord {
             status: "dispatch_started".into(),
             response: None,
             native_request_sha256: Some(request_sha256),
+            native_remote_id: Some(remote_id.hyphenated().to_string()),
         }
     }
+    /// The dispatch intent of one native post, bound to the request it sends:
+    /// its wire digest and the REMOTEID it carries come from the same value,
+    /// so the record cannot name a different request (bridge#579).
+    pub(super) fn dispatch_for(
+        batch: &ImportLedgerLine,
+        request: &super::post::NativePostRequest,
+    ) -> Self {
+        Self::dispatch_native(batch, request.request_sha256.clone(), request.remote_id)
+    }
+
     pub(super) fn response(batch: &ImportLedgerLine, response: DispatchResponse) -> Self {
         Self {
             record_type: StatusKind::DispatchResponse,
@@ -63,6 +85,7 @@ impl StatusRecord {
             status: "response_received".into(),
             response: Some(response),
             native_request_sha256: None,
+            native_remote_id: None,
         }
     }
 }
@@ -76,6 +99,7 @@ impl From<&ImportLedgerLine> for StatusRecord {
             status: batch.status.clone(),
             response: None,
             native_request_sha256: None,
+            native_remote_id: None,
         }
     }
 }
@@ -87,6 +111,8 @@ pub(super) struct BatchSnapshot {
     pub(super) batch: ImportLedgerLine,
     pub(super) dispatched: bool,
     pub(super) response: Option<DispatchResponse>,
+    /// The REMOTEID recorded with the native dispatch intent, if any.
+    pub(super) native_remote_id: Option<String>,
     // Last matching physical journal record, including identical status appends.
     pub(super) generation: VerificationGeneration,
 }
@@ -109,6 +135,9 @@ pub(super) fn read_snapshot(
                 response: selected
                     .as_ref()
                     .and_then(|snapshot| snapshot.response.clone()),
+                native_remote_id: selected
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.native_remote_id.clone()),
                 dispatched: selected
                     .as_ref()
                     .is_some_and(|snapshot| snapshot.dispatched),
@@ -125,6 +154,9 @@ pub(super) fn read_snapshot(
                 snapshot.response = Some(response);
             }
             snapshot.dispatched |= matches!(update.record_type, StatusKind::DispatchIntent);
+            if update.native_remote_id.is_some() {
+                snapshot.native_remote_id = update.native_remote_id.clone();
+            }
             snapshot.batch.status = update.status;
             snapshot.generation = generation;
         }
@@ -148,6 +180,7 @@ pub(super) fn read_lineage(
             let prior = latest.get(&batch.batch_id).map(|index| &builds[*index]);
             let snapshot = BatchSnapshot {
                 response: prior.and_then(|snapshot| snapshot.response.clone()),
+                native_remote_id: prior.and_then(|snapshot| snapshot.native_remote_id.clone()),
                 dispatched: prior.is_some_and(|snapshot| snapshot.dispatched),
                 batch: *batch,
                 generation,
@@ -167,6 +200,9 @@ pub(super) fn read_lineage(
                     snapshot.response = Some(response);
                 }
                 snapshot.dispatched |= matches!(update.record_type, StatusKind::DispatchIntent);
+                if update.native_remote_id.is_some() {
+                    snapshot.native_remote_id = update.native_remote_id.clone();
+                }
                 snapshot.batch.status = update.status;
                 snapshot.generation = generation;
             }
@@ -232,6 +268,17 @@ fn scan_records(
                 if !matches!(update.record_type, StatusKind::DispatchIntent)
                     || hash.len() != 64
                     || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+                {
+                    return Err("import_ledger_invalid".into());
+                }
+            }
+            // A recorded REMOTEID belongs only to a native dispatch intent,
+            // beside its request hash, and must be a canonical UUID.
+            if let Some(remote_id) = &update.native_remote_id {
+                if update.native_request_sha256.is_none()
+                    || Uuid::parse_str(remote_id)
+                        .map(|id| id.is_nil() || id.hyphenated().to_string() != *remote_id)
+                        .unwrap_or(true)
                 {
                     return Err("import_ledger_invalid".into());
                 }
@@ -327,9 +374,14 @@ pub(super) fn read_history(reader: impl BufRead) -> Result<Vec<BatchSnapshot>, S
                 .get(&batch.batch_id)
                 .and_then(|index| batches.get(*index))
                 .and_then(|snapshot| snapshot.response.clone());
+            let native_remote_id = latest
+                .get(&batch.batch_id)
+                .and_then(|index| batches.get(*index))
+                .and_then(|snapshot| snapshot.native_remote_id.clone());
             latest.insert(batch.batch_id.clone(), batches.len());
             batches.push(BatchSnapshot {
                 response,
+                native_remote_id,
                 dispatched,
                 batch: *batch,
                 generation,
@@ -341,6 +393,9 @@ pub(super) fn read_history(reader: impl BufRead) -> Result<Vec<BatchSnapshot>, S
                 snapshot.response = Some(response);
             }
             snapshot.dispatched |= matches!(update.record_type, StatusKind::DispatchIntent);
+            if update.native_remote_id.is_some() {
+                snapshot.native_remote_id = update.native_remote_id.clone();
+            }
             snapshot.batch.status = update.status;
             snapshot.generation = generation;
         }

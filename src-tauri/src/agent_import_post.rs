@@ -140,18 +140,8 @@ impl Server {
             };
             let voucher_date = bridge_tally_core::TallyDate::parse(line.vouchers[0].date.clone())
                 .map_err(|_| "voucher_date_invalid".to_string())?;
-            let xml = render_native_journal_xml(
-                &line
-                    .company
-                    .as_ref()
-                    .ok_or_else(|| "import_post_company_missing".to_string())?
-                    .name,
-                &line.vouchers[0],
-                line.identity_batch_id(),
-            );
-            let request_sha256 = sha256_hex(
-                &bridge_tally_protocol::encode_tally_xml_request_utf16le(&xml),
-            );
+            let native = native_post_request(&line, Uuid::new_v4())?;
+            let xml = native.xml.clone();
             let verification_request = crate::tally::agent_read_request::AgentReadRequest::parse(
                 render_import_verification_read(
                     &line
@@ -231,7 +221,7 @@ impl Server {
                             return Err("import_batch_changed".into());
                         }
                         self.append_import_record_while_admitted(
-                            &ledger::StatusRecord::dispatch_native(&line, request_sha256.clone()),
+                            &ledger::StatusRecord::dispatch_for(&line, &native),
                         )
                     },
                 )
@@ -537,6 +527,39 @@ fn recheck_import_admission(
         return Err(ApprovedImportAdmissionError::LedgerIdentityChanged.into());
     }
     Ok(())
+}
+
+/// One native post: the request bytes, their wire digest, and the fresh
+/// REMOTEID they carry. The post records `request_sha256` and `remote_id`
+/// together in its dispatch intent, before sending (bridge#579).
+pub(super) struct NativePostRequest {
+    pub(super) xml: String,
+    pub(super) request_sha256: String,
+    pub(super) remote_id: Uuid,
+}
+
+pub(super) fn native_post_request(
+    line: &ImportLedgerLine,
+    remote_id: Uuid,
+) -> Result<NativePostRequest, String> {
+    let company = line
+        .company
+        .as_ref()
+        .ok_or_else(|| "import_post_company_missing".to_string())?;
+    let xml = render_native_journal_xml(
+        &company.name,
+        &line.vouchers[0],
+        line.identity_batch_id(),
+        remote_id,
+    );
+    let request_sha256 = sha256_hex(&bridge_tally_protocol::encode_tally_xml_request_utf16le(
+        &xml,
+    ));
+    Ok(NativePostRequest {
+        xml,
+        request_sha256,
+        remote_id,
+    })
 }
 
 pub(super) fn require_native_numbering(voucher: &ImportVoucher) -> Result<(), String> {
