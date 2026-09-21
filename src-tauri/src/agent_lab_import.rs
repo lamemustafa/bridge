@@ -368,14 +368,23 @@ impl MasterKind {
     }
 }
 
-fn render_master_collection_request(company: &str, kind: MasterKind) -> Result<String, String> {
+/// The pre-check and read-back of a lab master write. It carries
+/// [`lab_dated_master_read`]'s book-start period, because the read-back compares
+/// `OPENINGBALANCE` against the book (bridge#568).
+fn render_master_collection_request(
+    company: &str,
+    kind: MasterKind,
+    period: &NativeLedgerExportPeriod,
+) -> Result<String, String> {
     let company = ValidatedCompanyName::new(company.to_string())
         .map_err(|_| "company_name_invalid".to_string())?;
     let object_type = kind.tally_type();
     let name = format!("Bridge Lab Write {object_type}s");
     Ok(format!(
-        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>{name}</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="{name}" ISMODIFY="No"><TYPE>{object_type}</TYPE><FETCH>{}</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>{name}</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">{}</SVFROMDATE><SVTODATE TYPE="Date">{}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="{name}" ISMODIFY="No"><TYPE>{object_type}</TYPE><FETCH>{}</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
         xml_escape(company.as_str()),
+        period.from().as_str(),
+        period.to().as_str(),
         kind.readback_fetch_fields()
     ))
 }
@@ -1041,10 +1050,11 @@ pub(in crate::agent) async fn lab_import_masters(
         if requested.is_empty() {
             continue;
         }
-        let request = render_master_collection_request(identity.display_name(), kind)
-            .map_err(ToolFailure::from)?;
         let (xml, read_evidence) =
-            lab_post_read(server, &identity, "lab_import_masters.precheck", request).await?;
+            lab_dated_master_read(server, &identity, "lab_import_masters.precheck", |period| {
+                render_master_collection_request(identity.display_name(), kind, period)
+            })
+            .await?;
         evidence = combine_evidence(evidence.clone(), read_evidence);
         let rows = parse_lab_master_rows(&xml, kind.tally_type())
             .map_err(|code| ToolFailure::from(code).with_prior_evidence(evidence.clone()))?;
@@ -1238,15 +1248,11 @@ pub(in crate::agent) async fn lab_import_masters(
 
             // Mandatory read-back, regardless of the counters (§9.2: never
             // trust CREATED/ERRORS alone).
-            let read_request = render_master_collection_request(identity.display_name(), kind)
-                .map_err(ToolFailure::from)?;
-            let (read_xml, read_evidence) = lab_post_read(
-                server,
-                &identity,
-                "lab_import_masters.readback",
-                read_request,
-            )
-            .await?;
+            let (read_xml, read_evidence) =
+                lab_dated_master_read(server, &identity, "lab_import_masters.readback", |period| {
+                    render_master_collection_request(identity.display_name(), kind, period)
+                })
+                .await?;
             evidence = combine_evidence(evidence.clone(), read_evidence);
             let rows = parse_lab_master_rows(&read_xml, kind.tally_type())
                 .map_err(|code| ToolFailure::from(code).with_prior_evidence(evidence.clone()))?;
@@ -1354,14 +1360,17 @@ pub(in crate::agent) async fn lab_import_masters(
         if mismatches.is_empty() {
             let (_company, identity, admit_evidence) = admit_lab_target(server).await?;
             evidence = combine_evidence(evidence.clone(), admit_evidence);
-            let read_request =
-                render_master_collection_request(identity.display_name(), MasterKind::Ledger)
-                    .map_err(ToolFailure::from)?;
-            let (read_xml, read_evidence) = lab_post_read(
+            let (read_xml, read_evidence) = lab_dated_master_read(
                 server,
                 &identity,
                 "lab_import_masters.readback.reconcile",
-                read_request,
+                |period| {
+                    render_master_collection_request(
+                        identity.display_name(),
+                        MasterKind::Ledger,
+                        period,
+                    )
+                },
             )
             .await?;
             evidence = combine_evidence(evidence.clone(), read_evidence);
