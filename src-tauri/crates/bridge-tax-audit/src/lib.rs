@@ -43,6 +43,7 @@ pub mod invariants;
 pub mod ledger_ids;
 pub mod ledger_scrutiny;
 pub mod read;
+pub mod registry;
 pub mod rules;
 pub mod stale_balances_41_1;
 mod support;

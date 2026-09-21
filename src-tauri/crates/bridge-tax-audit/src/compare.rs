@@ -55,14 +55,7 @@ const NUMERIC_UNITS: [&str; 4] = ["paise", "bp", "count", "days"];
 /// turnover (a value or "not supplied"), the audit-required call, the s.44ADA flag, three due dates
 /// and the presumptive-history status. Comparison-source figures come on top.
 pub fn default_min_figures(test_id: &str) -> usize {
-    match test_id {
-        "cash_44ab" => 7,
-        "cash_payments_40a3" => 18,
-        "depreciation" => 2,
-        "financial_statements" => 18,
-        "applicability_44ab" => 9,
-        _ => 1,
-    }
+    crate::registry::find(test_id).map_or(1, |t| t.min_figures)
 }
 
 /// A structural defect that stops the comparison (a bad type, or nothing to compare).
