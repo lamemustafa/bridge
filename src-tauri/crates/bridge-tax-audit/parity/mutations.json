@@ -606,5 +606,13 @@
   "file": "src/trial_balance.rs",
   "from": "Some(l) => l.chain.iter().rev().map(|g| display_name(g)).collect(),",
   "to": "Some(l) => l.chain.iter().rev().map(|g| g.as_str()).collect(),"
+ },
+ {
+  "id": "U01",
+  "by": "author",
+  "what": "py_upper ignores the Unicode 15.1 exception list",
+  "file": "src/support.rs",
+  "from": "            let keep = UPPER_UNCHANGED.binary_search(&u32::from(c)).is_ok();",
+  "to": "            let keep = false;"
  }
 ]
