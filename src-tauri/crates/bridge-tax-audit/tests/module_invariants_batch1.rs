@@ -437,3 +437,133 @@ fn edge_cash_book_lowest_day_is_the_first_of_equal_minima() {
         Value::Text("2025-06-01".to_string())
     );
 }
+
+/// With no `[ledger_scrutiny]` table the reference falls back to its own Rs 50,000 default and
+/// says so in the threshold's definition; the table is optional, not a requirement of the rules.
+#[test]
+fn edge_ledger_scrutiny_without_its_rules_table_uses_the_default() {
+    let b = book(
+        vec![
+            ledger("Repairs", &["Indirect Expenses"]),
+            ledger("Sundry", &["Suspense"]),
+        ],
+        vec![("Repairs", tb(0, 100, 0, 100))],
+        vec![voucher(
+            "v1",
+            "20250601",
+            "Journal",
+            &[("Repairs", 100), ("Sundry", -100)],
+        )],
+    );
+    let mut rules = rules();
+    rules.ledger_scrutiny_large_entry_paise = None;
+    let r = ledger_scrutiny::run(&b, &rules, &period(), &BTreeSet::new()).unwrap();
+    let f = r
+        .figures
+        .iter()
+        .find(|f| f.id == "ledger_scrutiny.large_entry_threshold_paise")
+        .unwrap();
+    assert_eq!(f.value, Value::Int(5_000_000));
+    assert_eq!(
+        f.definition,
+        "Threshold used for the large-single-entry indicator (local prototype default, status \
+\"confirm\" -- rules/ay2026-27.toml has no [ledger_scrutiny] table yet)."
+    );
+    assert_eq!(
+        r.findings[0].title,
+        "Ledger scrutiny indicators on one expense ledger: moved only by journal voucher all year"
+    );
+}
+
+/// A period shorter than the 7-day window still runs: the window starts before the period, as
+/// the reference computes it.
+#[test]
+fn edge_ledger_scrutiny_short_period_window_starts_before_the_period() {
+    let short = Window {
+        from: TallyDate::parse("20260401").unwrap(),
+        to: TallyDate::parse("20260404").unwrap(),
+    };
+    let b = book(
+        vec![
+            ledger("Repairs", &["Indirect Expenses"]),
+            ledger("Cash", &["Cash-in-Hand"]),
+        ],
+        vec![("Repairs", tb(0, 100, 0, 100))],
+        vec![voucher(
+            "v1",
+            "20260401",
+            "Payment",
+            &[("Repairs", 100), ("Cash", -100)],
+        )],
+    );
+    let cash: BTreeSet<String> = ["Cash".to_string()].into();
+    let r = ledger_scrutiny::run(&b, &rules(), &short, &cash).unwrap();
+    let f = r
+        .figures
+        .iter()
+        .find(|f| f.id == "ledger_scrutiny.last_days_count_cad740c5")
+        .unwrap();
+    assert_eq!(f.value, Value::Int(1));
+    assert_eq!(
+        f.definition,
+        "Entries on this ledger (tag cad740c5) dated in the last 7 days of the period (2026-03-29 \
+to 2026-04-04)."
+    );
+    assert_eq!(
+        r.findings[0].title,
+        "Ledger scrutiny indicators on one expense ledger: 1 entry in the last 7 days of the \
+period; cash share 100.00%"
+    );
+}
+
+/// A cash share of exactly 30.00% is flagged (>=), and a voucher dated on the window's first day
+/// is in it (>=).
+#[test]
+fn edge_ledger_scrutiny_thirty_percent_and_the_windows_first_day_are_inclusive() {
+    let b = book(
+        vec![
+            ledger("Repairs", &["Indirect Expenses"]),
+            ledger("Cash", &["Cash-in-Hand"]),
+            ledger("Sundry", &["Suspense"]),
+        ],
+        vec![("Repairs", tb(0, 10_000, 0, 10_000))],
+        vec![
+            voucher(
+                "v1",
+                "20260325",
+                "Payment",
+                &[("Repairs", 3_000), ("Cash", -3_000)],
+            ),
+            voucher(
+                "v2",
+                "20250601",
+                "Journal",
+                &[("Repairs", 7_000), ("Sundry", -7_000)],
+            ),
+        ],
+    );
+    let cash: BTreeSet<String> = ["Cash".to_string()].into();
+    let r = ledger_scrutiny::run(&b, &rules(), &period(), &cash).unwrap();
+    let id = |n: &str| format!("ledger_scrutiny.{n}_cad740c5");
+    assert_eq!(fig(&r, &id("cash_share_bp")), Value::Int(3000));
+    assert_eq!(fig(&r, &id("last_days_count")), Value::Int(1));
+    assert_eq!(
+        r.findings[0].title,
+        "Ledger scrutiny indicators on one expense ledger: 1 entry in the last 7 days of the \
+period; cash share 30.00%"
+    );
+}
+
+/// Every rules table but `[ledger_scrutiny]` is still required; that one is optional.
+#[test]
+fn rules_parse_without_the_ledger_scrutiny_table() {
+    let without: String = bridge_tax_audit::rules::VENDORED
+        .split("\n\n")
+        .filter(|block| !block.starts_with("[ledger_scrutiny]"))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    assert!(!without.contains("\n[ledger_scrutiny]\n"));
+    let parsed = Rules::parse(&without).unwrap();
+    assert_eq!(parsed.ledger_scrutiny_large_entry_paise, None);
+    assert_eq!(rules().ledger_scrutiny_large_entry_paise, Some(5_000_000));
+}

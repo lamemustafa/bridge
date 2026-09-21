@@ -34,6 +34,9 @@ const LAST_DAYS_OF_YEAR_WINDOW: i64 = 7;
 const CASH_SHARE_NOTABLE_BP: i64 = 3000;
 /// LSC-1's tolerance, Re 1.
 const LSC1_TOL_PAISE: i64 = 100;
+/// The reference's `DEFAULT_LEDGER_SCRUTINY` large-entry threshold (Rs 50,000), used when the
+/// rules file has no `[ledger_scrutiny]` table.
+const DEFAULT_LARGE_ENTRY_PAISE: i64 = 5_000_000;
 
 type Entries<'a> = BTreeMap<String, (&'a Voucher, i64)>;
 
@@ -69,17 +72,26 @@ fn evidence(entries: &Entries) -> Vec<EvidenceRef> {
         .collect()
 }
 
-/// The first day of the last-days window: the period end less six days.
+/// Howard Hinnant's `civil_from_days`, the inverse of `depreciation::civil_day_number`.
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    (y, m, d)
+}
+
+/// The first day of the last-days window: the period end less six days, as the reference computes
+/// it (`period.end - timedelta(days=6)`). On a period shorter than the window it falls before the
+/// period start, and every voucher is then in the window, as in the reference.
 fn last_days_start(period: &Window) -> Result<TallyDate> {
-    let span = civil_day_number(&period.to) - civil_day_number(&period.from);
-    let offset = u32::try_from(span - (LAST_DAYS_OF_YEAR_WINDOW - 1)).map_err(|_| {
-        AuditError::Config(format!(
-            "{TEST_ID}: the period is shorter than the {LAST_DAYS_OF_YEAR_WINDOW}-day window"
-        ))
-    })?;
-    period
-        .from
-        .add_days(offset)
+    let (y, m, d) = civil_from_days(civil_day_number(&period.to) - (LAST_DAYS_OF_YEAR_WINDOW - 1));
+    TallyDate::parse(format!("{y:04}{m:02}{d:02}"))
         .map_err(|e| AuditError::Config(format!("{TEST_ID}: window start: {e}")))
 }
 
@@ -103,15 +115,22 @@ excluded). One entry = one voucher's own line(s) on one ledger, summed to a sing
 amount per voucher."
         .to_string();
     let overflow = || AuditError::Config(format!("{TEST_ID}: a total overflowed i64 paise"));
-    let large_entry_paise = rules.ledger_scrutiny_large_entry_paise;
+    let large_entry_paise = rules
+        .ledger_scrutiny_large_entry_paise
+        .unwrap_or(DEFAULT_LARGE_ENTRY_PAISE);
     let start = last_days_start(period)?;
 
     r.fig(
         "large_entry_threshold_paise",
         Value::Int(large_entry_paise),
         Unit::Paise,
-        "Threshold used for the large-single-entry indicator (rules/ay2026-27.toml \
-[ledger_scrutiny].large_entry_paise).",
+        if rules.ledger_scrutiny_large_entry_paise.is_some() {
+            "Threshold used for the large-single-entry indicator (rules/ay2026-27.toml \
+[ledger_scrutiny].large_entry_paise)."
+        } else {
+            "Threshold used for the large-single-entry indicator (local prototype default, status \
+\"confirm\" -- rules/ay2026-27.toml has no [ledger_scrutiny] table yet)."
+        },
         Vec::new(),
     );
     let expense_ledgers = book.ledgers_under_any(&[
@@ -407,6 +426,9 @@ above.",
 /// subset of them), within Re 1.
 pub fn check_invariants(book: &Book, result: &TestResult) -> Result<Vec<String>> {
     let mut out = Vec::new();
+    // Tags are GUID-derived; a GUID-less ledger's falls back to a name hash. If two ledgers ever
+    // shared a tag, this map keeps the last in name order, where the reference's dict keeps the last
+    // in read order -- reviewer-only, and not reachable while tags are unique.
     let mut tag_to_name: HashMap<String, &String> = HashMap::new();
     for name in book.ledgers.keys() {
         tag_to_name.insert(stable_ledger_tag(book, name)?, name);
@@ -440,4 +462,22 @@ it"
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `civil_from_days` inverts `civil_day_number` on every day of 1900-2300, leap days and
+    /// century years included.
+    #[test]
+    fn civil_from_days_round_trips() {
+        let from = civil_day_number(&TallyDate::parse("19000101").unwrap());
+        let to = civil_day_number(&TallyDate::parse("23001231").unwrap());
+        for n in from..=to {
+            let (y, m, d) = civil_from_days(n);
+            let date = TallyDate::parse(format!("{y:04}{m:02}{d:02}")).unwrap();
+            assert_eq!(civil_day_number(&date), n);
+        }
+    }
 }

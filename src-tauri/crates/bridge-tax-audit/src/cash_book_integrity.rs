@@ -65,7 +65,10 @@ fn total<'a>(rows: impl IntoIterator<Item = &'a (&'a Voucher, i64)>) -> Result<i
     rows.into_iter().try_fold(0i64, |acc, (_, a)| add(acc, *a))
 }
 
-/// Python's `str.upper()` (full Unicode case mapping).
+/// Python's `str.upper()` (full Unicode case mapping). Rust's tables and Python's differ on about
+/// 55 code points (in Latin Extended-D, Georgian U+1C8A and the Garay script of Unicode 16),
+/// measured over every code point in the 2026-09-21 review; none is plausible in Tally narration
+/// text.
 fn upper(text: &str) -> String {
     text.to_uppercase()
 }

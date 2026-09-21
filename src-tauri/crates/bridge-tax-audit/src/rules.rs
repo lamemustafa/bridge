@@ -59,8 +59,10 @@ pub struct Rules {
     pub due_date_return_non_audit_firm: String,
     /// `[due_dates].status` ("partial" until checked against the Finance Act text).
     pub due_dates_status: String,
-    /// `[ledger_scrutiny].large_entry_paise`, a CA analytical materiality convention.
-    pub ledger_scrutiny_large_entry_paise: i64,
+    /// `[ledger_scrutiny].large_entry_paise`, a CA analytical materiality convention. `None`
+    /// when the rules file has no `[ledger_scrutiny]` table: the reference's `ledger_scrutiny`
+    /// then falls back to its own default, and no other test needs the table.
+    pub ledger_scrutiny_large_entry_paise: Option<i64>,
 }
 
 impl Rules {
@@ -74,7 +76,6 @@ impl Rules {
                 .and_then(toml::Value::as_table)
                 .ok_or_else(|| AuditError::Config(format!("rules: no [{name}] table")))
         };
-        let ledger_scrutiny = section("ledger_scrutiny")?;
         let (meta, s44ab, s40a3, s269st, s269ss_269t, depreciation, due_dates) = (
             section("meta")?,
             section("s44ab")?,
@@ -182,11 +183,13 @@ impl Rules {
                 .and_then(toml::Value::as_str)
                 .ok_or_else(|| AuditError::Config("rules: [due_dates].status".to_string()))?
                 .to_string(),
-            ledger_scrutiny_large_entry_paise: int_in(
-                ledger_scrutiny,
-                "ledger_scrutiny",
-                "large_entry_paise",
-            )?,
+            ledger_scrutiny_large_entry_paise: match table
+                .get("ledger_scrutiny")
+                .and_then(toml::Value::as_table)
+            {
+                Some(ls) => Some(int_in(ls, "ledger_scrutiny", "large_entry_paise")?),
+                None => None,
+            },
         })
     }
 

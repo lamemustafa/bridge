@@ -181,6 +181,9 @@ been written off or is expected to be."
 /// amount to it, re-derived by walking the population directly.
 pub fn check_invariants(book: &Book, result: &TestResult) -> Result<Vec<String>> {
     let mut out = Vec::new();
+    // Tags are GUID-derived; a GUID-less ledger's falls back to a name hash. If two ledgers ever
+    // shared a tag, this map keeps the last in name order, where the reference's dict keeps the last
+    // in read order -- reviewer-only, and not reachable while tags are unique.
     let mut tag_to_name: HashMap<String, &String> = HashMap::new();
     for name in book.ledgers.keys() {
         tag_to_name.insert(stable_ledger_tag(book, name)?, name);
