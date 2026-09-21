@@ -114,6 +114,26 @@ pub(in crate::agent) fn parse_company_high_water(
     Ok(json!({"altvchid": altvchid, "altmstid": altmstid}))
 }
 
+/// The company's voucher AlterID high-water for a read-side corroboration.
+///
+/// A company that has never held a voucher omits ALTVCHID while its master axis
+/// is observed; `parse_company_high_water` reports exactly that case as
+/// `VOUCHER_CHECKPOINT_NOT_OBSERVED`, and for a read it means a mark of 0. Every
+/// other refusal propagates, including a row carrying neither axis, which the
+/// parser keeps distinct by observing the master axis first.
+pub(in crate::agent) fn company_voucher_high_water(
+    xml: &str,
+    expected_guid: &str,
+) -> Result<u64, String> {
+    match parse_company_high_water(xml, expected_guid) {
+        Ok(mark) => mark["altvchid"]
+            .as_u64()
+            .ok_or_else(|| "voucher_checkpoint_invalid".to_string()),
+        Err(code) if code == VOUCHER_CHECKPOINT_NOT_OBSERVED => Ok(0),
+        Err(code) => Err(code),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
