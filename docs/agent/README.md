@@ -114,7 +114,9 @@ still be followed by the rest of that operation's requests. The call is answered
 `request_cancelled` and partial evidence, never with part of a read. Closing the
 input is not a cancellation: the call in flight still completes. Requests other than
 `ping` sent while a call runs are served after it, in order; a ping is answered at
-once. The lab write tools are not cancellable.
+once. Once eight requests are waiting, further input (including a ping or a
+cancellation of the call) stays unread until the call ends. The lab write tools are
+not cancellable.
 `egress_log` reads only the final 256 KiB, in 64 KiB reverse-seek chunks, so a
 larger receipt file still yields its bounded tail without loading the head.
 `changed_since` is unavailable: it is omitted from tool discovery and direct calls

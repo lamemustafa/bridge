@@ -1018,6 +1018,10 @@ mod through_the_tool {
             client_write.write_all(opening.as_bytes()).await.unwrap();
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             for frame in second {
+                if *frame == CLOSE_INPUT {
+                    client_write.shutdown().await.unwrap();
+                    continue;
+                }
                 client_write.write_all(frame.as_bytes()).await.unwrap();
                 client_write.write_all(b"\n").await.unwrap();
             }
@@ -1055,6 +1059,39 @@ mod through_the_tool {
             .filter(|request| !request.method.is_empty())
             .count();
         (responses, sent)
+    }
+
+    /// In `second`, closes the client's input instead of sending a frame.
+    const CLOSE_INPUT: &str = "<close input>";
+
+    #[tokio::test]
+    async fn closing_the_input_during_a_read_does_not_withdraw_it() {
+        // A client may write its requests, close its side and still read the
+        // answers: a closed input is not a cancellation, so the read completes
+        // in full and every request of it is sent.
+        let (response, requests) = serve_ledger_masters_then(&[CLOSE_INPUT]).await;
+        assert_eq!(response["result"]["isError"], false, "{response}");
+        assert_eq!(requests, basic_plans().len());
+    }
+
+    #[tokio::test]
+    async fn input_is_left_in_the_pipe_once_eight_requests_wait() {
+        // The bound on what a read holds: once eight requests are queued, input
+        // is not read until the call ends, so a cancellation behind them is not
+        // seen (the read completes in full, as before #554) and all eight are
+        // then answered. Without the bound the queue would grow without limit.
+        let mut frames: Vec<String> = (100..108)
+            .map(|id| json!({"jsonrpc":"2.0","id":id,"method":"tools/list"}).to_string())
+            .collect();
+        frames.push(
+            json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":7}})
+                .to_string(),
+        );
+        let frames: Vec<&str> = frames.iter().map(String::as_str).collect();
+        let (responses, sent) = serve_ledger_masters_collecting(&frames, 9).await;
+        let call = responses.iter().find(|value| value["id"] == 7).unwrap();
+        assert_eq!(call["result"]["isError"], false, "{call}");
+        assert_eq!(sent, basic_plans().len());
     }
 
     #[tokio::test]

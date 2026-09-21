@@ -532,7 +532,9 @@ enum InFlightFrame {
 }
 
 /// Frames `await_post` holds for later before it refuses more, and the count at
-/// which `await_read` stops reading input until the call ends.
+/// which `await_read` stops reading input until the call ends. A read does not
+/// apply `post_import`'s 5 MB total, so what it holds is bounded by eight frames
+/// of at most `MAX_REQUEST_BYTES` each (about 40 MB).
 const PENDING_FRAME_LIMIT: usize = 8;
 
 // A frame read while a tool call runs: a cancellation of a queued request is
