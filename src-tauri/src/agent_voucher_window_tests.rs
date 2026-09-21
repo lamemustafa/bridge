@@ -2285,13 +2285,13 @@ fn the_pre_post_request_is_admitted_on_what_verification_measured() {
     ];
     let budget = usize::try_from(WINDOW_READ_BUDGET_BYTES).unwrap();
     // Undivided: that read was the whole request, whatever its size.
-    assert!(WindowServed::of(&whole, &evidence(4 * budget)).fits_one_request());
+    assert!(WindowServed::of(&whole, &evidence(4 * budget), false).fits_one_request());
     // Divided, a light book: both parts together (one copy each) fit.
-    let light = WindowServed::of(&divided, &evidence(2 * budget));
+    let light = WindowServed::of(&divided, &evidence(2 * budget), false);
     assert_eq!(light.data_bytes, WINDOW_READ_BUDGET_BYTES);
     assert!(light.fits_one_request());
     // Divided, and one byte more than the budget: refused.
-    assert!(!WindowServed::of(&divided, &evidence(2 * budget + 2)).fits_one_request());
+    assert!(!WindowServed::of(&divided, &evidence(2 * budget + 2), false).fits_one_request());
 }
 
 #[tokio::test]
@@ -2427,4 +2427,35 @@ async fn a_replay_refuses_a_master_mark_that_moved_since_the_first_read() {
         outcome.err().map(|failure| failure.code).as_deref(),
         Some(WINDOW_CHANGED_DURING_READ)
     );
+}
+
+#[tokio::test]
+async fn a_read_after_tally_refused_the_whole_window_does_not_admit_it_whole() {
+    // Re-check of #520 review: verification planned the window whole, Tally
+    // refused that request as too large, and the two days were read instead.
+    // The parts summed well under the budget, and before this the pre-post
+    // check admitted the very request Tally had just refused. A deadline would
+    // be the same case with no size at all to sum.
+    let shape = VoucherReadShape::ImportVerification;
+    let mut plans = oversized();
+    plans.extend(paired(&xml_plan(three_vouchers())));
+    plans.extend(paired(&xml_plan(empty_collection())));
+    plans.extend(paired(&mark(1)));
+    let (outcome, _) = read_window(
+        plans,
+        ("20260801", "20260802"),
+        shape,
+        WindowPlanSource::Estimate {
+            known_marks: Some(marks_of(1)),
+        },
+        WindowReadLimits::for_shape(shape),
+    )
+    .await;
+    let read = outcome.unwrap();
+    assert!(read.refused_a_part);
+    let served = WindowServed::of(&read.reads, &read.evidence, read.refused_a_part);
+    assert!(served.data_bytes <= WINDOW_READ_BUDGET_BYTES);
+    assert!(!served.fits_one_request());
+    // Control: the same parts, read without a refusal, would be admitted.
+    assert!(WindowServed::of(&read.reads, &read.evidence, false).fits_one_request());
 }

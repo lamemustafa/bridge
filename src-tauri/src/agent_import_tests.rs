@@ -2437,3 +2437,99 @@ fn master_match_byte_cap_retains_narrow_fold_candidate() {
     assert!(listed.iter().all(|v| v["rule"] == "normalized_equal"));
     assert_eq!(rendered["candidates_truncated"], true);
 }
+
+/// The qualified build-and-verify cycle, except that verify_import's window
+/// (planned whole: ten vouchers under the mark) is refused by Tally as too
+/// large and read again as its two days, then replayed day by day.
+fn verify_split_after_refusal_plans() -> Vec<ScenarioPlan> {
+    let cycle = qualified_import_cycle_plans();
+    // Legs 0..44 build the batch and open verify_import through its marks.
+    let (company, status, premark) = (cycle[44].clone(), cycle[46].clone(), cycle[39].clone());
+    let readback = cycle[45].fixture.body().into_owned();
+    let first = readback.find("<VOUCHER ").unwrap();
+    let second = readback.rfind("<VOUCHER ").unwrap();
+    let end = readback.rfind("</COLLECTION>").unwrap();
+    let day = |voucher: &str| {
+        let mut plan = cycle[45].clone();
+        plan.fixture = Fixture::SyntheticXml(format!(
+            "{}{voucher}{}",
+            &readback[..first],
+            &readback[end..]
+        ));
+        plan
+    };
+    let (day_one, day_two) = (day(&readback[first..second]), day(&readback[second..end]));
+    let paired = |body: &ScenarioPlan| {
+        vec![
+            company.clone(),
+            body.clone(),
+            status.clone(),
+            body.clone(),
+            status.clone(),
+            company.clone(),
+        ]
+    };
+    let mut plans = cycle[..44].to_vec();
+    // The whole window, refused as over the transport cap.
+    plans.push(company.clone());
+    plans.push(
+        cycle[45]
+            .clone()
+            .with_framing(ResponseFraming::DeclaredContentLength {
+                bytes: bridge_tally_transport::XML_RESPONSE_MAX_BYTES + 1,
+            }),
+    );
+    for body in [&day_one, &day_two, &premark, &day_one, &day_two, &premark] {
+        plans.extend(paired(body));
+    }
+    plans
+}
+
+#[tokio::test]
+async fn a_split_verification_replays_with_its_witness_and_refuses_the_whole_pre_post_request() {
+    // Review of #520, through the tool:
+    // - verify_import's corroboration must replay the split read's parts with
+    //   its witness. Without it the replay of a divided read is refused as
+    //   unwitnessed, so this verification succeeding is what pins the hand-off.
+    // - post_import's verification must refuse, before approval, the whole
+    //   window it would send inside the dispatch lease: Tally has just refused
+    //   that very request.
+    for for_post in [false, true] {
+        let simulator =
+            SequenceSimulator::spawn(verify_split_after_refusal_plans()).expect("simulator");
+        let directory = tempfile::tempdir().expect("temporary data directory");
+        let server = Server::new(super::super::Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".to_string(),
+                port: simulator.address().port(),
+            },
+            data_dir: directory.path().to_path_buf(),
+            max_rows: 10,
+            max_bytes: 200_000,
+            redaction: super::super::Redaction::None,
+            import_enabled: true,
+            writes_enabled: false,
+        });
+        let built = server
+            .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).expect("json"))
+            .await
+            .expect("build");
+        let args = json!({"company_guid":CAPTURED_GUID,
+            "batch_id": built.payload["result"]["batch_id"].as_str().expect("batch id")});
+        if for_post {
+            let failure = match server.verify_import_for_post(&args).await {
+                Err(failure) => failure,
+                Ok(_) => panic!("the whole window Tally refused must not be admitted"),
+            };
+            assert_eq!(failure.code, post::IMPORT_POST_WINDOW_NOT_BOUNDED);
+            assert!(failure.evidence.is_some());
+        } else {
+            let proof = server.verify_import(&args).await.expect("verify");
+            assert_eq!(
+                proof.payload["result"]["counts"]["matching_content_observed"],
+                2
+            );
+        }
+        assert_eq!(simulator.finish().expect("requests").len(), 82);
+    }
+}

@@ -783,17 +783,22 @@ impl Server {
             .await
     }
 
-    /// [`Self::verify_import`], also reporting what its window read cost, for
-    /// `post_import`'s pre-approval check of the whole-window request it sends.
-    pub(super) async fn verify_import_measuring(
+    /// [`Self::verify_import`] for `post_import`, which then sends the batch's
+    /// whole verification window as one request inside the dispatch lease. That
+    /// request is admitted here on what this verification read of the same
+    /// window measured (§11c), and refused otherwise, before any approval.
+    pub(super) async fn verify_import_for_post(
         &self,
         args: &Value,
-    ) -> Result<(ToolOutcome, Option<super::WindowServed>), ToolFailure> {
+    ) -> Result<ToolOutcome, ToolFailure> {
         let mut served = None;
         let outcome = self
             .verify_import_with_dispatch(args, false, &mut served)
             .await?;
-        Ok((outcome, served))
+        post::admit_post_window(served).map_err(|code| {
+            ToolFailure::from(code).with_prior_evidence(outcome.evidence.clone())
+        })?;
+        Ok(outcome)
     }
 
     pub(in crate::agent) async fn verify_import_after_current_dispatch(
@@ -851,6 +856,7 @@ impl Server {
             *served = Some(super::WindowServed::of(
                 &observed_read.reads,
                 &observed_read.evidence,
+                observed_read.refused_a_part,
             ));
             let (observed, observed_evidence) = (observed_read.source, observed_read.evidence);
             accumulated = combine_evidence(accumulated.clone(), observed_evidence.clone());
@@ -1071,6 +1077,7 @@ impl Server {
             closing_evidence: read.closing_evidence,
             reads: read.reads,
             witness: read.witness,
+            refused_a_part: read.refused_a_part,
         })
     }
 
@@ -2232,6 +2239,8 @@ struct VerificationWindowRead {
     reads: Vec<super::WindowPart>,
     /// What a corroborating replay of this read must carry.
     witness: Option<super::WindowWitness>,
+    /// Tally refused one of this read's data requests as too large or timed out.
+    refused_a_part: bool,
 }
 
 pub(super) fn render_import_verification_read(company: &str, from: &str, to: &str) -> String {

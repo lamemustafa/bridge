@@ -120,7 +120,9 @@ impl Server {
             let preview = admit_fresh_saved_journal(&line, &self.settings.endpoint)?;
             // Number matching precedence is not qualified for native Create.
             // Previously dispatched numbered batches remain reconcilable above.
-            let (before, served) = self.verify_import_measuring(args).await?;
+            // Also admits, on this read's measurement, the whole-window request
+            // the lease sends before posting (§11c).
+            let before = self.verify_import_for_post(args).await?;
             accumulated = combine_evidence(accumulated.clone(), before.evidence);
             require_absent_verification_result(&before.payload["result"])?;
             let payload = ImportPayload {
@@ -175,12 +177,6 @@ impl Server {
                 .map_err(|_| "import_masters_changed".to_string())?;
             let mode = self.qualified_import_profile().await?;
             validate_post_profile_with_evidence(&payload, &mode, &mut accumulated)?;
-            // The pre-post check inside the dispatch lease sends the whole
-            // verification window as one request. `verify_import` just read that
-            // window under the pre-flight bound (§11c), possibly in parts; the
-            // whole request is admitted on what that read measured, and refused
-            // here, before approval, when it could not be one request.
-            admit_post_window(served)?;
             let request = ApprovedImport::confirm(
                 xml,
                 &preview,

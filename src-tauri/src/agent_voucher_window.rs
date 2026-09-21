@@ -647,15 +647,18 @@ impl WindowPlanSource {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct WindowServed {
     pub(super) divided: bool,
+    /// Tally refused one of the read's data requests as too large or timed out.
+    pub(super) refused_a_part: bool,
     /// One copy of every data response, summed: `post_read` reports both bodies
     /// of a paired read, so half of its evidence bytes.
     pub(super) data_bytes: u64,
 }
 
 impl WindowServed {
-    pub(super) fn of(reads: &[WindowPart], data: &Evidence) -> Self {
+    pub(super) fn of(reads: &[WindowPart], data: &Evidence, refused_a_part: bool) -> Self {
         Self {
             divided: is_divided(reads),
+            refused_a_part,
             data_bytes: u64::try_from(data.bytes / 2).unwrap_or(u64::MAX),
         }
     }
@@ -663,9 +666,12 @@ impl WindowServed {
     /// Whether one request of the whole window is within the budget, on what the
     /// read measured rather than on the pre-flight's prediction: an undivided
     /// read was that request, and a divided read's parts together were the
-    /// window's whole response.
+    /// window's whole response — unless Tally refused one of the read's
+    /// requests as too large or timed out. A request that timed out has no
+    /// size to sum, and one Tally refused may be the whole window itself, so
+    /// such a read never admits the whole request.
     pub(super) fn fits_one_request(self) -> bool {
-        !self.divided || self.data_bytes <= WINDOW_READ_BUDGET_BYTES
+        !self.refused_a_part && (!self.divided || self.data_bytes <= WINDOW_READ_BUDGET_BYTES)
     }
 }
 
@@ -761,6 +767,10 @@ pub(super) struct WindowReadOutcome<T> {
     /// What a replay of this read must carry. `None` only when no marks were
     /// read, which is the caller-counted source alone.
     pub(super) witness: Option<WindowWitness>,
+    /// Whether Tally refused a data request of this read as too large or timed
+    /// out, and the read went on in smaller parts. The parts' sizes then say
+    /// nothing about the request Tally refused.
+    pub(super) refused_a_part: bool,
 }
 
 impl<T> WindowReadOutcome<T> {
@@ -987,6 +997,7 @@ impl Server {
         let mut reads: Vec<WindowPart> = Vec::new();
         let mut measured = false;
         let mut dispatched = 0_usize;
+        let mut refused_a_part = false;
         // #485: the smallest span already known to be unservable on THIS call,
         // so a sibling of the same size is split without spending a deadline.
         let mut smallest_failed_days: Option<i64> = None;
@@ -1093,6 +1104,7 @@ impl Server {
                                 );
                             }
                         }
+                        refused_a_part = true;
                         // The failed attempt was a request; keep what it observed.
                         if let Some(attempt) = failure.evidence.clone() {
                             fold_evidence(&mut evidence, *attempt);
@@ -1155,6 +1167,7 @@ impl Server {
             closing_evidence: closing,
             reads,
             witness: opening.map(|marks| WindowWitness { marks, census }),
+            refused_a_part,
         })
     }
 

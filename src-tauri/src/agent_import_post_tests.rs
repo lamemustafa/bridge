@@ -856,8 +856,8 @@ fn the_whole_window_pre_post_request_is_admitted_on_the_verification_measurement
         },
     ];
     let budget = usize::try_from(crate::agent::WINDOW_READ_BUDGET_BYTES).unwrap();
-    let light = crate::agent::WindowServed::of(&divided, &evidence(2 * budget));
-    let heavy = crate::agent::WindowServed::of(&divided, &evidence(2 * budget + 2));
+    let light = crate::agent::WindowServed::of(&divided, &evidence(2 * budget), false);
+    let heavy = crate::agent::WindowServed::of(&divided, &evidence(2 * budget + 2), false);
     assert_eq!(admit_post_window(Some(light)), Ok(()));
     assert_eq!(
         admit_post_window(Some(heavy)),

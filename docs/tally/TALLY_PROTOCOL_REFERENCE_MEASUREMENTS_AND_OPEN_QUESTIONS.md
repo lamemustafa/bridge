@@ -262,7 +262,9 @@ request is predicted over a budget well below the cap.
    pre-post check inside the import dispatch lease sends the whole verification window as one
    request. Before approval it is admitted on the `verify_import` read of the same window that runs
    just before: an undivided read was that request, and a divided read's parts together (one copy of
-   each response) are its size, which must be within the budget. Otherwise the batch is refused as
+   each response) are its size, which must be within the budget — unless Tally refused one of that
+   read's requests as too large or timed out, since a timed-out request has no size to sum and the
+   refused one may be the whole window itself. Otherwise the batch is refused as
    `import_post_window_not_bounded`. The book can still grow between that read and the lease; the
    transport cap is the backstop there.
 10. **The transport cap remains the final safeguard.** Where a caller already divided a window after
