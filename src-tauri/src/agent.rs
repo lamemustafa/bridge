@@ -70,6 +70,9 @@ use change_parse::*;
 #[path = "agent_read_profiles.rs"]
 mod read_profiles;
 use read_profiles::*;
+#[path = "agent_voucher_window.rs"]
+mod voucher_window;
+use voucher_window::*;
 #[path = "agent_movement_math.rs"]
 mod movement_math;
 use movement_math::*;
@@ -466,6 +469,22 @@ fn refusal_remediation(code: &str) -> Option<&'static str> {
              exactly that sequence before parsing, so a ledger name carrying it would read back \
              as different text and could never be confirmed as posted. Rename the ledger to \
              drop that sequence and resubmit.",
+        ),
+        // A product limit of the bounded window read (protocol reference §11c):
+        // the census walks the book's AlterIDs whatever the window, so the
+        // obvious retry — a shorter window — cannot succeed, and saying so is
+        // the whole point of naming a step.
+        "voucher_window_book_too_large" => Some(
+            "This company's voucher history is too large for Bridge to count before reading \
+             it in bounded requests: its voucher high-water mark is above about 2.1 million. \
+             A shorter date window will not help, because the count covers the whole book. \
+             Read this company with Tally's own reports, or split the company in Tally so \
+             that each part's books are smaller.",
+        ),
+        "import_post_window_not_bounded" => Some(
+            "Before posting, Bridge checks the batch's whole date range in one request, and \
+             this range holds too many vouchers for one request to stay within its bound. \
+             Build the batch again over fewer days, then post that batch.",
         ),
         _ => None,
     }

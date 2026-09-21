@@ -711,9 +711,17 @@ fn presence_plans() -> Vec<ScenarioPlan> {
     // reread the nonempty (necessarily `Partial`) window path takes before it
     // can still produce `present`/`possibly_present` verdicts.
     steps.extend(paired_read(&catalogue));
+    steps.extend(paired_read(&high_water_xml()));
     steps.extend(paired_read(&window_xml()));
     steps.extend(paired_read(&catalogue));
     plans(steps)
+}
+
+/// The voucher high-water mark the pre-flight volume bound reads before the
+/// window (protocol reference §11c). Small enough that the window is read
+/// whole, in the synthetic shape the import tests already replay.
+fn high_water_xml() -> String {
+    format!("<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY><GUID>{CAPTURED_GUID}</GUID><ALTVCHID>10</ALTVCHID><ALTMSTID>7</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>")
 }
 
 /// `presence_plans` with one marker written into JV-1's narration, the way an
@@ -729,6 +737,7 @@ fn marker_presence_plans(marker: &str) -> Vec<ScenarioPlan> {
     );
     let mut steps = vec![Step::Company, Step::Status, Step::Company, Step::Status];
     steps.extend(paired_read(&catalogue));
+    steps.extend(paired_read(&high_water_xml()));
     steps.extend(paired_read(&window));
     steps.extend(paired_read(&catalogue));
     plans(steps)
@@ -794,7 +803,8 @@ async fn a_nonempty_window_without_a_control_total_still_answers_but_never_issue
         "partial"
     );
     let observed = simulator.finish().expect("requests");
-    assert_eq!(observed.len(), 22);
+    // 22 before the pre-flight volume bound, plus its one high-water read.
+    assert_eq!(observed.len(), 28);
 }
 
 /// The same window carrying a marker Bridge wrote, under `automatic` numbering.
@@ -999,6 +1009,7 @@ async fn a_ledger_missing_from_the_catalogue_fails_closed() {
     let catalogue = catalogue_xml();
     let mut steps = vec![Step::Company, Step::Status, Step::Company, Step::Status];
     steps.extend(paired_read(&catalogue));
+    steps.extend(paired_read(&high_water_xml()));
     steps.extend(paired_read(&unlisted));
     let simulator = SequenceSimulator::spawn(plans(steps)).expect("simulator");
     let directory = tempfile::tempdir().expect("directory");

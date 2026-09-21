@@ -1220,82 +1220,6 @@ fn verified_import_vouchers_require_observed_effective_accounting_flags() {
 }
 
 #[test]
-fn a_window_span_counts_both_endpoints() {
-    assert_eq!(window_span_days("20260401", "20260401"), Some(1));
-    assert_eq!(window_span_days("20260401", "20260402"), Some(2));
-    assert_eq!(window_span_days("20260401", "20270331"), Some(365));
-    // A leap year is counted by the calendar, not by arithmetic on months.
-    assert_eq!(window_span_days("20240101", "20241231"), Some(366));
-    assert_eq!(window_span_days("notadate", "20260401"), None);
-}
-
-#[test]
-fn a_span_already_known_to_fail_is_split_without_another_read() {
-    // The point of carrying the failed span forward: a sibling branch of the same
-    // size is split immediately rather than spending a full deadline to relearn it.
-    assert!(must_split_before_reading(Some(91), Some(91)));
-    assert!(must_split_before_reading(Some(182), Some(91)));
-    // Smaller than anything known to fail: read it, do not pre-split.
-    assert!(!must_split_before_reading(Some(45), Some(91)));
-    // Nothing has failed yet, so nothing is known: always read.
-    assert!(!must_split_before_reading(Some(365), None));
-    // A single day is the floor. Pre-splitting it would spin, and refusing is the
-    // reader's job, not this predicate's.
-    assert!(!must_split_before_reading(Some(1), Some(1)));
-    // An unparseable span falls through to reading rather than being treated as a
-    // failure: this is an optimisation and must never decide correctness.
-    assert!(!must_split_before_reading(None, Some(30)));
-}
-
-#[test]
-fn splitting_a_verification_window_partitions_it_exactly() {
-    // Every split must cover the original window once and only once. A gap drops
-    // vouchers from an attribution check; an overlap double-counts them.
-    for (from, to) in [
-        ("20260401", "20270331"), // a full financial year
-        ("20260401", "20260430"), // a month
-        ("20260401", "20260402"), // two days: mid must equal start
-        ("20260228", "20260301"), // across a month boundary
-        ("20240228", "20240301"), // across a leap day
-        ("20251231", "20260101"), // across a year boundary
-    ] {
-        let ((left_from, left_to), (right_from, right_to)) =
-            split_verification_window(from, to).expect("a multi-day window splits");
-        assert_eq!(left_from, from, "left half must start where the window did");
-        assert_eq!(right_to, to, "right half must end where the window did");
-        let day = |value: &str| chrono::NaiveDate::parse_from_str(value, "%Y%m%d").unwrap();
-        // Contiguous, no gap and no overlap: the right half starts exactly the day
-        // after the left half ends.
-        assert_eq!(
-            day(&right_from),
-            day(&left_to) + chrono::Duration::days(1),
-            "{from}..{to} split with a gap or an overlap"
-        );
-        // And it must actually shrink, or the splitter would never terminate.
-        assert!(
-            day(&left_to) < day(to),
-            "left half did not shrink {from}..{to}"
-        );
-        assert!(
-            day(&right_from) > day(from),
-            "right half did not shrink {from}..{to}"
-        );
-    }
-}
-
-#[test]
-fn a_single_day_verification_window_cannot_be_split() {
-    // The recursion floor. Without it the splitter would spin on a day it cannot
-    // read; with it, read_verification_window refuses rather than returning a
-    // verification over an incomplete window.
-    assert_eq!(split_verification_window("20260401", "20260401"), None);
-    // A reversed window is refused rather than silently inverted.
-    assert_eq!(split_verification_window("20260430", "20260401"), None);
-    // An unparseable bound is refused rather than guessed at.
-    assert_eq!(split_verification_window("notadate", "20260401"), None);
-}
-
-#[test]
 fn the_oversized_window_codes_match_the_transport_vocabulary() {
     use bridge_tally_transport::TallyTransportError;
     // The splitter matches these as literals. Pin them to what the transport
@@ -1584,7 +1508,9 @@ async fn simulator_verification_is_independent_of_the_output_row_limit() {
                     .expect("batch id")
             ))
             .exists());
-        assert_eq!(simulator.finish().expect("requests").len(), 50);
+        // 50 before the pre-flight volume bound, plus the six legs of the one
+        // high-water read verify_import now makes (protocol reference §11c).
+        assert_eq!(simulator.finish().expect("requests").len(), 56);
     }
 }
 
@@ -1621,13 +1547,22 @@ fn import_cycle_plans() -> Vec<ScenarioPlan> {
         company.clone(),
         premark.clone(),
         status.clone(),
+        premark.clone(),
+        status.clone(),
+        company.clone(),
+        company.clone(),
+        status.clone(),
+        company.clone(),
+        status.clone(),
+        // verify_import's pre-flight volume bound (protocol reference §11c)
+        // reads the voucher high-water mark before the window. Ten vouchers
+        // cannot exceed the budget, so the window is then read whole.
+        company.clone(),
+        premark.clone(),
+        status.clone(),
         premark,
         status.clone(),
         company.clone(),
-        company.clone(),
-        status.clone(),
-        company.clone(),
-        status.clone(),
         company.clone(),
         readback.clone(),
         status.clone(),
@@ -1642,9 +1577,8 @@ fn import_cycle_plans() -> Vec<ScenarioPlan> {
         company,
     ]
     .into_iter()
-    .enumerate()
-    .map(|(index, xml)| {
-        if matches!(index, 1 | 3 | 6 | 8 | 12 | 14 | 17 | 19 | 22 | 24 | 28 | 30) {
+    .map(|xml| {
+        if xml == status {
             ScenarioPlan::new(Fixture::ProductStatus(
                 tally_protocol_simulator::ProductStatus::TallyPrime,
             ))
@@ -2371,9 +2305,10 @@ async fn verify_saved_batch_after_dispatch(
         .latest_import_snapshot(&batch_id)
         .expect("persisted snapshot")
         .expect("batch");
+    // Six more than before the pre-flight bound: verify_import's high-water read.
     assert_eq!(
         simulator.finish().expect("captured plan requests").len(),
-        50
+        56
     );
     let markdown = fs::read_to_string(
         server
@@ -2470,9 +2405,10 @@ async fn current_dispatch_persists_its_reconciliation_verdict_before_returning_t
     assert_eq!(persisted["dispatch"]["counters"]["created"], 1);
     assert_eq!(persisted["dispatch"]["automatic_retry"], false);
     assert_eq!(latest.batch.status, "verification_incomplete");
+    // Six more than before the pre-flight bound: verify_import's high-water read.
     assert_eq!(
         simulator.finish().expect("captured plan requests").len(),
-        50
+        56
     );
 }
 
@@ -2500,4 +2436,100 @@ fn master_match_byte_cap_retains_narrow_fold_candidate() {
     assert_eq!(listed[0]["name"][super::super::PARTY_NAME_MARKER], narrow);
     assert!(listed.iter().all(|v| v["rule"] == "normalized_equal"));
     assert_eq!(rendered["candidates_truncated"], true);
+}
+
+/// The qualified build-and-verify cycle, except that verify_import's window
+/// (planned whole: ten vouchers under the mark) is refused by Tally as too
+/// large and read again as its two days, then replayed day by day.
+fn verify_split_after_refusal_plans() -> Vec<ScenarioPlan> {
+    let cycle = qualified_import_cycle_plans();
+    // Legs 0..44 build the batch and open verify_import through its marks.
+    let (company, status, premark) = (cycle[44].clone(), cycle[46].clone(), cycle[39].clone());
+    let readback = cycle[45].fixture.body().into_owned();
+    let first = readback.find("<VOUCHER ").unwrap();
+    let second = readback.rfind("<VOUCHER ").unwrap();
+    let end = readback.rfind("</COLLECTION>").unwrap();
+    let day = |voucher: &str| {
+        let mut plan = cycle[45].clone();
+        plan.fixture = Fixture::SyntheticXml(format!(
+            "{}{voucher}{}",
+            &readback[..first],
+            &readback[end..]
+        ));
+        plan
+    };
+    let (day_one, day_two) = (day(&readback[first..second]), day(&readback[second..end]));
+    let paired = |body: &ScenarioPlan| {
+        vec![
+            company.clone(),
+            body.clone(),
+            status.clone(),
+            body.clone(),
+            status.clone(),
+            company.clone(),
+        ]
+    };
+    let mut plans = cycle[..44].to_vec();
+    // The whole window, refused as over the transport cap.
+    plans.push(company.clone());
+    plans.push(
+        cycle[45]
+            .clone()
+            .with_framing(ResponseFraming::DeclaredContentLength {
+                bytes: bridge_tally_transport::XML_RESPONSE_MAX_BYTES + 1,
+            }),
+    );
+    for body in [&day_one, &day_two, &premark, &day_one, &day_two, &premark] {
+        plans.extend(paired(body));
+    }
+    plans
+}
+
+#[tokio::test]
+async fn a_split_verification_replays_with_its_witness_and_refuses_the_whole_pre_post_request() {
+    // Review of #520, through the tool:
+    // - verify_import's corroboration must replay the split read's parts with
+    //   its witness. Without it the replay of a divided read is refused as
+    //   unwitnessed, so this verification succeeding is what pins the hand-off.
+    // - post_import's verification must refuse, before approval, the whole
+    //   window it would send inside the dispatch lease: Tally has just refused
+    //   that very request.
+    for for_post in [false, true] {
+        let simulator =
+            SequenceSimulator::spawn(verify_split_after_refusal_plans()).expect("simulator");
+        let directory = tempfile::tempdir().expect("temporary data directory");
+        let server = Server::new(super::super::Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".to_string(),
+                port: simulator.address().port(),
+            },
+            data_dir: directory.path().to_path_buf(),
+            max_rows: 10,
+            max_bytes: 200_000,
+            redaction: super::super::Redaction::None,
+            import_enabled: true,
+            writes_enabled: false,
+        });
+        let built = server
+            .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).expect("json"))
+            .await
+            .expect("build");
+        let args = json!({"company_guid":CAPTURED_GUID,
+            "batch_id": built.payload["result"]["batch_id"].as_str().expect("batch id")});
+        if for_post {
+            let failure = match server.verify_import_for_post(&args).await {
+                Err(failure) => failure,
+                Ok(_) => panic!("the whole window Tally refused must not be admitted"),
+            };
+            assert_eq!(failure.code, post::IMPORT_POST_WINDOW_NOT_BOUNDED);
+            assert!(failure.evidence.is_some());
+        } else {
+            let proof = server.verify_import(&args).await.expect("verify");
+            assert_eq!(
+                proof.payload["result"]["counts"]["matching_content_observed"],
+                2
+            );
+        }
+        assert_eq!(simulator.finish().expect("requests").len(), 82);
+    }
 }

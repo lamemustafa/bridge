@@ -78,16 +78,17 @@ pub(crate) async fn selected_voucher_operation_for_verified(
         } else {
             None
         };
-        let request = render_agent_vouchers(&company.name, &from, &to, None)?;
-        let (xml, evidence) = server.post_read(&identity, request).await?;
-        accumulate_evidence(&mut accumulated, evidence);
-        let mut rows =
-            validate_then_filter_voucher_rows(parse_agent_rows(&xml, identity.company_guid())?, &from, &to, None)?;
+        let read = server
+            .read_entry_wildcard_window(&identity, &company.name, &from, &to, None)
+            .await?;
+        accumulate_evidence(&mut accumulated, read.all_evidence());
+        let source_marks = read.witness.as_ref().map(|witness| witness.marks);
+        let mut rows = validate_then_filter_voucher_rows(read.rows, &from, &to, None)?;
         let mut result_state = "complete";
         let mut corroboration_reason = None;
         if rows.is_empty() {
             let (read_evidence, partial, reason) = server
-                .corroborate_empty_voucher_read(&identity, &company.name, &from, &to, None)
+                .corroborate_empty_voucher_read(&identity, &company.name, &from, &to, None, source_marks)
                 .await?;
             accumulate_evidence(&mut accumulated, read_evidence);
             if partial {
@@ -162,18 +163,20 @@ impl Server {
         from: &str,
         to: &str,
         ledger: Option<&str>,
+        known_marks: Option<CompanyMarks>,
     ) -> Result<(Evidence, bool, Option<&'static str>), ToolFailure> {
         let (wider_from, wider_to) = widened_window(from, to)?;
-        let wider_request = render_agent_vouchers(company, &wider_from, &wider_to, None)?;
-        let (wider_xml, wider_evidence) = self.post_read(identity, wider_request).await?;
-        let mut evidence = wider_evidence;
+        // The window itself was empty, but the day either side of it need not
+        // be, and this read uses the entry wildcard: it is bounded like any
+        // other windowed read rather than trusted to be small.
+        let wider = self
+            .read_entry_wildcard_window(identity, company, &wider_from, &wider_to, known_marks)
+            .await?;
+        let mut evidence = wider.all_evidence();
+        let wider_rows = wider.rows;
         let outcome = async {
-            let wider_rows = validate_then_filter_voucher_rows(
-                parse_agent_rows(&wider_xml, identity.company_guid())?,
-                &wider_from,
-                &wider_to,
-                ledger,
-            )?;
+            let wider_rows =
+                validate_then_filter_voucher_rows(wider_rows, &wider_from, &wider_to, ledger)?;
             let high_water = if wider_rows.is_empty() {
                 let (high_water_xml, high_water_evidence) = self
                     .post_read(identity, render_agent_company_high_water(company))
@@ -192,5 +195,33 @@ impl Server {
         }
         .await;
         outcome.map_err(|failure: ToolFailure| failure.with_prior_evidence(evidence))
+    }
+}
+
+impl Server {
+    /// A bounded read of the entry-wildcard voucher window (`render_agent_vouchers`)
+    /// shared by `vouchers`, `voucher_presence` and the empty-window
+    /// corroboration. Rows are parsed per part and returned in date order;
+    /// validating them is the caller's job, over the union.
+    pub(super) async fn read_entry_wildcard_window(
+        &self,
+        identity: &VerifiedCompanyIdentity,
+        company: &str,
+        from: &str,
+        to: &str,
+        known_marks: Option<CompanyMarks>,
+    ) -> Result<WindowReadOutcome<Value>, ToolFailure> {
+        let shape = VoucherReadShape::EntryWildcard;
+        self.read_voucher_window(
+            identity,
+            company,
+            from,
+            to,
+            shape,
+            WindowPlanSource::Estimate { known_marks },
+            WindowReadLimits::for_shape(shape),
+            |xml| parse_agent_rows(xml, identity.company_guid()),
+        )
+        .await
     }
 }

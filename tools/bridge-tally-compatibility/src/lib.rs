@@ -288,10 +288,16 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// verification, moved out with only visibility and `super::` paths changed. It
 /// decides whether an imported voucher is reported `posted_verified`, which the
 /// posting path and the amendment compare-and-swap also rely on.
+///
+/// `src-tauri/src/agent_voucher_window.rs` is the pre-flight volume bound for
+/// windowed voucher reads (protocol reference §11c). It decides which voucher
+/// requests Bridge sends Tally — whether a window goes out whole, in which date
+/// and AlterID parts, and which windows are refused unsent — for `vouchers`,
+/// `voucher_presence`, `ledger_movement` and the import-verification read.
 // The canonical protocol-reference index is retained for legacy links while
 // bridge#317 moves its content into six separately pinned parts. The cap grows
 // by those six pins; it remains an exact count after the coordinated reseal.
-pub const MAX_SURFACE_FILES: usize = 274;
+pub const MAX_SURFACE_FILES: usize = 275;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;

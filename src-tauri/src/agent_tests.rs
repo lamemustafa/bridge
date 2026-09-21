@@ -1767,11 +1767,26 @@ async fn voucher_read_evidence_uses_utf16_transport_bytes() {
         ))
         .with_framing(ResponseFraming::ContentLength)
     };
+    // The pre-flight volume bound (protocol reference §11c) reads the voucher
+    // high-water mark first. A small synthetic mark keeps this window whole, so
+    // the test still isolates the byte accounting it exists for.
+    let high_water_xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY><GUID>bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID><ALTVCHID>2</ALTVCHID><ALTMSTID>7</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>";
+    let high_water_plan = || {
+        ScenarioPlan::new(Fixture::SyntheticXml(high_water_xml.to_string()))
+            .with_encoding(WireEncoding::Utf16Le)
+            .with_framing(ResponseFraming::ContentLength)
+    };
     let simulator = SequenceSimulator::spawn(vec![
         company_plan(),
         status_plan(),
         company_plan(),
         status_plan(),
+        company_plan(),
+        high_water_plan(),
+        status_plan(),
+        high_water_plan(),
+        status_plan(),
+        company_plan(),
         company_plan(),
         voucher_plan(),
         status_plan(),
@@ -1806,6 +1821,7 @@ async fn voucher_read_evidence_uses_utf16_transport_bytes() {
         .all(|row| row["cancelled"].is_boolean() && row["optional"].is_boolean()));
     let expected_bytes = bridge_tally_protocol::encode_tally_xml_request_utf16le(&company_xml)
         .len()
+        + bridge_tally_protocol::encode_tally_xml_request_utf16le(high_water_xml).len()
         + bridge_tally_protocol::encode_tally_xml_request_utf16le(captured_vouchers).len();
     assert_eq!(
         response["structuredContent"]["evidence"]["bytes"],
@@ -1813,15 +1829,23 @@ async fn voucher_read_evidence_uses_utf16_transport_bytes() {
     );
     assert_ne!(
         response["structuredContent"]["evidence"]["bytes"],
-        company_xml.len() + captured_vouchers.len()
+        company_xml.len() + high_water_xml.len() + captured_vouchers.len()
     );
-    assert_eq!(simulator.finish().expect("simulator result").len(), 10);
+    assert_eq!(simulator.finish().expect("simulator result").len(), 16);
 }
 
 /// `vouchers` over an empty window on a company whose high-water row carries
 /// the given axes: identity, then the bracketed window, widened window and
 /// company high-water reads (#550).
-async fn empty_window_vouchers_with_high_water(high_water: String) -> (Value, usize) {
+/// `vouchers` over an empty window, in the order the bounded read sends
+/// (protocol reference §11c): the company marks, the window, the widened
+/// window (which reuses those marks), then the empty-window corroboration's own
+/// mark read. A marks response the bound cannot read refuses at the first,
+/// before the window: `refused_at_preflight` scripts only that far.
+async fn empty_window_vouchers_with_high_water(
+    high_water: String,
+    refused_at_preflight: bool,
+) -> (Value, usize) {
     let utf16 = |bytes: &[u8]| {
         String::from_utf16(
             &bytes
@@ -1859,9 +1883,12 @@ async fn empty_window_vouchers_with_high_water(high_water: String) -> (Value, us
         ]
     };
     let mut plans = vec![plan(&company_xml), status(), plan(&company_xml), status()];
-    plans.extend(bracketed(&empty_xml));
-    plans.extend(bracketed(&empty_xml));
     plans.extend(bracketed(&high_water));
+    if !refused_at_preflight {
+        plans.extend(bracketed(&empty_xml));
+        plans.extend(bracketed(&empty_xml));
+        plans.extend(bracketed(&high_water));
+    }
     let simulator = SequenceSimulator::spawn(plans).expect("synthetic loopback server");
     let directory = tempfile::tempdir().expect("temporary agent directory");
     let server = Server::new(settings(
@@ -1892,7 +1919,7 @@ async fn an_empty_book_corroborates_an_empty_voucher_window() {
     let captured = company_high_water_fixture();
     let empty_book = captured.replacen("<ALTVCHID TYPE=\"Number\"> 101605</ALTVCHID>", "", 1);
     assert_ne!(empty_book, captured);
-    let (response, requests) = empty_window_vouchers_with_high_water(empty_book).await;
+    let (response, requests) = empty_window_vouchers_with_high_water(empty_book, false).await;
     assert_eq!(response["isError"], false, "{response}");
     let result = &response["structuredContent"]["result"];
     assert_eq!(result["items"], json!([]));
@@ -1900,7 +1927,8 @@ async fn an_empty_book_corroborates_an_empty_voucher_window() {
         response["structuredContent"]["evidence"]["state"],
         "complete"
     );
-    assert_eq!(requests, 22);
+    // Master's 22, plus the six legs of the bound's opening mark read.
+    assert_eq!(requests, 28);
 }
 
 #[tokio::test]
@@ -1918,7 +1946,8 @@ async fn a_high_water_row_with_neither_axis_still_refuses_the_empty_window() {
         neither.matches("<ALTMSTID").count() + 1,
         captured.matches("<ALTMSTID").count()
     );
-    let (response, _) = empty_window_vouchers_with_high_water(neither).await;
+    // Refused at the bound's opening mark read, under the same code.
+    let (response, _) = empty_window_vouchers_with_high_water(neither, true).await;
     assert_eq!(response["isError"], true, "{response}");
     assert_eq!(
         response["structuredContent"]["result"]["error"]["code"],

@@ -37,6 +37,9 @@ async fn voucher_boundary_refusals_retain_exact_source_commitments() {
             .with_framing(ResponseFraming::ContentLength);
         let cycle = import_cycle_plans();
         let mut plans = cycle[..4].to_vec();
+        // The pre-flight high-water read (protocol reference §11c): ten
+        // vouchers cannot exceed the budget, so the window is read whole.
+        plans.extend(cycle[10..16].iter().cloned());
         plans.extend([
             cycle[0].clone(),
             vouchers.clone(),
@@ -46,8 +49,13 @@ async fn voucher_boundary_refusals_retain_exact_source_commitments() {
             cycle[0].clone(),
         ]);
         let company_body = response_bytes(&plans[0]);
-        let voucher_body = response_bytes(&plans[5]);
-        let expected_hash = join_hashes(&sha256_hex(&company_body), &sha256_hex(&voucher_body));
+        let high_water_body = response_bytes(&plans[5]);
+        let voucher_body = response_bytes(&plans[11]);
+        // The window read's own evidence folds its pre-flight first.
+        let expected_hash = join_hashes(
+            &sha256_hex(&company_body),
+            &join_hashes(&sha256_hex(&high_water_body), &sha256_hex(&voucher_body)),
+        );
         let simulator = SequenceSimulator::spawn(plans).unwrap();
         let directory = tempfile::tempdir().unwrap();
         let response = server_for(simulator.address(), directory.path())
@@ -68,15 +76,18 @@ async fn voucher_boundary_refusals_retain_exact_source_commitments() {
         assert_eq!(evidence["response_sha256"], expected_hash);
         assert_eq!(
             evidence["bytes"],
-            2 * (company_body.len() + voucher_body.len())
+            2 * (company_body.len() + high_water_body.len() + voucher_body.len())
         );
         let observed = simulator.finish().unwrap();
-        assert_eq!(observed.len(), 10);
+        assert_eq!(observed.len(), 16);
         assert_eq!(
             evidence["request_sha256"],
             join_hashes(
                 &observed[0].request_body_sha256,
-                &observed[5].request_body_sha256
+                &join_hashes(
+                    &observed[5].request_body_sha256,
+                    &observed[11].request_body_sha256
+                )
             )
         );
     }
@@ -102,6 +113,7 @@ async fn selected_ledger_rename_or_unknown_entry_refuses_complete_selection() {
     for catalogue_changed in [false, true] {
         let cycle = import_cycle_plans();
         let mut plans = cycle[..10].to_vec();
+        plans.extend(cycle[10..16].iter().cloned());
         plans.extend([
             cycle[0].clone(),
             vouchers.clone(),
@@ -120,12 +132,17 @@ async fn selected_ledger_rename_or_unknown_entry_refuses_complete_selection() {
             }
         }
         plans.extend(after);
-        let source_bytes = [0, 5, 11, 17].map(|index| response_bytes(&plans[index]));
-        let expected_hash = source_bytes
-            .iter()
-            .map(|body| sha256_hex(body))
-            .reduce(|left, right| join_hashes(&left, &right))
-            .unwrap();
+        // Company, catalogue, high water, window, repeated catalogue. The
+        // window read folds its own pre-flight before it joins the chain.
+        let source_bytes = [0, 5, 11, 17, 23].map(|index| response_bytes(&plans[index]));
+        let hashes = source_bytes.each_ref().map(|body| sha256_hex(body));
+        let expected_hash = join_hashes(
+            &join_hashes(
+                &join_hashes(&hashes[0], &hashes[1]),
+                &join_hashes(&hashes[2], &hashes[3]),
+            ),
+            &hashes[4],
+        );
         let expected_bytes = 2 * source_bytes.iter().map(Vec::len).sum::<usize>();
         let simulator = SequenceSimulator::spawn(plans).unwrap();
         let directory = tempfile::tempdir().unwrap();
@@ -149,12 +166,15 @@ async fn selected_ledger_rename_or_unknown_entry_refuses_complete_selection() {
         assert_eq!(evidence["response_sha256"], expected_hash);
         assert_eq!(evidence["bytes"], expected_bytes);
         let observed = simulator.finish().unwrap();
-        assert_eq!(observed.len(), 22);
-        let request_hash = [0, 5, 11, 17]
-            .into_iter()
-            .map(|index| observed[index].request_body_sha256.clone())
-            .reduce(|left, right| join_hashes(&left, &right))
-            .unwrap();
+        assert_eq!(observed.len(), 28);
+        let requests = [0, 5, 11, 17, 23].map(|index| observed[index].request_body_sha256.clone());
+        let request_hash = join_hashes(
+            &join_hashes(
+                &join_hashes(&requests[0], &requests[1]),
+                &join_hashes(&requests[2], &requests[3]),
+            ),
+            &requests[4],
+        );
         assert_eq!(evidence["request_sha256"], request_hash);
     }
 }
@@ -188,6 +208,10 @@ async fn empty_ledger_selection_does_not_replace_source_emptiness() {
     for source_is_empty in [false, true] {
         let cycle = import_cycle_plans();
         let mut plans = cycle[..10].to_vec();
+        // The pre-flight high-water read before the window. The widened read
+        // that corroborates an empty window reuses that mark, and ten vouchers
+        // keep both windows whole.
+        plans.extend(cycle[10..16].iter().cloned());
         let paired_read = |source: &ScenarioPlan| {
             [
                 cycle[0].clone(),
@@ -235,6 +259,6 @@ async fn empty_ledger_selection_does_not_replace_source_emptiness() {
                 "complete"
             );
         }
-        assert_eq!(simulator.finish().unwrap().len(), 22);
+        assert_eq!(simulator.finish().unwrap().len(), 28);
     }
 }

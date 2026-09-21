@@ -86,7 +86,9 @@ async fn verification_qualifies_absence_without_hiding_positive_historical_rows(
     for (case, opening_fault, closing_fault, has_rows, missing_expected) in cases {
         let cycle = import_cycle_plans();
         let mut reads = cycle[16..].to_vec();
-        for index in [5, 7, 11, 13] {
+        // The two paired window reads, after the four company legs and the six
+        // legs of the pre-flight high-water read (protocol reference §11c).
+        for index in [11, 13, 17, 19] {
             reads[index].fixture = Fixture::SyntheticXml(if has_rows {
                 positive.clone()
             } else {
@@ -239,7 +241,8 @@ async fn verification_qualifies_absence_without_hiding_positive_historical_rows(
             );
         }
         let observed = simulator.finish().unwrap();
-        assert_eq!(observed.len(), if close { 20 } else { 18 }, "{case}");
+        // Six more legs than before the pre-flight bound: the high-water read.
+        assert_eq!(observed.len(), if close { 26 } else { 24 }, "{case}");
         let join = |a: &str, b: &str| sha256_hex(format!("{a}:{b}").as_bytes());
         let mut request = join(
             &observed[0].request_body_sha256,
@@ -247,7 +250,8 @@ async fn verification_qualifies_absence_without_hiding_positive_historical_rows(
         );
         let mut response = join(&sha256_hex(&responses[0]), &sha256_hex(&responses[1]));
         let mut bytes = responses[0].len() + responses[1].len();
-        for i in [2, 7, 13] {
+        // Identity, the pre-flight high-water read, then the two window reads.
+        for i in [2, 7, 13, 19] {
             request = join(&request, &observed[i].request_body_sha256);
             response = join(&response, &sha256_hex(&responses[i]));
             bytes += 2 * responses[i].len();
@@ -256,21 +260,21 @@ async fn verification_qualifies_absence_without_hiding_positive_historical_rows(
             request = join(
                 &request,
                 &join(
-                    &observed[18].request_body_sha256,
-                    &observed[19].request_body_sha256,
+                    &observed[24].request_body_sha256,
+                    &observed[25].request_body_sha256,
                 ),
             );
             response = join(
                 &response,
-                &join(&sha256_hex(&responses[18]), &sha256_hex(&responses[19])),
+                &join(&sha256_hex(&responses[24]), &sha256_hex(&responses[25])),
             );
-            bytes += responses[18].len() + responses[19].len();
+            bytes += responses[24].len() + responses[25].len();
         } else if case == "closing_http_failure" {
             // The closing GET completed before the failing company POST. Keep
             // exactly that source, without counting the rejected POST body.
-            request = join(&request, &observed[18].request_body_sha256);
-            response = join(&response, &sha256_hex(&responses[18]));
-            bytes += responses[18].len();
+            request = join(&request, &observed[24].request_body_sha256);
+            response = join(&response, &sha256_hex(&responses[24]));
+            bytes += responses[24].len();
         }
         assert_eq!(content["evidence"]["request_sha256"], request, "{case}");
         assert_eq!(content["evidence"]["response_sha256"], response, "{case}");
