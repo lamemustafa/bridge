@@ -45,7 +45,7 @@ use std::path::{Path, PathBuf};
 use bridge_tally_primitives::TallyDate;
 
 pub use error::{AuditError, Result};
-use read::{Read, Window};
+use read::{CompanyPin, Read, Window};
 use rules::Rules;
 
 /// The engagement keys this slice reads, from a reference-engine client config: `[client]`
@@ -62,6 +62,9 @@ pub struct Engagement {
     pub period: Window,
     pub read_dir: PathBuf,
     pub allow_unbracketed_read: bool,
+    /// `[client.tally]` `company_guid` + `books_from`: the company every read must come from
+    /// (C5-client), or `None` when the config does not pin one.
+    pub company_pin: Option<CompanyPin>,
     pub cash_groups: Vec<String>,
     pub bank_groups: Vec<String>,
     pub round_off_ledgers: Vec<String>,
@@ -172,6 +175,43 @@ impl Engagement {
             .and_then(toml::Value::as_str)
             .filter(|p| !p.is_empty())
             .ok_or_else(|| AuditError::refused("CFG-path", "[snapshot].path is required"))?;
+        let company_pin = client
+            .get("tally")
+            .map(|t| -> Result<CompanyPin> {
+                let bad = || {
+                    AuditError::refused(
+                        "CFG-tally-pin",
+                        "[client.tally] needs both company_guid and books_from (YYYY-MM-DD)",
+                    )
+                };
+                let t = t.as_table().ok_or_else(bad)?;
+                // Exact shapes, nothing stripped: the reference implementation applies the same
+                // two checks, so both engines accept and refuse the same pins.
+                let guid = t
+                    .get("company_guid")
+                    .and_then(toml::Value::as_str)
+                    .filter(|g| read::is_uuid(g))
+                    .ok_or_else(bad)?;
+                let books_from = t
+                    .get("books_from")
+                    .and_then(toml::Value::as_str)
+                    .filter(|s| {
+                        let b = s.as_bytes();
+                        b.len() == 10
+                            && b[4] == b'-'
+                            && b[7] == b'-'
+                            && b.iter()
+                                .enumerate()
+                                .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
+                    })
+                    .and_then(|s| TallyDate::parse(s.replace('-', "")).ok())
+                    .ok_or_else(bad)?;
+                Ok(CompanyPin {
+                    guid: guid.to_ascii_lowercase(),
+                    books_from,
+                })
+            })
+            .transpose()?;
         let depreciation = cfg
             .get("depreciation")
             .and_then(toml::Value::as_table)
@@ -271,6 +311,7 @@ not YYYY-MM-DD"
                 .get("allow_unbracketed_read")
                 .and_then(toml::Value::as_bool)
                 .unwrap_or(false),
+            company_pin,
             cash_groups: strings(roles, "cash_groups")?,
             bank_groups: strings(roles, "bank_groups")?,
             round_off_ledgers: match roles.get("round_off_ledgers") {
@@ -312,7 +353,11 @@ pub fn rules_for(engagement: &Engagement) -> Result<Rules> {
 /// Read and verify the engagement's read, and build its book (C1-C10).
 pub fn load_book(engagement: &Engagement) -> Result<book::Book> {
     let read = Read::open(&engagement.read_dir)?;
-    read.check(&engagement.period, engagement.allow_unbracketed_read)?;
+    read.check(
+        &engagement.period,
+        engagement.allow_unbracketed_read,
+        engagement.company_pin.as_ref(),
+    )?;
     book::load_book(&read, &engagement.label)
 }
 
