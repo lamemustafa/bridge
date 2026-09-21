@@ -24,26 +24,55 @@ impl Server {
                 .read_movement_ledgers(&identity, opening_date.clone())
                 .await?;
             evidence = combine_evidence(evidence.clone(), ledger_evidence);
-            let (page, read_evidence) = self
-                .read_movement_vouchers(&identity, &company.name, from.clone(), to.clone())
+            let opening_read = self
+                .read_movement_vouchers(
+                    &identity,
+                    &company.name,
+                    (from.clone(), to.clone()),
+                    WindowPlanSource::Estimate { known_marks: None },
+                    None,
+                )
                 .await?;
             let MovementPage {
                 rows: vouchers,
                 observed_rows: voucher_rows_observed,
-            } = page;
+            } = opening_read.page;
+            if let Some(preflight) = opening_read.preflight {
+                evidence = combine_evidence(evidence.clone(), preflight);
+            }
+            let read_evidence = opening_read.evidence;
             let voucher_snapshot = read_evidence.response_sha256.clone();
             evidence = combine_evidence(evidence.clone(), read_evidence);
+            if let Some(closing) = opening_read.closing {
+                evidence = combine_evidence(evidence.clone(), closing);
+            }
             let (corroborating_ledgers, corroboration_evidence) =
                 self.read_movement_ledgers(&identity, opening_date).await?;
             evidence = combine_evidence(evidence.clone(), corroboration_evidence);
             // An in-window posting need not change the period opening. Repeat
             // the voucher source across the final ledger read as well; an
             // AlterID high-water alone cannot establish deletion stability.
-            let (_, closing_voucher_evidence) = self
-                .read_movement_vouchers(&identity, &company.name, from, to)
+            // Replayed, not planned again: the two snapshots are compared by
+            // hash, so they must be read in the same parts. The replay carries
+            // the first read's witness and closes against its marks, so a
+            // voucher created above the first read's AlterID ceilings refuses
+            // it, where the two old-ceiling snapshots alone would still match.
+            let marks = opening_read.witness.as_ref().map(|witness| witness.marks);
+            let closing_read = self
+                .read_movement_vouchers(
+                    &identity,
+                    &company.name,
+                    (from, to),
+                    WindowPlanSource::replay_of(opening_read.reads, opening_read.witness),
+                    marks,
+                )
                 .await?;
+            let closing_voucher_evidence = closing_read.evidence;
             let closing_snapshot = closing_voucher_evidence.response_sha256.clone();
             evidence = combine_evidence(evidence.clone(), closing_voucher_evidence);
+            if let Some(closing) = closing_read.closing {
+                evidence = combine_evidence(evidence.clone(), closing);
+            }
             if voucher_snapshot != closing_snapshot {
                 return Err("voucher_snapshot_drifted".to_string().into());
             }
@@ -162,33 +191,49 @@ impl Server {
         Ok((ledgers, evidence_from_runtime_read(evidence)))
     }
 
+    /// Read the movement window, bounded by the pre-flight of protocol
+    /// reference §11c. The returned evidence covers the voucher source alone —
+    /// what the two snapshot reads compare — and the pre-flight comes back
+    /// beside it, with the ranges read so the closing read can replay them and
+    /// be comparable part for part.
     async fn read_movement_vouchers(
         &self,
         identity: &VerifiedCompanyIdentity,
         company: &str,
-        from: String,
-        to: String,
-    ) -> Result<(MovementPage, Evidence), ToolFailure> {
+        (from, to): (String, String),
+        source: WindowPlanSource,
+        known_marks: Option<CompanyMarks>,
+    ) -> Result<MovementWindowRead, ToolFailure> {
         let company = ValidatedCompanyName::new(company.to_string())
             .map_err(|_| "company_name_invalid".to_string())?;
         let range =
             ValidatedDateRange::new(from, to).map_err(|_| "invalid_date_range".to_string())?;
-        let (xml, mut evidence) = self
-            .post_read(
+        let shape = VoucherReadShape::Movement;
+        let read = self
+            .read_voucher_window(
                 identity,
-                render_agent_movement_vouchers(
-                    company.as_str(),
-                    range.from_yyyymmdd(),
-                    range.to_yyyymmdd(),
-                )?,
-            )
-            .await?;
-        let result: Result<(MovementPage, Evidence), ToolFailure> = async {
-            let page = parse_movement_rows(
-                parse_agent_changed_rows(&xml, identity.company_guid())?,
+                company.as_str(),
                 range.from_yyyymmdd(),
                 range.to_yyyymmdd(),
-            )?;
+                shape,
+                source,
+                WindowReadLimits::for_shape(shape),
+                |xml| parse_agent_changed_rows(xml, identity.company_guid()),
+            )
+            .await?;
+        let preflight = read.preflight_evidence;
+        let closing = read.closing_evidence;
+        let witness = read.witness;
+        let marks = witness
+            .as_ref()
+            .map(|witness| witness.marks)
+            .or(known_marks);
+        let reads = read.reads;
+        let mut evidence = read.evidence;
+        let voucher_rows = read.rows;
+        let result: Result<MovementPage, ToolFailure> = async {
+            let page =
+                parse_movement_rows(voucher_rows, range.from_yyyymmdd(), range.to_yyyymmdd())?;
             if page.observed_rows == 0 {
                 let (corroboration, partial, reason) = self
                     .corroborate_empty_voucher_read(
@@ -197,6 +242,7 @@ impl Server {
                         range.from_yyyymmdd(),
                         range.to_yyyymmdd(),
                         None,
+                        marks,
                     )
                     .await?;
                 evidence = combine_evidence(evidence.clone(), corroboration);
@@ -204,11 +250,40 @@ impl Server {
                     return Err(reason.unwrap_or("empty_uncorroborated").to_string().into());
                 }
             }
-            Ok((page, evidence.clone()))
+            Ok(page)
         }
         .await;
-        result.map_err(|failure| failure.with_prior_evidence(evidence))
+        match result {
+            Ok(page) => Ok(MovementWindowRead {
+                page,
+                evidence,
+                preflight,
+                closing,
+                reads,
+                witness,
+            }),
+            Err(failure) => Err(failure.with_prior_evidence(
+                [preflight, Some(evidence), closing]
+                    .into_iter()
+                    .flatten()
+                    .reduce(combine_evidence)
+                    .expect("the data evidence is present"),
+            )),
+        }
     }
+}
+
+/// One bounded movement window read. See `read_movement_vouchers`.
+struct MovementWindowRead {
+    page: MovementPage,
+    /// The voucher source (and any empty-window corroboration) alone.
+    evidence: Evidence,
+    preflight: Option<Evidence>,
+    /// The closing bracket, after the data parts.
+    closing: Option<Evidence>,
+    reads: Vec<WindowPart>,
+    /// What the corroborating replay must carry.
+    witness: Option<WindowWitness>,
 }
 
 /// Which column a ledger entry moves, taken from `AMOUNT`'s own sign.

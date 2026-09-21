@@ -4,6 +4,23 @@ use crate::agent::evidence_from_runtime_read;
 use crate::tally::approved_import::{ApprovedImport, ApprovedImportAdmissionError};
 use bridge_tally_protocol::{parse_import_outcome, TallyImportApplicationStatus};
 
+/// The batch's verification window is one the pre-flight bound (§11c) would
+/// read in parts, but the pre-post check inside the dispatch lease sends it as
+/// one request. Refused before approval; the batch can be posted over a
+/// narrower window.
+pub(super) const IMPORT_POST_WINDOW_NOT_BOUNDED: &str = "import_post_window_not_bounded";
+
+/// Admit the whole-window pre-post request on what the verification read of
+/// the same window measured: an undivided read was that request, and a divided
+/// read's parts together are its size. A verification that reported nothing is
+/// refused, not assumed small.
+pub(super) fn admit_post_window(served: Option<crate::agent::WindowServed>) -> Result<(), String> {
+    match served {
+        Some(served) if served.fits_one_request() => Ok(()),
+        _ => Err(IMPORT_POST_WINDOW_NOT_BOUNDED.to_string()),
+    }
+}
+
 impl Server {
     /// The response path runs only after its interrupted post future is gone.
     /// It may therefore use the endpoint lease to distinguish a locally empty
@@ -103,7 +120,9 @@ impl Server {
             let preview = admit_fresh_saved_journal(&line, &self.settings.endpoint)?;
             // Number matching precedence is not qualified for native Create.
             // Previously dispatched numbered batches remain reconcilable above.
-            let before = self.verify_import(args).await?;
+            // Also admits, on this read's measurement, the whole-window request
+            // the lease sends before posting (§11c).
+            let before = self.verify_import_for_post(args).await?;
             accumulated = combine_evidence(accumulated.clone(), before.evidence);
             require_absent_verification_result(&before.payload["result"])?;
             let payload = ImportPayload {

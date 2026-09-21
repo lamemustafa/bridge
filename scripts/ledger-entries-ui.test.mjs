@@ -39,6 +39,9 @@ test("desktop command invokes the one shared selected-voucher operation", async 
   assert.match(vouchers, /pub\(super\) async fn vouchers[\s\S]*?selected_voucher_operation\(self, args\)/);
   assert.match(agent, /pub\(crate\) async fn desktop_selected_vouchers[\s\S]*?vouchers::selected_voucher_operation_for_verified\([\s\S]*?&server/);
   assert.match(commands, /fetch_selected_ledger_entries[\s\S]*?desktop_selected_vouchers/);
-  assert.match(vouchers, /read_ledger_catalogue[\s\S]*?render_agent_vouchers[\s\S]*?read_ledger_catalogue/);
+  // The voucher source read is bounded before it is sent (protocol reference
+  // §11c); `read_entry_wildcard_window` renders `render_agent_vouchers` for it.
+  assert.match(vouchers, /read_ledger_catalogue[\s\S]*?read_entry_wildcard_window[\s\S]*?read_ledger_catalogue/);
+  assert.match(vouchers, /fn read_entry_wildcard_window[\s\S]*?VoucherReadShape::EntryWildcard/);
   assert.match(vouchers, /filter_voucher_rows_for_ledger[\s\S]*?skip\(offset\)[\s\S]*?take\(limit\)/);
 });

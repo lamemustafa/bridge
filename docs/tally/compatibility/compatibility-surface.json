@@ -3,15 +3,15 @@
   "files": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "a41cd0e2dfc20891bc250560f26f00388065ecc01fd60c3ca4e08617b5c71f69"
+      "sha256": "d71e28ab62d71e5101137df64e3f7737ee7d74a55879b4de9b6e67e3e43122f8"
     },
     {
       "path": ".github/workflows/dependency-security-scheduled.yml",
-      "sha256": "d9d7940aeed947df0dbc31ec7aacbdea5dac7eb5f7ac1b05e180a24c94f1363a"
+      "sha256": "8ad69bb034bf740c7dfcdf6d35ebab0a25d9b70ba74a517967807aaa4e36ba17"
     },
     {
       "path": ".github/workflows/dependency-security.yml",
-      "sha256": "d400dea029bca0e7b8fb8c04e98de9f78cfa3cc91adee80e67ed212536118891"
+      "sha256": "2517a2cbd0dd038ded6607455e62f0b9e563f9407354599912c31e7eeb7473a0"
     },
     {
       "path": "docs/adr/0004-tally-write-safety.md",
@@ -39,7 +39,7 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE.md",
-      "sha256": "5497d38ba255615771a013f8d81602c257a7d9b47379726a2dbcf77aa06ea297"
+      "sha256": "da868300b71e6817e28e6fe2bd410e36b702b4f610512ed9c17e67a6bcb67629"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_COMPANY_IDENTITY_AND_CREATION.md",
@@ -51,7 +51,7 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md",
-      "sha256": "c63a537886506bb7514cc1485f7d0b71cdc82fc135896f049ed135b38c47bc70"
+      "sha256": "156e3b1e3225b28fe2ebc38448b82c54bb6054c5f85a2e704ee2a1b46067e132"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_READS_AND_DATES.md",
@@ -123,7 +123,7 @@
     },
     {
       "path": "scripts/ledger-entries-ui.test.mjs",
-      "sha256": "8a916071983b3cc67756f3ab165a011df83a7c3ac08dfa2ff0b1380cec20d893"
+      "sha256": "df115704e2599faebed7fe2d84f6a23dd0794af9d04dfa2dcc0448150bc2ddba"
     },
     {
       "path": "scripts/outstandings-copy.test.mjs",
@@ -411,15 +411,15 @@
     },
     {
       "path": "src-tauri/crates/tally-protocol-simulator/src/server.rs",
-      "sha256": "f75332db2bfb32862925b5d14441daa267e04119065718e7bd3585699d51c537"
+      "sha256": "90b157d547b760c52c086fd4c2936254a53d8134223756769b7e569f9de47c9e"
     },
     {
       "path": "src-tauri/crates/tally-protocol-simulator/tests/protocol_simulator.rs",
-      "sha256": "bd3e3c955a2963eaa7f4abf06faeff7bfe4d7f90764cd6d9a81e484cdc4cdc6d"
+      "sha256": "311b01097edc118f233d1a7ecdc26ab02b73ef97fe024b52277cecfcf2c438dc"
     },
     {
       "path": "src-tauri/src/agent.rs",
-      "sha256": "6db5599ad77d54a6b55aa138e1b2e86a8e71876740333f33b59162f6bb1e264a"
+      "sha256": "395d5c537601b102a1f20046912b23415652bdcd8870788ee3f687cb16fbeda7"
     },
     {
       "path": "src-tauri/src/agent_bank_statement.rs",
@@ -431,7 +431,7 @@
     },
     {
       "path": "src-tauri/src/agent_change_parse.rs",
-      "sha256": "eafe09dbf27c092999148ee59d83a6a222ba9d1d2d0267021f96d263a7be072c"
+      "sha256": "aea25a3a3674ae90473d8247d1b2d53de787535d56f2290eec0fab54e84de979"
     },
     {
       "path": "src-tauri/src/agent_changes.rs",
@@ -455,7 +455,7 @@
     },
     {
       "path": "src-tauri/src/agent_import.rs",
-      "sha256": "4e5967ed566c719ee8c6a1aa1025f61513d0b4325b383c8939c369d2c31985bd"
+      "sha256": "852b55cf078e3b56b65d4aeb776dd89999fe806468778153c85231c49e25bad2"
     },
     {
       "path": "src-tauri/src/agent_import_amend.rs",
@@ -479,7 +479,7 @@
     },
     {
       "path": "src-tauri/src/agent_import_post.rs",
-      "sha256": "c9758bce10b6e66f07f424672d293d74abfad2d42d401599fd71b62a4f6161d9"
+      "sha256": "311305a47db02dce1dda77190424c35b15557e5904c1c0683cf1bc95251c63ab"
     },
     {
       "path": "src-tauri/src/agent_import_verification.rs",
@@ -491,7 +491,7 @@
     },
     {
       "path": "src-tauri/src/agent_movement.rs",
-      "sha256": "a1ca27209a17a23db26b72d190122b8be49a930b55151ecea59913126b599185"
+      "sha256": "89fdeefbb007e7b360bcec0fef7831700098ae96ab46f2ac10a7c5046571b98e"
     },
     {
       "path": "src-tauri/src/agent_movement_math.rs",
@@ -503,11 +503,11 @@
     },
     {
       "path": "src-tauri/src/agent_presence.rs",
-      "sha256": "0bfeb05248b0d371e6a87b4b004c9c3815b5590017c6bd3231277db12b030c8d"
+      "sha256": "f5515019bb7c42a4cf69cb6885e80006d4f9b58026484d78b1898141acaa9863"
     },
     {
       "path": "src-tauri/src/agent_presence_tests.rs",
-      "sha256": "11d35d8a5dd60178f02d070c8b33f9b2c1cf44cb7cf5517eac11430f2aa74796"
+      "sha256": "d3cb62443cc64aaa6e35975615a9e3c3f7b5262c6e74c705c47fefaa7349c5fb"
     },
     {
       "path": "src-tauri/src/agent_protocol.rs",
@@ -515,7 +515,7 @@
     },
     {
       "path": "src-tauri/src/agent_read_profiles.rs",
-      "sha256": "3677f17db5a7599a23f8e5014811844f408f3bf662d70b3d7e2fb09b7d646ad6"
+      "sha256": "d5a7a72c8fdd4a848d6a9464d6b22a8149129b58181fce81a254fa76be605800"
     },
     {
       "path": "src-tauri/src/agent_read_validation.rs",
@@ -531,7 +531,7 @@
     },
     {
       "path": "src-tauri/src/agent_tests.rs",
-      "sha256": "c9f49a53115fdc2f6a8cbe17f8ef5ff5a78838683dcf199a1520d222660c37aa"
+      "sha256": "4e44e1530e73d0c1542e82dc0f47d41f96830121fcd1d628e1f616bcd3cfd40d"
     },
     {
       "path": "src-tauri/src/agent_trial_balance.rs",
@@ -550,8 +550,12 @@
       "sha256": "e9b8d1bdb926f95325a80c48f452565d5e08d6ca7c7f5f9eaa8701ef78c3bf69"
     },
     {
+      "path": "src-tauri/src/agent_voucher_window.rs",
+      "sha256": "f7765f16c674d4247662439318157b7c70f6ef7305c78168088c7081ddb4d0e8"
+    },
+    {
       "path": "src-tauri/src/agent_vouchers.rs",
-      "sha256": "fba783b8c827fc36470dc6e5d6d773cbfe2b886e407eb76cba6e67034e25ac55"
+      "sha256": "55a7ea2980e1f9324f140821e010d23e200c90d2cab8351cc321d8133fffb0c7"
     },
     {
       "path": "src-tauri/src/axal.rs",
@@ -1063,7 +1067,7 @@
     },
     {
       "path": "tools/bridge-tally-compatibility/src/lib.rs",
-      "sha256": "b8a4608d830d95087330cb0279a1e4e5f0debceab58186216bf48e6de6df4c97"
+      "sha256": "6adafbd60dab2be15ace500ed91d97524e0eaea58ad70bd5f02877687aada73d"
     },
     {
       "path": "tools/bridge-tally-compatibility/src/main.rs",
@@ -1098,5 +1102,5 @@
       "sha256": "0ab5bfbe6d81b1e10530744c338fb91efa57fe5a66fb4bc0cfd382495eaf02a4"
     }
   ],
-  "manifest_sha256": "f211eda72c414766540eee55d52f522abe51321da8602f422d039ef1b5936a1c"
+  "manifest_sha256": "2ade56ce140b874f5e6e206ef149939c7eb36b8f83fbe006a39bdae38901fb85"
 }

@@ -316,6 +316,21 @@ struct ReadVoucher {
     entries: Vec<ReadEntry>,
 }
 
+impl super::WindowRow for ReadVoucher {
+    fn window_date(&self) -> Option<&str> {
+        self.date.as_deref()
+    }
+    fn window_alter_id(&self) -> Option<u64> {
+        self.alter_id
+    }
+    fn window_guid(&self) -> Option<&str> {
+        self.guid.as_deref()
+    }
+    fn window_master_id(&self) -> Result<Option<u64>, String> {
+        super::master_id_of(self.master_id.as_deref())
+    }
+}
+
 /// A complete collection admitted before either corroboration or attribution.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ImportReadSource {
@@ -599,14 +614,34 @@ impl Server {
             };
             // Exercise the exact future readback projection before publishing a file.
             // This observes today's source, not a bound on later Tally mutations.
-            let (preflight_xml, preflight_evidence) = self
-                .post_read(
+            // The high-water mark was read just above, so the pre-flight bound
+            // costs no further read for a book it already proves small.
+            //
+            // This read was a single request before the bound. It now also
+            // halves a part Tally cannot serve (#485), as verify_import does:
+            // it is the same request shape over the same window as the
+            // verification it precedes, and a preflight stricter than that
+            // verification would refuse to build a batch that could be verified.
+            let preflight_read = self
+                .read_verification_window(
                     &identity,
-                    render_import_verification_read(&company.name, &date_from, &date_to),
+                    &company.name,
+                    (&date_from, &date_to),
+                    super::WindowPlanSource::Estimate {
+                        known_marks: mark.value.zip(mark.master_value).map(
+                            |(vouchers, masters)| super::CompanyMarks { vouchers, masters },
+                        ),
+                    },
                 )
                 .await?;
+            if let Some(estimate) = preflight_read.preflight_evidence {
+                accumulated = combine_evidence(accumulated.clone(), estimate);
+            }
+            let (preflight, preflight_evidence) = (preflight_read.source, preflight_read.evidence);
             accumulated = combine_evidence(accumulated.clone(), preflight_evidence.clone());
-            let preflight = parse_import_vouchers(&preflight_xml, identity.company_guid())?;
+            if let Some(closing) = preflight_read.closing_evidence {
+                accumulated = combine_evidence(accumulated.clone(), closing);
+            }
             verification_window_identities(&preflight, &date_from, &date_to)?;
             let amendment = match &lineage {
                 Some(lineage) => match lineage.compare_and_swap(&payload.vouchers, &preflight)? {
@@ -744,20 +779,41 @@ impl Server {
     }
 
     pub(super) async fn verify_import(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
-        self.verify_import_with_dispatch(args, false).await
+        self.verify_import_with_dispatch(args, false, &mut None)
+            .await
+    }
+
+    /// [`Self::verify_import`] for `post_import`, which then sends the batch's
+    /// whole verification window as one request inside the dispatch lease. That
+    /// request is admitted here on what this verification read of the same
+    /// window measured (§11c), and refused otherwise, before any approval.
+    pub(super) async fn verify_import_for_post(
+        &self,
+        args: &Value,
+    ) -> Result<ToolOutcome, ToolFailure> {
+        let mut served = None;
+        let outcome = self
+            .verify_import_with_dispatch(args, false, &mut served)
+            .await?;
+        post::admit_post_window(served).map_err(|code| {
+            ToolFailure::from(code).with_prior_evidence(outcome.evidence.clone())
+        })?;
+        Ok(outcome)
     }
 
     pub(in crate::agent) async fn verify_import_after_current_dispatch(
         &self,
         args: &Value,
     ) -> Result<ToolOutcome, ToolFailure> {
-        self.verify_import_with_dispatch(args, true).await
+        self.verify_import_with_dispatch(args, true, &mut None)
+            .await
     }
 
     async fn verify_import_with_dispatch(
         &self,
         args: &Value,
         current_dispatch: bool,
+        served: &mut Option<super::WindowServed>,
     ) -> Result<ToolOutcome, ToolFailure> {
         let guid = required_string(args, "company_guid")?;
         let batch_id = required_string(args, "batch_id")?;
@@ -785,14 +841,44 @@ impl Server {
             if line.company.as_ref() != Some(&import_company_tuple(&company)?) {
                 return Err("company_identity_mismatch".to_string().into());
             }
-            let (observed, observed_evidence) = self
-                .read_verification_window(&identity, &company.name, &line.date_from, &line.date_to)
+            let window = (line.date_from.as_str(), line.date_to.as_str());
+            let observed_read = self
+                .read_verification_window(
+                    &identity,
+                    &company.name,
+                    window,
+                    super::WindowPlanSource::Estimate { known_marks: None },
+                )
                 .await?;
+            if let Some(preflight) = observed_read.preflight_evidence {
+                accumulated = combine_evidence(accumulated.clone(), preflight);
+            }
+            *served = Some(super::WindowServed::of(
+                &observed_read.reads,
+                &observed_read.evidence,
+                observed_read.refused_a_part,
+            ));
+            let (observed, observed_evidence) = (observed_read.source, observed_read.evidence);
             accumulated = combine_evidence(accumulated.clone(), observed_evidence.clone());
-            let (corroboration, corroboration_evidence) = self
-                .read_verification_window(&identity, &company.name, &line.date_from, &line.date_to)
+            if let Some(closing) = observed_read.closing_evidence {
+                accumulated = combine_evidence(accumulated.clone(), closing);
+            }
+            // The corroborating read replays the ranges the first one actually
+            // read, rather than planning again: it must observe the same parts.
+            let corroboration_read = self
+                .read_verification_window(
+                    &identity,
+                    &company.name,
+                    window,
+                    super::WindowPlanSource::replay_of(observed_read.reads, observed_read.witness),
+                )
                 .await?;
+            let (corroboration, corroboration_evidence) =
+                (corroboration_read.source, corroboration_read.evidence);
             accumulated = combine_evidence(accumulated.clone(), corroboration_evidence.clone());
+            if let Some(closing) = corroboration_read.closing_evidence {
+                accumulated = combine_evidence(accumulated.clone(), closing);
+            }
             // The window may have been served in parts, so there is no single
             // response to hash. The evidence's own response digest already folds
             // every part that was read, which is the honest commitment here.
@@ -944,8 +1030,9 @@ impl Server {
         Ok((groups, evidence))
     }
 
-    /// Read the whole verification window, splitting it when Tally cannot serve
-    /// it in one response.
+    /// Read the whole verification window, divided before it is sent so that no
+    /// request is predicted over the budget (protocol reference §11c), and
+    /// divided again if Tally still cannot serve a part (#485).
     ///
     /// The window is never narrowed — only divided. Every sub-window is read and
     /// its rows concatenated, so the set of vouchers observed is identical to
@@ -955,83 +1042,43 @@ impl Server {
     /// safety gate quietly stops being one. A date partition costs more requests
     /// and gives up nothing.
     ///
-    /// Splitting is reactive rather than scheduled, because cost per day is a
-    /// property of the book and not of the calendar: one licensed book served a
-    /// month in 7.6s and 11.8MB while a quarter of the same book exceeded both
-    /// the 20s per-leg deadline and the 32MB transport cap, and another book
-    /// served a whole year in about nine seconds. Any fixed page size is wrong
-    /// on one of them.
+    /// The rows are admitted ONCE over the union. `admit` enforces identity
+    /// uniqueness across the whole row set, so admitting each sub-window
+    /// separately would check uniqueness only within each one and let a voucher
+    /// duplicated across two sub-windows through — a hole that dividing would
+    /// have opened and that the undivided read never had.
     async fn read_verification_window(
         &self,
         identity: &super::VerifiedCompanyIdentity,
         company: &str,
-        from: &str,
-        to: &str,
-    ) -> Result<(ImportReadSource, Evidence), ToolFailure> {
-        let mut evidence: Option<Evidence> = None;
-        let mut rows = Vec::new();
-        // Ascending order, so the rows arrive in the same order an undivided read
-        // would have produced and a reader diffing two runs sees no churn.
-        let mut pending = vec![(from.to_string(), to.to_string())];
-        // The smallest span already known to be unservable on THIS call. Splitting
-        // alone rediscovers that span once per branch, and each rediscovery costs a
-        // full deadline — on a measured book a year needs four levels, so most of
-        // the wall clock was spent re-learning the same fact. Carrying it forward
-        // splits an over-large window without asking Tally again.
-        //
-        // Deliberately per-call and in memory: no persisted page size, so there is
-        // nothing to invalidate and no stale value can survive into a later call
-        // against a book whose density has changed.
-        let mut smallest_failed_days: Option<i64> = None;
-        while let Some((start, end)) = pending.pop() {
-            if must_split_before_reading(window_span_days(&start, &end), smallest_failed_days) {
-                // Known too big. Split without spending a deadline to confirm it.
-                // Falling through to the read would be correct but slower, so a
-                // missing span here costs time and never correctness.
-                if let Some((left, right)) = split_verification_window(&start, &end) {
-                    pending.push(right);
-                    pending.push(left);
-                    continue;
-                }
-            }
-            let request = render_import_verification_read(company, &start, &end);
-            match self.post_read(identity, request).await {
-                Ok((xml, read_evidence)) => {
-                    evidence = Some(match evidence {
-                        Some(prior) => combine_evidence(prior, read_evidence),
-                        None => read_evidence,
-                    });
-                    rows.extend(parse_import_voucher_rows(&xml, identity.company_guid())?);
-                }
-                Err(failure) if window_is_too_large(&failure) => {
-                    // Record the span so sibling branches do not pay a deadline to
-                    // learn the same thing. `min` because a later, smaller failure
-                    // is the tighter bound.
-                    if let Some(span) = window_span_days(&start, &end) {
-                        smallest_failed_days =
-                            Some(smallest_failed_days.map_or(span, |known| known.min(span)));
-                    }
-                    let (left, right) = split_verification_window(&start, &end)
-                        // A single day that still cannot be served is not something
-                        // splitting can fix, and silently returning the rows from
-                        // the days that did work would be a verification over an
-                        // incomplete window. Refuse instead.
-                        .ok_or_else(|| {
-                            ToolFailure::from("verification_window_day_not_readable".to_string())
-                        })?;
-                    pending.push(right);
-                    pending.push(left);
-                }
-                Err(other) => return Err(other),
-            }
-        }
-        let evidence = evidence.unwrap_or_else(|| local_evidence("verification_window_empty"));
-        // Admit ONCE over the union. `admit` enforces identity uniqueness across
-        // the whole row set, so admitting each sub-window separately would check
-        // uniqueness only within each one and let a voucher duplicated across two
-        // sub-windows through — a hole that splitting would have opened and that
-        // the undivided read never had.
-        Ok((ImportReadSource::admit(rows)?, evidence))
+        (from, to): (&str, &str),
+        source: super::WindowPlanSource,
+    ) -> Result<VerificationWindowRead, ToolFailure> {
+        let shape = super::VoucherReadShape::ImportVerification;
+        let read = self
+            .read_voucher_window(
+                identity,
+                company,
+                from,
+                to,
+                shape,
+                source,
+                super::WindowReadLimits::for_shape(shape),
+                |xml| parse_import_voucher_rows(xml, identity.company_guid()),
+            )
+            .await?;
+        let all_evidence = read.all_evidence();
+        let source = ImportReadSource::admit(read.rows)
+            .map_err(|failure| ToolFailure::from(failure).with_prior_evidence(all_evidence))?;
+        Ok(VerificationWindowRead {
+            source,
+            evidence: read.evidence,
+            preflight_evidence: read.preflight_evidence,
+            closing_evidence: read.closing_evidence,
+            reads: read.reads,
+            witness: read.witness,
+            refused_a_part: read.refused_a_part,
+        })
     }
 
     async fn pre_import_mark(
@@ -2180,63 +2227,38 @@ fn render_voucher_xml(voucher: &ImportVoucher, remote_id: Uuid, attribution_id: 
     format!("<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><VOUCHER REMOTEID=\"{}\" VCHTYPE=\"{}\" ACTION=\"Create\" OBJVIEW=\"Accounting Voucher View\"><DATE>{date}</DATE>{effective_date}<VOUCHERTYPENAME>{}</VOUCHERTYPENAME>{party}{voucher_number}{narration}{reference}{entries}</VOUCHER></TALLYMESSAGE>", remote_id, voucher.voucher_type.as_str(), voucher.voucher_type.as_str())
 }
 
-fn window_is_too_large(failure: &ToolFailure) -> bool {
-    super::is_window_too_large_code(&failure.code)
+/// One verification window as read: the admitted rows, the evidence for the
+/// data reads alone, the pre-flight reads kept apart from it, and the ranges
+/// read so that a corroborating read can replay them.
+struct VerificationWindowRead {
+    source: ImportReadSource,
+    evidence: Evidence,
+    preflight_evidence: Option<Evidence>,
+    /// The closing bracket, read after the data parts.
+    closing_evidence: Option<Evidence>,
+    reads: Vec<super::WindowPart>,
+    /// What a corroborating replay of this read must carry.
+    witness: Option<super::WindowWitness>,
+    /// Tally refused one of this read's data requests as too large or timed out.
+    refused_a_part: bool,
 }
 
-/// Inclusive span of a `YYYYMMDD` window in days, or `None` if either bound is
-/// unparseable. A one-day window spans 1.
-fn window_span_days(from: &str, to: &str) -> Option<i64> {
-    let parse = |value: &str| chrono::NaiveDate::parse_from_str(value, "%Y%m%d").ok();
-    Some((parse(to)? - parse(from)?).num_days() + 1)
+pub(super) fn render_import_verification_read(company: &str, from: &str, to: &str) -> String {
+    render_import_verification_in_span(company, from, to, None)
 }
 
-/// Whether a window is already known to be unservable at this size, so it can be
-/// split without spending a deadline to confirm it.
-///
-/// Only ever an optimisation. Answering `false` wrongly costs one extra read;
-/// answering `true` wrongly costs one extra split, and a split never narrows the
-/// window — both halves stay in the queue. Neither answer can change the set of
-/// vouchers observed, which is why an unparseable span (`None`) simply falls
-/// through to reading rather than being treated as a failure.
-fn must_split_before_reading(span: Option<i64>, smallest_failed: Option<i64>) -> bool {
-    match (span, smallest_failed) {
-        (Some(span), Some(failed)) => span >= failed && span > 1,
-        _ => false,
-    }
-}
-
-/// Split an inclusive `YYYYMMDD` window into two inclusive halves that exactly
-/// partition it, or `None` when it is already a single day.
-///
-/// Exactness is the whole point. The verification read filters on
-/// `$Date >= from AND $Date <= to`, so `[from, mid]` and `[mid + 1, to]` cover
-/// every date the undivided window covered, once each. A gap would silently drop
-/// vouchers from an attribution check and an overlap would double-count them —
-/// either turns a read that got smaller into a verification that got weaker.
-fn split_verification_window(from: &str, to: &str) -> Option<((String, String), (String, String))> {
-    let parse = |value: &str| chrono::NaiveDate::parse_from_str(value, "%Y%m%d").ok();
-    let (start, end) = (parse(from)?, parse(to)?);
-    if start >= end {
-        return None;
-    }
-    let mid = start + chrono::Duration::days((end - start).num_days() / 2);
-    // `mid` equals `start` on a two-day window, which is correct and still shrinks
-    // both halves. It cannot reach `end`, because the window spans at least one day
-    // and `floor(n / 2) < n` for every `n >= 1` — so the right half is always a
-    // proper subset and the loop in `read_verification_window` terminates. Asserted
-    // rather than clamped: a clamp here would be unreachable today and would
-    // silently absorb a future change to the midpoint that broke termination.
-    debug_assert!(mid < end, "midpoint must shrink both halves");
-    let stamp = |date: chrono::NaiveDate| date.format("%Y%m%d").to_string();
-    Some((
-        (stamp(start), stamp(mid)),
-        (stamp(mid + chrono::Duration::days(1)), stamp(end)),
-    ))
-}
-
-fn render_import_verification_read(company: &str, from: &str, to: &str) -> String {
-    format!("<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Import Verification</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeImportWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"</SYSTEM><COLLECTION NAME=\"Bridge Agent Import Verification\" ISMODIFY=\"No\"><TYPE>Voucher</TYPE><FETCH>DATE,VOUCHERNUMBER,VOUCHERTYPENAME,REMOTEID,GUID,MASTERID,ALTERID,NARRATION,ISCANCELLED,ISOPTIONAL,ALLLEDGERENTRIES.LEDGERNAME,ALLLEDGERENTRIES.AMOUNT,ALLLEDGERENTRIES.ISDEEMEDPOSITIVE,EFFECTIVEDATE</FETCH><FILTERS>BridgeImportWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>", xml_escape(company))
+/// [`render_import_verification_read`], optionally narrowed to an AlterID span.
+/// `None` renders the unnarrowed request byte for byte; `Some` is one part of
+/// a day too heavy for one read (protocol reference §11c). Every part is read
+/// and verified against; none is discarded.
+pub(super) fn render_import_verification_in_span(
+    company: &str,
+    from: &str,
+    to: &str,
+    span: Option<super::AlterIdSpan>,
+) -> String {
+    let span_filter = span.map(super::AlterIdSpan::filter).unwrap_or_default();
+    format!("<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Import Verification</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeImportWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"{span_filter}</SYSTEM><COLLECTION NAME=\"Bridge Agent Import Verification\" ISMODIFY=\"No\"><TYPE>Voucher</TYPE><FETCH>DATE,VOUCHERNUMBER,VOUCHERTYPENAME,REMOTEID,GUID,MASTERID,ALTERID,NARRATION,ISCANCELLED,ISOPTIONAL,ALLLEDGERENTRIES.LEDGERNAME,ALLLEDGERENTRIES.AMOUNT,ALLLEDGERENTRIES.ISDEEMEDPOSITIVE,EFFECTIVEDATE</FETCH><FILTERS>BridgeImportWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>", xml_escape(company))
 }
 
 fn xml_escape(value: &str) -> String {
@@ -2248,7 +2270,7 @@ fn xml_escape(value: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-fn local_evidence(label: &str) -> Evidence {
+pub(super) fn local_evidence(label: &str) -> Evidence {
     Evidence {
         request_sha256: sha256_hex(label.as_bytes()),
         response_sha256: sha256_hex(label.as_bytes()),
