@@ -159,10 +159,11 @@ pub fn result_invariants(book: &Book, result: &TestResult) -> (Vec<&'static str>
         .chain(result.findings.iter().flat_map(|f| f.evidence.iter()))
         .collect();
 
-    // EVID-1: every voucher or ledger evidence ref resolves in the book.
+    // EVID-1: every voucher (either kind) or ledger evidence ref resolves in the book.
     let guids: BTreeSet<&str> = book.vouchers.iter().map(|v| v.guid.as_str()).collect();
     for e in &refs {
-        let unresolved = (e.kind == "voucher" && !guids.contains(e.id.as_str()))
+        let unresolved = ((e.kind == "voucher" || e.kind == "excluded_voucher")
+            && !guids.contains(e.id.as_str()))
             || (e.kind == "ledger" && !book.ledgers.contains_key(&e.id));
         if unresolved {
             out.push(violation(
@@ -173,13 +174,115 @@ pub fn result_invariants(book: &Book, result: &TestResult) -> (Vec<&'static str>
         }
     }
 
-    // POP-4: no figure or finding cites a voucher outside the books population.
+    // POP-4: no figure or finding cites a voucher outside the books population -- except through
+    // an "excluded_voucher" ref, which states that purpose and must itself point at an excluded
+    // voucher. Both directions are checked, so the marker cannot hide a population voucher.
     let excluded: BTreeSet<&str> = book.excluded().map(|v| v.guid.as_str()).collect();
     for e in &refs {
         if e.kind == "voucher" && excluded.contains(e.id.as_str()) {
             out.push(violation("POP-4", &result.test_id, e.key()));
         }
+        if e.kind == "excluded_voucher"
+            && guids.contains(e.id.as_str())
+            && !excluded.contains(e.id.as_str())
+        {
+            out.push(violation(
+                "POP-4",
+                &result.test_id,
+                format!("{} is in the books population", e.key()),
+            ));
+        }
     }
 
     (vec!["REND-0", "EVID-1", "POP-4"], out)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use bridge_tally_primitives::TallyDate;
+
+    use super::*;
+    use crate::book::Voucher;
+    use crate::findings::{EvidenceRef, Unit, Value};
+
+    fn voucher(guid: &str, status: VoucherStatus) -> Voucher {
+        Voucher {
+            guid: guid.to_string(),
+            date: TallyDate::parse("20250601").unwrap(),
+            vtype: "Journal".to_string(),
+            base_type: "Journal".to_string(),
+            number: String::new(),
+            status,
+            lines: Vec::new(),
+        }
+    }
+
+    fn book() -> Book {
+        Book {
+            company_name: "Synthetic".to_string(),
+            company_guid: "test-guid".to_string(),
+            read_at: String::new(),
+            groups: BTreeMap::new(),
+            group_masters: BTreeMap::new(),
+            ledgers: BTreeMap::new(),
+            vouchers: vec![
+                voucher("in-books", VoucherStatus::Regular),
+                voucher("left-out", VoucherStatus::Optional),
+            ],
+            tb: BTreeMap::new(),
+        }
+    }
+
+    fn violations(kind: &str, guid: &str, code: &str) -> Vec<String> {
+        let mut r = TestResult::new("t", "1", "r");
+        r.fig(
+            "f",
+            Value::Int(1),
+            Unit::Count,
+            "d",
+            vec![EvidenceRef::new(kind, guid)],
+        );
+        result_invariants(&book(), &r)
+            .1
+            .into_iter()
+            .filter(|v| v.invariant == code)
+            .map(|v| v.detail)
+            .collect()
+    }
+
+    /// Negative control: the marker must not have weakened the ordinary check.
+    #[test]
+    fn a_plain_voucher_reference_to_an_excluded_voucher_still_fires() {
+        assert_eq!(
+            violations("voucher", "left-out", "POP-4"),
+            vec!["voucher:left-out"]
+        );
+    }
+
+    #[test]
+    fn an_excluded_voucher_reference_to_an_excluded_voucher_is_clean() {
+        assert!(violations("excluded_voucher", "left-out", "POP-4").is_empty());
+    }
+
+    /// Negative control in the other direction: the marker cannot hide a population voucher.
+    #[test]
+    fn an_excluded_voucher_reference_to_a_books_voucher_fires() {
+        assert_eq!(
+            violations("excluded_voucher", "in-books", "POP-4"),
+            vec!["excluded_voucher:in-books is in the books population"]
+        );
+    }
+
+    #[test]
+    fn evid1_resolves_the_new_kind() {
+        assert!(violations("excluded_voucher", "left-out", "EVID-1").is_empty());
+        assert_eq!(
+            violations("excluded_voucher", "nowhere", "EVID-1"),
+            vec!["unresolved excluded_voucher:nowhere"]
+        );
+        // An unresolvable ref is EVID-1's to report, not POP-4's.
+        assert!(violations("excluded_voucher", "nowhere", "POP-4").is_empty());
+    }
 }

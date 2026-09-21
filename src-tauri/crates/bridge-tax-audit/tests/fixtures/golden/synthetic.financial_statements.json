@@ -80,7 +80,7 @@
       "definition_text": "Excluded vouchers with status 'postdated' and voucher type 'Receipt' (tag 276ac9a9).",
       "evidence": [
         {
-          "kind": "voucher",
+          "kind": "excluded_voucher",
           "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000011",
           "label": "Receipt R/4 on 2026-03-20"
         }
@@ -94,12 +94,12 @@
       "definition_text": "Excluded vouchers with status 'optional' and voucher type 'Payment' (tag a6c76077).",
       "evidence": [
         {
-          "kind": "voucher",
+          "kind": "excluded_voucher",
           "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000000a",
           "label": "Payment P/4 on 2025-08-20"
         },
         {
-          "kind": "voucher",
+          "kind": "excluded_voucher",
           "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000010",
           "label": "Payment P/6 on 2026-01-05"
         }
@@ -113,7 +113,7 @@
       "definition_text": "Excluded vouchers with status 'cancelled' and voucher type 'Cash Sale' (tag be1083ee).",
       "evidence": [
         {
-          "kind": "voucher",
+          "kind": "excluded_voucher",
           "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000000b",
           "label": "Cash Sale CS/2 on 2025-09-02"
         }
@@ -475,28 +475,7 @@
     "POP-4",
     "REND-0"
   ],
-  "result_invariant_violations": [
-    {
-      "invariant": "POP-4",
-      "subject": "financial_statements",
-      "detail": "voucher:6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000000a"
-    },
-    {
-      "invariant": "POP-4",
-      "subject": "financial_statements",
-      "detail": "voucher:6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000000b"
-    },
-    {
-      "invariant": "POP-4",
-      "subject": "financial_statements",
-      "detail": "voucher:6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000010"
-    },
-    {
-      "invariant": "POP-4",
-      "subject": "financial_statements",
-      "detail": "voucher:6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000011"
-    }
-  ],
+  "result_invariant_violations": [],
   "module_invariants_evaluated": [
     "financial_statements.check_invariants"
   ],
