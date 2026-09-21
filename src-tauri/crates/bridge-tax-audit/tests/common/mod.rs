@@ -7,8 +7,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use bridge_tax_audit::applicability_44ab::{ComparisonTurnover, TurnoverInputs};
 use bridge_tax_audit::financial_statements::ReportTotals;
 use bridge_tax_audit::{
-    applicability_44ab_canonical, cash_44ab_canonical, cash_payments_40a3_canonical,
-    depreciation_canonical, financial_statements_canonical, rules_for, Engagement, Result,
+    applicability_44ab_canonical, cash_44ab_canonical, cash_book_integrity_canonical,
+    cash_payments_40a3_canonical, depreciation_canonical, financial_statements_canonical,
+    ledger_scrutiny_canonical, rules_for, stale_balances_41_1_canonical, trial_balance_canonical,
+    Engagement, Result,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -90,6 +92,32 @@ pub fn engagement(read_dir: &Path, allow_unbracketed: bool) -> Engagement {
     e.read_dir = read_dir.to_path_buf();
     e.allow_unbracketed_read = allow_unbracketed;
     e
+}
+
+/// A committed golden by its file stem under `golden/`, e.g. `synthetic.trial_balance`.
+pub fn golden_named(stem: &str) -> Value {
+    let path = fixtures().join(format!("golden/{stem}.json"));
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+pub fn run_trial_balance(read_dir: &Path, allow_unbracketed: bool) -> Result<Value> {
+    let e = engagement(read_dir, allow_unbracketed);
+    trial_balance_canonical(&e, &rules_for(&e)?)
+}
+
+pub fn run_cash_book_integrity(read_dir: &Path, allow_unbracketed: bool) -> Result<Value> {
+    let e = engagement(read_dir, allow_unbracketed);
+    cash_book_integrity_canonical(&e, &rules_for(&e)?)
+}
+
+pub fn run_ledger_scrutiny(read_dir: &Path, allow_unbracketed: bool) -> Result<Value> {
+    let e = engagement(read_dir, allow_unbracketed);
+    ledger_scrutiny_canonical(&e, &rules_for(&e)?)
+}
+
+pub fn run_stale_balances_41_1(read_dir: &Path, allow_unbracketed: bool) -> Result<Value> {
+    let e = engagement(read_dir, allow_unbracketed);
+    stale_balances_41_1_canonical(&e, &rules_for(&e)?)
 }
 
 pub fn run(read_dir: &Path, allow_unbracketed: bool) -> Result<Value> {

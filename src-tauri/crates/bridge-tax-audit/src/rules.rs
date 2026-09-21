@@ -5,7 +5,8 @@
 //! reference implementation's own AY 2026-27 rules file -- `[meta]` through the end of `[s44ab]`,
 //! then `[s40a3]` in full, then the first three lines each of `[s269st]` and `[s269ss_269t]`,
 //! then `[depreciation]` in full with its three `[depreciation.blocks.<key>]` sub-tables, then
-//! `[due_dates]` as three blocks (header, the three dates, `status`) --
+//! `[due_dates]` as three blocks (header, the three dates, `status`), then `[ledger_scrutiny]` in
+//! full --
 //! under a header explaining why each block stops where it does (see the file itself). The
 //! source file had sha256 [`SOURCE_SHA256`] when it was read at reference commit
 //! [`SOURCE_COMMIT`]. The local parity example re-checks, against a local copy of the reference
@@ -21,7 +22,7 @@ use crate::error::{AuditError, Result};
 
 pub const VENDORED: &str = include_str!("../rules/ay2026-27.s44ab.toml");
 pub const VENDORED_SHA256: &str =
-    "2f190fda42438cf9d4588bc9c1ce6f43a834acc117adf94837b6d72cb9ba3929";
+    "4c08f19756da92a32144c21f7e87486e777860919ab04000e36e6287a9d30f51";
 pub const SOURCE_PATH: &str = "the reference Python implementation's AY 2026-27 rules file";
 pub const SOURCE_SHA256: &str = "8a6ec80cd5d19da34392e93024dc9a43a98982b09fb457c662f627174acedf2d";
 pub const SOURCE_COMMIT: &str = "dd376ed014d922a1e2b12052763af36a565402ec";
@@ -58,6 +59,8 @@ pub struct Rules {
     pub due_date_return_non_audit_firm: String,
     /// `[due_dates].status` ("partial" until checked against the Finance Act text).
     pub due_dates_status: String,
+    /// `[ledger_scrutiny].large_entry_paise`, a CA analytical materiality convention.
+    pub ledger_scrutiny_large_entry_paise: i64,
 }
 
 impl Rules {
@@ -71,6 +74,7 @@ impl Rules {
                 .and_then(toml::Value::as_table)
                 .ok_or_else(|| AuditError::Config(format!("rules: no [{name}] table")))
         };
+        let ledger_scrutiny = section("ledger_scrutiny")?;
         let (meta, s44ab, s40a3, s269st, s269ss_269t, depreciation, due_dates) = (
             section("meta")?,
             section("s44ab")?,
@@ -178,6 +182,11 @@ impl Rules {
                 .and_then(toml::Value::as_str)
                 .ok_or_else(|| AuditError::Config("rules: [due_dates].status".to_string()))?
                 .to_string(),
+            ledger_scrutiny_large_entry_paise: int_in(
+                ledger_scrutiny,
+                "ledger_scrutiny",
+                "large_entry_paise",
+            )?,
         })
     }
 

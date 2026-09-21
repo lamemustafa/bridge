@@ -4,11 +4,14 @@
 //! This slice's end-to-end path: read a tally-read-v1 directory ([`read`], every byte verified
 //! against its manifest), build only the book fields a test needs ([`book`]), evaluate the book
 //! and result invariants ([`invariants`]), run a test ([`cash_44ab`], [`cash_payments_40a3`],
-//! [`depreciation`], [`financial_statements`], [`applicability_44ab`]) with rule values from a vendored rules excerpt ([`rules`]), and serialise the
-//! result canonically ([`canonical`]) so [`compare`] can diff it against the reference engine's
-//! dump under the same rules the reference's own comparer applies. `depreciation` additionally
-//! carries a module-level invariant (`depreciation::check_invariants`, DEP-1/DEP-2), threaded
-//! through [`canonical::canonical_test_result`]'s `module_check` parameter.
+//! [`depreciation`], [`financial_statements`], [`applicability_44ab`], [`trial_balance`],
+//! [`stale_balances_41_1`], [`ledger_scrutiny`], [`cash_book_integrity`]) with rule values from
+//! a vendored rules excerpt ([`rules`]), and serialise the result canonically ([`canonical`]) so
+//! [`compare`] can diff it against the reference engine's dump under the same rules the
+//! reference's own comparer applies. A module with its own invariant (`depreciation`'s DEP-1/DEP-2,
+//! `financial_statements`' FS-1/FS-2, `trial_balance`'s TB-1/TB-2, `stale_balances_41_1`'s STL-1,
+//! `ledger_scrutiny`'s LSC-1, `cash_book_integrity`'s CBI-1/CBI-2) threads it through
+//! [`canonical::canonical_test_result`]'s `module_check` parameter.
 //!
 //! Nothing here talks to Tally, and nothing here writes. The crate reads files a person (or,
 //! later, Bridge) put on disk.
@@ -29,6 +32,7 @@ pub mod binding;
 pub mod book;
 pub mod canonical;
 pub mod cash_44ab;
+pub mod cash_book_integrity;
 pub mod cash_payments_40a3;
 pub mod compare;
 pub mod depreciation;
@@ -37,8 +41,11 @@ pub mod financial_statements;
 pub mod findings;
 pub mod invariants;
 pub mod ledger_ids;
+pub mod ledger_scrutiny;
 pub mod read;
 pub mod rules;
+pub mod stale_balances_41_1;
+pub mod trial_balance;
 pub mod xml;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -71,6 +78,10 @@ pub struct Engagement {
     pub bank_groups: Vec<String>,
     pub round_off_ledgers: Vec<String>,
     pub loan_ledgers_configured: Vec<String>,
+    /// `cash_book_integrity`-only: the optional `[roles].own_account_narration_terms`, the forms
+    /// in which the bank prints the assessee's own other account on transfer lines (client data).
+    /// Empty when the key is absent, as the reference's `own_account_narration_terms` defaults it.
+    pub own_account_narration_terms: Vec<String>,
     /// `depreciation`-only: `None` when the client config carries no `[depreciation]` table at
     /// all (an engagement that never runs that test); `Some` once the table is present, at which
     /// point `block_by_ledger`, `opening_wdv_paise` and `dep_expense_ledgers` are REQUIRED within
@@ -355,6 +366,10 @@ not YYYY-MM-DD"
                 Some(_) => strings(roles, "round_off_ledgers")?,
                 None => Vec::new(),
             },
+            own_account_narration_terms: match roles.get("own_account_narration_terms") {
+                Some(_) => strings(roles, "own_account_narration_terms")?,
+                None => Vec::new(),
+            },
             loan_ledgers_configured: cfg
                 .get("loans")
                 .and_then(toml::Value::as_table)
@@ -497,6 +512,102 @@ pub fn depreciation_on(
 /// Read, verify, build the book, run `depreciation` and return its canonical parity dump.
 pub fn depreciation_canonical(engagement: &Engagement, rules: &Rules) -> Result<serde_json::Value> {
     depreciation_on(engagement, &load_book(engagement)?, rules)
+}
+
+/// Run `trial_balance` on a book and return its canonical parity dump, with the module's own
+/// TB-1/TB-2 check. Reads no engagement configuration beyond binding.
+pub fn trial_balance_on(
+    engagement: &Engagement,
+    book: &book::Book,
+    rules: &Rules,
+) -> Result<serde_json::Value> {
+    let (_engagement, _report) = engagement.bind(book)?;
+    let result = trial_balance::run(book, rules)?;
+    let module_check = trial_balance::check_invariants(book, &result)?;
+    canonical::canonical_test_result(book, &result, Some(module_check))
+}
+
+/// Run `cash_book_integrity` on a book and return its canonical parity dump, with the module's
+/// own CBI-1/CBI-2 check. Cash and bank are the engagement's cash and bank groups; the
+/// own-account narration terms are the optional `[roles]` key, as the reference's pack passes
+/// them.
+pub fn cash_book_integrity_on(
+    engagement: &Engagement,
+    book: &book::Book,
+    rules: &Rules,
+) -> Result<serde_json::Value> {
+    let (engagement, _report) = engagement.bind(book)?;
+    let cash = book.ledgers_under_any(&engagement.cash_groups);
+    let bank = book.ledgers_under_any(&engagement.bank_groups);
+    let result = cash_book_integrity::run(
+        book,
+        rules,
+        &cash,
+        &bank,
+        &engagement.own_account_narration_terms,
+    )?;
+    let module_check = cash_book_integrity::check_invariants(book, &result)?;
+    canonical::canonical_test_result(book, &result, Some(module_check))
+}
+
+/// Read, verify, build the book, run `cash_book_integrity` and return its canonical parity dump.
+pub fn cash_book_integrity_canonical(
+    engagement: &Engagement,
+    rules: &Rules,
+) -> Result<serde_json::Value> {
+    cash_book_integrity_on(engagement, &load_book(engagement)?, rules)
+}
+
+/// Run `ledger_scrutiny` on a book and return its canonical parity dump, with the module's own
+/// LSC-1 check. The cash ledgers are the engagement's cash groups, as the reference's pack passes
+/// them; the last-days window ends at the engagement period's end.
+pub fn ledger_scrutiny_on(
+    engagement: &Engagement,
+    book: &book::Book,
+    rules: &Rules,
+) -> Result<serde_json::Value> {
+    let (engagement, _report) = engagement.bind(book)?;
+    let cash = book.ledgers_under_any(&engagement.cash_groups);
+    let result = ledger_scrutiny::run(book, rules, &engagement.period, &cash)?;
+    let module_check = ledger_scrutiny::check_invariants(book, &result)?;
+    canonical::canonical_test_result(book, &result, Some(module_check))
+}
+
+/// Read, verify, build the book, run `ledger_scrutiny` and return its canonical parity dump.
+pub fn ledger_scrutiny_canonical(
+    engagement: &Engagement,
+    rules: &Rules,
+) -> Result<serde_json::Value> {
+    ledger_scrutiny_on(engagement, &load_book(engagement)?, rules)
+}
+
+/// Run `stale_balances_41_1` on a book and return its canonical parity dump, with the module's
+/// own STL-1 check. Reads no engagement configuration beyond binding.
+pub fn stale_balances_41_1_on(
+    engagement: &Engagement,
+    book: &book::Book,
+    rules: &Rules,
+) -> Result<serde_json::Value> {
+    let (_engagement, _report) = engagement.bind(book)?;
+    let result = stale_balances_41_1::run(book, rules)?;
+    let module_check = stale_balances_41_1::check_invariants(book, &result)?;
+    canonical::canonical_test_result(book, &result, Some(module_check))
+}
+
+/// Read, verify, build the book, run `stale_balances_41_1` and return its canonical parity dump.
+pub fn stale_balances_41_1_canonical(
+    engagement: &Engagement,
+    rules: &Rules,
+) -> Result<serde_json::Value> {
+    stale_balances_41_1_on(engagement, &load_book(engagement)?, rules)
+}
+
+/// Read, verify, build the book, run `trial_balance` and return its canonical parity dump.
+pub fn trial_balance_canonical(
+    engagement: &Engagement,
+    rules: &Rules,
+) -> Result<serde_json::Value> {
+    trial_balance_on(engagement, &load_book(engagement)?, rules)
 }
 
 /// Run `financial_statements` on a book and return its canonical parity dump. `report_totals` is

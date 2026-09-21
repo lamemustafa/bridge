@@ -98,7 +98,7 @@ impl Element {
 
 /// Python's `str.isspace()` set: Unicode `White_Space` plus the four ASCII information
 /// separators U+001C..U+001F, which Rust's `char::is_whitespace` does not include.
-fn is_py_space(c: char) -> bool {
+pub(crate) fn is_py_space(c: char) -> bool {
     c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
 }
 

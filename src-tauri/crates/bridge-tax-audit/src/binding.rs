@@ -709,6 +709,7 @@ mod tests {
             )]),
             ledgers,
             vouchers: vec![Voucher {
+                narration: String::new(),
                 guid: "v1".to_string(),
                 date: TallyDate::parse("20250410").unwrap(),
                 vtype: "Receipt".to_string(),

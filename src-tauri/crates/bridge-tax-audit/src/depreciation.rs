@@ -136,7 +136,7 @@ fn gst_tcs_match(name: &str) -> bool {
 /// Proleptic-Gregorian day number (days since 1970-01-01) for a [`TallyDate`], Howard Hinnant's
 /// `days_from_civil` algorithm. `TallyDate::parse` already established the date is a valid
 /// Gregorian calendar date, so the digit parses here cannot fail.
-fn civil_day_number(date: &TallyDate) -> i64 {
+pub(crate) fn civil_day_number(date: &TallyDate) -> i64 {
     let s = date.as_str();
     let y: i64 = s[0..4].parse().unwrap_or(0);
     let m: i64 = s[4..6].parse().unwrap_or(1);
@@ -1085,6 +1085,7 @@ mod tests {
             due_date_return_audit_case: String::new(),
             due_date_return_non_audit_firm: String::new(),
             due_dates_status: String::new(),
+            ledger_scrutiny_large_entry_paise: 0,
         }
     }
 
@@ -1114,6 +1115,7 @@ mod tests {
 
     fn voucher(guid: &str, date: &str, lines: &[(&str, i64)]) -> Voucher {
         Voucher {
+            narration: String::new(),
             guid: guid.to_string(),
             date: TallyDate::parse(date).unwrap(),
             vtype: "Journal".to_string(),

@@ -230,6 +230,7 @@ mod tests {
 
     fn voucher(guid: &str, status: VoucherStatus) -> Voucher {
         Voucher {
+            narration: String::new(),
             guid: guid.to_string(),
             date: TallyDate::parse("20250601").unwrap(),
             vtype: "Journal".to_string(),

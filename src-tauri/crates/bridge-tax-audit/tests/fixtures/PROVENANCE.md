@@ -194,6 +194,31 @@ All six goldens were regenerated at reference-implementation commit
 line posts to a ledger the book's masters carry): each gains only `"MAP-0"` in
 `book_invariants_evaluated`. The fixture has no such line, so no violation is added.
 
+Batch 1 of the port (2026-09-21) adds `trial_balance`, `stale_balances_41_1`, `ledger_scrutiny`
+and `cash_book_integrity`. Two ledgers are appended after every earlier one (so no earlier ledger's
+masterid or GUID moved): "Quarry Lane Stores" (Sundry Debtors, opening Rs 12,345) and "Harbour Mill
+Supplies" (Sundry Creditors, opening -Rs 12,345), which no voucher touches, so the Trial Balance
+carries each opening unchanged with nil movement: `stale_balances_41_1`'s stale path, its two
+findings and its per-ledger figures run in CI. Their openings are equal and opposite, so TB
+openings still sum as before (POP-3). Only `parts/ledgers.xml`, `parts/tb_fy.xml` and
+`manifest.json` changed. All ten goldens were regenerated at reference-implementation commit
+`57f2619b686b9fea7a8f1f39f8c547012e66757e`, from an archive of that commit, by the invocations
+above (with `--test trial_balance`, `--test stale_balances_41_1`, `--test ledger_scrutiny` and
+`--test cash_book_integrity` for the four new ones, each with no further arguments). The six
+existing goldens came out byte-identical. `ledger_scrutiny` and `cash_book_integrity` already
+reach their finding paths on the unchanged vouchers (7 and 2 findings).
+
+What the synthetic read does not reach -- the exactly-Re-1 active boundary, the exactly-Rs-50,000
+large-entry boundary, a credit entry with a cash leg, two days tied at the lowest cash balance,
+narrations differing only in whitespace and case, a receipt credited to an expense, and every
+module invariant but TB-2 -- is exercised by `tests/module_invariants_batch1.rs` on small
+invented books. The expected values of its `edge_*` tests were produced by the reference
+implementation's own modules (`tae.audit_tests.stale_balances_41_1`, `ledger_scrutiny` and
+`cash_book_integrity`, at the same commit) run on the identical books built with `tae.model`, not
+derived by hand; the ledger tags asserted there are the reference's own. Parsing a voucher's
+NARRATION, which the `Book` now carries for `cash_book_integrity`, is tested on a copy of the
+synthetic read in `tests/consumer_rules.rs`.
+
 ### What the three-client parity does and does not evidence
 
 The local parity run (never committed) compares this crate with the reference implementation on
@@ -238,15 +263,19 @@ uv run -q --with openpyxl --with xlrd --with python-docx --with jsonschema --wit
 | `synthetic.financial_statements.noreport.json` | 15,682 | `d407d2e72b09ad9348e8cfb19dbeff90a3617742ef8a348eb9e29018d1fa0c93` | `golden/synthetic.financial_statements.noreport.json` |
 | `synthetic-report-totals.json` | 134 | `e772509bd6ebc52afc23ef9742b6b1f2a090737533abe3761a7448124411b7e3` | `synthetic-report-totals.json` |
 | `synthetic.applicability_44ab.json` | 10,679 | `b90cf74038dcb1b26e4a9e8236861447e4b10d303027fbeb2e7359ead81778f5` | `golden/synthetic.applicability_44ab.json` |
+| `synthetic.trial_balance.json` | 92,608 | `6236b033586f46684545d189b9e98cf93872775250f296fa60b5adf9bf5fd305` | `golden/synthetic.trial_balance.json` |
+| `synthetic.stale_balances_41_1.json` | 9,820 | `0e58840903da8234858a209606305d1a1d1aa7a33f89ea7441ab98fd633c0e48` | `golden/synthetic.stale_balances_41_1.json` |
+| `synthetic.ledger_scrutiny.json` | 51,342 | `6b0358464627bc7e7d4cc9fd206cc2f4564ed7a35a1b769d303e5d0986d1470e` | `golden/synthetic.ledger_scrutiny.json` |
+| `synthetic.cash_book_integrity.json` | 15,221 | `2ee1cbc0de9d5087956c4115610c74a8cdd15cc361296dd09b685363bdf74289` | `golden/synthetic.cash_book_integrity.json` |
 | `synthetic-turnover-inputs.json` | 153 | `970500728d9d0447cb3fe1b6e870d5fea2c3a1bb919da05f1d601d4ba6f66929` | `synthetic-turnover-inputs.json` |
 | `synthetic-engagement.toml` | 2,821 | `c179b7ebcc9a03c9a4d836c62298aaa5841ee2bf20f7df51bd1010f83a06c68b` | `synthetic-engagement.toml` |
-| `manifest.json` | 9,711 | `6872873e193231239b7e2bf38ef7d482dd8cf7c43fb00ab76b0bc0dd07e8833a` | `synthetic-read/manifest.json` |
+| `manifest.json` | 9,711 | `d3948085c8466002c269133fd59c5f6361acab028ff6db74bd1fd6d23f7271a7` | `synthetic-read/manifest.json` |
 | `company_object.xml` | 606 | `f1b6fe4e6b6cc406a4ae92ce0ef62a6c79a88a99ac83b1888989a98fbee967b4` | `synthetic-read/parts/company_object.xml` |
 | `groups.xml` | 8,102 | `12e4d994960ecd768cd33fb4565f19b140a765d3f9f4982dbcfe1a108d9e5214` | `synthetic-read/parts/groups.xml` |
 | `high_water_after.xml` | 643 | `0d482540a4ac4beebfe19e5f5dd695e748084ee1779bf80b012b5bd489a17eaa` | `synthetic-read/parts/high_water_after.xml` |
 | `high_water_before.xml` | 643 | `0d482540a4ac4beebfe19e5f5dd695e748084ee1779bf80b012b5bd489a17eaa` | `synthetic-read/parts/high_water_before.xml` |
-| `ledgers.xml` | 26,356 | `824dc80ffdc97e0b396c5d810b553e55f978fa9c14c65c19b9da0452a85df896` | `synthetic-read/parts/ledgers.xml` |
-| `tb_fy.xml` | 12,942 | `8640ebe7761fffab0b9232cc19fb83ae82c9a2500e37b59a5aa090614057f1e4` | `synthetic-read/parts/tb_fy.xml` |
+| `ledgers.xml` | 27,528 | `89fce4866d4cb45934f50764c6de618421adab52ea0c8b543af02f1e1a7f944e` | `synthetic-read/parts/ledgers.xml` |
+| `tb_fy.xml` | 13,497 | `261c76d9756be12783e98ec27f19bc4d7960cd47fa62c511639bf285f4bb4213` | `synthetic-read/parts/tb_fy.xml` |
 | `voucher_status_list.json` | 249 | `c7959e4e91a445f774ff2a5eaad4f8968f6fc82e21622d5168ececf9b0a1aa78` | `synthetic-read/parts/voucher_status_list.json` |
 | `vouchers_h1.xml` | 50,762 | `993dc982021b41efb7303a736d70a6c846de87a8cd815ec8c7d049bdad759884` | `synthetic-read/parts/vouchers_h1.xml` |
 | `vouchers_h2.xml.gz` | 1,156 | `cd9cb1f339141bc1af8585fd16c445f21016dccbbccd5cd21d1bd82c1feb41b1` | `synthetic-read/parts/vouchers_h2.xml.gz` |

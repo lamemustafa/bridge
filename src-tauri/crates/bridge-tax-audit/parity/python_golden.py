@@ -16,7 +16,10 @@ tally-read-v1 directory (relative to the TOML), e.g. tests/fixtures/synthetic-en
 invocation of this script). `cash_payments_40a3` additionally reads `[roles].round_off_ledgers`
 (optional, defaults to none configured) and an optional `[loans.loan_ledgers.<ledger>]` table
 (defaults to no ledger configured) -- the same optional-table conventions the reference engine's
-own loaders use for a client with nothing configured there. `depreciation` reads
+own loaders use for a client with nothing configured there. `trial_balance` and
+`stale_balances_41_1` read nothing beyond the book and rules; `ledger_scrutiny` reads the cash
+groups, and `cash_book_integrity` the cash and bank groups and the optional
+`[roles].own_account_narration_terms`, as the reference's pack passes them. `depreciation` reads
 `[depreciation].block_by_ledger`, `.opening_wdv_paise` and `.dep_expense_ledgers` (all three
 REQUIRED -- `tae.config.depreciation_config`'s own `require()` raises on a missing one, unlike the
 optional tables above) and an optional `[depreciation.put_to_use_by_voucher]` (defaults to none
@@ -59,7 +62,8 @@ def main() -> int:
     ap.add_argument("--read", help="override [snapshot] with this tally-read-v1 directory")
     ap.add_argument("--test", default="cash_44ab",
                      choices=["cash_44ab", "cash_payments_40a3", "depreciation", "financial_statements",
-                              "applicability_44ab"])
+                              "applicability_44ab", "trial_balance", "stale_balances_41_1",
+                              "ledger_scrutiny", "cash_book_integrity"])
     ap.add_argument("--turnover-inputs", help="applicability_44ab: comparison turnover JSON to use")
     ap.add_argument("--emit-turnover-inputs",
                     help="applicability_44ab: take GSTR-1 turnover from the reference's own pack and write it here")
@@ -70,10 +74,13 @@ def main() -> int:
 
     sys.path.insert(0, str(Path(a.engine).resolve()))
     from tae.adapters import read_format
-    from tae.audit_tests import (applicability_44ab, cash_44ab, cash_payments_40a3, depreciation,
-                                 financial_statements)
+    from tae.audit_tests import (applicability_44ab, cash_44ab, cash_book_integrity, cash_payments_40a3,
+                                 depreciation,
+                                 financial_statements, ledger_scrutiny, stale_balances_41_1,
+                                 trial_balance)
     from tae.binding import bind_config
     from tae.config import (depreciation_config, gstr1_coverage, load_rules, loan_ledgers_config,
+                             own_account_narration_terms,
                              partner_interest_ledgers, presumptive_history_config, resolve_ledgers,
                              role_ledger_set)
     from tae.model import Engagement
@@ -106,6 +113,18 @@ def main() -> int:
             eng, rules, cash=cash, bank=bank,
             loan_ledgers_configured=loan_ledgers_configured,
             round_off_ledgers=frozenset(round_off_ledgers))
+    elif a.test == "trial_balance":
+        module = trial_balance
+        result = trial_balance.run(eng, rules)
+    elif a.test == "cash_book_integrity":
+        module = cash_book_integrity
+        result = cash_book_integrity.run(eng, rules, cash, bank, own_account_narration_terms(cfg))
+    elif a.test == "ledger_scrutiny":
+        module = ledger_scrutiny
+        result = ledger_scrutiny.run(eng, rules, cash)
+    elif a.test == "stale_balances_41_1":
+        module = stale_balances_41_1
+        result = stale_balances_41_1.run(eng, rules)
     elif a.test == "financial_statements":
         module = financial_statements
         report_totals = None

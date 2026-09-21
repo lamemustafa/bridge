@@ -149,6 +149,10 @@ LEDGERS = {
     "Partner Capital - A": ("Capital Account", 0),
     "Hardware Stock": ("Stock-in-Hand", 60_000_00),  # stale TB closing field (STALE_TB_DEBIT/CREDIT below)
     "Packing Material Stock": ("Stock-in-Hand", 10_000_00),  # no movement: closing field equals opening, not stale
+    # stale_balances_41_1: a debtor and a creditor no voucher touches all year, so the TB carries
+    # the opening unchanged with nil movement (stale); equal and opposite, so POP-3 still holds.
+    "Quarry Lane Stores": ("Sundry Debtors", 12_345_00),
+    "Harbour Mill Supplies": ("Sundry Creditors", -12_345_00),
 }
 
 VOUCHER_TYPES = (("Contra", "Contra"), ("Journal", "Journal"), ("Payment", "Payment"),
