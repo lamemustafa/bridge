@@ -19,6 +19,21 @@ DEFAULT_TOOLS = {
     "tally_status", "list_companies", "voucher_schema", "validate_masters", "outstandings",
     "ledger_masters", "ledger_movement", "trial_balance", "vouchers", "voucher_presence", "read_evidence", "egress_log", "verify_import",
 }
+# The bundle always enables file preparation and bank-statement parsing; they
+# write nothing to Tally. Posting is the one tool behind the user's switch, and
+# it is off by default until bridge#574 and bridge#575 are fixed.
+IMPORT_TOOLS = {"build_import_xml", "parse_bank_statement"}
+POSTING_TOOLS = {"post_import"}
+
+
+def expected_tools(environment):
+    """The tools/list a bundle launched with `environment` must advertise."""
+    tools = set(DEFAULT_TOOLS)
+    if environment.get("BRIDGE_AGENT_ENABLE_IMPORT") == "true" or environment.get("BRIDGE_AGENT_ENABLE_WRITES") == "true":
+        tools |= IMPORT_TOOLS
+    if environment.get("BRIDGE_AGENT_ENABLE_WRITES") == "true":
+        tools |= POSTING_TOOLS
+    return tools
 # The bundled PDFium: beside the binary, where parse_bank_statement loads it,
 # with the licence notice scripts/fetch-pdfium.py generated at the root. Both are
 # checked against packaging/pdfium/pdfium.lock.json, not merely present.
@@ -121,8 +136,8 @@ def statement_smoke(command, base_environment, temporary, repository):
     descriptor = os.open(password_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
         handle.write(STATEMENT_PASSWORD + "\n")
-    environment = dict(base_environment, BRIDGE_AGENT_ENABLE_WRITES="true",
-                       BRIDGE_AGENT_DATA_DIR=str(work / "data"))
+    # The default bundle environment, posting off: parsing must not need it.
+    environment = dict(base_environment, BRIDGE_AGENT_DATA_DIR=str(work / "data"))
     arguments = {
         "statement_path": str(statement), "password_file": str(password_file), "bank": "hdfc",
         "account_label": "Synthetic CA xx4321", "opening_balance": "1,000.00",
@@ -185,10 +200,14 @@ def run_bounded(command, payload, environment, timeout=15):
 def resolve_environment(manifest):
     mappings = manifest["server"]["mcp_config"]["env"]
     require(set(mappings) == {"BRIDGE_TALLY_HOST", "BRIDGE_TALLY_PORT", "BRIDGE_AGENT_REDACTION",
-                              "BRIDGE_AGENT_ENABLE_WRITES"}, "unexpected_environment_mapping")
+                              "BRIDGE_AGENT_ENABLE_IMPORT", "BRIDGE_AGENT_ENABLE_WRITES"},
+            "unexpected_environment_mapping")
+    require(mappings["BRIDGE_AGENT_ENABLE_IMPORT"] == "true", "import_environment_mapping_mismatch")
     writes = manifest["user_config"].get("enable_writes", {})
     require(writes.get("type") == "boolean" and isinstance(writes.get("default"), bool),
             "writes_default_must_be_boolean")
+    # Posting stays off by default until bridge#574 and bridge#575 are fixed.
+    require(writes["default"] is False, "posting_must_default_off")
     require(mappings["BRIDGE_AGENT_ENABLE_WRITES"] == "${user_config.enable_writes}",
             "writes_environment_mapping_mismatch")
     # Supply isolated client settings through the manifest itself. Overwriting
@@ -262,20 +281,22 @@ def smoke(archive, repository):
         require(replies[0]["result"]["protocolVersion"] == "2025-06-18", "protocol_mismatch")
         server_version = validate_server_version(replies[0], manifest)
         names = [tool["name"] for tool in replies[1]["result"]["tools"]]
-        expected_tools = DEFAULT_TOOLS | ({"build_import_xml", "parse_bank_statement", "post_import"}
-                                          if environment["BRIDGE_AGENT_ENABLE_WRITES"] == "true" else set())
-        require(len(names) == len(expected_tools) and set(names) == expected_tools,
-                "default_tools_mismatch")
-        # The user's read-only opt-out hides generation and posting while
-        # retaining verify_import for safe recovery of saved batches.
-        disabled_environment = dict(environment, BRIDGE_AGENT_ENABLE_WRITES="false")
+        expected = expected_tools(environment)
+        require(len(names) == len(expected) and set(names) == expected, "default_tools_mismatch")
+        require("post_import" not in names and IMPORT_TOOLS <= set(names),
+                "default_bundle_must_prepare_but_not_post")
+        # The user's opt-in adds posting and nothing else; verify_import stays
+        # available either way for safe recovery of saved batches.
+        enabled_environment = dict(environment, BRIDGE_AGENT_ENABLE_WRITES="true")
         catalogue_payload = b"".join(json.dumps(request).encode() + b"\n" for request in requests[:-1])
-        disabled_output, disabled_diagnostics = run_bounded([command], catalogue_payload, disabled_environment)
-        disabled_replies = [json.loads(line) for line in disabled_output.splitlines()]
-        require([reply.get("id") for reply in disabled_replies] == [1, 2], "opt_out_response_ids")
-        disabled_names = [tool["name"] for tool in disabled_replies[1]["result"]["tools"]]
-        require(len(disabled_names) == len(DEFAULT_TOOLS) and set(disabled_names) == DEFAULT_TOOLS,
-                "opt_out_tools_mismatch")
+        enabled_output, enabled_diagnostics = run_bounded([command], catalogue_payload, enabled_environment)
+        enabled_replies = [json.loads(line) for line in enabled_output.splitlines()]
+        require([reply.get("id") for reply in enabled_replies] == [1, 2], "opt_in_response_ids")
+        enabled_names = [tool["name"] for tool in enabled_replies[1]["result"]["tools"]]
+        require(len(enabled_names) == len(expected_tools(enabled_environment))
+                and set(enabled_names) == expected_tools(enabled_environment)
+                and set(enabled_names) - set(names) == POSTING_TOOLS,
+                "opt_in_tools_mismatch")
         schema = replies[2]["result"]
         require(schema.get("isError") is False
                 and schema["structuredContent"]["result"]["schema"]["type"] == "object"
@@ -295,8 +316,8 @@ def smoke(archive, repository):
             "statement_vouchers": statement_vouchers,
             "server_version": server_version,
             "response_ids": [reply["id"] for reply in replies], "response_bytes": len(output),
-            "default_tool_count": len(names), "opt_out_tool_count": len(disabled_names),
-            "opt_out_stderr_bytes": len(disabled_diagnostics), "egress_receipts": receipts,
+            "default_tool_count": len(names), "opt_in_tool_count": len(enabled_names),
+            "opt_in_stderr_bytes": len(enabled_diagnostics), "egress_receipts": receipts,
             "stderr_bytes": len(diagnostics), "stderr_sha256": hashlib.sha256(diagnostics).hexdigest(),
         }
 
