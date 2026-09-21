@@ -960,6 +960,20 @@ mod through_the_tool {
     /// first leg is held; while it runs the client sends `second`. Returns the
     /// response to request 7 and how many requests reached the simulator.
     async fn serve_ledger_masters_then(second: &[&str]) -> (Value, usize) {
+        let (responses, sent) = serve_ledger_masters_collecting(second, 1).await;
+        let response = responses
+            .into_iter()
+            .find(|value| value["id"] == 7)
+            .expect("a response to request 7");
+        (response, sent)
+    }
+
+    /// As `serve_ledger_masters_then`, returning every response in the order
+    /// written, once `expected` responses other than `initialize`'s arrived.
+    async fn serve_ledger_masters_collecting(
+        second: &[&str],
+        expected: usize,
+    ) -> (Vec<Value>, usize) {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
         let mut plans = basic_plans();
         plans[0] = plans[0]
@@ -1008,21 +1022,24 @@ mod through_the_tool {
                 client_write.write_all(b"\n").await.unwrap();
             }
             let mut lines = BufReader::new(client_read).lines();
-            let response = loop {
+            let mut responses = Vec::new();
+            let mut answered = 0;
+            while answered < expected {
                 let line = lines
                     .next_line()
                     .await
                     .unwrap()
-                    .expect("a response to request 7");
+                    .expect("every expected response");
                 let value: Value = serde_json::from_str(&line).unwrap();
-                if value["id"] == 7 {
-                    break value;
+                if value["id"] != 1 {
+                    answered += 1;
                 }
-            };
+                responses.push(value);
+            }
             drop(client_write);
-            response
+            responses
         };
-        let (served, response) = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        let (served, responses) = tokio::time::timeout(std::time::Duration::from_secs(20), async {
             tokio::join!(serve, client)
         })
         .await
@@ -1037,7 +1054,138 @@ mod through_the_tool {
             .iter()
             .filter(|request| !request.method.is_empty())
             .count();
-        (response, sent)
+        (responses, sent)
+    }
+
+    #[tokio::test]
+    async fn requests_sent_during_a_read_are_all_served_after_it() {
+        // Before #554 no input was read while a read ran, so a burst of requests
+        // waited in the pipe and was served in order afterwards. Watching input
+        // must not turn that into refusals: ten requests during one held read
+        // are all answered, after the read, in the order sent.
+        let burst: Vec<String> = (100..110)
+            .map(|id| json!({"jsonrpc":"2.0","id":id,"method":"tools/list"}).to_string())
+            .collect();
+        let frames: Vec<&str> = burst.iter().map(String::as_str).collect();
+        let (responses, _) = serve_ledger_masters_collecting(&frames, 11).await;
+        let ids: Vec<Value> = responses
+            .iter()
+            .map(|value| value["id"].clone())
+            .filter(|id| *id != 1)
+            .collect();
+        let expected: Vec<Value> = std::iter::once(json!(7))
+            .chain((100..110).map(|id| json!(id)))
+            .collect();
+        assert_eq!(ids, expected, "{responses:?}");
+        assert!(
+            responses.iter().all(|value| value.get("error").is_none()),
+            "{responses:?}"
+        );
+    }
+
+    /// Input that yields `data`, then waits until `fail` fires and returns an
+    /// I/O error, as a host whose pipe breaks mid-call would.
+    struct FailingInput {
+        data: std::io::Cursor<Vec<u8>>,
+        fail: tokio::sync::oneshot::Receiver<()>,
+    }
+
+    impl tokio::io::AsyncRead for FailingInput {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            use std::io::Read;
+            let remaining = buf.remaining();
+            let mut chunk = vec![0; remaining];
+            let read = self.data.read(&mut chunk).unwrap();
+            if read > 0 {
+                buf.put_slice(&chunk[..read]);
+                return std::task::Poll::Ready(Ok(()));
+            }
+            match std::future::Future::poll(std::pin::Pin::new(&mut self.fail), cx) {
+                std::task::Poll::Ready(_) => {
+                    std::task::Poll::Ready(Err(std::io::Error::other("pipe broke")))
+                }
+                std::task::Poll::Pending => std::task::Poll::Pending,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn an_input_failure_still_answers_the_call_in_flight_then_ends() {
+        // The input breaks while the identity read is held: the call stops
+        // before its next operation, its answer is still written (the output
+        // works), and only then does the session end with the input error.
+        let mut plans = basic_plans();
+        plans[0] = plans[0]
+            .clone()
+            .with_delivery(tally_protocol_simulator::Delivery::SlowHeaders(
+                std::time::Duration::from_millis(900),
+            ));
+        let simulator = SequenceSimulator::spawn(plans).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let server = Server::new(Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".into(),
+                port: simulator.address().port(),
+            },
+            data_dir: directory.path().into(),
+            max_rows: 500,
+            max_bytes: 200_000,
+            redaction: Redaction::None,
+            import_enabled: false,
+            writes_enabled: false,
+        });
+        let frames = format!(
+            "{}\n{}\n",
+            json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}),
+            json!({"jsonrpc":"2.0","id":7,"method":"tools/call","params":{
+                "name":"ledger_masters","arguments":{"company_guid":GUID}}})
+        );
+        let (fail, failed) = tokio::sync::oneshot::channel();
+        let input = FailingInput {
+            data: std::io::Cursor::new(frames.into_bytes()),
+            fail: failed,
+        };
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            let _ = fail.send(());
+        });
+        let mut output = Vec::new();
+        let served = tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            crate::agent::agent_protocol::serve_stdio(
+                server,
+                tokio::io::BufReader::new(input),
+                &mut output,
+            ),
+        )
+        .await
+        .unwrap();
+        assert!(served.is_err(), "the session ends with the input error");
+        let responses: Vec<Value> = String::from_utf8(output)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let call = responses
+            .iter()
+            .find(|value| value["id"] == 7)
+            .expect("the call in flight is still answered");
+        assert_eq!(
+            call["result"]["structuredContent"]["result"]["error"]["code"],
+            "request_cancelled"
+        );
+        simulator.cancel();
+        let sent = simulator
+            .finish()
+            .unwrap()
+            .iter()
+            .filter(|request| !request.method.is_empty())
+            .count();
+        assert_eq!(sent, identity_plans().len());
     }
 
     #[tokio::test]

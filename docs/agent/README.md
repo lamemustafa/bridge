@@ -107,10 +107,14 @@ cannot establish completed delivery. Consumers must join new records by
 All output object keys must remain server-defined; identifiers belong in values,
 including when adding new grouped reports.
 While a tool other than `post_import` runs, a `notifications/cancelled` naming it
-stops the call before its next Tally request; the request already sent runs to
-completion, because abandoning it would not stop Tally. The call is answered with
+stops the call before its next queued operation. An operation already started runs
+to completion, including every request it makes (a paired read, its brackets and any
+retries), because abandoning a request would not stop Tally; so a cancellation can
+still be followed by the rest of that operation's requests. The call is answered with
 `request_cancelled` and partial evidence, never with part of a read. Closing the
-input is not a cancellation: the call in flight still completes.
+input is not a cancellation: the call in flight still completes. Requests other than
+`ping` sent while a call runs are served after it, in order; a ping is answered at
+once. The lab write tools are not cancellable.
 `egress_log` reads only the final 256 KiB, in 64 KiB reverse-seek chunks, so a
 larger receipt file still yields its bounded tail without loading the head.
 `changed_since` is unavailable: it is omitted from tool discovery and direct calls
