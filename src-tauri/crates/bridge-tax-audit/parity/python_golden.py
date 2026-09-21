@@ -21,7 +21,13 @@ own loaders use for a client with nothing configured there. `depreciation` reads
 REQUIRED -- `tae.config.depreciation_config`'s own `require()` raises on a missing one, unlike the
 optional tables above) and an optional `[depreciation.put_to_use_by_voucher]` (defaults to none
 configured; no shipped client config uses it, but `depreciation.run()`'s own signature carries
-it). With --read DIR, the [snapshot] table is replaced in memory by that read with
+it). `financial_statements` reads each `[partners.<key>].interest_ledger` (optional; none when there is
+no [partners] table) and, only when asked, Tally's own Profit & Loss report totals: `--report-totals
+FILE` reads them from a JSON file ({"net_profit_paise", "closing_stock_paise", "source"}), and
+`--emit-report-totals FILE` takes them from the read's own report part through the reference
+engine's `read_format.report_pl` and writes that JSON, so the Rust side can be fed the same numbers
+(the crate takes these totals as caller data and does not parse Tally reports). With neither, the
+test runs with no report, as it does for a read that carries none. With --read DIR, the [snapshot] table is replaced in memory by that read with
 allow_unbracketed_read = true -- the same switch the engine's own read-format parity gate applies
 -- so a legacy client config can be run against its wrapped read without editing it.
 
@@ -44,15 +50,18 @@ def main() -> int:
     ap.add_argument("output")
     ap.add_argument("--read", help="override [snapshot] with this tally-read-v1 directory")
     ap.add_argument("--test", default="cash_44ab",
-                     choices=["cash_44ab", "cash_payments_40a3", "depreciation"])
+                     choices=["cash_44ab", "cash_payments_40a3", "depreciation", "financial_statements"])
+    ap.add_argument("--report-totals", help="financial_statements: report totals JSON to use")
+    ap.add_argument("--emit-report-totals",
+                    help="financial_statements: take report totals from the read and write them here")
     a = ap.parse_args()
 
     sys.path.insert(0, str(Path(a.engine).resolve()))
     from tae.adapters import read_format
-    from tae.audit_tests import cash_44ab, cash_payments_40a3, depreciation
+    from tae.audit_tests import cash_44ab, cash_payments_40a3, depreciation, financial_statements
     from tae.binding import bind_config
-    from tae.config import (depreciation_config, load_rules, loan_ledgers_config, resolve_ledgers,
-                             role_ledger_set)
+    from tae.config import (depreciation_config, load_rules, loan_ledgers_config, partner_interest_ledgers,
+                             resolve_ledgers, role_ledger_set)
     from tae.model import Engagement
     from tae.parity import canonical
 
@@ -83,6 +92,23 @@ def main() -> int:
             eng, rules, cash=cash, bank=bank,
             loan_ledgers_configured=loan_ledgers_configured,
             round_off_ledgers=frozenset(round_off_ledgers))
+    elif a.test == "financial_statements":
+        module = financial_statements
+        report_totals = None
+        if a.report_totals and a.emit_report_totals:
+            ap.error("--report-totals and --emit-report-totals are exclusive")
+        if a.report_totals:
+            report_totals = json.loads(Path(a.report_totals).read_text(encoding="utf-8"))
+        elif a.emit_report_totals:
+            pl = read_format.report_pl(cfg, path.parent)
+            if pl is None:
+                raise SystemExit("--emit-report-totals: the read carries no Profit & Loss report")
+            # The same three keys, with the same source text, that the reference's own pack builds.
+            report_totals = {"net_profit_paise": pl["net_profit_paise"],
+                             "closing_stock_paise": pl["closing_stock_paise"],
+                             "source": "Tally Profit & Loss report export"}
+            Path(a.emit_report_totals).write_text(json.dumps(report_totals, indent=2) + "\n", encoding="utf-8")
+        result = financial_statements.run(eng, rules, partner_interest_ledgers(cfg), report_totals)
     else:
         module = depreciation
         block_by_ledger, opening_wdv_paise, dep_expense_ledgers = depreciation_config(cfg)

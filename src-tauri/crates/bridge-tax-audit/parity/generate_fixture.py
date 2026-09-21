@@ -69,7 +69,9 @@ WINDOWS = (("2025-04-01", "2025-09-30"), ("2025-10-01", "2026-03-31"))
 CMPINFO_TAGS = ("COMPANY", "GROUP", "LEDGER", "VOUCHERTYPE", "CURRENCY", "UNIT", "VOUCHER")
 
 PRIMARY = ("Capital Account", "Current Assets", "Current Liabilities", "Indirect Expenses",
-           "Loans (Liability)", "Purchase Accounts", "Sales Accounts")
+           "Loans (Liability)", "Purchase Accounts", "Sales Accounts",
+           # Added for financial_statements: the three P&L primaries the book had no ledger under.
+           "Direct Expenses", "Direct Incomes", "Indirect Incomes")
 SUB_GROUPS = (
     ("Bank Accounts", "Current Assets"),
     ("Bank OD A/c", "Loans (Liability)"),
@@ -85,6 +87,10 @@ SUB_GROUPS = (
     ("Duties & Taxes", "Current Liabilities"),
     ("Loans & Advances (Asset)", "Current Assets"),
     ("Unsecured Loans", "Loans (Liability)"),
+    # Added for financial_statements: a P&L ledger one group below its primary (the primary is
+    # the chain's last element, not the immediate parent), and Tally's Stock-in-Hand subgroup.
+    ("Carriage Inward", "Direct Expenses"),
+    ("Stock-in-Hand", "Current Assets"),
 )
 
 # name -> (parent group, opening in paise, debit positive). "Legacy Holding" is deliberately
@@ -98,7 +104,7 @@ LEDGERS = {
     "Purchases - Hardware": ("Purchase Accounts", 0),
     "Shop Rent": ("Shop Running Costs", 0),
     "Electricity": ("Indirect Expenses", 0),
-    "Owner Capital": ("Capital Account", -5_70_000_00),  # offsets Factory Machine's opening below, so TB openings still sum to zero (POP-3)
+    "Owner Capital": ("Capital Account", -6_40_000_00),  # offsets Factory Machine's and the two stock ledgers' openings below, so TB openings still sum to zero (POP-3)
     "Pinecrest Builders": ("Sundry Debtors", 20_000_00),
     "Tidewater Fasteners": ("Sundry Creditors", -15_000_00),
     "Unmapped Holding": ("Legacy Holding", 0),
@@ -134,6 +140,15 @@ LEDGERS = {
     "Depreciation A/c": ("Indirect Expenses", 0),  # dep_expense_ledgers: the client's own book depreciation charge
     "Comfort Furnishings": ("Sundry Creditors", 0),  # invented supplier absorbing the non-cash addition credits above
     "Machinery Disposal Proceeds": ("Current Assets", 0),  # invented counter-ledger for the Factory Machine deletion (amount receivable)
+    # financial_statements ledgers below (masterid 50-53 vouchers), appended last so every earlier
+    # ledger keeps its masterid and GUID. Every name is invented.
+    "Freight Inward": ("Carriage Inward", 0),  # Direct Expenses, reached through a subgroup
+    "Job Work Income": ("Direct Incomes", 0),
+    "Interest Received": ("Indirect Incomes", 0),
+    "Interest to Partners": ("Indirect Expenses", 0),  # [partners.*].interest_ledger
+    "Partner Capital - A": ("Capital Account", 0),
+    "Hardware Stock": ("Stock-in-Hand", 60_000_00),  # stale TB closing field (STALE_TB_DEBIT/CREDIT below)
+    "Packing Material Stock": ("Stock-in-Hand", 10_000_00),  # no movement: closing field equals opening, not stale
 }
 
 VOUCHER_TYPES = (("Contra", "Contra"), ("Journal", "Journal"), ("Payment", "Payment"),
@@ -213,6 +228,12 @@ VOUCHERS_H1 = (
     # Factory Machine deletion of Rs 5,50,000, exceeding the full-rate pool (opening only, no >=180
     # addition here) and spilling into the half-rate pool (s.43(6)).
     (48, "20250601", "Journal", "J/2", None, (("Machinery Disposal Proceeds", "-550000.00"), ("Factory Machine", "550000.00"))),
+    # ---- masterid 50-53: financial_statements. Journals between non-cash, non-bank ledgers only,
+    # so no cash_44ab, cash_payments_40a3 or depreciation figure moves.
+    (50, "20250815", "Journal", "J/4", None, (("Freight Inward", "-4500.00"), ("Tidewater Fasteners", "4500.00"))),
+    (51, "20250818", "Journal", "J/5", None, (("Pinecrest Builders", "-12000.00"), ("Job Work Income", "12000.00"))),
+    (52, "20250822", "Journal", "J/6", None, (("Pinecrest Builders", "-1850.25"), ("Interest Received", "1850.25"))),
+    (53, "20250930", "Journal", "J/7", None, (("Interest to Partners", "-7500.00"), ("Partner Capital - A", "7500.00"))),
 )
 # The second window carries no ISOPTIONAL/ISPOSTDATED tags (the shape of an export whose
 # status came from a separate side list); the voucher_status_list part decides them.
@@ -240,8 +261,15 @@ SIDE_LIST = ({"masterid": "16", "optional": True, "cancelled": False, "postdated
 EXCLUDED = {10, 11, 16, 17}
 # Tally's TB for this ledger is written 5.00 away from its vouchers, so POP-1 fires on it.
 TB_SKEW = {"Electricity": 500}
+# financial_statements: a Stock-in-Hand ledger in a company that does not integrate accounts with
+# inventory. Its TB debit and credit columns carry the year's manually entered stock movements while
+# its closing field stays a copy of the opening (the quirk the test's stale-field count reports).
+# The credit makes closing stock depend on the "- credit" term too. No voucher carries either, so
+# POP-1 (vouchers vs closing - opening) still ties.
+STALE_TB_DEBIT = {"Hardware Stock": 75_000_00}
+STALE_TB_CREDIT = {"Hardware Stock": 5_000_00}
 ALTER_BASE = 100
-HIGH_WATER = (ALTER_BASE + 49, 57)  # closing high-water must be >= the max ALTERID across both windows (masterid 49, H2)
+HIGH_WATER = (ALTER_BASE + 53, 57)  # closing high-water must be >= the max ALTERID across both windows (masterid 53, H1)
 
 
 def paise(text: str) -> int:
@@ -366,9 +394,11 @@ def trial_balance_xml() -> str:
     body = []
     for n, (_p, opening) in LEDGERS.items():
         closing = opening + dr[n] - cr[n] + TB_SKEW.get(n, 0)
+        debit_column = dr[n] + STALE_TB_DEBIT.get(n, 0)  # neither column moves the closing field
+        credit_column = cr[n] + STALE_TB_CREDIT.get(n, 0)
         body.append(f'    <LEDGER NAME="{esc(n)}" RESERVEDNAME="">\n'
-                    f'     <DEBITTOTALS TYPE="Amount">{amount_text(dr[n])}</DEBITTOTALS>\n'
-                    f'     <CREDITTOTALS TYPE="Amount">{amount_text(-cr[n])}</CREDITTOTALS>\n'
+                    f'     <DEBITTOTALS TYPE="Amount">{amount_text(debit_column)}</DEBITTOTALS>\n'
+                    f'     <CREDITTOTALS TYPE="Amount">{amount_text(-credit_column)}</CREDITTOTALS>\n'
                     f'     <TBALCLOSING TYPE="Amount">{amount_text(closing)}</TBALCLOSING>\n'
                     f'     <TBALOPENING TYPE="Amount">{amount_text(opening)}</TBALOPENING>\n'
                     f'    </LEDGER>\n')

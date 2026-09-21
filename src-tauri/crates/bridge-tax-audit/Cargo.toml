@@ -1,7 +1,7 @@
 [package]
 name = "bridge-tax-audit"
 version = "0.1.0"
-description = "Reads a tally-read-v1 directory into an audit book and runs books-based tax-audit tests (cash_44ab, cash_payments_40a3, depreciation) with canonical parity output"
+description = "Reads a tally-read-v1 directory into an audit book and runs books-based tax-audit tests (cash_44ab, cash_payments_40a3, depreciation, financial_statements) with canonical parity output"
 license = "Apache-2.0"
 repository = "https://github.com/lamemustafa/bridge"
 publish = false
