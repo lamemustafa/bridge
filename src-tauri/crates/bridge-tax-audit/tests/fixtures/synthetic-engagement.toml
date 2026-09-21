@@ -1,6 +1,6 @@
 # Engagement for the synthetic read beside this file. Invented; see PROVENANCE.md.
-# Shape: the keys of a reference-engine client config that cash_44ab and cash_payments_40a3 read,
-# and nothing else.
+# Shape: the keys of a reference-engine client config that cash_44ab, cash_payments_40a3,
+# depreciation and financial_statements read, and nothing else.
 [client]
 label = "Lakeview Hardware Demo"
 entity_type = "individual"
@@ -52,3 +52,10 @@ dep_expense_ledgers = ["Depreciation A/c"]
 furniture_10 = 0
 plant_machinery_15 = 50000000
 computers_40 = 0
+
+# financial_statements only: each partner's interest_ledger (the reference engine's
+# partner_interest_ledgers). capital_ledgers is here only because the reference engine's own
+# binding binds every [partners.*] location; this crate reads interest_ledger alone.
+[partners.partner_a]
+capital_ledgers = ["Partner Capital - A"]
+interest_ledger = "Interest to Partners"

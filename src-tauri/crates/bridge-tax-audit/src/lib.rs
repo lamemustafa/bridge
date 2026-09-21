@@ -4,7 +4,7 @@
 //! This slice's end-to-end path: read a tally-read-v1 directory ([`read`], every byte verified
 //! against its manifest), build only the book fields a test needs ([`book`]), evaluate the book
 //! and result invariants ([`invariants`]), run a test ([`cash_44ab`], [`cash_payments_40a3`],
-//! [`depreciation`]) with rule values from a vendored rules excerpt ([`rules`]), and serialise the
+//! [`depreciation`], [`financial_statements`]) with rule values from a vendored rules excerpt ([`rules`]), and serialise the
 //! result canonically ([`canonical`]) so [`compare`] can diff it against the reference engine's
 //! dump under the same rules the reference's own comparer applies. `depreciation` additionally
 //! carries a module-level invariant (`depreciation::check_invariants`, DEP-1/DEP-2), threaded
@@ -32,6 +32,7 @@ pub mod cash_payments_40a3;
 pub mod compare;
 pub mod depreciation;
 pub mod error;
+pub mod financial_statements;
 pub mod findings;
 pub mod invariants;
 pub mod ledger_ids;
@@ -76,6 +77,10 @@ pub struct Engagement {
     /// defaulting it -- unlike `round_off_ledgers`/`loan_ledgers_configured` above, "nothing
     /// configured" is not a valid state for a client that has fixed assets at all).
     pub depreciation: Option<DepreciationConfig>,
+    /// `financial_statements`-only: `[partners.<key>].interest_ledger`, keyed by partner key
+    /// (`deed` is not a partner and is skipped, as the reference's `partners_config` pops it).
+    /// Empty when the config has no `[partners]` table (e.g. a proprietorship).
+    pub partner_interest_ledgers: BTreeMap<String, String>,
     /// The parsed config, kept only so [`Engagement::bind`] can read `[ledger_ids]`/
     /// `[group_ids]` (`binding::bind`) without re-parsing the source text. Not part of this
     /// struct's public contract: a field a caller should read directly (`cash_groups` and the
@@ -299,6 +304,31 @@ not YYYY-MM-DD"
                 })
             })
             .transpose()?;
+        let mut partner_interest_ledgers = BTreeMap::new();
+        if let Some(partners) = cfg.get("partners") {
+            let partners = partners
+                .as_table()
+                .ok_or_else(|| AuditError::Config("[partners] is not a table".to_string()))?;
+            for (key, partner) in partners.iter().filter(|(k, _)| k.as_str() != "deed") {
+                let partner = partner.as_table().ok_or_else(|| {
+                    AuditError::Config(format!("[partners].{key} is not a table"))
+                })?;
+                match partner.get("interest_ledger") {
+                    None => {}
+                    Some(v) => {
+                        let s = v.as_str().ok_or_else(|| {
+                            AuditError::Config(format!(
+                                "[partners].{key}.interest_ledger is not a string"
+                            ))
+                        })?;
+                        // The reference keeps only a truthy interest_ledger.
+                        if !s.is_empty() {
+                            partner_interest_ledgers.insert(key.clone(), s.to_string());
+                        }
+                    }
+                }
+            }
+        }
         Ok(Self {
             label: string(client, "label")?,
             assessment_year: string(client, "assessment_year")?,
@@ -326,6 +356,7 @@ not YYYY-MM-DD"
                 .map(|table| table.keys().cloned().collect())
                 .unwrap_or_default(),
             depreciation,
+            partner_interest_ledgers,
             raw_cfg: cfg,
         })
     }
@@ -443,4 +474,32 @@ pub fn depreciation_on(
 /// Read, verify, build the book, run `depreciation` and return its canonical parity dump.
 pub fn depreciation_canonical(engagement: &Engagement, rules: &Rules) -> Result<serde_json::Value> {
     depreciation_on(engagement, &load_book(engagement)?, rules)
+}
+
+/// Run `financial_statements` on a book and return its canonical parity dump. `report_totals` is
+/// caller data (Tally's own Profit & Loss report); `None` gives the reference's "no report" result.
+pub fn financial_statements_on(
+    engagement: &Engagement,
+    book: &book::Book,
+    rules: &Rules,
+    report_totals: Option<&financial_statements::ReportTotals>,
+) -> Result<serde_json::Value> {
+    let (engagement, _report) = engagement.bind(book)?;
+    let interest: BTreeSet<String> = engagement
+        .partner_interest_ledgers
+        .values()
+        .cloned()
+        .collect();
+    let result = financial_statements::run(book, rules, &interest, report_totals)?;
+    let module_check = financial_statements::check_invariants(book, &result)?;
+    canonical::canonical_test_result(book, &result, Some(module_check))
+}
+
+/// Read, verify, build the book, run `financial_statements` and return its canonical parity dump.
+pub fn financial_statements_canonical(
+    engagement: &Engagement,
+    rules: &Rules,
+    report_totals: Option<&financial_statements::ReportTotals>,
+) -> Result<serde_json::Value> {
+    financial_statements_on(engagement, &load_book(engagement)?, rules, report_totals)
 }

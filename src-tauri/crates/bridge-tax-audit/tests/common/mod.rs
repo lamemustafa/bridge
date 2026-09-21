@@ -4,9 +4,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use bridge_tax_audit::financial_statements::ReportTotals;
 use bridge_tax_audit::{
-    cash_44ab_canonical, cash_payments_40a3_canonical, depreciation_canonical, rules_for,
-    Engagement, Result,
+    cash_44ab_canonical, cash_payments_40a3_canonical, depreciation_canonical,
+    financial_statements_canonical, rules_for, Engagement, Result,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -32,6 +33,29 @@ pub fn golden_depreciation() -> Value {
     serde_json::from_str(&text).unwrap()
 }
 
+pub fn golden_financial_statements(with_report: bool) -> Value {
+    let name = if with_report {
+        "golden/synthetic.financial_statements.json"
+    } else {
+        "golden/synthetic.financial_statements.noreport.json"
+    };
+    serde_json::from_str(&std::fs::read_to_string(fixtures().join(name)).unwrap()).unwrap()
+}
+
+/// The committed synthetic report totals (`synthetic-report-totals.json`), exactly Rs 1 from the
+/// derived net profit and closing stock -- FS-1's inclusive tolerance.
+pub fn synthetic_report_totals() -> ReportTotals {
+    let v: Value = serde_json::from_str(
+        &std::fs::read_to_string(fixtures().join("synthetic-report-totals.json")).unwrap(),
+    )
+    .unwrap();
+    ReportTotals {
+        net_profit_paise: v["net_profit_paise"].as_i64().unwrap(),
+        closing_stock_paise: v["closing_stock_paise"].as_i64(),
+        source: v["source"].as_str().map(str::to_string),
+    }
+}
+
 /// The synthetic engagement, pointed at `read_dir` instead of the committed read.
 pub fn engagement(read_dir: &Path, allow_unbracketed: bool) -> Engagement {
     let text = std::fs::read_to_string(fixtures().join("synthetic-engagement.toml")).unwrap();
@@ -54,6 +78,15 @@ pub fn run_40a3(read_dir: &Path, allow_unbracketed: bool) -> Result<Value> {
 pub fn run_depreciation(read_dir: &Path, allow_unbracketed: bool) -> Result<Value> {
     let e = engagement(read_dir, allow_unbracketed);
     depreciation_canonical(&e, &rules_for(&e)?)
+}
+
+pub fn run_financial_statements(
+    read_dir: &Path,
+    allow_unbracketed: bool,
+    report_totals: Option<&ReportTotals>,
+) -> Result<Value> {
+    let e = engagement(read_dir, allow_unbracketed);
+    financial_statements_canonical(&e, &rules_for(&e)?, report_totals)
 }
 
 fn hex(bytes: &[u8]) -> String {
