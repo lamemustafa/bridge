@@ -75,32 +75,59 @@ fn seam_gate_problems(source: &str) -> Vec<String> {
     problems
 }
 
-/// Every outer or inner attribute in `source`, whitespace removed, read from
-/// `#[` or `#![` to the bracket that closes it, however many lines it spans.
+/// Every outer or inner attribute in `source`, read from `#[` or `#![` to the
+/// bracket that closes it, however many lines it spans. Whitespace is removed
+/// and string literals are kept only as `""`: a bracket inside a string (say
+/// `feature = "x]y"`) neither ends the attribute nor hides what follows it,
+/// and a word inside a string is not a cfg predicate.
 fn attributes(source: &str) -> Vec<String> {
     let mut found = Vec::new();
-    let mut current: Option<(String, i32)> = None;
+    let mut current: Option<String> = None;
+    let (mut depth, mut in_string, mut escaped) = (0_i32, false, false);
     for line in source.lines() {
         let trimmed = line.trim();
         if current.is_none() && (trimmed.starts_with("#[") || trimmed.starts_with("#![")) {
-            current = Some((String::new(), 0));
+            current = Some(String::new());
+            depth = 0;
         }
-        let Some((text, depth)) = current.as_mut() else {
+        let Some(text) = current.as_mut() else {
             continue;
         };
-        for character in trimmed.chars().filter(|c| !c.is_whitespace()) {
-            text.push(character);
-            match character {
-                '[' => *depth += 1,
-                ']' => *depth -= 1,
-                _ => {}
+        for character in trimmed.chars() {
+            if in_string {
+                match (escaped, character) {
+                    (true, _) => escaped = false,
+                    (false, '\\') => escaped = true,
+                    (false, '"') => {
+                        in_string = false;
+                        text.push('"');
+                    }
+                    _ => {}
+                }
+                continue;
             }
-            if *depth == 0 && character == ']' {
+            match character {
+                '"' => {
+                    in_string = true;
+                    text.push('"');
+                }
+                '[' => {
+                    depth += 1;
+                    text.push('[');
+                }
+                ']' => {
+                    depth -= 1;
+                    text.push(']');
+                }
+                c if c.is_whitespace() => {}
+                c => text.push(c),
+            }
+            if depth == 0 && character == ']' {
                 break;
             }
         }
-        if *depth == 0 {
-            found.push(current.take().unwrap().0);
+        if depth == 0 && !in_string {
+            found.push(current.take().unwrap());
         }
     }
     found
@@ -175,6 +202,13 @@ fn the_seam_is_gated_by_bare_cfg_test_and_its_non_test_arm_is_the_real_dialog() 
             "#[cfg(test)]\nuse test_seam::approve;",
             "#[cfg_attr(test, allow(unused))]\nuse test_seam::approve;",
         ),
+        // A bracket inside a string literal must not end the attribute early
+        // and hide the `test` that follows it (on an enclosing item, so the
+        // seam's own bare `#[cfg(test)]` still sits directly above it).
+        source.replace(
+            "#[cfg(test)]\npub(crate) mod test_seam {",
+            "#[cfg(any(feature = \"x]y\", test))]\nmod scoped {}\n#[cfg(test)]\npub(crate) mod test_seam {",
+        ),
         // A widened gate on an enclosing block, wrapped over lines, with the
         // seam's own bare `#[cfg(test)]` left in place inside it.
         source.replace(
@@ -196,6 +230,8 @@ fn the_seam_is_gated_by_bare_cfg_test_and_its_non_test_arm_is_the_real_dialog() 
             "#[cfg(test)]\n/// Scripted approvals.\npub(crate) mod test_seam {",
         ),
         format!("{source}\n#[cfg(feature = \"voucher-scan\")]\nfn unrelated() {{}}\n"),
+        // A word inside a string is not a cfg predicate.
+        format!("{source}\n#[cfg(feature = \"test-fixtures\")]\nfn unrelated() {{}}\n"),
     ] {
         assert_ne!(benign, source);
         assert_eq!(seam_gate_problems(&benign), Vec::<String>::new());
