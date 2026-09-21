@@ -91,7 +91,9 @@ pending consented synthetic live qualification.
    transaction are still required to remove the remaining full decoded string
    and per-record durable-state rewrite.
 4. Establish incremental checkpoints only from verified full snapshots plus an immutable exact-scope coverage and source-high-watermark receipt.
-5. Connect the versioned AXAL destination contract without guessing endpoints.
+5. Deferred by the 2026-09-20 [retention decision](#deliberately-dormant-foundations):
+   retain the versioned destination contract pending an explicit product decision
+   and reviewed contract. No AXAL connection or endpoint is committed.
 6. The read-side operator console now provides stable-company selection,
    offline persisted profiles, separate verified-baseline/latest-attempt
    states, phase/window progress, explicit cancellation, company/pack-scoped
@@ -202,6 +204,34 @@ pending consented synthetic live qualification.
     broad read or completeness claims from this evidence.
 19. Record Windows and macOS installer evidence before a supported release
     claim.
+
+### Deliberately dormant foundations
+
+**2026-09-20 deviation — retention decision.** Retain these three portable
+foundations as accepted or deferred roadmap groundwork. This decision amends
+item 5 to defer destination activation. It establishes no runtime, support, or
+qualification claim and sets no activation schedule. The summary below is
+non-exhaustive; the linked plans and ADR remain the authoritative gates.
+
+- `bills_reconciliation` retains the item 15 fail-closed, exact-arithmetic
+  Bills & Payments foundation governed by [ADR 0013](./adr/0013-tally-party-outstanding-confidence-authority.md)
+  and the [PR16 boundary](./tally/TALLY_INTEGRATION_RESEARCH_AND_CODEX_PLAN.md#implemented-pr16-boundary--party-outstanding-confidence-receipt-v1).
+  Future activation must provide the full gates there, including a
+  parser-to-canonical adapter, a separately reviewed live-qualified typed
+  authority constructor, and Bills-qualified checkpoint/proof authority; a
+  receipt or display wiring alone cannot promote the pack.
+- `transport_qualification` retains item 7's JSONEX semantic-shadowing
+  foundation. [PR10's full activation policy](./tally/TALLY_INTEGRATION_RESEARCH_AND_CODEX_PLAN.md#pr-10--jsonex-negotiated-path-with-semantic-shadowing)
+  remains controlling. In particular, any runtime promotion needs live
+  Capability Passport evidence bound to the exact endpoint, company identity,
+  and request/query profile, followed by separately reviewed promotion;
+  synthetic or caller-supplied parity remains shadowing.
+- `destination` retains a versioned destination-contract boundary for an open
+  product decision. It does not commit Bridge to Tally-to-AXAL delivery or imply
+  that an endpoint exists. Retention can be revisited if a product decision and
+  a reviewed versioned contract meet the [privacy model](./tally/privacy-model.md)
+  and the [evidence-layer-first hook](./tally/IMPROVEMENT_PLAN_2026H2.md#explicitly-deferred-hooks-design-compatible-no-code-now);
+  until then no endpoint is guessed or used.
 
 ## Managed repository controls
 

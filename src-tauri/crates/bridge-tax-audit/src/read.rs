@@ -1,5 +1,5 @@
-//! A tally-read-v1 directory, opened and verified (`docs/tax-audit/read-format-v1.md` section 7,
-//! rules C1-C7, C10).
+//! A tally-read-v1, opened and verified (`docs/tax-audit/read-format-v1.md` section 7, rules
+//! C1-C7, C10).
 //!
 //! [`Read::open`] admits a directory only if its manifest is well formed (C1), every path is
 //! safe (C2), every stored file and its decoded content match their declared sha256 and length
@@ -8,15 +8,16 @@
 //! voucher windows (C7) and Education-mode dates (C10). The remaining rules (C5 identity, C8,
 //! C9) need parsed vouchers and live in `book.rs`.
 //!
-//! The verified content is kept in memory and is what the book parses, so the bytes parsed are
-//! the bytes hashed; there is no second read of the file to fall out of step with the first.
+//! The verified decoded content is kept in memory and is what the book parses, so the bytes
+//! parsed are the bytes hashed. Gzip blobs make one stored-byte verification pass before their
+//! decoder opens a fresh stream, then verify that second stored stream before retaining content.
 //!
 //! C1 here is a typed subset of the reference engine's JSON Schema (required keys, enums,
 //! patterns, the conditional requirements), not a JSON Schema validator. Unknown keys and
 //! unknown part kinds are ignored, as a v1.x manifest requires.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Read as _;
+use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 
 use bridge_tally_primitives::TallyDate;
@@ -53,6 +54,21 @@ const WINDOWED_KINDS: [&str; 4] = [
     "report_balance_sheet",
 ];
 
+/// A source of one `tally-read-v1` manifest and its stored blobs.
+///
+/// The reader owns the consumer contract; a store only supplies byte streams.  In particular,
+/// a missing key is distinct from a stream that could not be read, so C3 can refuse a missing
+/// declared blob without treating it as an empty one.
+pub trait ReadStore {
+    /// The exact stored bytes of `manifest.json`.
+    fn manifest_bytes(&self) -> Result<Box<dyn io::Read + '_>>;
+
+    /// The exact stored bytes named by a manifest blob path, or `None` when that key is absent.
+    /// Each call returns a fresh stream positioned at byte zero: gzip verification opens the
+    /// declared key twice and compares both streams with the manifest before returning content.
+    fn stored_blob(&self, path: &str) -> Result<Option<Box<dyn io::Read + '_>>>;
+}
+
 /// An inclusive date window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Window {
@@ -87,6 +103,7 @@ pub struct Part {
 
 #[derive(Debug)]
 pub struct Read {
+    /// The directory root for [`Read::open`], empty for a storage-backed read.
     pub root: PathBuf,
     pub company_guid: String,
     pub read_at: String,
@@ -463,10 +480,6 @@ fn declared_part(value: &Value, index: usize) -> Result<DeclaredPart> {
     })
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
-    crate::canonical::hex(&Sha256::digest(bytes))
-}
-
 /// C2: relative, inside the read, no symlink anywhere below the root.
 fn safe_path(root: &Path, rel: &str) -> Result<PathBuf> {
     if rel.contains('\\')
@@ -505,9 +518,192 @@ fn safe_path(root: &Path, rel: &str) -> Result<PathBuf> {
     Ok(current)
 }
 
-/// C2 + C3 for one stored blob: returns the verified content.
-fn verified_blob(root: &Path, blob: &Blob, what: &str) -> Result<Vec<u8>> {
-    let path = safe_path(root, &blob.path)?;
+/// The directory implementation of [`ReadStore`].  C2 belongs here because only a directory
+/// has symlinks or a path that can escape its read root.
+struct DirectoryReadStore<'a> {
+    root: &'a Path,
+}
+
+impl ReadStore for DirectoryReadStore<'_> {
+    fn manifest_bytes(&self) -> Result<Box<dyn io::Read + '_>> {
+        let manifest_path = self.root.join("manifest.json");
+        let meta = std::fs::symlink_metadata(&manifest_path);
+        if !meta.is_ok_and(|m| m.file_type().is_file()) {
+            return Err(AuditError::refused(
+                "C2-manifest",
+                format!("no regular manifest.json in {}", self.root.display()),
+            ));
+        }
+        std::fs::File::open(&manifest_path)
+            .map(|file| Box::new(file) as Box<dyn io::Read>)
+            .map_err(|source| AuditError::Io {
+                path: manifest_path.display().to_string(),
+                source,
+            })
+    }
+
+    fn stored_blob(&self, rel: &str) -> Result<Option<Box<dyn io::Read + '_>>> {
+        let path = safe_path(self.root, rel)?;
+        let meta = match std::fs::symlink_metadata(&path) {
+            Ok(meta) => meta,
+            Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => {
+                return Err(AuditError::Io {
+                    path: rel.to_string(),
+                    source,
+                });
+            }
+        };
+        if !meta.file_type().is_file() {
+            return Ok(None);
+        }
+        std::fs::File::open(&path)
+            .map(|file| Some(Box::new(file) as Box<dyn io::Read>))
+            .map_err(|source| AuditError::Io {
+                path: rel.to_string(),
+                source,
+            })
+    }
+}
+
+struct HashingReader<R> {
+    inner: R,
+    hasher: Sha256,
+    bytes: u64,
+    max_bytes: u64,
+    latched_source_error: Option<io::Error>,
+}
+
+impl<R> HashingReader<R> {
+    fn new(inner: R, declared_bytes: u64) -> Self {
+        Self {
+            inner,
+            hasher: Sha256::new(),
+            bytes: 0,
+            // Read one byte past the declared size. That is enough to prove a length mismatch
+            // without following an unbounded corrupt stream. `u64::MAX` has no representable
+            // successor, so it remains its own cap.
+            max_bytes: declared_bytes.saturating_add(1),
+            latched_source_error: None,
+        }
+    }
+
+    fn finish(self) -> (u64, String) {
+        (self.bytes, crate::canonical::hex(&self.hasher.finalize()))
+    }
+
+    fn take_source_error(&mut self) -> Option<io::Error> {
+        self.latched_source_error.take()
+    }
+}
+
+impl<R: io::Read> io::Read for HashingReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let remaining = self.max_bytes.saturating_sub(self.bytes);
+        if remaining == 0 {
+            return Ok(0);
+        }
+        let allowed = usize::try_from(remaining.min(buf.len() as u64))
+            .expect("the buffer length bounds this conversion");
+        if self.latched_source_error.is_some() {
+            return Err(io::Error::other("stored reader failed"));
+        }
+        let read = loop {
+            match self.inner.read(&mut buf[..allowed]) {
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                Err(error) => {
+                    self.latched_source_error = Some(error);
+                    return Err(io::Error::other("stored reader failed"));
+                }
+                Ok(read) => break read,
+            }
+        };
+        self.hasher.update(&buf[..read]);
+        self.bytes = self.bytes.saturating_add(read as u64);
+        Ok(read)
+    }
+}
+
+fn stored_mismatch(blob: &Blob, what: &str) -> AuditError {
+    AuditError::refused(
+        "C3-stored-hash",
+        format!(
+            "{what}: stored bytes of {} do not match the manifest",
+            blob.path
+        ),
+    )
+}
+
+fn ensure_stored(blob: &Blob, what: &str, stored_bytes: u64, stored_sha256: &str) -> Result<()> {
+    if stored_bytes != blob.stored_bytes || stored_sha256 != blob.stored_sha256 {
+        Err(stored_mismatch(blob, what))
+    } else {
+        Ok(())
+    }
+}
+
+fn open_stored_blob<'a>(
+    store: &'a dyn ReadStore,
+    blob: &Blob,
+    what: &str,
+) -> Result<Box<dyn io::Read + 'a>> {
+    store.stored_blob(&blob.path)?.ok_or_else(|| {
+        AuditError::refused("C3-missing", format!("{what}: {} not found", blob.path))
+    })
+}
+
+/// Hash a stored blob before decoding it. The reader stops after the declared length plus one
+/// byte, so a wrong declaration is refused without consuming an unbounded source.
+fn verify_stored_blob(store: &dyn ReadStore, blob: &Blob, what: &str) -> Result<()> {
+    let stored_reader = open_stored_blob(store, blob, what)?;
+    let mut hashing_reader = HashingReader::new(stored_reader, blob.stored_bytes);
+    if let Err(error) = io::copy(&mut hashing_reader, &mut io::sink()) {
+        return Err(AuditError::Io {
+            path: blob.path.clone(),
+            source: hashing_reader.take_source_error().unwrap_or(error),
+        });
+    }
+    let (stored_bytes, stored_sha256) = hashing_reader.finish();
+    ensure_stored(blob, what, stored_bytes, &stored_sha256)
+}
+
+fn collect_content<R: io::Read>(
+    reader: &mut R,
+    what: &str,
+    max_bytes: Option<usize>,
+    stream_error: impl Fn(io::Error) -> AuditError,
+) -> Result<(Vec<u8>, u64, String)> {
+    let mut content = Vec::new();
+    let mut hasher = Sha256::new();
+    let mut bytes = 0_u64;
+    let mut buffer = vec![0_u8; 64 * 1024];
+    loop {
+        let read = reader.read(&mut buffer).map_err(&stream_error)?;
+        if read == 0 {
+            break;
+        }
+        if let Some(limit) = max_bytes {
+            if content.len().saturating_add(read) > limit {
+                return Err(AuditError::refused(
+                    "C3-size",
+                    format!("{what}: decompressed size exceeds {limit} bytes"),
+                ));
+            }
+        }
+        hasher.update(&buffer[..read]);
+        bytes = bytes.saturating_add(read as u64);
+        content.extend_from_slice(&buffer[..read]);
+    }
+    Ok((content, bytes, crate::canonical::hex(&hasher.finalize())))
+}
+
+/// C2 + C3 for one stored blob: stream both byte domains and return the verified content.
+fn verified_blob_from(
+    store: &dyn ReadStore,
+    blob: &Blob,
+    what: &str,
+    max_content_bytes: usize,
+) -> Result<Vec<u8>> {
     let file_name = blob.path.rsplit('/').next().unwrap_or_default();
     // Case-sensitive, as the reference engine's `name.endswith(".gz")` is.
     let gz_name = Path::new(file_name).extension().is_some_and(|e| e == "gz");
@@ -517,47 +713,69 @@ fn verified_blob(root: &Path, blob: &Blob, what: &str) -> Result<Vec<u8>> {
             format!("{what}: storage does not match file name {file_name:?}"),
         ));
     }
-    if !path.is_file() {
-        return Err(AuditError::refused(
-            "C3-missing",
-            format!("{what}: {} not found", blob.path),
-        ));
-    }
-    let stored = std::fs::read(&path).map_err(|source| AuditError::Io {
-        path: blob.path.clone(),
-        source,
-    })?;
-    if stored.len() as u64 != blob.stored_bytes || sha256_hex(&stored) != blob.stored_sha256 {
-        return Err(AuditError::refused(
-            "C3-stored-hash",
-            format!(
-                "{what}: stored bytes of {} do not match the manifest",
-                blob.path
-            ),
-        ));
-    }
-    let content = if blob.gzip {
-        let mut out = Vec::new();
-        flate2::read::MultiGzDecoder::new(stored.as_slice())
-            .take(MAX_CONTENT_BYTES as u64 + 1)
-            .read_to_end(&mut out)
-            .map_err(|e| {
+    let (content, content_bytes, content_sha256) = if blob.gzip {
+        // C3 records the stored checksum specifically so corrupt storage is detected before
+        // decompression. Re-open and check the second stream too: a mutable store cannot swap a
+        // valid first stream for different decoded bytes between these two operations.
+        verify_stored_blob(store, blob, what)?;
+        let hashing_reader =
+            HashingReader::new(open_stored_blob(store, blob, what)?, blob.stored_bytes);
+        let mut gzip_decoder = flate2::read::MultiGzDecoder::new(hashing_reader);
+        if let Some(source) = gzip_decoder.get_mut().take_source_error() {
+            return Err(AuditError::Io {
+                path: blob.path.clone(),
+                source,
+            });
+        }
+        let decoded_result =
+            collect_content(&mut gzip_decoder, what, Some(max_content_bytes), |error| {
                 AuditError::refused(
                     "C3-content-hash",
-                    format!("{what}: gzip does not decode: {e}"),
+                    format!("{what}: gzip does not decode: {error}"),
                 )
-            })?;
-        if out.len() > MAX_CONTENT_BYTES {
-            return Err(AuditError::refused(
-                "C3-size",
-                format!("{what}: decompressed size exceeds {MAX_CONTENT_BYTES} bytes"),
-            ));
+            });
+        let mut hashing_reader = gzip_decoder.into_inner();
+        if let Some(source) = hashing_reader.take_source_error() {
+            return Err(AuditError::Io {
+                path: blob.path.clone(),
+                source,
+            });
         }
-        out
+        let drain = io::copy(&mut hashing_reader, &mut io::sink());
+        let source_error = hashing_reader.take_source_error();
+        let (stored_bytes, stored_sha256) = hashing_reader.finish();
+        if let Some(source) = source_error {
+            return Err(AuditError::Io {
+                path: blob.path.clone(),
+                source,
+            });
+        }
+        drain.map_err(|source| AuditError::Io {
+            path: blob.path.clone(),
+            source,
+        })?;
+        ensure_stored(blob, what, stored_bytes, &stored_sha256)?;
+        let (content, content_bytes, content_sha256) = decoded_result?;
+        (content, content_bytes, content_sha256)
     } else {
-        stored
+        let mut hashing_reader =
+            HashingReader::new(open_stored_blob(store, blob, what)?, blob.stored_bytes);
+        let content_result =
+            collect_content(&mut hashing_reader, what, None, |source| AuditError::Io {
+                path: blob.path.clone(),
+                source,
+            });
+        if let Some(source) = hashing_reader.take_source_error() {
+            return Err(AuditError::Io {
+                path: blob.path.clone(),
+                source,
+            });
+        }
+        let (stored_bytes, stored_sha256) = hashing_reader.finish();
+        ensure_stored(blob, what, stored_bytes, &stored_sha256)?;
+        content_result?
     };
-    if content.len() as u64 != blob.bytes || sha256_hex(&content) != blob.sha256 {
+    if content_bytes != blob.bytes || content_sha256 != blob.sha256 {
         return Err(AuditError::refused(
             "C3-content-hash",
             format!(
@@ -570,20 +788,57 @@ fn verified_blob(root: &Path, blob: &Blob, what: &str) -> Result<Vec<u8>> {
 }
 
 impl Read {
+    /// C1-C4 through the directory compatibility adapter.
+    pub fn open(root: &Path) -> Result<Self> {
+        Self::open_inner(&DirectoryReadStore { root }, root.to_path_buf(), None)
+    }
+
+    /// C1-C4 from a storage-neutral source, bound to the handle a producer returned.
+    ///
+    /// `read_id` and `manifest_sha256` identify an immutable read.  A caller that has no handle
+    /// uses [`Read::open`] for an exported directory instead.
+    pub fn open_from(store: &dyn ReadStore, read_id: &str, manifest_sha256: &str) -> Result<Self> {
+        Self::open_inner(store, PathBuf::new(), Some((read_id, manifest_sha256)))
+    }
+
     /// C1-C4. Every part's bytes, and every stored request's, are verified before this returns.
     #[allow(clippy::too_many_lines)] // one pass over the manifest, in the reference order
-    pub fn open(root: &Path) -> Result<Self> {
-        let manifest_path = root.join("manifest.json");
-        let meta = std::fs::symlink_metadata(&manifest_path);
-        if !meta.is_ok_and(|m| m.file_type().is_file()) {
-            return Err(AuditError::refused(
-                "C2-manifest",
-                format!("no regular manifest.json in {}", root.display()),
-            ));
+    fn open_inner(
+        store: &dyn ReadStore,
+        root: PathBuf,
+        handle: Option<(&str, &str)>,
+    ) -> Result<Self> {
+        let manifest_bytes = {
+            let mut manifest_reader = store.manifest_bytes()?;
+            let mut manifest_bytes = Vec::new();
+            manifest_reader
+                .read_to_end(&mut manifest_bytes)
+                .map_err(|source| AuditError::Io {
+                    path: "manifest.json".to_string(),
+                    source,
+                })?;
+            manifest_bytes
+        };
+        if let Some((expected_read_id, expected_manifest_sha256)) = handle {
+            if !is_sha256(expected_manifest_sha256)
+                || crate::canonical::hex(&Sha256::digest(&manifest_bytes))
+                    != expected_manifest_sha256
+            {
+                return Err(AuditError::refused(
+                    "C1-handle",
+                    "manifest bytes do not match the supplied read handle",
+                ));
+            }
+            if expected_read_id.is_empty() {
+                return Err(AuditError::refused(
+                    "C1-handle",
+                    "read handle has an empty read_id",
+                ));
+            }
         }
-        let text = std::fs::read_to_string(&manifest_path).map_err(|source| AuditError::Io {
-            path: manifest_path.display().to_string(),
-            source,
+        let text = String::from_utf8(manifest_bytes).map_err(|source| AuditError::Io {
+            path: "manifest.json".to_string(),
+            source: io::Error::new(io::ErrorKind::InvalidData, source),
         })?;
         let manifest: Value = serde_json::from_str(&text)
             .map_err(|e| AuditError::refused("C1-format", format!("manifest is not JSON: {e}")))?;
@@ -638,6 +893,14 @@ impl Read {
             128,
         ) {
             return Err(schema("read_id does not match its pattern"));
+        }
+        if let Some((expected_read_id, _)) = handle {
+            if read_id != expected_read_id {
+                return Err(AuditError::refused(
+                    "C1-handle",
+                    "manifest read_id does not match the supplied read handle",
+                ));
+            }
         }
         for key in ["created_at", "read_at"] {
             if string(top, key, "(root)")?.chars().count() < 10 {
@@ -775,14 +1038,19 @@ impl Read {
         let mut parts = Vec::with_capacity(declared.len());
         for d in declared {
             let mut part = d.part;
-            part.content = verified_blob(root, &d.response, &part.id)?;
+            part.content = verified_blob_from(store, &d.response, &part.id, MAX_CONTENT_BYTES)?;
             if let Some(request) = &d.request {
-                verified_blob(root, request, &format!("{} request", part.id))?;
+                verified_blob_from(
+                    store,
+                    request,
+                    &format!("{} request", part.id),
+                    MAX_CONTENT_BYTES,
+                )?;
             }
             parts.push(part);
         }
         Ok(Self {
-            root: root.to_path_buf(),
+            root,
             company_guid: company_guid.to_string(),
             read_at: string(top, "read_at", "(root)")?.to_string(),
             period,
@@ -955,4 +1223,387 @@ pub(crate) fn window_of(part: &Part) -> &Window {
 pub fn iso(date: &TallyDate) -> String {
     let s = date.as_str();
     format!("{}-{}-{}", &s[0..4], &s[4..6], &s[6..8])
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::collections::BTreeMap;
+    use std::io::{Cursor, Write as _};
+
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+
+    use super::*;
+
+    struct MemoryStore {
+        blobs: BTreeMap<String, Vec<u8>>,
+    }
+
+    impl ReadStore for MemoryStore {
+        fn manifest_bytes(&self) -> Result<Box<dyn io::Read + '_>> {
+            Err(AuditError::Config("not used by this unit test".to_string()))
+        }
+
+        fn stored_blob(&self, path: &str) -> Result<Option<Box<dyn io::Read + '_>>> {
+            Ok(self
+                .blobs
+                .get(path)
+                .cloned()
+                .map(|bytes| Box::new(Cursor::new(bytes)) as Box<dyn io::Read>))
+        }
+    }
+
+    struct SwitchingStore {
+        first: Vec<u8>,
+        second: Vec<u8>,
+        opens: Cell<usize>,
+    }
+
+    impl ReadStore for SwitchingStore {
+        fn manifest_bytes(&self) -> Result<Box<dyn io::Read + '_>> {
+            Err(AuditError::Config("not used by this unit test".to_string()))
+        }
+
+        fn stored_blob(&self, _path: &str) -> Result<Option<Box<dyn io::Read + '_>>> {
+            let opens = self.opens.get();
+            self.opens.set(opens + 1);
+            let bytes = if opens == 0 {
+                &self.first
+            } else {
+                &self.second
+            };
+            Ok(Some(Box::new(Cursor::new(bytes.clone()))))
+        }
+    }
+
+    #[derive(Clone)]
+    enum StoredRead {
+        Bytes(Vec<u8>),
+        InterruptedOnce(Vec<u8>),
+        BytesThenError(Vec<u8>, io::ErrorKind),
+        Error(io::ErrorKind),
+    }
+
+    struct InterruptedOnceReader {
+        inner: Cursor<Vec<u8>>,
+        interrupted: bool,
+    }
+
+    impl io::Read for InterruptedOnceReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if !self.interrupted {
+                self.interrupted = true;
+                return Err(io::Error::from(io::ErrorKind::Interrupted));
+            }
+            self.inner.read(buf)
+        }
+    }
+
+    struct ErrorReader(io::ErrorKind);
+
+    impl io::Read for ErrorReader {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::from(self.0))
+        }
+    }
+
+    struct BytesThenErrorReader {
+        inner: Cursor<Vec<u8>>,
+        error: io::ErrorKind,
+    }
+
+    impl io::Read for BytesThenErrorReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let read = self.inner.read(buf)?;
+            if read == 0 {
+                Err(io::Error::from(self.error))
+            } else {
+                Ok(read)
+            }
+        }
+    }
+
+    struct ScriptedStore {
+        reads: Vec<StoredRead>,
+        opens: Cell<usize>,
+    }
+
+    impl ReadStore for ScriptedStore {
+        fn manifest_bytes(&self) -> Result<Box<dyn io::Read + '_>> {
+            Err(AuditError::Config("not used by this unit test".to_string()))
+        }
+
+        fn stored_blob(&self, _path: &str) -> Result<Option<Box<dyn io::Read + '_>>> {
+            let open = self.opens.get();
+            self.opens.set(open + 1);
+            let read = self.reads.get(open).unwrap_or_else(|| {
+                panic!(
+                    "unexpected stored-blob open {open}; expected {}",
+                    self.reads.len()
+                )
+            });
+            let reader: Box<dyn io::Read> = match read {
+                StoredRead::Bytes(bytes) => Box::new(Cursor::new(bytes.clone())),
+                StoredRead::InterruptedOnce(bytes) => Box::new(InterruptedOnceReader {
+                    inner: Cursor::new(bytes.clone()),
+                    interrupted: false,
+                }),
+                StoredRead::BytesThenError(bytes, error) => Box::new(BytesThenErrorReader {
+                    inner: Cursor::new(bytes.clone()),
+                    error: *error,
+                }),
+                StoredRead::Error(kind) => Box::new(ErrorReader(*kind)),
+            };
+            Ok(Some(reader))
+        }
+    }
+
+    fn gzip(content: &[u8]) -> Vec<u8> {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(content).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    fn gzip_blob(path: &str, stored: &[u8], content: &[u8]) -> Blob {
+        Blob {
+            path: path.to_string(),
+            gzip: true,
+            stored_sha256: crate::canonical::hex(&Sha256::digest(stored)),
+            stored_bytes: stored.len() as u64,
+            sha256: crate::canonical::hex(&Sha256::digest(content)),
+            bytes: content.len() as u64,
+        }
+    }
+
+    fn identity_blob(path: &str, content: &[u8]) -> Blob {
+        Blob {
+            path: path.to_string(),
+            gzip: false,
+            stored_sha256: crate::canonical::hex(&Sha256::digest(content)),
+            stored_bytes: content.len() as u64,
+            sha256: crate::canonical::hex(&Sha256::digest(content)),
+            bytes: content.len() as u64,
+        }
+    }
+
+    fn assert_io_kind(error: AuditError, expected: io::ErrorKind) {
+        match error {
+            AuditError::Io { source, .. } => assert_eq!(source.kind(), expected),
+            other => panic!("expected a typed I/O error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn gzip_content_over_the_cap_is_refused_without_collecting_the_extra_chunk() {
+        let content = vec![b'x'; 1_025];
+        let stored = gzip(&content);
+        let blob = gzip_blob("parts/large.xml.gz", &stored, &content);
+        let store = MemoryStore {
+            blobs: BTreeMap::from([(blob.path.clone(), stored)]),
+        };
+
+        let error = verified_blob_from(&store, &blob, "large", 1_024).unwrap_err();
+        assert_eq!(error.code(), Some("C3-size"));
+    }
+
+    #[test]
+    fn malformed_gzip_with_a_wrong_stored_hash_is_refused_before_a_second_open() {
+        let expected = gzip(b"valid");
+        let blob = gzip_blob("parts/corrupt.xml.gz", &expected, b"valid");
+        let store = SwitchingStore {
+            first: b"not a gzip stream".to_vec(),
+            second: expected.clone(),
+            opens: Cell::new(0),
+        };
+
+        let error = verified_blob_from(&store, &blob, "corrupt", 1_024).unwrap_err();
+        assert_eq!(error.code(), Some("C3-stored-hash"));
+        assert_eq!(
+            store.opens.get(),
+            1,
+            "decoder must not open an unverified blob"
+        );
+    }
+
+    #[test]
+    fn malformed_gzip_after_a_matching_stored_check_is_content_refusal() {
+        let stored = b"not a gzip stream".to_vec();
+        let blob = gzip_blob("parts/malformed.xml.gz", &stored, b"valid");
+        let store = MemoryStore {
+            blobs: BTreeMap::from([(blob.path.clone(), stored)]),
+        };
+
+        let error = verified_blob_from(&store, &blob, "malformed", 1_024).unwrap_err();
+        assert_eq!(error.code(), Some("C3-content-hash"));
+    }
+
+    #[test]
+    fn a_first_gzip_stream_with_the_wrong_stored_hash_is_refused_before_decode() {
+        let content = b"same decoded content";
+        let expected = gzip(content);
+        let mut first = expected.clone();
+        first[4] = first[4].wrapping_add(1);
+        let blob = gzip_blob("parts/first-changing.xml.gz", &expected, content);
+        let store = SwitchingStore {
+            first,
+            second: expected,
+            opens: Cell::new(0),
+        };
+
+        let error = verified_blob_from(&store, &blob, "first-changing", 1_024).unwrap_err();
+        assert_eq!(error.code(), Some("C3-stored-hash"));
+        assert_eq!(
+            store.opens.get(),
+            1,
+            "decoder must not open an unverified blob"
+        );
+    }
+
+    #[test]
+    fn a_store_that_changes_between_gzip_passes_is_refused() {
+        let content = b"same decoded content";
+        let first = gzip(content);
+        let mut second = first.clone();
+        // MTIME occupies bytes 4..8 in a gzip member header. It changes the stored hash while
+        // preserving both the length and every decoded byte, so only the second stored check can
+        // distinguish these streams.
+        second[4] = second[4].wrapping_add(1);
+        assert_eq!(first.len(), second.len());
+        let blob = gzip_blob("parts/changing.xml.gz", &first, content);
+        let store = SwitchingStore {
+            first,
+            second,
+            opens: Cell::new(0),
+        };
+
+        let error = verified_blob_from(&store, &blob, "changing", 1_024).unwrap_err();
+        assert_eq!(error.code(), Some("C3-stored-hash"));
+        assert_eq!(store.opens.get(), 2);
+    }
+
+    #[test]
+    fn valid_multi_member_gzip_content_is_verified_and_returned() {
+        let first = gzip(b"first ");
+        let second = gzip(b"second");
+        let mut stored = first;
+        stored.extend(second);
+        let content = b"first second";
+        let blob = gzip_blob("parts/multi.xml.gz", &stored, content);
+        let store = MemoryStore {
+            blobs: BTreeMap::from([(blob.path.clone(), stored)]),
+        };
+
+        assert_eq!(
+            verified_blob_from(&store, &blob, "multi", 1_024).unwrap(),
+            content
+        );
+    }
+
+    #[test]
+    fn interrupted_stored_reads_retry_for_identity_and_gzip() {
+        let identity_content = b"identity";
+        let identity = identity_blob("parts/identity.xml", identity_content);
+        let identity_store = ScriptedStore {
+            reads: vec![StoredRead::InterruptedOnce(identity_content.to_vec())],
+            opens: Cell::new(0),
+        };
+        assert_eq!(
+            verified_blob_from(&identity_store, &identity, "identity", 1_024).unwrap(),
+            identity_content
+        );
+
+        let gzip_content = b"gzip";
+        let gzip_stored = gzip(gzip_content);
+        let gzip = gzip_blob("parts/retry.xml.gz", &gzip_stored, gzip_content);
+        let gzip_store = ScriptedStore {
+            reads: vec![
+                StoredRead::InterruptedOnce(gzip_stored.clone()),
+                StoredRead::InterruptedOnce(gzip_stored),
+            ],
+            opens: Cell::new(0),
+        };
+        assert_eq!(
+            verified_blob_from(&gzip_store, &gzip, "gzip", 1_024).unwrap(),
+            gzip_content
+        );
+        assert_eq!(gzip_store.opens.get(), 2);
+    }
+
+    #[test]
+    fn persistent_noninterrupted_stored_read_is_a_typed_io_error() {
+        let blob = identity_blob("parts/unavailable.xml", b"unavailable");
+        let store = ScriptedStore {
+            reads: vec![StoredRead::Error(io::ErrorKind::PermissionDenied)],
+            opens: Cell::new(0),
+        };
+
+        assert_io_kind(
+            verified_blob_from(&store, &blob, "unavailable", 1_024).unwrap_err(),
+            io::ErrorKind::PermissionDenied,
+        );
+    }
+
+    #[test]
+    fn a_second_gzip_stream_transport_failure_is_a_typed_io_error() {
+        let content = b"gzip transport";
+        let stored = gzip(content);
+        let blob = gzip_blob("parts/transport.xml.gz", &stored, content);
+        for kind in [io::ErrorKind::TimedOut, io::ErrorKind::ConnectionReset] {
+            let store = ScriptedStore {
+                reads: vec![
+                    StoredRead::Bytes(stored.clone()),
+                    StoredRead::BytesThenError(stored.clone(), kind),
+                ],
+                opens: Cell::new(0),
+            };
+            assert_io_kind(
+                verified_blob_from(&store, &blob, "transport", 1_024).unwrap_err(),
+                kind,
+            );
+            assert_eq!(store.opens.get(), 2);
+        }
+    }
+
+    #[test]
+    fn a_second_gzip_prefix_then_transport_failure_is_not_a_stored_mismatch() {
+        let content = b"gzip prefix";
+        let stored = gzip(content);
+        let blob = gzip_blob("parts/prefix.xml.gz", &stored, content);
+        let store = ScriptedStore {
+            reads: vec![
+                StoredRead::Bytes(stored.clone()),
+                StoredRead::BytesThenError(
+                    stored[..stored.len() / 2].to_vec(),
+                    io::ErrorKind::TimedOut,
+                ),
+            ],
+            opens: Cell::new(0),
+        };
+
+        assert_io_kind(
+            verified_blob_from(&store, &blob, "prefix", 1_024).unwrap_err(),
+            io::ErrorKind::TimedOut,
+        );
+        assert_eq!(store.opens.get(), 2);
+    }
+
+    #[test]
+    fn a_drain_transport_failure_wins_over_matching_malformed_gzip() {
+        let stored = b"not a gzip stream".to_vec();
+        let blob = gzip_blob("parts/drain.xml.gz", &stored, b"valid");
+        let store = ScriptedStore {
+            reads: vec![
+                StoredRead::Bytes(stored.clone()),
+                StoredRead::BytesThenError(stored, io::ErrorKind::ConnectionReset),
+            ],
+            opens: Cell::new(0),
+        };
+
+        assert_io_kind(
+            verified_blob_from(&store, &blob, "drain", 1_024).unwrap_err(),
+            io::ErrorKind::ConnectionReset,
+        );
+        assert_eq!(store.opens.get(), 2);
+    }
 }

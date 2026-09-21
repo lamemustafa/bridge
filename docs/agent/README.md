@@ -63,12 +63,18 @@ Cursor uses the same server object in `.cursor/mcp.json`:
 {"mcpServers":{"bridge-tally":{"command":"/absolute/path/to/bridge_mcp"}}}
 ```
 
-The read tools are `tally_status`, `list_companies`, `outstandings`,
-`ledger_masters`, `trial_balance`, `ledger_movement`, `vouchers`,
-`read_evidence`, `egress_log`, and `verify_import`; `voucher_schema` and
-`validate_masters` are also available by default (eleven read/schema tools).
-The MCPB extension adds Journal building and posting by default, for thirteen
-total. Each call returns compact JSON with the
+The ordinary default tools are `tally_status`, `list_companies`,
+`voucher_schema`, `validate_masters`, `verify_import`, `outstandings`,
+`ledger_masters`, `ledger_movement`, `trial_balance`, `vouchers`,
+`voucher_presence`, `read_evidence`, and `egress_log`. For a command-line
+installation, `BRIDGE_AGENT_ENABLE_IMPORT=true` also exposes
+`build_import_xml` and `parse_bank_statement`, which prepares local
+bank-statement voucher proposals. `BRIDGE_AGENT_ENABLE_WRITES=true` enables
+that import workflow and exposes `post_import`; the MCPB extension enables
+the same workflow through its **Allow Journal posting** setting by default.
+This is a source-configuration inventory, not a claim that an installed client
+uses a particular setting or that a tool is qualified for every runtime. Each
+call returns compact JSON with the
 company identity where scoped, a read timestamp, request/response commitments,
 byte count, completeness reason, and truncation state. Before a tool response is written, Bridge appends a metadata-only
 `response_prepared` record to `agent-egress.jsonl`, including a unique `receipt_id`.
@@ -316,10 +322,11 @@ licence mode has been qualified.
 The MCPB extension makes **Allow Journal posting** available by default.
 Turn it off for a read-only connector; existing saved settings remain respected.
 For command-line installation, set `BRIDGE_AGENT_ENABLE_WRITES=true`.
-This enables `build_import_xml` and `post_import`; `verify_import` remains
-available so an uncertain saved batch can be checked after posting is turned
-off. `BRIDGE_AGENT_ENABLE_IMPORT=true` alone exposes the manual file workflow,
-while verification remains available without either switch. Both switches
+This enables `build_import_xml`, `parse_bank_statement`, and `post_import`;
+`verify_import` remains available so an uncertain saved batch can be checked
+after posting is turned off. `BRIDGE_AGENT_ENABLE_IMPORT=true` alone exposes
+the manual file workflow and bank-statement proposal preparation, while
+verification remains available without either switch. Both switches
 accept `true`/`false` or `1`/`0`; invalid values stop startup. No model-supplied argument can grant approval. Claude controls
 its own tool-call permission prompts: Bridge cannot preselect **Always allow**
 for the user. That client permission does not approve an accounting entry.

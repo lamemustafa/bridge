@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "cc3de55f191f0783556e1b8179f866e44f83e3748e129b8b24af549b7e6eaee7"
+      "sha256": "159e87cafa60f9fa44760aea2c80ecd81519080d87d555c03930afd7e5ba2486"
     },
     {
       "path": ".github/workflows/dependency-security-scheduled.yml",
@@ -31,7 +31,7 @@
     },
     {
       "path": "docs/step-by-step-roadmap.md",
-      "sha256": "4417680a829847b99f18b2fcc176b8721a7348f164c08ed6bbf9c6221150aea3"
+      "sha256": "68182c6f64e4907bffe4cc5cee75c08de102a681d1daa279f6f065c146d551cd"
     },
     {
       "path": "docs/tally/TALLY_INTEGRATION_RESEARCH_AND_CODEX_PLAN.md",
@@ -39,7 +39,31 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE.md",
-      "sha256": "49d81c9d8c8b87716949a024972b22761c54ba19479a9145f81f16c5fa316b81"
+      "sha256": "5497d38ba255615771a013f8d81602c257a7d9b47379726a2dbcf77aa06ea297"
+    },
+    {
+      "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_COMPANY_IDENTITY_AND_CREATION.md",
+      "sha256": "591154896360993e070bd0c4c444034aedad1ee69b5658097bf481f7404c83ed"
+    },
+    {
+      "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_ENVIRONMENT_AND_REQUESTS.md",
+      "sha256": "c85a36ec89bd564f900604da64032f341d0f5524be9021f5c137fc6e55926294"
+    },
+    {
+      "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md",
+      "sha256": "c63a537886506bb7514cc1485f7d0b71cdc82fc135896f049ed135b38c47bc70"
+    },
+    {
+      "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_READS_AND_DATES.md",
+      "sha256": "fb8d9ff44c11f6ddd4661322d2e961b6924b6bc022198aecb0d1fe9ecb290342"
+    },
+    {
+      "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_VOUCHER_WRITES.md",
+      "sha256": "35c6486b3ab4ae908cb5bd42267279765873ef97b63754f900736f0078e4ae7d"
+    },
+    {
+      "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_WRITE_RESPONSES_AND_MASTERS.md",
+      "sha256": "ce1a9623c8d00ef5a2d932a320837a55e044a134ba4bddd76fb17aef0e504d8f"
     },
     {
       "path": "docs/tally/compatibility/README.md",
@@ -1039,7 +1063,7 @@
     },
     {
       "path": "tools/bridge-tally-compatibility/src/lib.rs",
-      "sha256": "ab4f83a1a9f79fc556936c08dd7a3de748ed71d1873dd182403ed2eca104c32d"
+      "sha256": "b8a4608d830d95087330cb0279a1e4e5f0debceab58186216bf48e6de6df4c97"
     },
     {
       "path": "tools/bridge-tally-compatibility/src/main.rs",
@@ -1074,5 +1098,5 @@
       "sha256": "0ab5bfbe6d81b1e10530744c338fb91efa57fe5a66fb4bc0cfd382495eaf02a4"
     }
   ],
-  "manifest_sha256": "3ef897715007116bf749f610fc9223251a020d43880eac7812f807500872c12b"
+  "manifest_sha256": "ad120dfb67d92939d79f148b8cede4bd4f7dddfd639bb1c8205712f0caa81a6f"
 }
