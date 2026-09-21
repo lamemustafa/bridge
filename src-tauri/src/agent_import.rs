@@ -1434,7 +1434,7 @@ fn build_import_guidance(
     // live import of it. Comments and docs are not what an operator reads, so
     // the result says so itself, beside the party choice it made.
     let multi_entry_warning = multi_entry_bank.then_some(
-        "A Payment, Receipt or Contra with more than two entries is admitted pending the owner's confirmation (bridge#466). Hand-built files of this shape were imported and read back with every entry over the gateway on licensed TallyPrime 7.1 Silver (for a Contra, only with a ledger repeated, never three distinct ledgers), but no Bridge-built file of it has been imported and verified. Where such a voucher names several counterparties, the file names the first as the voucher's party; on two-entry Payments and Receipts, Tally 7.1 Silver read back the bank ledger as the party rather than the counterparty written, and verify_import does not compare the party. verify_import still compares every entry.",
+        "A Payment, Receipt or Contra with more than two entries is admitted pending the owner's confirmation (bridge#466). Hand-built files of this shape were imported and read back with every entry over the gateway on licensed TallyPrime 7.1 Silver (for a Contra, only with a ledger repeated; three distinct ledgers not observed), but no Bridge-built file of it has been imported and verified. Where such a voucher names several counterparties, the file names the first as the voucher's party; on two-entry Payments and Receipts, Tally 7.1 Silver read back the bank ledger as the party rather than the counterparty written, and verify_import does not compare the party. verify_import still compares every entry.",
     );
     let warnings = |first: &str| {
         json!(std::iter::once(first)
