@@ -891,7 +891,7 @@
     },
     {
       "path": "src-tauri/src/tally/runtime.rs",
-      "sha256": "983d3b3a8b8e8cf0bb9ea1a96c76c3c34cae15cd842136ac9ddc72be69f03a3d"
+      "sha256": "04c240215790c01cba3817cfece1a9b79ef77b5473585759dc6f7a4851cc12b9"
     },
     {
       "path": "src-tauri/src/tally/runtime_control.rs",
@@ -1102,5 +1102,5 @@
       "sha256": "0ab5bfbe6d81b1e10530744c338fb91efa57fe5a66fb4bc0cfd382495eaf02a4"
     }
   ],
-  "manifest_sha256": "424b0f3efcb414f6240976749c9dfe173d48d62b74ec34511daa6bd973ebcb4a"
+  "manifest_sha256": "32757fd844d83d5c90b78ed5c62f62f29a0545637d959f7ab31f70deb8c3c07b"
 }

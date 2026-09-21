@@ -686,7 +686,7 @@ pub(crate) enum OpeningBoundaryObservationError {
     Changed,
 }
 
-fn observed_opening_boundary(
+pub(crate) fn observed_opening_boundary(
     profile: &bridge_tally_core::CapabilityProfile,
 ) -> Result<DateBoundaryProfile, OpeningBoundaryObservationError> {
     use bridge_tally_core::{CapabilityFeatureId, CapabilityState, EvidenceConfidence};

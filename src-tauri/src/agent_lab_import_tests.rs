@@ -802,7 +802,7 @@ fn voucher_sort_key_orders_voucher_numbers_numerically_within_a_date() {
         v.voucher_number = Some(number.to_string());
         v
     }
-    let mut vouchers = vec![
+    let mut vouchers = [
         voucher("20250518", "100"),
         voucher("20250518", "98"),
         voucher("20250518", "99"),
@@ -1914,4 +1914,116 @@ fn line_error_text_keeps_a_forbidden_reference_as_the_marker() {
         extract_line_error_texts(xml),
         vec!["Group \u{fffd}#4; Primary cannot be altered".to_string()]
     );
+}
+
+fn book_start(yyyymmdd: &str) -> NativeLedgerExportPeriod {
+    let date = bridge_tally_core::TallyDate::parse(yyyymmdd.to_string()).unwrap();
+    NativeLedgerExportPeriod::new(DateBoundaryProfile::ModeAgnostic, date.clone(), date).unwrap()
+}
+
+#[test]
+fn every_lab_write_master_read_loads_the_book_start_period() {
+    for kind in MasterKind::IMPORT_ORDER {
+        let request = render_master_collection_request(
+            "BRIDGE SYNTHETIC BOOK",
+            kind,
+            &book_start("20240401"),
+        )
+        .unwrap();
+        let statics = request
+            .split_once("<STATICVARIABLES>")
+            .and_then(|(_, rest)| rest.split_once("</STATICVARIABLES>"))
+            .map(|(inner, _)| inner)
+            .unwrap();
+        assert_eq!(
+            statics,
+            "<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>\
+<SVCURRENTCOMPANY>BRIDGE SYNTHETIC BOOK</SVCURRENTCOMPANY>\
+<SVFROMDATE TYPE=\"Date\">20240401</SVFROMDATE>\
+<SVTODATE TYPE=\"Date\">20240401</SVTODATE>",
+            "{}",
+            kind.tally_type()
+        );
+    }
+}
+
+/// A simulated two-year book whose loaded display period is its second year.
+/// Its ledger opened the first year at 1000.00 and the second at 1750.00.
+/// Tally reports a master's `OPENINGBALANCE` for the period the request's
+/// `SVFROMDATE` loads, and for the display period when it carries none
+/// (protocol reference §5.5). The same model answers stock items with
+/// quantities.
+fn multi_year_book_answer(request: &str) -> String {
+    let first_period = request.contains(r#"<SVFROMDATE TYPE="Date">20240401</SVFROMDATE>"#);
+    let undated = !request.contains("<SVFROMDATE");
+    assert!(
+        first_period || undated,
+        "the model knows only these two periods"
+    );
+    let (ledger_opening, stock_opening) = if first_period {
+        ("1000.00", "10 Nos")
+    } else {
+        ("1750.00", "4 Nos")
+    };
+    if request.contains("<TYPE>Ledger</TYPE>") {
+        format!(
+            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+<LEDGER NAME=\"Bridge Synthetic Supplier\"><PARENT>Sundry Creditors</PARENT>\
+<OPENINGBALANCE>{ledger_opening}</OPENINGBALANCE></LEDGER>\
+</COLLECTION></DATA></BODY></ENVELOPE>"
+        )
+    } else {
+        assert!(request.contains("<TYPE>StockItem</TYPE>"));
+        format!(
+            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+<STOCKITEM NAME=\"Bridge Synthetic Widget\"><PARENT>Primary</PARENT>\
+<OPENINGBALANCE>{stock_opening}</OPENINGBALANCE></STOCKITEM>\
+</COLLECTION></DATA></BODY></ENVELOPE>"
+        )
+    }
+}
+
+#[test]
+fn a_correct_write_on_a_book_viewed_in_a_later_period_reads_back_as_written() {
+    // bridge#568. The read-back sends the pre-check's own request builder to
+    // a book whose display period is not its first. The book asks for the
+    // first period's opening, which is what Tally holds.
+    let supplier = BookLedger {
+        name: "Bridge Synthetic Supplier".into(),
+        parent: Some("Sundry Creditors".into()),
+        opening_balance: Some("1000.00".into()),
+        is_billwise_on: None,
+        party_gstin: None,
+        tax_type: None,
+        gst_duty_head: None,
+        opening_bill_allocations: vec![],
+    };
+    let period = book_start("20240401");
+    let request =
+        render_master_collection_request("BRIDGE SYNTHETIC BOOK", MasterKind::Ledger, &period)
+            .unwrap();
+    let rows = parse_lab_master_rows(&multi_year_book_answer(&request), "Ledger").unwrap();
+    let row = find_readback_row(&rows, &supplier.name).expect("ledger read back");
+    assert_eq!(diff_ledger(&supplier, row), Vec::<String>::new());
+
+    // A wrong write (the second period's figure booked as the opening) must
+    // not match.
+    let wrong = BookLedger {
+        opening_balance: Some("1750.00".into()),
+        ..supplier.clone()
+    };
+    assert_eq!(diff_ledger(&wrong, row).len(), 1);
+
+    let item: BookStockItem = serde_json::from_value(serde_json::json!({
+        "name": "Bridge Synthetic Widget",
+        "parent": "Primary",
+        "opening_qty": "10 Nos"
+    }))
+    .unwrap();
+    let request =
+        render_master_collection_request("BRIDGE SYNTHETIC BOOK", MasterKind::StockItem, &period)
+            .unwrap();
+    let rows = parse_lab_master_rows(&multi_year_book_answer(&request), "StockItem").unwrap();
+    let row = find_readback_row(&rows, &item.name).expect("stock item read back");
+    assert_eq!(diff_stock_item(&item, row), Vec::<String>::new());
 }
