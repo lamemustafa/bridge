@@ -242,7 +242,9 @@ request is predicted over a budget well below the cap.
      rule. The mode is read from the `EDUMODE` field of the `CompanyListV2` response that brackets
      every read, so it costs no request. The whole remaining plan is checked before each part, so a
      divided read is refused before its first part, and the runtime refuses any single read with
-     such a boundary before sending it.
+     such a boundary before sending it, or after it when only the closing bracket reports Education.
+     An `EDUMODE` other than `No` counts as Education; a list with no `EDUMODE` keeps ordinary
+     boundaries. `EDUMODE = Yes` has not been captured live.
 6. **Every part is admitted, and so is their union.** Each row of a part must lie in the part's dates
    and AlterID span. When the window was counted, a part's vouchers must be **exactly** the ones the
    census counted for it, by AlterID and GUID — a matching count is not enough, because a substituted

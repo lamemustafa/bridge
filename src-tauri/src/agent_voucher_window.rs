@@ -1323,8 +1323,6 @@ fn census_refusal_cause(code: &str) -> Option<&'static str> {
     }
 }
 
-/// Whether a set of parts is a divided read: more than one request, or a part
-/// limited to an AlterID span.
 /// Record the boundary profile one read observed. Education seen on any read
 /// holds for the rest of the window: a mode that changes during a read is held
 /// to the stricter rule, never relaxed by a later licensed observation.
@@ -1361,6 +1359,8 @@ fn admit_plan_boundaries(
     }
 }
 
+/// Whether a set of parts is a divided read: more than one request, or a part
+/// limited to an AlterID span.
 fn is_divided(parts: &[WindowPart]) -> bool {
     parts.len() > 1 || parts.iter().any(|part| part.span.is_some())
 }

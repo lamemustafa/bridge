@@ -189,9 +189,13 @@ Every voucher, movement, presence and verification read observes the mode from t
 mode a read whose `SVFROMDATE` or `SVTODATE` is not on day 1, 2 or 31 is refused as
 `window_part_boundary_unsupported_in_education` before it is sent, because Education
 answers a read starting on another day with an empty collection rather than an error. A
-divided window is checked whole before its first part. The end side is held to the same
-rule without a live measurement in these shapes, so an Education whole-month read ending
-on the 30th is refused.
+divided window is checked whole before its first part, and a read whose closing bracket
+reports Education is refused the same way, since either mode may have served it. Any
+`EDUMODE` value other than `No` counts as Education even when the other capability fields
+do not parse; a company list with no `EDUMODE` field keeps ordinary boundaries, and
+`EDUMODE = Yes` itself has not yet been captured from a live Education instance. The end
+side is held to the same rule without a live measurement in these shapes, so an Education
+whole-month read ending on the 30th is refused.
 A genuinely empty voucher response uses the same wider-window
 corroboration as `vouchers` before zero movement can be reported. Cancelled and
 optional rows establish response presence while contributing no accounting movement.

@@ -1054,26 +1054,27 @@ impl TallyClient {
     pub(crate) async fn fetch_companies_with_wire_evidence(
         &self,
     ) -> anyhow::Result<(Vec<TallyCompany>, RuntimeReadEvidence)> {
-        self.fetch_companies_observing_gateway()
+        self.fetch_companies_observing_education_mode()
             .await
             .map(|(companies, evidence, _)| (companies, evidence))
     }
 
-    /// As [`Self::fetch_companies_with_wire_evidence`], also returning the
-    /// product and licence-mode facts the same `CompanyListV2` response
-    /// carries, or `None` when they do not parse. No further request is made.
-    pub(crate) async fn fetch_companies_observing_gateway(
+    /// As [`Self::fetch_companies_with_wire_evidence`], also returning whether
+    /// the same `CompanyListV2` response may come from an Education-mode
+    /// endpoint: by the full capability observation, or by any `EDUMODE` field
+    /// saying anything but `No` when that observation does not parse. No
+    /// further request is made.
+    pub(crate) async fn fetch_companies_observing_education_mode(
         &self,
-    ) -> anyhow::Result<(
-        Vec<TallyCompany>,
-        RuntimeReadEvidence,
-        Option<bridge_tally_protocol::CompanyGatewayCapabilityObservation>,
-    )> {
+    ) -> anyhow::Result<(Vec<TallyCompany>, RuntimeReadEvidence, bool)> {
         let mut evidence = RuntimeReadEvidence::empty();
         let xml = self
             .post_probe_xml(ReadOnlyProfile::CompanyListV2.render(), &mut evidence)
             .await?;
-        let gateway = parse_company_gateway_capability_observation(&xml).ok();
+        let education = parse_company_gateway_capability_observation(&xml)
+            .map(|observation| observation.educational_mode)
+            .unwrap_or(false)
+            || bridge_tally_protocol::company_list_may_be_in_educational_mode(&xml);
         let discovered = xml_parser::parse_companies_from_collection(&xml)
             .map_err(|error| with_read_evidence(error, evidence.clone()))?;
         let companies = normalize_discovered_companies(discovered).map_err(|_| {
@@ -1084,7 +1085,7 @@ impl TallyClient {
                 evidence.clone(),
             )
         })?;
-        Ok((companies, evidence, gateway))
+        Ok((companies, evidence, education))
     }
 
     /// Re-enumerates the trusted `Company` collection, then proves one

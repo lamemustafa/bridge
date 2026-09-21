@@ -2935,3 +2935,92 @@ async fn a_census_mismatch_reaches_the_caller_with_its_counts() {
     assert_eq!(error["cause"], PART_CENSUS_MISMATCH);
     assert_eq!(error["counts"], json!({"returned": 0, "counted": per_read}));
 }
+
+/// A licence that drops to Education while a read is in flight: the opening
+/// bracket said licensed, the closing one says Education. Which mode served
+/// the read is unknown, so a read Education would have served empty is refused,
+/// with the read it made accounted for (bridge#581).
+#[tokio::test]
+async fn education_reported_after_a_read_refuses_a_boundary_education_serves_empty() {
+    let body = xml_plan(relabelled(&vouchers_kept(1), &[(1, "20260805")]));
+    let (outcome, observed) = read_window(
+        vec![
+            company_plan(),
+            body.clone(),
+            status_plan(),
+            body,
+            status_plan(),
+            education_company_plan(),
+        ],
+        ("20260805", "20260805"),
+        VoucherReadShape::EntryWildcard,
+        WindowPlanSource::Counted(census_of(&[("20260805", 1)])),
+        three_a_read(),
+    )
+    .await;
+    let failure = outcome.err().expect("the read is refused");
+    assert_eq!(failure.code, EDUCATION_BOUNDARY_UNSUPPORTED);
+    assert!(failure.evidence.is_some(), "the data read is accounted for");
+    assert_eq!(observed.len(), 6);
+}
+
+/// An Education list whose other capability fields do not parse still
+/// restricts: an empty `SILVER` must not switch the guard off.
+#[tokio::test]
+async fn education_is_observed_when_another_capability_field_is_empty() {
+    let mut plan = education_company_plan();
+    let body = plan.fixture.body().into_owned();
+    let broken = body.replace(
+        "<SILVER TYPE=\"Logical\">Yes</SILVER>",
+        "<SILVER TYPE=\"Logical\"/>",
+    );
+    assert_ne!(broken, body);
+    assert!(bridge_tally_protocol::parse_company_gateway_capability_observation(&broken).is_err());
+    plan = xml_plan(broken);
+    let (outcome, observed) = read_window(
+        vec![plan],
+        ("20260805", "20260805"),
+        VoucherReadShape::EntryWildcard,
+        WindowPlanSource::Counted(census_of(&[("20260805", 1)])),
+        three_a_read(),
+    )
+    .await;
+    assert_eq!(
+        outcome.err().map(|failure| failure.code).as_deref(),
+        Some(EDUCATION_BOUNDARY_UNSUPPORTED)
+    );
+    assert_eq!(
+        observed
+            .iter()
+            .filter(|request| !request.method.is_empty())
+            .count(),
+        1
+    );
+}
+
+/// A census over a window Education cannot serve is refused by the runtime
+/// under its own code, not relabelled as an unestimated window.
+#[tokio::test]
+async fn a_census_education_cannot_serve_is_refused_by_name() {
+    let (outcome, observed) = read_window(
+        vec![education_company_plan()],
+        ("20260805", "20260831"),
+        VoucherReadShape::EntryWildcard,
+        WindowPlanSource::Estimate {
+            known_marks: Some(marks_of(3)),
+        },
+        three_a_read(),
+    )
+    .await;
+    assert_eq!(
+        outcome.err().map(|failure| failure.code).as_deref(),
+        Some(EDUCATION_BOUNDARY_UNSUPPORTED)
+    );
+    assert_eq!(
+        observed
+            .iter()
+            .filter(|request| !request.method.is_empty())
+            .count(),
+        1
+    );
+}

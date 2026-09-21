@@ -92,18 +92,32 @@ async fn fetch_admitted_agent_read(
     identity: &VerifiedCompanyIdentity,
     request: super::agent_read_request::AgentReadRequest,
 ) -> anyhow::Result<(AgentRead, RuntimeReadEvidence)> {
-    let profile = bracket_verified_company_identity_observing_mode(client, identity).await?;
-    if !request.window_accepted_by(profile) {
+    let opening = bracket_verified_company_identity_observing_mode(client, identity).await?;
+    if !request.window_accepted_by(opening) {
         return Err(EducationBoundaryRefusal.into());
     }
-    let request_xml = request.into_xml();
+    let request_xml = request.clone().into_xml();
     let (body, encoded_bytes, encoded_sha256) = client
         .fetch_native_report_paired_with_evidence(request_xml.clone())
         .await?;
     let evidence = RuntimeReadEvidence::paired(&request_xml, encoded_sha256.clone(), encoded_bytes);
-    bracket_verified_company_identity(client, identity)
+    let closing = bracket_verified_company_identity_observing_mode(client, identity)
         .await
         .map_err(|error| with_read_evidence(error, evidence.clone()))?;
+    // Education reported only after the read may have served it: which mode
+    // answered is unknown, so the read is refused as if it had been sent in
+    // Education (a licence server dropping out mid-read does this).
+    if !request.window_accepted_by(closing) {
+        return Err(with_read_evidence(
+            EducationBoundaryRefusal.into(),
+            evidence.clone(),
+        ));
+    }
+    let profile = if closing == DateBoundaryProfile::EducationRestricted {
+        closing
+    } else {
+        opening
+    };
     Ok((
         AgentRead {
             body,
@@ -258,17 +272,19 @@ async fn bracket_verified_company_identity(
 /// As [`bracket_verified_company_identity`], also returning the date-boundary
 /// profile the same company-list response reports. Education mode is read from
 /// the `EDUMODE` field every `CompanyListV2` row carries, so observing it here
-/// costs no request. A response whose mode facts do not parse keeps the
-/// mode-agnostic profile, as that parser's contract requires.
+/// costs no request. Any `EDUMODE` field that does not say `No` is enough, even
+/// when the other capability fields do not parse. A response with no `EDUMODE`
+/// field at all keeps the mode-agnostic profile, as before bridge#581.
 async fn bracket_verified_company_identity_observing_mode(
     client: &TallyClient,
     identity: &VerifiedCompanyIdentity,
 ) -> anyhow::Result<DateBoundaryProfile> {
-    let (companies, _, gateway) = client.fetch_companies_observing_gateway().await?;
+    let (companies, _, education) = client.fetch_companies_observing_education_mode().await?;
     admit_company_identity(&companies, identity)?;
-    Ok(match gateway {
-        Some(gateway) if gateway.educational_mode => DateBoundaryProfile::EducationRestricted,
-        _ => DateBoundaryProfile::ModeAgnostic,
+    Ok(if education {
+        DateBoundaryProfile::EducationRestricted
+    } else {
+        DateBoundaryProfile::ModeAgnostic
     })
 }
 

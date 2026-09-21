@@ -1,8 +1,8 @@
 use bridge_tally_protocol::xml_read_profiles::ReadOnlyProfile;
 use bridge_tally_protocol::{
-    decode_tally_xml_response_bytes_limited, encode_tally_xml_request_utf16le,
-    parse_companies_from_collection, parse_company_gateway_capability_observation,
-    ExpectedTallyTextEncoding,
+    company_list_may_be_in_educational_mode, decode_tally_xml_response_bytes_limited,
+    encode_tally_xml_request_utf16le, parse_companies_from_collection,
+    parse_company_gateway_capability_observation, ExpectedTallyTextEncoding,
 };
 use sha2::{Digest, Sha256};
 
@@ -100,5 +100,46 @@ fn malformed_release_claims_fail_closed_at_the_collection_boundary() {
             1
         ))
         .is_err());
+    }
+}
+
+/// bridge#581: the Education question is answered even where the full
+/// capability observation fails. Any `EDUMODE` that is not `No` counts as
+/// Education; a list with no `EDUMODE` at all says nothing about the mode.
+#[test]
+fn an_uncertain_edumode_counts_as_education_and_an_absent_one_as_unknown() {
+    let captured = captured_xml();
+    let licensed = r#"<EDUMODE TYPE="Logical">No</EDUMODE>"#;
+    assert!(captured.contains(licensed));
+    let empty_silver = captured.replace(
+        r#"<SILVER TYPE="Logical">Yes</SILVER>"#,
+        r#"<SILVER TYPE="Logical"/>"#,
+    );
+    assert!(parse_company_gateway_capability_observation(&empty_silver).is_err());
+    for (xml, education) in [
+        (captured.clone(), false),
+        (
+            captured.replacen(licensed, r#"<EDUMODE TYPE="Logical">Yes</EDUMODE>"#, 1),
+            true,
+        ),
+        (
+            captured.replacen(licensed, r#"<EDUMODE TYPE="Logical">Maybe</EDUMODE>"#, 1),
+            true,
+        ),
+        (
+            captured.replacen(licensed, r#"<EDUMODE TYPE="Logical"></EDUMODE>"#, 1),
+            true,
+        ),
+        (
+            captured.replacen(licensed, r#"<EDUMODE TYPE="Logical"/>"#, 1),
+            true,
+        ),
+        (captured.replace(licensed, ""), false),
+        (
+            empty_silver.replace(licensed, r#"<EDUMODE TYPE="Logical">Yes</EDUMODE>"#),
+            true,
+        ),
+    ] {
+        assert_eq!(company_list_may_be_in_educational_mode(&xml), education);
     }
 }
