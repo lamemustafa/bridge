@@ -2,8 +2,8 @@
 //!
 //! An engagement config names ledgers and groups by display text: `[roles].cash_groups`,
 //! `[roles].round_off_ledgers`, `[loans.loan_ledgers]`'s keys, `[depreciation].block_by_ledger`'s
-//! keys and `[depreciation].dep_expense_ledgers` -- every location this crate's [`Engagement`]
-//! reads. Staff rename ledgers between reads, and a name that stops matching used to drop out of
+//! keys, `[depreciation].dep_expense_ledgers` and `[partners.*].interest_ledger` -- every location
+//! this crate's [`Engagement`] reads. Staff rename ledgers between reads, and a name that stops matching used to drop out of
 //! a role silently: the figures moved and nothing said why. [`bind`] is the one place a
 //! configured name meets the Book; every one of the locations above is bound once, before any
 //! test runs, mirroring the reference implementation's `tae/binding.py` (identifier before name,
@@ -539,6 +539,15 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
             .collect();
     }
 
+    let partner_interest_ledgers = engagement
+        .partner_interest_ledgers
+        .iter()
+        .map(|(key, label)| {
+            let bound = lbinder.bind_one(label, &format!("partners.{key}.interest_ledger"))?;
+            Ok((key.clone(), bound))
+        })
+        .collect::<Result<BTreeMap<String, String>>>()?;
+
     lbinder.check_unused()?;
 
     let group_ids = parse_identity_table(&engagement.raw_cfg, "group_ids")?;
@@ -584,6 +593,7 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
         round_off_ledgers,
         loan_ledgers_configured,
         depreciation,
+        partner_interest_ledgers,
         ..engagement.clone()
     };
     Ok((bound, report))
@@ -1057,6 +1067,119 @@ mod tests {
         );
         assert!(dep.dep_expense_ledgers.contains("Depreciation A/c"));
         assert_eq!(report.drifts[0].current_name, "Furniture (renamed)");
+    }
+
+    // ---- [partners.*].interest_ledger (financial_statements) ----
+
+    fn book_with_interest_ledger(name: &str, guid: &str, masterid: Option<i64>) -> book::Book {
+        let mut b = book("Cash-in-Hand", "", None);
+        b.ledgers.insert(
+            name.to_string(),
+            ledger(name, "Indirect Expenses", guid, masterid),
+        );
+        b
+    }
+
+    #[test]
+    fn a_partner_interest_ledger_bound_by_identity_follows_a_rename() {
+        let e = engagement(&format!(
+            "\n[ledger_ids]\n\"Interest to Partners\" = {G_ROUNDOFF:?}\n\
+             \n[partners.a]\ninterest_ledger = \"Interest to Partners\"\n"
+        ));
+        let b = book_with_interest_ledger("Partners' Interest", G_ROUNDOFF, None);
+        let (bound, report) = e.bind(&b).unwrap();
+        assert_eq!(
+            bound.partner_interest_ledgers.get("a").map(String::as_str),
+            Some("Partners' Interest")
+        );
+        assert_eq!(report.drifts.len(), 1);
+        assert_eq!(report.drifts[0].current_name, "Partners' Interest");
+    }
+
+    #[test]
+    fn a_bare_partner_interest_ledger_that_matches_binds_unchanged() {
+        let e = engagement("\n[partners.a]\ninterest_ledger = \"Interest to Partners\"\n");
+        let b = book_with_interest_ledger("Interest to Partners", "", None);
+        let (bound, report) = e.bind(&b).unwrap();
+        assert_eq!(
+            bound.partner_interest_ledgers.get("a").map(String::as_str),
+            Some("Interest to Partners")
+        );
+        assert!(report.drifts.is_empty());
+    }
+
+    #[test]
+    fn an_unknown_partner_interest_ledger_refuses_naming_its_location() {
+        let e = engagement("\n[partners.a]\ninterest_ledger = \"Interest to Partners\"\n");
+        let b = book_with_interest_ledger("Interest To Partners", "", None); // case differs
+        let err = e.bind(&b).unwrap_err();
+        assert_eq!(err.code(), Some(BIND_NAME_UNKNOWN));
+        assert!(format!("{err}").contains("partners.a.interest_ledger"));
+    }
+
+    #[test]
+    fn a_partner_interest_identity_with_an_unknown_guid_refuses() {
+        let e = engagement(&format!(
+            "\n[ledger_ids]\n\"Interest to Partners\" = {G_OTHER:?}\n\
+             \n[partners.a]\ninterest_ledger = \"Interest to Partners\"\n"
+        ));
+        let b = book_with_interest_ledger("Interest to Partners", G_ROUNDOFF, None);
+        assert_eq!(e.bind(&b).unwrap_err().code(), Some(BIND_GUID_UNKNOWN));
+    }
+
+    #[test]
+    fn a_partner_interest_identity_with_the_wrong_masterid_refuses() {
+        let e = engagement(&format!(
+            "\n[ledger_ids]\n\"Interest to Partners\" = {{ guid = {G_ROUNDOFF:?}, masterid = 9 }}\n\
+             \n[partners.a]\ninterest_ledger = \"Interest to Partners\"\n"
+        ));
+        let b = book_with_interest_ledger("Interest to Partners", G_ROUNDOFF, Some(8));
+        assert_eq!(e.bind(&b).unwrap_err().code(), Some(BIND_MASTERID_MISMATCH));
+    }
+
+    #[test]
+    fn an_identity_used_only_by_a_partner_interest_ledger_is_not_unused() {
+        // Before [partners.*].interest_ledger was a bound location, this label would have been
+        // refused BIND-ID-UNUSED; a genuinely stale second label still is.
+        let used = engagement(&format!(
+            "\n[ledger_ids]\n\"Interest to Partners\" = {G_ROUNDOFF:?}\n\
+             \n[partners.a]\ninterest_ledger = \"Interest to Partners\"\n"
+        ));
+        let b = book_with_interest_ledger("Interest to Partners", G_ROUNDOFF, None);
+        assert!(used.bind(&b).is_ok());
+        let stale = engagement(&format!(
+            "\n[ledger_ids]\n\"Interest to Partners\" = {G_ROUNDOFF:?}\n\"Old Label\" = {G_ROUNDOFF:?}\n\
+             \n[partners.a]\ninterest_ledger = \"Interest to Partners\"\n"
+        ));
+        assert_eq!(stale.bind(&b).unwrap_err().code(), Some(BIND_ID_UNUSED));
+    }
+
+    #[test]
+    fn two_partners_sharing_one_interest_ledger_bind_to_it_once_each() {
+        let e = engagement(
+            "\n[partners.a]\ninterest_ledger = \"Interest to Partners\"\n\
+             \n[partners.b]\ninterest_ledger = \"Interest to Partners\"\n",
+        );
+        let b = book_with_interest_ledger("Interest to Partners", "", None);
+        let (bound, _) = e.bind(&b).unwrap();
+        assert_eq!(bound.partner_interest_ledgers.len(), 2);
+        let distinct: BTreeSet<&String> = bound.partner_interest_ledgers.values().collect();
+        assert_eq!(distinct.len(), 1);
+    }
+
+    #[test]
+    fn the_partners_table_is_read_as_the_reference_reads_it() {
+        // `deed` is not a partner; an empty interest_ledger is not configured; a partner with no
+        // interest_ledger contributes nothing.
+        let e = engagement(
+            "\n[partners.deed]\nreceived = false\n\
+             \n[partners.a]\ninterest_ledger = \"\"\n\
+             \n[partners.b]\ncapital_ledgers = [\"B Capital\"]\n",
+        );
+        assert!(e.partner_interest_ledgers.is_empty());
+        let err = engagement_err("\n[partners.a]\ninterest_ledger = 5\n");
+        assert!(matches!(err, AuditError::Config(_)));
+        assert!(format!("{err}").contains("[partners].a.interest_ledger"));
     }
 
     // ---- the end-to-end proof: a rename bound by identity reproduces the un-renamed figures ----
