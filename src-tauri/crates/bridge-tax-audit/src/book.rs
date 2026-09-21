@@ -109,6 +109,8 @@ pub struct Voucher {
     pub number: String,
     pub status: VoucherStatus,
     pub lines: Vec<LedgerLine>,
+    /// NARRATION, Python-stripped as the reference's adapter reads it; empty when absent.
+    pub narration: String,
 }
 
 #[derive(Debug, Clone)]
@@ -503,6 +505,7 @@ fn load_vouchers(
             number: v.child_text("VOUCHERNUMBER").to_string(),
             status,
             lines,
+            narration: v.child_text("NARRATION").to_string(),
         });
     }
     Ok(PartVouchers {

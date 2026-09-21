@@ -7,8 +7,10 @@ invented.
 ## What these fixtures establish, and what they do not
 
 They establish **parity**: that this crate and the Python reference engine it ports compute
-the same canonical `cash_44ab`, `cash_payments_40a3`, `depreciation`, `financial_statements` and `applicability_44ab` results
-(`docs/tax-audit/parity-spec-v1.md`) from the same bytes. They do **not** establish anything
+the same canonical `cash_44ab`, `cash_payments_40a3`, `depreciation`, `financial_statements`,
+`applicability_44ab`, `trial_balance`, `stale_balances_41_1`, `ledger_scrutiny` and
+`cash_book_integrity` results (`docs/tax-audit/parity-spec-v1.md`) from the same bytes -- the
+synthetic read below, and the edge books (small invented books built directly, not read). They do **not** establish anything
 about Tally. No byte here was served by Tally. The XML follows the element layout Tally uses for
 collection exports (envelope, `CMPINFO` counts, UTF-16LE without a BOM for the group and ledger
 masters, `&#4;` before `Primary`, flags and amounts in Tally's sign), so the parser is exercised
@@ -85,7 +87,10 @@ this fixture is otherwise exercising.
 
 `golden/synthetic.cash_44ab.json`, `golden/synthetic.cash_payments_40a3.json`,
 `golden/synthetic.depreciation.json`, `golden/synthetic.financial_statements.json`,
-`golden/synthetic.financial_statements.noreport.json` and `golden/synthetic.applicability_44ab.json` are the reference Python implementation's own canonical dumps
+`golden/synthetic.financial_statements.noreport.json`, `golden/synthetic.applicability_44ab.json`,
+`golden/synthetic.trial_balance.json`, `golden/synthetic.stale_balances_41_1.json`,
+`golden/synthetic.ledger_scrutiny.json` and `golden/synthetic.cash_book_integrity.json` are the
+reference Python implementation's own canonical dumps
 for that engagement and read: its `tally-read-v1` adapter built the book, the named test ran with
 its AY 2026-27 rules, and its own canonical serialiser produced the result. All three regenerated
 together at reference-implementation commit `04a34da8bfcb71b2093c0cc66b19d11e3d05ded1`
@@ -194,6 +199,77 @@ All six goldens were regenerated at reference-implementation commit
 line posts to a ledger the book's masters carry): each gains only `"MAP-0"` in
 `book_invariants_evaluated`. The fixture has no such line, so no violation is added.
 
+Batch 1 of the port (2026-09-21) adds `trial_balance`, `stale_balances_41_1`, `ledger_scrutiny`
+and `cash_book_integrity`. Two ledgers are appended after every earlier one (so no earlier ledger's
+masterid or GUID moved): "Quarry Lane Stores" (Sundry Debtors, opening Rs 12,345) and "Harbour Mill
+Supplies" (Sundry Creditors, opening -Rs 12,345), which no voucher touches, so the Trial Balance
+carries each opening unchanged with nil movement: `stale_balances_41_1`'s stale path, its two
+findings and its per-ledger figures run in CI. Their openings are equal and opposite, so TB
+openings still sum as before (POP-3). Only `parts/ledgers.xml`, `parts/tb_fy.xml` and
+`manifest.json` changed. All ten goldens were regenerated at reference-implementation commit
+`57f2619b686b9fea7a8f1f39f8c547012e66757e`, from an archive of that commit, by the invocations
+above (with `--test trial_balance`, `--test stale_balances_41_1`, `--test ledger_scrutiny` and
+`--test cash_book_integrity` for the four new ones, each with no further arguments). The six
+existing goldens came out byte-identical. `ledger_scrutiny` and `cash_book_integrity` already
+reach their finding paths on the unchanged vouchers (7 and 2 findings).
+
+What the synthetic read reaches for batch 1, and what it does not. `cash_book_integrity` has five
+parts; the synthetic golden is non-zero only in part 1 (negative cash) -- its openings sum to zero,
+no own-account terms are configured, and no receipt credits an expense or journal pays cash to one
+-- so parts 2 to 5 are evidenced by the edge books below, not by the synthetic read.
+`ledger_scrutiny`'s large-entry and contra-nature indicators do not fire on it either. Parsing a
+voucher's NARRATION, which the `Book` now carries for `cash_book_integrity`, is tested on a copy of
+the synthetic read in `tests/consumer_rules.rs`.
+
+## The edge books
+
+`edge-books/*.json` are small invented books, each written by hand to reach boundaries and
+branches the synthetic read does not, and each carrying a `comment` naming what it reaches:
+`tb_rows.json` (`trial_balance`: closing-only, zero and ledger-less rows, an empty chain, the
+reserved Primary marker, and the row order), `stale.json` (`stale_balances_41_1`: the Re 1 active
+boundary, a credit-only movement, a debtor with no TB row, zero-amount and optional lines, STL-1
+firing), `scrutiny.json`, `scrutiny_default.json` and `scrutiny_short.json` (`ledger_scrutiny`:
+the Rs 50,000 and 30% boundaries, the last-days window's first day, cash legs, journal-only and
+contra-nature, LSC-1 and its tolerance, no rules table, a 4-day period), and `cash_book.json`
+(`cash_book_integrity`: all five parts, equal minima, CBI-2 firing); and two written by an
+independent reviewer to catch what those miss, `cash_book_misc.json` (own-account terms repeated
+in different case, a Contra between two bank ledgers, zero-amount expense lines, one voucher
+matching on several lines) and `scrutiny_misc.json` (a debit cash leg, a large credit entry, a
+ledger with no TB row, a ledger under both expense groups). Two vouchers have no number
+and a non-ASCII GUID whose 12-byte cut splits a character, so the voucher label must take the last
+12 characters, as the reference does. None of these is a Tally read: they establish that the port
+and the reference agree on the same book, and nothing about reading Tally.
+
+One divergence is known and not fixed here: case mapping. Rust 1.96 carries Unicode 17.0 and the
+reference's Python 3.13 carries 15.1.0, and upper- and lower-casing each differ at 55 code points
+(measured over every code point). All 55 for lower-casing, and 51 for upper-casing, are unassigned in
+15.1; the other 4 (U+019B, U+0264, U+A7D3, U+A7D5) are older lowercase letters whose uppercase
+partner was assigned later. A narration holding one can change
+`cash_book_integrity`'s parts 3 and 5. No edge book holds one; the crate-wide fix pins case
+mapping to the reference's version.
+
+`golden/edge.NAME.TEST.json` is the reference implementation's own canonical dump for that book,
+built with its own model (`tae.model`) by `parity/edge_golden.py` -- company GUID
+`invented-edge-company`, an individual's AY 2026-27 engagement, its own rules with any table the
+book's `rules_without` names removed -- and `golden/edge.tb_rows.trial_balance.order.json` is the
+order in which it emits `trial_balance`'s per-ledger rows, which the canonical dump (sorted by id)
+does not show. All were produced at reference-implementation commit
+`57f2619b686b9fea7a8f1f39f8c547012e66757e`, from an archive of that commit, by
+
+```
+uv run -q --with openpyxl --with xlrd --with python-docx --with jsonschema --with striprtf \
+    --with pdfplumber python parity/edge_golden.py ENGINE tests/fixtures/edge-books/NAME.json \
+    tests/fixtures/golden
+```
+
+once per book. `tests/edge_books.rs` builds each book in Rust, runs each named test with its module
+check, compares the whole dump with `compare` -- every field of it, the spec and test versions
+included -- and compares the row order. Of 52 hand-written
+mutations of the four modules and the NARRATION parse (32 from an independent reviewer, 20 from the
+author; see the PR), the crate's suite fails on every one, and the edge books alone on 50: the other
+two alter how the read's XML is parsed, which the edge books bypass by building the book directly,
+and `tests/consumer_rules.rs` catches both.
+
 ### What the three-client parity does and does not evidence
 
 The local parity run (never committed) compares this crate with the reference implementation on
@@ -203,6 +279,16 @@ there, meaning at least one figure is non-zero. For `depreciation`, the third en
 Its "identical" row compared zeros (and, since 2026-09-21, the "not computed" finding). So the real-
 data evidence for `depreciation`'s arithmetic rests on the first two engagements (61 of 68 and 37 of
 48 figures non-zero). `cash_44ab` and `cash_payments_40a3` are non-vacuous on all three.
+
+Batch 1 (2026-09-21: the Rust port at this branch's head against dumps from the reference
+implementation's engine worktree at `145622de`, whose four batch-1 modules are those of `57f2619b`) is identical
+on all twelve test-client pairs. `trial_balance` and `ledger_scrutiny` are non-vacuous on all three.
+`stale_balances_41_1` finds stale ledgers on the first two only; on the third its figures are
+counts with no stale ledger, so its stale path is evidenced there only by the synthetic read and
+the edge books. `cash_book_integrity` is non-zero only in part 4 (receipts credited to expenses)
+on the first two, and in all five parts on the third, which is the only one configuring
+own-account terms. `ledger_scrutiny`'s contra-nature indicator fires on none of the three: only the
+edge books reach it.
 
 The two `financial_statements` goldens were produced at reference-implementation commit
 `7598ebffcdce8ff2004ce2d93ce96b0340ab633c`, after the fixture change above, by
@@ -238,15 +324,36 @@ uv run -q --with openpyxl --with xlrd --with python-docx --with jsonschema --wit
 | `synthetic.financial_statements.noreport.json` | 15,682 | `d407d2e72b09ad9348e8cfb19dbeff90a3617742ef8a348eb9e29018d1fa0c93` | `golden/synthetic.financial_statements.noreport.json` |
 | `synthetic-report-totals.json` | 134 | `e772509bd6ebc52afc23ef9742b6b1f2a090737533abe3761a7448124411b7e3` | `synthetic-report-totals.json` |
 | `synthetic.applicability_44ab.json` | 10,679 | `b90cf74038dcb1b26e4a9e8236861447e4b10d303027fbeb2e7359ead81778f5` | `golden/synthetic.applicability_44ab.json` |
+| `synthetic.trial_balance.json` | 92,608 | `6236b033586f46684545d189b9e98cf93872775250f296fa60b5adf9bf5fd305` | `golden/synthetic.trial_balance.json` |
+| `synthetic.stale_balances_41_1.json` | 9,820 | `0e58840903da8234858a209606305d1a1d1aa7a33f89ea7441ab98fd633c0e48` | `golden/synthetic.stale_balances_41_1.json` |
+| `synthetic.ledger_scrutiny.json` | 51,342 | `6b0358464627bc7e7d4cc9fd206cc2f4564ed7a35a1b769d303e5d0986d1470e` | `golden/synthetic.ledger_scrutiny.json` |
+| `synthetic.cash_book_integrity.json` | 15,221 | `2ee1cbc0de9d5087956c4115610c74a8cdd15cc361296dd09b685363bdf74289` | `golden/synthetic.cash_book_integrity.json` |
+| `cash_book.json` | 8,499 | `1ae602f22368e3b549ce1430770f097758f13efb716025bcb2bab2a2e4a34f11` | `edge-books/cash_book.json` |
+| `cash_book_misc.json` | 5,333 | `23bd18a9b41d3768ce4cba9c9b5243b0822316e5fa7ab0308b83226c581c93f0` | `edge-books/cash_book_misc.json` |
+| `scrutiny.json` | 7,211 | `047e7ca918611b43b7480fef16841fadb54016360b16ebca30e9c94df05c3fb4` | `edge-books/scrutiny.json` |
+| `scrutiny_default.json` | 1,108 | `04bf6e5efb9c45601803624f8931ee563f23fbc502580fcc3c28b6870c9dd37e` | `edge-books/scrutiny_default.json` |
+| `scrutiny_misc.json` | 4,300 | `258aae0ba8d75656870d57638345b10d465edabd797f9cce4bab999f39812a8d` | `edge-books/scrutiny_misc.json` |
+| `scrutiny_short.json` | 1,212 | `e60f643456d1b812bb82c24ad581a030c4ae0dcc1c9701560ef1ace44d54b46e` | `edge-books/scrutiny_short.json` |
+| `stale.json` | 3,134 | `3e896344abf36b0469d289d69dabfdc5206ee4998c2df505bed449fb79255059` | `edge-books/stale.json` |
+| `tb_rows.json` | 2,362 | `5e3df2c81094e5ea7577309b48597bc03067a4f9ba09175a610b627b62fc31cd` | `edge-books/tb_rows.json` |
+| `edge.cash_book.cash_book_integrity.json` | 32,683 | `510282f185b850cec19cacb06ec08a82c4d8d9bf3b88fd12e8aae37247584078` | `golden/edge.cash_book.cash_book_integrity.json` |
+| `edge.cash_book_misc.cash_book_integrity.json` | 21,454 | `c955eeca88f6880d43ffb93c5642a37c625c55a334323a6e15f0981097de747c` | `golden/edge.cash_book_misc.cash_book_integrity.json` |
+| `edge.scrutiny.ledger_scrutiny.json` | 69,427 | `52ba969e677ef12c09cf26fb118b6ebca4aace4a4ed5a76f0063e2409475f666` | `golden/edge.scrutiny.ledger_scrutiny.json` |
+| `edge.scrutiny_default.ledger_scrutiny.json` | 8,407 | `03c41d14a83cd4da0bb94e026f93dc36438270b9a430d84f67967ed7339e58b7` | `golden/edge.scrutiny_default.ledger_scrutiny.json` |
+| `edge.scrutiny_misc.ledger_scrutiny.json` | 44,609 | `920f462e1642ea33f8249f3bece1fded847ee83886bc678a26f46678628dcf45` | `golden/edge.scrutiny_misc.ledger_scrutiny.json` |
+| `edge.scrutiny_short.ledger_scrutiny.json` | 8,638 | `9cd03cab0d2c3daebf60368faf9130366d19726963b0815dc72758fa62ef1112` | `golden/edge.scrutiny_short.ledger_scrutiny.json` |
+| `edge.stale.stale_balances_41_1.json` | 9,839 | `39a7bef9ed505d7ec78806d1b6ab524eeaaccc23aac95721a1f65a6b6bc37319` | `golden/edge.stale.stale_balances_41_1.json` |
+| `edge.tb_rows.trial_balance.json` | 14,783 | `870dd45e33e6350394c42d3e4c0ed5ec5be3f875b5a131e4e812682d88c8f9b6` | `golden/edge.tb_rows.trial_balance.json` |
+| `edge.tb_rows.trial_balance.order.json` | 219 | `2ace3be45ee1cd6ae4757727e947e07fd2ca3600a83f480b279bdda181d5f43d` | `golden/edge.tb_rows.trial_balance.order.json` |
 | `synthetic-turnover-inputs.json` | 153 | `970500728d9d0447cb3fe1b6e870d5fea2c3a1bb919da05f1d601d4ba6f66929` | `synthetic-turnover-inputs.json` |
 | `synthetic-engagement.toml` | 2,821 | `c179b7ebcc9a03c9a4d836c62298aaa5841ee2bf20f7df51bd1010f83a06c68b` | `synthetic-engagement.toml` |
-| `manifest.json` | 9,711 | `6872873e193231239b7e2bf38ef7d482dd8cf7c43fb00ab76b0bc0dd07e8833a` | `synthetic-read/manifest.json` |
+| `manifest.json` | 9,711 | `d3948085c8466002c269133fd59c5f6361acab028ff6db74bd1fd6d23f7271a7` | `synthetic-read/manifest.json` |
 | `company_object.xml` | 606 | `f1b6fe4e6b6cc406a4ae92ce0ef62a6c79a88a99ac83b1888989a98fbee967b4` | `synthetic-read/parts/company_object.xml` |
 | `groups.xml` | 8,102 | `12e4d994960ecd768cd33fb4565f19b140a765d3f9f4982dbcfe1a108d9e5214` | `synthetic-read/parts/groups.xml` |
 | `high_water_after.xml` | 643 | `0d482540a4ac4beebfe19e5f5dd695e748084ee1779bf80b012b5bd489a17eaa` | `synthetic-read/parts/high_water_after.xml` |
 | `high_water_before.xml` | 643 | `0d482540a4ac4beebfe19e5f5dd695e748084ee1779bf80b012b5bd489a17eaa` | `synthetic-read/parts/high_water_before.xml` |
-| `ledgers.xml` | 26,356 | `824dc80ffdc97e0b396c5d810b553e55f978fa9c14c65c19b9da0452a85df896` | `synthetic-read/parts/ledgers.xml` |
-| `tb_fy.xml` | 12,942 | `8640ebe7761fffab0b9232cc19fb83ae82c9a2500e37b59a5aa090614057f1e4` | `synthetic-read/parts/tb_fy.xml` |
+| `ledgers.xml` | 27,528 | `89fce4866d4cb45934f50764c6de618421adab52ea0c8b543af02f1e1a7f944e` | `synthetic-read/parts/ledgers.xml` |
+| `tb_fy.xml` | 13,497 | `261c76d9756be12783e98ec27f19bc4d7960cd47fa62c511639bf285f4bb4213` | `synthetic-read/parts/tb_fy.xml` |
 | `voucher_status_list.json` | 249 | `c7959e4e91a445f774ff2a5eaad4f8968f6fc82e21622d5168ececf9b0a1aa78` | `synthetic-read/parts/voucher_status_list.json` |
 | `vouchers_h1.xml` | 50,762 | `993dc982021b41efb7303a736d70a6c846de87a8cd815ec8c7d049bdad759884` | `synthetic-read/parts/vouchers_h1.xml` |
 | `vouchers_h2.xml.gz` | 1,156 | `cd9cb1f339141bc1af8585fd16c445f21016dccbbccd5cd21d1bd82c1feb41b1` | `synthetic-read/parts/vouchers_h2.xml.gz` |

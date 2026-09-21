@@ -1,0 +1,544 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "trial_balance",
+  "test_version": "1",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "1430e3c5655e7b13",
+  "population_note_text": "Tally's own Trial Balance export for the period; no voucher is re-read here.",
+  "figures": [
+    {
+      "id": "trial_balance.ledger_rows_count",
+      "value": 6,
+      "unit": "count",
+      "definition_sha256_16": "799f3a578b67bb08",
+      "definition_text": "Ledgers with any opening, movement or closing in the period.",
+      "evidence": []
+    },
+    {
+      "id": "trial_balance.tb_closing_3b5eb05b",
+      "value": 10,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Ghost Row",
+          "label": "Ghost Row"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_3e77fa30",
+      "value": -500,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Beta Traders",
+          "label": "Beta Traders"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_6b9742ab",
+      "value": 400,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Gamma Rent",
+          "label": "Gamma Rent"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_95423751",
+      "value": 900,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Alpha Stores",
+          "label": "Alpha Stores"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_ae57d608",
+      "value": 50,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Delta Chainless",
+          "label": "Delta Chainless"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_closing_c5ce3cf7",
+      "value": -1350,
+      "unit": "paise",
+      "definition_sha256_16": "a4ac582c6d1edf85",
+      "definition_text": "Closing balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Zeta Cash",
+          "label": "Zeta Cash"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_3b5eb05b",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Ghost Row",
+          "label": "Ghost Row"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_3e77fa30",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Beta Traders",
+          "label": "Beta Traders"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_6b9742ab",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Gamma Rent",
+          "label": "Gamma Rent"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_95423751",
+      "value": 300,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Alpha Stores",
+          "label": "Alpha Stores"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_ae57d608",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Delta Chainless",
+          "label": "Delta Chainless"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_credit_c5ce3cf7",
+      "value": 300,
+      "unit": "paise",
+      "definition_sha256_16": "f69a73eb9de60cc2",
+      "definition_text": "Credits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Zeta Cash",
+          "label": "Zeta Cash"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_3b5eb05b",
+      "value": 10,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Ghost Row",
+          "label": "Ghost Row"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_3e77fa30",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Beta Traders",
+          "label": "Beta Traders"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_6b9742ab",
+      "value": 400,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Gamma Rent",
+          "label": "Gamma Rent"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_95423751",
+      "value": 200,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Alpha Stores",
+          "label": "Alpha Stores"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_ae57d608",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Delta Chainless",
+          "label": "Delta Chainless"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_debit_c5ce3cf7",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "f5934a8122c04df0",
+      "definition_text": "Debits in the period per the Trial Balance.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Zeta Cash",
+          "label": "Zeta Cash"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_3b5eb05b",
+      "value": "(group not in the masters)",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Ghost Row",
+          "label": "Ghost Row"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_3e77fa30",
+      "value": "Current Liabilities > Sundry Creditors",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Beta Traders",
+          "label": "Beta Traders"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_6b9742ab",
+      "value": "Primary > Indirect Expenses",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Gamma Rent",
+          "label": "Gamma Rent"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_95423751",
+      "value": "Current Assets > Sundry Debtors",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Alpha Stores",
+          "label": "Alpha Stores"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_ae57d608",
+      "value": "(group not in the masters)",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Delta Chainless",
+          "label": "Delta Chainless"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_group_c5ce3cf7",
+      "value": "Current Assets > Cash-in-Hand",
+      "unit": "text",
+      "definition_sha256_16": "5c791b5aad2328ac",
+      "definition_text": "The ledger's Tally group chain, primary group first.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Zeta Cash",
+          "label": "Zeta Cash"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_3b5eb05b",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Ghost Row",
+          "label": "Ghost Row"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_3e77fa30",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Beta Traders",
+          "label": "Beta Traders"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_6b9742ab",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Gamma Rent",
+          "label": "Gamma Rent"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_95423751",
+      "value": 1000,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Alpha Stores",
+          "label": "Alpha Stores"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_ae57d608",
+      "value": 50,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Delta Chainless",
+          "label": "Delta Chainless"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.tb_opening_c5ce3cf7",
+      "value": -1050,
+      "unit": "paise",
+      "definition_sha256_16": "20b5722ff1ca7a64",
+      "definition_text": "Opening balance per the Trial Balance (Dr positive).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Zeta Cash",
+          "label": "Zeta Cash"
+        }
+      ]
+    },
+    {
+      "id": "trial_balance.total_closing",
+      "value": -490,
+      "unit": "paise",
+      "definition_sha256_16": "0e551969baf93db4",
+      "definition_text": "Sum of closings (Dr positive); equals the opening difference when the period's entries balance.",
+      "evidence": []
+    },
+    {
+      "id": "trial_balance.total_credit",
+      "value": 600,
+      "unit": "paise",
+      "definition_sha256_16": "c26cae3f33447f4c",
+      "definition_text": "Sum of the credit column as Tally exports it.",
+      "evidence": []
+    },
+    {
+      "id": "trial_balance.total_debit",
+      "value": 610,
+      "unit": "paise",
+      "definition_sha256_16": "8e595340031a8442",
+      "definition_text": "Sum of the debit column as Tally exports it (a Stock-in-Hand ledger's column can carry stock values that do not move its closing, so this need not equal the credit column).",
+      "evidence": []
+    },
+    {
+      "id": "trial_balance.total_opening",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "e9f4abadf9015380",
+      "definition_text": "Sum of openings (Dr positive); non-zero is Tally's 'Difference in opening balances'.",
+      "evidence": []
+    }
+  ],
+  "findings": [],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-0",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3"
+  ],
+  "book_invariant_violations": [
+    {
+      "invariant": "POP-1",
+      "subject": "Beta Traders",
+      "detail": "vouchers 0 vs TB movement -500 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Gamma Rent",
+      "detail": "vouchers 0 vs TB movement 400 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Zeta Cash",
+      "detail": "vouchers 0 vs TB movement -300 paise"
+    },
+    {
+      "invariant": "POP-3",
+      "subject": "closing_paise",
+      "detail": "TB closing_paise sums to -490 paise"
+    }
+  ],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [
+    {
+      "invariant": "EVID-1",
+      "subject": "trial_balance",
+      "detail": "unresolved ledger:Ghost Row"
+    },
+    {
+      "invariant": "EVID-1",
+      "subject": "trial_balance",
+      "detail": "unresolved ledger:Ghost Row"
+    },
+    {
+      "invariant": "EVID-1",
+      "subject": "trial_balance",
+      "detail": "unresolved ledger:Ghost Row"
+    },
+    {
+      "invariant": "EVID-1",
+      "subject": "trial_balance",
+      "detail": "unresolved ledger:Ghost Row"
+    },
+    {
+      "invariant": "EVID-1",
+      "subject": "trial_balance",
+      "detail": "unresolved ledger:Ghost Row"
+    }
+  ],
+  "module_invariants_evaluated": [
+    "trial_balance.check_invariants"
+  ],
+  "module_invariant_violations": [
+    {
+      "invariant": "trial_balance.check_invariants",
+      "subject": "trial_balance",
+      "detail": "TB-2: the period's movements (closing less opening) sum to -490 paise, not zero"
+    }
+  ]
+}
