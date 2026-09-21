@@ -186,10 +186,10 @@
  {
   "id": "M24",
   "by": "reviewer",
-  "what": "cbi: narration key ASCII-only upper",
-  "file": "src/cash_book_integrity.rs",
-  "from": "    text.to_uppercase()\n",
-  "to": "    text.to_ascii_uppercase()\n"
+  "what": "cbi: narration key ASCII-only upper (retargeted to support::py_upper, which the narration key now uses) (retargeted to support::py_upper, which the narration key now uses)",
+  "file": "src/support.rs",
+  "from": "            } else {\n                c.to_uppercase().collect()\n            };",
+  "to": "            } else {\n                vec![c.to_ascii_uppercase()]\n            };"
  },
  {
   "id": "M25",
@@ -514,10 +514,10 @@
  {
   "id": "X13",
   "by": "reviewer",
-  "what": "cbi: ignore the Payment/other-type terms guard via lower-case",
-  "file": "src/cash_book_integrity.rs",
-  "from": "fn upper(text: &str) -> String {\n    text.to_uppercase()",
-  "to": "fn upper(text: &str) -> String {\n    text.to_lowercase()"
+  "what": "cbi: ignore the Payment/other-type terms guard via lower-case (retargeted to support::py_upper) (retargeted to support::py_upper)",
+  "file": "src/support.rs",
+  "from": "            } else {\n                c.to_uppercase().collect()\n            };",
+  "to": "            } else {\n                c.to_lowercase().collect()\n            };"
  },
  {
   "id": "X14",
