@@ -176,6 +176,7 @@
   ],
   "book_invariants_evaluated": [
     "ID-1",
+    "MAP-0",
     "MAP-1",
     "POP-0",
     "POP-1",
