@@ -316,6 +316,21 @@ struct ReadVoucher {
     entries: Vec<ReadEntry>,
 }
 
+impl super::WindowRow for ReadVoucher {
+    fn window_date(&self) -> Option<&str> {
+        self.date.as_deref()
+    }
+    fn window_alter_id(&self) -> Option<u64> {
+        self.alter_id
+    }
+    fn window_guid(&self) -> Option<&str> {
+        self.guid.as_deref()
+    }
+    fn window_master_id(&self) -> Result<Option<u64>, String> {
+        super::master_id_of(self.master_id.as_deref())
+    }
+}
+
 /// A complete collection admitted before either corroboration or attribution.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ImportReadSource {
@@ -613,7 +628,9 @@ impl Server {
                     &company.name,
                     (&date_from, &date_to),
                     super::WindowPlanSource::Estimate {
-                        known_high_water: mark.value,
+                        known_marks: mark.value.zip(mark.master_value).map(
+                            |(vouchers, masters)| super::CompanyMarks { vouchers, masters },
+                        ),
                     },
                 )
                 .await?;
@@ -622,6 +639,9 @@ impl Server {
             }
             let (preflight, preflight_evidence) = (preflight_read.source, preflight_read.evidence);
             accumulated = combine_evidence(accumulated.clone(), preflight_evidence.clone());
+            if let Some(closing) = preflight_read.closing_evidence {
+                accumulated = combine_evidence(accumulated.clone(), closing);
+            }
             verification_window_identities(&preflight, &date_from, &date_to)?;
             let amendment = match &lineage {
                 Some(lineage) => match lineage.compare_and_swap(&payload.vouchers, &preflight)? {
@@ -806,7 +826,7 @@ impl Server {
                     &identity,
                     &company.name,
                     window,
-                    super::WindowPlanSource::Estimate { known_high_water: None },
+                    super::WindowPlanSource::Estimate { known_marks: None },
                 )
                 .await?;
             if let Some(preflight) = observed_read.preflight_evidence {
@@ -814,6 +834,9 @@ impl Server {
             }
             let (observed, observed_evidence) = (observed_read.source, observed_read.evidence);
             accumulated = combine_evidence(accumulated.clone(), observed_evidence.clone());
+            if let Some(closing) = observed_read.closing_evidence {
+                accumulated = combine_evidence(accumulated.clone(), closing);
+            }
             // The corroborating read replays the ranges the first one actually
             // read, rather than planning again: it must observe the same parts.
             let corroboration_read = self
@@ -821,12 +844,18 @@ impl Server {
                     &identity,
                     &company.name,
                     window,
-                    super::WindowPlanSource::Replay(observed_read.reads),
+                    super::WindowPlanSource::Replay {
+                        parts: observed_read.reads,
+                        witness: observed_read.witness,
+                    },
                 )
                 .await?;
             let (corroboration, corroboration_evidence) =
                 (corroboration_read.source, corroboration_read.evidence);
             accumulated = combine_evidence(accumulated.clone(), corroboration_evidence.clone());
+            if let Some(closing) = corroboration_read.closing_evidence {
+                accumulated = combine_evidence(accumulated.clone(), closing);
+            }
             // The window may have been served in parts, so there is no single
             // response to hash. The evidence's own response digest already folds
             // every part that was read, which is the honest commitment here.
@@ -1022,7 +1051,9 @@ impl Server {
             source,
             evidence: read.evidence,
             preflight_evidence: read.preflight_evidence,
+            closing_evidence: read.closing_evidence,
             reads: read.reads,
+            witness: read.witness,
         })
     }
 
@@ -2179,7 +2210,11 @@ struct VerificationWindowRead {
     source: ImportReadSource,
     evidence: Evidence,
     preflight_evidence: Option<Evidence>,
+    /// The closing bracket, read after the data parts.
+    closing_evidence: Option<Evidence>,
     reads: Vec<super::WindowPart>,
+    /// What a corroborating replay of this read must carry.
+    witness: Option<super::WindowWitness>,
 }
 
 pub(super) fn render_import_verification_read(company: &str, from: &str, to: &str) -> String {

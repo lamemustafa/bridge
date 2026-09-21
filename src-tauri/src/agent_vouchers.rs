@@ -82,13 +82,13 @@ pub(crate) async fn selected_voucher_operation_for_verified(
             .read_entry_wildcard_window(&identity, &company.name, &from, &to, None)
             .await?;
         accumulate_evidence(&mut accumulated, read.all_evidence());
-        let source_high_water = read.high_water;
+        let source_marks = read.witness.as_ref().map(|witness| witness.marks);
         let mut rows = validate_then_filter_voucher_rows(read.rows, &from, &to, None)?;
         let mut result_state = "complete";
         let mut corroboration_reason = None;
         if rows.is_empty() {
             let (read_evidence, partial, reason) = server
-                .corroborate_empty_voucher_read(&identity, &company.name, &from, &to, None, source_high_water)
+                .corroborate_empty_voucher_read(&identity, &company.name, &from, &to, None, source_marks)
                 .await?;
             accumulate_evidence(&mut accumulated, read_evidence);
             if partial {
@@ -163,14 +163,14 @@ impl Server {
         from: &str,
         to: &str,
         ledger: Option<&str>,
-        known_high_water: Option<u64>,
+        known_marks: Option<CompanyMarks>,
     ) -> Result<(Evidence, bool, Option<&'static str>), ToolFailure> {
         let (wider_from, wider_to) = widened_window(from, to)?;
         // The window itself was empty, but the day either side of it need not
         // be, and this read uses the entry wildcard: it is bounded like any
         // other windowed read rather than trusted to be small.
         let wider = self
-            .read_entry_wildcard_window(identity, company, &wider_from, &wider_to, known_high_water)
+            .read_entry_wildcard_window(identity, company, &wider_from, &wider_to, known_marks)
             .await?;
         let mut evidence = wider.all_evidence();
         let wider_rows = wider.rows;
@@ -210,7 +210,7 @@ impl Server {
         company: &str,
         from: &str,
         to: &str,
-        known_high_water: Option<u64>,
+        known_marks: Option<CompanyMarks>,
     ) -> Result<WindowReadOutcome<Value>, ToolFailure> {
         let shape = VoucherReadShape::EntryWildcard;
         self.read_voucher_window(
@@ -219,7 +219,7 @@ impl Server {
             from,
             to,
             shape,
-            WindowPlanSource::Estimate { known_high_water },
+            WindowPlanSource::Estimate { known_marks },
             WindowReadLimits::for_shape(shape),
             |xml| parse_agent_rows(xml, identity.company_guid()),
         )

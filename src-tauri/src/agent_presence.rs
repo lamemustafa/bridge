@@ -116,7 +116,7 @@ impl Server {
                 .read_entry_wildcard_window(&identity, &company.name, &from, &to, None)
                 .await?;
             accumulate(&mut accumulated, read.all_evidence());
-            let source_high_water = read.high_water;
+            let source_marks = read.witness.as_ref().map(|witness| witness.marks);
             let rows = validate_then_filter_voucher_rows(read.rows, &from, &to, None)?;
 
             // The window is independent evidence about which ledgers exist.
@@ -157,7 +157,7 @@ impl Server {
                         &from,
                         &to,
                         None,
-                        source_high_water,
+                        source_marks,
                     )
                     .await?;
                 accumulate(&mut accumulated, read_evidence);

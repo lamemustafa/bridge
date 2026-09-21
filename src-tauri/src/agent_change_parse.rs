@@ -3,7 +3,7 @@ use super::*;
 
 #[path = "agent_company_checkpoint.rs"]
 mod company_checkpoint;
-pub(super) use company_checkpoint::parse_company_high_water;
+pub(super) use company_checkpoint::{parse_company_high_water, parse_company_marks};
 
 pub(super) fn parse_master_domain_high_water(xml: &str) -> Result<u64, String> {
     validate_agent_envelope(xml)?;

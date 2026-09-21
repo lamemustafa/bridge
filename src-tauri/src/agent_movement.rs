@@ -29,9 +29,7 @@ impl Server {
                     &identity,
                     &company.name,
                     (from.clone(), to.clone()),
-                    WindowPlanSource::Estimate {
-                        known_high_water: None,
-                    },
+                    WindowPlanSource::Estimate { known_marks: None },
                     None,
                 )
                 .await?;
@@ -45,6 +43,9 @@ impl Server {
             let read_evidence = opening_read.evidence;
             let voucher_snapshot = read_evidence.response_sha256.clone();
             evidence = combine_evidence(evidence.clone(), read_evidence);
+            if let Some(closing) = opening_read.closing {
+                evidence = combine_evidence(evidence.clone(), closing);
+            }
             let (corroborating_ledgers, corroboration_evidence) =
                 self.read_movement_ledgers(&identity, opening_date).await?;
             evidence = combine_evidence(evidence.clone(), corroboration_evidence);
@@ -52,19 +53,29 @@ impl Server {
             // the voucher source across the final ledger read as well; an
             // AlterID high-water alone cannot establish deletion stability.
             // Replayed, not planned again: the two snapshots are compared by
-            // hash, so they must be read in the same parts.
-            let closing_voucher_evidence = self
+            // hash, so they must be read in the same parts. The replay carries
+            // the first read's witness and closes against its marks, so a
+            // voucher created above the first read's AlterID ceilings refuses
+            // it, where the two old-ceiling snapshots alone would still match.
+            let marks = opening_read.witness.as_ref().map(|witness| witness.marks);
+            let closing_read = self
                 .read_movement_vouchers(
                     &identity,
                     &company.name,
                     (from, to),
-                    WindowPlanSource::Replay(opening_read.reads),
-                    opening_read.high_water,
+                    WindowPlanSource::Replay {
+                        parts: opening_read.reads,
+                        witness: opening_read.witness,
+                    },
+                    marks,
                 )
-                .await?
-                .evidence;
+                .await?;
+            let closing_voucher_evidence = closing_read.evidence;
             let closing_snapshot = closing_voucher_evidence.response_sha256.clone();
             evidence = combine_evidence(evidence.clone(), closing_voucher_evidence);
+            if let Some(closing) = closing_read.closing {
+                evidence = combine_evidence(evidence.clone(), closing);
+            }
             if voucher_snapshot != closing_snapshot {
                 return Err("voucher_snapshot_drifted".to_string().into());
             }
@@ -194,7 +205,7 @@ impl Server {
         company: &str,
         (from, to): (String, String),
         source: WindowPlanSource,
-        known_high_water: Option<u64>,
+        known_marks: Option<CompanyMarks>,
     ) -> Result<MovementWindowRead, ToolFailure> {
         let company = ValidatedCompanyName::new(company.to_string())
             .map_err(|_| "company_name_invalid".to_string())?;
@@ -214,7 +225,12 @@ impl Server {
             )
             .await?;
         let preflight = read.preflight_evidence;
-        let high_water = read.high_water.or(known_high_water);
+        let closing = read.closing_evidence;
+        let witness = read.witness;
+        let marks = witness
+            .as_ref()
+            .map(|witness| witness.marks)
+            .or(known_marks);
         let reads = read.reads;
         let mut evidence = read.evidence;
         let voucher_rows = read.rows;
@@ -229,7 +245,7 @@ impl Server {
                         range.from_yyyymmdd(),
                         range.to_yyyymmdd(),
                         None,
-                        high_water,
+                        marks,
                     )
                     .await?;
                 evidence = combine_evidence(evidence.clone(), corroboration);
@@ -245,13 +261,17 @@ impl Server {
                 page,
                 evidence,
                 preflight,
+                closing,
                 reads,
-                high_water,
+                witness,
             }),
-            Err(failure) => Err(failure.with_prior_evidence(match preflight {
-                Some(estimate) => combine_evidence(estimate, evidence),
-                None => evidence,
-            })),
+            Err(failure) => Err(failure.with_prior_evidence(
+                [preflight, Some(evidence), closing]
+                    .into_iter()
+                    .flatten()
+                    .reduce(combine_evidence)
+                    .expect("the data evidence is present"),
+            )),
         }
     }
 }
@@ -262,8 +282,11 @@ struct MovementWindowRead {
     /// The voucher source (and any empty-window corroboration) alone.
     evidence: Evidence,
     preflight: Option<Evidence>,
+    /// The closing bracket, after the data parts.
+    closing: Option<Evidence>,
     reads: Vec<WindowPart>,
-    high_water: Option<u64>,
+    /// What the corroborating replay must carry.
+    witness: Option<WindowWitness>,
 }
 
 /// Which column a ledger entry moves, taken from `AMOUNT`'s own sign.

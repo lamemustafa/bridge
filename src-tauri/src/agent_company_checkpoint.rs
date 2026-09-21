@@ -6,6 +6,46 @@ pub(in crate::agent) fn parse_company_high_water(
     xml: &str,
     expected_guid: &str,
 ) -> Result<Value, String> {
+    let row = company_high_water_row(xml, expected_guid)?;
+    // Observe the master axis first. A company that has never held a voucher
+    // returns ALTMSTID but omits ALTVCHID entirely, and `pre_import_mark` reads
+    // the resulting `voucher_checkpoint_not_observed` as that empty book.
+    //
+    // This row already matched the requested company — `matched` guarantees that
+    // whichever order these run in. What the ordering adds is narrower and is the
+    // whole basis of the distinction: that the master axis was itself observed as
+    // a number. Without it, a row carrying NEITHER axis would return the voucher
+    // code, and a response Bridge could not read would be reported to the caller
+    // as an empty book.
+    let altmstid = observed_checkpoint(row.get("ALTMSTID"), "master")?;
+    let altvchid = observed_checkpoint(row.get("ALTVCHID"), "voucher")?;
+    Ok(json!({"altvchid": altvchid, "altmstid": altmstid}))
+}
+
+/// Both change marks of one company, `(vouchers, masters)`, with a company that
+/// has never held a voucher reported as a voucher mark of zero.
+///
+/// The master axis must itself be observed, exactly as in
+/// [`parse_company_high_water`]: only a row that carries `ALTMSTID` and omits
+/// `ALTVCHID` is that empty book. A row carrying neither is refused.
+pub(in crate::agent) fn parse_company_marks(
+    xml: &str,
+    expected_guid: &str,
+) -> Result<(u64, u64), String> {
+    let row = company_high_water_row(xml, expected_guid)?;
+    let masters = observed_checkpoint(row.get("ALTMSTID"), "master")?;
+    let vouchers = match observed_checkpoint(row.get("ALTVCHID"), "voucher") {
+        Ok(vouchers) => vouchers,
+        Err(code) if code == VOUCHER_CHECKPOINT_NOT_OBSERVED => 0,
+        Err(code) => return Err(code),
+    };
+    Ok((vouchers, masters))
+}
+
+fn company_high_water_row(
+    xml: &str,
+    expected_guid: &str,
+) -> Result<BTreeMap<String, String>, String> {
     let marked = mark_agent_xml(xml);
     let xml = marked.as_ref();
     validate_agent_envelope(xml)?;
@@ -98,20 +138,7 @@ pub(in crate::agent) fn parse_company_high_water(
         }
     }
     scope.finish()?;
-    let row = matched.ok_or_else(|| "company_high_water_identity_absent".to_string())?;
-    // Observe the master axis first. A company that has never held a voucher
-    // returns ALTMSTID but omits ALTVCHID entirely, and `pre_import_mark` reads
-    // the resulting `voucher_checkpoint_not_observed` as that empty book.
-    //
-    // This row already matched the requested company — `matched` guarantees that
-    // whichever order these run in. What the ordering adds is narrower and is the
-    // whole basis of the distinction: that the master axis was itself observed as
-    // a number. Without it, a row carrying NEITHER axis would return the voucher
-    // code, and a response Bridge could not read would be reported to the caller
-    // as an empty book.
-    let altmstid = observed_checkpoint(row.get("ALTMSTID"), "master")?;
-    let altvchid = observed_checkpoint(row.get("ALTVCHID"), "voucher")?;
-    Ok(json!({"altvchid": altvchid, "altmstid": altmstid}))
+    matched.ok_or_else(|| "company_high_water_identity_absent".to_string())
 }
 
 #[cfg(test)]

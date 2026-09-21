@@ -4,6 +4,12 @@ use crate::agent::evidence_from_runtime_read;
 use crate::tally::approved_import::{ApprovedImport, ApprovedImportAdmissionError};
 use bridge_tally_protocol::{parse_import_outcome, TallyImportApplicationStatus};
 
+/// The batch's verification window is one the pre-flight bound (§11c) would
+/// read in parts, but the pre-post check inside the dispatch lease sends it as
+/// one request. Refused before approval; the batch can be posted over a
+/// narrower window.
+pub(super) const IMPORT_POST_WINDOW_NOT_BOUNDED: &str = "import_post_window_not_bounded";
+
 impl Server {
     /// The response path runs only after its interrupted post future is gone.
     /// It may therefore use the endpoint lease to distinguish a locally empty
@@ -158,6 +164,26 @@ impl Server {
                 .map_err(|_| "import_masters_changed".to_string())?;
             let mode = self.qualified_import_profile().await?;
             validate_post_profile_with_evidence(&payload, &mode, &mut accumulated)?;
+            // The pre-post check inside the dispatch lease sends the whole
+            // verification window as one request. `verify_import` may have read
+            // that window in parts under the pre-flight bound (§11c), so the
+            // same bound decides here, before approval, whether one request of
+            // it is predicted within budget; a window it would divide is refused
+            // rather than sent whole inside the lease.
+            let (whole, bound_evidence) = self
+                .window_reads_whole(
+                    &identity,
+                    &company.name,
+                    (&line.date_from, &line.date_to),
+                    crate::agent::VoucherReadShape::ImportVerification,
+                )
+                .await?;
+            if let Some(bound) = bound_evidence {
+                accumulated = combine_evidence(accumulated.clone(), bound);
+            }
+            if !whole {
+                return Err(IMPORT_POST_WINDOW_NOT_BOUNDED.to_string().into());
+            }
             let request = ApprovedImport::confirm(
                 xml,
                 &preview,

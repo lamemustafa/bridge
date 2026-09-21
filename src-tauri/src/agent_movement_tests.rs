@@ -285,7 +285,10 @@ async fn movement_read_preserves_observed_count_after_accounting_exclusions() {
                 &observed.name,
                 (date.clone(), date),
                 WindowPlanSource::Estimate {
-                    known_high_water: Some(3),
+                    known_marks: Some(CompanyMarks {
+                        vouchers: 3,
+                        masters: 7,
+                    }),
                 },
                 None,
             )

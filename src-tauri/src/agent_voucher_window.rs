@@ -39,20 +39,17 @@ pub(super) const WINDOW_READ_BUDGET_BYTES: u64 =
 /// above that rather than assuming it.
 const CENSUS_WIRE_BYTES_PER_VOUCHER: u64 = 4 * 1024;
 
-/// The most census requests one window read may spend, planned and reactive
-/// together. Above it the volume is unestimated and the read is refused.
-const MAX_CENSUS_READS: usize = 64;
+/// The most census requests one window read may spend. A book whose voucher
+/// mark needs more AlterID spans than this to be counted is refused as
+/// [`BOOK_TOO_LARGE`] before any census is sent: at 8,192 rows a span, a mark
+/// above about 2.1 million. That is a product limit of the bounded read, not
+/// an estimate; see [`census_spans`].
+pub(super) const MAX_CENSUS_READS: usize = 256;
 
 /// The most planned data reads one window read may spend before it is refused
 /// as needing a narrower window. The same ceiling the outstandings scanner uses
 /// for its own segment pairs.
 pub(super) const MAX_PLANNED_READS: usize = 128;
-
-/// How much denser than its average a census assumes the next date range to
-/// be, once a first range has been counted. Census rows are light, so an
-/// underestimate costs a light response larger than planned, and a census
-/// response the transport refuses is halved by date.
-const CENSUS_DENSITY_FACTOR: u64 = 2;
 
 /// The request shapes this bound plans for, each with the per-voucher cost to
 /// assume when nothing about the book has been measured.
@@ -217,6 +214,49 @@ pub(super) const VOLUME_UNESTIMATED: &str = "voucher_window_volume_unestimated";
 /// its parts may not describe one state of the book. See `read_voucher_window`.
 pub(super) const WINDOW_CHANGED_DURING_READ: &str = "voucher_window_changed_during_read";
 
+/// A part returned vouchers that are not the ones its plan counted for it: a row
+/// outside the part's dates or AlterID span, or a population that differs from
+/// the census for that part. Either Tally did not honour the part's filter or the
+/// book changed after it was counted; both refuse, because a union of parts is
+/// only the window's vouchers if every part holds exactly its own.
+pub(super) const PART_NOT_ADMITTED: &str = "voucher_window_part_not_admitted";
+
+/// A replay of a divided read arrived without the witness of the read it
+/// repeats. A replay of AlterID-limited parts reads only up to the first read's
+/// ceilings, so without that read's marks it cannot see a voucher created above
+/// them, and its responses can match the first read's exactly while both miss it.
+pub(super) const REPLAY_UNWITNESSED: &str = "voucher_window_replay_unwitnessed";
+
+/// The book's voucher mark needs more census spans than one read may spend.
+/// Narrowing the window does not help — a census walks the book's AlterIDs
+/// whatever the window — so this is a product limit, refused by name before any
+/// census is sent.
+pub(super) const BOOK_TOO_LARGE: &str = "voucher_window_book_too_large";
+
+/// A company's two change marks (§10): `ALTVCHID` and `ALTMSTID`.
+///
+/// A divided read is bracketed on both. Measured live on TallyPrime 7.1 Silver
+/// (2026-09-21): creating, altering, cancelling, re-dating and deleting a voucher
+/// each advanced the voucher mark, but renaming a ledger advanced only the master
+/// mark — while every voucher export naming that ledger changed. A read
+/// bracketed on the voucher mark alone returned `complete` across a rename made
+/// between two of its parts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct CompanyMarks {
+    pub(super) vouchers: u64,
+    pub(super) masters: u64,
+}
+
+/// What a divided read observed that a replay of it must still hold: the marks
+/// it opened and closed on (equal, or it would have been refused), and the
+/// census its parts were admitted against. A replay reads no census of its own;
+/// it is admitted against this one and closes against these marks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct WindowWitness {
+    pub(super) marks: CompanyMarks,
+    pub(super) census: Option<WindowCensus>,
+}
+
 /// A measured per-voucher cost may replace the shape's default, but never falls
 /// below half of it.
 ///
@@ -235,49 +275,21 @@ pub(super) fn planning_figure(default_bytes_per_voucher: u64, measured: u64) -> 
 /// See [`planning_figure`].
 const MEASURED_FLOOR_DIVISOR: u64 = 2;
 
-/// How many days the next date census may cover.
-///
-/// The first census assumes the book's average density times
-/// [`CENSUS_DENSITY_FACTOR`], because the average hides dense stretches. Later
-/// ones use the density counted so far, times the same factor, but may cover
-/// at most twice the days of the one before: a sparse or empty stretch says
-/// little about the next, and without that cap one empty range would let the
-/// next census span thousands of days. Always at least one day.
-pub(super) fn census_range_days(
-    capacity: u64,
-    prior_density: u64,
-    counted: Option<(u64, u64, u64)>,
-) -> u64 {
-    let days = match counted {
-        None => capacity / prior_density.max(1).saturating_mul(CENSUS_DENSITY_FACTOR),
-        Some((rows, days_counted, previous_days)) => {
-            let density = rows
-                .div_ceil(days_counted.max(1))
-                .max(1)
-                .saturating_mul(CENSUS_DENSITY_FACTOR);
-            (capacity / density).min(previous_days.saturating_mul(2))
-        }
-    };
-    days.max(1)
-}
-
 /// What a census does with a read Tally did not serve.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum CensusFailure {
-    /// The response was over the transport cap: count the range in smaller parts.
-    Divide,
-    /// The read timed out. Not retried in any form: the gateway may still be
-    /// building the abandoned response, and more requests queue behind it. The
-    /// window is refused as unestimated.
+    /// The response was over the transport cap, or the read timed out. Every
+    /// census is bounded before it is sent, so neither is divided or retried:
+    /// an oversized census means the per-row figure was wrong, and a timed-out
+    /// one may still be building on the gateway. The window is refused as
+    /// unestimated.
     Refuse,
     /// Any other failure is the caller's, unchanged.
     Propagate,
 }
 
 pub(super) fn census_failure(code: &str) -> CensusFailure {
-    if code == "response_size_limit_exceeded" {
-        CensusFailure::Divide
-    } else if is_window_too_large_code(code) {
+    if code == "response_size_limit_exceeded" || is_window_too_large_code(code) {
         CensusFailure::Refuse
     } else {
         CensusFailure::Propagate
@@ -300,6 +312,18 @@ fn vouchers_per_read(budget: u64, bytes_per_voucher: u64) -> u64 {
 pub(super) struct WindowCensus {
     /// Ascending AlterIDs of the vouchers counted on each day.
     days: BTreeMap<NaiveDate, Vec<u64>>,
+    /// The GUID counted with each AlterID, when the census carried one. Bridge's
+    /// own census always does; a count built from `(day, AlterID)` alone does not,
+    /// and is then admitted on AlterIDs only.
+    guids: BTreeMap<u64, String>,
+}
+
+/// One voucher as a census counted it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct CensusRow {
+    pub(super) day: NaiveDate,
+    pub(super) alter_id: u64,
+    pub(super) guid: String,
 }
 
 impl WindowCensus {
@@ -312,7 +336,46 @@ impl WindowCensus {
             ids.sort_unstable();
             ids.dedup();
         }
-        Self { days }
+        Self {
+            days,
+            guids: BTreeMap::new(),
+        }
+    }
+
+    /// A census as Bridge reads it, with each voucher's GUID. Refused when two
+    /// rows claim one AlterID: AlterIDs are distinct within a company (§10), so
+    /// such a count does not describe one state of the book.
+    pub(super) fn from_census_rows(rows: impl IntoIterator<Item = CensusRow>) -> Option<Self> {
+        let mut guids = BTreeMap::new();
+        let mut days = Vec::new();
+        for row in rows {
+            if guids
+                .insert(row.alter_id, row.guid.trim().to_ascii_lowercase())
+                .is_some()
+            {
+                return None;
+            }
+            days.push((row.day, row.alter_id));
+        }
+        let mut census = Self::from_rows(days);
+        census.guids = guids;
+        Some(census)
+    }
+
+    /// The vouchers counted in `[from, to]` and inside `span`, if any, as
+    /// AlterID to GUID (when counted).
+    fn population(
+        &self,
+        from: NaiveDate,
+        to: NaiveDate,
+        span: Option<AlterIdSpan>,
+    ) -> BTreeMap<u64, Option<&str>> {
+        self.days
+            .range(from..=to)
+            .flat_map(|(_, ids)| ids.iter().copied())
+            .filter(|id| span.is_none_or(|span| span.holds(*id)))
+            .map(|id| (id, self.guids.get(&id).map(String::as_str)))
+            .collect()
     }
 
     pub(super) fn total(&self) -> u64 {
@@ -549,10 +612,10 @@ fn halve_part(
 
 /// Where a window read's parts come from.
 pub(super) enum WindowPlanSource {
-    /// Estimate the window's volume and plan it. `known_high_water` is a voucher
-    /// high-water mark the caller has just read itself, which saves reading it
-    /// again.
-    Estimate { known_high_water: Option<u64> },
+    /// Estimate the window's volume and plan it. `known_marks` are the company's
+    /// marks the caller has just read itself, which saves reading them again;
+    /// they open the bracket exactly as a mark read here would.
+    Estimate { known_marks: Option<CompanyMarks> },
     /// Plan from a count the caller already holds for exactly this window, and
     /// send no census. See [`WindowCensus`]. No high-water mark is read, so a
     /// divided read is not bracketed: the caller answers for the count being
@@ -561,8 +624,15 @@ pub(super) enum WindowPlanSource {
     #[cfg_attr(not(test), allow(dead_code))]
     Counted(WindowCensus),
     /// Read exactly these parts again, as a corroborating second read of a
-    /// window already planned and read once.
-    Replay(Vec<WindowPart>),
+    /// window already planned and read once. A replay of a divided read must
+    /// carry that read's [`WindowWitness`]: its parts are admitted against the
+    /// witness's census and it closes against the witness's marks, so a voucher
+    /// created above the first read's ceilings refuses the replay instead of
+    /// being missed by both reads alike. Without one it is refused unread.
+    Replay {
+        parts: Vec<WindowPart>,
+        witness: Option<WindowWitness>,
+    },
 }
 
 /// The per-call limits a window read plans under.
@@ -570,6 +640,9 @@ pub(super) enum WindowPlanSource {
 pub(super) struct WindowReadLimits {
     pub(super) budget_bytes: u64,
     pub(super) default_bytes_per_voucher: u64,
+    /// The most data requests one read may dispatch. [`MAX_PLANNED_READS`] in
+    /// production.
+    pub(super) max_reads: usize,
 }
 
 impl WindowReadLimits {
@@ -577,38 +650,109 @@ impl WindowReadLimits {
         Self {
             budget_bytes: WINDOW_READ_BUDGET_BYTES,
             default_bytes_per_voucher: shape.default_wire_bytes_per_voucher(),
+            max_reads: MAX_PLANNED_READS,
         }
     }
 
-    fn census_capacity(self) -> u64 {
-        vouchers_per_read(self.budget_bytes, CENSUS_WIRE_BYTES_PER_VOUCHER).max(1)
+    /// Rows one census request may be asked for. A census is bounded by
+    /// construction — an AlterID span of this width cannot return more rows —
+    /// so it is sized against the whole transport cap (twice the budget), not
+    /// the half-budget that absorbs the error in an estimated data part. Its
+    /// only uncertainty is the per-row figure: 4 KiB is assumed against 2.42 to
+    /// 2.72 KB measured live (§11c.5), so a full census is about 22 MB.
+    pub(super) fn census_capacity(self) -> u64 {
+        vouchers_per_read(
+            self.budget_bytes.saturating_mul(2),
+            CENSUS_WIRE_BYTES_PER_VOUCHER,
+        )
+        .max(1)
     }
+}
+
+/// The identity of one voucher row as a window read admits it. Every read shape
+/// Bridge sends fetches `DATE`, `GUID`, `ALTERID` and `MASTERID`.
+pub(super) trait WindowRow {
+    fn window_date(&self) -> Option<&str>;
+    fn window_alter_id(&self) -> Option<u64>;
+    fn window_guid(&self) -> Option<&str>;
+    /// `Err` when a master ID is present but not a number.
+    fn window_master_id(&self) -> Result<Option<u64>, String>;
+}
+
+impl WindowRow for Value {
+    fn window_date(&self) -> Option<&str> {
+        self["date"].as_str()
+    }
+    fn window_alter_id(&self) -> Option<u64> {
+        self["alter_id"].as_u64()
+    }
+    fn window_guid(&self) -> Option<&str> {
+        self["guid"].as_str()
+    }
+    fn window_master_id(&self) -> Result<Option<u64>, String> {
+        master_id_of(match &self["master_id"] {
+            Value::String(value) => Some(value.as_str()),
+            Value::Number(value) => return Ok(value.as_u64()),
+            _ => None,
+        })
+    }
+}
+
+/// A master ID as Tally renders it, padded with a leading space.
+pub(super) fn master_id_of(value: Option<&str>) -> Result<Option<u64>, String> {
+    value
+        .map(|value| {
+            value
+                .trim()
+                .parse::<u64>()
+                .map_err(|_| "voucher_master_id_invalid".to_string())
+        })
+        .transpose()
 }
 
 pub(super) struct WindowReadOutcome<T> {
     pub(super) rows: Vec<T>,
     /// The data reads alone, folded in order.
     pub(super) evidence: Evidence,
-    /// The pre-flight reads (high water, census, the closing high-water
-    /// bracket), when any were sent. Kept apart so that a proof committing to
-    /// the data read does not silently start committing to a planning estimate.
+    /// The opening pre-flight reads (the marks and the census), when any were
+    /// sent. Kept apart so that a proof committing to the data read does not
+    /// silently start committing to a planning estimate.
     pub(super) preflight_evidence: Option<Evidence>,
+    /// The closing bracket, read after the last data part. Kept apart from the
+    /// opening reads so that every fold of this read's evidence can keep the
+    /// order the requests were sent in.
+    pub(super) closing_evidence: Option<Evidence>,
     /// The parts actually read, in order.
     pub(super) reads: Vec<WindowPart>,
-    /// The voucher high-water mark the plan was bounded by, when one was used,
-    /// so a follow-up read of an adjacent window need not read it again.
-    pub(super) high_water: Option<u64>,
+    /// What a replay of this read must carry. `None` only when no marks were
+    /// read, which is the caller-counted source alone.
+    pub(super) witness: Option<WindowWitness>,
 }
 
 impl<T> WindowReadOutcome<T> {
-    /// Every read this window cost, pre-flight first, for a caller that
-    /// accounts for all of them together.
+    /// Every read this window cost, in the order it was sent: the opening
+    /// pre-flight, the data parts, then the closing bracket.
     pub(super) fn all_evidence(&self) -> Evidence {
-        match &self.preflight_evidence {
-            Some(preflight) => combine_evidence(preflight.clone(), self.evidence.clone()),
-            None => self.evidence.clone(),
-        }
+        chronological(
+            &self.preflight_evidence,
+            &Some(self.evidence.clone()),
+            &self.closing_evidence,
+        )
+        .unwrap_or_else(|| self.evidence.clone())
     }
+}
+
+/// Fold opening, data and closing evidence in the order the requests were sent.
+fn chronological(
+    opening: &Option<Evidence>,
+    data: &Option<Evidence>,
+    closing: &Option<Evidence>,
+) -> Option<Evidence> {
+    [opening, data, closing]
+        .into_iter()
+        .flatten()
+        .cloned()
+        .reduce(combine_evidence)
 }
 
 fn fold_evidence(target: &mut Option<Evidence>, next: Evidence) {
@@ -632,17 +776,23 @@ fn stack_of(plan: &[PlannedRead]) -> Vec<WindowPart> {
     plan.iter().rev().map(PlannedRead::part).collect()
 }
 
-/// A failure carrying every read made before it: pre-flight first, then data.
+/// A failure carrying every read made before it, in the order sent.
 fn with_prior(
     failure: ToolFailure,
     preflight: &Option<Evidence>,
     data: &Option<Evidence>,
 ) -> ToolFailure {
-    let prior = match (preflight.clone(), data.clone()) {
-        (Some(estimate), Some(read)) => Some(combine_evidence(estimate, read)),
-        (estimate, read) => estimate.or(read),
-    };
-    match prior {
+    with_prior_closed(failure, preflight, data, &None)
+}
+
+/// [`with_prior`] for a failure at or after the closing bracket.
+fn with_prior_closed(
+    failure: ToolFailure,
+    preflight: &Option<Evidence>,
+    data: &Option<Evidence>,
+    closing: &Option<Evidence>,
+) -> ToolFailure {
+    match chronological(preflight, data, closing) {
         Some(prior) => failure.with_prior_evidence(prior),
         None => failure,
     }
@@ -655,9 +805,8 @@ enum Preflight {
     /// Counted per day; plan it.
     Counted {
         census: WindowCensus,
-        /// The mark the census was bounded by, when one was read, which the
-        /// closing bracket compares against.
-        high_water: Option<u64>,
+        /// The marks the census was bounded by, when they were read.
+        marks: Option<CompanyMarks>,
     },
 }
 
@@ -667,13 +816,23 @@ impl Server {
     ///
     /// `parse` turns one response into rows. Rows from every part are returned
     /// together in order, so a caller sees what one undivided read would have
-    /// produced and must validate the union, not each part.
+    /// produced.
     ///
-    /// A divided read is bracketed: the voucher high-water mark is read again
-    /// after the last part, and a mark that moved refuses the read. Parts read
-    /// at different moments describe one state of the book only if nothing was
-    /// created or altered between them, and a day read in AlterID spans covers
-    /// only the AlterIDs that existed when it was counted.
+    /// A divided read is admitted part by part and as a whole:
+    ///
+    /// - every row of a part must lie in that part's dates and AlterID span, and
+    ///   when the window was counted, a part's vouchers must be exactly the ones
+    ///   the census counted for it ([`PART_NOT_ADMITTED`]);
+    /// - GUIDs and master IDs must be unique across the union of parts, not
+    ///   only within each response;
+    /// - it is bracketed: both company marks are read again after the last part,
+    ///   and marks that moved refuse the read. Parts read at different moments
+    ///   describe one state of the book only if nothing changed between them,
+    ///   and a day read in AlterID spans covers only the AlterIDs that existed
+    ///   when it was counted.
+    ///
+    /// Every data request counts against the read allowance when it is
+    /// dispatched, including a part divided after Tally could not serve it.
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn read_voucher_window<T, P>(
         &self,
@@ -687,6 +846,7 @@ impl Server {
         mut parse: P,
     ) -> Result<WindowReadOutcome<T>, ToolFailure>
     where
+        T: WindowRow,
         P: FnMut(&str) -> Result<Vec<T>, String>,
     {
         let first = parse_day(from)?;
@@ -695,18 +855,38 @@ impl Server {
             return Err("invalid_date_range".to_string().into());
         }
         let mut preflight = None;
-        let mut high_water = None;
+        let mut opening: Option<CompanyMarks> = None;
         let mut census = None;
         let mut ceiling = 0;
         let mut bytes_per_voucher = limits.default_bytes_per_voucher;
         // A stack whose pops are in order and whose parts always tile the part
         // of the window not yet read, so the rows arrive in order.
         let mut pending: Vec<WindowPart> = match source {
-            WindowPlanSource::Replay(parts) => {
+            WindowPlanSource::Replay { parts, witness } => {
                 for part in &parts {
-                    if parse_day(&part.from)? > parse_day(&part.to)? {
+                    let (part_from, part_to) = (parse_day(&part.from)?, parse_day(&part.to)?);
+                    if part_from > part_to {
                         return Err("invalid_date_range".to_string().into());
                     }
+                    if part_from < first || part_to > last {
+                        return Err("window_not_honoured".to_string().into());
+                    }
+                }
+                match witness {
+                    Some(witness) => {
+                        opening = Some(witness.marks);
+                        ceiling = witness.marks.vouchers.max(
+                            witness
+                                .census
+                                .as_ref()
+                                .map_or(0, WindowCensus::max_alter_id),
+                        );
+                        census = witness.census;
+                    }
+                    None if is_divided(&parts) => {
+                        return Err(REPLAY_UNWITNESSED.to_string().into());
+                    }
+                    None => {}
                 }
                 parts.into_iter().rev().collect()
             }
@@ -718,19 +898,19 @@ impl Server {
                         }
                         whole_or_counted(counted, None, limits)
                     }
-                    WindowPlanSource::Estimate { known_high_water } => self
+                    WindowPlanSource::Estimate { known_marks } => self
                         .estimate_window_volume(
                             identity,
                             company,
                             (first, last),
-                            known_high_water,
+                            known_marks,
                             limits,
                             &mut preflight,
-                            &mut high_water,
+                            &mut opening,
                         )
                         .await
                         .map_err(|failure| with_prior(failure, &preflight, &None))?,
-                    WindowPlanSource::Replay(_) => unreachable!("handled above"),
+                    WindowPlanSource::Replay { .. } => unreachable!("handled above"),
                 };
                 match estimate {
                     Preflight::Whole => vec![WindowPart {
@@ -740,9 +920,11 @@ impl Server {
                     }],
                     Preflight::Counted {
                         census: counted,
-                        high_water: mark,
+                        marks,
                     } => {
-                        ceiling = mark.unwrap_or(0).max(counted.max_alter_id());
+                        ceiling = marks
+                            .map_or(0, |marks| marks.vouchers)
+                            .max(counted.max_alter_id());
                         let plan = plan_window_reads(
                             first,
                             last,
@@ -751,7 +933,7 @@ impl Server {
                             ceiling,
                             bytes_per_voucher,
                             limits.budget_bytes,
-                            MAX_PLANNED_READS,
+                            limits.max_reads,
                         )
                         .map_err(|refusal| {
                             with_prior(refusal.code().to_string().into(), &preflight, &None)
@@ -766,6 +948,7 @@ impl Server {
         let mut evidence: Option<Evidence> = None;
         let mut reads: Vec<WindowPart> = Vec::new();
         let mut measured = false;
+        let mut dispatched = 0_usize;
         // #485: the smallest span already known to be unservable on THIS call,
         // so a sibling of the same size is split without spending a deadline.
         let mut smallest_failed_days: Option<i64> = None;
@@ -785,6 +968,19 @@ impl Server {
                         continue;
                     }
                 }
+                // The allowance is spent when a request is dispatched, not when a
+                // plan is made: a part divided after Tally could not serve it, or
+                // split because a sibling could not be served, costs a request
+                // no plan counted.
+                if dispatched >= limits.max_reads {
+                    return Err(PlanRefusal::TooManyReads {
+                        reads: dispatched + 1 + pending.len(),
+                    }
+                    .code()
+                    .to_string()
+                    .into());
+                }
+                dispatched += 1;
                 let request = shape.render(company, &part.from, &part.to, part.span)?;
                 match self.post_read(identity, request).await {
                     Ok((xml, read_evidence)) => {
@@ -795,7 +991,9 @@ impl Server {
                         );
                         // Account for this part before anything below can refuse.
                         fold_evidence(&mut evidence, read_evidence);
-                        rows.extend(parsed.map_err(ToolFailure::from)?);
+                        let parsed = parsed.map_err(ToolFailure::from)?;
+                        admit_part(&part, (first, last), &parsed, census.as_ref())?;
+                        rows.extend(parsed);
                         reads.push(part.clone());
                         // Plan the rest at the book's own measured cost: the
                         // first measurement replaces the default, and a later,
@@ -827,7 +1025,7 @@ impl Server {
                         if rest > last {
                             continue;
                         }
-                        let allowance = MAX_PLANNED_READS.saturating_sub(reads.len());
+                        let allowance = limits.max_reads.saturating_sub(dispatched);
                         let plan = plan_window_reads(
                             rest,
                             last,
@@ -854,6 +1052,10 @@ impl Server {
                                 );
                             }
                         }
+                        // The failed attempt was a request; keep what it observed.
+                        if let Some(attempt) = failure.evidence.clone() {
+                            fold_evidence(&mut evidence, *attempt);
+                        }
                         // A part that cannot be divided further is not something
                         // splitting can fix, and returning the parts that did work
                         // would be a read over an incomplete window. Refuse.
@@ -873,19 +1075,26 @@ impl Server {
         if let Err(failure) = outcome {
             return Err(with_prior(failure, &preflight, &evidence));
         }
-        // Close the bracket on a divided read. Only a divided read needs it: one
-        // undivided request is one observation, exactly as before the bound.
-        let divided = reads.len() > 1 || reads.iter().any(|part| part.span.is_some());
-        if let (true, Some(opening)) = (divided, census_mark(&census, high_water)) {
-            let closing = self
-                .read_high_water(identity, company, &mut preflight)
+        // The union of parts must hold each voucher once. Each response is
+        // admitted on its own by its parser; only here can a voucher returned by
+        // two parts — re-dated between them, or served by a filter Tally did not
+        // honour — be seen.
+        admit_union(&rows).map_err(|code| with_prior(code.into(), &preflight, &evidence))?;
+        // Close the bracket on a divided read, whether it was planned divided,
+        // divided after Tally could not serve a part, or replayed. One undivided
+        // request is one observation, exactly as before the bound.
+        let mut closing = None;
+        if let (true, Some(opened)) = (is_divided(&reads), opening) {
+            let closed = self
+                .read_marks(identity, company, &mut closing)
                 .await
-                .map_err(|failure| with_prior(failure, &preflight, &evidence))?;
-            if closing != Some(opening) {
-                return Err(with_prior(
+                .map_err(|failure| with_prior_closed(failure, &preflight, &evidence, &closing))?;
+            if closed != opened {
+                return Err(with_prior_closed(
                     WINDOW_CHANGED_DURING_READ.to_string().into(),
                     &preflight,
                     &evidence,
+                    &closing,
                 ));
             }
         }
@@ -897,153 +1106,124 @@ impl Server {
             rows,
             evidence,
             preflight_evidence: preflight,
+            closing_evidence: closing,
             reads,
-            high_water,
+            witness: opening.map(|marks| WindowWitness { marks, census }),
         })
     }
 
-    async fn read_high_water(
+    /// Whether a window of `shape` would be read as one request, established by
+    /// the same pre-flight a read of it would run, without reading it.
+    ///
+    /// For a caller that must send the undivided request itself — the pre-post
+    /// check inside the dispatch lease sends the whole verification window — and
+    /// so must refuse beforehand a window the bound would have divided.
+    pub(super) async fn window_reads_whole(
         &self,
         identity: &VerifiedCompanyIdentity,
         company: &str,
-        preflight: &mut Option<Evidence>,
-    ) -> Result<Option<u64>, ToolFailure> {
-        let (xml, evidence) = self
+        (from, to): (&str, &str),
+        shape: VoucherReadShape,
+    ) -> Result<(bool, Option<Evidence>), ToolFailure> {
+        let (first, last) = (parse_day(from)?, parse_day(to)?);
+        if first > last {
+            return Err("invalid_date_range".to_string().into());
+        }
+        let mut preflight = None;
+        let mut marks = None;
+        let estimate = self
+            .estimate_window_volume(
+                identity,
+                company,
+                (first, last),
+                None,
+                WindowReadLimits::for_shape(shape),
+                &mut preflight,
+                &mut marks,
+            )
+            .await
+            .map_err(|failure| with_prior(failure, &preflight, &None))?;
+        Ok((matches!(estimate, Preflight::Whole), preflight))
+    }
+
+    async fn read_marks(
+        &self,
+        identity: &VerifiedCompanyIdentity,
+        company: &str,
+        evidence: &mut Option<Evidence>,
+    ) -> Result<CompanyMarks, ToolFailure> {
+        let (xml, read) = self
             .post_read(identity, render_agent_company_high_water(company))
             .await?;
-        fold_evidence(preflight, evidence);
-        Ok(voucher_high_water(&xml, identity.company_guid()))
+        fold_evidence(evidence, read);
+        Ok(company_marks(&xml, identity.company_guid())?)
     }
 
     /// Establish what `window` holds, cheapest first: the company's voucher
     /// high-water mark bounds every window of the book at once; only when that
-    /// bound is not enough is the window itself counted, by date first.
+    /// bound is not enough is the window itself counted.
     #[allow(clippy::too_many_arguments)]
     async fn estimate_window_volume(
         &self,
         identity: &VerifiedCompanyIdentity,
         company: &str,
         (first, last): (NaiveDate, NaiveDate),
-        known_high_water: Option<u64>,
+        known_marks: Option<CompanyMarks>,
         limits: WindowReadLimits,
         preflight: &mut Option<Evidence>,
-        observed_high_water: &mut Option<u64>,
+        observed_marks: &mut Option<CompanyMarks>,
     ) -> Result<Preflight, ToolFailure> {
-        let high_water = match known_high_water {
-            Some(value) => value,
-            None => self
-                .read_high_water(identity, company, preflight)
-                .await?
-                .ok_or_else(|| ToolFailure::from(VOLUME_UNESTIMATED.to_string()))?,
+        let marks = match known_marks {
+            Some(marks) => marks,
+            None => self.read_marks(identity, company, preflight).await?,
         };
-        *observed_high_water = Some(high_water);
+        *observed_marks = Some(marks);
+        let high_water = marks.vouchers;
         // Every voucher carries a distinct AlterID no greater than the high-water
         // mark (§10), so the book — and therefore any window of it — holds at
         // most `high_water` vouchers.
         if high_water.saturating_mul(limits.default_bytes_per_voucher) <= limits.budget_bytes {
             return Ok(Preflight::Whole);
         }
-        let book_days = NaiveDate::parse_from_str(identity.books_from_yyyymmdd(), "%Y%m%d")
-            .ok()
-            .map_or(1, |books_from| (last - books_from).num_days() + 1)
-            .max(1);
-        let prior_density = high_water.div_ceil(u64::try_from(book_days).unwrap_or(1));
         let rows = self
             .census_window(
                 identity,
                 company,
                 (first, last),
                 high_water,
-                prior_density,
                 limits,
                 preflight,
             )
             .await?;
-        Ok(whole_or_counted(
-            WindowCensus::from_rows(rows),
-            Some(high_water),
-            limits,
-        ))
+        let census = WindowCensus::from_census_rows(rows)
+            .ok_or_else(|| ToolFailure::from(VOLUME_UNESTIMATED.to_string()))?;
+        Ok(whole_or_counted(census, Some(marks), limits))
     }
 
-    /// Count the window's vouchers per day, narrowing by date first.
-    ///
-    /// Each census covers a date range sized so its expected rows fit one read:
-    /// at first from the book's average density (high-water mark over the days
-    /// since the books began), then from the density the census has observed so
-    /// far, times [`CENSUS_DENSITY_FACTOR`]. A short window on an ordinary book
-    /// is therefore one census. A census the transport refuses as too large is
-    /// halved by date; a single day that is still too large is counted in
-    /// AlterID spans of the whole book, which bounds each by construction. A
-    /// census that times out is not retried: the gateway may still be scanning.
-    #[allow(clippy::too_many_arguments)]
+    /// Count the window's vouchers per day, every census request bounded
+    /// before it is sent. See [`census_spans`].
     async fn census_window(
         &self,
         identity: &VerifiedCompanyIdentity,
         company: &str,
         (first, last): (NaiveDate, NaiveDate),
         high_water: u64,
-        prior_density: u64,
         limits: WindowReadLimits,
         preflight: &mut Option<Evidence>,
-    ) -> Result<Vec<(NaiveDate, u64)>, ToolFailure> {
-        let capacity = limits.census_capacity();
+    ) -> Result<Vec<CensusRow>, ToolFailure> {
         let unestimated = || ToolFailure::from(VOLUME_UNESTIMATED.to_string());
+        let spans = census_spans(high_water, limits.census_capacity())
+            .map_err(|code| ToolFailure::from(code.to_string()))?;
+        let (from, to) = (stamp(first), stamp(last));
         let mut rows = Vec::new();
-        let mut spent = 0_usize;
-        let (mut counted_days, mut counted_rows) = (0_u64, 0_u64);
-        let mut previous_days: Option<u64> = None;
-        // Pending census requests, in order. A span is only ever used for one day.
-        let mut pending: Vec<(NaiveDate, NaiveDate, Option<AlterIdSpan>)> = Vec::new();
-        let mut cursor = Some(first);
-        loop {
-            let (start, end, span) = match pending.pop() {
-                Some(next) => next,
-                None => {
-                    let Some(start) = cursor.filter(|day| *day <= last) else {
-                        break;
-                    };
-                    let days = census_range_days(
-                        capacity,
-                        prior_density,
-                        previous_days.map(|previous| (counted_rows, counted_days, previous)),
-                    );
-                    let end = start
-                        .checked_add_days(chrono::Days::new(days - 1))
-                        .map_or(last, |end| end.min(last));
-                    cursor = end.succ_opt();
-                    (start, end, None)
-                }
-            };
-            spent += 1;
-            if spent > MAX_CENSUS_READS {
-                return Err(unestimated());
-            }
-            let request = render_agent_voucher_census(company, &stamp(start), &stamp(end), span)?;
+        for span in spans {
+            let request = render_agent_voucher_census(company, &from, &to, span)?;
             let (xml, evidence) = match self.post_read(identity, request).await {
                 Ok(read) => read,
-                Err(failure) if census_failure(&failure.code) == CensusFailure::Divide => {
-                    if let Some(((left_from, left_to), (right_from, right_to))) =
-                        split_verification_window(&stamp(start), &stamp(end))
-                    {
-                        pending.push((parse_day(&right_from)?, parse_day(&right_to)?, None));
-                        pending.push((parse_day(&left_from)?, parse_day(&left_to)?, None));
-                    } else if span.is_none() {
-                        // One day too dense for a date census: count it in
-                        // AlterID spans, each bounded by construction.
-                        let mut through = high_water;
-                        while through > 0 {
-                            let after = through.saturating_sub(capacity);
-                            pending.push((start, end, Some(AlterIdSpan { after, through })));
-                            through = after;
-                        }
-                    } else {
-                        return Err(unestimated());
-                    }
-                    continue;
-                }
                 Err(failure) if census_failure(&failure.code) == CensusFailure::Refuse => {
-                    // Keep what the failed attempt observed, under the refusal.
+                    // A census bounded by construction that Tally still could not
+                    // serve is not divided further or retried: the gateway may
+                    // still be building it. Keep what the attempt observed.
                     let mut refused = unestimated();
                     refused.evidence = failure.evidence;
                     return Err(refused);
@@ -1051,27 +1231,157 @@ impl Server {
                 Err(failure) => return Err(failure),
             };
             fold_evidence(preflight, evidence);
-            let counted = parse_voucher_census(&xml, (&stamp(start), &stamp(end)), span)
-                .map_err(|_| unestimated())?;
-            if span.is_none() {
-                let days = u64::try_from((end - start).num_days() + 1).unwrap_or(1);
-                counted_days += days;
-                counted_rows += counted.len() as u64;
-                previous_days = Some(days);
-            }
-            rows.extend(counted);
+            rows.extend(parse_voucher_census(&xml, (&from, &to), span).map_err(|_| unestimated())?);
         }
         Ok(rows)
     }
 }
 
-fn census_mark(census: &Option<WindowCensus>, high_water: Option<u64>) -> Option<u64> {
-    census.as_ref().and(high_water)
+/// Whether a set of parts is a divided read: more than one request, or a part
+/// limited to an AlterID span.
+fn is_divided(parts: &[WindowPart]) -> bool {
+    parts.len() > 1 || parts.iter().any(|part| part.span.is_some())
+}
+
+/// The census requests for a book whose voucher mark is `high_water`, each with
+/// a cardinality bound fixed before it is sent (§11c.3).
+///
+/// A date census alone is bounded only by the whole book: a date range can
+/// hold every voucher the book has. So a book whose mark fits one census is
+/// counted in one date census of the window, bounded by the mark itself; any
+/// larger book is counted in AlterID spans of `capacity` across `(0, mark]`,
+/// each also narrowed to the window's dates, and each bounded by construction
+/// because AlterIDs are distinct. The spans are produced one at a time, and a
+/// mark needing more of them than [`MAX_CENSUS_READS`] is refused before any is.
+///
+/// The cost is a census count proportional to the book, not the window: a
+/// mark of 250,000 is 31 census requests however short the window. That is a
+/// cost in elapsed time, not in gateway safety: every request stays bounded,
+/// so a caller that abandons the read leaves at most one bounded request in
+/// Tally. A request that returns only a count per range would avoid the walk,
+/// but no such shape is qualified live.
+pub(super) fn census_spans(high_water: u64, capacity: u64) -> Result<CensusSpans, &'static str> {
+    let capacity = capacity.max(1);
+    let requests = high_water.div_ceil(capacity).max(1);
+    if requests > MAX_CENSUS_READS as u64 {
+        return Err(BOOK_TOO_LARGE);
+    }
+    Ok(CensusSpans {
+        whole: high_water <= capacity,
+        after: 0,
+        high_water,
+        capacity,
+        done: false,
+    })
+}
+
+/// See [`census_spans`].
+pub(super) struct CensusSpans {
+    whole: bool,
+    after: u64,
+    high_water: u64,
+    capacity: u64,
+    done: bool,
+}
+
+impl Iterator for CensusSpans {
+    type Item = Option<AlterIdSpan>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+        if self.whole {
+            self.done = true;
+            return Some(None);
+        }
+        let through = self
+            .after
+            .saturating_add(self.capacity)
+            .min(self.high_water);
+        let span = AlterIdSpan {
+            after: self.after,
+            through,
+        };
+        self.after = through;
+        self.done = through >= self.high_water;
+        Some(Some(span))
+    }
+}
+
+/// Admit one part's rows against the part and, when the window was counted,
+/// against the census. See [`PART_NOT_ADMITTED`].
+fn admit_part<T: WindowRow>(
+    part: &WindowPart,
+    (first, last): (NaiveDate, NaiveDate),
+    rows: &[T],
+    census: Option<&WindowCensus>,
+) -> Result<(), ToolFailure> {
+    let whole_window = part.span.is_none() && census.is_none() && {
+        parse_day(&part.from)? == first && parse_day(&part.to)? == last
+    };
+    // An undivided read is admitted by its caller against the window, exactly
+    // as before the bound; nothing here narrows it further.
+    if whole_window {
+        return Ok(());
+    }
+    let refused = || ToolFailure::from(PART_NOT_ADMITTED.to_string());
+    let (from, to) = (parse_day(&part.from)?, parse_day(&part.to)?);
+    let mut observed = BTreeMap::new();
+    for row in rows {
+        let day = row
+            .window_date()
+            .and_then(|value| NaiveDate::parse_from_str(value.trim(), "%Y%m%d").ok())
+            .ok_or_else(refused)?;
+        if day < from || day > to {
+            return Err(refused());
+        }
+        let alter_id = row.window_alter_id();
+        if let Some(span) = part.span {
+            if !alter_id.is_some_and(|id| span.holds(id)) {
+                return Err(refused());
+            }
+        }
+        if census.is_some() {
+            let alter_id = alter_id.ok_or_else(refused)?;
+            let guid = row
+                .window_guid()
+                .map(|guid| guid.trim().to_ascii_lowercase());
+            if observed.insert(alter_id, guid).is_some() {
+                return Err(refused());
+            }
+        }
+    }
+    let Some(census) = census else {
+        return Ok(());
+    };
+    let expected = census.population(from, to, part.span);
+    let matches = expected.len() == observed.len()
+        && expected.iter().all(|(id, counted)| {
+            observed.get(id).is_some_and(|guid| match counted {
+                Some(counted) => guid.as_deref() == Some(*counted),
+                None => true,
+            })
+        });
+    if matches {
+        Ok(())
+    } else {
+        Err(refused())
+    }
+}
+
+/// GUIDs and master IDs must be unique across every part of a window.
+fn admit_union<T: WindowRow>(rows: &[T]) -> Result<(), String> {
+    let mut identities = VoucherSourceIdentities::default();
+    for row in rows {
+        identities.admit(row.window_guid(), row.window_master_id()?)?;
+    }
+    Ok(())
 }
 
 fn whole_or_counted(
     census: WindowCensus,
-    high_water: Option<u64>,
+    marks: Option<CompanyMarks>,
     limits: WindowReadLimits,
 ) -> Preflight {
     if census
@@ -1081,7 +1391,7 @@ fn whole_or_counted(
     {
         Preflight::Whole
     } else {
-        Preflight::Counted { census, high_water }
+        Preflight::Counted { census, marks }
     }
 }
 
@@ -1151,30 +1461,29 @@ pub(super) fn split_verification_window(
     ))
 }
 
-/// The voucher high-water mark, with a company that has never held a voucher
-/// read as zero (Tally omits `ALTVCHID` for it; see `pre_import_mark_refusal`).
-/// `None` when the mark could not be observed at all.
-fn voucher_high_water(xml: &str, company_guid: &str) -> Option<u64> {
-    match parse_company_high_water(xml, company_guid) {
-        Ok(value) => value["altvchid"].as_u64(),
-        Err(code) if code == VOUCHER_CHECKPOINT_NOT_OBSERVED => Some(0),
-        Err(_) => None,
-    }
+/// The company's marks, with a company that has never held a voucher read as a
+/// voucher mark of zero (Tally omits `ALTVCHID` for it; see
+/// `pre_import_mark_refusal`). A response the marks cannot be read from is
+/// refused with the parser's own code — never read as an empty book, and never
+/// folded into a planning or bracket outcome that would hide which it was.
+fn company_marks(xml: &str, company_guid: &str) -> Result<CompanyMarks, String> {
+    parse_company_marks(xml, company_guid)
+        .map(|(vouchers, masters)| CompanyMarks { vouchers, masters })
 }
 
-/// Parse a census response into `(date, AlterID)` per voucher.
+/// Parse a census response into a [`CensusRow`] per voucher.
 ///
 /// Counts `VOUCHER` start elements inside `BODY/DATA/COLLECTION` only, and
 /// takes only the two direct child fields it needs: §12.7 records an empty
 /// response whose `CMPINFO` carries a bare `<VOUCHER>0</VOUCHER>`, which a
 /// document-wide count reads as a row. Every row must fall inside the window
-/// and the span it was asked for, if any,, or the census is not describing what was
-/// asked and is refused.
+/// and the span it was asked for, if any, and carry its GUID, or the census is
+/// not describing what was asked and is refused.
 pub(super) fn parse_voucher_census(
     xml: &str,
     window: (&str, &str),
     span: Option<AlterIdSpan>,
-) -> Result<Vec<(NaiveDate, u64)>, String> {
+) -> Result<Vec<CensusRow>, String> {
     use quick_xml::events::Event;
     validate_agent_envelope(xml)?;
     let invalid = || "agent_read_protocol_invalid".to_string();
@@ -1186,7 +1495,7 @@ pub(super) fn parse_voucher_census(
     let mut current: Option<BTreeMap<String, String>> = None;
     let mut tag = String::new();
     let mut rows = Vec::new();
-    let wanted = |name: &str| matches!(name, "DATE" | "ALTERID");
+    let wanted = |name: &str| matches!(name, "DATE" | "ALTERID" | "GUID");
     loop {
         match reader.read_event() {
             Ok(event @ (Event::Start(_) | Event::Empty(_))) => {
@@ -1202,7 +1511,8 @@ pub(super) fn parse_voucher_census(
                     current = Some(BTreeMap::new());
                 }
                 // `row` is true directly inside a VOUCHER, before this child is
-                // pushed, so only the voucher's own DATE and ALTERID are claimed.
+                // pushed, so only the voucher's own DATE, ALTERID and GUID are
+                // claimed.
                 if scope.row("VOUCHER") && wanted(&name) {
                     claim_agent_scalar(current.as_mut().ok_or_else(invalid)?, &name)?;
                 }
@@ -1248,10 +1558,19 @@ pub(super) fn parse_voucher_census(
                         // plan around one.
                         .filter(|alter_id| *alter_id > 0)
                         .ok_or_else(invalid)?;
+                    let guid = row
+                        .get("GUID")
+                        .map(|guid| guid.trim().to_string())
+                        .filter(|guid| !guid.is_empty())
+                        .ok_or_else(invalid)?;
                     if day < first || day > last || span.is_some_and(|span| !span.holds(alter_id)) {
                         return Err("window_not_honoured".to_string());
                     }
-                    rows.push((day, alter_id));
+                    rows.push(CensusRow {
+                        day,
+                        alter_id,
+                        guid,
+                    });
                 }
                 tag.clear();
             }
