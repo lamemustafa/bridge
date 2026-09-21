@@ -352,6 +352,12 @@ impl PartyLedgerMasterCurrencyAssertion {
     }
 }
 
+/// `CompanyCurrencyRead::admit_inr` refused to label this company's figures
+/// as INR. The code is one of that function's static reasons, never data.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub(crate) struct CurrencyAdmissionRefusal(pub(crate) &'static str);
+
 /// The result of the existing Tally currency probe, retaining the extent that
 /// bracketed it so a monetary document cannot separate the two facts.
 #[derive(Debug, Clone)]
@@ -2014,9 +2020,12 @@ impl TallyRuntime {
             .detect_base_currency_with_extent(config.clone(), identity)
             .await?;
         let currency_evidence = currency_read.evidence.clone();
-        let assertion = currency_read
-            .admit_inr()
-            .map_err(|code| with_read_evidence(anyhow::anyhow!(code), currency_evidence.clone()))?;
+        let assertion = currency_read.admit_inr().map_err(|code| {
+            with_read_evidence(
+                anyhow::Error::new(CurrencyAdmissionRefusal(code)),
+                currency_evidence.clone(),
+            )
+        })?;
         let (source, source_evidence) = self
             .fetch_party_ledger_master_source_with_evidence(config, identity, assertion)
             .await

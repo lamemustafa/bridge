@@ -615,6 +615,14 @@ mod through_the_tool {
     }
 
     async fn call(plans: Vec<ScenarioPlan>, args: Value) -> (Value, usize) {
+        call_with_max_bytes(plans, args, 200_000).await
+    }
+
+    async fn call_with_max_bytes(
+        plans: Vec<ScenarioPlan>,
+        args: Value,
+        max_bytes: usize,
+    ) -> (Value, usize) {
         let simulator = SequenceSimulator::spawn(plans).unwrap();
         let directory = tempfile::tempdir().unwrap();
         let server = Server::new(Settings {
@@ -624,7 +632,7 @@ mod through_the_tool {
             },
             data_dir: directory.path().into(),
             max_rows: 500,
-            max_bytes: 200_000,
+            max_bytes,
             redaction: Redaction::None,
             import_enabled: false,
             writes_enabled: false,
@@ -632,6 +640,83 @@ mod through_the_tool {
         let response = server.call_tool("ledger_masters", args).await;
         let requests = simulator.finish().unwrap().len();
         (response, requests)
+    }
+
+    /// Identity, then the extent-bracketed currency read that returns the
+    /// captured two-Currency-master response (protocol reference §9.10a.1).
+    fn multi_currency_plans() -> Vec<ScenarioPlan> {
+        let company = xml(companies());
+        let extent = xml(include_str!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+        )
+        .to_owned());
+        let currency = xml(captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/currency_multi_live.utf16le.xml"
+        )));
+        let mut plans = identity_plans();
+        plans.push(company.clone());
+        pair(&mut plans, extent.clone());
+        pair(&mut plans, currency);
+        pair(&mut plans, extent);
+        plans.push(company);
+        plans
+    }
+
+    fn refusal(response: &Value) -> &Value {
+        assert_eq!(response["isError"], true, "{response}");
+        &response["structuredContent"]["result"]["error"]
+    }
+
+    #[tokio::test]
+    async fn currency_refusal_names_its_cause_beside_the_operation_code() {
+        let (response, _) = call(
+            multi_currency_plans(),
+            json!({"company_guid":GUID,"fields":"compliance"}),
+        )
+        .await;
+        let error = refusal(&response);
+        assert_eq!(error["code"], "party_ledger_master_read_failed");
+        assert_eq!(error["cause"], "company_base_currency_undetermined");
+    }
+
+    #[tokio::test]
+    async fn join_refusal_names_the_validation_variant_as_its_cause() {
+        let balance_name = "NAME=\"Bridge Nested Debtor WR4\"";
+        let source = balances();
+        assert_eq!(source.matches(balance_name).count(), 1);
+        let renamed = source.replace(balance_name, "NAME=\"Bridge Renamed Debtor WR4\"");
+        // The join refuses before the closing re-bracket, so those three
+        // reads are never sent.
+        let mut plans = compliance_plans(masters(), renamed);
+        plans.truncate(plans.len() - 3);
+        let (response, _) = call(plans, json!({"company_guid":GUID,"fields":"compliance"})).await;
+        let error = refusal(&response);
+        assert_eq!(error["code"], "party_ledger_master_read_failed");
+        assert_eq!(error["cause"], "balance_missing_master_ledger");
+    }
+
+    #[tokio::test]
+    async fn cause_is_omitted_below_the_guidance_budget_and_the_code_survives() {
+        // Control: the same refusal carries a cause at the default budget, so
+        // its absence below is the budget rule and not a missing cause.
+        let (response, _) = call(
+            multi_currency_plans(),
+            json!({"company_guid":GUID,"fields":"compliance"}),
+        )
+        .await;
+        assert_eq!(
+            refusal(&response)["cause"],
+            "company_base_currency_undetermined"
+        );
+        let (response, _) = call_with_max_bytes(
+            multi_currency_plans(),
+            json!({"company_guid":GUID,"fields":"compliance"}),
+            REMEDIATION_MIN_RESPONSE_BUDGET - 1,
+        )
+        .await;
+        let error = refusal(&response);
+        assert_eq!(error["code"], "party_ledger_master_read_failed");
+        assert!(error.get("cause").is_none(), "{error}");
     }
 
     fn items(response: &Value) -> &Vec<Value> {

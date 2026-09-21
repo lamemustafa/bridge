@@ -380,6 +380,9 @@ struct ToolOutcome {
 struct ToolFailure {
     code: String,
     evidence: Option<Box<Evidence>>,
+    /// Why the operation named by `code` failed, when a typed, data-free cause
+    /// is known. `code` keeps naming what failed.
+    cause: Option<&'static str>,
 }
 
 impl From<String> for ToolFailure {
@@ -387,8 +390,30 @@ impl From<String> for ToolFailure {
         Self {
             code,
             evidence: None,
+            cause: None,
         }
     }
+}
+
+/// The first typed, data-free cause in a runtime error chain. Before this, an
+/// operation code such as `party_ledger_master_read_failed` was all a caller
+/// saw, whether the read refused on currency admission or on the ledger join.
+fn runtime_refusal_cause(error: &anyhow::Error) -> Option<&'static str> {
+    error.chain().find_map(|cause| {
+        if let Some(refusal) =
+            cause.downcast_ref::<crate::tally::runtime::CurrencyAdmissionRefusal>()
+        {
+            return Some(refusal.0);
+        }
+        if let Some(validation) =
+            cause.downcast_ref::<crate::tally::connection::PartyLedgerMasterSourceValidationError>()
+        {
+            return Some(validation.safe_code());
+        }
+        cause
+            .downcast_ref::<crate::tally::connection::PairedReadValidationError>()
+            .map(crate::tally::connection::PairedReadValidationError::safe_code)
+    })
 }
 
 /// The generic agent read-failure code. It names no operation and covers parse
@@ -557,9 +582,11 @@ impl ToolFailure {
                 })
                 .map(|failure| Box::new(evidence_from_runtime_read(failure.evidence.clone())))
         });
+        let cause = runtime_refusal_cause(&error).filter(|cause| *cause != code);
         Self {
             code: code.to_string(),
             evidence,
+            cause,
         }
     }
 
@@ -648,7 +675,11 @@ impl Server {
             truncated,
         } = match result {
             Ok(outcome) => outcome,
-            Err(ToolFailure { code, evidence }) => {
+            Err(ToolFailure {
+                code,
+                evidence,
+                cause,
+            }) => {
                 let mut evidence = evidence.map(|value| *value).unwrap_or_else(|| Evidence {
                     request_sha256: sha256_hex(format!("{name}:{args_sha256}").as_bytes()),
                     response_sha256: sha256_hex(code.as_bytes()),
@@ -672,6 +703,14 @@ impl Server {
                 // these ~250 extra bytes could cost the caller the one thing it
                 // most needs, leaving it worse off than before this field existed.
                 // Guidance is a convenience; the refusal code is not.
+                // Same budget rule as `remediation`: at a deliberately small cap
+                // the refusal code must survive, so the cause is only added
+                // where there is room for it.
+                if let Some(cause) = cause {
+                    if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
+                        error["cause"] = json!(cause);
+                    }
+                }
                 if let Some(remediation) = refusal_remediation(&code) {
                     if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
                         error["remediation"] = json!(remediation);
