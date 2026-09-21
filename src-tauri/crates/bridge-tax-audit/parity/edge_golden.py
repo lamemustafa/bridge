@@ -8,21 +8,23 @@ own-account narration terms, and the tests to run on it. It is not a Tally read 
 built directly -- so it proves the Rust port and the reference agree on the same book, and
 nothing about reading Tally.
 
-    uv run -q --with openpyxl --with xlrd --with python-docx --with jsonschema --with striprtf \
-        --with pdfplumber python parity/edge_golden.py ENGINE tests/fixtures/edge-books/NAME.json \
-        tests/fixtures/golden
+    uv run -q --python 3.13 --with openpyxl --with xlrd --with python-docx --with jsonschema \
+        --with striprtf --with pdfplumber python parity/edge_golden.py ENGINE \
+        tests/fixtures/edge-books/NAME.json tests/fixtures/golden
 
 writes golden/edge.NAME.TEST.json for each test the book names -- the reference's own canonical
 dump (`tae.parity.canonical.canonical_test_result`), module invariant included -- and, for
 `trial_balance`, golden/edge.NAME.trial_balance.order.json: the order in which the reference emits
 its per-ledger rows, which the canonical dump (sorted by id) does not show. `tests/edge_books.rs`
-builds the same book in Rust and compares whole dumps.
+builds the same book in Rust and compares whole dumps. Python 3.13 is pinned because its Unicode
+tables (15.1.0) are the ones the crate's case mapping reproduces (`src/support.rs`).
 
 Spec keys: `period` ([start, end], ISO; default the AY 2026-27 previous year), `groups` ({name:
 parent or null}), `ledgers` ([{name, chain, guid}]), `tb` ([{ledger, opening, debit, credit,
 closing}]), `vouchers` ([{guid, date, base_type, vtype?, number?, status?, narration?, lines:
-[[ledger, paise], ...]}]), `cash`, `bank`, `own_account_terms`, `rules_without` (rules tables to
-drop, e.g. ["ledger_scrutiny"]), `tests`.
+[[ledger, paise], ...]}]; `number` defaults to the GUID, so pass `""` to test a voucher with no
+number), `cash`, `bank`, `own_account_terms`, `rules_without` (top-level rules tables to drop, e.g.
+["ledger_scrutiny"]; the Rust side must map each one, see `tests/edge_books.rs`), `tests`.
 """
 from __future__ import annotations
 
@@ -47,16 +49,22 @@ def main() -> int:
     name = spec_path.stem
     status = {s: getattr(VoucherStatus, s.upper()) for s in STATUS}
     start, end = spec.get("period", ["2025-04-01", "2026-03-31"])
-    groups = {n: Group(n, p) for n, p in spec["groups"].items()}
-    ledgers = {l["name"]: Ledger(l["name"], l["chain"][0] if l["chain"] else "", tuple(l["chain"]), True,
-                                 guid=l.get("guid", "")) for l in spec["ledgers"]}
-    vouchers = [Voucher(v["guid"], None, None, date.fromisoformat(v["date"]), v.get("vtype", v["base_type"]),
-                        v["base_type"], v.get("number", v["guid"]), "", "", "", v.get("narration", ""),
-                        status[v.get("status", "regular")], "edge-book",
-                        tuple(LedgerLine(l, a) for l, a in v["lines"])) for v in spec["vouchers"]]
-    tb = {t["ledger"]: TBRow(t["ledger"], t["opening"], t["debit"], t["credit"], t["closing"]) for t in spec["tb"]}
-    book = Book("Invented edge book", Period(date.fromisoformat(start), date.fromisoformat(end)), groups,
-                ledgers, vouchers, tb, company_guid="invented-edge-company")
+    groups = {n: Group(name=n, parent=p) for n, p in spec["groups"].items()}
+    ledgers = {l["name"]: Ledger(name=l["name"], parent=l["chain"][0] if l["chain"] else "",
+                                 chain=tuple(l["chain"]), chain_complete=True, guid=l.get("guid", ""))
+               for l in spec["ledgers"]}
+    vouchers = [Voucher(guid=v["guid"], masterid=None, alterid=None, date=date.fromisoformat(v["date"]),
+                        vtype=v.get("vtype", v["base_type"]), base_type=v["base_type"],
+                        number=v.get("number", v["guid"]), reference="", party_field="", party_gstin="",
+                        narration=v.get("narration", ""), status=status[v.get("status", "regular")],
+                        status_source="edge-book",
+                        lines=tuple(LedgerLine(ledger=l, amount_paise=a) for l, a in v["lines"]))
+                for v in spec["vouchers"]]
+    tb = {t["ledger"]: TBRow(ledger=t["ledger"], opening_paise=t["opening"], debit_paise=t["debit"],
+                             credit_paise=t["credit"], closing_paise=t["closing"]) for t in spec["tb"]}
+    book = Book(company_name="Invented edge book",
+                period=Period(date.fromisoformat(start), date.fromisoformat(end)), groups=groups,
+                ledgers=ledgers, vouchers=vouchers, tb=tb, company_guid="invented-edge-company")
     eng = Engagement("individual", "2026-27", book)
     rules = load_rules("2026-27", "individual")
     for table in spec.get("rules_without", []):
@@ -65,20 +73,23 @@ def main() -> int:
     cash, bank = set(spec.get("cash", [])), set(spec.get("bank", []))
     terms = frozenset(spec.get("own_account_terms", []))
 
+    # One runner per test an edge book may name: the module and its result, run as the reference's
+    # pack runs it.
+    runners = {
+        "cash_book_integrity": lambda: (cash_book_integrity,
+                                        cash_book_integrity.run(eng, rules, cash, bank, terms)),
+        "ledger_scrutiny": lambda: (ledger_scrutiny, ledger_scrutiny.run(eng, rules, cash)),
+        "stale_balances_41_1": lambda: (stale_balances_41_1, stale_balances_41_1.run(eng, rules)),
+        "trial_balance": lambda: (trial_balance, trial_balance.run(eng, rules)),
+    }
     for test in spec["tests"]:
+        if test not in runners:
+            raise SystemExit(f"{spec_path}: no edge runner for test {test!r}")
+        module, result = runners[test]()
         if test == "trial_balance":
-            module, result = trial_balance, trial_balance.run(eng, rules)
             order = [fid for fid in result.figures if fid.startswith("trial_balance.tb_group_")]
             (out_dir / f"edge.{name}.trial_balance.order.json").write_text(
                 json.dumps(order, indent=1) + "\n", encoding="utf-8")
-        elif test == "stale_balances_41_1":
-            module, result = stale_balances_41_1, stale_balances_41_1.run(eng, rules)
-        elif test == "ledger_scrutiny":
-            module, result = ledger_scrutiny, ledger_scrutiny.run(eng, rules, cash)
-        elif test == "cash_book_integrity":
-            module, result = cash_book_integrity, cash_book_integrity.run(eng, rules, cash, bank, terms)
-        else:
-            raise SystemExit(f"{spec_path}: unknown test {test!r}")
         doc = canonical.canonical_test_result(eng, result, module)
         out = out_dir / f"edge.{name}.{test}.json"
         out.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

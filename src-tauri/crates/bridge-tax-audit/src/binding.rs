@@ -104,7 +104,7 @@ fn parse_identity_table(cfg: &toml::Table, table: &str) -> Result<BTreeMap<Strin
     for (label, v) in raw {
         let (guid, masterid) = match v {
             toml::Value::String(s) => {
-                let g = s.trim().to_string();
+                let g = crate::support::py_strip(s).to_string();
                 (if g.is_empty() { None } else { Some(g) }, None)
             }
             toml::Value::Table(t) => {
@@ -118,7 +118,7 @@ fn parse_identity_table(cfg: &toml::Table, table: &str) -> Result<BTreeMap<Strin
                 let guid = match t.get("guid") {
                     None => None,
                     Some(toml::Value::String(s)) => {
-                        let g = s.trim().to_string();
+                        let g = crate::support::py_strip(s).to_string();
                         (!g.is_empty()).then_some(g)
                     }
                     Some(_) => {
@@ -214,9 +214,11 @@ fn resolve_ids(
     let mut by_guid: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut by_mid: BTreeMap<i64, Vec<String>> = BTreeMap::new();
     for (name, m) in masters {
-        if !m.guid.is_empty() {
+        // The reference: `g = (m.guid or "").strip()`, then `if g:`, keyed by `g.lower()`.
+        let g = crate::support::py_strip(&m.guid);
+        if !g.is_empty() {
             by_guid
-                .entry(m.guid.to_lowercase())
+                .entry(crate::support::py_lower(g))
                 .or_default()
                 .push(name.clone());
         }
@@ -230,7 +232,7 @@ fn resolve_ids(
         let mut name: Option<String> = None;
         if let Some(guid) = ident.guid.as_deref() {
             let hits = by_guid
-                .get(&guid.to_lowercase())
+                .get(&crate::support::py_lower(guid))
                 .cloned()
                 .unwrap_or_default();
             if hits.len() > 1 {
@@ -824,6 +826,35 @@ mod tests {
         assert_eq!(d.identity, G_CASH);
         assert_eq!(d.paths, vec!["roles.cash_groups".to_string()]);
         assert_eq!(d.label_now_on, None);
+    }
+
+    /// The reference keys masters by `guid.strip().lower()` and looks a configured GUID up the same
+    /// way, with Python's whitespace (U+001C..U+001F included) and full case mapping.
+    #[test]
+    fn a_guid_binds_whatever_its_case_and_python_whitespace() {
+        // Letters in the GUID, so its case is actually exercised.
+        let guid = "abcdef01-2345-4789-abcd-ef0123456789";
+        let upper = guid.to_uppercase();
+        assert_ne!(upper, guid);
+        let e = engagement(&format!(
+            "\n[group_ids]\n\"Cash-in-Hand\" = \"\u{a0}{upper}\u{2003}\"\n"
+        ));
+        let b = book("Cash In Hand (New)", &format!("\u{1c}{guid}\u{1f}"), None);
+        let (bound, report) = e.bind(&b).unwrap();
+        assert_eq!(bound.cash_groups, vec!["Cash In Hand (New)".to_string()]);
+        assert_eq!(report.bound_by_id, 1);
+    }
+
+    /// The same, with Python-only whitespace (U+001D/U+001E) on the configured side and a non-ASCII
+    /// letter, which an ASCII-only fold would not match.
+    #[test]
+    fn a_guid_binds_across_python_only_whitespace_and_non_ascii_case() {
+        // TOML forbids raw control characters in a string, so the file carries them escaped.
+        let e = engagement("\n[group_ids]\n\"Cash-in-Hand\" = \"\\u001D\u{c4}BC-GUID-1\\u001E\"\n");
+        let b = book("Cash In Hand (New)", "\u{e4}bc-guid-1", None);
+        let (bound, report) = e.bind(&b).unwrap();
+        assert_eq!(bound.cash_groups, vec!["Cash In Hand (New)".to_string()]);
+        assert_eq!(report.bound_by_id, 1);
     }
 
     #[test]

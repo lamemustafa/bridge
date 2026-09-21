@@ -195,7 +195,7 @@ fn check(name: &str) {
                 let c = cash_book_integrity::check_invariants(&book, &r).unwrap();
                 (r, c)
             }
-            other => panic!("{name}: unknown test {other}"),
+            other => panic!("{name}: no edge dispatch for {other} (EDGE_TESTS: {EDGE_TESTS:?})"),
         };
         let rust = canonical_test_result(&book, &result, Some(module_check)).unwrap();
         let golden = common::golden_named(&format!("edge.{name}.{test}"));
@@ -204,75 +204,141 @@ fn check(name: &str) {
     }
 }
 
-#[test]
-fn tb_rows() {
-    check("tb_rows");
-}
+/// The tests an edge book may name: the arms of `check` above, and exactly the keys of
+/// `parity/edge_golden.py`'s `runners` (`edge_runners_agree_across_the_two_sides`).
+const EDGE_TESTS: [&str; 4] = [
+    "cash_book_integrity",
+    "ledger_scrutiny",
+    "stale_balances_41_1",
+    "trial_balance",
+];
 
-#[test]
-fn stale() {
-    check("stale");
-}
+/// Synthetic goldens other than `synthetic.<id>.json`, each read by a named test:
+/// `financial_statements.noreport` by `tests/common/mod.rs` (`golden_financial_statements(false)`).
+const SYNTHETIC_VARIANTS: [&str; 1] = ["financial_statements.noreport"];
 
-#[test]
-fn scrutiny() {
-    check("scrutiny");
-}
-
-#[test]
-fn scrutiny_default() {
-    check("scrutiny_default");
-}
-
-#[test]
-fn scrutiny_short() {
-    check("scrutiny_short");
-}
-
-#[test]
-fn cash_book() {
-    check("cash_book");
-}
-
-#[test]
-fn cash_book_misc() {
-    check("cash_book_misc");
-}
-
-#[test]
-fn scrutiny_misc() {
-    check("scrutiny_misc");
-}
-
-/// Every committed edge book is checked above, and every edge golden has its book.
-#[test]
-fn every_edge_book_is_checked() {
-    let checked = [
-        "tb_rows",
-        "stale",
-        "scrutiny",
-        "scrutiny_default",
-        "scrutiny_short",
-        "cash_book",
-        "cash_book_misc",
-        "scrutiny_misc",
-    ];
-    let mut books: Vec<String> = std::fs::read_dir(common::fixtures().join("edge-books"))
+fn book_names() -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(common::fixtures().join("edge-books"))
         .unwrap()
-        .map(|e| {
-            let p = e.unwrap().path();
-            p.file_stem().unwrap().to_str().unwrap().to_string()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .map(|p| p.file_stem().unwrap().to_str().unwrap().to_string())
+        .collect();
+    names.sort();
+    names
+}
+
+/// Every edge book in the directory is built and compared -- no hand-kept list to fall behind.
+/// Each book runs in its own panic boundary so one failure names its book and the rest still run.
+#[test]
+fn every_edge_book_matches_the_reference() {
+    let names = book_names();
+    assert!(!names.is_empty());
+    let failed: Vec<String> = names
+        .iter()
+        .filter_map(|name| {
+            std::panic::catch_unwind(|| check(name)).err().map(|e| {
+                let msg = e
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| e.downcast_ref::<&str>().map(|s| (*s).to_string()))
+                    .unwrap_or_default();
+                format!("{name}: {msg}")
+            })
         })
         .collect();
-    books.sort();
-    let mut want: Vec<String> = checked.iter().map(|s| (*s).to_string()).collect();
-    want.sort();
-    assert_eq!(books, want);
+    assert!(failed.is_empty(), "{}", failed.join("\n\n"));
+}
+
+/// Every edge golden belongs to a book that names its test, and every test a book names has its
+/// golden; every synthetic golden is a registered test's. A stray or orphaned golden fails here.
+#[test]
+fn every_golden_belongs_to_a_book_or_a_registered_test() {
+    let books: BTreeMap<String, Vec<String>> = book_names()
+        .into_iter()
+        .map(|n| {
+            let tests = strs(&spec(&n)["tests"]);
+            (n, tests)
+        })
+        .collect();
+    let registered: Vec<&str> = bridge_tax_audit::registry::PORTED
+        .iter()
+        .map(|t| t.id)
+        .collect();
+    let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
     for entry in std::fs::read_dir(common::fixtures().join("golden")).unwrap() {
         let file = entry.unwrap().file_name().into_string().unwrap();
-        if let Some(rest) = file.strip_prefix("edge.") {
-            let book = rest.split('.').next().unwrap();
-            assert!(want.iter().any(|b| b == book), "{file} has no edge book");
+        let stem = file
+            .strip_suffix(".json")
+            .unwrap_or_else(|| panic!("{file}: not json"));
+        if let Some(rest) = stem.strip_prefix("edge.") {
+            let (rest, order) = match rest.strip_suffix(".order") {
+                Some(r) => (r, true),
+                None => (rest, false),
+            };
+            let (book, test) = rest.split_once('.').unwrap_or_else(|| panic!("{file}"));
+            let tests = books
+                .get(book)
+                .unwrap_or_else(|| panic!("{file}: no edge book {book}"));
+            assert!(
+                tests.iter().any(|t| t == test),
+                "{file}: {book} does not name {test}"
+            );
+            assert!(
+                !order || test == "trial_balance",
+                "{file}: only trial_balance has an order file"
+            );
+            if !order {
+                seen.insert((book.to_string(), test.to_string()));
+            }
+        } else if let Some(rest) = stem.strip_prefix("synthetic.") {
+            // A registered test's golden, or one of the named variants a test reads.
+            let (id, variant) = rest.split_once('.').unwrap_or((rest, ""));
+            assert!(
+                registered.contains(&id),
+                "{file}: {id} is not a registered test"
+            );
+            assert!(
+                variant.is_empty() || SYNTHETIC_VARIANTS.contains(&rest),
+                "{file}: variant {variant:?} is not in SYNTHETIC_VARIANTS (add it with the test that reads it)"
+            );
+        } else {
+            panic!("{file}: neither an edge nor a synthetic golden");
         }
+    }
+    for (book, tests) in &books {
+        for test in tests {
+            assert!(
+                seen.contains(&(book.clone(), test.clone())),
+                "{book} names {test} but golden/edge.{book}.{test}.json is missing"
+            );
+        }
+    }
+}
+
+/// `parity/edge_golden.py`'s runners and this file's dispatch name the same tests, all
+/// registered. Read as text: the Python module needs the reference engine to import.
+#[test]
+fn edge_runners_agree_across_the_two_sides() {
+    let text = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("parity/edge_golden.py"),
+    )
+    .unwrap();
+    let block = text
+        .split("    runners = {\n")
+        .nth(1)
+        .and_then(|rest| rest.split("\n    }\n").next())
+        .expect("edge_golden.py has a `runners = { ... }` block");
+    let mut python: Vec<&str> = block
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix('"').and_then(|r| r.split('"').next()))
+        .collect();
+    python.sort_unstable();
+    assert_eq!(python, EDGE_TESTS.to_vec());
+    for t in EDGE_TESTS {
+        assert!(
+            bridge_tax_audit::registry::find(t).is_some(),
+            "{t} is not registered"
+        );
     }
 }

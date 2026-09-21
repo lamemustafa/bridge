@@ -43,6 +43,7 @@ pub mod invariants;
 pub mod ledger_ids;
 pub mod ledger_scrutiny;
 pub mod read;
+pub mod registry;
 pub mod rules;
 pub mod stale_balances_41_1;
 mod support;
@@ -234,7 +235,7 @@ impl Engagement {
                     .and_then(|s| TallyDate::parse(s.replace('-', "")).ok())
                     .ok_or_else(bad)?;
                 Ok(CompanyPin {
-                    guid: guid.to_ascii_lowercase(),
+                    guid: crate::support::py_lower(guid),
                     books_from,
                 })
             })

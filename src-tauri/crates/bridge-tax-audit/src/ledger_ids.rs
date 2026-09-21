@@ -27,13 +27,15 @@ fn missing_guid(what: &str) -> AuditError {
     AuditError::MissingGuid(what.to_string())
 }
 
-/// Trim surrounding whitespace, then lowercase (ASCII only -- a Tally GUID is hex digits and
-/// hyphens). Two engines, or two Tally exports of the same GUID in different casing, must agree
+/// Strip surrounding whitespace, then lower-case, exactly as the reference's `str.strip().lower()`
+/// (Python's whitespace and Unicode 15.1 case mapping: `support::py_strip`, `py_lower`). A Tally
+/// GUID is hex digits and hyphens, but a read carrying anything else must still tag as the
+/// reference tags it. Two engines, or two Tally exports of the same GUID in different casing, must agree
 /// on the same tag; the binding logic elsewhere in this stack already treats GUIDs as
 /// case-insensitive, so the tag has to match that, not hash the raw bytes
 /// (`docs/tax-audit/parity-spec-v1.md` §11).
 fn normalize_guid(guid: &str) -> String {
-    guid.trim().to_ascii_lowercase()
+    crate::support::py_lower(crate::support::py_strip(guid))
 }
 
 /// Short, stable, non-reversible-in-practice tag for a figure/finding/evidence id, from a Tally
@@ -124,6 +126,26 @@ mod tests {
             guid_tag("00000000-0000-4000-8000-0000000000b1", "x").unwrap(),
             "d2101a72"
         );
+    }
+
+    /// The reference normalises with Python's `str.strip().lower()`, so a non-ASCII or
+    /// control-character GUID must hash as it does there. Expected tags are the reference's own
+    /// (`tae.ledger_ids.guid_tag`, Python 3.13).
+    #[test]
+    fn guid_tag_strips_and_lowercases_as_python_does() {
+        for (guid, want) in [
+            ("\u{c9}BC-1", "eae20bd6"),
+            ("\u{1c}abc-1", "097be456"),
+            ("abc-1\u{1f}", "097be456"),
+            ("\u{a0}abc-1\u{2003}", "097be456"),
+            ("\u{212a}-1", "4136a771"),
+            ("\u{a7cb}-1", "0d0b470a"),
+            ("\u{c4}bc-1", "bb498af8"),
+            ("\u{e4}bc-1", "bb498af8"),
+            ("\u{1d}abc-1\u{1e}", "097be456"),
+        ] {
+            assert_eq!(guid_tag(guid, "ledger").unwrap(), want, "{guid:?}");
+        }
     }
 
     #[test]

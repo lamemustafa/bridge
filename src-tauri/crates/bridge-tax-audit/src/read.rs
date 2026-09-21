@@ -1100,7 +1100,7 @@ impl Read {
         pin: Option<&CompanyPin>,
     ) -> Result<()> {
         if let Some(pin) = pin {
-            if !self.company_guid.eq_ignore_ascii_case(&pin.guid) {
+            if crate::support::py_lower(&self.company_guid) != crate::support::py_lower(&pin.guid) {
                 return Err(AuditError::refused(
                     "C5-client",
                     format!(

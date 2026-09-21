@@ -55,14 +55,7 @@ const NUMERIC_UNITS: [&str; 4] = ["paise", "bp", "count", "days"];
 /// turnover (a value or "not supplied"), the audit-required call, the s.44ADA flag, three due dates
 /// and the presumptive-history status. Comparison-source figures come on top.
 pub fn default_min_figures(test_id: &str) -> usize {
-    match test_id {
-        "cash_44ab" => 7,
-        "cash_payments_40a3" => 18,
-        "depreciation" => 2,
-        "financial_statements" => 18,
-        "applicability_44ab" => 9,
-        _ => 1,
-    }
+    crate::registry::find(test_id).map_or(1, |t| t.min_figures)
 }
 
 /// A structural defect that stops the comparison (a bad type, or nothing to compare).
@@ -115,6 +108,81 @@ pub fn validate_types(doc: &Json, side: &str) -> Result<(), ParityMismatch> {
         }
     }
     Ok(())
+}
+
+/// The canonical dump's key sets (`docs/tax-audit/parity-spec-v1.md` §1-§3). A key outside them
+/// would be compared by nothing, so it is reported rather than ignored.
+const TOP_KEYS: [&str; 14] = [
+    "spec_version",
+    "test_id",
+    "test_version",
+    "rules_version",
+    "population_note_sha256_16",
+    "population_note_text",
+    "figures",
+    "findings",
+    "book_invariants_evaluated",
+    "book_invariant_violations",
+    "result_invariants_evaluated",
+    "result_invariant_violations",
+    "module_invariants_evaluated",
+    "module_invariant_violations",
+];
+const FIGURE_KEYS: [&str; 6] = [
+    "id",
+    "value",
+    "unit",
+    "definition_sha256_16",
+    "definition_text",
+    "evidence",
+];
+const FINDING_KEYS: [&str; 11] = [
+    "id",
+    "clauses",
+    "confidence",
+    "facts",
+    "evidence",
+    "title_sha256_16",
+    "title_text",
+    "limits_sha256_16",
+    "limits_text",
+    "ask_client_sha256_16",
+    "ask_client_text",
+];
+const EVIDENCE_KEYS: [&str; 3] = ["kind", "id", "label"];
+
+/// Unknown keys and repeated figure/finding ids on one side: either would otherwise pass
+/// unseen (`by_id` keeps one entry per id).
+fn structure(doc: &Json, side: &str, out: &mut Vec<String>) {
+    let unknown = |obj: &Json, allowed: &[&str], at: &str, out: &mut Vec<String>| {
+        if let Some(map) = obj.as_object() {
+            for k in map.keys().filter(|k| !allowed.contains(&k.as_str())) {
+                out.push(format!("{side}: unknown key {k:?} in {at}"));
+            }
+        }
+    };
+    unknown(doc, &TOP_KEYS, "the dump", out);
+    for (kind, allowed) in [
+        ("figures", &FIGURE_KEYS[..]),
+        ("findings", &FINDING_KEYS[..]),
+    ] {
+        let mut seen = BTreeSet::new();
+        for item in list(doc, kind) {
+            let id = text(item, "id");
+            if !seen.insert(id.to_string()) {
+                out.push(format!("{side}: {kind} id {id:?} appears more than once"));
+            }
+            unknown(item, allowed, &format!("{kind} {id:?}"), out);
+            for e in list(item, "evidence") {
+                unknown(
+                    e,
+                    &EVIDENCE_KEYS,
+                    &format!("evidence of {kind} {id:?}"),
+                    out,
+                );
+            }
+        }
+    }
 }
 
 fn by_id(items: &[Json]) -> BTreeMap<String, &Json> {
@@ -264,6 +332,8 @@ pub fn compare(
     let min = min_figures.unwrap_or_else(|| default_min_figures(test_id));
 
     let mut out = Vec::new();
+    structure(a, "left", &mut out);
+    structure(b, "right", &mut out);
     for field in ["spec_version", "test_id", "test_version", "rules_version"] {
         if a.get(field) != b.get(field) {
             out.push(format!(
