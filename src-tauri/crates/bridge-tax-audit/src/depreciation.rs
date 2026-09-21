@@ -1094,7 +1094,7 @@ mod tests {
             parent: "Fixed Assets".to_string(),
             chain: vec!["Fixed Assets".to_string()],
             chain_complete: true,
-            opening_paise: 0,
+            master_opening_paise: 0,
             guid: format!("guid-{name}"),
             masterid: None,
         }
@@ -1106,7 +1106,7 @@ mod tests {
             parent: group.to_string(),
             chain: vec![group.to_string()],
             chain_complete: true,
-            opening_paise: 0,
+            master_opening_paise: 0,
             guid: format!("guid-{name}"),
             masterid: None,
         }
