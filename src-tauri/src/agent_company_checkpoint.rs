@@ -216,6 +216,45 @@ mod tests {
     }
 
     #[test]
+    fn corroboration_mark_reads_only_the_empty_book_as_zero() {
+        let xml = book_extents_fixture();
+        let guid = "bb8ad19e-6aef-4239-a917-87fec0c6215e";
+        assert_eq!(company_voucher_high_water(&xml, guid), Ok(101_605));
+        let empty_book = xml.replacen("<ALTVCHID TYPE=\"Number\"> 101605</ALTVCHID>", "", 1);
+        assert_eq!(company_voucher_high_water(&empty_book, guid), Ok(0));
+        // Every other refusal must propagate unchanged, never read as an empty book.
+        let neither = empty_book.replacen("<ALTMSTID TYPE=\"Number\"> 328</ALTMSTID>", "", 1);
+        let invalid_scalar = xml.replacen("101605", "101<OTHER>6</OTHER>05", 1);
+        let empty_scalar = xml.replacen(
+            "<ALTVCHID TYPE=\"Number\"> 101605</ALTVCHID>",
+            "<ALTVCHID/>",
+            1,
+        );
+        for (altered, code) in [
+            (&neither, "master_checkpoint_not_observed"),
+            (&invalid_scalar, "agent_read_protocol_invalid"),
+            (&empty_scalar, "voucher_checkpoint_invalid"),
+            (&xml, "company_high_water_identity_absent"),
+        ] {
+            let expected_guid = if altered == &xml {
+                "missing-guid"
+            } else {
+                guid
+            };
+            assert_eq!(
+                company_voucher_high_water(altered, expected_guid),
+                Err(code.to_string()),
+                "{code}"
+            );
+            assert_eq!(
+                parse_company_high_water(altered, expected_guid),
+                Err(code.to_string()),
+                "helper and parser refuse identically: {code}"
+            );
+        }
+    }
+
+    #[test]
     fn voucher_axis_absence_matches_its_named_code() {
         // pre_import_mark matches VOUCHER_CHECKPOINT_NOT_OBSERVED as a literal
         // against what observed_checkpoint formats from its axis argument. Pin
