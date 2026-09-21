@@ -464,7 +464,8 @@ pub(crate) const PY_CASED: [(u32, u32); 150] = [
 ];
 
 /// Python's effective Case_Ignorable set for the final-sigma rule (skipped when looking for a
-/// cased neighbour), excluding characters that are also effectively cased.
+/// cased neighbour). It includes characters that are also Cased (U+0345, modifier letters):
+/// CPython skips them before asking whether they are cased, so here they are ignorable only.
 pub(crate) const PY_CASE_IGNORABLE: [(u32, u32); 437] = [
     (0x0027, 0x0027),
     (0x002E, 0x002E),

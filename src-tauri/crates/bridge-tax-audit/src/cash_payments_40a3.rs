@@ -72,7 +72,8 @@ fn overflow() -> AuditError {
 const TRANSPORT_NAME_RE: &str = "FREIGHT|TRANSPORT|ROAD\\s?LINES|CARRIER|LOGISTIC|CARGO|ROADWAYS";
 
 fn transport_name_match(name: &str) -> bool {
-    let alts = crate::support::re_alternatives(TRANSPORT_NAME_RE);
+    static ALTS: std::sync::OnceLock<Vec<Vec<crate::support::ReTok>>> = std::sync::OnceLock::new();
+    let alts = ALTS.get_or_init(|| crate::support::re_alternatives(TRANSPORT_NAME_RE));
     let alts: Vec<&[crate::support::ReTok]> = alts.iter().map(Vec::as_slice).collect();
     crate::support::py_re_search(name, &alts)
 }
@@ -851,13 +852,13 @@ mod tests {
         for name in [
             "ABC LOGISTICS",
             "abc logistics",
-            "Sharma Road Lines",
-            "sharma roadlines",
+            "Invented Road Lines",
+            "invented roadlines",
             "Cargo Co",
         ] {
             assert!(transport_name_match(name), "{name}");
         }
-        assert!(!transport_name_match("Sharma Traders"));
+        assert!(!transport_name_match("Invented Traders"));
     }
 
     /// The s.269SS/269T figure definition names the voucher by `guid[-12:]` too, in the reference.

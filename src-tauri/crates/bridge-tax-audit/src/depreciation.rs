@@ -90,7 +90,8 @@ use crate::support::voucher_label;
 const GST_TCS_RE: &str = "\\bCGST\\b|\\bSGST\\b|\\bIGST\\b|\\bGST\\b|\\bTCS\\b";
 
 fn gst_tcs_match(name: &str) -> bool {
-    let alts = crate::support::re_alternatives(GST_TCS_RE);
+    static ALTS: std::sync::OnceLock<Vec<Vec<crate::support::ReTok>>> = std::sync::OnceLock::new();
+    let alts = ALTS.get_or_init(|| crate::support::re_alternatives(GST_TCS_RE));
     let alts: Vec<&[crate::support::ReTok]> = alts.iter().map(Vec::as_slice).collect();
     crate::support::py_re_search(name, &alts)
 }
@@ -1014,6 +1015,7 @@ not mapped to any depreciation block"
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::book::{Ledger, LedgerLine, VoucherStatus};
 
     /// The pattern searched here is the reference's own, byte for byte (the probe file records it
     /// from the reference module).
@@ -1027,7 +1029,6 @@ mod tests {
             GST_TCS_RE
         );
     }
-    use crate::book::{Ledger, LedgerLine, VoucherStatus};
 
     /// The reference's GST/TCS regex is case-insensitive (`re.I`) and word-bounded.
     #[test]

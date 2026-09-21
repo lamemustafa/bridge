@@ -263,8 +263,8 @@ mod tests {
     #[test]
     fn check_no_duplicate_ledger_guids_refuses_when_two_ledgers_share_a_normalised_guid() {
         let ledgers = book_with_ledgers(vec![
-            ledger_with("RAM TRADERS", "G-1"),
-            ledger_with("SHYAM TRADERS", " g-1 "),
+            ledger_with("EXAMPLE LEDGER A", "G-1"),
+            ledger_with("EXAMPLE LEDGER B", " g-1 "),
         ])
         .ledgers;
         let err = check_no_duplicate_ledger_guids(&ledgers).unwrap_err();
@@ -276,8 +276,8 @@ mod tests {
         // Blank GUIDs are exempt: two ledgers with "no identity" is not the corrupt-read case
         // this guards against (they already get the name-hash fallback in ledger_tag).
         let ledgers = book_with_ledgers(vec![
-            ledger_with("RAM TRADERS", ""),
-            ledger_with("SHYAM TRADERS", ""),
+            ledger_with("EXAMPLE LEDGER A", ""),
+            ledger_with("EXAMPLE LEDGER B", ""),
         ])
         .ledgers;
         assert!(check_no_duplicate_ledger_guids(&ledgers).is_ok());
@@ -286,8 +286,8 @@ mod tests {
     #[test]
     fn check_no_duplicate_ledger_guids_allows_distinct_guids() {
         let ledgers = book_with_ledgers(vec![
-            ledger_with("RAM TRADERS", "g-1"),
-            ledger_with("SHYAM TRADERS", "g-2"),
+            ledger_with("EXAMPLE LEDGER A", "g-1"),
+            ledger_with("EXAMPLE LEDGER B", "g-2"),
         ])
         .ledgers;
         assert!(check_no_duplicate_ledger_guids(&ledgers).is_ok());

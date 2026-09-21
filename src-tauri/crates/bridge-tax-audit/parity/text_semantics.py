@@ -16,9 +16,11 @@ It writes:
 - the extra characters `re.I` matches for each ASCII letter;
 - Python's effective Cased and Case_Ignorable sets for the final-sigma rule, found by probing
   `str.lower()` itself;
-- the probe file: Python's own results on the acceptance set (Latin, Latin-1/Ext-A/B, Devanagari
+- the probe file: Python's own results on the acceptance set (Latin, Latin-1/Ext-A/B, modifier
+  letters and combining diacriticals, currency symbols, Devanagari
   and the other Indic scripts, general punctuation, NBSP and the whitespace Tally emits), which
-  `tests/text_semantics.rs` replays in CI.
+  `src/support.rs`'s `text_probe_tests` replay in CI. After writing, run
+`cargo fmt -p bridge-tax-audit`: the tables are emitted unwrapped.
 """
 from __future__ import annotations
 
@@ -49,7 +51,8 @@ def rust_ranges(name, rs):
 
 
 def acceptance():
-    cps = list(range(0x20, 0x250)) + list(range(0x0900, 0x0E00)) + list(range(0x2000, 0x2070))
+    cps = list(range(0x20, 0x250)) + list(range(0x02B0, 0x0370)) + list(range(0x0900, 0x0E00))
+    cps += list(range(0x2000, 0x2070)) + list(range(0x20A0, 0x20D0))
     cps += [0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x1C, 0x1D, 0x1E, 0x1F, 0xA0, 0x202F, 0xFEFF, 0x3000]
     return sorted({cp for cp in cps if unicodedata.category(chr(cp)) != "Cn"})
 
@@ -104,7 +107,8 @@ def main() -> int:
         "/// sigma lowers to the final form.\n"
         + rust_ranges("PY_CASED", ranges(cased))
         + "\n/// Python's effective Case_Ignorable set for the final-sigma rule (skipped when looking for a\n"
-        "/// cased neighbour), excluding characters that are also effectively cased.\n"
+        "/// cased neighbour). It includes characters that are also Cased (U+0345, modifier letters):\n"
+        "/// CPython skips them before asking whether they are cased, so here they are ignorable only.\n"
         + rust_ranges("PY_CASE_IGNORABLE", ranges(ignorable))
     )
     (ROOT / "src" / "text_tables.rs").write_text(out, encoding="utf-8")
@@ -124,13 +128,14 @@ def main() -> int:
         for s in ("ROAD" + c + "LINES", "LOG" + c + "STIC", c + "Cargo", "FRE" + c + "GHT", "RO" + c + "DWAYS"):
             probes["transport"].append([s, bool(transport.search(s))])
     for s in ("İLOG", "LOGİSTIC", "CARRıER", "LOﬆIC", "STRAßE CARGO", "ROAD\x1cLINES",
-              "roadlines", "Sharma Road Lines", "ABC LOGISTICS"):
+              "roadlines", "Invented Road Lines", "invented logistic", "ABC LOGISTICS"):
         probes["transport"].append([s, bool(transport.search(s))])
     for s in ("CGST INPUT", "cgst input", "Input Igst", "Gstin Register", "ABCGST", "कGST", "GSTा"):
         probes["gst_tcs"].append([s, bool(gst_tcs.search(s))])
     header = {"generated_by": "parity/text_semantics.py", "python": sys.version.split()[0],
               "unicode": unicodedata.unidata_version, "reference_regexes": {"transport": transport.pattern,
-              "gst_tcs": gst_tcs.pattern}}
+              "gst_tcs": gst_tcs.pattern}, "reference_regex_flags": {"transport": transport.flags,
+              "gst_tcs": gst_tcs.flags}}
     (ROOT / "tests" / "fixtures" / "text-probes.json").write_text(
         json.dumps({"header": header, "probes": probes}, ensure_ascii=False, indent=0) + "\n", encoding="utf-8")
     print(f"NOT_PY_ALNUM {len(ranges(not_alnum))} ranges; PY_CASED {len(ranges(cased))}; "

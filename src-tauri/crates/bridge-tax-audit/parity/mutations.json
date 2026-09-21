@@ -718,5 +718,21 @@
   "file": "src/support.rs",
   "from": "            let before = at > 0 && py_is_word(chars[at - 1]);",
   "to": "            let before = false;"
+ },
+ {
+  "id": "T06",
+  "by": "author",
+  "what": "re.I folds only for a capital pattern letter",
+  "file": "src/support.rs",
+  "from": "        .any(|(l, cps)| *l == up && cps.contains(&u32::from(c)))",
+  "to": "        .any(|(l, cps)| *l == p && cps.contains(&u32::from(c)))"
+ },
+ {
+  "id": "T07",
+  "by": "author",
+  "what": "a NOT_PY_ALNUM range shifted by one",
+  "file": "src/text_tables.rs",
+  "from": "    (0x0345, 0x0345),",
+  "to": "    (0x0346, 0x0346),"
  }
 ]
