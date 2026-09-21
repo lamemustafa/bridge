@@ -614,5 +614,69 @@
   "file": "src/support.rs",
   "from": "            let keep = UPPER_UNCHANGED.binary_search(&u32::from(c)).is_ok();",
   "to": "            let keep = false;"
+ },
+ {
+  "id": "F01",
+  "by": "author",
+  "what": "compare ignores repeated figure/finding ids",
+  "file": "src/compare.rs",
+  "from": "            if !seen.insert(id.to_string()) {",
+  "to": "            if !seen.insert(id.to_string()) && false {"
+ },
+ {
+  "id": "F02",
+  "by": "author",
+  "what": "compare ignores unknown keys",
+  "file": "src/compare.rs",
+  "from": "            for k in map.keys().filter(|k| !allowed.contains(&k.as_str())) {",
+  "to": "            for k in map.keys().filter(|_| false) {"
+ },
+ {
+  "id": "F03",
+  "by": "author",
+  "what": "registry find matches a prefix",
+  "file": "src/registry.rs",
+  "from": "    PORTED.iter().find(|t| t.id == id)",
+  "to": "    PORTED.iter().find(|t| t.id.starts_with(id))"
+ },
+ {
+  "id": "F04",
+  "by": "author",
+  "what": "a mistyped closing stock is read as none",
+  "file": "src/registry.rs",
+  "from": "    let closing_stock_paise = match &v[\"closing_stock_paise\"] {",
+  "to": "    let closing_stock_paise = match &serde_json::Value::Null {"
+ },
+ {
+  "id": "F05",
+  "by": "author",
+  "what": "py_isspace is Rust's whitespace",
+  "file": "src/support.rs",
+  "from": "    c.is_whitespace() || ('\\u{1c}'..='\\u{1f}').contains(&c)",
+  "to": "    c.is_whitespace()"
+ },
+ {
+  "id": "F06",
+  "by": "author",
+  "what": "GUID tag trims instead of Python strip",
+  "file": "src/ledger_ids.rs",
+  "from": "    crate::support::py_lower(crate::support::py_strip(guid))",
+  "to": "    crate::support::py_lower(guid.trim())"
+ },
+ {
+  "id": "F07",
+  "by": "author",
+  "what": "binding keys a master GUID unstripped",
+  "file": "src/binding.rs",
+  "from": "        let g = crate::support::py_strip(&m.guid);",
+  "to": "        let g = m.guid.as_str();"
+ },
+ {
+  "id": "F08",
+  "by": "author",
+  "what": "binding looks a configured GUID up case-sensitively",
+  "file": "src/binding.rs",
+  "from": ".get(&crate::support::py_lower(guid))",
+  "to": ".get(guid)"
  }
 ]

@@ -854,6 +854,21 @@ line of abs amount >= the s.269SS/269T limit ({limit_ss_t} paise)."
 mod tests {
     use super::*;
 
+    /// The reference's transport-name regex is case-insensitive (`re.I`).
+    #[test]
+    fn the_transport_name_check_ignores_case() {
+        for name in [
+            "ABC LOGISTICS",
+            "abc logistics",
+            "Sharma Road Lines",
+            "sharma roadlines",
+            "Cargo Co",
+        ] {
+            assert!(transport_name_match(name), "{name}");
+        }
+        assert!(!transport_name_match("Sharma Traders"));
+    }
+
     /// The s.269SS/269T figure definition names the voucher by `guid[-12:]` too, in the reference.
     #[test]
     fn a_loan_line_definition_names_the_voucher_by_the_last_12_characters_of_its_guid() {

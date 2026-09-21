@@ -50,6 +50,34 @@ fn synthetic_read_matches_the_python_golden() {
 }
 
 #[test]
+fn a_repeated_id_or_an_unknown_key_is_reported() {
+    let mut rust = rust_dump();
+    let first = rust["figures"][0].clone();
+    let mut twin = first.clone();
+    twin["value"] = json!(123_456_789);
+    rust["figures"].as_array_mut().unwrap().insert(0, twin);
+    let d = diffs(&rust);
+    assert!(
+        d.iter()
+            .any(|x| x.starts_with("right: figures id") && x.ends_with("appears more than once")),
+        "{d:?}"
+    );
+
+    let mut rust = rust_dump();
+    rust["basis"] = json!("x");
+    rust["figures"][0]["basis"] = json!("x");
+    rust["findings"][0]["severity"] = json!("x");
+    let d = diffs(&rust);
+    for want in [
+        "right: unknown key \"basis\" in the dump",
+        "right: unknown key \"basis\" in figures",
+        "right: unknown key \"severity\" in findings",
+    ] {
+        assert!(d.iter().any(|x| x.starts_with(want)), "{want}: {d:?}");
+    }
+}
+
+#[test]
 fn a_changed_test_or_spec_version_is_reported() {
     for field in ["test_version", "spec_version"] {
         let mut rust = rust_dump();

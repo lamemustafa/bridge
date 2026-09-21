@@ -29,6 +29,11 @@ LIST = ROOT / "parity" / "mutations.json"
 
 def main() -> int:
     mutations = json.loads(LIST.read_text(encoding="utf-8"))
+    ids = [m["id"] for m in mutations]
+    repeated = sorted({i for i in ids if ids.count(i) > 1})
+    if repeated:
+        print(f"refusing: mutation ids used more than once: {repeated}", file=sys.stderr)
+        return 2
     wanted = set(sys.argv[1:])
     if wanted:
         mutations = [m for m in mutations if m["id"] in wanted]

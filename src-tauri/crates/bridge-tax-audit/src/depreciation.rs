@@ -1042,6 +1042,23 @@ mod tests {
     use super::*;
     use crate::book::{Ledger, LedgerLine, VoucherStatus};
 
+    /// The reference's GST/TCS regex is case-insensitive (`re.I`) and word-bounded.
+    #[test]
+    fn the_gst_tcs_name_check_ignores_case_and_needs_a_word() {
+        for name in [
+            "CGST Input",
+            "cgst input",
+            "Input Igst",
+            "tcs payable",
+            "GST",
+        ] {
+            assert!(gst_tcs_match(name), "{name}");
+        }
+        for name in ["Gstin Register", "Machinery", "ABCGST", "tcsx"] {
+            assert!(!gst_tcs_match(name), "{name}");
+        }
+    }
+
     /// The reference labels a voucher with no number by `guid[-12:]`: 12 characters. Here the
     /// 12-byte cut would land inside an 'é' (a panic when byte-sliced); the expected tail is the
     /// reference's own `"invented-guid-ééééééa"[-12:]`.

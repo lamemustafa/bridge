@@ -100,10 +100,26 @@ pub fn report_totals_from_json(v: &serde_json::Value) -> Result<ReportTotals> {
     let net_profit_paise = v["net_profit_paise"].as_i64().ok_or_else(|| {
         AuditError::Config("report totals: net_profit_paise is not an integer".to_string())
     })?;
+    let closing_stock_paise = match &v["closing_stock_paise"] {
+        serde_json::Value::Null => None,
+        x => Some(x.as_i64().ok_or_else(|| {
+            AuditError::Config("report totals: closing_stock_paise is not an integer".to_string())
+        })?),
+    };
+    let source = match &v["source"] {
+        serde_json::Value::Null => None,
+        x => Some(
+            x.as_str()
+                .ok_or_else(|| {
+                    AuditError::Config("report totals: source is not a string".to_string())
+                })?
+                .to_string(),
+        ),
+    };
     Ok(ReportTotals {
         net_profit_paise,
-        closing_stock_paise: v["closing_stock_paise"].as_i64(),
-        source: v["source"].as_str().map(str::to_string),
+        closing_stock_paise,
+        source,
     })
 }
 
@@ -136,6 +152,48 @@ pub fn turnover_inputs_from_json(v: &serde_json::Value) -> Result<TurnoverInputs
 #[cfg(test)]
 mod tests {
     use super::PORTED;
+
+    #[test]
+    fn find_is_by_exact_id() {
+        assert!(super::find("trial_balance").is_some());
+        assert!(super::find("trial").is_none());
+        assert!(super::find("cash").is_none());
+        assert!(super::find("trial_balance ").is_none());
+    }
+
+    #[test]
+    fn caller_data_is_read_whole_and_refused_when_mistyped() {
+        use super::{report_totals_from_json, turnover_inputs_from_json};
+        use serde_json::json;
+        let t = turnover_inputs_from_json(&json!({
+            "gstr1": {"turnover_paise": 5, "coverage": "full"},
+            "gstr3b": null,
+            "ais": {"turnover_paise": 7, "coverage": "partial"}
+        }))
+        .unwrap();
+        assert_eq!(t.gstr1.unwrap().turnover_paise, 5);
+        assert!(t.gstr3b.is_none());
+        let ais = t.ais.unwrap();
+        assert_eq!((ais.turnover_paise, ais.coverage.as_str()), (7, "partial"));
+        for bad in [
+            json!({"gstr1": {"turnover_paise": "5", "coverage": "full"}}),
+            json!({"ais": {"coverage": "full"}}),
+        ] {
+            assert!(turnover_inputs_from_json(&bad).is_err(), "{bad}");
+        }
+        let r =
+            report_totals_from_json(&json!({"net_profit_paise": 3, "closing_stock_paise": null}))
+                .unwrap();
+        assert_eq!((r.net_profit_paise, r.closing_stock_paise), (3, None));
+        for bad in [
+            json!({}),
+            json!({"net_profit_paise": "3"}),
+            json!({"net_profit_paise": 3, "closing_stock_paise": "4"}),
+            json!({"net_profit_paise": 3, "source": 9}),
+        ] {
+            assert!(report_totals_from_json(&bad).is_err(), "{bad}");
+        }
+    }
 
     #[test]
     fn the_registry_is_sorted_and_unique() {

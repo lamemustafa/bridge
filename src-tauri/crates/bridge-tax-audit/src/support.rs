@@ -148,6 +148,13 @@ mod tests {
             "the toolchain's Unicode tables moved: regenerate the exception lists with \
              parity/case_exceptions.py and update GENERATED_AGAINST"
         );
+        // The generator's own counts: a dropped or added entry fails here.
+        assert_eq!((UPPER_UNCHANGED.len(), LOWER_UNCHANGED.len()), (55, 55));
+        assert_eq!(
+            unicode_normalization::UNICODE_VERSION,
+            (17, 0, 0),
+            "NFC tables moved"
+        );
         for list in [&UPPER_UNCHANGED[..], &LOWER_UNCHANGED[..]] {
             assert!(list.windows(2).all(|w| w[0] < w[1]), "sorted and unique");
         }
@@ -157,6 +164,8 @@ mod tests {
     fn exceptions_keep_their_character_and_everything_else_maps_as_rust_does() {
         assert_eq!(py_upper("\u{0264}ab\u{A7D3}"), "\u{0264}AB\u{A7D3}");
         assert_eq!(py_lower("\u{A7CB}AB"), "\u{A7CB}ab");
+        // An exception in the middle of a word: the text either side is lower-cased once each.
+        assert_eq!(py_lower("AB\u{A7CB}CD\u{A7CB}EF"), "ab\u{A7CB}cd\u{A7CB}ef");
         assert_eq!(py_upper("straße"), "STRASSE");
         assert_eq!(py_lower("ΟΔΟΣ"), "οδος"); // final sigma, as Python and Rust both do
         assert_eq!(py_lower("İ"), "i\u{307}");
