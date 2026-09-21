@@ -3,15 +3,15 @@
   "files": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "159e87cafa60f9fa44760aea2c80ecd81519080d87d555c03930afd7e5ba2486"
+      "sha256": "a41cd0e2dfc20891bc250560f26f00388065ecc01fd60c3ca4e08617b5c71f69"
     },
     {
       "path": ".github/workflows/dependency-security-scheduled.yml",
-      "sha256": "00c6a439c1147250d2980ea9202ffca244a53f28edb49d112e8f836f5fc717e2"
+      "sha256": "d9d7940aeed947df0dbc31ec7aacbdea5dac7eb5f7ac1b05e180a24c94f1363a"
     },
     {
       "path": ".github/workflows/dependency-security.yml",
-      "sha256": "4067c87bf6d3ddcd751a6151e00477fb8c7c7d9f594ba5c8bab6f15df5da405b"
+      "sha256": "d400dea029bca0e7b8fb8c04e98de9f78cfa3cc91adee80e67ed212536118891"
     },
     {
       "path": "docs/adr/0004-tally-write-safety.md",
@@ -103,11 +103,11 @@
     },
     {
       "path": "package.json",
-      "sha256": "917adc4ebe83bcd2ae5be0b06ba91c878c29f7dfc4b38d5dab1a4893a7effc91"
+      "sha256": "665d269c5512f5ce434221cc0b83c98d767b06415d72eebc6d5c224836b8b8f8"
     },
     {
       "path": "pnpm-lock.yaml",
-      "sha256": "7f2cdeebf4c7827fec8df21b6b084160305755f26af06d7ddd62ffdff98cda15"
+      "sha256": "98fa3873a5e1c494d9428eea73e6bfb1b696d686334af732bc3c236d69d20a2b"
     },
     {
       "path": "scripts/check-tally-live-read-boundary.mjs",
@@ -151,7 +151,7 @@
     },
     {
       "path": "src-tauri/Cargo.lock",
-      "sha256": "044445308637ee327deb9aa1d2e37ed9f0be8077e95369852a22fca089edaa44"
+      "sha256": "859342938170868439fa8b948ac63531a18765396552b0fe2f3b08ddecf10f0d"
     },
     {
       "path": "src-tauri/Cargo.toml",
@@ -1098,5 +1098,5 @@
       "sha256": "0ab5bfbe6d81b1e10530744c338fb91efa57fe5a66fb4bc0cfd382495eaf02a4"
     }
   ],
-  "manifest_sha256": "105be2e7733fdc73e227b3f926538ed2531412b16b1cc816c6f3729419290410"
+  "manifest_sha256": "09277dee8bf11e0765967ae7c342374ba6f76204d1998b0a7ffa48f177b1180f"
 }
