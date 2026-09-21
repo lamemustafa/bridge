@@ -321,9 +321,12 @@ uv run -q --with openpyxl --with xlrd --with python-docx --with jsonschema --wit
 
 From 2026-09-22 every golden is produced under Python 3.13 (`uv run --python 3.13 ...`), the
 version whose Unicode tables the crate reproduces; the ten synthetic goldens and every edge golden
-above regenerate byte-identical under it. `parity/python_golden.py` and `parity/edge_golden.py`
-dispatch through runner tables that name the same tests as `src/registry.rs`
-(`tests/registry.rs` checks the two lists agree).
+above regenerate byte-identical under it. `parity/python_golden.py`'s runner table names exactly the tests in `src/registry.rs`
+(`tests/registry.rs` checks it), and `parity/edge_golden.py`'s runners name exactly the tests
+`tests/edge_books.rs` dispatches, all of them registered (`edge_runners_agree_across_the_two_sides`).
+`tests/edge_books.rs` builds every book in `edge-books/`, with no hand-kept list, and fails on a
+golden that no book names or no registered test owns. `tests/provenance_rows.rs` fails on a golden
+or edge book with no byte row.
 
 From batch 2 on, each batch records its own fixtures -- prose and byte table -- in
 `provenance/<batch>.md` under this directory, not in this file, so two lanes porting in parallel

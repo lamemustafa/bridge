@@ -19,7 +19,10 @@ fn markdown_rows(dir: &Path, out: &mut Vec<String>) {
                 // "", file, bytes, sha, path, ""
                 if cells.len() == 6
                     && cells[3].trim_matches('`').len() == 64
-                    && cells[3].trim_matches('`').bytes().all(|b| b.is_ascii_hexdigit())
+                    && cells[3]
+                        .trim_matches('`')
+                        .bytes()
+                        .all(|b| b.is_ascii_hexdigit())
                 {
                     out.push(cells[4].trim_matches('`').to_string());
                 }
