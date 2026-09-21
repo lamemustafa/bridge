@@ -56,10 +56,12 @@ fn total<'a>(rows: impl IntoIterator<Item = &'a (&'a Voucher, i64)>) -> Result<i
     rows.into_iter().try_fold(0i64, |acc, (_, a)| add(acc, *a))
 }
 
-/// Python's `str.upper()` (full Unicode case mapping). Rust's tables and Python's differ on about
-/// 55 code points (in Latin Extended-D, Georgian U+1C8A and the Garay script of Unicode 16),
-/// measured over every code point in the 2026-09-21 review; none is plausible in Tally narration
-/// text.
+/// Python's `str.upper()` (full Unicode case mapping) -- except where the Unicode versions differ.
+/// Rust 1.96 carries Unicode 17.0 and the reference's Python 3.13 carries 15.1.0; measured over
+/// every code point, `to_uppercase` differs from `str.upper()` at exactly 55: U+019B, U+0264,
+/// U+1C8A, U+A7CD, U+A7CF, U+A7D3, U+A7D5, U+A7DB, U+10D70-10D85 and U+16EBB-16ED3. A narration
+/// holding one of them can change parts 3 and 5 here (a reviewer's crafted book did). Known,
+/// unfixed in this change; the crate-wide fix pins case mapping to the reference's version.
 fn upper(text: &str) -> String {
     text.to_uppercase()
 }
@@ -126,14 +128,15 @@ fn under_expense(book: &Book, ledger: &str) -> bool {
         .is_some_and(|l| EXPENSE_GROUPS.iter().any(|g| l.under(g)))
 }
 
-#[allow(clippy::too_many_lines)] // one section per fact, as the reference lays them out
 /// `[roles].own_account_narration_terms` as this test reads it: absent is no terms; otherwise a
 /// list of strings, or a configuration error for this test alone.
 ///
-/// Divergence, deliberate: the reference passes the value to `frozenset(...)` unchecked, so a
-/// single string (`"SELF"` rather than `["SELF"]`) becomes the set of its characters and part 3
-/// matches any narration containing any one of them. Here a string, or a list holding anything
-/// but strings, is refused.
+/// Divergence, deliberate, and not parity: the reference passes the value to `frozenset(...)`
+/// unchecked. A single string (`"SELF"` rather than `["SELF"]`) becomes the set of its characters,
+/// so part 3 matches any narration containing any one of them; a table becomes the set of its
+/// keys; and a list holding a non-string raises inside the test's `run`, which -- because the
+/// reference's pack builds every result in one expression -- fails the whole pack, not this test.
+/// Here all three are refused, and only this test fails.
 pub fn own_account_terms(raw: Option<&toml::Value>) -> Result<Vec<String>> {
     let Some(raw) = raw else {
         return Ok(Vec::new());
@@ -150,6 +153,7 @@ pub fn own_account_terms(raw: Option<&toml::Value>) -> Result<Vec<String>> {
         .collect()
 }
 
+#[allow(clippy::too_many_lines)] // one section per fact, as the reference lays them out
 pub fn run(
     book: &Book,
     rules: &Rules,

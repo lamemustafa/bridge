@@ -234,6 +234,16 @@ fn cash_book() {
     check("cash_book");
 }
 
+#[test]
+fn cash_book_misc() {
+    check("cash_book_misc");
+}
+
+#[test]
+fn scrutiny_misc() {
+    check("scrutiny_misc");
+}
+
 /// Every committed edge book is checked above, and every edge golden has its book.
 #[test]
 fn every_edge_book_is_checked() {
@@ -244,6 +254,8 @@ fn every_edge_book_is_checked() {
         "scrutiny_default",
         "scrutiny_short",
         "cash_book",
+        "cash_book_misc",
+        "scrutiny_misc",
     ];
     let mut books: Vec<String> = std::fs::read_dir(common::fixtures().join("edge-books"))
         .unwrap()

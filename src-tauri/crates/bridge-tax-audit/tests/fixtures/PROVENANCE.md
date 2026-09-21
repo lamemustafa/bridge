@@ -231,10 +231,20 @@ boundary, a credit-only movement, a debtor with no TB row, zero-amount and optio
 firing), `scrutiny.json`, `scrutiny_default.json` and `scrutiny_short.json` (`ledger_scrutiny`:
 the Rs 50,000 and 30% boundaries, the last-days window's first day, cash legs, journal-only and
 contra-nature, LSC-1 and its tolerance, no rules table, a 4-day period), and `cash_book.json`
-(`cash_book_integrity`: all five parts, equal minima, CBI-2 firing). Two vouchers have no number
+(`cash_book_integrity`: all five parts, equal minima, CBI-2 firing); and two written by an
+independent reviewer to catch what those miss, `cash_book_misc.json` (own-account terms repeated
+in different case, a Contra between two bank ledgers, zero-amount expense lines, one voucher
+matching on several lines) and `scrutiny_misc.json` (a debit cash leg, a large credit entry, a
+ledger with no TB row, a ledger under both expense groups). Two vouchers have no number
 and a non-ASCII GUID whose 12-byte cut splits a character, so the voucher label must take the last
 12 characters, as the reference does. None of these is a Tally read: they establish that the port
 and the reference agree on the same book, and nothing about reading Tally.
+
+One divergence is known and not fixed here: case mapping. Rust 1.96 carries Unicode 17.0 and the
+reference's Python 3.13 carries 15.1.0, and upper- and lower-casing each differ at 55 code points
+(all assigned after 15.1; measured over every code point). A narration holding one can change
+`cash_book_integrity`'s parts 3 and 5. No edge book holds one; the crate-wide fix pins case
+mapping to the reference's version.
 
 `golden/edge.NAME.TEST.json` is the reference implementation's own canonical dump for that book,
 built with its own model (`tae.model`) by `parity/edge_golden.py` -- company GUID
@@ -251,7 +261,8 @@ uv run -q --with openpyxl --with xlrd --with python-docx --with jsonschema --wit
 ```
 
 once per book. `tests/edge_books.rs` builds each book in Rust, runs each named test with its module
-check, compares the whole dump with `compare`, and compares the row order. Of 52 hand-written
+check, compares the whole dump with `compare` -- every field of it, the spec and test versions
+included -- and compares the row order. Of 52 hand-written
 mutations of the four modules and the NARRATION parse (32 from an independent reviewer, 20 from the
 author; see the PR), the crate's suite fails on every one, and the edge books alone on 50: the other
 two alter how the read's XML is parsed, which the edge books bypass by building the book directly,
@@ -316,14 +327,18 @@ uv run -q --with openpyxl --with xlrd --with python-docx --with jsonschema --wit
 | `synthetic.ledger_scrutiny.json` | 51,342 | `6b0358464627bc7e7d4cc9fd206cc2f4564ed7a35a1b769d303e5d0986d1470e` | `golden/synthetic.ledger_scrutiny.json` |
 | `synthetic.cash_book_integrity.json` | 15,221 | `2ee1cbc0de9d5087956c4115610c74a8cdd15cc361296dd09b685363bdf74289` | `golden/synthetic.cash_book_integrity.json` |
 | `cash_book.json` | 8,499 | `1ae602f22368e3b549ce1430770f097758f13efb716025bcb2bab2a2e4a34f11` | `edge-books/cash_book.json` |
+| `cash_book_misc.json` | 5,333 | `23bd18a9b41d3768ce4cba9c9b5243b0822316e5fa7ab0308b83226c581c93f0` | `edge-books/cash_book_misc.json` |
 | `scrutiny.json` | 7,211 | `047e7ca918611b43b7480fef16841fadb54016360b16ebca30e9c94df05c3fb4` | `edge-books/scrutiny.json` |
 | `scrutiny_default.json` | 1,108 | `04bf6e5efb9c45601803624f8931ee563f23fbc502580fcc3c28b6870c9dd37e` | `edge-books/scrutiny_default.json` |
+| `scrutiny_misc.json` | 4,300 | `258aae0ba8d75656870d57638345b10d465edabd797f9cce4bab999f39812a8d` | `edge-books/scrutiny_misc.json` |
 | `scrutiny_short.json` | 1,212 | `e60f643456d1b812bb82c24ad581a030c4ae0dcc1c9701560ef1ace44d54b46e` | `edge-books/scrutiny_short.json` |
 | `stale.json` | 3,134 | `3e896344abf36b0469d289d69dabfdc5206ee4998c2df505bed449fb79255059` | `edge-books/stale.json` |
 | `tb_rows.json` | 2,362 | `5e3df2c81094e5ea7577309b48597bc03067a4f9ba09175a610b627b62fc31cd` | `edge-books/tb_rows.json` |
 | `edge.cash_book.cash_book_integrity.json` | 32,683 | `510282f185b850cec19cacb06ec08a82c4d8d9bf3b88fd12e8aae37247584078` | `golden/edge.cash_book.cash_book_integrity.json` |
+| `edge.cash_book_misc.cash_book_integrity.json` | 21,454 | `c955eeca88f6880d43ffb93c5642a37c625c55a334323a6e15f0981097de747c` | `golden/edge.cash_book_misc.cash_book_integrity.json` |
 | `edge.scrutiny.ledger_scrutiny.json` | 69,427 | `52ba969e677ef12c09cf26fb118b6ebca4aace4a4ed5a76f0063e2409475f666` | `golden/edge.scrutiny.ledger_scrutiny.json` |
 | `edge.scrutiny_default.ledger_scrutiny.json` | 8,407 | `03c41d14a83cd4da0bb94e026f93dc36438270b9a430d84f67967ed7339e58b7` | `golden/edge.scrutiny_default.ledger_scrutiny.json` |
+| `edge.scrutiny_misc.ledger_scrutiny.json` | 44,609 | `920f462e1642ea33f8249f3bece1fded847ee83886bc678a26f46678628dcf45` | `golden/edge.scrutiny_misc.ledger_scrutiny.json` |
 | `edge.scrutiny_short.ledger_scrutiny.json` | 8,638 | `9cd03cab0d2c3daebf60368faf9130366d19726963b0815dc72758fa62ef1112` | `golden/edge.scrutiny_short.ledger_scrutiny.json` |
 | `edge.stale.stale_balances_41_1.json` | 9,839 | `39a7bef9ed505d7ec78806d1b6ab524eeaaccc23aac95721a1f65a6b6bc37319` | `golden/edge.stale.stale_balances_41_1.json` |
 | `edge.tb_rows.trial_balance.json` | 14,783 | `870dd45e33e6350394c42d3e4c0ed5ec5be3f875b5a131e4e812682d88c8f9b6` | `golden/edge.tb_rows.trial_balance.json` |

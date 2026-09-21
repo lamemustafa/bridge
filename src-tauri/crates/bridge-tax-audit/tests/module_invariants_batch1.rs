@@ -155,6 +155,31 @@ fn stl1_reports_a_tag_it_cannot_resolve() {
 }
 
 #[test]
+fn lsc1_reports_a_tag_it_cannot_resolve() {
+    let period = Window {
+        from: TallyDate::parse("20250401").unwrap(),
+        to: TallyDate::parse("20260331").unwrap(),
+    };
+    let b = book(
+        vec![ledger("Repairs", &["Indirect Expenses"])],
+        vec![("Repairs", tb(0, 100, 0, 100))],
+        vec![voucher("v1", "20250601", "Journal", &[("Repairs", 100)])],
+    );
+    let mut r = ledger_scrutiny::run(&b, &rules(), &period, &BTreeSet::new()).unwrap();
+    let f = r
+        .figures
+        .iter_mut()
+        .find(|f| f.id.starts_with("ledger_scrutiny.total_debit_paise_"))
+        .unwrap();
+    f.id = "ledger_scrutiny.total_debit_paise_nosuchtag".to_string();
+    let v = ledger_scrutiny::check_invariants(&b, &r).unwrap();
+    assert_eq!(
+        v,
+        vec!["LSC-1: cannot resolve an expense ledger for figure ledger_scrutiny.total_debit_paise_nosuchtag (tag nosuchtag)"]
+    );
+}
+
+#[test]
 fn lsc1_fires_when_the_walk_exceeds_the_tb_debit_by_more_than_a_rupee() {
     let period = Window {
         from: TallyDate::parse("20250401").unwrap(),

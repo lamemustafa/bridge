@@ -37,6 +37,7 @@ fn a_malformed_value_fails_cash_book_integrity_alone() {
     for line in [
         "own_account_narration_terms = \"SELF\"",
         "own_account_narration_terms = [\"SELF\", 7]",
+        "own_account_narration_terms = { SELF = 1 }",
     ] {
         let e = engagement_with(line);
         let rules = rules_for(&e).unwrap();

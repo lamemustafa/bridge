@@ -1,10 +1,11 @@
 //! Diff two canonical dumps by the same rules as the reference Python implementation's own
 //! comparison tool (`docs/tax-audit/parity-spec-v1.md` section 7): type validation on both
-//! sides first, refusal of an empty-vs-empty comparison, a minimum figure count, identical
-//! figure and finding key sets (the full symmetric difference is reported), then per-figure
-//! unit, value, definition hash and evidence; per-finding clauses (ordered), confidence, facts,
-//! evidence and prose hashes; the population note; and the invariant reports. Every list is
-//! re-sorted before comparing, so a producer's order never decides the result.
+//! sides first, refusal of an empty-vs-empty comparison, equal spec, test and rules versions and
+//! test id (the reference's tool checks only the test id and rules version), a minimum figure
+//! count, identical figure and finding key sets (the full symmetric difference is reported), then
+//! per-figure unit, value, definition hash and evidence; per-finding clauses (ordered),
+//! confidence, facts, evidence and prose hashes; the population note; and the invariant reports.
+//! Every list is re-sorted before comparing, so a producer's order never decides the result.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -263,7 +264,7 @@ pub fn compare(
     let min = min_figures.unwrap_or_else(|| default_min_figures(test_id));
 
     let mut out = Vec::new();
-    for field in ["test_id", "rules_version"] {
+    for field in ["spec_version", "test_id", "test_version", "rules_version"] {
         if a.get(field) != b.get(field) {
             out.push(format!(
                 "{field} differs left={:?} right={:?}",

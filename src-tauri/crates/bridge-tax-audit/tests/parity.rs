@@ -50,6 +50,17 @@ fn synthetic_read_matches_the_python_golden() {
 }
 
 #[test]
+fn a_changed_test_or_spec_version_is_reported() {
+    for field in ["test_version", "spec_version"] {
+        let mut rust = rust_dump();
+        rust[field] = json!("2");
+        let d = diffs(&rust);
+        assert_eq!(d.len(), 1, "{field}: {d:?}");
+        assert!(d[0].starts_with(&format!("{field} differs")), "{d:?}");
+    }
+}
+
+#[test]
 fn a_changed_value_is_reported() {
     let mut rust = rust_dump();
     figure_mut(&mut rust, "cash_44ab.cash_receipts")["value"] = json!(9_873_458);
