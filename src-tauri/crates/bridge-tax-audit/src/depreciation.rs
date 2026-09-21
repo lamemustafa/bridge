@@ -82,19 +82,7 @@ fn hash12_sha256(text: &str) -> String {
     crate::canonical::hex(&Sha256::digest(text.as_bytes()))[..12].to_string()
 }
 
-fn guid_tail12(guid: &str) -> &str {
-    let cut = guid.len().saturating_sub(12);
-    &guid[cut..]
-}
-
-fn voucher_label(v: &Voucher) -> String {
-    let num = if v.number.is_empty() {
-        guid_tail12(&v.guid)
-    } else {
-        v.number.as_str()
-    };
-    format!("{} {} on {}", v.vtype, num, iso(&v.date))
-}
+use crate::support::voucher_label;
 
 fn is_word_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'

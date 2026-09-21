@@ -133,22 +133,7 @@ fn group_for_kind(kind: &str) -> Result<&'static str> {
         })
 }
 
-/// A Tally GUID's prefix is the company's, shared by every voucher; the last 12 characters are
-/// the distinguishing part the reference implementation falls back to when a voucher has no
-/// number.
-fn guid_tail12(guid: &str) -> &str {
-    let cut = guid.len().saturating_sub(12);
-    &guid[cut..]
-}
-
-fn voucher_label(v: &Voucher) -> String {
-    let num = if v.number.is_empty() {
-        guid_tail12(&v.guid)
-    } else {
-        v.number.as_str()
-    };
-    format!("{} {} on {}", v.vtype, num, iso(&v.date))
-}
+use crate::support::voucher_label;
 
 /// One (date, ledger) row's aggregate: cash amount and the distinct vouchers that contributed.
 struct RowAgg<'a> {
@@ -767,7 +752,7 @@ needed)."
             &format!(
                 "Loan-ledger line (tag {h}) on voucher {}, cash {} in the same voucher ({} by \
 the client's [loans] configuration).",
-                guid_tail12(&v.guid),
+                crate::support::guid_tail12(&v.guid),
                 c.direction,
                 coverage_tag
             ),
@@ -868,6 +853,75 @@ line of abs amount >= the s.269SS/269T limit ({limit_ss_t} paise)."
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The s.269SS/269T figure definition names the voucher by `guid[-12:]` too, in the reference.
+    #[test]
+    fn a_loan_line_definition_names_the_voucher_by_the_last_12_characters_of_its_guid() {
+        use crate::book::{LedgerLine, VoucherStatus};
+        let ledger = |name: &str, chain: &[&str]| crate::book::Ledger {
+            name: name.to_string(),
+            parent: chain[0].to_string(),
+            chain: chain.iter().map(|g| (*g).to_string()).collect(),
+            chain_complete: true,
+            master_opening_paise: 0,
+            guid: format!("invented-{name}"),
+            masterid: None,
+        };
+        let book = Book {
+            company_name: "Invented".to_string(),
+            company_guid: "invented-company".to_string(),
+            read_at: String::new(),
+            groups: BTreeMap::new(),
+            group_masters: BTreeMap::new(),
+            ledgers: [
+                ledger("Cash", &["Cash-in-Hand"]),
+                ledger("Lender Loan", &["Loans (Liability)"]),
+            ]
+            .into_iter()
+            .map(|l| (l.name.clone(), l))
+            .collect(),
+            vouchers: vec![Voucher {
+                guid: "invented-guid-ééééééa".to_string(),
+                date: TallyDate::parse("20250601").unwrap(),
+                vtype: "Receipt".to_string(),
+                base_type: "Receipt".to_string(),
+                number: "R/1".to_string(),
+                status: VoucherStatus::Regular,
+                lines: vec![
+                    LedgerLine {
+                        ledger: "Cash".to_string(),
+                        amount_paise: 3_000_000,
+                    },
+                    LedgerLine {
+                        ledger: "Lender Loan".to_string(),
+                        amount_paise: -3_000_000,
+                    },
+                ],
+                narration: String::new(),
+            }],
+            tb: BTreeMap::new(),
+        };
+        let cash: BTreeSet<String> = ["Cash".to_string()].into_iter().collect();
+        let r = run(
+            &book,
+            &Rules::vendored().unwrap(),
+            &cash,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+        )
+        .unwrap();
+        let def = r
+            .figures
+            .iter()
+            .find(|f| f.id.contains("s269ss269t_amount_uncovered_"))
+            .map(|f| f.definition.clone())
+            .unwrap();
+        assert!(
+            def.contains("on voucher guid-ééééééa, cash accepted"),
+            "{def}"
+        );
+    }
 
     /// The reference labels a voucher with no number by `guid[-12:]`: 12 characters. Here the
     /// 12-byte cut would land inside an 'é' (a panic when byte-sliced); the expected tail is the

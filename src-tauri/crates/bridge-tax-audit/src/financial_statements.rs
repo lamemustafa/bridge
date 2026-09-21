@@ -148,21 +148,7 @@ fn hash8(text: &str) -> String {
     crate::canonical::hex(&Sha1::digest(text.as_bytes()))[..8].to_string()
 }
 
-fn guid_tail12(guid: &str) -> &str {
-    let n = guid.chars().count();
-    let skip = n.saturating_sub(12);
-    let start = guid.char_indices().nth(skip).map_or(guid.len(), |(i, _)| i);
-    &guid[start..]
-}
-
-fn voucher_label(v: &Voucher) -> String {
-    let num = if v.number.is_empty() {
-        guid_tail12(&v.guid)
-    } else {
-        v.number.as_str()
-    };
-    format!("{} {} on {}", v.vtype, num, iso(&v.date))
-}
+use crate::support::voucher_label;
 
 /// The excluded vouchers' refs carry the "excluded_voucher" kind: listing them is this figure's
 /// purpose, and POP-4 checks that each really is outside the books population.
