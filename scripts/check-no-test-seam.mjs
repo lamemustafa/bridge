@@ -72,16 +72,20 @@ export function assertNoTestSeam(paths) {
 
 /**
  * The executables a `tauri build` produced: bridge and bridge_mcp in the
- * profile directory the build used, for the host target and any explicit
- * `--target` directory. Tauri gives the hook TAURI_ENV_DEBUG but no target
- * triple, so every candidate directory is scanned; scanning a stale binary
- * too is harmless. Finding none is a failure: a hook that saw nothing proved
- * nothing.
+ * profile directory the build used. Tauri gives the hook TAURI_ENV_DEBUG and
+ * TAURI_ENV_TARGET_TRIPLE, but a build without `--target` still writes to
+ * `target/<profile>`, so the host directory and every `target/<triple>/<profile>`
+ * are scanned; scanning a stale binary too is harmless. Cargo runs from
+ * src-tauri, so a relative CARGO_TARGET_DIR (or CARGO_BUILD_TARGET_DIR) is
+ * resolved there. Finding none is a failure: a hook that saw nothing proved
+ * nothing. A target directory set only in a Cargo config file, or a custom
+ * `--profile`, is not followed; CI scans its exact output paths separately.
  */
 export function tauriBuildExecutables(environment = process.env, sourceRoot = root) {
   const profile = environment.TAURI_ENV_DEBUG === "true" ? "debug" : "release";
-  const target = environment.CARGO_TARGET_DIR
-    ? resolve(sourceRoot, environment.CARGO_TARGET_DIR)
+  const configured = environment.CARGO_TARGET_DIR || environment.CARGO_BUILD_TARGET_DIR;
+  const target = configured
+    ? resolve(sourceRoot, "src-tauri", configured)
     : resolve(sourceRoot, "src-tauri", "target");
   const directories = [join(target, profile)];
   if (existsSync(target)) {
@@ -136,7 +140,8 @@ export function testHarnessExecutable(release, sourceRoot = root) {
 function main(argumentsList) {
   if (argumentsList[0] === "--expect-present") {
     const [file] = argumentsList.slice(1);
-    if (!file || !holdsMarker(file)) {
+    // The same scan the negative check runs, so the control proves that code.
+    if (!file || markedFiles([file]).length !== 1) {
       throw new Error(`${file ?? "(no file)"} does not hold the seam marker: the scan cannot see the seam`);
     }
     console.log(`seam marker present in ${basename(file)}, as a positive control requires`);

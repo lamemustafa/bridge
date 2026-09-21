@@ -35,12 +35,15 @@ fn read(path: impl AsRef<Path>) -> String {
 fn seam_gate_problems(source: &str) -> Vec<String> {
     let lines: Vec<&str> = source.lines().map(str::trim).collect();
     let mut problems = Vec::new();
+    // The attribute governing an item: the nearest line above it that is not
+    // a comment, so a doc comment between the two changes nothing.
     let attribute_before = |needle: &str| {
-        lines
+        let index = lines.iter().position(|line| *line == needle)?;
+        lines[..index]
             .iter()
-            .position(|line| *line == needle)
-            .and_then(|index| index.checked_sub(1))
-            .and_then(|index| lines.get(index).copied())
+            .rev()
+            .find(|line| !line.starts_with("//"))
+            .copied()
     };
     for (item, gate) in [
         ("use confirm as approve;", "#[cfg(not(test))]"),
@@ -56,17 +59,16 @@ fn seam_gate_problems(source: &str) -> Vec<String> {
     if !source.contains("approve(preview).await?;") {
         problems.push("the approval call site must be `approve(preview).await?;`".into());
     }
-    for widened in [
-        "cfg(any(",
-        "cfg(all(",
-        "cfg(feature",
-        "debug_assertions",
-        "cfg_attr(",
-    ] {
-        if source.contains(widened) {
-            problems.push(format!(
-                "`{widened}` in approved_import.rs could widen the seam's gate"
-            ));
+    // Any other attribute that names `test` inside a cfg (`any(test, ..)`,
+    // `cfg_attr(test, ..)`) could widen or relocate the gate. Unrelated cfgs
+    // elsewhere in the file are not the seam's business.
+    for line in &lines {
+        let compact: String = line.chars().filter(|c| !c.is_whitespace()).collect();
+        let names_test_in_cfg = compact.starts_with("#[")
+            && compact.contains("cfg")
+            && (compact.contains("(test") || compact.contains(",test"));
+        if names_test_in_cfg && !matches!(compact.as_str(), "#[cfg(test)]" | "#[cfg(not(test))]") {
+            problems.push(format!("`{line}` could widen the seam's gate"));
         }
     }
     problems
@@ -137,12 +139,28 @@ fn the_seam_is_gated_by_bare_cfg_test_and_its_non_test_arm_is_the_real_dialog() 
             "#[cfg(test)]\nuse test_seam::approve;",
             "use test_seam::approve;",
         ),
+        source.replace(
+            "#[cfg(test)]\nuse test_seam::approve;",
+            "#[cfg_attr(test, allow(unused))]\nuse test_seam::approve;",
+        ),
     ] {
         assert_ne!(
             broken, source,
             "the fabricated breakage must change the source"
         );
         assert!(!seam_gate_problems(&broken).is_empty());
+    }
+    // Ordinary edits that leave the gate alone pass: a doc comment between an
+    // attribute and its item, and an unrelated feature cfg elsewhere.
+    for benign in [
+        source.replace(
+            "#[cfg(test)]\npub(crate) mod test_seam {",
+            "#[cfg(test)]\n/// Scripted approvals.\npub(crate) mod test_seam {",
+        ),
+        format!("{source}\n#[cfg(feature = \"voucher-scan\")]\nfn unrelated() {{}}\n"),
+    ] {
+        assert_ne!(benign, source);
+        assert_eq!(seam_gate_problems(&benign), Vec::<String>::new());
     }
 }
 

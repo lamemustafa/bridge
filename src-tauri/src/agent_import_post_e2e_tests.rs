@@ -207,6 +207,13 @@ fn appended_kinds(before: &[u8], after: &[u8]) -> Vec<String> {
         .collect()
 }
 
+/// `plans` and one more, so a request past the last expected one is served
+/// and observed rather than refused by a simulator that has stopped listening.
+fn with_sentinel(mut plans: Vec<ScenarioPlan>) -> Vec<ScenarioPlan> {
+    plans.push(status());
+    plans
+}
+
 /// Data requests a run actually made (a cancel's wake-up connection has no method).
 fn sent(simulator: SequenceSimulator) -> Vec<tally_protocol_simulator::ObservedRequest> {
     simulator.cancel();
@@ -224,7 +231,7 @@ fn sent(simulator: SequenceSimulator) -> Vec<tally_protocol_simulator::ObservedR
 #[tokio::test]
 async fn an_unscripted_approval_declines_and_nothing_is_sent_or_journaled() {
     let expected = before_approval().len();
-    let simulator = SequenceSimulator::spawn(before_approval()).unwrap();
+    let simulator = SequenceSimulator::spawn(with_sentinel(before_approval())).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let server = server_at(simulator.address(), directory.path());
     let (_, args) = saved_batch(&server);
@@ -298,7 +305,7 @@ async fn an_approved_post_sends_exactly_the_request_its_intent_recorded() {
 #[tokio::test]
 async fn a_declined_post_sends_nothing_and_journals_no_intent() {
     let expected = before_approval().len();
-    let simulator = SequenceSimulator::spawn(before_approval()).unwrap();
+    let simulator = SequenceSimulator::spawn(with_sentinel(before_approval())).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let server = server_at(simulator.address(), directory.path());
     let (line, args) = saved_batch(&server);
@@ -369,15 +376,14 @@ async fn the_dispatch_intent_is_journaled_before_the_post_is_received() {
 /// A dispatch admission that fails stops the send. While the approval is
 /// pending the batch's record changes, so the admission that journals the
 /// intent refuses it: no intent is written and nothing follows the absence
-/// reads. A post that sent before admitting would show a POST here.
+/// reads. The POST's plan, and one after it, stay in the sequence, so a post
+/// that sent anyway would be served and observed here, not refused unseen.
 #[tokio::test]
 async fn a_dispatch_admission_that_fails_sends_nothing() {
     let mut plans = before_approval();
-    let mut after = after_approval(xml(created_one()));
-    after.pop();
-    let expected = plans.len() + after.len();
-    plans.extend(after);
-    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let expected = plans.len() + after_approval(xml(created_one())).len() - 1;
+    plans.extend(after_approval(xml(created_one())));
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let server = server_at(simulator.address(), directory.path());
     let (line, args) = saved_batch(&server);

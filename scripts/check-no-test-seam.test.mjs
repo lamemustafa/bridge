@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -78,13 +79,29 @@ test("the bundle hook scans the executables of the profile tauri built", () => {
     join(targeted, "bridge"),
   ].sort());
   assert.deepEqual(tauriBuildExecutables({ TAURI_ENV_DEBUG: "true" }, root), [join(debug, "bridge.exe")]);
-  const custom = join(root, "elsewhere", "release");
+  // Cargo runs from src-tauri, so a relative target directory is resolved there.
+  const custom = join(root, "src-tauri", "elsewhere", "release");
   mkdirSync(custom, { recursive: true });
   binary(join(custom, "bridge_mcp"), false);
   assert.deepEqual(tauriBuildExecutables({ CARGO_TARGET_DIR: "elsewhere" }, root), [join(custom, "bridge_mcp")]);
+  assert.deepEqual(tauriBuildExecutables({ CARGO_BUILD_TARGET_DIR: "elsewhere" }, root), [join(custom, "bridge_mcp")]);
 });
 
 test("a bundle hook that finds no executable fails rather than passing", () => {
   const root = scratch();
   assert.throws(() => tauriBuildExecutables({}, root), /no bridge or bridge_mcp executable/);
+});
+
+test("the command line fails on a marked binary and on a control that sees nothing", () => {
+  const directory = scratch();
+  const script = new URL("./check-no-test-seam.mjs", import.meta.url);
+  const run = (...argumentsList) =>
+    spawnSync(process.execPath, [script.pathname, ...argumentsList], { encoding: "utf8" }).status;
+  const marked = binary(join(directory, "marked"), true);
+  const clean = binary(join(directory, "clean"), false);
+  assert.equal(run(clean), 0);
+  assert.equal(run(marked), 1);
+  assert.equal(run(clean, marked), 1);
+  assert.equal(run("--expect-present", marked), 0);
+  assert.equal(run("--expect-present", clean), 1);
 });
