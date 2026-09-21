@@ -614,6 +614,72 @@ mod through_the_tool {
         plans
     }
 
+    /// The whole successful `fields=basic` sequence: identity, then the runtime's boundary
+    /// probe, the extent-bracketed BOOKSFROM-pinned ledger export and the closing checks.
+    fn basic_plans() -> Vec<ScenarioPlan> {
+        let company = xml(companies());
+        let extent = xml(include_str!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+        )
+        .to_owned());
+        let ledger = xml(captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-period-opening.utf16le.xml"
+        )));
+        let mut plans = identity_plans();
+        plans.extend([
+            status(),
+            company.clone(),
+            company.clone(),
+            extent.clone(),
+            status(),
+            extent.clone(),
+            status(),
+            ledger.clone(),
+            status(),
+            ledger,
+            status(),
+            extent.clone(),
+            status(),
+            extent,
+            status(),
+            company.clone(),
+            status(),
+            company,
+        ]);
+        plans
+    }
+
+    /// The BOOKSFROM the captured extent admits for this company; both ledger_masters requests
+    /// pin SVFROMDATE to it (see `ledger_movement_opening_export_is_pinned_to_admitted_books_from`).
+    const ADMITTED_BOOKS_FROM: &str = "20260401";
+
+    #[tokio::test]
+    async fn basic_ledger_masters_rows_carry_their_opening_balance_as_of() {
+        let plans = basic_plans();
+        let total = plans.len();
+        let (response, requests) = call(plans, json!({"company_guid":GUID,"fields":"basic"})).await;
+        let rows = items(&response);
+        assert_eq!(requests, total);
+        assert!(!rows.is_empty());
+        for row in rows {
+            assert_eq!(row["opening_balance_as_of"], ADMITTED_BOOKS_FROM, "{row}");
+        }
+    }
+
+    #[tokio::test]
+    async fn compliance_ledger_masters_rows_carry_their_opening_balance_as_of() {
+        let (response, _) = call(
+            compliance_plans(masters(), balances()),
+            json!({"company_guid":GUID,"fields":"compliance"}),
+        )
+        .await;
+        let rows = items(&response);
+        assert!(!rows.is_empty());
+        for row in rows {
+            assert_eq!(row["opening_balance_as_of"], ADMITTED_BOOKS_FROM, "{row}");
+        }
+    }
+
     async fn call(plans: Vec<ScenarioPlan>, args: Value) -> (Value, usize) {
         call_with_max_bytes(plans, args, 200_000).await
     }

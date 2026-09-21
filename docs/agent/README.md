@@ -438,7 +438,13 @@ movement with exact decimal `opening`, `debit`, `credit`, `closing`, parent,
 and `vouchers_touching`. `ledger_masters` accepts `fields: "compliance"` to
 return the paired party-master GSTIN/PAN/MSME/bank/IFSC/email/phone/state and
 address observations; `mask_parties` redacts the ledger name before it leaves
-the server. The unavailable `changed_since` implementation must not be used as
+the server. Each `ledger_masters` row's `opening_balance` is the opening at the
+start of the company's books, and `opening_balance_as_of` names that date (the
+admitted `BOOKSFROM` the request pins). On a book holding several years it is
+not the current year's opening: for a period's opening, use `trial_balance` or
+`ledger_movement` with that period's `from`.
+
+The unavailable `changed_since` implementation must not be used as
 change-enumeration evidence; its retained internal response states that
 deletion detection is unsupported.
 

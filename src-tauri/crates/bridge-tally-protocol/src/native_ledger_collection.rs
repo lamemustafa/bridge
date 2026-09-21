@@ -160,9 +160,11 @@ pub struct PartyLedgerMasterRecord {
 }
 
 /// Parses the native `List of Ledgers` collection used by ordinary ledger
-/// reads. It deliberately has no period variables: the retired report profile
-/// set only `SVEXPORTFORMAT` and `SVCURRENTCOMPANY`, so adding dates here would
-/// silently change the as-of meaning of `OPENINGBALANCE`.
+/// reads. The request is pinned by `render_native_ledger_export_request` to
+/// `SVFROMDATE = BOOKSFROM`: an undated request returns `OPENINGBALANCE` as of
+/// Tally's loaded display period, so the date is load-bearing and must not be
+/// removed (TALLY_PROTOCOL_REFERENCE §5.5). This parser reads the rows only;
+/// the as-of date is the request's.
 ///
 /// The collection has no report-envelope company identity. Its row GUIDs bind
 /// the response instead: at least one row must carry the requested company
