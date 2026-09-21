@@ -60,18 +60,50 @@ fn seam_gate_problems(source: &str) -> Vec<String> {
         problems.push("the approval call site must be `approve(preview).await?;`".into());
     }
     // Any other attribute that names `test` inside a cfg (`any(test, ..)`,
-    // `cfg_attr(test, ..)`) could widen or relocate the gate. Unrelated cfgs
-    // elsewhere in the file are not the seam's business.
-    for line in &lines {
-        let compact: String = line.chars().filter(|c| !c.is_whitespace()).collect();
-        let names_test_in_cfg = compact.starts_with("#[")
-            && compact.contains("cfg")
-            && (compact.contains("(test") || compact.contains(",test"));
-        if names_test_in_cfg && !matches!(compact.as_str(), "#[cfg(test)]" | "#[cfg(not(test))]") {
-            problems.push(format!("`{line}` could widen the seam's gate"));
+    // `cfg_attr(test, ..)`) could widen or relocate the gate, including one on
+    // an enclosing block or wrapped over several lines, so each attribute is
+    // read whole, from `#[` to its closing bracket. Unrelated cfgs elsewhere
+    // in the file are not the seam's business.
+    for attribute in attributes(source) {
+        let names_test_in_cfg = attribute.contains("cfg")
+            && (attribute.contains("(test") || attribute.contains(",test"));
+        if names_test_in_cfg && !matches!(attribute.as_str(), "#[cfg(test)]" | "#[cfg(not(test))]")
+        {
+            problems.push(format!("`{attribute}` could widen the seam's gate"));
         }
     }
     problems
+}
+
+/// Every outer or inner attribute in `source`, whitespace removed, read from
+/// `#[` or `#![` to the bracket that closes it, however many lines it spans.
+fn attributes(source: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut current: Option<(String, i32)> = None;
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if current.is_none() && (trimmed.starts_with("#[") || trimmed.starts_with("#![")) {
+            current = Some((String::new(), 0));
+        }
+        let Some((text, depth)) = current.as_mut() else {
+            continue;
+        };
+        for character in trimmed.chars().filter(|c| !c.is_whitespace()) {
+            text.push(character);
+            match character {
+                '[' => *depth += 1,
+                ']' => *depth -= 1,
+                _ => {}
+            }
+            if *depth == 0 && character == ']' {
+                break;
+            }
+        }
+        if *depth == 0 {
+            found.push(current.take().unwrap().0);
+        }
+    }
+    found
 }
 
 /// Files outside `approved_import.rs` and `*_tests.rs` that name the seam.
@@ -142,6 +174,12 @@ fn the_seam_is_gated_by_bare_cfg_test_and_its_non_test_arm_is_the_real_dialog() 
         source.replace(
             "#[cfg(test)]\nuse test_seam::approve;",
             "#[cfg_attr(test, allow(unused))]\nuse test_seam::approve;",
+        ),
+        // A widened gate on an enclosing block, wrapped over lines, with the
+        // seam's own bare `#[cfg(test)]` left in place inside it.
+        source.replace(
+            "#[cfg(test)]\npub(crate) mod test_seam {",
+            "#[cfg(any(\n    test,\n    feature = \"approval-seam\"\n))]\nmod scoped {}\n#[cfg(test)]\npub(crate) mod test_seam {",
         ),
     ] {
         assert_ne!(
