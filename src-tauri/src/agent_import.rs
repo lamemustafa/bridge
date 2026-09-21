@@ -1101,6 +1101,38 @@ impl Server {
         Ok((mark, evidence))
     }
 
+    /// The XML file Bridge persisted when it built `batch_id`, read whole. The
+    /// desktop review and the post path both compare it byte for byte with
+    /// what they accept or send, so a journal record that agrees only with
+    /// itself cannot stand in for the batch Bridge built (bridge#575).
+    pub(super) fn read_persisted_import_xml(&self, batch_id: &str) -> Result<Vec<u8>, String> {
+        const MAX_PERSISTED_IMPORT_XML_BYTES: usize = 5_000_000;
+        let uuid = batch_id
+            .strip_prefix("bridge-")
+            .and_then(|value| uuid::Uuid::parse_str(value).ok())
+            .ok_or_else(|| "import_batch_identifier_invalid".to_string())?;
+        let path = self.imports_dir()?.join(format!("bridge-{uuid}.xml"));
+        let mut file = super::local_file::open_local_file(&path, false)
+            .map_err(|_| "import_persisted_file_unavailable".to_string())?;
+        let length = file
+            .metadata()
+            .map_err(|_| "import_persisted_file_unavailable".to_string())?
+            .len();
+        if length > MAX_PERSISTED_IMPORT_XML_BYTES as u64 {
+            return Err("import_persisted_file_too_large".into());
+        }
+        let mut bytes = Vec::with_capacity(length as usize);
+        std::io::Read::read_to_end(
+            &mut std::io::Read::take(&mut file, (MAX_PERSISTED_IMPORT_XML_BYTES + 1) as u64),
+            &mut bytes,
+        )
+        .map_err(|_| "import_persisted_file_unavailable".to_string())?;
+        if bytes.len() > MAX_PERSISTED_IMPORT_XML_BYTES {
+            return Err("import_persisted_file_too_large".into());
+        }
+        Ok(bytes)
+    }
+
     fn imports_dir(&self) -> Result<PathBuf, String> {
         let path = self.settings.data_dir.join("imports");
         super::ensure_private_directory(&path).map_err(|error| match error {

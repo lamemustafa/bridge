@@ -869,3 +869,82 @@ fn the_whole_window_pre_post_request_is_admitted_on_the_verification_measurement
         Err(IMPORT_POST_WINDOW_NOT_BOUNDED.to_string())
     );
 }
+
+/// bridge#575. The post path used to compare a journal record only with
+/// itself; the saved XML file Bridge built was never read. A record and file
+/// that disagree must stop the post before anything is sent to Tally.
+#[tokio::test]
+async fn a_saved_xml_file_that_differs_from_the_record_is_refused_before_tally() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut line, mut endpoint) = batch();
+    // Port 9 is not a Tally endpoint: a regression that reaches the network
+    // fails there with a transport error, never with the codes below.
+    endpoint.port = 9;
+    line.endpoint_origin = Some(super::super::super::canonical_loopback_origin(&endpoint).unwrap());
+    let server = Server::new(crate::agent::Settings {
+        endpoint,
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 10,
+        max_bytes: 200_000,
+        redaction: crate::agent::Redaction::None,
+        import_enabled: true,
+        writes_enabled: true,
+    });
+    server.append_import_ledger(&line).unwrap();
+    let path = server
+        .imports_dir()
+        .unwrap()
+        .join(format!("{}.xml", line.batch_id));
+    let args = json!({"company_guid":line.company_guid,"batch_id":line.batch_id});
+
+    // The record is self-consistent; the file holds a different Journal.
+    let mut other = line.vouchers.clone();
+    other[0].entries[0].amount = "99.00".into();
+    other[0].entries[1].amount = "99.00".into();
+    fs::write(
+        &path,
+        render_import_xml("Synthetic Accounts", &other, &line.batch_id),
+    )
+    .unwrap();
+    assert!(admit_saved_journal_integrity(&line, &server.settings.endpoint).is_ok());
+    assert_eq!(post_error(&server, &args).await, "import_batch_changed");
+
+    fs::remove_file(&path).unwrap();
+    assert_eq!(
+        post_error(&server, &args).await,
+        "import_persisted_file_unavailable"
+    );
+
+    // The exact file passes this check; the post then fails later, at the
+    // network, because port 9 is not Tally.
+    fs::write(
+        &path,
+        render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id),
+    )
+    .unwrap();
+    let later = post_error(&server, &args).await;
+    assert!(
+        !matches!(
+            later.as_str(),
+            "import_batch_changed" | "import_persisted_file_unavailable"
+        ),
+        "{later}"
+    );
+}
+
+/// The error code a post reports, whether it failed before or inside its
+/// operation (the latter comes back as an outcome whose result names the
+/// error), and that no attempt was recorded.
+async fn post_error(server: &Server, args: &Value) -> String {
+    match server.post_import(args).await {
+        Ok(outcome) => {
+            let result = &outcome.payload["result"];
+            assert_ne!(result["attempt_recorded"], json!(true), "{result}");
+            result["error"]["code"]
+                .as_str()
+                .unwrap_or("unexpected_success")
+                .to_string()
+        }
+        Err(failure) => failure.code,
+    }
+}
