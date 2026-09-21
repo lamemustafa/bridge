@@ -126,6 +126,22 @@ mod tests {
         );
     }
 
+    /// The reference normalises with Python's `str.strip().lower()`, so a non-ASCII or
+    /// control-character GUID must hash as it does there. Expected tags are the reference's own
+    /// (`tae.ledger_ids.guid_tag`, Python 3.13).
+    #[test]
+    fn guid_tag_strips_and_lowercases_as_python_does() {
+        for (guid, want) in [
+            ("\u{c9}BC-1", "eae20bd6"),
+            ("\u{1c}abc-1", "097be456"),
+            ("abc-1\u{1f}", "097be456"),
+            ("\u{a0}abc-1\u{2003}", "097be456"),
+            ("\u{212a}-1", "4136a771"),
+        ] {
+            assert_eq!(guid_tag(guid, "ledger").unwrap(), want, "{guid:?}");
+        }
+    }
+
     #[test]
     fn guid_tag_blank_refuses() {
         assert!(matches!(
