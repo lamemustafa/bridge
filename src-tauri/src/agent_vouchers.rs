@@ -179,11 +179,10 @@ impl Server {
                     .post_read(identity, render_agent_company_high_water(company))
                     .await?;
                 evidence = combine_evidence(evidence.clone(), high_water_evidence);
-                Some(
-                    parse_company_high_water(&high_water_xml, identity.company_guid())?["altvchid"]
-                        .as_u64()
-                        .ok_or_else(|| "voucher_checkpoint_invalid".to_string())?,
-                )
+                Some(company_voucher_high_water(
+                    &high_water_xml,
+                    identity.company_guid(),
+                )?)
             } else {
                 None
             };
