@@ -189,6 +189,10 @@ pub enum ReadOnlyProfileId {
     VoucherOutstandingsV1,
     #[cfg(feature = "voucher-scan")]
     VoucherEmptyPartitionWitnessV1,
+    AuditCompanyObjectV1,
+    AuditLedgersV1,
+    AuditVouchersV1,
+    AuditStockItemsV1,
 }
 
 impl ReadOnlyProfileId {
@@ -210,6 +214,10 @@ impl ReadOnlyProfileId {
             Self::VoucherOutstandingsV1 => "voucher_outstandings_v1",
             #[cfg(feature = "voucher-scan")]
             Self::VoucherEmptyPartitionWitnessV1 => "voucher_empty_partition_witness_v1",
+            Self::AuditCompanyObjectV1 => "audit_company_object_v1",
+            Self::AuditLedgersV1 => "audit_ledgers_v1",
+            Self::AuditVouchersV1 => "audit_vouchers_v1",
+            Self::AuditStockItemsV1 => "audit_stock_items_v1",
         }
     }
 
@@ -250,6 +258,16 @@ impl ReadOnlyProfileId {
                 TEMPLATE_FROM,
                 TEMPLATE_TO,
             ),
+            Self::AuditCompanyObjectV1 => render_audit_company_object(TEMPLATE_COMPANY),
+            Self::AuditLedgersV1 => {
+                render_audit_ledgers(TEMPLATE_COMPANY, TEMPLATE_FROM, TEMPLATE_TO)
+            }
+            Self::AuditVouchersV1 => {
+                render_audit_vouchers(TEMPLATE_COMPANY, TEMPLATE_FROM, TEMPLATE_TO)
+            }
+            Self::AuditStockItemsV1 => {
+                render_audit_stock_items(TEMPLATE_COMPANY, TEMPLATE_FROM, TEMPLATE_TO)
+            }
         };
         sha256_hex(&encode_tally_xml_request_utf16le(&template))
     }
@@ -320,6 +338,26 @@ pub enum ReadOnlyProfile<'a> {
         company: &'a PinnedCompany,
         window: &'a NarrowDateWindow,
     },
+    /// The `company` part of a tally-read v1 read: a single-object export of
+    /// the one named company. See [`AUDIT_COMPANY_FETCH`].
+    AuditCompanyObjectV1 {
+        company: &'a ValidatedCompanyName,
+    },
+    /// The `ledgers` part of a tally-read v1 read, for the audit period.
+    AuditLedgersV1 {
+        company: &'a ValidatedCompanyName,
+        period: &'a ValidatedDateRange,
+    },
+    /// One `vouchers` part of a tally-read v1 read: one date window.
+    AuditVouchersV1 {
+        company: &'a ValidatedCompanyName,
+        window: &'a ValidatedDateRange,
+    },
+    /// The `stock_items` part of a tally-read v1 read, for the audit period.
+    AuditStockItemsV1 {
+        company: &'a ValidatedCompanyName,
+        period: &'a ValidatedDateRange,
+    },
 }
 
 impl ReadOnlyProfile<'_> {
@@ -343,6 +381,10 @@ impl ReadOnlyProfile<'_> {
             Self::VoucherEmptyPartitionWitnessV1 { .. } => {
                 ReadOnlyProfileId::VoucherEmptyPartitionWitnessV1
             }
+            Self::AuditCompanyObjectV1 { .. } => ReadOnlyProfileId::AuditCompanyObjectV1,
+            Self::AuditLedgersV1 { .. } => ReadOnlyProfileId::AuditLedgersV1,
+            Self::AuditVouchersV1 { .. } => ReadOnlyProfileId::AuditVouchersV1,
+            Self::AuditStockItemsV1 { .. } => ReadOnlyProfileId::AuditStockItemsV1,
         }
     }
 
@@ -397,6 +439,22 @@ impl ReadOnlyProfile<'_> {
                 crate::outstandings::voucher_empty_partition_witness_request(company, window)
                     .into_xml()
             }
+            Self::AuditCompanyObjectV1 { company } => render_audit_company_object(company.as_str()),
+            Self::AuditLedgersV1 { company, period } => render_audit_ledgers(
+                company.as_str(),
+                period.from_yyyymmdd(),
+                period.to_yyyymmdd(),
+            ),
+            Self::AuditVouchersV1 { company, window } => render_audit_vouchers(
+                company.as_str(),
+                window.from_yyyymmdd(),
+                window.to_yyyymmdd(),
+            ),
+            Self::AuditStockItemsV1 { company, period } => render_audit_stock_items(
+                company.as_str(),
+                period.from_yyyymmdd(),
+                period.to_yyyymmdd(),
+            ),
         }
     }
 }
@@ -867,6 +925,125 @@ fn render_selected_vouchers(company: &str, from: &str, to: &str) -> String {
         record_count_field,
         &format!("{window_fields}{record_count_field}"),
         1,
+    )
+}
+
+/// FETCHLIST of the tally-read v1 `company` part (`AuditCompanyObjectV1`).
+///
+/// A `Company` *collection* returns every loaded company whatever
+/// `SVCURRENTCOMPANY` says (protocol reference §12a.7), and both consumers
+/// take the first `COMPANY` carrying a GUID, so the part is a single-object
+/// export instead (protocol reference §9.11a). That shape was measured with
+/// `FETCH *` only (565 tags). This explicit list is narrower on purpose: the
+/// part is stored, and nothing else in the company definition is read:
+/// `GUID` and `BOOKSFROM` (both engines), `ISINTEGRATED` (the Python stock
+/// test), and `NAME`, which no engine reads but which evidences which company
+/// Tally resolved the `ID` to. Each was present in the `FETCH *` captures of
+/// the audit books; whether an explicit `FETCHLIST` narrows an Object export
+/// is unmeasured, so admission checks the fields the consumers need, not the
+/// absence of the rest.
+///
+/// Never add `ORIGINALNAME` or any field outside this list without a new
+/// profile id.
+pub const AUDIT_COMPANY_FETCH: [&str; 4] = ["GUID", "NAME", "BOOKSFROM", "ISINTEGRATED"];
+
+/// FETCH of the tally-read v1 `ledgers` part (`AuditLedgersV1`).
+///
+/// The fields the audit consumers were recorded reading (Lane B's recorded
+/// Python reads and the crate's traced reads of the same parts, 2026-09-21).
+/// It is deliberately narrower
+/// than the party-master workbook's list: no bank details, IFSC, e-mail,
+/// phone or address, because no audit consumer reads them and the read is
+/// stored (plan D-C). Adding a field needs a new profile id.
+/// `LEDGSTREGDETAILS.LIST` fetches the whole registration sub-list (the
+/// consumers read `APPLICABLEFROM` and `GSTIN` from it); it carries the
+/// dated GST registration history; the flat `PARTYGSTIN` was blank for
+/// ledgers whose GSTIN lives only there (measured 2026-09-21 on licensed
+/// Silver 7.1 with this exact FETCH token in a `Ledger` collection).
+pub const AUDIT_LEDGER_FETCH: &str = "NAME, GUID, MASTERID, PARENT, OPENINGBALANCE, \
+ISBILLWISEON, PARTYGSTIN, INCOMETAXNUMBER, LEDGSTREGDETAILS.LIST";
+
+/// FETCH of one tally-read v1 `vouchers` part (`AuditVouchersV1`): the
+/// fields both engines were recorded reading (2026-09-21). `@REMOTEID` and
+/// `@VCHTYPE` are attributes Tally emits on every voucher unasked.
+///
+/// - `ISOPTIONAL`, `ISCANCELLED` and `ISPOSTDATED` are load-bearing: Tally
+///   emits no field the FETCH does not name, and a voucher missing any of the
+///   three is UNKNOWN to the engine, which then refuses the book.
+/// - Quantities, rates and amounts on goods lines are fetched at every level
+///   the Python engine falls back through, including
+///   `ALLLEDGERENTRIES.INVENTORYALLOCATIONS`: an absent quantity there reads
+///   as no quantity and the stock movement is silently dropped.
+/// - No bill allocations. That holds only while no audit test reads bill
+///   types; the agent's `ALLLEDGERENTRIES.*` shape exists for readers that do.
+/// - **Unmeasured:** Bridge ships one-level dotted paths
+///   (`ALLLEDGERENTRIES.LEDGERNAME`); the two-level
+///   `ALLLEDGERENTRIES.INVENTORYALLOCATIONS.*` and the `ALLINVENTORYENTRIES.*`
+///   and `INVENTORYENTRIES{IN,OUT}.*` paths have not been sent to Tally by
+///   Bridge. Live qualification must show they return the nested values on an
+///   inventory book with batches before this profile reads a client book.
+pub const AUDIT_VOUCHER_FETCH: &str = "GUID,MASTERID,ALTERID,DATE,VOUCHERTYPENAME,\
+VOUCHERNUMBER,REFERENCE,PARTYLEDGERNAME,PARTYGSTIN,NARRATION,ISOPTIONAL,ISCANCELLED,ISPOSTDATED,\
+ALLLEDGERENTRIES.LEDGERNAME,ALLLEDGERENTRIES.AMOUNT,ALLLEDGERENTRIES.ISDEEMEDPOSITIVE,\
+ALLLEDGERENTRIES.INVENTORYALLOCATIONS.STOCKITEMNAME,ALLLEDGERENTRIES.INVENTORYALLOCATIONS.BILLEDQTY,\
+ALLLEDGERENTRIES.INVENTORYALLOCATIONS.ACTUALQTY,ALLLEDGERENTRIES.INVENTORYALLOCATIONS.RATE,\
+ALLLEDGERENTRIES.INVENTORYALLOCATIONS.AMOUNT,\
+ALLINVENTORYENTRIES.STOCKITEMNAME,ALLINVENTORYENTRIES.BILLEDQTY,ALLINVENTORYENTRIES.ACTUALQTY,\
+ALLINVENTORYENTRIES.RATE,ALLINVENTORYENTRIES.AMOUNT,\
+INVENTORYENTRIESIN.STOCKITEMNAME,INVENTORYENTRIESIN.ACTUALQTY,INVENTORYENTRIESIN.AMOUNT,\
+INVENTORYENTRIESOUT.STOCKITEMNAME,INVENTORYENTRIESOUT.ACTUALQTY,INVENTORYENTRIESOUT.AMOUNT";
+
+/// FETCH of the tally-read v1 `stock_items` part (`AuditStockItemsV1`).
+///
+/// The fields the Python stock tests were recorded reading from a
+/// `stock_items` part (2026-09-21). `CLOSINGRATE` is read only from
+/// `stock_summary` parts and is
+/// not fetched here. The request carries the audit period on the inference
+/// that closing figures are period-dependent; that is unmeasured.
+pub const AUDIT_STOCK_ITEM_FETCH: &str = "NAME, GUID, PARENT, BASEUNITS, \
+OPENINGBALANCE, OPENINGVALUE, CLOSINGBALANCE, CLOSINGVALUE";
+
+fn render_audit_company_object(company: &str) -> String {
+    let company = xml_escape(company);
+    let fetch = AUDIT_COMPANY_FETCH
+        .iter()
+        .map(|field| format!("<FETCH>{field}</FETCH>"))
+        .collect::<String>();
+    format!(
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Object</TYPE><SUBTYPE>Company</SUBTYPE><ID TYPE="Name">{company}</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY></STATICVARIABLES><FETCHLIST>{fetch}</FETCHLIST></DESC></BODY></ENVELOPE>"#
+    )
+}
+
+fn render_audit_ledgers(company: &str, from: &str, to: &str) -> String {
+    format!(
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Audit Ledgers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">{from}</SVFROMDATE><SVTODATE TYPE="Date">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="Bridge Audit Ledgers" ISMODIFY="No"><TYPE>Ledger</TYPE><FETCH>{AUDIT_LEDGER_FETCH}</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        company = xml_escape(company),
+        from = xml_escape(from),
+        to = xml_escape(to),
+    )
+}
+
+/// The agent's windowed voucher envelope (literal `$Date` bounds, protocol
+/// reference §5.3) with [`AUDIT_VOUCHER_FETCH`]. The app crate holds a test
+/// that this is byte-identical to its own windowed renderer apart from the
+/// FETCH, so the request is the qualified window shape. The response-side
+/// checks keyed to that shape (`window_not_honoured`, part admission) are not
+/// inherited by this renderer; the caller that sends it must apply them.
+fn render_audit_vouchers(company: &str, from: &str, to: &str) -> String {
+    format!(
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Vouchers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeAgentWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"</SYSTEM><COLLECTION NAME=\"Bridge Agent Vouchers\" ISMODIFY=\"No\"><TYPE>Voucher</TYPE><FETCH>{AUDIT_VOUCHER_FETCH}</FETCH><FILTERS>BridgeAgentWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>",
+        company = xml_escape(company),
+        from = xml_escape(from),
+        to = xml_escape(to),
+    )
+}
+
+fn render_audit_stock_items(company: &str, from: &str, to: &str) -> String {
+    format!(
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Audit Stock Items</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">{from}</SVFROMDATE><SVTODATE TYPE="Date">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="Bridge Audit Stock Items" ISMODIFY="No"><TYPE>StockItem</TYPE><FETCH>{AUDIT_STOCK_ITEM_FETCH}</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        company = xml_escape(company),
+        from = xml_escape(from),
+        to = xml_escape(to),
     )
 }
 
