@@ -54,11 +54,13 @@ pub struct Ledger {
     pub chain: Vec<String>,
     /// False when the group masters could not resolve the chain to a primary group.
     pub chain_complete: bool,
-    /// The ledger master's own `OPENINGBALANCE`, as the read returned it. It is NOT the audit year's
-    /// opening: on a master request without `SVFROMDATE` Tally answers for the company's current
-    /// period, which on a book already carried into the next year is the audit year's closing. No
-    /// test reads it; the audit year's opening is `TbRow::opening_paise` (`TBALOPENING` of a
-    /// trial balance windowed to the period).
+    /// The ledger master's own `OPENINGBALANCE`, as the read returned it. Do not take it for the
+    /// audit year's opening: that holds only when the `ledgers` part was requested with
+    /// `SVFROMDATE` = period start, as `docs/tax-audit/read-format-v1.md` specifies, and nothing
+    /// here checks that it was (`ledgers` is not a windowed kind). Requested without it, Tally
+    /// answers for the company's current period, which on a book already carried into the next
+    /// year is the audit year's closing. No test reads it; the audit year's opening is
+    /// `TbRow::opening_paise` (`TBALOPENING` of a trial balance windowed to the period).
     pub master_opening_paise: i64,
     /// The Tally GUID (`crate::binding` matches an engagement config's `[ledger_ids]` entry
     /// against this), empty when the read's LEDGER element carried none.
