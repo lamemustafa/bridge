@@ -1,21 +1,19 @@
 use super::{
-    combine_evidence, company_json, normalized_date, parse_company_high_water, party_name,
-    render_agent_company_high_water, required_string, sha256_hex, sha256_json, Evidence, Server,
-    ToolFailure, ToolOutcome, VOUCHER_CHECKPOINT_NOT_OBSERVED,
+    combine_evidence, company_high_water_read, company_json, native_group_snapshot_read,
+    normalized_date, parse_company_high_water, party_name, required_string, sha256_hex,
+    sha256_json, standard_ledger_catalog_read, Evidence, Server, ToolFailure, ToolOutcome,
+    VOUCHER_CHECKPOINT_NOT_OBSERVED,
 };
 use crate::tally::agent_read_request::AgentReadRequest;
 use crate::tally::standard_ledger_catalog::{
     admit_standard_ledger_catalog_request, parse_standard_ledger_catalog_response,
-    render_standard_ledger_catalog_request,
 };
 use bridge_tally_core::master_binding::{
     self, BindingBasis, BindingStatus, Candidates, EntityBinding, MasterCatalog, MasterClass,
     SourceEntity,
 };
 use bridge_tally_core::ExactDecimal;
-use bridge_tally_protocol::native_outstandings::{
-    parse_native_group_snapshot, render_native_group_snapshot_request,
-};
+use bridge_tally_protocol::native_outstandings::parse_native_group_snapshot;
 use bridge_tally_protocol::outstandings_shared::DateBoundaryProfile;
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -994,11 +992,11 @@ impl Server {
         ),
         ToolFailure,
     > {
-        let request_xml = render_standard_ledger_catalog_request(company_name)
+        let read = standard_ledger_catalog_read(company_name)
             .map_err(|_| "company_name_invalid".to_string())?;
-        let request = admit_standard_ledger_catalog_request(request_xml.clone())
+        let request = admit_standard_ledger_catalog_request(read.as_str().to_string())
             .map_err(|_| "ledger_export_invalid".to_string())?;
-        let (xml, evidence) = self.post_read(identity, request_xml).await?;
+        let (xml, evidence) = self.post_read(identity, read).await?;
         let catalogue =
             parse_standard_ledger_catalog_response(&xml, company_name, identity.company_guid())
                 .map_err(|_| {
@@ -1021,8 +1019,9 @@ impl Server {
         identity: &super::VerifiedCompanyIdentity,
         company_name: &str,
     ) -> Result<(Vec<bridge_tally_protocol::TallyNamedMaster>, Evidence), ToolFailure> {
-        let request_xml = render_native_group_snapshot_request(company_name);
-        let (xml, evidence) = self.post_read(identity, request_xml).await?;
+        let (xml, evidence) = self
+            .post_read(identity, native_group_snapshot_read(company_name))
+            .await?;
         let groups = parse_native_group_snapshot(&xml, identity.company_guid()).map_err(|_| {
             ToolFailure::from("group_export_invalid".to_string())
                 .with_prior_evidence(evidence.clone())
@@ -1091,7 +1090,7 @@ impl Server {
             .as_deref()
             .ok_or_else(|| "pre_import_mark_unobserved".to_string())?;
         let (xml, evidence) = self
-            .post_read(identity, render_agent_company_high_water(&company.name))
+            .post_read(identity, company_high_water_read(&company.name))
             .await?;
         let high_water = parse_company_high_water(&xml, guid).map_err(|code| {
             ToolFailure::from(pre_import_mark_refusal(&code).to_string())
@@ -1100,6 +1099,38 @@ impl Server {
         let mark = company_high_water_mark(&high_water)
             .map_err(|code| ToolFailure::from(code).with_prior_evidence(evidence.clone()))?;
         Ok((mark, evidence))
+    }
+
+    /// The XML file Bridge persisted when it built `batch_id`, read whole. The
+    /// desktop review and the post path both compare it byte for byte with
+    /// what they accept or send, so a journal record that agrees only with
+    /// itself cannot stand in for the batch Bridge built (bridge#575).
+    pub(super) fn read_persisted_import_xml(&self, batch_id: &str) -> Result<Vec<u8>, String> {
+        const MAX_PERSISTED_IMPORT_XML_BYTES: usize = 5_000_000;
+        let uuid = batch_id
+            .strip_prefix("bridge-")
+            .and_then(|value| uuid::Uuid::parse_str(value).ok())
+            .ok_or_else(|| "import_batch_identifier_invalid".to_string())?;
+        let path = self.imports_dir()?.join(format!("bridge-{uuid}.xml"));
+        let mut file = super::local_file::open_local_file(&path, false)
+            .map_err(|_| "import_persisted_file_unavailable".to_string())?;
+        let length = file
+            .metadata()
+            .map_err(|_| "import_persisted_file_unavailable".to_string())?
+            .len();
+        if length > MAX_PERSISTED_IMPORT_XML_BYTES as u64 {
+            return Err("import_persisted_file_too_large".into());
+        }
+        let mut bytes = Vec::with_capacity(length as usize);
+        std::io::Read::read_to_end(
+            &mut std::io::Read::take(&mut file, (MAX_PERSISTED_IMPORT_XML_BYTES + 1) as u64),
+            &mut bytes,
+        )
+        .map_err(|_| "import_persisted_file_unavailable".to_string())?;
+        if bytes.len() > MAX_PERSISTED_IMPORT_XML_BYTES {
+            return Err("import_persisted_file_too_large".into());
+        }
+        Ok(bytes)
     }
 
     fn imports_dir(&self) -> Result<PathBuf, String> {

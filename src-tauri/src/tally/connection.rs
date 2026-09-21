@@ -233,6 +233,11 @@ pub(crate) enum LedgerOpeningCoverageRead {
 #[error("Tally native report changed between paired reads")]
 pub(crate) struct NativeReportPairDrift;
 
+impl NativeReportPairDrift {
+    /// A stable, data-free name for this refusal, safe to return to an agent.
+    pub(crate) const SAFE_CODE: &'static str = "native_report_pair_changed";
+}
+
 /// Tags a failure as coming from one of the two POST responses inside
 /// `fetch_native_report_paired_with_evidence` -- the paired native report
 /// request itself, never the health checks bracketing it or any stage

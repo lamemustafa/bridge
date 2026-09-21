@@ -1030,7 +1030,8 @@ impl Server {
                     .into());
                 }
                 dispatched += 1;
-                let request = shape.render(company, &part.from, &part.to, part.span)?;
+                let request =
+                    voucher_window_part_read(shape, company, &part.from, &part.to, part.span)?;
                 match self.post_read(identity, request).await {
                     Ok((xml, read_evidence)) => {
                         let parsed = parse(&xml);
@@ -1178,7 +1179,7 @@ impl Server {
         evidence: &mut Option<Evidence>,
     ) -> Result<CompanyMarks, ToolFailure> {
         let (xml, read) = self
-            .post_read(identity, render_agent_company_high_water(company))
+            .post_read(identity, company_high_water_read(company))
             .await?;
         fold_evidence(evidence, read);
         Ok(company_marks(&xml, identity.company_guid())?)
@@ -1242,7 +1243,7 @@ impl Server {
         let (from, to) = (stamp(first), stamp(last));
         let mut rows = Vec::new();
         for span in spans {
-            let request = render_agent_voucher_census(company, &from, &to, span)?;
+            let request = voucher_census_read(company, &from, &to, span)?;
             let (xml, evidence) = match self.post_read(identity, request).await {
                 Ok(read) => read,
                 Err(failure) if census_failure(&failure.code) == CensusFailure::Refuse => {

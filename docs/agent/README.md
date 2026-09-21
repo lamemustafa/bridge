@@ -6,8 +6,10 @@ The developer configuration below remains for supported client integrations.
 
 `bridge_mcp` is Bridge's newline-delimited JSON-RPC 2.0 MCP server. It uses
 Bridge's loopback-only Tally XML transport. Reads are enabled by default.
-The MCPB extension also exposes Journal preparation and posting by default,
-with separate native approval for each new attempt. Command-line installations
+The MCPB extension also exposes Journal file preparation and bank-statement
+parsing by default. Journal posting is off by default until bridge#574 and
+bridge#575 are fixed; the **Allow Journal posting** setting adds it, with
+separate native approval for each new attempt. Command-line installations
 retain explicit environment switches.
 
 Build and run it with Rust 1.96:
@@ -70,8 +72,9 @@ The ordinary default tools are `tally_status`, `list_companies`,
 installation, `BRIDGE_AGENT_ENABLE_IMPORT=true` also exposes
 `build_import_xml` and `parse_bank_statement`, which prepares local
 bank-statement voucher proposals. `BRIDGE_AGENT_ENABLE_WRITES=true` enables
-that import workflow and exposes `post_import`; the MCPB extension enables
-the same workflow through its **Allow Journal posting** setting by default.
+that import workflow and exposes `post_import`. The MCPB extension always
+sets `BRIDGE_AGENT_ENABLE_IMPORT=true` and maps its **Allow Journal posting**
+setting, off by default, to `BRIDGE_AGENT_ENABLE_WRITES`.
 This is a source-configuration inventory, not a claim that an installed client
 uses a particular setting or that a tool is qualified for every runtime. Each
 call returns compact JSON with the
@@ -80,6 +83,8 @@ byte count, completeness reason, and truncation state. A refused call returns
 `result.error` with `code`, which names what failed, and `message`. Where a runtime
 refusal has a typed, data-free reason, the error also carries `cause`, which names why
 (for example `company_base_currency_undetermined` beside `party_ledger_master_read_failed`).
+A read whose two paired halves differ, because the book changed while Bridge was reading it,
+carries `native_report_pair_changed`.
 Like `remediation`, `cause` is omitted when `BRIDGE_AGENT_MAX_BYTES` is below 4,096, so
 that the code always fits. Before a tool response is written, Bridge appends a metadata-only
 `response_prepared` record to `agent-egress.jsonl`, including a unique `receipt_id`.
@@ -184,9 +189,10 @@ valid empty collection remains distinguishable from invalid discovery.
 ## Voucher-file preparation and verification
 
 The MCPB extension exposes `verify_import` by default as a read-only recovery
-tool. `build_import_xml` remains behind `BRIDGE_AGENT_ENABLE_IMPORT=1` for a
-command-line installation, or is enabled with Journal posting as described
-below. New file generation accepts `Journal`, `Payment`, `Receipt` and `Contra`, each
+tool, and `build_import_xml` by default because it always sets
+`BRIDGE_AGENT_ENABLE_IMPORT`. A command-line installation keeps
+`build_import_xml` behind `BRIDGE_AGENT_ENABLE_IMPORT=1`, or enables it with
+Journal posting as described below. New file generation accepts `Journal`, `Payment`, `Receipt` and `Contra`, each
 with freshly observed supported TallyPrime product and licence mode before and
 after the build reads. Release and licence tier are returned as observed facts;
 they do not independently refuse a file. `tally_status` reports the observed
@@ -293,8 +299,15 @@ licence mode has been qualified.
 
 ## Approved Journal posting
 
-The MCPB extension makes **Allow Journal posting** available by default.
-Turn it off for a read-only connector; existing saved settings remain respected.
+**Journal posting is off by default in the MCPB extension** until two known
+defects are fixed. Posting aims at the loaded company by name, so a voucher can
+land in whichever company Tally has loaded
+([#574](https://github.com/lamemustafa/bridge/issues/574)). Its post-write
+integrity check compares a journal record with itself, not what Tally stored
+with the approved batch ([#575](https://github.com/lamemustafa/bridge/issues/575)).
+**Allow Journal posting** turns it on for users who accept those risks. Existing
+saved settings are respected, so an installation that saved the earlier default
+may still have posting on; check the setting.
 For command-line installation, set `BRIDGE_AGENT_ENABLE_WRITES=true`.
 This enables `build_import_xml`, `parse_bank_statement`, and `post_import`;
 `verify_import` remains available so an uncertain saved batch can be checked
