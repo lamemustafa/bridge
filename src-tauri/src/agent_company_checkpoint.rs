@@ -32,13 +32,10 @@ pub(in crate::agent) fn parse_company_marks(
     xml: &str,
     expected_guid: &str,
 ) -> Result<(u64, u64), String> {
+    // The voucher axis means exactly what every other read-side mark means.
+    let vouchers = company_voucher_high_water(xml, expected_guid)?;
     let row = company_high_water_row(xml, expected_guid)?;
     let masters = observed_checkpoint(row.get("ALTMSTID"), "master")?;
-    let vouchers = match observed_checkpoint(row.get("ALTVCHID"), "voucher") {
-        Ok(vouchers) => vouchers,
-        Err(code) if code == VOUCHER_CHECKPOINT_NOT_OBSERVED => 0,
-        Err(code) => return Err(code),
-    };
     Ok((vouchers, masters))
 }
 
@@ -141,6 +138,26 @@ fn company_high_water_row(
     matched.ok_or_else(|| "company_high_water_identity_absent".to_string())
 }
 
+/// The company's voucher AlterID high-water for a read-side corroboration.
+///
+/// A company that has never held a voucher omits ALTVCHID while its master axis
+/// is observed; `parse_company_high_water` reports exactly that case as
+/// `VOUCHER_CHECKPOINT_NOT_OBSERVED`, and for a read it means a mark of 0. Every
+/// other refusal propagates, including a row carrying neither axis, which the
+/// parser keeps distinct by observing the master axis first.
+pub(in crate::agent) fn company_voucher_high_water(
+    xml: &str,
+    expected_guid: &str,
+) -> Result<u64, String> {
+    match parse_company_high_water(xml, expected_guid) {
+        Ok(mark) => mark["altvchid"]
+            .as_u64()
+            .ok_or_else(|| "voucher_checkpoint_invalid".to_string()),
+        Err(code) if code == VOUCHER_CHECKPOINT_NOT_OBSERVED => Ok(0),
+        Err(code) => Err(code),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,6 +237,45 @@ mod tests {
             parse_company_high_water(&neither, guid),
             Err("master_checkpoint_not_observed".to_string())
         );
+    }
+
+    #[test]
+    fn corroboration_mark_reads_only_the_empty_book_as_zero() {
+        let xml = book_extents_fixture();
+        let guid = "bb8ad19e-6aef-4239-a917-87fec0c6215e";
+        assert_eq!(company_voucher_high_water(&xml, guid), Ok(101_605));
+        let empty_book = xml.replacen("<ALTVCHID TYPE=\"Number\"> 101605</ALTVCHID>", "", 1);
+        assert_eq!(company_voucher_high_water(&empty_book, guid), Ok(0));
+        // Every other refusal must propagate unchanged, never read as an empty book.
+        let neither = empty_book.replacen("<ALTMSTID TYPE=\"Number\"> 328</ALTMSTID>", "", 1);
+        let invalid_scalar = xml.replacen("101605", "101<OTHER>6</OTHER>05", 1);
+        let empty_scalar = xml.replacen(
+            "<ALTVCHID TYPE=\"Number\"> 101605</ALTVCHID>",
+            "<ALTVCHID/>",
+            1,
+        );
+        for (altered, code) in [
+            (&neither, "master_checkpoint_not_observed"),
+            (&invalid_scalar, "agent_read_protocol_invalid"),
+            (&empty_scalar, "voucher_checkpoint_invalid"),
+            (&xml, "company_high_water_identity_absent"),
+        ] {
+            let expected_guid = if altered == &xml {
+                "missing-guid"
+            } else {
+                guid
+            };
+            assert_eq!(
+                company_voucher_high_water(altered, expected_guid),
+                Err(code.to_string()),
+                "{code}"
+            );
+            assert_eq!(
+                parse_company_high_water(altered, expected_guid),
+                Err(code.to_string()),
+                "helper and parser refuse identically: {code}"
+            );
+        }
     }
 
     #[test]
