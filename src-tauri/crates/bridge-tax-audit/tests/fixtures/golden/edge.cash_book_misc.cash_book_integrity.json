@@ -1,0 +1,673 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "cash_book_integrity",
+  "test_version": "1",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "ba2601e59ad709f4",
+  "population_note_text": "Books population (optional, cancelled and post-dated vouchers excluded).",
+  "figures": [
+    {
+      "id": "cash_book_integrity.expense_credit_count_e2239d0b",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "f4e6c549e21dbfbc",
+      "definition_text": "Entries in that total (ledger tag e2239d0b).",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.expense_credit_total_all",
+      "value": 90,
+      "unit": "paise",
+      "definition_sha256_16": "559e74699c35238c",
+      "definition_text": "Sum of money received credited to any expense ledger.",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.expense_credit_total_e2239d0b",
+      "value": 90,
+      "unit": "paise",
+      "definition_sha256_16": "c876687e28c24479",
+      "definition_text": "Money received into cash or bank credited to expense ledger (tag e2239d0b).",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "m5",
+          "label": "Receipt m5 on 2025-06-03"
+        }
+      ]
+    },
+    {
+      "id": "cash_book_integrity.journal_cash_count_0a846562",
+      "value": 6,
+      "unit": "count",
+      "definition_sha256_16": "cd9c5d8804199adf",
+      "definition_text": "Journal entries in that total (ledger tag 0a846562).",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.journal_cash_count_a3489ad8",
+      "value": 2,
+      "unit": "count",
+      "definition_sha256_16": "3aed4a753b7c5903",
+      "definition_text": "Journal entries in that total (ledger tag a3489ad8).",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.journal_cash_repeated_narration_count_0a846562",
+      "value": 3,
+      "unit": "count",
+      "definition_sha256_16": "e73925b2dd9a5f2b",
+      "definition_text": "Number of entries in that repeated-narration total (ledger tag 0a846562).",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.journal_cash_repeated_narration_count_a3489ad8",
+      "value": 2,
+      "unit": "count",
+      "definition_sha256_16": "ccfc735bdabb706a",
+      "definition_text": "Number of entries in that repeated-narration total (ledger tag a3489ad8).",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.journal_cash_repeated_narration_total_0a846562",
+      "value": 180,
+      "unit": "paise",
+      "definition_sha256_16": "4e9c73b0ecb2b88f",
+      "definition_text": "Of those, entries whose narration text is identical to another such entry's (ledger tag 0a846562).",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "m2",
+          "label": "Journal m2 on 2025-06-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "m3",
+          "label": "Journal m3 on 2025-06-02"
+        },
+        {
+          "kind": "voucher",
+          "id": "m4",
+          "label": "Journal m4 on 2025-06-02"
+        }
+      ]
+    },
+    {
+      "id": "cash_book_integrity.journal_cash_repeated_narration_total_a3489ad8",
+      "value": 23,
+      "unit": "paise",
+      "definition_sha256_16": "9eb04deacbedf0fb",
+      "definition_text": "Of those, entries whose narration text is identical to another such entry's (ledger tag a3489ad8).",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "m9",
+          "label": "Journal m9 on 2025-06-07"
+        }
+      ]
+    },
+    {
+      "id": "cash_book_integrity.journal_cash_total_0a846562",
+      "value": 202,
+      "unit": "paise",
+      "definition_sha256_16": "71fea55b01fd002d",
+      "definition_text": "Cash paid through Journal entries to expense ledger (tag 0a846562).",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "m12",
+          "label": "Journal m12 on 2025-06-09"
+        },
+        {
+          "kind": "voucher",
+          "id": "m13",
+          "label": "Journal m13 on 2025-06-09"
+        },
+        {
+          "kind": "voucher",
+          "id": "m2",
+          "label": "Journal m2 on 2025-06-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "m3",
+          "label": "Journal m3 on 2025-06-02"
+        },
+        {
+          "kind": "voucher",
+          "id": "m4",
+          "label": "Journal m4 on 2025-06-02"
+        },
+        {
+          "kind": "voucher",
+          "id": "m8",
+          "label": "Journal m8 on 2025-06-06"
+        }
+      ]
+    },
+    {
+      "id": "cash_book_integrity.journal_cash_total_a3489ad8",
+      "value": 23,
+      "unit": "paise",
+      "definition_sha256_16": "6371bd951bdf3d01",
+      "definition_text": "Cash paid through Journal entries to expense ledger (tag a3489ad8).",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "m9",
+          "label": "Journal m9 on 2025-06-07"
+        }
+      ]
+    },
+    {
+      "id": "cash_book_integrity.journal_cash_total_all",
+      "value": 225,
+      "unit": "paise",
+      "definition_sha256_16": "f4e31bb5fc826f4c",
+      "definition_text": "Cash paid through Journal entries to any expense ledger.",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.journal_cash_unnarrated_count_0a846562",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "ec23955398d1e7c5",
+      "definition_text": "Number of unnarrated entries (ledger tag 0a846562).",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.journal_cash_unnarrated_count_a3489ad8",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "c413d2564c0ec6c8",
+      "definition_text": "Number of unnarrated entries (ledger tag a3489ad8).",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.journal_cash_unnarrated_total_0a846562",
+      "value": 5,
+      "unit": "paise",
+      "definition_sha256_16": "e0673ef6675106d9",
+      "definition_text": "Of those, entries with no narration at all (ledger tag 0a846562).",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "m8",
+          "label": "Journal m8 on 2025-06-06"
+        }
+      ]
+    },
+    {
+      "id": "cash_book_integrity.journal_cash_unnarrated_total_a3489ad8",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "3ac6b092b75bca1c",
+      "definition_text": "Of those, entries with no narration at all (ledger tag a3489ad8).",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.lowest_best_case_balance_320cbae3",
+      "value": -123,
+      "unit": "paise",
+      "definition_sha256_16": "0b0ed3f7104e56b5",
+      "definition_text": "Lowest best-case daily closing of cash ledger (tag 320cbae3); zero when it never goes below zero.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "m10",
+          "label": "Payment m10 on 2025-06-08"
+        },
+        {
+          "kind": "voucher",
+          "id": "m11",
+          "label": "Receipt m11 on 2025-06-08"
+        },
+        {
+          "kind": "voucher",
+          "id": "m7",
+          "label": "Contra m7 on 2025-06-05"
+        },
+        {
+          "kind": "voucher",
+          "id": "m9",
+          "label": "Journal m9 on 2025-06-07"
+        }
+      ]
+    },
+    {
+      "id": "cash_book_integrity.lowest_best_case_balance_6ea64f57",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "6c37f4b68647b687",
+      "definition_text": "Lowest best-case daily closing of cash ledger (tag 6ea64f57); zero when it never goes below zero.",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.lowest_best_case_date_320cbae3",
+      "value": "2025-06-07",
+      "unit": "text",
+      "definition_sha256_16": "5e5a424128c75157",
+      "definition_text": "Date of that lowest best-case closing (blank when none).",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.lowest_best_case_date_6ea64f57",
+      "value": "",
+      "unit": "text",
+      "definition_sha256_16": "5e5a424128c75157",
+      "definition_text": "Date of that lowest best-case closing (blank when none).",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.negative_days_best_case_320cbae3",
+      "value": 3,
+      "unit": "count",
+      "definition_sha256_16": "2427dd446a1d513a",
+      "definition_text": "Days on which cash ledger (tag 320cbae3) closes below zero even if every same-day receipt came before every same-day payment.",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.negative_days_best_case_6ea64f57",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "17df0af70a7a0606",
+      "definition_text": "Days on which cash ledger (tag 6ea64f57) closes below zero even if every same-day receipt came before every same-day payment.",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.negative_days_worst_case_320cbae3",
+      "value": 3,
+      "unit": "count",
+      "definition_sha256_16": "d69f2938776f7841",
+      "definition_text": "Days on which cash ledger (tag 320cbae3) is below zero if same-day payments came first.",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.negative_days_worst_case_6ea64f57",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "22e0361525a17fee",
+      "definition_text": "Days on which cash ledger (tag 6ea64f57) is below zero if same-day payments came first.",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.opening_difference",
+      "value": 1007,
+      "unit": "paise",
+      "definition_sha256_16": "0c72414cb85a377e",
+      "definition_text": "Sum of every ledger's Trial Balance opening balance (Dr positive). Tally shows a non-zero sum as 'Difference in opening balances'.",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.own_account_booked_as_deposit_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "a0833916ce92dc4c",
+      "definition_text": "Number of those entries.",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.own_account_booked_as_deposit_total",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "4c09787c61f8df94",
+      "definition_text": "Contra entries crediting cash whose bank narration names the assessee's own account (money received from another account, booked as cash deposited).",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.own_account_booked_as_withdrawal_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "a0833916ce92dc4c",
+      "definition_text": "Number of those entries.",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.own_account_booked_as_withdrawal_total",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "9baee13ef47d348f",
+      "definition_text": "Contra entries debiting cash whose bank narration names the assessee's own account (money sent to another account, booked as cash in hand).",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.own_account_terms_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "ef391386299e43cd",
+      "definition_text": "Own-account narration terms configured (roles.own_account_narration_terms). Zero means part 3 looked at nothing.",
+      "evidence": []
+    }
+  ],
+  "findings": [
+    {
+      "id": "cash_book_integrity/expense_credits/e2239d0b",
+      "clauses": [
+        "s.68"
+      ],
+      "confidence": "judgement_required",
+      "facts": [
+        {
+          "name": "amount",
+          "figure_id": "cash_book_integrity.expense_credit_total_e2239d0b"
+        },
+        {
+          "name": "count",
+          "figure_id": "cash_book_integrity.expense_credit_count_e2239d0b"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Wages",
+          "label": ""
+        },
+        {
+          "kind": "voucher",
+          "id": "m5",
+          "label": "Receipt m5 on 2025-06-03"
+        }
+      ],
+      "title_sha256_16": "0001093240e3af9f",
+      "title_text": "Money received booked as a reduction of an expense",
+      "limits_sha256_16": "9e44c5b637887a22",
+      "limits_text": [
+        "The books do not show why each sum was received: a refund of an advance reduces the expense; any other receipt does not, and an unexplained credit is a s.68 question."
+      ],
+      "ask_client_sha256_16": "d0d83dfbd1e4f097",
+      "ask_client_text": [
+        "For each receipt, name the payer and state why the money was received."
+      ]
+    },
+    {
+      "id": "cash_book_integrity/journal_cash/0a846562",
+      "clauses": [],
+      "confidence": "judgement_required",
+      "facts": [
+        {
+          "name": "amount",
+          "figure_id": "cash_book_integrity.journal_cash_total_0a846562"
+        },
+        {
+          "name": "count",
+          "figure_id": "cash_book_integrity.journal_cash_count_0a846562"
+        },
+        {
+          "name": "repeated_amount",
+          "figure_id": "cash_book_integrity.journal_cash_repeated_narration_total_0a846562"
+        },
+        {
+          "name": "repeated_count",
+          "figure_id": "cash_book_integrity.journal_cash_repeated_narration_count_0a846562"
+        },
+        {
+          "name": "unnarrated_amount",
+          "figure_id": "cash_book_integrity.journal_cash_unnarrated_total_0a846562"
+        },
+        {
+          "name": "unnarrated_count",
+          "figure_id": "cash_book_integrity.journal_cash_unnarrated_count_0a846562"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Rent",
+          "label": ""
+        },
+        {
+          "kind": "voucher",
+          "id": "m12",
+          "label": "Journal m12 on 2025-06-09"
+        },
+        {
+          "kind": "voucher",
+          "id": "m13",
+          "label": "Journal m13 on 2025-06-09"
+        },
+        {
+          "kind": "voucher",
+          "id": "m2",
+          "label": "Journal m2 on 2025-06-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "m3",
+          "label": "Journal m3 on 2025-06-02"
+        },
+        {
+          "kind": "voucher",
+          "id": "m4",
+          "label": "Journal m4 on 2025-06-02"
+        },
+        {
+          "kind": "voucher",
+          "id": "m8",
+          "label": "Journal m8 on 2025-06-06"
+        }
+      ],
+      "title_sha256_16": "f8fdefae0d198e85",
+      "title_text": "Cash paid through journal entries, without a payee",
+      "limits_sha256_16": "65ee2bff5328a598",
+      "limits_text": [
+        "A journal names no payee, so the per-person daily limit of s.40A(3) and the TDS thresholds cannot be tested from these entries; the payment records behind them decide both.",
+        "Identical narration text on two entries is a question of duplication, not proof of it."
+      ],
+      "ask_client_sha256_16": "8d29a786b5004aab",
+      "ask_client_text": [
+        "Provide the wage register or payment records (payee, date, amount) behind each entry.",
+        "Explain each pair of entries that carries the same narration."
+      ]
+    },
+    {
+      "id": "cash_book_integrity/journal_cash/a3489ad8",
+      "clauses": [],
+      "confidence": "judgement_required",
+      "facts": [
+        {
+          "name": "amount",
+          "figure_id": "cash_book_integrity.journal_cash_total_a3489ad8"
+        },
+        {
+          "name": "count",
+          "figure_id": "cash_book_integrity.journal_cash_count_a3489ad8"
+        },
+        {
+          "name": "repeated_amount",
+          "figure_id": "cash_book_integrity.journal_cash_repeated_narration_total_a3489ad8"
+        },
+        {
+          "name": "repeated_count",
+          "figure_id": "cash_book_integrity.journal_cash_repeated_narration_count_a3489ad8"
+        },
+        {
+          "name": "unnarrated_amount",
+          "figure_id": "cash_book_integrity.journal_cash_unnarrated_total_a3489ad8"
+        },
+        {
+          "name": "unnarrated_count",
+          "figure_id": "cash_book_integrity.journal_cash_unnarrated_count_a3489ad8"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Frais é",
+          "label": ""
+        },
+        {
+          "kind": "voucher",
+          "id": "m9",
+          "label": "Journal m9 on 2025-06-07"
+        }
+      ],
+      "title_sha256_16": "f8fdefae0d198e85",
+      "title_text": "Cash paid through journal entries, without a payee",
+      "limits_sha256_16": "65ee2bff5328a598",
+      "limits_text": [
+        "A journal names no payee, so the per-person daily limit of s.40A(3) and the TDS thresholds cannot be tested from these entries; the payment records behind them decide both.",
+        "Identical narration text on two entries is a question of duplication, not proof of it."
+      ],
+      "ask_client_sha256_16": "8d29a786b5004aab",
+      "ask_client_text": [
+        "Provide the wage register or payment records (payee, date, amount) behind each entry.",
+        "Explain each pair of entries that carries the same narration."
+      ]
+    },
+    {
+      "id": "cash_book_integrity/negative_cash/320cbae3",
+      "clauses": [],
+      "confidence": "computed",
+      "facts": [
+        {
+          "name": "days_best_case",
+          "figure_id": "cash_book_integrity.negative_days_best_case_320cbae3"
+        },
+        {
+          "name": "days_worst_case",
+          "figure_id": "cash_book_integrity.negative_days_worst_case_320cbae3"
+        },
+        {
+          "name": "lowest",
+          "figure_id": "cash_book_integrity.lowest_best_case_balance_320cbae3"
+        },
+        {
+          "name": "lowest_date",
+          "figure_id": "cash_book_integrity.lowest_best_case_date_320cbae3"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Kasse Ü",
+          "label": ""
+        },
+        {
+          "kind": "voucher",
+          "id": "m10",
+          "label": "Payment m10 on 2025-06-08"
+        },
+        {
+          "kind": "voucher",
+          "id": "m11",
+          "label": "Receipt m11 on 2025-06-08"
+        },
+        {
+          "kind": "voucher",
+          "id": "m7",
+          "label": "Contra m7 on 2025-06-05"
+        },
+        {
+          "kind": "voucher",
+          "id": "m9",
+          "label": "Journal m9 on 2025-06-07"
+        }
+      ],
+      "title_sha256_16": "411425ef44afbd2f",
+      "title_text": "Cash in hand as booked falls below zero",
+      "limits_sha256_16": "61dfaefc2c485252",
+      "limits_text": [
+        "Cash cannot be spent before it is held; the entries on these days cannot all carry the dates on which the cash moved. Which entries are misdated is not visible from the books."
+      ],
+      "ask_client_sha256_16": "2a1552e66bbbea9f",
+      "ask_client_text": [
+        "Provide the cash book or cash vouchers for the negative days, with the dates cash was actually paid."
+      ]
+    },
+    {
+      "id": "cash_book_integrity/opening_difference/all",
+      "clauses": [],
+      "confidence": "computed",
+      "facts": [
+        {
+          "name": "difference",
+          "figure_id": "cash_book_integrity.opening_difference"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Bank",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Cash",
+          "label": ""
+        }
+      ],
+      "title_sha256_16": "7eccbf888637505a",
+      "title_text": "Opening balances do not balance",
+      "limits_sha256_16": "7c485abd346dd01a",
+      "limits_text": [
+        "The books cannot show which opening is missing or wrong; the prior year's closing balance sheet settles it."
+      ],
+      "ask_client_sha256_16": "de298fc5a81775f8",
+      "ask_client_text": [
+        "Provide the balance sheet as at the start of the year (the prior year's closing)."
+      ]
+    }
+  ],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-0",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3"
+  ],
+  "book_invariant_violations": [
+    {
+      "invariant": "POP-1",
+      "subject": "Bank",
+      "detail": "vouchers 500 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Bank2",
+      "detail": "vouchers -500 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Cash",
+      "detail": "vouchers -407 vs TB movement -1005 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Kasse Ü",
+      "detail": "vouchers -123 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Rent",
+      "detail": "vouchers 202 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Wages",
+      "detail": "vouchers 310 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-3",
+      "subject": "opening_paise",
+      "detail": "TB opening_paise sums to 1007 paise"
+    }
+  ],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [],
+  "module_invariants_evaluated": [
+    "cash_book_integrity.check_invariants"
+  ],
+  "module_invariant_violations": [
+    {
+      "invariant": "cash_book_integrity.check_invariants",
+      "subject": "cash_book_integrity",
+      "detail": "CBI-2: cash ledger tag 6ea64f57 closes negative in the TB but no negative day was found"
+    }
+  ]
+}

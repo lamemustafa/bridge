@@ -47,9 +47,9 @@ One JSON object per (test id, Book) pair:
 ```
 
 `spec_version` is this document's own version (semver-ish, currently `"1.0.0"`). A change to any
-rule below that changes what a conforming dump looks like bumps it; a comparison tool may refuse
-to compare two dumps with different `spec_version`s once a second version exists (v1 does not
-check this yet, since only one version exists).
+rule below that changes what a conforming dump looks like bumps it. Two dumps with different
+`spec_version`s are reported as differing (§7.3), so a dump written to another version of this
+spec never passes as identical.
 
 ## 2. Figure
 
@@ -210,7 +210,10 @@ the content is complete and correct.
    stops the comparison outright — a badly-typed document cannot be meaningfully diffed further.
 2. **Refuse empty-vs-empty.** If both sides report zero figures, that is itself a failure
    regardless of anything else being equal. An empty result must never look like success.
-3. **`test_id` and `rules_version` equality.**
+3. **`spec_version`, `test_id`, `test_version` and `rules_version` equality.** The reference
+   implementation's own `tae/parity/compare.py` checks `test_id` and `rules_version` only; this
+   crate's `compare` also checks the two versions, so a port that bumps a test's version (or
+   writes another spec version) without the reference doing the same is reported, not passed.
 4. **Minimum figure count**, per test id. Anchored to the committed synthetic fixture's own
    current figure count, so the fixture and the reference engine cannot silently drift the count
    without the anchor being updated together. A real client's count is far larger and is measured

@@ -372,3 +372,27 @@ fn c5_the_parent_read_for_the_splits_year_is_refused_when_pinned() {
         "C5-client"
     );
 }
+
+/// A voucher's NARRATION reaches the book Python-stripped, as the reference's adapter reads it.
+#[test]
+fn a_voucher_narration_is_read_and_stripped() {
+    let scratch = common::ScratchRead::new("narration");
+    scratch.edit_part(
+        "vouchers-2025-04-01",
+        "<NARRATION TYPE=\"String\">Synthetic voucher CS/1</NARRATION>",
+        "<NARRATION> \t Counter sale  week 1 \n</NARRATION>",
+        true,
+    );
+    let e = common::engagement(&scratch.dir, false);
+    let book = bridge_tax_audit::load_book(&e).unwrap();
+    let narration = |number: &str| {
+        book.vouchers
+            .iter()
+            .find(|v| v.number == number)
+            .unwrap_or_else(|| panic!("{number}"))
+            .narration
+            .clone()
+    };
+    assert_eq!(narration("CS/1"), "Counter sale  week 1");
+    assert_eq!(narration("R/1"), "Synthetic voucher R/1");
+}

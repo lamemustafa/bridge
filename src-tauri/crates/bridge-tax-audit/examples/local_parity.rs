@@ -7,8 +7,10 @@
 //!     TEST_ID ENGINE_RULES_TOML CLIENT_TOML READ_DIR PYTHON_DUMP_JSON RUST_DUMP_OUT
 //! ```
 //!
-//! `TEST_ID` is `cash_44ab`, `cash_payments_40a3`, `depreciation`, `financial_statements` or
-//! `applicability_44ab`. For `applicability_44ab`, an optional seventh argument
+//! `TEST_ID` is `cash_44ab`, `cash_payments_40a3`, `depreciation`, `financial_statements`,
+//! `applicability_44ab`, `trial_balance`, `stale_balances_41_1`, `ledger_scrutiny` or
+//! `cash_book_integrity` (the last two read `[roles]`: the cash groups, the bank groups for
+//! `cash_book_integrity`, and its optional `own_account_narration_terms`). For `applicability_44ab`, an optional seventh argument
 //! `TURNOVER_INPUTS_JSON` feeds the GSTR-1/GSTR-3B/AIS comparison turnover as caller data -- the
 //! file `parity/python_golden.py --emit-turnover-inputs` wrote -- so both sides compare against the
 //! same numbers; without it neither side has a comparison source. For
@@ -58,8 +60,9 @@ use bridge_tax_audit::compare::compare;
 use bridge_tax_audit::financial_statements::ReportTotals;
 use bridge_tax_audit::rules::{Rules, SOURCE_SHA256, VENDORED};
 use bridge_tax_audit::{
-    applicability_44ab_on, cash_44ab_on, cash_payments_40a3_on, depreciation_on,
-    financial_statements_on, load_book, Engagement,
+    applicability_44ab_on, cash_44ab_on, cash_book_integrity_on, cash_payments_40a3_on,
+    depreciation_on, financial_statements_on, ledger_scrutiny_on, load_book,
+    stale_balances_41_1_on, trial_balance_on, Engagement,
 };
 use sha2::{Digest, Sha256};
 
@@ -163,12 +166,16 @@ fn main() -> ExitCode {
                 )
             }
         };
-    const TESTS: [&str; 5] = [
+    const TESTS: [&str; 9] = [
         "cash_44ab",
         "cash_payments_40a3",
         "depreciation",
         "financial_statements",
         "applicability_44ab",
+        "trial_balance",
+        "stale_balances_41_1",
+        "ledger_scrutiny",
+        "cash_book_integrity",
     ];
     if !TESTS.contains(&test_id.as_str()) {
         return fail(format!(
@@ -315,7 +322,12 @@ fn main() -> ExitCode {
             financial_statements_on(&engagement, &book, &rules, report_totals.as_ref())
         }
         "applicability_44ab" => applicability_44ab_on(&engagement, &book, &rules, &comparisons),
-        _ => depreciation_on(&engagement, &book, &rules),
+        "depreciation" => depreciation_on(&engagement, &book, &rules),
+        "trial_balance" => trial_balance_on(&engagement, &book, &rules),
+        "stale_balances_41_1" => stale_balances_41_1_on(&engagement, &book, &rules),
+        "ledger_scrutiny" => ledger_scrutiny_on(&engagement, &book, &rules),
+        "cash_book_integrity" => cash_book_integrity_on(&engagement, &book, &rules),
+        other => return fail(format!("no dispatch for TEST_ID {other:?}")),
     };
     let rust = match rust {
         Ok(doc) => doc,

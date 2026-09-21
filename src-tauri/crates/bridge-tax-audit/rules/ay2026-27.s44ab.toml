@@ -1,4 +1,4 @@
-# Vendored excerpt of the reference Python implementation's rules table for AY 2026-27, as five
+# Vendored excerpt of the reference Python implementation's rules table for AY 2026-27, as
 # separate byte-for-byte verbatim blocks (each checked independently against the live source by
 # the local parity example, since the blocks are not contiguous in the source file):
 #   1. [meta] through the end of [s44ab] ("status = \"verified\"") -- excludes the [s44ab.turnover]
@@ -18,6 +18,7 @@
 #      first three keys, the third cut at its value (its trailing comment names a client, and this
 #      repository is public; the substring check still holds); and `status` alone. Excludes the
 #      header's comment lines, which cite a private research note.
+#   7. [ledger_scrutiny] in full (added for ledger_scrutiny): large_entry_paise, authority, status.
 # The source file's sha256 and the reference commit are recorded in src/rules.rs. This file's own
 # name predates the [s40a3]/[s269st]/[s269ss_269t]/[depreciation] additions; kept as-is rather than
 # renamed.
@@ -77,3 +78,8 @@ return_audit_case = 2026-10-31
 return_non_audit_firm = 2026-08-31
 
 status = "partial"
+
+[ledger_scrutiny]
+large_entry_paise = 50_000_00  # Rs 50,000
+authority = "CA analytical materiality convention; not a statutory threshold"
+status = "confirm"

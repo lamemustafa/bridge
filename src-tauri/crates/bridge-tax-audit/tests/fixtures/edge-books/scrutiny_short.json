@@ -1,0 +1,74 @@
+{
+ "comment": "ledger_scrutiny on a 4-day period: the 7-day window starts before the period, as the reference computes it, and the test still runs.",
+ "period": [
+  "2026-04-01",
+  "2026-04-04"
+ ],
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Sundry Debtors": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Direct Expenses": null,
+  "Indirect Expenses": null,
+  "Suspense A/c": null,
+  "Petty Cash Box": "Cash-in-Hand"
+ },
+ "ledgers": [
+  {
+   "name": "Repairs",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-repairs"
+  },
+  {
+   "name": "Cash",
+   "chain": [
+    "Cash-in-Hand"
+   ],
+   "guid": "edge-cash"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Repairs",
+   "opening": 0,
+   "debit": 100,
+   "credit": 0,
+   "closing": 100
+  },
+  {
+   "ledger": "Cash",
+   "opening": 0,
+   "debit": 0,
+   "credit": 100,
+   "closing": -100
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "v1",
+   "date": "2026-04-01",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Repairs",
+     100
+    ],
+    [
+     "Cash",
+     -100
+    ]
+   ]
+  }
+ ],
+ "cash": [
+  "Cash"
+ ],
+ "tests": [
+  "ledger_scrutiny"
+ ]
+}
