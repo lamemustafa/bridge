@@ -210,6 +210,9 @@ base revision.
 <a id="911c-extent-reads-must-retain-the-verified-company-tuple--verified-on-one-endpoint"></a>
 
 [9.11c Extent reads must retain the verified company tuple — **VERIFIED on one endpoint**](./TALLY_PROTOCOL_REFERENCE_COMPANY_IDENTITY_AND_CREATION.md#911c-extent-reads-must-retain-the-verified-company-tuple--verified-on-one-endpoint)
+<a id="911e-the-audit-reads-company-part-is-the-one-admitted-object-export--code-live-unmeasured"></a>
+
+[9.11e The audit read's company part is the one admitted Object export — **CODE; live unmeasured**](./TALLY_PROTOCOL_REFERENCE_COMPANY_IDENTITY_AND_CREATION.md#911e-the-audit-reads-company-part-is-the-one-admitted-object-export--code-live-unmeasured)
 <a id="910-company-creation-over-xml--partial-symbol-element-found-formal-name-element-not"></a>
 
 [9.10 Company creation over XML — **PARTIAL: symbol element found, formal-name element not**](./TALLY_PROTOCOL_REFERENCE_COMPANY_IDENTITY_AND_CREATION.md#910-company-creation-over-xml--partial-symbol-element-found-formal-name-element-not)

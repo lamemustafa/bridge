@@ -266,6 +266,22 @@ fn profile_ids_and_template_hashes_are_stable() {
             ReadOnlyProfileId::VouchersV3,
             "8dbe02d0645ff6b055ea8f6fb63d27af90dc41e81ee42b39ee7d2b407ab4aa3b",
         ),
+        (
+            ReadOnlyProfileId::AuditCompanyObjectV1,
+            "ff023f06940b80c8e922d8b238772cd77e18f220b2fd7a4be7af667029948acf",
+        ),
+        (
+            ReadOnlyProfileId::AuditLedgersV1,
+            "fb0cd8441bd9d422dfd26300a3e6b781a37c75492363869cbac602e61ab94582",
+        ),
+        (
+            ReadOnlyProfileId::AuditVouchersV1,
+            "e099da0dcb7426d833e1d2bf1eecc848ed5015847761d803cbb2a8cd6720f8a2",
+        ),
+        (
+            ReadOnlyProfileId::AuditStockItemsV1,
+            "74b6f7dd6d843015b863c1dc09dcef70ac19131268a3780ff90b5d5bf7ed8feb",
+        ),
     ];
     #[cfg(feature = "voucher-scan")]
     expected.extend([
@@ -337,5 +353,360 @@ fn compatibility_renderers_preserve_validated_profile_bytes() {
             range: &range,
         }
         .render()
+    );
+}
+
+/// Every element of `xml` as its slash-joined path and trimmed text, in
+/// document order. Attributes are recorded as `path/@NAME`.
+fn element_paths(xml: &str) -> Vec<(String, String)> {
+    use quick_xml::events::Event;
+    let mut reader = quick_xml::Reader::from_str(xml);
+    let mut path = Vec::<String>::new();
+    let mut out = Vec::new();
+    loop {
+        match reader.read_event().unwrap() {
+            Event::Start(event) => {
+                path.push(String::from_utf8(event.name().as_ref().to_vec()).unwrap());
+                for attribute in event.attributes() {
+                    let attribute = attribute.unwrap();
+                    out.push((
+                        format!(
+                            "{}/@{}",
+                            path.join("/"),
+                            String::from_utf8(attribute.key.as_ref().to_vec()).unwrap()
+                        ),
+                        attribute
+                            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                            .unwrap()
+                            .into_owned(),
+                    ));
+                }
+                out.push((path.join("/"), String::new()));
+            }
+            Event::Text(text) => {
+                let text = text.decode().unwrap();
+                if let Some(last) = out.last_mut() {
+                    last.1.push_str(&text);
+                }
+            }
+            Event::GeneralRef(reference) => {
+                let name = reference.decode().unwrap();
+                let decoded = quick_xml::escape::resolve_predefined_entity(&name).unwrap();
+                out.last_mut().unwrap().1.push_str(decoded);
+            }
+            Event::End(_) => {
+                path.pop();
+            }
+            Event::Eof => break,
+            other => panic!("unexpected event in a rendered profile: {other:?}"),
+        }
+    }
+    out.into_iter()
+        .map(|(path, text)| (path, text.trim().to_string()))
+        .collect()
+}
+
+#[test]
+fn audit_company_object_is_exactly_one_named_object_with_the_closed_fetchlist() {
+    let company = ValidatedCompanyName::new("BRIDGE & <SYNTHETIC> \"BOOK\"").unwrap();
+    let request = ReadOnlyProfile::AuditCompanyObjectV1 { company: &company }.render();
+    let mut expected = vec![
+        ("ENVELOPE", ""),
+        ("ENVELOPE/HEADER", ""),
+        ("ENVELOPE/HEADER/VERSION", "1"),
+        ("ENVELOPE/HEADER/TALLYREQUEST", "Export"),
+        ("ENVELOPE/HEADER/TYPE", "Object"),
+        ("ENVELOPE/HEADER/SUBTYPE", "Company"),
+        ("ENVELOPE/HEADER/ID/@TYPE", "Name"),
+        ("ENVELOPE/HEADER/ID", "BRIDGE & <SYNTHETIC> \"BOOK\""),
+        ("ENVELOPE/BODY", ""),
+        ("ENVELOPE/BODY/DESC", ""),
+        ("ENVELOPE/BODY/DESC/STATICVARIABLES", ""),
+        (
+            "ENVELOPE/BODY/DESC/STATICVARIABLES/SVEXPORTFORMAT",
+            "$$SysName:XML",
+        ),
+        (
+            "ENVELOPE/BODY/DESC/STATICVARIABLES/SVCURRENTCOMPANY",
+            "BRIDGE & <SYNTHETIC> \"BOOK\"",
+        ),
+        ("ENVELOPE/BODY/DESC/FETCHLIST", ""),
+    ];
+    for field in AUDIT_COMPANY_FETCH {
+        expected.push(("ENVELOPE/BODY/DESC/FETCHLIST/FETCH", field));
+    }
+    let observed = element_paths(&request);
+    assert_eq!(
+        observed,
+        expected
+            .into_iter()
+            .map(|(path, text)| (path.to_string(), text.to_string()))
+            .collect::<Vec<_>>(),
+        "the company part is a closed shape: no TDL, filter, compute or extra field"
+    );
+    assert_eq!(
+        AUDIT_COMPANY_FETCH,
+        ["GUID", "NAME", "BOOKSFROM", "ISINTEGRATED"]
+    );
+}
+
+#[test]
+fn audit_collections_are_exports_of_one_type_with_their_fetch_and_period() {
+    let company = ValidatedCompanyName::new("BRIDGE & <SYNTHETIC> \"BOOK\"").unwrap();
+    let period = ValidatedDateRange::new("20250401", "20260331").unwrap();
+    let day = ValidatedDateRange::new("20260330", "20260330").unwrap();
+    for (request, collection, object_type, fetch, from, to) in [
+        (
+            ReadOnlyProfile::AuditLedgersV1 {
+                company: &company,
+                period: &period,
+            }
+            .render(),
+            "Bridge Audit Ledgers",
+            "Ledger",
+            AUDIT_LEDGER_FETCH,
+            "20250401",
+            "20260331",
+        ),
+        (
+            ReadOnlyProfile::AuditStockItemsV1 {
+                company: &company,
+                period: &period,
+            }
+            .render(),
+            "Bridge Audit Stock Items",
+            "StockItem",
+            AUDIT_STOCK_ITEM_FETCH,
+            "20250401",
+            "20260331",
+        ),
+        (
+            ReadOnlyProfile::AuditVouchersV1 {
+                company: &company,
+                window: &day,
+            }
+            .render(),
+            "Bridge Agent Vouchers",
+            "Voucher",
+            AUDIT_VOUCHER_FETCH,
+            "20260330",
+            "20260330",
+        ),
+    ] {
+        let observed = element_paths(&request);
+        let text = |path: &str| {
+            let values = observed
+                .iter()
+                .filter(|(candidate, _)| candidate == path)
+                .map(|(_, value)| value.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(values.len(), 1, "{path} occurs once in {collection}");
+            values[0].to_string()
+        };
+        assert_eq!(text("ENVELOPE/HEADER/TALLYREQUEST"), "Export");
+        assert_eq!(text("ENVELOPE/HEADER/TYPE"), "Collection");
+        assert_eq!(text("ENVELOPE/HEADER/ID"), collection);
+        assert_eq!(
+            text("ENVELOPE/BODY/DESC/STATICVARIABLES/SVCURRENTCOMPANY"),
+            "BRIDGE & <SYNTHETIC> \"BOOK\""
+        );
+        assert_eq!(text("ENVELOPE/BODY/DESC/STATICVARIABLES/SVFROMDATE"), from);
+        assert_eq!(text("ENVELOPE/BODY/DESC/STATICVARIABLES/SVTODATE"), to);
+        let collection_path = "ENVELOPE/BODY/DESC/TDL/TDLMESSAGE/COLLECTION";
+        assert_eq!(text(&format!("{collection_path}/@NAME")), collection);
+        assert_eq!(text(&format!("{collection_path}/@ISMODIFY")), "No");
+        assert_eq!(text(&format!("{collection_path}/TYPE")), object_type);
+        assert_eq!(text(&format!("{collection_path}/FETCH")), fetch);
+        assert!(
+            !observed.iter().any(|(path, _)| path.ends_with("/COMPUTE")),
+            "{collection} computes nothing"
+        );
+    }
+}
+
+#[test]
+fn audit_voucher_window_filters_on_literal_dates_only() {
+    let company = ValidatedCompanyName::new("BRIDGE SYNTHETIC BOOK").unwrap();
+    let day = ValidatedDateRange::new("20260330", "20260331").unwrap();
+    let request = ReadOnlyProfile::AuditVouchersV1 {
+        company: &company,
+        window: &day,
+    }
+    .render();
+    let observed = element_paths(&request);
+    let formulae = observed
+        .iter()
+        .filter(|(path, _)| path == "ENVELOPE/BODY/DESC/TDL/TDLMESSAGE/SYSTEM")
+        .map(|(_, value)| value.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        formulae,
+        ["$Date >= $$Date:\"20260330\" AND $Date <= $$Date:\"20260331\""]
+    );
+    assert!(observed.contains(&(
+        "ENVELOPE/BODY/DESC/TDL/TDLMESSAGE/COLLECTION/FILTERS".to_string(),
+        "BridgeAgentWindow".to_string()
+    )));
+}
+
+#[test]
+fn audit_fetch_lists_carry_what_a_silent_default_would_hide() {
+    let fields = |fetch: &str| {
+        fetch
+            .split(',')
+            .map(|field| field.trim().to_string())
+            .collect::<Vec<_>>()
+    };
+    let vouchers = fields(AUDIT_VOUCHER_FETCH);
+    // A voucher missing any status flag is UNKNOWN and the engine refuses
+    // the book; Tally emits no field the FETCH does not name.
+    for required in [
+        "GUID",
+        "ALTERID",
+        "DATE",
+        "ISOPTIONAL",
+        "ISCANCELLED",
+        "ISPOSTDATED",
+    ] {
+        assert!(vouchers.iter().any(|field| field == required), "{required}");
+    }
+    // An absent quantity, rate or amount on a goods line is read as none,
+    // and the stock movement is silently dropped (Lane B, 2026-09-21).
+    for prefix in [
+        "ALLLEDGERENTRIES.INVENTORYALLOCATIONS",
+        "ALLINVENTORYENTRIES",
+    ] {
+        for leaf in ["STOCKITEMNAME", "BILLEDQTY", "ACTUALQTY", "RATE", "AMOUNT"] {
+            let field = format!("{prefix}.{leaf}");
+            assert!(vouchers.contains(&field), "{field}");
+        }
+    }
+    for prefix in ["INVENTORYENTRIESIN", "INVENTORYENTRIESOUT"] {
+        for leaf in ["STOCKITEMNAME", "ACTUALQTY", "AMOUNT"] {
+            let field = format!("{prefix}.{leaf}");
+            assert!(vouchers.contains(&field), "{field}");
+        }
+    }
+    assert!(
+        !vouchers
+            .iter()
+            .any(|field| field.contains("BILLALLOCATIONS")),
+        "no audit consumer reads bill allocations"
+    );
+    for fetch in [
+        AUDIT_VOUCHER_FETCH,
+        AUDIT_LEDGER_FETCH,
+        AUDIT_STOCK_ITEM_FETCH,
+    ] {
+        let listed = fields(fetch);
+        let mut unique = listed.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), listed.len(), "no field is listed twice");
+        assert!(
+            !listed.iter().any(|field| field.contains('*')),
+            "no wildcard"
+        );
+    }
+}
+
+#[test]
+fn audit_ledgers_fetch_no_contact_or_bank_details() {
+    let upper = AUDIT_LEDGER_FETCH.to_ascii_uppercase();
+    for sensitive in [
+        "BANK",
+        "IFSC",
+        "EMAIL",
+        "PHONE",
+        "MOBILE",
+        "ADDRESS",
+        "PINCODE",
+        "MSME",
+        "UDYAM",
+        "NAMEONPAN",
+    ] {
+        assert!(!upper.contains(sensitive), "{sensitive}");
+    }
+    assert!(AUDIT_LEDGER_FETCH.contains("LEDGSTREGDETAILS.LIST"));
+    assert!(AUDIT_LEDGER_FETCH.contains("ISBILLWISEON"));
+}
+
+#[test]
+fn audit_fetch_lists_are_pinned_exactly() {
+    // A field dropped from any list silently changes a figure in at least one
+    // engine (a line without AMOUNT is skipped; an absent OPENINGBALANCE reads
+    // as 0), and a template-hash reseal would not say which. Each list is
+    // therefore pinned field by field, and a change must edit this test.
+    let fields = |fetch: &str| {
+        fetch
+            .split(',')
+            .map(|field| field.trim().to_string())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        fields(AUDIT_LEDGER_FETCH),
+        [
+            "NAME",
+            "GUID",
+            "MASTERID",
+            "ALTERID",
+            "PARENT",
+            "OPENINGBALANCE",
+            "ISBILLWISEON",
+            "PARTYGSTIN",
+            "INCOMETAXNUMBER",
+            "LEDGSTREGDETAILS.LIST",
+        ]
+    );
+    assert_eq!(
+        fields(AUDIT_STOCK_ITEM_FETCH),
+        [
+            "NAME",
+            "GUID",
+            "ALTERID",
+            "PARENT",
+            "BASEUNITS",
+            "OPENINGBALANCE",
+            "OPENINGVALUE",
+            "CLOSINGBALANCE",
+            "CLOSINGVALUE",
+        ]
+    );
+    assert_eq!(
+        fields(AUDIT_VOUCHER_FETCH),
+        [
+            "GUID",
+            "MASTERID",
+            "ALTERID",
+            "DATE",
+            "VOUCHERTYPENAME",
+            "VOUCHERNUMBER",
+            "REFERENCE",
+            "PARTYLEDGERNAME",
+            "PARTYGSTIN",
+            "NARRATION",
+            "ISOPTIONAL",
+            "ISCANCELLED",
+            "ISPOSTDATED",
+            "ALLLEDGERENTRIES.LEDGERNAME",
+            "ALLLEDGERENTRIES.AMOUNT",
+            "ALLLEDGERENTRIES.ISDEEMEDPOSITIVE",
+            "ALLLEDGERENTRIES.INVENTORYALLOCATIONS.STOCKITEMNAME",
+            "ALLLEDGERENTRIES.INVENTORYALLOCATIONS.BILLEDQTY",
+            "ALLLEDGERENTRIES.INVENTORYALLOCATIONS.ACTUALQTY",
+            "ALLLEDGERENTRIES.INVENTORYALLOCATIONS.RATE",
+            "ALLLEDGERENTRIES.INVENTORYALLOCATIONS.AMOUNT",
+            "ALLINVENTORYENTRIES.STOCKITEMNAME",
+            "ALLINVENTORYENTRIES.BILLEDQTY",
+            "ALLINVENTORYENTRIES.ACTUALQTY",
+            "ALLINVENTORYENTRIES.RATE",
+            "ALLINVENTORYENTRIES.AMOUNT",
+            "INVENTORYENTRIESIN.STOCKITEMNAME",
+            "INVENTORYENTRIESIN.ACTUALQTY",
+            "INVENTORYENTRIESIN.AMOUNT",
+            "INVENTORYENTRIESOUT.STOCKITEMNAME",
+            "INVENTORYENTRIESOUT.ACTUALQTY",
+            "INVENTORYENTRIESOUT.AMOUNT",
+        ]
     );
 }

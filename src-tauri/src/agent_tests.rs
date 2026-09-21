@@ -201,6 +201,39 @@ fn voucher_company_name_is_validated_and_xml_escaped_without_a_tdl_literal() {
 }
 
 #[test]
+fn the_audit_voucher_part_is_the_agent_window_shape_with_its_own_fetch() {
+    use bridge_tally_protocol::xml_read_profiles::{
+        ReadOnlyProfile, ValidatedCompanyName, ValidatedDateRange, AUDIT_VOUCHER_FETCH,
+    };
+    // The audit part inherits the agent window's qualification (literal
+    // `$Date` bounds, protocol reference §5.3) and every refusal keyed to it
+    // only if it is that request byte for byte apart from the FETCH.
+    for (company, from, to) in [
+        ("BRIDGE SYNTHETIC BOOK", "20260330", "20260330"),
+        (
+            "Bridge & <Synthetic> \"Book\", + खर्चा",
+            "20250401",
+            "20260331",
+        ),
+    ] {
+        let agent = render_agent_vouchers_in_span(company, from, to, None).unwrap();
+        let (head, rest) = agent.split_once("<FETCH>").unwrap();
+        let (_, tail) = rest.split_once("</FETCH>").unwrap();
+        let expected = format!("{head}<FETCH>{AUDIT_VOUCHER_FETCH}</FETCH>{tail}");
+        let validated = ValidatedCompanyName::new(company).unwrap();
+        let window = ValidatedDateRange::new(from, to).unwrap();
+        assert_eq!(
+            ReadOnlyProfile::AuditVouchersV1 {
+                company: &validated,
+                window: &window,
+            }
+            .render(),
+            expected
+        );
+    }
+}
+
+#[test]
 fn built_batch_stays_in_band_when_its_egress_receipt_fails() {
     let mut response = json!({
         "jsonrpc": "2.0",

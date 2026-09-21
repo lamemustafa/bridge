@@ -153,6 +153,57 @@ not a financial report, another endpoint, a compatibility cell, or accounting
 writes. V1 remains for historical corpus interpretation; production extent reads
 use V2 without fallback.
 
+### 9.11e The audit read's company part is the one admitted Object export — **CODE; live unmeasured**
+
+**Code, 2026-09-21.** Every agent read passes `AgentReadRequest::parse`, which admits
+only an `Export` of `TYPE=Collection`. The tally-read v1 read also needs a `company` part
+naming exactly one company. A `Company` collection cannot give that (§12a.7), and both
+audit consumers take the first `COMPANY` element that has a GUID. So the part is the
+single-object export of §9.11a. It reaches dispatch through one typed constructor,
+never through `parse`:
+
+- **Construction.** `AgentReadRequest::company_object(&VerifiedCompanyIdentity)`
+  renders the pinned `audit_company_object_v1` template (`ReadOnlyProfileId`).
+  - The request is `Export`, `TYPE=Object`, `SUBTYPE=Company`,
+    `ID TYPE="Name"` = the verified display name (validated and XML-escaped), and the same
+    `SVCURRENTCOMPANY`.
+  - It carries a `FETCHLIST` of exactly `GUID`, `NAME`, `BOOKSFROM` and `ISINTEGRATED`.
+  - It has no TDL, filter, compute, `ORIGINALNAME` or wildcard. A structural test pins
+    every element of the rendered request.
+- **Everything else stays refused.** `parse` is unchanged and refuses every `TYPE=Object`
+  envelope, including this one and its case, whitespace, subtype, fetch and
+  Collection-plus-Object variants. So no XML from outside the constructor can use the
+  shape.
+- **Admission of the response** (`bridge_tally_protocol::audit_company_part`).
+  - `HEADER/STATUS` is `1`, and nothing follows the envelope.
+  - There is exactly one `DATA/TALLYMESSAGE` and one child `COMPANY`, and no other `COMPANY`
+    element carries a `GUID`. The consumers take the first `COMPANY` with a GUID anywhere,
+    so admission ensures that is this one. The `CMPINFO/COMPANY` object counter has no GUID.
+  - The company carries a `NAME` attribute, and `GUID` and `BOOKSFROM` occur exactly once
+    each.
+  - `GUID` must equal the verified GUID and `BOOKSFROM` the verified date: a year-split
+    sibling shares the GUID (§9.11b).
+  - `ISINTEGRATED` may be absent or empty, in which case the stock test reports "unknown",
+    but it may not repeat. A read field with a child element is refused.
+  - `NAME` is recorded, not compared. On licensed Silver 7.1 (2026-09-21) a collection
+    returned a display form of a stored ledger name ("Round Off" for "ROUND OFF"), so a
+    name comparison could refuse the right company. The GUID and `BOOKSFROM` already bind
+    the part.
+
+**Unmeasured, and required before any use on a client book:**
+
+- what an `ID` that does not resolve does, for example a company unloaded between the
+  listing and the read: a refusal, an empty response, or the §1.2 modal;
+- names with `&`, quotes or non-ASCII text in the `ID` (§9.11a measured one plain name);
+- whether an explicit `FETCHLIST` narrows an Object export (only `FETCH *` was measured,
+  §9.11a);
+- whether two sends of the same Object export are byte-stable, since the `CMPINFO`
+  counters could differ;
+- behaviour on Gold.
+
+The first live use is one request on a synthetic company on the licensed lab, with an
+operator watching the Tally screen (§1.2), stopping on the first silence.
+
 ## 9.10 Company creation over XML — **PARTIAL: symbol element found, formal-name element not**
 
 **PARTIAL.** Company creation is *attempted* by Tally — it validates and returns specific

@@ -97,6 +97,35 @@ impl AgentReadRequest {
         Ok(Self(xml))
     }
 
+    /// The `company` part of a tally-read v1 read: a single-object export of
+    /// exactly the verified company, rendered from the pinned
+    /// `AuditCompanyObjectV1` template.
+    ///
+    /// This is the only way an Object export reaches dispatch. [`Self::parse`]
+    /// stays Collection-only and refuses every `TYPE=Object` envelope, so no
+    /// XML from anywhere else can use this shape: the company name is the only
+    /// variable, it comes from a verified identity, and it is validated and
+    /// escaped. The response still has to be admitted by GUID, because Tally
+    /// resolves the `ID` by name.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "sent by the audit_read orchestrator, plan step 7")
+    )]
+    pub(crate) fn company_object(
+        identity: &super::VerifiedCompanyIdentity,
+    ) -> Result<Self, AgentReadRequestError> {
+        let company = bridge_tally_protocol::xml_read_profiles::ValidatedCompanyName::new(
+            identity.display_name(),
+        )
+        .map_err(|_| AgentReadRequestError)?;
+        Ok(Self(
+            bridge_tally_protocol::xml_read_profiles::ReadOnlyProfile::AuditCompanyObjectV1 {
+                company: &company,
+            }
+            .render(),
+        ))
+    }
+
     pub(crate) fn into_xml(self) -> String {
         self.0
     }
