@@ -761,7 +761,7 @@ mod tests {
             parent: chain[0].to_string(),
             chain: chain.iter().map(|s| (*s).to_string()).collect(),
             chain_complete: true,
-            opening_paise: 0,
+            master_opening_paise: 0,
             guid: format!("guid-{name}"),
             masterid: None,
         }
