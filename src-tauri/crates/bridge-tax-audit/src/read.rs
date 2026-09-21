@@ -9,8 +9,8 @@
 //! remaining rules (C5 identity, C8, C9) need parsed parts and live in `book.rs`.
 //!
 //! Company identity is (GUID, books_from), never the name: a Tally split company keeps its
-//! parent's GUID and begins its books on the split date, so the GUID alone lets a read of one
-//! pass as the other.
+//! parent's GUID (one measured pair also differed only in books_from), so the GUID alone lets a
+//! read of one pass as the other.
 //!
 //! The verified decoded content is kept in memory and is what the book parses, so the bytes
 //! parsed are the bytes hashed. Gzip blobs make one stored-byte verification pass before their
@@ -204,7 +204,7 @@ fn is_sha256(s: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-fn is_uuid(s: &str) -> bool {
+pub(crate) fn is_uuid(s: &str) -> bool {
     let groups: Vec<&str> = s.split('-').collect();
     groups.len() == 5
         && groups
@@ -1134,15 +1134,17 @@ impl Read {
                 ),
             ));
         }
+        // A company whose books begin after the period ends cannot hold it (the split read for
+        // its parent's year). Books that begin inside the period, a first year, are admitted.
         if let Some(books_from) = &self.books_from {
-            if self.period.from < *books_from {
+            if *books_from > self.period.to {
                 return Err(AuditError::refused(
                     "C5-books-from",
                     format!(
-                        "read period starts {}, before this company's books begin {} (a split \
+                        "this company's books begin {}, after the read period ends {} (a split \
 company keeps its parent's GUID)",
-                        iso(&self.period.from),
-                        iso(books_from)
+                        iso(books_from),
+                        iso(&self.period.to)
                     ),
                 ));
             }

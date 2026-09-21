@@ -185,16 +185,25 @@ impl Engagement {
                     )
                 };
                 let t = t.as_table().ok_or_else(bad)?;
+                // Exact shapes, nothing stripped: the reference implementation applies the same
+                // two checks, so both engines accept and refuse the same pins.
                 let guid = t
                     .get("company_guid")
                     .and_then(toml::Value::as_str)
-                    .map(str::trim)
-                    .filter(|g| !g.is_empty())
+                    .filter(|g| read::is_uuid(g))
                     .ok_or_else(bad)?;
                 let books_from = t
                     .get("books_from")
                     .and_then(toml::Value::as_str)
-                    .filter(|s| s.len() == 10)
+                    .filter(|s| {
+                        let b = s.as_bytes();
+                        b.len() == 10
+                            && b[4] == b'-'
+                            && b[7] == b'-'
+                            && b.iter()
+                                .enumerate()
+                                .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
+                    })
                     .and_then(|s| TallyDate::parse(s.replace('-', "")).ok())
                     .ok_or_else(bad)?;
                 Ok(CompanyPin {

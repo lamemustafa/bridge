@@ -179,7 +179,7 @@ path.
 | C2 | Paths are relative and inside the read, with no `.` or `..` segment, no backslash and no symlink anywhere below the read root. `storage` matches the `.gz` suffix. `manifest.json` is a regular file |
 | C3 | For every part, consumed or not: the stored bytes and the decoded content both match their sha256 and length. Decompression is capped at 512 MiB. Each parser's own returned sha256 must equal the manifest's, which closes the gap between verifying a file and parsing it |
 | C4 | Part ids are unique. Singleton kinds appear at most once. `company`, `groups`, `ledgers`, `trial_balance`, `voucher_types` and at least one `vouchers` part are present, and every voucher's type resolves through `voucher_types` to a type that is its own parent (a base type such as Contra). A type that does not resolve, or whose chain repeats, refuses the read (`C4-vtype-unresolved`); it is never read as its own base type. No reference points at an unknown part. A `stock_summary` is selected by exact `as_of` |
-| C5 | The company part's GUID equals `company.guid`. The read's period equals the client's period. `C5-client`: when the client config pins `[client.tally]` `company_guid` and `books_from`, both equal the manifest's company (GUID case-insensitively); a pin the manifest cannot check, because it records no `books_from`, refuses. `C5-books-from`: the read's period does not start before `company.books_from`. 1.1: a company part that carries BOOKSFROM must equal `company.books_from` (`C5-identity`); a part without it is still read |
+| C5 | The company part's GUID equals `company.guid`. The read's period equals the client's period. `C5-client`: when the client config pins `[client.tally]` `company_guid` and `books_from`, both equal the manifest's company (GUID case-insensitively); a pin the manifest cannot check, because it records no `books_from`, refuses. `C5-books-from`: `company.books_from`, when recorded, is not after the read's period ends (books that begin inside the period, a company's first year, are admitted). 1.1: a company part that carries BOOKSFROM must equal `company.books_from` (`C5-identity`); a part without it is still read |
 | C6 | High-water bracket (section 4) |
 | C7 | Voucher windows are sorted, disjoint and contiguous, and their union is exactly the period |
 | C8 | Every voucher's DATE lies inside its own part's window. This catches Education-mode widening and a wrongly declared window |
@@ -225,11 +225,19 @@ closing_date = "2026-03-31"
 
 ### 8.1 Changes in 1.1
 
-A Tally split company keeps its parent's company GUID; the two differ in the date their books
-begin. On one measured pair the parent's books began 2025-04-01 and the split's 2026-04-01, while
-both reported the same GUID (their COMPANYNUMBER also differed). A consumer that checks the GUID
-alone therefore admits a read of the split as the parent, or the reverse. That is one pair: no
-one has yet shown that a split always changes `books_from`. 1.1 is additive:
+A Tally split company keeps its parent's company GUID. On one measured pair the parent's books
+began 2025-04-01 and the split's 2026-04-01, while both reported the same GUID (their
+COMPANYNUMBER also differed). A consumer that checks the GUID alone therefore admits a read of the
+split as the parent, or the reverse. That is one pair: no one has yet shown that a split always
+changes `books_from`.
+
+1.1 adds one optional field and three consumer rules. The rules are not purely additive in the
+section 8 sense: `books_from`, already a 1.0 field, becomes part of identity, and a 1.0 read that
+was admitted before can now be refused. That happens only when the client config pins a
+different company, when its company part's BOOKSFROM contradicts its manifest, or when its
+company's books begin after its own period ends, a read that cannot hold that period. For a read
+wrapped from an earlier capture, the manifest's `books_from` was itself taken from the company
+part, so the BOOKSFROM cross-check there shows internal consistency only.
 
 - `company.number` (optional) records COMPANYNUMBER as evidence. It is never identity, because it
   is a load-order number local to one Tally installation.
@@ -237,8 +245,11 @@ one has yet shown that a split always changes `books_from`. 1.1 is additive:
   `company.books_from` differs from it or is absent (`C5-identity`). A 1.0 read without it is
   still read.
 - Two consumer rules that need no new field: `C5-client` (the client config's pin of
-  `company_guid` and `books_from`) and `C5-books-from` (a read's period may not start before its
-  company's books begin, which refuses a split's read for its parent's year even without a pin).
+  `company_guid` and `books_from`, each in an exact form: a UUID and `YYYY-MM-DD`) and
+  `C5-books-from` (a company whose books begin after the period ends is refused). When the
+  manifest records `books_from`, the second refuses a split's read for its parent's year with no
+  pin. Without a pin, the reverse case (the parent's read for a year after the split) is admitted,
+  and so is any read whose manifest records no `books_from`; only the pin separates those.
 
 ## 9. Real-world validation
 
