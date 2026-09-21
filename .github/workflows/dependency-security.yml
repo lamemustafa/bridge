@@ -36,7 +36,7 @@ jobs:
           node-version-file: .node-version
       - name: Audit production frontend dependencies
         run: corepack pnpm run security:audit:frontend
-      - uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
+      - uses: taiki-e/install-action@4076c08d76dba979c11a7285295b0716c1d67908 # v2.87.15
         with:
           tool: cargo-audit@0.22.2
           fallback: none
