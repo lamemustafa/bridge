@@ -1,5 +1,5 @@
 {
- "comment": "cash_book_integrity, all five parts. 1: two cash ledgers; negative days with several vouchers (M28), two days tied at the lowest (first wins), a day whose worst case is exactly nil (M27); a cash ledger closing nil in the TB (M26) and one closing negative with no negative day (CBI-2 fires). 2: openings that do not sum to nil, with some nil openings (M22). 3: own-account terms differing in case (M18), an empty term (M21) and a blank term; Contra withdrawal and deposit (M20); a matching narration on a Payment (M19). 4: a receipt through bank crediting an expense (M16), and a journal crediting an expense with no positive cash/bank line (M15). 5: journal cash to an expense with narrations equal only after whitespace/case folding and straße/STRASSE (M24), a pair (M25), a blank-only narration (M23), and a journal whose cash leg is a debit (M17).",
+ "comment": "cash_book_integrity, all five parts. 1: two cash ledgers; negative days with several vouchers (M28), two days tied at the lowest (first wins), a day whose worst case is exactly nil (M27); a cash ledger closing nil in the TB (M26) and one closing negative with no negative day (CBI-2 fires). 2: openings that do not sum to nil, with some nil openings (M22). 3: own-account terms differing in case (M18), an empty term (M21) and a blank term; Contra withdrawal and deposit (M20); a matching narration on a Payment (M19). 4: a receipt through bank crediting an expense (M16), and a journal crediting an expense with no positive cash/bank line (M15). 5: journal cash to an expense with narrations equal only after whitespace/case folding and straße/STRASSE (M24), a pair (M25), a blank-only narration (M23), and a journal whose cash leg is a debit (M17). Also: 'Float' falls to the same lowest balance on two days, and the first is reported (B12); 'Drawer' closes negative in the TB with no voucher at all, so CBI-2 fires (B15).",
  "groups": {
   "Current Assets": null,
   "Cash-in-Hand": "Current Assets",
@@ -69,6 +69,20 @@
     "Suspense A/c"
    ],
    "guid": "edge-owner"
+  },
+  {
+   "name": "Float",
+   "chain": [
+    "Cash-in-Hand"
+   ],
+   "guid": "edge-float"
+  },
+  {
+   "name": "Drawer",
+   "chain": [
+    "Cash-in-Hand"
+   ],
+   "guid": "edge-drawer"
   }
  ],
  "tb": [
@@ -127,6 +141,20 @@
    "debit": 0,
    "credit": 0,
    "closing": 0
+  },
+  {
+   "ledger": "Float",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "Drawer",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": -5
   }
  ],
  "vouchers": [
@@ -479,12 +507,59 @@
     ]
    ],
    "narration": "petty rent"
+  },
+  {
+   "guid": "r1",
+   "date": "2025-10-01",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Float",
+     -50
+    ],
+    [
+     "Suspense",
+     50
+    ]
+   ]
+  },
+  {
+   "guid": "r2",
+   "date": "2025-10-02",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Float",
+     50
+    ],
+    [
+     "Suspense",
+     -50
+    ]
+   ]
+  },
+  {
+   "guid": "r3",
+   "date": "2025-10-03",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Float",
+     -50
+    ],
+    [
+     "Suspense",
+     50
+    ]
+   ]
   }
  ],
  "cash": [
   "Cash",
   "Till",
-  "Petty"
+  "Petty",
+  "Float",
+  "Drawer"
  ],
  "bank": [
   "Bank"

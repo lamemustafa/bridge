@@ -243,6 +243,33 @@
       ]
     },
     {
+      "id": "cash_book_integrity.lowest_best_case_balance_afcdbd78",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "5386919c5cca924b",
+      "definition_text": "Lowest best-case daily closing of cash ledger (tag afcdbd78); zero when it never goes below zero.",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.lowest_best_case_balance_cb26e0ad",
+      "value": -50,
+      "unit": "paise",
+      "definition_sha256_16": "24ea08c5ae4e44a9",
+      "definition_text": "Lowest best-case daily closing of cash ledger (tag cb26e0ad); zero when it never goes below zero.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "r1",
+          "label": "Payment r1 on 2025-10-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "r3",
+          "label": "Payment r3 on 2025-10-03"
+        }
+      ]
+    },
+    {
       "id": "cash_book_integrity.lowest_best_case_balance_d989b38f",
       "value": -580,
       "unit": "paise",
@@ -318,6 +345,22 @@
       "evidence": []
     },
     {
+      "id": "cash_book_integrity.lowest_best_case_date_afcdbd78",
+      "value": "",
+      "unit": "text",
+      "definition_sha256_16": "5e5a424128c75157",
+      "definition_text": "Date of that lowest best-case closing (blank when none).",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.lowest_best_case_date_cb26e0ad",
+      "value": "2025-10-01",
+      "unit": "text",
+      "definition_sha256_16": "5e5a424128c75157",
+      "definition_text": "Date of that lowest best-case closing (blank when none).",
+      "evidence": []
+    },
+    {
       "id": "cash_book_integrity.lowest_best_case_date_d989b38f",
       "value": "2025-09-05",
       "unit": "text",
@@ -342,6 +385,22 @@
       "evidence": []
     },
     {
+      "id": "cash_book_integrity.negative_days_best_case_afcdbd78",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "8e286769f5da826c",
+      "definition_text": "Days on which cash ledger (tag afcdbd78) closes below zero even if every same-day receipt came before every same-day payment.",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.negative_days_best_case_cb26e0ad",
+      "value": 2,
+      "unit": "count",
+      "definition_sha256_16": "dff8872b5135e9d3",
+      "definition_text": "Days on which cash ledger (tag cb26e0ad) closes below zero even if every same-day receipt came before every same-day payment.",
+      "evidence": []
+    },
+    {
       "id": "cash_book_integrity.negative_days_best_case_d989b38f",
       "value": 9,
       "unit": "count",
@@ -363,6 +422,22 @@
       "unit": "count",
       "definition_sha256_16": "8b71fd0d070ca63a",
       "definition_text": "Days on which cash ledger (tag 1e60d67e) is below zero if same-day payments came first.",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.negative_days_worst_case_afcdbd78",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "1efc75a62c3436ad",
+      "definition_text": "Days on which cash ledger (tag afcdbd78) is below zero if same-day payments came first.",
+      "evidence": []
+    },
+    {
+      "id": "cash_book_integrity.negative_days_worst_case_cb26e0ad",
+      "value": 3,
+      "unit": "count",
+      "definition_sha256_16": "ab6e28dc05e82000",
+      "definition_text": "Days on which cash ledger (tag cb26e0ad) is below zero if same-day payments came first.",
       "evidence": []
     },
     {
@@ -660,6 +735,56 @@
       ]
     },
     {
+      "id": "cash_book_integrity/negative_cash/cb26e0ad",
+      "clauses": [],
+      "confidence": "computed",
+      "facts": [
+        {
+          "name": "days_best_case",
+          "figure_id": "cash_book_integrity.negative_days_best_case_cb26e0ad"
+        },
+        {
+          "name": "days_worst_case",
+          "figure_id": "cash_book_integrity.negative_days_worst_case_cb26e0ad"
+        },
+        {
+          "name": "lowest",
+          "figure_id": "cash_book_integrity.lowest_best_case_balance_cb26e0ad"
+        },
+        {
+          "name": "lowest_date",
+          "figure_id": "cash_book_integrity.lowest_best_case_date_cb26e0ad"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Float",
+          "label": ""
+        },
+        {
+          "kind": "voucher",
+          "id": "r1",
+          "label": "Payment r1 on 2025-10-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "r3",
+          "label": "Payment r3 on 2025-10-03"
+        }
+      ],
+      "title_sha256_16": "411425ef44afbd2f",
+      "title_text": "Cash in hand as booked falls below zero",
+      "limits_sha256_16": "61dfaefc2c485252",
+      "limits_text": [
+        "Cash cannot be spent before it is held; the entries on these days cannot all carry the dates on which the cash moved. Which entries are misdated is not visible from the books."
+      ],
+      "ask_client_sha256_16": "2a1552e66bbbea9f",
+      "ask_client_text": [
+        "Provide the cash book or cash vouchers for the negative days, with the dates cash was actually paid."
+      ]
+    },
+    {
       "id": "cash_book_integrity/negative_cash/d989b38f",
       "clauses": [],
       "confidence": "computed",
@@ -855,13 +980,18 @@
     },
     {
       "invariant": "POP-1",
+      "subject": "Suspense",
+      "detail": "vouchers 140 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-1",
       "subject": "Wages",
       "detail": "vouchers 615 vs TB movement 0 paise"
     },
     {
       "invariant": "POP-3",
       "subject": "closing_paise",
-      "detail": "TB closing_paise sums to 560 paise"
+      "detail": "TB closing_paise sums to 555 paise"
     },
     {
       "invariant": "POP-3",
@@ -878,5 +1008,11 @@
   "module_invariants_evaluated": [
     "cash_book_integrity.check_invariants"
   ],
-  "module_invariant_violations": []
+  "module_invariant_violations": [
+    {
+      "invariant": "cash_book_integrity.check_invariants",
+      "subject": "cash_book_integrity",
+      "detail": "CBI-2: cash ledger tag afcdbd78 closes negative in the TB but no negative day was found"
+    }
+  ]
 }
