@@ -311,7 +311,7 @@ mod tests {
             parent: "Indirect Expenses".to_string(),
             chain: vec!["Indirect Expenses".to_string()],
             chain_complete: true,
-            opening_paise: 0,
+            master_opening_paise: 0,
             guid: String::new(),
             masterid: None,
         }
