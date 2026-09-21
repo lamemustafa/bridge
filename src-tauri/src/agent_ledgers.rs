@@ -94,7 +94,7 @@ impl Server {
             // (empty, not absent -- `fields=basic` never reads groups at
             // all, which `group_scope=ancestry` is refused for above).
             let (mut ledgers, ledger_evidence): (Vec<(Value, Vec<String>)>, _) = if compliance {
-                let (records, groups, evidence) = self
+                let (records, groups, opening_as_of, evidence) = self
                     .runtime
                     .fetch_agent_party_ledger_masters_with_evidence(self.tally_config(), &identity)
                     .await
@@ -114,6 +114,7 @@ impl Server {
                                 "name": party_name(record.ledger.name),
                                 "parent": parent,
                                 "opening_balance": record.ledger.opening_balance,
+                                "opening_balance_as_of": &opening_as_of,
                                 "party_gstin": record.ledger.party_gstin.returned_text(),
                                 "compliance": mark_compliance_party_names(
                                     serde_json::to_value(record.fields).unwrap_or_default(),
@@ -126,9 +127,9 @@ impl Server {
                     evidence,
                 )
             } else {
-                let (records, evidence) = self
+                let (records, opening_as_of, evidence) = self
                     .runtime
-                    .fetch_ledgers_with_evidence(self.tally_config(), &identity)
+                    .fetch_ledgers_with_opening_as_of_evidence(self.tally_config(), &identity)
                     .await
                     .map_err(|error| ToolFailure::from_runtime("ledger_export_invalid", error))?;
                 (
@@ -139,6 +140,7 @@ impl Server {
                                 "name": party_name(ledger.name),
                                 "parent": ledger.parent.returned_text(),
                                 "opening_balance": ledger.opening_balance,
+                                "opening_balance_as_of": &opening_as_of,
                             });
                             (row, Vec::new())
                         })

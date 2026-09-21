@@ -1859,6 +1859,20 @@ impl TallyRuntime {
     ) -> anyhow::Result<(Vec<TallyLedger>, RuntimeReadEvidence)> {
         self.fetch_ledger_opening_with_evidence(config, identity, None)
             .await
+            .map(|(ledgers, _, evidence)| (ledgers, evidence))
+    }
+
+    /// As `fetch_ledgers_with_evidence`, also returning the `SVFROMDATE` the
+    /// export was pinned to (the admitted BOOKSFROM). Each ledger's
+    /// `OPENINGBALANCE` is the opening at that date (TALLY_PROTOCOL_REFERENCE
+    /// §5.5), which on a multi-year book is not the current year's opening.
+    pub async fn fetch_ledgers_with_opening_as_of_evidence(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+    ) -> anyhow::Result<(Vec<TallyLedger>, TallyDate, RuntimeReadEvidence)> {
+        self.fetch_ledger_opening_with_evidence(config, identity, None)
+            .await
     }
 
     /// Reads the native period opening at `from`, retaining the existing paired
@@ -1873,6 +1887,7 @@ impl TallyRuntime {
     ) -> anyhow::Result<(Vec<TallyLedger>, RuntimeReadEvidence)> {
         self.fetch_ledger_opening_with_evidence(config, identity, Some(from))
             .await
+            .map(|(ledgers, _, evidence)| (ledgers, evidence))
     }
 
     async fn fetch_ledger_opening_with_evidence(
@@ -1880,7 +1895,7 @@ impl TallyRuntime {
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
         opening_date: Option<TallyDate>,
-    ) -> anyhow::Result<(Vec<TallyLedger>, RuntimeReadEvidence)> {
+    ) -> anyhow::Result<(Vec<TallyLedger>, TallyDate, RuntimeReadEvidence)> {
         let _lease = self.begin_ordinary_read(&config)?;
         let identity = identity.clone();
         self.execute(
@@ -1929,7 +1944,7 @@ impl TallyRuntime {
                         let closing_evidence =
                             confirm_read_boundary(&client, boundary_profile).await?;
                         evidence = evidence.clone().combine(closing_evidence);
-                        Ok((ledgers, evidence.clone()))
+                        Ok((ledgers, period.from().clone(), evidence.clone()))
                     }
                     .await;
                     result.map_err(|error| with_read_evidence(error, evidence))
@@ -2014,6 +2029,7 @@ impl TallyRuntime {
     ) -> anyhow::Result<(
         Vec<bridge_tally_protocol::PartyLedgerMasterRecord>,
         Vec<bridge_tally_protocol::TallyNamedMaster>,
+        TallyDate,
         RuntimeReadEvidence,
     )> {
         let currency_read = self
@@ -2032,6 +2048,8 @@ impl TallyRuntime {
             .map_err(|error| with_read_evidence(error, currency_evidence.clone()))?;
         let evidence = currency_evidence.combine(source_evidence);
         let groups = source.groups.clone();
+        // The master request's SVFROMDATE (the admitted BOOKSFROM): each opening is as of it.
+        let opening_as_of = source.from.clone();
         let records = source
             .rows
             .into_iter()
@@ -2045,7 +2063,7 @@ impl TallyRuntime {
                 fields: row.fields,
             })
             .collect();
-        Ok((records, groups, evidence))
+        Ok((records, groups, opening_as_of, evidence))
     }
 
     /// Retain the three actual request body commitments alongside their paired
