@@ -540,7 +540,13 @@ impl ToolFailure {
         } else {
             None
         };
-        let code = if let Some(error) = error.chain().find_map(|cause| {
+        // A withdrawn call names the withdrawal, whatever operation it stopped.
+        let code = if error
+            .chain()
+            .any(|cause| cause.is::<crate::tally::runtime::ToolCancelled>())
+        {
+            "request_cancelled"
+        } else if let Some(error) = error.chain().find_map(|cause| {
             cause.downcast_ref::<crate::tally::runtime::TrialBalanceReadError>()
         }) {
             error.safe_code()

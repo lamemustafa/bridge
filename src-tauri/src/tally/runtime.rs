@@ -131,6 +131,20 @@ pub struct RuntimeReadEvidence {
     pub bytes: usize,
 }
 
+tokio::task_local! {
+    /// The cancellation of the one agent tool call running in this task, when
+    /// its caller can withdraw it (an MCP `notifications/cancelled`, or the host
+    /// closing its input). Checked before each queued operation starts, never
+    /// during one: an operation already sent to Tally runs to completion, since
+    /// abandoning a request does not stop Tally (protocol reference §11b.2).
+    pub(crate) static TOOL_CANCELLATION: CancellationToken;
+}
+
+/// The tool call was withdrawn before this operation started; nothing was sent.
+#[derive(Debug, thiserror::Error)]
+#[error("request_cancelled")]
+pub(crate) struct ToolCancelled;
+
 /// Retains admitted source commitments when a runtime read cannot be released.
 #[derive(Debug, thiserror::Error)]
 #[error("{source}")]
@@ -1551,6 +1565,14 @@ impl TallyRuntime {
         F: FnMut(TallyClient) -> Fut,
         Fut: Future<Output = anyhow::Result<T>>,
     {
+        // The only point a withdrawn agent tool call stops: before this
+        // operation is queued, so nothing further is sent. Never mid-operation.
+        if TOOL_CANCELLATION
+            .try_with(CancellationToken::is_cancelled)
+            .unwrap_or(false)
+        {
+            return Err(ToolCancelled.into());
+        }
         let session = self.session(config)?;
         let request = session.begin_request()?;
         let client = session.client.clone();
