@@ -239,6 +239,10 @@ company's books begin after its own period ends, a read that cannot hold that pe
 wrapped from an earlier capture, the manifest's `books_from` was itself taken from the company
 part, so the BOOKSFROM cross-check there shows internal consistency only.
 
+Bridge's producer side already refuses the live ambiguity: when more than one loaded company matches the requested
+GUID, company selection fails with `company_identity_ambiguous` (`src-tauri/src/agent_company.rs`). The consumer
+rules above cover what that cannot: a read captured while only one of the pair was loaded.
+
 - `company.number` (optional) records COMPANYNUMBER as evidence. It is never identity, because it
   is a load-order number local to one Tally installation.
 - The `company` part may carry BOOKSFROM. When it does, a consumer refuses a read whose manifest
