@@ -43,7 +43,7 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_COMPANY_IDENTITY_AND_CREATION.md",
-      "sha256": "9ea305865ea538250951381cc1a28feb786a59122c8f55a4dff5f94a8b3017ed"
+      "sha256": "ad9a20c89e0d84f7c3ab4e6a42d7939a04c028aa24f2f3871e1cdf3073a8423a"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_ENVIRONMENT_AND_REQUESTS.md",
@@ -1102,5 +1102,5 @@
       "sha256": "0ab5bfbe6d81b1e10530744c338fb91efa57fe5a66fb4bc0cfd382495eaf02a4"
     }
   ],
-  "manifest_sha256": "3cf03538d7bcad1d9159689ec0afcf8459d916090bf5a68016250fe08b186a23"
+  "manifest_sha256": "2976d6318a9076ca9784777323f6c673a593dcfe36dc74326bc559a99b00a8d8"
 }

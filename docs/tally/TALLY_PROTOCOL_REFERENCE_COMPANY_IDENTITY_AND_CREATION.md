@@ -200,7 +200,9 @@ never through `parse`:
   §9.11a);
 - whether two sends of the same Object export are byte-stable, since the `CMPINFO`
   counters could differ;
-- behaviour on Gold.
+- the part read while another user is writing to the company. Gold differs from Silver only in
+  allowing several users, so a book changing during a read is the normal case there. The read's
+  company high-water bracket, not this part, is what refuses a moved book.
 
 The first live use is one request on a synthetic company on the licensed lab, with an
 operator watching the Tally screen (§1.2), stopping on the first silence.
