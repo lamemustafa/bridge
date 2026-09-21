@@ -193,9 +193,9 @@ or an owner decision to amend the requirement instead:
 7. **Write capability in the Passport (row 1).** Decide whether a verified post
    should become observed write evidence, and under what rule.
 8. **Concurrent external changes:** #239 (accepted limitation).
-9. **Aiming by name (scope, "How the write is aimed").** Narrow or close the gap between the
+9. **Aiming by name (scope, "How the write is aimed"), #574.** Narrow or close the gap between the
    in-queue identity recheck and the POST, or record it as accepted with #239.
-10. **Batch record integrity (scope, "What it can send").** Decide whether the post path should
+10. **Batch record integrity (scope, "What it can send"), #575.** Decide whether the post path should
     re-check the saved file's bytes, as the desktop review already does, or record that the
     journal record is trusted local state.
 11. **Test the call-time refusal.** No test references `import_posting_disabled` (`agent.rs`); only
