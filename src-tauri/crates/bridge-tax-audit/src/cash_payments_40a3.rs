@@ -864,3 +864,26 @@ line of abs amount >= the s.269SS/269T limit ({limit_ss_t} paise)."
 
     Ok(r)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The reference labels a voucher with no number by `guid[-12:]`: 12 characters. Here the
+    /// 12-byte cut would land inside an 'é' (a panic when byte-sliced); the expected tail is the
+    /// reference's own `"invented-guid-ééééééa"[-12:]`.
+    #[test]
+    fn a_voucher_without_a_number_is_labelled_by_the_last_12_characters_of_its_guid() {
+        let v = Voucher {
+            guid: "invented-guid-ééééééa".to_string(),
+            date: TallyDate::parse("20250601").unwrap(),
+            vtype: "Payment".to_string(),
+            base_type: "Payment".to_string(),
+            number: String::new(),
+            status: crate::book::VoucherStatus::Regular,
+            lines: Vec::new(),
+            narration: String::new(),
+        };
+        assert_eq!(voucher_label(&v), "Payment guid-ééééééa on 2025-06-01");
+    }
+}
