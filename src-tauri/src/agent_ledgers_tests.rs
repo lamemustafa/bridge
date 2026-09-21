@@ -720,6 +720,26 @@ mod through_the_tool {
     }
 
     #[tokio::test]
+    async fn strict_compliance_keeps_joining_empty_master_and_omitted_balance_parent() {
+        // Strict compliance keeps its pre-diagnostics key, which flattens a
+        // returned-empty master parent and an omitted balance parent to one
+        // key. Only compliance_diagnostics keeps them apart (#521).
+        let (masters, balances) = empty_master_parent_and_missing_balance_parent();
+        let (response, _) = call(
+            compliance_plans(masters, balances),
+            json!({"company_guid":GUID,"fields":"compliance"}),
+        )
+        .await;
+        assert_ne!(response["result"]["isError"], true, "{response}");
+        let rows = items(&response);
+        assert!(
+            rows.iter()
+                .any(|row| row["name"] == "Bridge Nested Debtor WR4"),
+            "the flattened parent still joins in strict compliance"
+        );
+    }
+
+    #[tokio::test]
     async fn diagnostic_mode_quarantines_empty_and_unobserved_parent_observations() {
         let (masters, balances) = empty_master_parent_and_missing_balance_parent();
         let (response, _) = call(
