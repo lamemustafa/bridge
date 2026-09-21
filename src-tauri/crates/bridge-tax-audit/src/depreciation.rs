@@ -38,6 +38,11 @@
 //!     FY voucher activity that is not in `block_by_ledger` makes the whole book-vs-Act total
 //!     unsafe: `run` fails loud (a `JudgementRequired` finding, no total figures) rather than
 //!     silently omitting it.
+//!   * Nothing mapped at all (no `block_by_ledger`, no `opening_wdv_paise`, no Fixed Assets ledger
+//!     with a balance or movement) is not a computed nil: the book-vs-Act finding is
+//!     `JudgementRequired`, titled "Depreciation not computed: ...", and cites only a non-zero book
+//!     charge. Otherwise it is titled "Book vs Income-tax Act depreciation", never asserting a
+//!     difference the figures may not show.
 //!
 //! `check_invariants` (DEP-1, DEP-2) is independent of [`compute_depreciation`]/[`run`]: it never
 //! calls them, and DEP-1 re-derives each Fixed Assets ledger's own movement purely from the book
@@ -867,6 +872,58 @@ depreciation journals do not fully explain the expense ledger's TB movement.",
         Vec::new(),
     );
 
+    // Nothing to compute: no block is mapped, no opening WDV is configured, and no Fixed Assets
+    // ledger carries a balance or movement. Act depreciation is then zero by construction, not a
+    // computed nil -- a depreciable asset recorded outside the Fixed Assets group (or never
+    // recorded) is invisible here -- so the finding is a question for the CA, never `Computed`.
+    // Without this, the "every ledger mapped" check below passes vacuously on an empty set of Fixed
+    // Assets ledgers. A configured opening WDV is a real block (its Act depreciation is computed and
+    // filed in clause 18), so it never takes this branch.
+    let any_fa_with_balance = fa_ledgers.iter().any(|n| {
+        book.tb
+            .get(n)
+            .is_some_and(|row| row.closing_paise != 0 || row.movement_paise() != 0)
+    });
+    if block_by_ledger.is_empty() && opening_wdv_paise.is_empty() && !any_fa_with_balance {
+        let charged = book_dep_from_tb != 0;
+        let mut limits = vec![
+            "No ledger under the Fixed Assets group carries a balance or movement, and no \
+depreciation block or opening written-down value is configured, so Income-tax Act depreciation is \
+not computed: an asset recorded outside the Fixed Assets group, or not recorded at all, is not \
+tested."
+                .to_string(),
+        ];
+        if charged {
+            limits.push(
+                "Depreciation is charged in the books although no asset ledger is mapped; the \
+book total above has no asset behind it in this test."
+                    .to_string(),
+            );
+        }
+        r.findings.push(Finding {
+            id: format!("{TEST_ID}/book_vs_act"),
+            clauses: vec!["s.32".to_string(), "3CD-18".to_string()],
+            title: "Depreciation not computed: no fixed-asset ledger is mapped to a depreciation \
+block"
+                .to_string(),
+            facts: if charged {
+                vec![("book_total".to_string(), f_book_total)]
+            } else {
+                Vec::new()
+            },
+            evidence: Vec::new(),
+            confidence: Confidence::JudgementRequired,
+            limits,
+            ask_client: vec![
+                "Confirm whether the business holds any depreciable asset, including one recorded \
+outside the Fixed Assets group, and if so its block, opening written-down value, and additions and \
+deletions in the year."
+                    .to_string(),
+            ],
+        });
+        return Ok(r);
+    }
+
     let every_ledger_mapped = fa_ledgers.iter().all(|n| block_by_ledger.contains_key(n));
     let mut facts = vec![
         ("book_total".to_string(), f_book_total),
@@ -877,7 +934,7 @@ depreciation journals do not fully explain the expense ledger's TB movement.",
     r.findings.push(Finding {
         id: format!("{TEST_ID}/book_vs_act"),
         clauses: vec!["s.32".to_string(), "3CD-18".to_string()],
-        title: "Book depreciation differs from Income-tax Act depreciation".to_string(),
+        title: "Book vs Income-tax Act depreciation".to_string(),
         facts,
         evidence: Vec::new(),
         confidence: if every_ledger_mapped {
@@ -1389,6 +1446,119 @@ mod tests {
                 .any(|v| v.contains("DEP-2") && v.contains("Unmapped Asset")),
             "{violations:?}"
         );
+    }
+
+    fn book_vs_act(res: &TestResult) -> &Finding {
+        let found: Vec<_> = res
+            .findings
+            .iter()
+            .filter(|f| f.id == format!("{TEST_ID}/book_vs_act"))
+            .collect();
+        assert_eq!(found.len(), 1);
+        found[0]
+    }
+
+    fn run_with(
+        b: &Book,
+        block_by_ledger: &[(&str, &str)],
+        opening: &[(&str, i64)],
+        dep_expense: &[&str],
+    ) -> TestResult {
+        let bbl: BTreeMap<String, String> = block_by_ledger
+            .iter()
+            .map(|(l, k)| ((*l).to_string(), (*k).to_string()))
+            .collect();
+        let open: BTreeMap<String, i64> = opening
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), *v))
+            .collect();
+        let dep: BTreeSet<String> = dep_expense.iter().map(|s| (*s).to_string()).collect();
+        run(
+            b,
+            &rules_dep(1500),
+            &period(),
+            &bbl,
+            &open,
+            &dep,
+            &BTreeMap::new(),
+        )
+        .unwrap()
+    }
+
+    /// No block mapped, no opening WDV and no Fixed Assets ledger with a balance: the zero totals
+    /// are not a computed nil. Before this, `every_ledger_mapped` passed vacuously on an empty set
+    /// of Fixed Assets ledgers and the finding read `Computed`, titled as a difference of zero.
+    #[test]
+    fn nothing_mapped_is_a_question_not_a_nil() {
+        let b = book(vec![misc("Suspense", "Suspense")], vec![], vec![]);
+        let f = book_vs_act(&run_with(&b, &[], &[], &[])).clone();
+        assert_eq!(f.confidence, Confidence::JudgementRequired);
+        assert!(f.title.contains("not computed"), "{}", f.title);
+        assert!(f.facts.is_empty()); // no zero total cited as though it were a result
+        assert!(!f.ask_client.is_empty());
+
+        // A Fixed Assets ledger with no balance takes the same branch, not the older
+        // every-ledger-mapped fallback (which would also say JudgementRequired).
+        let b = book(
+            vec![asset("Idle Asset")],
+            vec![],
+            vec![("Idle Asset", 0, 0, 0, 0)],
+        );
+        let f = book_vs_act(&run_with(&b, &[], &[], &[])).clone();
+        assert!(f.title.contains("not computed"), "{}", f.title);
+        assert!(f.facts.is_empty());
+    }
+
+    /// A configured opening WDV is a real block: its Act depreciation is computed (and filed in
+    /// clause 18), so the finding must not call it "not computed".
+    #[test]
+    fn opening_wdv_without_a_mapped_ledger_is_real_depreciation() {
+        let b = book(vec![misc("Suspense", "Suspense")], vec![], vec![]);
+        let res = run_with(&b, &[], &[("block_a", 1_000_000)], &[]);
+        let dep = res
+            .figures
+            .iter()
+            .find(|f| f.id == "depreciation.dep_total_act_block_a")
+            .unwrap();
+        assert_eq!(dep.value, Value::Int(150_000));
+        let f = book_vs_act(&res);
+        assert!(!f.title.contains("not computed"), "{}", f.title);
+        assert!(f.facts.iter().any(|(k, _)| k == "act_total"));
+    }
+
+    #[test]
+    fn book_charge_with_nothing_mapped_is_cited() {
+        let b = book(
+            vec![misc("Depreciation", "Indirect Expenses")],
+            vec![],
+            vec![("Depreciation", 0, 500_000, 0, 500_000)],
+        );
+        let f = book_vs_act(&run_with(&b, &[], &[], &["Depreciation"])).clone();
+        assert!(f.title.contains("not computed"), "{}", f.title);
+        let keys: Vec<_> = f.facts.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys, vec!["book_total"]);
+        assert!(f.limits.iter().any(|l| l.contains("no asset behind it")));
+    }
+
+    /// The guard is "nothing mapped", not "all zero": a configured block with no movement is a real
+    /// computed nil, and the title never asserts a difference.
+    #[test]
+    fn a_mapped_block_with_zero_figures_is_still_computed() {
+        let b = book(
+            vec![asset("Idle Asset")],
+            vec![],
+            vec![("Idle Asset", 0, 0, 0, 0)],
+        );
+        let f = book_vs_act(&run_with(
+            &b,
+            &[("Idle Asset", "block_a")],
+            &[("block_a", 0)],
+            &[],
+        ))
+        .clone();
+        assert_eq!(f.confidence, Confidence::Computed);
+        assert_eq!(f.title, "Book vs Income-tax Act depreciation");
+        assert!(f.facts.iter().any(|(k, _)| k == "act_total"));
     }
 
     /// DEP-1: opening + additions - deletions - depreciation credited (from vouchers) must equal
