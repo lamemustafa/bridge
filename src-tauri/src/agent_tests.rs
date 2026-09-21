@@ -1818,6 +1818,114 @@ async fn voucher_read_evidence_uses_utf16_transport_bytes() {
     assert_eq!(simulator.finish().expect("simulator result").len(), 10);
 }
 
+/// `vouchers` over an empty window on a company whose high-water row carries
+/// the given axes: identity, then the bracketed window, widened window and
+/// company high-water reads (#550).
+async fn empty_window_vouchers_with_high_water(high_water: String) -> (Value, usize) {
+    let utf16 = |bytes: &[u8]| {
+        String::from_utf16(
+            &bytes
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
+    };
+    let company_xml = utf16(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-companies.utf16le.xml"
+    ));
+    let empty_xml = utf16(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-empty-collection.utf16le.xml"
+    ));
+    let plan = |xml: &str| {
+        ScenarioPlan::new(Fixture::SyntheticXml(xml.to_string()))
+            .with_encoding(WireEncoding::Utf16Le)
+            .with_framing(ResponseFraming::ContentLength)
+    };
+    let status = || {
+        ScenarioPlan::new(Fixture::ProductStatus(
+            tally_protocol_simulator::ProductStatus::TallyPrime,
+        ))
+        .with_framing(ResponseFraming::ContentLength)
+    };
+    let bracketed = |xml: &str| {
+        vec![
+            plan(&company_xml),
+            plan(xml),
+            status(),
+            plan(xml),
+            status(),
+            plan(&company_xml),
+        ]
+    };
+    let mut plans = vec![plan(&company_xml), status(), plan(&company_xml), status()];
+    plans.extend(bracketed(&empty_xml));
+    plans.extend(bracketed(&empty_xml));
+    plans.extend(bracketed(&high_water));
+    let simulator = SequenceSimulator::spawn(plans).expect("synthetic loopback server");
+    let directory = tempfile::tempdir().expect("temporary agent directory");
+    let server = Server::new(settings(
+        simulator.address(),
+        directory.path().to_path_buf(),
+    ));
+    let response = server
+        .call_tool(
+            "vouchers",
+            json!({"company_guid":"bb8ad19e-6aef-4239-a917-87fec0c6215e","from":"2026-04-01","to":"2026-04-30"}),
+        )
+        .await;
+    let requests = simulator.finish().expect("simulator result").len();
+    (response, requests)
+}
+
+fn company_high_water_fixture() -> String {
+    include_str!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+    )
+    .to_string()
+}
+
+#[tokio::test]
+async fn an_empty_book_corroborates_an_empty_voucher_window() {
+    // Negative-only fault injection into a captured response: the live
+    // never-held-a-voucher shape (#550) keeps ALTMSTID and omits ALTVCHID.
+    let captured = company_high_water_fixture();
+    let empty_book = captured.replacen("<ALTVCHID TYPE=\"Number\"> 101605</ALTVCHID>", "", 1);
+    assert_ne!(empty_book, captured);
+    let (response, requests) = empty_window_vouchers_with_high_water(empty_book).await;
+    assert_eq!(response["isError"], false, "{response}");
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(result["items"], json!([]));
+    assert_eq!(
+        response["structuredContent"]["evidence"]["state"],
+        "complete"
+    );
+    assert_eq!(requests, 22);
+}
+
+#[tokio::test]
+async fn a_high_water_row_with_neither_axis_still_refuses_the_empty_window() {
+    let captured = company_high_water_fixture();
+    let neither = captured
+        .replacen("<ALTVCHID TYPE=\"Number\"> 101605</ALTVCHID>", "", 1)
+        .replacen("<ALTMSTID TYPE=\"Number\"> 328</ALTMSTID>", "", 1);
+    // Exactly one of each axis removed: the requested company's row.
+    assert_eq!(
+        neither.matches("<ALTVCHID").count() + 1,
+        captured.matches("<ALTVCHID").count()
+    );
+    assert_eq!(
+        neither.matches("<ALTMSTID").count() + 1,
+        captured.matches("<ALTMSTID").count()
+    );
+    let (response, _) = empty_window_vouchers_with_high_water(neither).await;
+    assert_eq!(response["isError"], true, "{response}");
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"],
+        "master_checkpoint_not_observed"
+    );
+}
+
 #[tokio::test]
 async fn tally_status_does_not_infer_product_from_status_banner() {
     let simulator = SequenceSimulator::spawn(vec![
