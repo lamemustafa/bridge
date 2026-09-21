@@ -2191,3 +2191,27 @@ async fn diagnostic_history_reads_honor_the_configured_global_row_cap() {
         }
     }
 }
+
+#[test]
+fn preparation_without_posting_lists_the_import_tools_but_not_post_import() {
+    // The MCPB bundle's default since the posting-default-off decision:
+    // BRIDGE_AGENT_ENABLE_IMPORT=true, BRIDGE_AGENT_ENABLE_WRITES=false.
+    let names = |definitions: Value| {
+        definitions
+            .as_array()
+            .expect("tool list")
+            .iter()
+            .filter_map(|tool| tool["name"].as_str().map(str::to_string))
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    let preparing = names(tool_definitions(true, false));
+    for tool in ["build_import_xml", "parse_bank_statement", "verify_import"] {
+        assert!(preparing.contains(tool), "{tool}");
+    }
+    assert!(!preparing.contains("post_import"));
+    let posting = names(tool_definitions(true, true));
+    assert_eq!(
+        posting.difference(&preparing).cloned().collect::<Vec<_>>(),
+        ["post_import".to_string()]
+    );
+}

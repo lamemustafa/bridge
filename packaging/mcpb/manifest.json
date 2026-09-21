@@ -17,6 +17,7 @@
         "BRIDGE_TALLY_HOST": "${user_config.host}",
         "BRIDGE_TALLY_PORT": "${user_config.port}",
         "BRIDGE_AGENT_REDACTION": "${user_config.redaction}",
+        "BRIDGE_AGENT_ENABLE_IMPORT": "true",
         "BRIDGE_AGENT_ENABLE_WRITES": "${user_config.enable_writes}"
       }
     }
@@ -45,8 +46,8 @@
     "enable_writes": {
       "type": "boolean",
       "title": "Allow Journal posting",
-      "description": "Journal preparation and posting are available by default. Every new posting requires approval in a native dialog; existing ledgers only. Turn off to use reads only.",
-      "default": true
+      "description": "Off by default. Turning this on lets the connector post an approved Journal into Tally. Posting has two known defects under repair (bridge#574, bridge#575): it aims at the loaded company by name, and its post-write check does not compare against your approved batch. Leave it off unless you accept that risk. Reads, bank-statement parsing and Journal file preparation are available either way.",
+      "default": false
     }
   }
 }
