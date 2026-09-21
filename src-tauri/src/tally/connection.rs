@@ -66,6 +66,55 @@ use bridge_tally_transport::{
 
 pub type TallyConfig = TallyEndpointConfig;
 
+/// How `(NAME, PARENT)` join keys treat the parent observation.
+///
+/// `Observed` distinguishes a returned-empty parent from one Tally did not
+/// return, and is used only by the opt-in diagnostic mode (#521).
+/// `LegacyStrict` reproduces the strict compliance/workbook key exactly as it
+/// was before diagnostics existed: the master side keys a returned-empty or
+/// absent parent as `""`, the balance side additionally flattens a
+/// whitespace-only parent to `""`.  Changing strict admission is out of scope
+/// for the diagnostic mode, so strict consumers keep this key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ParentKeyMode {
+    Observed,
+    LegacyStrict,
+}
+
+fn legacy_ledger_display_key(name: &str, parent: Option<&str>) -> String {
+    let parent = parent.unwrap_or_default();
+    format!("{}:{name}{}:{parent}", name.len(), parent.len())
+}
+
+fn master_join_key(
+    mode: ParentKeyMode,
+    name: &str,
+    parent: &PartyLedgerMasterFieldObservation,
+) -> String {
+    match mode {
+        ParentKeyMode::Observed => ledger_display_key(name, parent),
+        ParentKeyMode::LegacyStrict => {
+            legacy_ledger_display_key(name, parent.nonempty_returned_text())
+        }
+    }
+}
+
+fn balance_join_key(
+    mode: ParentKeyMode,
+    name: &str,
+    parent: &PartyLedgerMasterFieldObservation,
+) -> String {
+    match mode {
+        ParentKeyMode::Observed => ledger_display_key(name, parent),
+        ParentKeyMode::LegacyStrict => legacy_ledger_display_key(
+            name,
+            parent
+                .returned_text()
+                .filter(|parent| !parent.trim().is_empty()),
+        ),
+    }
+}
+
 fn ledger_display_key(name: &str, parent: &PartyLedgerMasterFieldObservation) -> String {
     match parent {
         PartyLedgerMasterFieldObservation::Returned(parent) => {
@@ -173,6 +222,7 @@ fn balance_only_bucket_reason(
 /// malformed master.  Duplicate buckets are quarantined wholesale: choosing a
 /// first matching record would manufacture a pairing Tally did not establish.
 fn join_party_ledger_master_observations(
+    mode: ParentKeyMode,
     masters: Vec<ParsedSourceRecord<PartyLedgerMasterRecord>>,
     balances: Vec<LedgerSnapshotObservedParentEntry>,
 ) -> anyhow::Result<(
@@ -203,7 +253,11 @@ fn join_party_ledger_master_observations(
         // value is intentionally not used as a join substitute; the balance
         // comparison below still checks the exact observed master opening.
         bridge_tally_core::ExactDecimal::parse(master_opening.to_owned())?;
-        let key = ledger_display_key(&source.record.ledger.name, &source.record.ledger.parent);
+        let key = master_join_key(
+            mode,
+            &source.record.ledger.name,
+            &source.record.ledger.parent,
+        );
         masters_by_key.entry(key).or_insert_with(Vec::new).push((
             source_ordinal,
             source,
@@ -215,7 +269,7 @@ fn join_party_ledger_master_observations(
 
     let mut balances_by_key = BTreeMap::new();
     for (source_ordinal, balance) in balances.into_iter().enumerate() {
-        let key = ledger_display_key(&balance.name, &balance.parent);
+        let key = balance_join_key(mode, &balance.name, &balance.parent);
         balances_by_key
             .entry(key)
             .or_insert_with(Vec::new)
@@ -1415,7 +1469,12 @@ impl TallyClient {
         currency_assertion: PartyLedgerMasterCurrencyAssertion,
     ) -> anyhow::Result<PartyLedgerMasterSource> {
         let diagnostic = self
-            .fetch_party_ledger_master_diagnostic(identity, boundary_profile, currency_assertion)
+            .fetch_party_ledger_master_join(
+                identity,
+                boundary_profile,
+                currency_assertion,
+                ParentKeyMode::LegacyStrict,
+            )
             .await?;
         strict_party_ledger_master_source(diagnostic)
     }
@@ -1428,6 +1487,22 @@ impl TallyClient {
         identity: &VerifiedCompanyIdentity,
         boundary_profile: DateBoundaryProfile,
         currency_assertion: PartyLedgerMasterCurrencyAssertion,
+    ) -> anyhow::Result<PartyLedgerMasterJoinDiagnostic> {
+        self.fetch_party_ledger_master_join(
+            identity,
+            boundary_profile,
+            currency_assertion,
+            ParentKeyMode::Observed,
+        )
+        .await
+    }
+
+    async fn fetch_party_ledger_master_join(
+        &self,
+        identity: &VerifiedCompanyIdentity,
+        boundary_profile: DateBoundaryProfile,
+        currency_assertion: PartyLedgerMasterCurrencyAssertion,
+        key_mode: ParentKeyMode,
     ) -> anyhow::Result<PartyLedgerMasterJoinDiagnostic> {
         let mut evidence = RuntimeReadEvidence::empty();
         let result = async {
@@ -1517,7 +1592,7 @@ impl TallyClient {
             let master_observation_count = master.records.len();
             let balance_observation_count = balances.len();
             let (rows, unresolved) =
-                join_party_ledger_master_observations(master.records, balances)?;
+                join_party_ledger_master_observations(key_mode, master.records, balances)?;
             Ok(PartyLedgerMasterJoinDiagnostic {
                 company: identity.display_name().to_string(),
                 company_guid: identity.company_guid().to_string(),

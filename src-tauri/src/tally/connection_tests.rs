@@ -2000,8 +2000,12 @@ fn captured_party_join_is_exact_and_complete_when_every_bucket_is_one_to_one() {
     let (masters, balances) = captured_party_join_inputs();
     let master_count = masters.len();
     let balance_count = balances.len();
-    let (rows, unresolved) = super::join_party_ledger_master_observations(masters, balances)
-        .expect("captured master fields are admitted before their exact join");
+    let (rows, unresolved) = super::join_party_ledger_master_observations(
+        super::ParentKeyMode::Observed,
+        masters,
+        balances,
+    )
+    .expect("captured master fields are admitted before their exact join");
     assert!(
         unresolved.is_empty(),
         "captured source has only one-to-one keys"
@@ -2020,9 +2024,12 @@ fn duplicate_master_bucket_quarantines_every_side_and_never_first_joins() {
     let key_name = duplicate.record.ledger.name.clone();
     masters.push(duplicate);
 
-    let (rows, unresolved) =
-        super::join_party_ledger_master_observations(masters.clone(), balances.clone())
-            .expect("duplicate display key is diagnostic, not a malformed master");
+    let (rows, unresolved) = super::join_party_ledger_master_observations(
+        super::ParentKeyMode::Observed,
+        masters.clone(),
+        balances.clone(),
+    )
+    .expect("duplicate display key is diagnostic, not a malformed master");
     assert!(
         !rows.iter().any(|row| row.name == key_name),
         "a 2:1 display-key bucket must not retain a guessed first master/balance pair"
@@ -2066,9 +2073,12 @@ fn duplicate_master_bucket_quarantines_every_side_and_never_first_joins() {
     masters.reverse();
     let mut reversed_balances = balances;
     reversed_balances.reverse();
-    let (reordered_rows, reordered_unresolved) =
-        super::join_party_ledger_master_observations(masters, reversed_balances)
-            .expect("bucket order cannot select a different pair");
+    let (reordered_rows, reordered_unresolved) = super::join_party_ledger_master_observations(
+        super::ParentKeyMode::Observed,
+        masters,
+        reversed_balances,
+    )
+    .expect("bucket order cannot select a different pair");
     assert_eq!(
         rows.iter().map(|row| &row.name).collect::<Vec<_>>(),
         reordered_rows
@@ -2093,9 +2103,12 @@ fn duplicate_balance_bucket_quarantines_the_one_master_and_both_balances() {
     let key_name = duplicate.name.clone();
     balances.push(duplicate);
 
-    let (rows, unresolved) =
-        super::join_party_ledger_master_observations(masters.clone(), balances.clone())
-            .expect("duplicate balance display key is diagnostic, not a guessed pairing");
+    let (rows, unresolved) = super::join_party_ledger_master_observations(
+        super::ParentKeyMode::Observed,
+        masters.clone(),
+        balances.clone(),
+    )
+    .expect("duplicate balance display key is diagnostic, not a guessed pairing");
     assert!(
         !rows.iter().any(|row| row.name == key_name),
         "a 1:2 display-key bucket must not retain its sole master against an arbitrary balance"
@@ -2143,9 +2156,12 @@ fn unmatched_master_and_balance_are_both_preserved_as_typed_observations() {
     orphan.name = "diagnostic balance without master".to_string();
     balances.push(orphan);
 
-    let (rows, unresolved) =
-        super::join_party_ledger_master_observations(masters.clone(), balances)
-            .expect("unmatched exact keys are diagnostic rather than a guessed join");
+    let (rows, unresolved) = super::join_party_ledger_master_observations(
+        super::ParentKeyMode::Observed,
+        masters.clone(),
+        balances,
+    )
+    .expect("unmatched exact keys are diagnostic rather than a guessed join");
     assert_eq!(rows.len() + 1, masters.len());
     assert_eq!(
         unresolved
@@ -2184,8 +2200,12 @@ fn missing_master_identity_remains_a_hard_failure_before_diagnostic_join() {
     balances
         .retain(|balance| super::ledger_display_key(&balance.name, &balance.parent) != master_key);
     masters[0].identities.guid = None;
-    let error = super::join_party_ledger_master_observations(masters, balances)
-        .expect_err("missing GUID cannot be downgraded into an unresolved join observation");
+    let error = super::join_party_ledger_master_observations(
+        super::ParentKeyMode::Observed,
+        masters,
+        balances,
+    )
+    .expect_err("missing GUID cannot be downgraded into an unresolved join observation");
     assert!(error.chain().any(|cause| matches!(
         cause.downcast_ref::<super::PartyLedgerMasterSourceValidationError>(),
         Some(super::PartyLedgerMasterSourceValidationError::MasterGuid)
@@ -2249,8 +2269,12 @@ fn duplicate_only_buckets_quarantine_every_observation_on_the_present_side() {
     duplicate_master.identities.master_id = Some("duplicate-only-master-id".to_string());
     duplicate_master.alter_id = Some("duplicate-only-master-alter-id".to_string());
     masters.push(duplicate_master);
-    let (_, unresolved_masters) = super::join_party_ledger_master_observations(masters, balances)
-        .expect("duplicate-only master bucket is diagnostic");
+    let (_, unresolved_masters) = super::join_party_ledger_master_observations(
+        super::ParentKeyMode::Observed,
+        masters,
+        balances,
+    )
+    .expect("duplicate-only master bucket is diagnostic");
     assert_eq!(
         unresolved_masters
             .iter()
@@ -2268,8 +2292,12 @@ fn duplicate_only_buckets_quarantine_every_observation_on_the_present_side() {
             != balance_key
     });
     balances.push(balances[0].clone());
-    let (_, unresolved_balances) = super::join_party_ledger_master_observations(masters, balances)
-        .expect("duplicate-only balance bucket is diagnostic");
+    let (_, unresolved_balances) = super::join_party_ledger_master_observations(
+        super::ParentKeyMode::Observed,
+        masters,
+        balances,
+    )
+    .expect("duplicate-only balance bucket is diagnostic");
     assert_eq!(
         unresolved_balances
             .iter()
@@ -2278,5 +2306,87 @@ fn duplicate_only_buckets_quarantine_every_observation_on_the_present_side() {
             .count(),
         2,
         "both 0:2 balance observations remain quarantined"
+    );
+}
+
+/// Sets the parent observation of `masters[0]` and of its captured balance
+/// partner, leaving every other captured row untouched.
+fn captured_party_join_with_parents(
+    master_parent: bridge_tally_protocol::PartyLedgerMasterFieldObservation,
+    balance_parent: bridge_tally_protocol::PartyLedgerMasterFieldObservation,
+) -> (
+    Vec<bridge_tally_protocol::ParsedSourceRecord<bridge_tally_protocol::PartyLedgerMasterRecord>>,
+    Vec<bridge_tally_protocol::native_outstandings::LedgerSnapshotObservedParentEntry>,
+) {
+    let (mut masters, mut balances) = captured_party_join_inputs();
+    let master_key = super::ledger_display_key(
+        &masters[0].record.ledger.name,
+        &masters[0].record.ledger.parent,
+    );
+    let partner = balances
+        .iter()
+        .position(|balance| super::ledger_display_key(&balance.name, &balance.parent) == master_key)
+        .expect("captured master has a one-to-one balance partner");
+    masters[0].record.ledger.parent = master_parent;
+    balances[partner].parent = balance_parent;
+    (masters, balances)
+}
+
+#[test]
+fn strict_join_keeps_the_legacy_parent_key_while_diagnostics_keep_observations() {
+    use bridge_tally_protocol::PartyLedgerMasterFieldObservation::{NotObserved, Returned};
+
+    // Master returned an empty PARENT, balance omitted it: the strict key has
+    // always flattened both to "" and joined them. Only diagnostics separate them.
+    let (masters, balances) =
+        captured_party_join_with_parents(Returned(String::new()), NotObserved);
+    let master_count = masters.len();
+    let (rows, unresolved) = super::join_party_ledger_master_observations(
+        super::ParentKeyMode::LegacyStrict,
+        masters.clone(),
+        balances.clone(),
+    )
+    .expect("strict join admits the captured masters");
+    assert!(
+        unresolved.is_empty(),
+        "strict key flattens returned-empty and absent parents"
+    );
+    assert_eq!(rows.len(), master_count);
+    let (_, unresolved) = super::join_party_ledger_master_observations(
+        super::ParentKeyMode::Observed,
+        masters,
+        balances,
+    )
+    .expect("diagnostic join admits the captured masters");
+    assert_eq!(
+        unresolved.len(),
+        2,
+        "diagnostics keep returned-empty and absent apart"
+    );
+
+    // Whitespace-only PARENT on both sides: the legacy balance side flattened it
+    // to "" while the master side kept it, so strict refused; that is unchanged.
+    let (masters, balances) =
+        captured_party_join_with_parents(Returned(" ".to_string()), Returned(" ".to_string()));
+    let (_, unresolved) = super::join_party_ledger_master_observations(
+        super::ParentKeyMode::LegacyStrict,
+        masters.clone(),
+        balances.clone(),
+    )
+    .expect("strict join admits the captured masters");
+    assert_eq!(
+        unresolved.len(),
+        2,
+        "strict whitespace-only parent behaviour is unchanged"
+    );
+    let (_, unresolved) = super::join_party_ledger_master_observations(
+        super::ParentKeyMode::Observed,
+        masters,
+        balances,
+    )
+    .expect("diagnostic join admits the captured masters");
+    assert!(
+        unresolved.is_empty(),
+        "identical observed parents join exactly"
     );
 }
