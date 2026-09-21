@@ -954,4 +954,121 @@ mod through_the_tool {
         .await;
         assert!(items(&response).is_empty());
     }
+
+    /// #554 through the stdio server: `ledger_masters` basic is two queued
+    /// operations (the identity read, then the ledger read). The identity read's
+    /// first leg is held; while it runs the client sends `second`. Returns the
+    /// response to request 7 and how many requests reached the simulator.
+    async fn serve_ledger_masters_then(second: &[&str]) -> (Value, usize) {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        let mut plans = basic_plans();
+        plans[0] = plans[0]
+            .clone()
+            .with_delivery(tally_protocol_simulator::Delivery::SlowHeaders(
+                std::time::Duration::from_millis(900),
+            ));
+        let simulator = SequenceSimulator::spawn(plans).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let server = Server::new(Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".into(),
+                port: simulator.address().port(),
+            },
+            data_dir: directory.path().into(),
+            max_rows: 500,
+            max_bytes: 200_000,
+            redaction: Redaction::None,
+            import_enabled: false,
+            writes_enabled: false,
+        });
+        let (client, source) = tokio::io::duplex(1 << 20);
+        let (client_read, mut client_write) = tokio::io::split(client);
+        let (source_read, mut source_write) = tokio::io::split(source);
+        let serve = async move {
+            crate::agent::agent_protocol::serve_stdio(
+                server,
+                BufReader::new(source_read),
+                &mut source_write,
+            )
+            .await
+        };
+        let client = async move {
+            let call = json!({"jsonrpc":"2.0","id":7,"method":"tools/call","params":{
+                "name":"ledger_masters","arguments":{"company_guid":GUID}}});
+            let opening = format!(
+                "{}\n{}\n{}\n",
+                json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}),
+                json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+                call
+            );
+            client_write.write_all(opening.as_bytes()).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            for frame in second {
+                client_write.write_all(frame.as_bytes()).await.unwrap();
+                client_write.write_all(b"\n").await.unwrap();
+            }
+            let mut lines = BufReader::new(client_read).lines();
+            let response = loop {
+                let line = lines
+                    .next_line()
+                    .await
+                    .unwrap()
+                    .expect("a response to request 7");
+                let value: Value = serde_json::from_str(&line).unwrap();
+                if value["id"] == 7 {
+                    break value;
+                }
+            };
+            drop(client_write);
+            response
+        };
+        let (served, response) = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            tokio::join!(serve, client)
+        })
+        .await
+        .unwrap();
+        served.unwrap();
+        simulator.cancel();
+        // `cancel` wakes the simulator with an empty connection; count only the
+        // requests Bridge actually sent.
+        let sent = simulator
+            .finish()
+            .unwrap()
+            .iter()
+            .filter(|request| !request.method.is_empty())
+            .count();
+        (response, sent)
+    }
+
+    #[tokio::test]
+    async fn a_withdrawn_call_stops_before_its_next_operation() {
+        let (response, requests) = serve_ledger_masters_then(&[
+            r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":7}}"#,
+        ])
+        .await;
+        // The identity read in flight completes (abandoning it would not stop
+        // Tally); the ledger read is never sent, and the call is refused as
+        // withdrawn with partial evidence, never answered with a partial read.
+        assert_eq!(requests, identity_plans().len(), "{response}");
+        let result = &response["result"];
+        assert_eq!(result["isError"], true, "{response}");
+        assert_eq!(
+            result["structuredContent"]["result"]["error"]["code"],
+            "request_cancelled"
+        );
+        assert_eq!(result["structuredContent"]["evidence"]["state"], "partial");
+    }
+
+    #[tokio::test]
+    async fn an_unrelated_notification_does_not_stop_the_call() {
+        // Control: a cancellation naming another request, and a plain
+        // notification, arrive while the call runs; it completes in full.
+        let (response, requests) = serve_ledger_masters_then(&[
+            r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":99}}"#,
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        ])
+        .await;
+        assert_eq!(response["result"]["isError"], false, "{response}");
+        assert_eq!(requests, basic_plans().len());
+    }
 }

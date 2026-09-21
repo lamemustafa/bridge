@@ -106,6 +106,11 @@ cannot establish completed delivery. Consumers must join new records by
 `receipt_id`; preparation alone is not a completed write.
 All output object keys must remain server-defined; identifiers belong in values,
 including when adding new grouped reports.
+While a tool other than `post_import` runs, a `notifications/cancelled` naming it
+stops the call before its next Tally request; the request already sent runs to
+completion, because abandoning it would not stop Tally. The call is answered with
+`request_cancelled` and partial evidence, never with part of a read. Closing the
+input is not a cancellation: the call in flight still completes.
 `egress_log` reads only the final 256 KiB, in 64 KiB reverse-seek chunks, so a
 larger receipt file still yields its bounded tail without loading the head.
 `changed_since` is unavailable: it is omitted from tool discovery and direct calls

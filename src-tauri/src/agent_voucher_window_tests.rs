@@ -2459,3 +2459,115 @@ async fn a_read_after_tally_refused_the_whole_window_does_not_admit_it_whole() {
     // Control: the same parts, read without a refusal, would be admitted.
     assert!(WindowServed::of(&read.reads, &read.evidence, false).fits_one_request());
 }
+
+/// Three parts of one day-divided read, as in
+/// `the_first_part_measures_the_book_and_the_rest_of_its_day_is_read_above_it`,
+/// with the first part's report leg held so a withdrawal lands while it runs.
+fn three_part_plans(hold_first_part: bool) -> Vec<ScenarioPlan> {
+    let mut plans = paired(&xml_plan(relabelled(&vouchers_kept(1), &[(1, "20260801")])));
+    if hold_first_part {
+        plans[1] = plans[1]
+            .clone()
+            .with_delivery(tally_protocol_simulator::Delivery::SlowHeaders(
+                std::time::Duration::from_millis(900),
+            ));
+    }
+    plans.extend(paired(&xml_plan(relabelled(
+        &vouchers_kept(2),
+        &[(2, "20260801"), (3, "20260801")],
+    ))));
+    plans.extend(paired(&xml_plan(relabelled(
+        &vouchers_kept(2),
+        &[(4, "20260802"), (5, "20260802")],
+    ))));
+    plans
+}
+
+fn three_part_census() -> WindowCensus {
+    WindowCensus::from_rows([
+        (day("20260801"), 1),
+        (day("20260801"), 2),
+        (day("20260801"), 3),
+        (day("20260802"), 4),
+        (day("20260802"), 5),
+    ])
+}
+
+async fn read_three_parts_under(
+    cancellation: tokio_util::sync::CancellationToken,
+    withdraw_after: Option<std::time::Duration>,
+) -> (
+    Result<WindowReadOutcome<Value>, ToolFailure>,
+    Vec<tally_protocol_simulator::ObservedRequest>,
+) {
+    let simulator = SequenceSimulator::spawn(three_part_plans(withdraw_after.is_some())).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let identity = identity();
+    if let Some(delay) = withdraw_after {
+        let withdraw = cancellation.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            withdraw.cancel();
+        });
+    }
+    let outcome = crate::tally::runtime::TOOL_CANCELLATION
+        .scope(
+            cancellation,
+            server.read_voucher_window(
+                &identity,
+                identity.display_name(),
+                "20260801",
+                "20260802",
+                VoucherReadShape::EntryWildcard,
+                WindowPlanSource::Counted(three_part_census()),
+                three_a_read(),
+                |xml| parse_agent_rows(xml, GUID),
+            ),
+        )
+        .await;
+    simulator.cancel();
+    // `cancel` wakes the simulator with an empty connection; keep only the
+    // requests Bridge actually sent.
+    let sent = simulator
+        .finish()
+        .unwrap()
+        .into_iter()
+        .filter(|request| !request.method.is_empty())
+        .collect();
+    (outcome, sent)
+}
+
+#[tokio::test]
+async fn a_withdrawal_during_one_part_sends_no_further_part() {
+    // #554. The withdrawal lands while the first part's report leg is held. That
+    // part runs to completion (its six legs: abandoning a request does not stop
+    // Tally), and the next part is never sent. The read is refused as withdrawn
+    // with the first part's evidence kept, never returned as a partial window.
+    let (outcome, observed) = read_three_parts_under(
+        tokio_util::sync::CancellationToken::new(),
+        Some(std::time::Duration::from_millis(200)),
+    )
+    .await;
+    assert_eq!(observed.len(), 6, "only the part in flight was sent");
+    let failure = outcome.err().expect("a withdrawn read is refused");
+    assert_eq!(failure.code, "request_cancelled");
+    // The part already read is accounted for; the response layer marks the
+    // refusal's evidence partial (see the stdio test).
+    let evidence = failure
+        .evidence
+        .expect("the part already read is accounted");
+    assert!(!evidence.response_sha256.is_empty() && evidence.bytes > 0);
+}
+
+#[tokio::test]
+async fn a_read_whose_withdrawal_never_comes_reads_every_part() {
+    // Control: the same read under a cancellation that is never fired.
+    let (outcome, observed) =
+        read_three_parts_under(tokio_util::sync::CancellationToken::new(), None).await;
+    assert_eq!(
+        outcome.expect("an unwithdrawn read completes").rows.len(),
+        5
+    );
+    assert_eq!(observed.len(), 18);
+}
