@@ -7,8 +7,8 @@ The developer configuration below remains for supported client integrations.
 `bridge_mcp` is Bridge's newline-delimited JSON-RPC 2.0 MCP server. It uses
 Bridge's loopback-only Tally XML transport. Reads are enabled by default.
 The MCPB extension also exposes Journal file preparation and bank-statement
-parsing by default. Journal posting is off by default until bridge#574 and
-bridge#575 are fixed; the **Allow Journal posting** setting adds it, with
+parsing by default. Journal posting is off by default while bridge#574 and
+bridge#579 are open; the **Allow Journal posting** setting adds it, with
 separate native approval for each new attempt. Command-line installations
 retain explicit environment switches.
 
@@ -299,12 +299,13 @@ licence mode has been qualified.
 
 ## Approved Journal posting
 
-**Journal posting is off by default in the MCPB extension** until two known
-defects are fixed. Posting aims at the loaded company by name, so a voucher can
-land in whichever company Tally has loaded
-([#574](https://github.com/lamemustafa/bridge/issues/574)). Its post-write
-integrity check compares a journal record with itself, not what Tally stored
-with the approved batch ([#575](https://github.com/lamemustafa/bridge/issues/575)).
+**Journal posting is off by default in the MCPB extension** while two known
+limits remain. The post names its company only by name, so if that company is renamed in the moment between Bridge's checks and the post, the voucher is still sent, and where Tally then puts it is not yet established
+([#574](https://github.com/lamemustafa/bridge/issues/574)). And Bridge cannot
+delete or roll back a voucher it has posted, so a wrong post must be corrected
+by hand in Tally ([#579](https://github.com/lamemustafa/bridge/issues/579)).
+The saved batch file is now checked byte for byte against the approved record
+before posting ([#575](https://github.com/lamemustafa/bridge/issues/575), fixed).
 **Allow Journal posting** turns it on for users who accept those risks. Existing
 saved settings are respected, so an installation that saved the earlier default
 may still have posting on; check the setting.

@@ -39,11 +39,11 @@ reading. When writing is off, the write tools do not merely refuse — they are
 exist.
 
 - **The Claude Desktop extension turns Journal posting off by default.** Two
-  known defects in posting are being fixed: it aims the voucher at the loaded
-  company by name, so a post can land in whichever company Tally has loaded
-  ([#574](https://github.com/lamemustafa/bridge/issues/574)), and its post-write
-  check does not compare what Tally stored against your approved batch
-  ([#575](https://github.com/lamemustafa/bridge/issues/575)). Turning on
+  known limits in posting remain. The post names its company only by name, so if that company is renamed in the moment between Bridge's checks and the post, the voucher is still sent, and where Tally then puts it is not yet established
+  ([#574](https://github.com/lamemustafa/bridge/issues/574)). And Bridge cannot
+  delete or roll back a voucher it has posted, so a wrong post must be
+  corrected by hand in Tally
+  ([#579](https://github.com/lamemustafa/bridge/issues/579)). Turning on
   **Allow Journal posting** in the extension settings adds `post_import`; every
   posting still waits for your approval in a separate Bridge dialog. Leave it
   off unless you accept those risks. Journal file preparation and bank-statement
