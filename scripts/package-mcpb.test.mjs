@@ -94,7 +94,7 @@ test("every host manifest launches its bundled binary and maps user settings to 
     assert.equal(manifest.server.entry_point, entryPoint);
     assert.equal(manifest.server.mcp_config.command, `${"${__dirname}"}/${entryPoint}`);
     assert.deepEqual(manifest.compatibility.platforms, [platform]);
-    // Posting is off by default until bridge#574 and bridge#575 are fixed;
+    // Posting is off by default while bridge#574 and bridge#579 are open;
     // preparation and bank-statement parsing stay on.
     assert.equal(manifest.user_config.enable_writes.default, false);
     assert.deepEqual(manifest.server.mcp_config.env, {
