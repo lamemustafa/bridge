@@ -782,6 +782,53 @@ mod through_the_tool {
     }
 
     #[tokio::test]
+    async fn diagnostic_masking_hides_matched_parents_and_ancestry_names() {
+        let (plain, _) = call(
+            compliance_plans(masters(), balances()),
+            json!({"company_guid":GUID,"fields":"compliance_diagnostics"}),
+        )
+        .await;
+        let mut raw_names = std::collections::BTreeSet::new();
+        for row in items(&plain) {
+            assert_eq!(row["join_state"], "matched");
+            if let Some(parent) = row["parent"].as_str().filter(|parent| !parent.is_empty()) {
+                raw_names.insert(parent.to_owned());
+            }
+            for hop in row["ancestry"]["chain"].as_array().into_iter().flatten() {
+                if let Some(name) = hop["name"].as_str() {
+                    raw_names.insert(name.to_owned());
+                }
+            }
+        }
+        assert!(
+            !raw_names.is_empty(),
+            "the captured matched rows carry parent and ancestry names to mask"
+        );
+
+        let (masked, _) = call_with_settings(
+            compliance_plans(masters(), balances()),
+            json!({"company_guid":GUID,"fields":"compliance_diagnostics"}),
+            Redaction::MaskParties,
+            200_000,
+        )
+        .await;
+        let rows = items(&masked);
+        assert_eq!(rows.len(), items(&plain).len());
+        for row in rows {
+            if let Some(parent) = row["parent"].as_str() {
+                assert!(
+                    !raw_names.contains(parent),
+                    "matched parent leaked unmasked"
+                );
+            }
+            for hop in row["ancestry"]["chain"].as_array().into_iter().flatten() {
+                let name = hop["name"].as_str().unwrap_or_default();
+                assert!(!raw_names.contains(name), "ancestry name leaked unmasked");
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn diagnostic_partial_state_is_global_even_on_matched_or_empty_pages() {
         let mut commitments = None;
         for (offset, limit, count) in [(0, 1, 1), (8, 10, 2), (10, 1, 0), (50, 1, 0)] {
