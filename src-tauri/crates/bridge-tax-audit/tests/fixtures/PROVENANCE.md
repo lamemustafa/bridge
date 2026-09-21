@@ -182,12 +182,17 @@ excluded instead of flagging, so the four POP-4 violations those figures used to
 fixture are gone. Nothing else in either golden changed; the other four goldens are byte-identical.
 
 Both `financial_statements` goldens were regenerated again at reference-implementation commit
-`0cb05cd5ec24cdb20f2eb55028dbaae95d452772` for the report tie's status: each gains the text figure
+`41a392a2adaa9a19128e0baa65dc8138ef1d7a10` for the report tie's status: each gains the text figure
 `report_tie_status` ("performed: net profit and closing stock" with the synthetic report totals,
 "not performed: no report part in this read" without them), cited as a fact of the report-tie
 finding. In the no-report golden that finding's title now says the tie was not performed and its
 confidence is `needs_document` instead of `computed`. Nothing else in either golden changed; the
 other four goldens are byte-identical.
+
+All six goldens were regenerated at reference-implementation commit
+`b559cad6bebd68fcfe84dd59e590359572c2a7f2` for the book invariant MAP-0 (every in-books voucher
+line posts to a ledger the book's masters carry): each gains only `"MAP-0"` in
+`book_invariants_evaluated`. The fixture has no such line, so no violation is added.
 
 ### What the three-client parity does and does not evidence
 
@@ -226,13 +231,13 @@ uv run -q --with openpyxl --with xlrd --with python-docx --with jsonschema --wit
 
 | Fixture | Bytes | SHA-256 | Path |
 | --- | ---: | --- | --- |
-| `synthetic.cash_44ab.json` | 5,828 | `c424096e2accfab877b68d5391f81a5e5319698637e2b68d64cae75314d3ac8f` | `golden/synthetic.cash_44ab.json` |
-| `synthetic.cash_payments_40a3.json` | 72,284 | `9dc98414ef0271c1ca2544a7e7042716471ec7f5c260c52f3ab0193d947f3269` | `golden/synthetic.cash_payments_40a3.json` |
-| `synthetic.depreciation.json` | 27,613 | `0c100a919eee8443b4622a1aac568707c7e3a5849a496759816c4e1c56520ae8` | `golden/synthetic.depreciation.json` |
-| `synthetic.financial_statements.json` | 16,692 | `c48244dfd022fb0fbc4adcb0efcdd81c29247f2462a1e0e8688550ee823dc444` | `golden/synthetic.financial_statements.json` |
-| `synthetic.financial_statements.noreport.json` | 15,669 | `938eeec8d3da1915ac9cf800721156eed33e8b2056b82ceab5b8b99186fdb33c` | `golden/synthetic.financial_statements.noreport.json` |
+| `synthetic.cash_44ab.json` | 5,841 | `cf1a9f74e3622fdd969cb4250a9c5ac46c1b42737fe51460c9dffc286d408cc7` | `golden/synthetic.cash_44ab.json` |
+| `synthetic.cash_payments_40a3.json` | 72,297 | `f12b0ac35ccd09fc406037579442afeb47d3a2e26ee540acc4bd114b023a3364` | `golden/synthetic.cash_payments_40a3.json` |
+| `synthetic.depreciation.json` | 27,626 | `0ccb72fb5c4c65f046bd6358878a717b1fd57ec46d33c4f7ffed06cd4296ea36` | `golden/synthetic.depreciation.json` |
+| `synthetic.financial_statements.json` | 16,705 | `b40e6fac2ee98cb37528ecc2fe0f42c6afacf31974eec7ba5be30f74201a324f` | `golden/synthetic.financial_statements.json` |
+| `synthetic.financial_statements.noreport.json` | 15,682 | `d407d2e72b09ad9348e8cfb19dbeff90a3617742ef8a348eb9e29018d1fa0c93` | `golden/synthetic.financial_statements.noreport.json` |
 | `synthetic-report-totals.json` | 134 | `e772509bd6ebc52afc23ef9742b6b1f2a090737533abe3761a7448124411b7e3` | `synthetic-report-totals.json` |
-| `synthetic.applicability_44ab.json` | 10,666 | `3ecd7d2ce69b076833a0c3c41e8b64906fd1286d3b1f076b9e57f5bcb400a2b9` | `golden/synthetic.applicability_44ab.json` |
+| `synthetic.applicability_44ab.json` | 10,679 | `b90cf74038dcb1b26e4a9e8236861447e4b10d303027fbeb2e7359ead81778f5` | `golden/synthetic.applicability_44ab.json` |
 | `synthetic-turnover-inputs.json` | 153 | `970500728d9d0447cb3fe1b6e870d5fea2c3a1bb919da05f1d601d4ba6f66929` | `synthetic-turnover-inputs.json` |
 | `synthetic-engagement.toml` | 2,821 | `c179b7ebcc9a03c9a4d836c62298aaa5841ee2bf20f7df51bd1010f83a06c68b` | `synthetic-engagement.toml` |
 | `manifest.json` | 9,711 | `6872873e193231239b7e2bf38ef7d482dd8cf7c43fb00ab76b0bc0dd07e8833a` | `synthetic-read/manifest.json` |

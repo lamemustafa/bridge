@@ -111,6 +111,27 @@ pub fn book_invariants(book: &Book) -> Result<(Vec<&'static str>, Vec<Violation>
         }
     }
 
+    // MAP-0: every in-books voucher line posts to a ledger the book's masters carry. MAP-1 and
+    // every role lookup skip a ledger with no master, and POP-1 is silent when its lines net to
+    // zero; one violation per such ledger, with its line count.
+    let mut unknown: BTreeMap<&str, usize> = BTreeMap::new();
+    for v in &population {
+        for l in &v.lines {
+            if !book.ledgers.contains_key(&l.ledger) {
+                *unknown.entry(l.ledger.as_str()).or_insert(0) += 1;
+            }
+        }
+    }
+    for (name, count) in unknown {
+        out.push(violation(
+            "MAP-0",
+            name,
+            format!(
+                "{count} in-books voucher line(s) post to it; the book has no ledger master for it"
+            ),
+        ));
+    }
+
     // MAP-1: every ledger with vouchers resolves to a primary group.
     let used: BTreeSet<&str> = population
         .iter()
@@ -129,7 +150,7 @@ pub fn book_invariants(book: &Book) -> Result<(Vec<&'static str>, Vec<Violation>
     }
 
     Ok((
-        vec!["ID-1", "POP-0", "POP-1", "POP-2", "POP-3", "MAP-1"],
+        vec!["ID-1", "POP-0", "POP-1", "POP-2", "POP-3", "MAP-0", "MAP-1"],
         out,
     ))
 }
@@ -273,6 +294,130 @@ mod tests {
             violations("excluded_voucher", "in-books", "POP-4"),
             vec!["excluded_voucher:in-books is in the books population"]
         );
+    }
+
+    fn lines(l: &[(&str, i64)]) -> Vec<crate::book::LedgerLine> {
+        l.iter()
+            .map(|(n, a)| crate::book::LedgerLine {
+                ledger: (*n).to_string(),
+                amount_paise: *a,
+            })
+            .collect()
+    }
+
+    fn ledger(name: &str) -> crate::book::Ledger {
+        crate::book::Ledger {
+            name: name.to_string(),
+            parent: "Indirect Expenses".to_string(),
+            chain: vec!["Indirect Expenses".to_string()],
+            chain_complete: true,
+            master_opening_paise: 0,
+            guid: String::new(),
+            masterid: None,
+        }
+    }
+
+    fn map0(b: &Book) -> Vec<(String, String)> {
+        book_invariants(b)
+            .unwrap()
+            .1
+            .into_iter()
+            .filter(|v| v.invariant == "MAP-0")
+            .map(|v| (v.subject, v.detail))
+            .collect()
+    }
+
+    /// MAP-0 is neither looser nor stricter than the join every test uses: exact, case-sensitive
+    /// lookup in `book.ledgers`. A line naming "Round Off" against a master stored as "ROUND OFF"
+    /// is joined by no test, so MAP-0 names it (the reference pins the same case).
+    #[test]
+    fn map0_matches_the_join_rule_a_case_only_difference_fires() {
+        let mut b = book();
+        b.ledgers
+            .insert("ROUND OFF".to_string(), ledger("ROUND OFF"));
+        b.vouchers = vec![Voucher {
+            lines: lines(&[("Round Off", 100), ("ROUND OFF", -100)]),
+            ..voucher("a", VoucherStatus::Regular)
+        }];
+        assert!(!b.ledgers.contains_key("Round Off")); // the join misses it...
+        assert_eq!(
+            map0(&b), // ...so MAP-0 fires, once
+            vec![(
+                "Round Off".to_string(),
+                "1 in-books voucher line(s) post to it; the book has no ledger master for it"
+                    .to_string()
+            )]
+        );
+    }
+
+    /// Several unknown ledgers are reported in name order, one each, each with its own count.
+    #[test]
+    fn map0_reports_several_ledgers_in_name_order() {
+        let mut b = book();
+        b.vouchers = vec![Voucher {
+            lines: lines(&[("Zeta", 100), ("Alpha", -60), ("Alpha", -40)]),
+            ..voucher("a", VoucherStatus::Regular)
+        }];
+        let got: Vec<(String, String)> = map0(&b)
+            .into_iter()
+            .map(|(s, d)| (s, d[..1].to_string()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("Alpha".to_string(), "2".to_string()),
+                ("Zeta".to_string(), "1".to_string())
+            ]
+        );
+    }
+
+    /// MAP-0: a line whose ledger has no master is skipped by MAP-1 and by every role lookup;
+    /// when its lines net to zero POP-1 is silent too. MAP-0 names it, once per ledger, counting
+    /// in-books lines only. The same book, detail and count as the reference's own test.
+    #[test]
+    fn map0_names_a_ledger_with_no_master() {
+        let mut b = book();
+        b.ledgers.insert("X".to_string(), ledger("X"));
+        b.tb.insert(
+            "X".to_string(),
+            TbRow {
+                opening_paise: 0,
+                debit_paise: 0,
+                credit_paise: 0,
+                closing_paise: 0,
+            },
+        );
+        b.vouchers = vec![
+            Voucher {
+                lines: lines(&[("X", 100), ("Ghost", -100)]),
+                ..voucher("a", VoucherStatus::Regular)
+            },
+            Voucher {
+                lines: lines(&[("X", -100), ("Ghost", 100)]),
+                ..voucher("b", VoucherStatus::Regular)
+            },
+            Voucher {
+                lines: lines(&[("X", 5), ("Phantom", -5)]),
+                ..voucher("c", VoucherStatus::Optional)
+            },
+        ];
+        let (codes, viol) = book_invariants(&b).unwrap();
+        assert!(codes.contains(&"MAP-0"));
+        let got: Vec<(&str, &str, &str)> = viol
+            .iter()
+            .map(|v| (v.invariant.as_str(), v.subject.as_str(), v.detail.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![(
+                "MAP-0",
+                "Ghost",
+                "2 in-books voucher line(s) post to it; the book has no ledger master for it"
+            )]
+        );
+        // Negative control: with Ghost's master present, nothing fires.
+        b.ledgers.insert("Ghost".to_string(), ledger("Ghost"));
+        assert!(book_invariants(&b).unwrap().1.is_empty());
     }
 
     #[test]
