@@ -1,0 +1,610 @@
+[
+ {
+  "id": "M01",
+  "by": "reviewer",
+  "what": "tb sort: chain not reversed",
+  "file": "src/trial_balance.rs",
+  "from": "Some(l) => l.chain.iter().rev().map(|g| display_name(g)).collect(),",
+  "to": "Some(l) => l.chain.iter().map(|g| display_name(g)).collect(),"
+ },
+ {
+  "id": "M02",
+  "by": "reviewer",
+  "what": "tb sort: absent ledger sorts first",
+  "file": "src/trial_balance.rs",
+  "from": "None => vec![\"~\"],",
+  "to": "None => vec![\"\"],"
+ },
+ {
+  "id": "M03",
+  "by": "reviewer",
+  "what": "tb: closing-only row skipped",
+  "file": "src/trial_balance.rs",
+  "from": "&& t.credit_paise == 0 && t.closing_paise == 0",
+  "to": "&& t.credit_paise == 0"
+ },
+ {
+  "id": "M04",
+  "by": "reviewer",
+  "what": "tb: display_name identity",
+  "file": "src/trial_balance.rs",
+  "from": "reserved_value(text).unwrap_or(text)",
+  "to": "text"
+ },
+ {
+  "id": "M05",
+  "by": "reviewer",
+  "what": "tb: empty chain shows empty",
+  "file": "src/trial_balance.rs",
+  "from": "Some(l) if !l.chain.is_empty() => l",
+  "to": "Some(l) => l"
+ },
+ {
+  "id": "M06",
+  "by": "reviewer",
+  "what": "stl: debit-only stale",
+  "file": "src/stale_balances_41_1.rs",
+  "from": "if tb.debit_paise == 0 && tb.credit_paise == 0 {",
+  "to": "if tb.debit_paise == 0 {"
+ },
+ {
+  "id": "M07",
+  "by": "reviewer",
+  "what": "stl1: zero lines count as touched",
+  "file": "src/stale_balances_41_1.rs",
+  "from": "            if l.amount_paise != 0 {\n                touched",
+  "to": "            if true {\n                touched"
+ },
+ {
+  "id": "M08",
+  "by": "reviewer",
+  "what": "ls: window 8 days",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "civil_day_number(&period.to) - (LAST_DAYS_OF_YEAR_WINDOW - 1)",
+  "to": "civil_day_number(&period.to) - LAST_DAYS_OF_YEAR_WINDOW"
+ },
+ {
+  "id": "M09",
+  "by": "reviewer",
+  "what": "ls: zero cash line is a cash leg",
+  "file": "src/ledger_scrutiny.rs",
+  "from": ".any(|l| cash.contains(&l.ledger) && l.amount_paise != 0);",
+  "to": ".any(|l| cash.contains(&l.ledger));"
+ },
+ {
+  "id": "M10",
+  "by": "reviewer",
+  "what": "ls: cash share flag strictly over 30%",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "if bp >= CASH_SHARE_NOTABLE_BP {",
+  "to": "if bp > CASH_SHARE_NOTABLE_BP {"
+ },
+ {
+  "id": "M11",
+  "by": "reviewer",
+  "what": "ls: journal_only ignores non-journal",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "!d.journal.is_empty() && d.non_journal.is_empty()",
+  "to": "!d.journal.is_empty()"
+ },
+ {
+  "id": "M12",
+  "by": "reviewer",
+  "what": "ls: zero-net voucher skips journal marking",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "            if v.base_type == JOURNAL_BASE_TYPE {\n                row.journal",
+  "to": "            if net == 0 { continue; }\n            if v.base_type == JOURNAL_BASE_TYPE {\n                row.journal"
+ },
+ {
+  "id": "M13",
+  "by": "reviewer",
+  "what": "ls: contra-nature <= 0",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "let contra_nature = closing < 0;",
+  "to": "let contra_nature = closing <= 0;"
+ },
+ {
+  "id": "M14",
+  "by": "reviewer",
+  "what": "ls: cash share 1 decimal",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "format!(\"cash share {:.2}%\", bp as f64 / 100.0)",
+  "to": "format!(\"cash share {:.1}%\", bp as f64 / 100.0)"
+ },
+ {
+  "id": "M15",
+  "by": "reviewer",
+  "what": "cbi: receipts leg any nonzero",
+  "file": "src/cash_book_integrity.rs",
+  "from": "(cash.contains(&l.ledger) || bank.contains(&l.ledger)) && l.amount_paise > 0)",
+  "to": "(cash.contains(&l.ledger) || bank.contains(&l.ledger)) && l.amount_paise != 0)"
+ },
+ {
+  "id": "M16",
+  "by": "reviewer",
+  "what": "cbi: receipts ignore bank",
+  "file": "src/cash_book_integrity.rs",
+  "from": "(cash.contains(&l.ledger) || bank.contains(&l.ledger)) && l.amount_paise > 0)",
+  "to": "cash.contains(&l.ledger) && l.amount_paise > 0)"
+ },
+ {
+  "id": "M17",
+  "by": "reviewer",
+  "what": "cbi: journal cash leg any nonzero",
+  "file": "src/cash_book_integrity.rs",
+  "from": ".any(|l| cash.contains(&l.ledger) && l.amount_paise < 0)",
+  "to": ".any(|l| cash.contains(&l.ledger) && l.amount_paise != 0)"
+ },
+ {
+  "id": "M18",
+  "by": "reviewer",
+  "what": "cbi: own-account narration not upper-cased",
+  "file": "src/cash_book_integrity.rs",
+  "from": "let text = upper(&v.narration);",
+  "to": "let text = v.narration.clone();"
+ },
+ {
+  "id": "M19",
+  "by": "reviewer",
+  "what": "cbi: own-account any base type",
+  "file": "src/cash_book_integrity.rs",
+  "from": "            if v.base_type != \"Contra\" {\n                continue;\n            }\n",
+  "to": ""
+ },
+ {
+  "id": "M20",
+  "by": "reviewer",
+  "what": "cbi: own-account withdrawal sign flipped",
+  "file": "src/cash_book_integrity.rs",
+  "from": "            if c > 0 {\n                out_v.push((v, c));\n            } else if c < 0 {",
+  "to": "            if c < 0 {\n                out_v.push((v, c));\n            } else if c > 0 {"
+ },
+ {
+  "id": "M21",
+  "by": "reviewer",
+  "what": "cbi: empty terms kept",
+  "file": "src/cash_book_integrity.rs",
+  "from": ".filter(|t| !t.is_empty())\n",
+  "to": "\n"
+ },
+ {
+  "id": "M22",
+  "by": "reviewer",
+  "what": "cbi: opening evidence unfiltered",
+  "file": "src/cash_book_integrity.rs",
+  "from": ".filter(|(_, t)| t.opening_paise != 0)\n",
+  "to": "\n"
+ },
+ {
+  "id": "M23",
+  "by": "reviewer",
+  "what": "cbi: unnarrated uses raw emptiness",
+  "file": "src/cash_book_integrity.rs",
+  "from": ".filter(|(v, _)| py_strip(&v.narration).is_empty())",
+  "to": ".filter(|(v, _)| v.narration.is_empty())"
+ },
+ {
+  "id": "M24",
+  "by": "reviewer",
+  "what": "cbi: narration key ASCII-only upper",
+  "file": "src/cash_book_integrity.rs",
+  "from": "    text.to_uppercase()\n",
+  "to": "    text.to_ascii_uppercase()\n"
+ },
+ {
+  "id": "M25",
+  "by": "reviewer",
+  "what": "cbi: repeated needs 3",
+  "file": "src/cash_book_integrity.rs",
+  "from": ".filter(|g| g.len() > 1)",
+  "to": ".filter(|g| g.len() > 2)"
+ },
+ {
+  "id": "M26",
+  "by": "reviewer",
+  "what": "cbi2: fires on zero closing",
+  "file": "src/cash_book_integrity.rs",
+  "from": "if closing.is_some_and(|c| c < 0) && f.value == Value::Int(0) {",
+  "to": "if closing.is_some_and(|c| c <= 0) && f.value == Value::Int(0) {"
+ },
+ {
+  "id": "M27",
+  "by": "reviewer",
+  "what": "cbi: worst case counts days <= 0",
+  "file": "src/cash_book_integrity.rs",
+  "from": "let worst_neg = walk.iter().filter(|d| d.worst < 0).count();",
+  "to": "let worst_neg = walk.iter().filter(|d| d.worst <= 0).count();"
+ },
+ {
+  "id": "M28",
+  "by": "reviewer",
+  "what": "cbi: best-case evidence only lowest day",
+  "file": "src/cash_book_integrity.rs",
+  "from": "        let best_vouchers: Vec<&Voucher> = best_neg\n            .iter()",
+  "to": "        let best_vouchers: Vec<&Voucher> = lowest\n            .iter()"
+ },
+ {
+  "id": "M29",
+  "by": "reviewer",
+  "what": "narration: unstripped",
+  "file": "src/book.rs",
+  "from": "narration: v.child_text(\"NARRATION\").to_string(),",
+  "to": "narration: v.child(\"NARRATION\").map_or(String::new(), |c| c.text.clone()),"
+ },
+ {
+  "id": "M30",
+  "by": "reviewer",
+  "what": "lsc1: no tolerance",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "> i128::from(tb_debit) + i128::from(LSC1_TOL_PAISE)",
+  "to": "> i128::from(tb_debit)"
+ },
+ {
+  "id": "M31",
+  "by": "reviewer",
+  "what": "stl: ledgers without TB row counted active",
+  "file": "src/stale_balances_41_1.rs",
+  "from": "            let Some(tb) = book.tb.get(name) else {\n                continue;\n            };",
+  "to": "            let zero = TbRow { opening_paise: 0, debit_paise: 0, credit_paise: 0, closing_paise: 1000 };\n            let tb = book.tb.get(name).unwrap_or(Box::leak(Box::new(zero)));"
+ },
+ {
+  "id": "M32",
+  "by": "reviewer",
+  "what": "tb1: invariant compares opening",
+  "file": "src/trial_balance.rs",
+  "from": "            if c != t.closing_paise {",
+  "to": "            if c != t.opening_paise + t.debit_paise - t.credit_paise {"
+ },
+ {
+  "id": "B01",
+  "by": "author",
+  "what": "TB: zero rows not skipped",
+  "file": "src/trial_balance.rs",
+  "from": "        if t.opening_paise == 0 && t.debit_paise == 0 && t.credit_paise == 0 && t.closing_paise == 0\n        {\n            continue;\n        }",
+  "to": ""
+ },
+ {
+  "id": "B02",
+  "by": "author",
+  "what": "TB: chain shown parent-first",
+  "file": "src/trial_balance.rs",
+  "from": "            Some(l) if !l.chain.is_empty() => l\n                .chain\n                .iter()\n                .rev()",
+  "to": "            Some(l) if !l.chain.is_empty() => l\n                .chain\n                .iter()"
+ },
+ {
+  "id": "B03",
+  "by": "author",
+  "what": "TB-2: movement sign flipped",
+  "file": "src/trial_balance.rs",
+  "from": "            let m = c.checked_sub(o)",
+  "to": "            let m = o.checked_sub(c)"
+ },
+ {
+  "id": "B04",
+  "by": "author",
+  "what": "STL: active boundary >=",
+  "file": "src/stale_balances_41_1.rs",
+  "from": "> ACTIVE_TOL_PAISE {",
+  "to": ">= ACTIVE_TOL_PAISE {"
+ },
+ {
+  "id": "B05",
+  "by": "author",
+  "what": "STL: stale ignores credit",
+  "file": "src/stale_balances_41_1.rs",
+  "from": "if tb.debit_paise == 0 && tb.credit_paise == 0 {",
+  "to": "if tb.debit_paise == 0 {"
+ },
+ {
+  "id": "B06",
+  "by": "author",
+  "what": "STL-1 disabled",
+  "file": "src/stale_balances_41_1.rs",
+  "from": "                Some(name) if touched.contains(name.as_str()) => out.push(",
+  "to": "                Some(name) if false && touched.contains(name.as_str()) => out.push("
+ },
+ {
+  "id": "B07",
+  "by": "author",
+  "what": "LS: window 8 days",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "const LAST_DAYS_OF_YEAR_WINDOW: i64 = 7;",
+  "to": "const LAST_DAYS_OF_YEAR_WINDOW: i64 = 8;"
+ },
+ {
+  "id": "B08",
+  "by": "author",
+  "what": "LS: cash paid includes credits",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "            if net > 0 && has_cash_leg {",
+  "to": "            if has_cash_leg {"
+ },
+ {
+  "id": "B09",
+  "by": "author",
+  "what": "LS: large boundary >=",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "            if abs > large_entry_paise {",
+  "to": "            if abs >= large_entry_paise {"
+ },
+ {
+  "id": "B10",
+  "by": "author",
+  "what": "LSC-1 tolerance widened",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "        if i128::from(reported) > i128::from(tb_debit) + i128::from(LSC1_TOL_PAISE) {",
+  "to": "        if i128::from(reported) > i128::from(tb_debit) + i128::from(LSC1_TOL_PAISE) + 100_000_000 {"
+ },
+ {
+  "id": "B11",
+  "by": "author",
+  "what": "CBI: worst case uses receipts",
+  "file": "src/cash_book_integrity.rs",
+  "from": "        let worst = bal.checked_sub(outflow)",
+  "to": "        let worst = bal.checked_sub(inflow)"
+ },
+ {
+  "id": "B12",
+  "by": "author",
+  "what": "CBI: lowest takes the last minimum",
+  "file": "src/cash_book_integrity.rs",
+  "from": "            Some(a) if a.close <= d.close => Some(a),",
+  "to": "            Some(a) if a.close < d.close => Some(a),"
+ },
+ {
+  "id": "B13",
+  "by": "author",
+  "what": "CBI: narration whitespace not collapsed",
+  "file": "src/cash_book_integrity.rs",
+  "from": "            .split(is_py_space)",
+  "to": "            .split(' ')"
+ },
+ {
+  "id": "B14",
+  "by": "author",
+  "what": "CBI: expense credits read debits",
+  "file": "src/cash_book_integrity.rs",
+  "from": "            if l.amount_paise < 0 && under_expense(book, &l.ledger) {",
+  "to": "            if l.amount_paise > 0 && under_expense(book, &l.ledger) {"
+ },
+ {
+  "id": "B15",
+  "by": "author",
+  "what": "CBI-2 disabled",
+  "file": "src/cash_book_integrity.rs",
+  "from": "        if closing.is_some_and(|c| c < 0) && f.value == Value::Int(0) {",
+  "to": "        if false {"
+ },
+ {
+  "id": "B16",
+  "by": "author",
+  "what": "Book: narration not parsed",
+  "file": "src/book.rs",
+  "from": "            narration: v.child_text(\"NARRATION\").to_string(),",
+  "to": "            narration: String::new(),"
+ },
+ {
+  "id": "B17",
+  "by": "author",
+  "what": "LS: always the configured-table text",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "        if rules.ledger_scrutiny_large_entry_paise.is_some() {",
+  "to": "        if true {"
+ },
+ {
+  "id": "B18",
+  "by": "author",
+  "what": "LS: 30% boundary exclusive",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "            if bp >= CASH_SHARE_NOTABLE_BP {",
+  "to": "            if bp > CASH_SHARE_NOTABLE_BP {"
+ },
+ {
+  "id": "B19",
+  "by": "author",
+  "what": "LS: window first day exclusive",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "            if v.date >= start {",
+  "to": "            if v.date > start {"
+ },
+ {
+  "id": "B20",
+  "by": "author",
+  "what": "LS: window clamped to the period",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "civil_day_number(&period.to) - (LAST_DAYS_OF_YEAR_WINDOW - 1)",
+  "to": "civil_day_number(&period.to).max(civil_day_number(&period.from) + LAST_DAYS_OF_YEAR_WINDOW - 1) - (LAST_DAYS_OF_YEAR_WINDOW - 1)"
+ },
+ {
+  "id": "X01",
+  "by": "reviewer",
+  "what": "cbi: terms not de-duplicated",
+  "file": "src/cash_book_integrity.rs",
+  "from": "let terms: BTreeSet<String> = own_account_terms",
+  "to": "let terms: Vec<String> = own_account_terms"
+ },
+ {
+  "id": "X02",
+  "by": "reviewer",
+  "what": "cbi: matching Contra with no cash leg counted as deposit",
+  "file": "src/cash_book_integrity.rs",
+  "from": "} else if c < 0 {",
+  "to": "} else {"
+ },
+ {
+  "id": "X03",
+  "by": "reviewer",
+  "what": "cbi: part 5 any base type",
+  "file": "src/cash_book_integrity.rs",
+  "from": "if v.base_type != \"Journal\"\n            || !v",
+  "to": "if false\n            || !v"
+ },
+ {
+  "id": "X04",
+  "by": "reviewer",
+  "what": "cbi: part 5 zero expense line counted",
+  "file": "src/cash_book_integrity.rs",
+  "from": "if l.amount_paise > 0 && under_expense(book, &l.ledger) {",
+  "to": "if l.amount_paise >= 0 && under_expense(book, &l.ledger) {"
+ },
+ {
+  "id": "X05",
+  "by": "reviewer",
+  "what": "cbi: part 4 zero expense line counted",
+  "file": "src/cash_book_integrity.rs",
+  "from": "if l.amount_paise < 0 && under_expense(book, &l.ledger) {",
+  "to": "if l.amount_paise <= 0 && under_expense(book, &l.ledger) {"
+ },
+ {
+  "id": "X06",
+  "by": "reviewer",
+  "what": "cbi: VERSION 2",
+  "file": "src/cash_book_integrity.rs",
+  "from": "pub const VERSION: &str = \"1\";",
+  "to": "pub const VERSION: &str = \"2\";"
+ },
+ {
+  "id": "X07",
+  "by": "reviewer",
+  "what": "ls: VERSION 2",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "pub const VERSION: &str = \"1\";",
+  "to": "pub const VERSION: &str = \"2\";"
+ },
+ {
+  "id": "X08",
+  "by": "reviewer",
+  "what": "ls: cash leg must be a credit",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "cash.contains(&l.ledger) && l.amount_paise != 0",
+  "to": "cash.contains(&l.ledger) && l.amount_paise < 0"
+ },
+ {
+  "id": "X09",
+  "by": "reviewer",
+  "what": "ls: large compares signed net",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "if abs > large_entry_paise {",
+  "to": "if net > large_entry_paise {"
+ },
+ {
+  "id": "X10",
+  "by": "reviewer",
+  "what": "support: tag lookup over TB rows",
+  "file": "src/support.rs",
+  "from": "for name in book.ledgers.keys() {",
+  "to": "for name in book.tb.keys() {"
+ },
+ {
+  "id": "X11",
+  "by": "reviewer",
+  "what": "cbi: add wraps on overflow",
+  "file": "src/cash_book_integrity.rs",
+  "from": "a.checked_add(b).ok_or_else(overflow)",
+  "to": "Ok(a.wrapping_add(b))"
+ },
+ {
+  "id": "X12",
+  "by": "reviewer",
+  "what": "support: overflow message",
+  "file": "src/support.rs",
+  "from": "{test_id}: a total overflowed i64 paise",
+  "to": "{test_id}: overflow"
+ },
+ {
+  "id": "X13",
+  "by": "reviewer",
+  "what": "cbi: ignore the Payment/other-type terms guard via lower-case",
+  "file": "src/cash_book_integrity.rs",
+  "from": "fn upper(text: &str) -> String {\n    text.to_uppercase()",
+  "to": "fn upper(text: &str) -> String {\n    text.to_lowercase()"
+ },
+ {
+  "id": "X14",
+  "by": "reviewer",
+  "what": "stl: VERSION 2",
+  "file": "src/stale_balances_41_1.rs",
+  "from": "pub const VERSION: &str = \"1\";",
+  "to": "pub const VERSION: &str = \"2\";"
+ },
+ {
+  "id": "X15",
+  "by": "reviewer",
+  "what": "tb: VERSION 2",
+  "file": "src/trial_balance.rs",
+  "from": "pub const VERSION: &str = \"1\";",
+  "to": "pub const VERSION: &str = \"2\";"
+ },
+ {
+  "id": "X16",
+  "by": "reviewer",
+  "what": "cbi: CBI-1 check removed",
+  "file": "src/cash_book_integrity.rs",
+  "from": "if f.value != Value::Int(tb_sum) {",
+  "to": "if false && f.value != Value::Int(tb_sum) {"
+ },
+ {
+  "id": "X17",
+  "by": "reviewer",
+  "what": "ls: LSC-1 unresolved tag silently skipped",
+  "file": "src/ledger_scrutiny.rs",
+  "from": "let Some(name) = tag_to_name.get(tag) else {\n            out.push(",
+  "to": "let Some(name) = tag_to_name.get(tag) else {\n            continue;\n            #[allow(unreachable_code)]\n            out.push("
+ },
+ {
+  "id": "X18",
+  "by": "reviewer",
+  "what": "cbi: part 4 ignores cash (bank only)",
+  "file": "src/cash_book_integrity.rs",
+  "from": ".any(|l| (cash.contains(&l.ledger) || bank.contains(&l.ledger)) && l.amount_paise > 0)",
+  "to": ".any(|l| bank.contains(&l.ledger) && l.amount_paise > 0)"
+ },
+ {
+  "id": "X19",
+  "by": "reviewer",
+  "what": "support: label uses number even when empty",
+  "file": "src/support.rs",
+  "from": "let num = if v.number.is_empty() {",
+  "to": "let num = if v.number.is_empty() && false {"
+ },
+ {
+  "id": "X20",
+  "by": "reviewer",
+  "what": "cbi: own_account_terms accepts a table as no terms",
+  "file": "src/cash_book_integrity.rs",
+  "from": "let Some(raw) = raw else {\n        return Ok(Vec::new());\n    };",
+  "to": "let Some(raw) = raw.filter(|r| !r.is_table()) else {\n        return Ok(Vec::new());\n    };"
+ },
+ {
+  "id": "X21",
+  "by": "reviewer",
+  "what": "support: label uses base type",
+  "file": "src/support.rs",
+  "from": "format!(\"{} {} on {}\", v.vtype, num",
+  "to": "format!(\"{} {} on {}\", v.base_type, num"
+ },
+ {
+  "id": "X22",
+  "by": "reviewer",
+  "what": "cbi: evidence not de-duplicated",
+  "file": "src/cash_book_integrity.rs",
+  "from": "let refs: BTreeSet<(String, String)> = vouchers",
+  "to": "let refs: Vec<(String, String)> = vouchers"
+ },
+ {
+  "id": "X23",
+  "by": "reviewer",
+  "what": "cbi: walk keeps zero-net days",
+  "file": "src/cash_book_integrity.rs",
+  "from": "if amt == 0 {\n            continue;\n        }",
+  "to": "if amt == 0 && false {\n            continue;\n        }"
+ },
+ {
+  "id": "X24",
+  "by": "reviewer",
+  "what": "tb: sort key uses raw chain names",
+  "file": "src/trial_balance.rs",
+  "from": "Some(l) => l.chain.iter().rev().map(|g| display_name(g)).collect(),",
+  "to": "Some(l) => l.chain.iter().rev().map(|g| g.as_str()).collect(),"
+ }
+]
