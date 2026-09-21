@@ -8,7 +8,7 @@
   "figures": [
     {
       "id": "financial_statements.closing_stock",
-      "value": 14500000,
+      "value": 14000000,
       "unit": "paise",
       "definition_sha256_16": "d71330240d267c52",
       "definition_text": "Closing stock: sum, per Stock-in-Hand ledger, of TB opening + the year's TB debit movement - the year's TB credit movement (recomputed; the ledger's own TB closing field is NOT used -- see closing_stock_tb_field and stock_in_hand_ledgers_with_stale_tb_closing_field_count).",
@@ -137,7 +137,7 @@
     },
     {
       "id": "financial_statements.gross_profit",
-      "value": 8800000,
+      "value": 8300000,
       "unit": "paise",
       "definition_sha256_16": "1fd6d0911f0202e7",
       "definition_text": "sales + direct_incomes - (opening_stock + purchases + direct_expenses - closing_stock); one stock basis (TB / balance-sheet, above) used at BOTH ends, direct expenses included, so this ties to Form 3CD Clause 40.",
@@ -145,7 +145,7 @@
     },
     {
       "id": "financial_statements.gross_profit_pct_bp",
-      "value": 2958,
+      "value": 2790,
       "unit": "bp",
       "definition_sha256_16": "5ea7bdc9264a7e55",
       "definition_text": "gross_profit / sales, on the TB stock basis above.",
@@ -200,7 +200,7 @@
     },
     {
       "id": "financial_statements.net_profit",
-      "value": -2530525,
+      "value": -3030525,
       "unit": "paise",
       "definition_sha256_16": "dd9b37cc62bee6af",
       "definition_text": "gross_profit - indirect_expenses + other_income.",
@@ -208,7 +208,7 @@
     },
     {
       "id": "financial_statements.net_profit_pct_bp",
-      "value": -851,
+      "value": -1019,
       "unit": "bp",
       "definition_sha256_16": "bf411136b0a7c6bd",
       "definition_text": "net_profit / sales.",
@@ -263,7 +263,7 @@
     },
     {
       "id": "financial_statements.profit_before_partner_interest",
-      "value": -1780525,
+      "value": -2280525,
       "unit": "paise",
       "definition_sha256_16": "299d11a29b601dc3",
       "definition_text": "net_profit + partner_interest (net_profit above is AFTER partners' interest, since it is charged as an indirect expense).",
@@ -319,7 +319,7 @@
     },
     {
       "id": "financial_statements.stock_to_turnover_pct_bp",
-      "value": 4874,
+      "value": 4706,
       "unit": "bp",
       "definition_sha256_16": "e99e0fe10e3278f9",
       "definition_text": "closing_stock / sales.",

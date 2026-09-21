@@ -74,8 +74,9 @@ fn synthetic_read_matches_the_python_golden_with_report_totals() {
     assert_eq!(value(&rust, "direct_incomes"), json!(1_200_000)); // sign-flipped
     assert_eq!(value(&rust, "other_income"), json!(185_025));
     assert_eq!(value(&rust, "partner_interest"), json!(750_000));
-    // Stale closing field: closing stock is 60,000 + 75,000 + 10,000, not the field's 70,000.
-    assert_eq!(value(&rust, "closing_stock"), json!(14_500_000));
+    // Stale closing field: closing stock is (60,000 + 75,000 - 5,000) + 10,000, not the field's
+    // 70,000.
+    assert_eq!(value(&rust, "closing_stock"), json!(14_000_000));
     assert_eq!(value(&rust, "closing_stock_tb_field"), json!(7_000_000));
     assert_eq!(
         value(

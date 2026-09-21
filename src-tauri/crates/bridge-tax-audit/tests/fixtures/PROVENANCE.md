@@ -151,9 +151,10 @@ Income" (Direct Incomes) and "Interest Received" (Indirect Incomes), both credit
 that are sign-flipped -- and a fourth debiting "Interest to Partners", the `[partners.partner_a]`
 interest ledger in `synthetic-engagement.toml` (its `capital_ledgers` entry is there only because
 the reference's own binding binds every `[partners.*]` location). Two Stock-in-Hand ledgers carry
-no voucher: "Hardware Stock", whose TB debit column carries Rs 75,000 while its closing field
-stays a copy of its Rs 60,000 opening (`STALE_TB_DEBIT` in the generator: the non-integrated
-inventory quirk the test counts, and POP-1 still ties because no voucher moves it), and "Packing
+no voucher: "Hardware Stock", whose TB debit column carries Rs 75,000 and credit column Rs 5,000
+while its closing field stays a copy of its Rs 60,000 opening (`STALE_TB_DEBIT`/`STALE_TB_CREDIT`
+in the generator: the non-integrated inventory quirk the test counts; the credit makes closing
+stock depend on the "- credit" term; POP-1 still ties because no voucher moves it), and "Packing
 Material Stock", opening Rs 10,000 with no movement, not stale. "Owner Capital"'s opening moved
 from -Rs 5,70,000 to -Rs 6,40,000 to offset the two stock openings, so TB openings still sum as
 before (POP-3). The three new P&L primaries and two subgroups are added to the group masters. The
@@ -162,8 +163,8 @@ touched: the `cash_44ab`, `cash_payments_40a3` and `depreciation` goldens regene
 after this change.
 
 `synthetic-report-totals.json` is invented report totals for the tie branch, each exactly Rs 1
-from the derived figure (net profit -Rs 25,304.25 against -Rs 25,305.25; closing stock
-Rs 1,45,001.00 against Rs 1,45,000.00): FS-1's tolerance is inclusive, so the committed golden is
+from the derived figure (net profit -Rs 30,304.25 against -Rs 30,305.25; closing stock
+Rs 1,40,001.00 against Rs 1,40,000.00): FS-1's tolerance is inclusive, so the committed golden is
 `computed` and a comparison that used `<` would disagree with it. This crate takes report totals
 as caller data and never parses a Tally report (a native-report reader needs its own ADR first).
 
@@ -198,17 +199,17 @@ uv run -q --with openpyxl --with xlrd --with python-docx --with jsonschema --wit
 | `synthetic.cash_44ab.json` | 5,828 | `c424096e2accfab877b68d5391f81a5e5319698637e2b68d64cae75314d3ac8f` | `golden/synthetic.cash_44ab.json` |
 | `synthetic.cash_payments_40a3.json` | 72,284 | `9dc98414ef0271c1ca2544a7e7042716471ec7f5c260c52f3ab0193d947f3269` | `golden/synthetic.cash_payments_40a3.json` |
 | `synthetic.depreciation.json` | 27,613 | `0c100a919eee8443b4622a1aac568707c7e3a5849a496759816c4e1c56520ae8` | `golden/synthetic.depreciation.json` |
-| `synthetic.financial_statements.json` | 16,685 | `6ae352d95c42c52465bfb0e0f18700a3de18059339274f42669adb57f6d96eb3` | `golden/synthetic.financial_statements.json` |
-| `synthetic.financial_statements.noreport.json` | 15,687 | `8781279cd5ad447ab28cf37b541775203aca1f92203666c5969ba8925b5158bd` | `golden/synthetic.financial_statements.noreport.json` |
-| `synthetic-report-totals.json` | 134 | `9cb8195550bbe2dd29ccbce390c930cc586890aa92fae490b5929bd0411a64c5` | `synthetic-report-totals.json` |
+| `synthetic.financial_statements.json` | 16,686 | `e0f5038fa515c3e39c6af49dcfc6ccf66ff04172b7da6b770c48eefdc9725cc5` | `golden/synthetic.financial_statements.json` |
+| `synthetic.financial_statements.noreport.json` | 15,688 | `9d63143f038a78e936237b622fe203796c47eef6cff03cd95630511e25aa7800` | `golden/synthetic.financial_statements.noreport.json` |
+| `synthetic-report-totals.json` | 134 | `e772509bd6ebc52afc23ef9742b6b1f2a090737533abe3761a7448124411b7e3` | `synthetic-report-totals.json` |
 | `synthetic-engagement.toml` | 2,631 | `2559bdb11b32a342f12e769745dfcc297c942ccac19836c4a404944956d102e1` | `synthetic-engagement.toml` |
-| `manifest.json` | 9,711 | `436da18189f3af14f0fc4d9688b13786a8a6f287ab204a70ca331ddebc235bea` | `synthetic-read/manifest.json` |
+| `manifest.json` | 9,711 | `6872873e193231239b7e2bf38ef7d482dd8cf7c43fb00ab76b0bc0dd07e8833a` | `synthetic-read/manifest.json` |
 | `company_object.xml` | 606 | `f1b6fe4e6b6cc406a4ae92ce0ef62a6c79a88a99ac83b1888989a98fbee967b4` | `synthetic-read/parts/company_object.xml` |
 | `groups.xml` | 8,102 | `12e4d994960ecd768cd33fb4565f19b140a765d3f9f4982dbcfe1a108d9e5214` | `synthetic-read/parts/groups.xml` |
 | `high_water_after.xml` | 643 | `0d482540a4ac4beebfe19e5f5dd695e748084ee1779bf80b012b5bd489a17eaa` | `synthetic-read/parts/high_water_after.xml` |
 | `high_water_before.xml` | 643 | `0d482540a4ac4beebfe19e5f5dd695e748084ee1779bf80b012b5bd489a17eaa` | `synthetic-read/parts/high_water_before.xml` |
 | `ledgers.xml` | 26,356 | `824dc80ffdc97e0b396c5d810b553e55f978fa9c14c65c19b9da0452a85df896` | `synthetic-read/parts/ledgers.xml` |
-| `tb_fy.xml` | 12,935 | `a3f4ee95eb65bbfc6c5a275d4a24e09bdebc4f21ded20ea6bed86bf6cd120205` | `synthetic-read/parts/tb_fy.xml` |
+| `tb_fy.xml` | 12,942 | `8640ebe7761fffab0b9232cc19fb83ae82c9a2500e37b59a5aa090614057f1e4` | `synthetic-read/parts/tb_fy.xml` |
 | `voucher_status_list.json` | 249 | `c7959e4e91a445f774ff2a5eaad4f8968f6fc82e21622d5168ececf9b0a1aa78` | `synthetic-read/parts/voucher_status_list.json` |
 | `vouchers_h1.xml` | 50,762 | `993dc982021b41efb7303a736d70a6c846de87a8cd815ec8c7d049bdad759884` | `synthetic-read/parts/vouchers_h1.xml` |
 | `vouchers_h2.xml.gz` | 1,156 | `cd9cb1f339141bc1af8585fd16c445f21016dccbbccd5cd21d1bd82c1feb41b1` | `synthetic-read/parts/vouchers_h2.xml.gz` |

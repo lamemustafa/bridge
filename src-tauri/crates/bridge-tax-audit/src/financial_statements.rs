@@ -869,6 +869,29 @@ mod tests {
             .any(|f| f.id.ends_with(".partner_interest")));
     }
 
+    /// Closing stock subtracts the year's TB credit too: a stock ledger drawn down during the year
+    /// closes lower than opening + debit.
+    #[test]
+    fn stock_credit_movement_reduces_closing_stock() {
+        let mut b = book();
+        *b.tb.get_mut("Still Stock").unwrap() = TbRow {
+            opening_paise: 100_000,
+            debit_paise: 0,
+            credit_paise: 30_000,
+            closing_paise: 70_000,
+        };
+        let r = run(&b, &rules(), &BTreeSet::new(), None).unwrap();
+        assert_eq!(fig(&r, "closing_stock"), Value::Int(520_000)); // 4,500 + 700
+        assert_eq!(
+            fig(
+                &r,
+                "stock_in_hand_ledgers_with_stale_tb_closing_field_count"
+            ),
+            Value::Int(1) // the drawn-down ledger's field is current, not stale
+        );
+        assert!(check_invariants(&b, &r).unwrap().is_empty());
+    }
+
     #[test]
     fn partner_interest_is_reported_only_when_configured() {
         let r = run(&book(), &rules(), &interest(), None).unwrap();
