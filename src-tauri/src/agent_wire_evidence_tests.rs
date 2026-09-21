@@ -200,7 +200,10 @@ async fn write_shaped_adapter_request_is_refused_before_any_transport() {
         let request = format!("<ENVELOPE><HEADER><TALLYREQUEST>{operation}</TALLYREQUEST><TYPE>Collection</TYPE></HEADER><BODY/></ENVELOPE>");
         assert_eq!(
             server
-                .post_read(&identity, request)
+                .post_read(
+                    &identity,
+                    crate::agent::read_profiles::ReadRequest::unrendered_for_test(request)
+                )
                 .await
                 .err()
                 .unwrap()

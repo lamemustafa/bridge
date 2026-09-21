@@ -419,7 +419,7 @@
     },
     {
       "path": "src-tauri/src/agent.rs",
-      "sha256": "395d5c537601b102a1f20046912b23415652bdcd8870788ee3f687cb16fbeda7"
+      "sha256": "049ad3255eefdb8489692d102b9162339f03c0a7a0dd403f63736e830c77cf5f"
     },
     {
       "path": "src-tauri/src/agent_bank_statement.rs",
@@ -435,7 +435,7 @@
     },
     {
       "path": "src-tauri/src/agent_changes.rs",
-      "sha256": "ce8c0ca98c2194f8ce42493a39f3a034f80418bcf4c6aa3d9fc9df30a6161f71"
+      "sha256": "0f6a2ef8084a6b4139f1be416896db6f4df1180b8955a4e50a640f9f365a99d6"
     },
     {
       "path": "src-tauri/src/agent_company.rs",
@@ -455,7 +455,7 @@
     },
     {
       "path": "src-tauri/src/agent_import.rs",
-      "sha256": "852b55cf078e3b56b65d4aeb776dd89999fe806468778153c85231c49e25bad2"
+      "sha256": "18da46256f614cee3794a80d28f2e71856f66243e9155ec2b14f7f8a0e462378"
     },
     {
       "path": "src-tauri/src/agent_import_amend.rs",
@@ -515,7 +515,7 @@
     },
     {
       "path": "src-tauri/src/agent_read_profiles.rs",
-      "sha256": "d5a7a72c8fdd4a848d6a9464d6b22a8149129b58181fce81a254fa76be605800"
+      "sha256": "2d2d653d4942419fd307adabcb14bf96219d78267b8ddedf30095ac4d294cd4d"
     },
     {
       "path": "src-tauri/src/agent_read_validation.rs",
@@ -551,11 +551,11 @@
     },
     {
       "path": "src-tauri/src/agent_voucher_window.rs",
-      "sha256": "f7765f16c674d4247662439318157b7c70f6ef7305c78168088c7081ddb4d0e8"
+      "sha256": "c6a76f2378da6aab1d0563ba94216d24112db6203772632861ce471fc1a88758"
     },
     {
       "path": "src-tauri/src/agent_vouchers.rs",
-      "sha256": "55a7ea2980e1f9324f140821e010d23e200c90d2cab8351cc321d8133fffb0c7"
+      "sha256": "2094cae557ed111f1e2c754447aa644e707328872779bb46b9254e1ab9681713"
     },
     {
       "path": "src-tauri/src/axal.rs",
@@ -1102,5 +1102,5 @@
       "sha256": "0ab5bfbe6d81b1e10530744c338fb91efa57fe5a66fb4bc0cfd382495eaf02a4"
     }
   ],
-  "manifest_sha256": "a0141d9be100c93f0cd07dfeb81c9e0aebc32cff337e549e2e094fd53c855954"
+  "manifest_sha256": "210cf09206c94051bc15613562ca1b2cf5f8d902d458ad825eac09fad2718f9c"
 }
