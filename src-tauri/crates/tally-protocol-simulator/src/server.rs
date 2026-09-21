@@ -20,7 +20,9 @@ const ACCEPT_DEADLINE: Duration = Duration::from_secs(30);
 const REQUEST_READ_DEADLINE: Duration = Duration::from_secs(30);
 const REQUEST_READ_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const MAX_REQUEST_BYTES: usize = 128 * 1024;
-pub const MAX_SEQUENCE_REQUESTS: usize = 64;
+/// A divided agent read replayed end to end (bridge#520) is about ninety legs:
+/// six per paired read, plus the identity and ledger legs around them.
+pub const MAX_SEQUENCE_REQUESTS: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObservedRequest {
@@ -226,6 +228,12 @@ fn serve_request(
             }
             Err(error) => return Err(error),
         };
+        // The listener is non-blocking so that accept can poll; on macOS and the
+        // BSDs an accepted socket inherits that. A non-blocking `write_all` of a
+        // body larger than the loopback send buffer (about 256 KiB there) then
+        // fails with `WouldBlock`, which reads as a client that stopped reading,
+        // and the response was cut short. Linux does not inherit the flag.
+        stream.set_nonblocking(false)?;
         stream.set_nodelay(true)?;
         stream.set_read_timeout(Some(REQUEST_READ_POLL_INTERVAL))?;
         stream.set_write_timeout(Some(Duration::from_secs(2)))?;

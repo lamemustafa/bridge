@@ -127,6 +127,199 @@ the only way to avoid paying 22 s to discover that nothing changed.
 reads) · 21,532 wildcard. Segment sizing can be derived from a single sample read with
 confidence.
 
+## 11c. A windowed voucher read is bounded before it is sent — **rule; the measurements below are VERIFIED, the bound's own requests are UNVERIFIED live**
+
+> **Status 2026-09-21.** The bound's request shapes — the census, its AlterID spans and the
+> AlterID-narrowed data parts — are now **VERIFIED live** (§11c.5), and the rectified bound was run
+> end to end on one inventory-heavy book. The heading keeps its original wording so existing links
+> resolve; §11c.4 lists what is still open.
+
+### 11c.1 What was measured
+
+**VERIFIED**, measured on a licensed lab gateway the week of 2026-09-14. Figures are UTF-8 bytes
+unless marked; Bridge's wire is UTF-16LE (§1.2), which costs exactly twice as much.
+
+- **Response size follows vouchers returned, not window width**, with a fixed per-request overhead
+  of about 0.15 s. This repeats §11b.4 and §12a.8 on more books.
+- **Bytes per voucher depend on the book and on the request shape:**
+
+  | Book | Shape | Bytes per voucher |
+  | --- | --- | --- |
+  | Synthetic, accounting-only | named ledger-entry fields | ~4.7 KB |
+  | Larger accounting book | named ledger-entry fields | ~6.7 KB |
+  | Inventory-heavy trading book, whole year (16,367 vouchers, 587 MB) | named ledger-entry fields | **35.0 KB** mean |
+  | Same book, one day (41 vouchers) | named ledger-entry fields | 28 KB |
+  | Same book, one day | `ALLLEDGERENTRIES.*` entry wildcard | ~128 KB |
+
+- **A one-day probe understated the year on that book** (28 KB against a 35.0 KB mean). A single
+  small sample is not a reliable estimator on its own.
+- **Half-month windows were barely inside the cap.** With named fields the heaviest half-month of
+  that year reached 98.4% of Bridge's 32 MiB transport cap. It succeeded; it had no margin.
+- **Month-scale entry-wildcard windows on that book returned hundreds of megabytes and took
+  minutes.** A response that large can fail mid-transfer, and afterwards the gateway can stop
+  accepting connections for every company for tens of minutes; a client that gives up does not stop
+  Tally (§11b.2). The reproducing detail is deliberately not recorded here.
+
+### 11c.2 Why the existing limits do not protect Tally
+
+Bridge's response cap (`XML_RESPONSE_MAX_BYTES`, 32 MiB) and per-leg deadline (20 s) are enforced
+on the response, client-side. By the time either trips, Tally has already committed to building the
+whole response and will finish it regardless (§11b.1, §11b.2). They protect Bridge's memory and its
+caller; they cannot protect the gateway. The only bound that protects Tally is one applied before a
+request is sent — which is what §11b.2's "never issue a read you cannot afford to wait out" and
+§12a.8's pre-flight count already ask for.
+
+### 11c.3 The rule
+
+Before a windowed voucher read, predict its response and divide the window so that no single
+request is predicted over a budget well below the cap.
+
+1. **Budget, and the one margin.** Half the transport cap, in encoded wire bytes: 16 MiB. A part is
+   planned at the book's measured cost per voucher, not at an inflated one; the other half of the
+   cap is the only allowance for that measurement being wrong. It is sized for the understatement
+   measured in §11c.1 (a one-day probe 1.25 times below the year) with room.
+   **The floor makes that margin hold.** A measured cost never replaces the default below **half** of
+   it. A part planned within the budget at a figure of at least half the default holds at most
+   `2 × budget / default` vouchers, so if no voucher in it is heavier than the default — which is set
+   above the heaviest cost measured for the shape — the part is at most twice the budget: the cap.
+   Without the floor, one light first part (bank receipts at a tenth of an inventory voucher's cost)
+   would plan the next part at ten times its safe size. A light book pays in more, smaller parts.
+2. **Vouchers in the window, cheapest estimate first.**
+   - The company's voucher high-water mark, `ALTVCHID` (§10), bounds the whole book: every voucher
+     carries an AlterID no greater than it. If the mark times the shape's conservative per-voucher
+     cost fits the budget, no window of the book is predicted to exceed it, and the window is sent **undivided,
+     exactly as before**. A company that has never held a voucher omits `ALTVCHID`; that is a zero.
+   - Otherwise, a **census** of the window: one row per voucher carrying only `GUID`, `ALTERID` and
+     `DATE` (the §12.7 witness fetch), **every census request bounded before it is sent**. A date
+     range can hold every voucher the book has, so a date census is bounded only by the mark itself:
+     a book whose mark fits one census is counted in **one date census of the window**. A larger
+     book is counted in **AlterID spans across `(0, mark]`, each also narrowed to the window's
+     dates**, and each bounded by construction because AlterIDs are distinct. The spans are produced
+     one at a time, and a mark needing more than 256 of them is refused before any census is sent.
+   - **A census is sized against the whole transport cap,** not the half-budget: 8,192 rows at the
+     planning figure of 4 KiB a row. The half-budget exists to absorb the error in an *estimated*
+     data part; a census span's row count is fixed by construction, so its only uncertainty is the
+     per-row figure, measured live at 2.42–2.72 KB (§11c.5). A full census is about 22 MB.
+   - The cost is a census count proportional to the **book**, not the window: a mark of 250,000 is
+     31 census requests however short the window. It is a cost in elapsed time, not in gateway
+     safety: every request stays bounded, so a caller that abandons the read leaves at most one
+     bounded request in Tally. An earlier revision sized a date census from the
+     book's average density; that size was an expectation, learned too late when it was wrong, so it
+     was withdrawn. A request returning only a count per date range would avoid the span walk, but no
+     such shape is qualified live.
+   - A census Tally does not serve — oversized, or timed out — is not divided or retried: every
+     census is already bounded, so an oversized one means the per-row figure was wrong, and a
+     timed-out one may still be building on the gateway. The window is refused as unestimated.
+   - A caller already holding such a witness count for the same window may supply it instead, and
+     no census is sent. A count that names a day outside the window is refused.
+3. **Bytes per voucher for the request shape.** Until something is measured, a **conservative
+   per-shape default** above the heaviest figure measured for that shape: 96 KiB per voucher on the
+   wire for named ledger-entry fields (48 KiB of UTF-8, against a 35.0 KB measured mean) and 384 KiB
+   for the entry wildcard (192 KiB of UTF-8, against ~128 KB measured). It sizes only the **first
+   part**, which is real data, not a discarded sample. That part's measured cost then replaces the
+   default for the rest of the window; each later part heavier than the planning figure raises it,
+   and a lighter one never lowers it again. Nothing is remembered between calls.
+4. **Divide by date, then within a day by AlterID.** Days are packed in order into contiguous
+   date ranges, each predicted within the budget; a day without vouchers joins whichever range it
+   falls in. A day too heavy for one read is read alone, in AlterID spans of that day that together
+   cover every AlterID up to the high-water mark. Reading every part observes the same vouchers one
+   undivided read would, provided the book does not change during the read (rule 6).
+5. **Refuse by name, before any further data read,** rather than send:
+   - `voucher_window_part_over_budget` — a single voucher is predicted over the budget, so no
+     division can help.
+   - `voucher_window_too_many_reads` — the read would dispatch more than 128 data requests. The
+     allowance is spent **when a request is dispatched**, not when a plan is made, so a part divided
+     after Tally could not serve it — and the failed attempt itself — count against it.
+   - `voucher_window_book_too_large` — the book's mark needs more than 256 census spans (a mark above
+     about 2.1 million). A **product limit**: narrowing the window does not help, because the census
+     walks the book's AlterIDs whatever the window.
+   - `voucher_window_volume_unestimated` — a census could not be read, was refused as oversized, or
+     timed out. A mark that cannot be read is refused under the mark parser's own code.
+6. **Every part is admitted, and so is their union.** Each row of a part must lie in the part's dates
+   and AlterID span. When the window was counted, a part's vouchers must be **exactly** the ones the
+   census counted for it, by AlterID and GUID — a matching count is not enough, because a substituted
+   voucher preserves it. And GUIDs and master IDs must be unique across the union of parts, not only
+   within each response: a voucher re-dated between two parts is returned by both, each valid alone.
+   Either failure refuses as `voucher_window_part_not_admitted` or
+   `voucher_source_identity_invalid`.
+7. **A divided read is bracketed on both marks.** `ALTVCHID` **and** `ALTMSTID` are read again after
+   the last part, and either moving refuses the read as `voucher_window_changed_during_read`. Live
+   (§11c.5): creating, altering, cancelling, re-dating and deleting a voucher each advance
+   `ALTVCHID`, but renaming a ledger advances only `ALTMSTID` while changing that ledger's name in
+   every voucher export. A read bracketed on `ALTVCHID` alone returned `complete` across a rename
+   made between two of its parts. Every divided read is bracketed — including one planned whole and
+   divided only after Tally could not serve it. An undivided read is one observation, as before.
+8. **A corroborating second read replays exactly the first read's parts and carries its witness** —
+   it never re-plans from a measurement, which could merge parts back into a request the first read
+   found Tally could not serve. The witness is the marks the first read opened and closed on, and
+   the census its parts were admitted against. The replay is admitted against that census and
+   closes against those marks. Without them, a replay of
+   AlterID-limited parts reads only up to the first read's ceilings: a voucher posted in the window
+   between the two reads takes an AlterID above them, both reads miss it, and their responses match
+   byte for byte. A replay of a divided read without a witness is refused as
+   `voucher_window_replay_unwitnessed`.
+9. **A caller that must send the undivided request itself decides on what was measured.** The
+   pre-post check inside the import dispatch lease sends the whole verification window as one
+   request. Before approval it is admitted on the `verify_import` read of the same window that runs
+   just before: an undivided read was that request, and a divided read's parts together (one copy of
+   each response) are its size, which must be within the budget — unless Tally refused one of that
+   read's requests as too large or timed out, since a timed-out request has no size to sum and the
+   refused one may be the whole window itself. Otherwise the batch is refused as
+   `import_post_window_not_bounded`. The book can still grow between that read and the lease; the
+   transport cap is the backstop there.
+10. **The transport cap remains the final safeguard.** Where a caller already divided a window after
+   a deadline or an oversized response (#485, the import-verification read), it still does: by date,
+   then, for a single day, by the day's counted AlterIDs.
+
+### 11c.4 What this does not establish
+
+- **The rectified bound was run end to end live only twice.** A build of the tree committed as
+  `986c1d77` made the two calls timed below (§11c.5). Two changes made after review — a replay
+  that no longer re-plans, and the measured pre-post admission — are established by simulator and
+  unit regressions only.
+- **Latency on a large book.** Measured end to end on the rectified bound (§11c.5), on an
+  inventory-heavy book with a mark of about 250,000 (31 census spans): a one-day `vouchers` call took
+  34 s (7.5 s before the rectify) and a one-month `ledger_movement` 105 s (53 s before). The MCP
+  host's own timeout is not measured.
+- **An abandoned call is not cancelled mid-read.** For every tool but `post_import`, the stdio server
+  awaits a tool call to completion before reading its input again, so a host's cancellation or
+  closed input is seen only afterwards, and the read dispatches its remaining (bounded) requests.
+- **`ALTVCHID` and `ALTMSTID` moving on every change** was observed only for changes made through
+  the XML gateway, once each, on one release (§11c.5). Changes made in the Tally UI, the Edit Log
+  SKU and Education mode were not tested.
+- **The first part is one place in the window.** A book whose later vouchers are much heavier than
+  its first part's is protected only by rule 3's raising and rule 1's margin. Live, three equal-count
+  spans of one day on an inventory-heavy book differed 1.8× in bytes.
+- **A mark that is loose as a density prior.** On the inventory-heavy book the mark was ten times the
+  voucher count. It is still a correct upper bound; it only makes the whole-book shortcut rarer.
+- **The empty-window corroboration reuses the first read's marks.** Its widened read (±1 day) opens
+  on the marks the window's own read observed. Only when that widened read is itself divided is it
+  bracketed, and then a change anywhere in the company between the two reads refuses it. An undivided
+  widened read is not bracketed; there, a voucher in the window refuses the read as
+  `window_contradicted`, and otherwise the empty result is corroborated or reported partial by the
+  existing empty-window control, exactly as before the bound.
+- **AlterID 0.** Every span starts above an exclusive lower bound of 0, so a voucher with AlterID 0
+  could not be read by a divided day. None has been observed; a census row carrying AlterID 0 is
+  refused rather than planned around.
+
+### 11c.5 Live evidence, 2026-09-21
+
+**VERIFIED** on a licensed TallyPrime 7.1 Silver lab (the last licensed day), one request at a time,
+`/status` probed before and after each, on four synthetic companies and one inventory-heavy client
+book (read-only there). The request strings were the branch's own at `cf618c00`.
+
+| Check | Result |
+| --- | --- |
+| Census row | `DATE` and `ALTERID` are direct children of `VOUCHER`; 2.42–2.72 KB per row in UTF-16 on every book (about forty default fields come with each row); an empty window parses to zero rows with `CMPINFO`'s `<VOUCHER>0</VOUCHER>` not counted |
+| Census count equals the full read | yes, on every whole-day window tried, in every shape |
+| `ALTVCHID` as a count bound | the count never exceeded the mark and no AlterID exceeded it, on every book: 67/90, 2,790/2,797, 29,900/29,900, and 23,634 against 249,948; a company with no vouchers omits `ALTVCHID` |
+| AlterID spans, three shapes | three contiguous spans of one day, in the entry-wildcard, movement and import-verification shapes, on three books: disjoint, their union equal to the unspanned read and to the census, no row outside its span; every read under 1.6 s |
+| Charset | the same 1,230-voucher read is exactly twice as large in UTF-16 as in UTF-8 |
+| `ALTVCHID` on each change (gateway writes, synthetic company) | create +1; alter (re-post with the same client `REMOTEID`) +1; cancel (official `TAGNAME` shape; the counter that moves is `ALTERED`) +1; re-date +1; delete +2; a no-op re-post +1. A ledger rename: `ALTVCHID` +0, `ALTMSTID` +1 |
+| End to end (`bridge_mcp` @ `cf618c00`, before #520) | whole-FY, one-day and one-month `vouchers`, a quarter and a month of `ledger_movement`, on three books: complete, every part under 16 MiB and 2 s. A voucher created between two parts refused the read as `voucher_window_changed_during_read`; a ledger renamed between two parts did not (fixed by rule 7) |
+| Paired reads | every Tally request is sent twice, back to back (the repeated-source read), so wire traffic is about twice the data |
+| End to end after the #520 rectify (census spans of 8,192; a build of the tree committed as `986c1d77`) | inventory-heavy book, mark ~250,000: one-day `vouchers` complete in 34.3 s (31 census spans, 2 data parts); one-month `ledger_movement` complete in 104.7 s (31 census spans, 5 data parts of at most 6.6 MB, and the replay closed against the first read's marks). Every request under 16 MiB and 2 s |
+
 ## 11a. Scale measurements — 11,287-voucher corpus
 
 **VERIFIED 2026-07-29** on a generated production-shaped corpus: 25 customers and 15
@@ -655,3 +848,5 @@ UI. Deletion was not exercised at all. Per P6, neither may be built upon.
 | 2026-09-11 | Narrowed §9.13's company-guard paragraph to match §9.11d: which *kind* of mismatched `SVCURRENTCOMPANY` posts silently is UNVERIFIED, so the classification by name shape was withdrawn, and the pre-write check was corrected from the GUID alone to the whole §9.11b identity tuple. |
 | 2026-09-18 | Added §8.2c: `REFERENCE`/`ISPOSTDATED`/`ISINVOICE`/`PARTYGSTIN` added to the voucher `FETCH` list and captured on licensed TallyPrime 7.1 Silver (`BRIDGE SHAPE LAB`, 67 vouchers, twelve windows). `ISINVOICE` never carries `TYPE="Logical"`, unlike the other three; `PARTYGSTIN` round-trips but was empty on every observed row (population UNVERIFIED). |
 | 2026-09-18 | Added §1.1(d): the rule `mark_forbidden_numeric_references` applies before parsing, now public in `bridge-tally-protocol`, including that a `&#` with no `;` in its window no longer ends the rewrite. |
+| 2026-09-18 | Added §11c: the pre-flight volume bound for windowed voucher reads, with the bytes-per-voucher measurements behind it (a whole-year 35.0 KB mean on an inventory-heavy book, understated by a one-day probe; half-month windows at 98.4% of the cap). The measurements are VERIFIED; the date-first census and the AlterID-narrowed parts the rule sends are UNVERIFIED live. |
+| 2026-09-21 | §11c after the bridge#520 rectify: every census is bounded before it is sent (one date census when the mark fits one, otherwise AlterID spans of 8,192 sized against the whole cap; a mark needing more than 256 spans is refused as `voucher_window_book_too_large`); parts are admitted against the census and their union; the read allowance is spent at dispatch; a divided read is bracketed on `ALTVCHID` and `ALTMSTID`; a replay carries and closes against the first read's witness; the pre-post check refuses a window the bound would divide. Added §11c.5, the first live evidence (licensed 7.1 Silver lab): census and span shapes, `ALTVCHID` as a count bound and on every voucher change, a ledger rename moving only `ALTMSTID`, and end-to-end timings. |

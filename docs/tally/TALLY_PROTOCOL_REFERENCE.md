@@ -270,6 +270,24 @@ base revision.
 <a id="11b4-bytes-per-row-is-stable-and-predictable"></a>
 
 [11b.4 Bytes-per-row is stable and predictable](./TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md#11b4-bytes-per-row-is-stable-and-predictable)
+<a id="11c-a-windowed-voucher-read-is-bounded-before-it-is-sent--rule-the-measurements-below-are-verified-the-bounds-own-requests-are-unverified-live"></a>
+
+[11c. A windowed voucher read is bounded before it is sent — **rule; the measurements below are VERIFIED, the bound's own requests are UNVERIFIED live**](./TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md#11c-a-windowed-voucher-read-is-bounded-before-it-is-sent--rule-the-measurements-below-are-verified-the-bounds-own-requests-are-unverified-live)
+<a id="11c1-what-was-measured"></a>
+
+[11c.1 What was measured](./TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md#11c1-what-was-measured)
+<a id="11c2-why-the-existing-limits-do-not-protect-tally"></a>
+
+[11c.2 Why the existing limits do not protect Tally](./TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md#11c2-why-the-existing-limits-do-not-protect-tally)
+<a id="11c3-the-rule"></a>
+
+[11c.3 The rule](./TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md#11c3-the-rule)
+<a id="11c4-what-this-does-not-establish"></a>
+
+[11c.4 What this does not establish](./TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md#11c4-what-this-does-not-establish)
+<a id="11c5-live-evidence-2026-09-21"></a>
+
+[11c.5 Live evidence, 2026-09-21](./TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md#11c5-live-evidence-2026-09-21)
 <a id="11a-scale-measurements--11287-voucher-corpus"></a>
 
 [11a. Scale measurements — 11,287-voucher corpus](./TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md#11a-scale-measurements--11287-voucher-corpus)

@@ -7,7 +7,12 @@
 //!     TEST_ID ENGINE_RULES_TOML CLIENT_TOML READ_DIR PYTHON_DUMP_JSON RUST_DUMP_OUT
 //! ```
 //!
-//! `TEST_ID` is `cash_44ab`, `cash_payments_40a3` or `depreciation`. `CLIENT_TOML` is the
+//! `TEST_ID` is `cash_44ab`, `cash_payments_40a3`, `depreciation` or `financial_statements`. For
+//! `financial_statements`, an optional seventh argument `REPORT_TOTALS_JSON` feeds Tally's own
+//! Profit & Loss report totals as caller data -- the file `parity/python_golden.py
+//! --emit-report-totals` wrote from the same read, so both sides tie against the same numbers;
+//! without it both run with no report. `CLIENT_TOML`'s `[partners.*].interest_ledger` entries are
+//! read and bound like every other configured name. `CLIENT_TOML` is the
 //! reference engine's client config; its `[snapshot]` is replaced in memory by `READ_DIR` with
 //! `allow_unbracketed_read = true`, the same switch `parity/python_golden.py --read` applies, so
 //! both sides read the same bytes. For `cash_payments_40a3`, `CLIENT_TOML`'s own `[roles]
@@ -30,7 +35,7 @@
 //! written for the reference implementation's FULL pack, though, and a real client TOML typically
 //! binds many labels this port never reads (`tds`, `gst_outward`, `related_parties`, ...);
 //! `narrow_identity_tables` below strips `[ledger_ids]`/`[group_ids]` down to just the labels the
-//! six locations this port's `Engagement` reads actually use, before `Engagement::from_toml` ever
+//! seven locations this port's `Engagement` reads actually use, before `Engagement::from_toml` ever
 //! sees them, so `BIND-ID-UNUSED` never fires on a label this port simply does not consume.
 //! `python_golden.py`'s own `bind_config` call sees the FULL, unnarrowed tables (it binds every
 //! location the reference implementation reads, not just the six this port ports), so its
@@ -45,9 +50,11 @@ use std::time::Instant;
 
 use bridge_tax_audit::canonical::hex;
 use bridge_tax_audit::compare::compare;
+use bridge_tax_audit::financial_statements::ReportTotals;
 use bridge_tax_audit::rules::{Rules, SOURCE_SHA256, VENDORED};
 use bridge_tax_audit::{
-    cash_44ab_on, cash_payments_40a3_on, depreciation_on, load_book, Engagement,
+    cash_44ab_on, cash_payments_40a3_on, depreciation_on, financial_statements_on, load_book,
+    Engagement,
 };
 use sha2::{Digest, Sha256};
 
@@ -70,12 +77,12 @@ fn vendored_blocks_are_verbatim(source: &str) -> bool {
         .all(|block| source.contains(block))
 }
 
-/// Narrows `[ledger_ids]`/`[group_ids]` to the labels the six locations this port's `Engagement`
+/// Narrows `[ledger_ids]`/`[group_ids]` to the labels the seven locations this port's `Engagement`
 /// actually reads (`roles.cash_groups`, `roles.bank_groups`, `roles.round_off_ledgers`,
-/// `loans.loan_ledgers`'s keys, `depreciation.block_by_ledger`'s keys and
-/// `depreciation.dep_expense_ledgers`) use, so `Engagement::bind`'s `BIND-ID-UNUSED` check never
-/// refuses over a label a real client TOML binds only for a role this port does not implement
-/// (see this file's doc comment and `docs/tax-audit/config-identity-binding-v1.md` section 4).
+/// `loans.loan_ledgers`'s keys, `depreciation.block_by_ledger`'s keys,
+/// `depreciation.dep_expense_ledgers` and `partners.*.interest_ledger`) use, so
+/// `Engagement::bind`'s `BIND-ID-UNUSED` check never refuses over a label a real client TOML
+/// binds only for a role this port does not implement (see this file's doc comment and `docs/tax-audit/config-identity-binding-v1.md` section 4).
 /// A label absent from `cfg` entirely is simply not collected; this never adds anything to `cfg`,
 /// only removes stale table entries.
 fn narrow_identity_tables(cfg: &mut toml::Table) {
@@ -116,6 +123,20 @@ fn narrow_identity_tables(cfg: &mut toml::Table) {
             ledger_labels.extend(strs(v));
         }
     }
+    if let Some(partners) = cfg.get("partners").and_then(toml::Value::as_table) {
+        for (key, partner) in partners {
+            if key == "deed" {
+                continue;
+            }
+            if let Some(label) = partner
+                .as_table()
+                .and_then(|p| p.get("interest_ledger"))
+                .and_then(toml::Value::as_str)
+            {
+                ledger_labels.insert(label.to_string());
+            }
+        }
+    }
     if let Some(toml::Value::Table(t)) = cfg.get_mut("ledger_ids") {
         t.retain(|k, _| ledger_labels.contains(k));
     }
@@ -126,18 +147,51 @@ fn narrow_identity_tables(cfg: &mut toml::Table) {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let [test_id, rules_toml, client_toml, read_dir, python_dump, rust_out] = args.as_slice()
-    else {
-        return fail(
-            "usage: TEST_ID(cash_44ab|cash_payments_40a3) ENGINE_RULES_TOML CLIENT_TOML \
-             READ_DIR PYTHON_DUMP_JSON RUST_DUMP_OUT",
-        );
-    };
-    if !["cash_44ab", "cash_payments_40a3", "depreciation"].contains(&test_id.as_str()) {
+    let (test_id, rules_toml, client_toml, read_dir, python_dump, rust_out, report_json) =
+        match args.as_slice() {
+            [a, b, c, d, e, f] => (a, b, c, d, e, f, None),
+            [a, b, c, d, e, f, g] => (a, b, c, d, e, f, Some(g)),
+            _ => {
+                return fail(
+                    "usage: TEST_ID ENGINE_RULES_TOML CLIENT_TOML READ_DIR PYTHON_DUMP_JSON \
+                     RUST_DUMP_OUT [REPORT_TOTALS_JSON]",
+                )
+            }
+        };
+    const TESTS: [&str; 4] = [
+        "cash_44ab",
+        "cash_payments_40a3",
+        "depreciation",
+        "financial_statements",
+    ];
+    if !TESTS.contains(&test_id.as_str()) {
         return fail(format!(
-            "unknown TEST_ID {test_id:?}; expected cash_44ab, cash_payments_40a3 or depreciation"
+            "unknown TEST_ID {test_id:?}; expected one of {TESTS:?}"
         ));
     }
+    if report_json.is_some() && test_id != "financial_statements" {
+        return fail("REPORT_TOTALS_JSON applies to financial_statements only");
+    }
+    let report_totals = match report_json {
+        None => None,
+        Some(path) => {
+            let parsed: serde_json::Value = match std::fs::read_to_string(path)
+                .map_err(|e| e.to_string())
+                .and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string()))
+            {
+                Ok(v) => v,
+                Err(e) => return fail(format!("{path}: {e}")),
+            };
+            let Some(net_profit_paise) = parsed["net_profit_paise"].as_i64() else {
+                return fail(format!("{path}: net_profit_paise is not an integer"));
+            };
+            Some(ReportTotals {
+                net_profit_paise,
+                closing_stock_paise: parsed["closing_stock_paise"].as_i64(),
+                source: parsed["source"].as_str().map(str::to_string),
+            })
+        }
+    };
 
     // The vendored rules excerpt against the live source.
     let source = match std::fs::read_to_string(rules_toml) {
@@ -210,6 +264,9 @@ fn main() -> ExitCode {
     let rust = match test_id.as_str() {
         "cash_44ab" => cash_44ab_on(&engagement, &book, &rules),
         "cash_payments_40a3" => cash_payments_40a3_on(&engagement, &book, &rules),
+        "financial_statements" => {
+            financial_statements_on(&engagement, &book, &rules, report_totals.as_ref())
+        }
         _ => depreciation_on(&engagement, &book, &rules),
     };
     let rust = match rust {
