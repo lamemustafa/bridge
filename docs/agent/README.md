@@ -235,7 +235,8 @@ The four rest on different observations, and each build reports its own in
   [reference §9.13](../tally/TALLY_PROTOCOL_REFERENCE.md). These three are
   admitted with two or more entries (at least one debit and one credit, no
   ledger on both sides; more than two is bridge#466, owner-pending and not yet
-  qualified live) with no voucher number and no reference, and every leg on
+  qualified live, so such a voucher reports `live_evidence` as `none_recorded`
+  and its build result warns so) with no voucher number and no reference, and every leg on
   their money side must be a ledger whose live group
   ancestry reaches a reserved `Bank Accounts`, `Cash-in-Hand` or `Bank OD A/c`
   identity, while

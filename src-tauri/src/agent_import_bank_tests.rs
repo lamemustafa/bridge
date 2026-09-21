@@ -604,12 +604,71 @@ async fn a_payment_and_receipt_batch_builds_against_the_captured_masters() {
             .any(|warning| warning.contains("Confirm the loaded company before importing")),
         "company-identity warning missing from a bank batch: {warnings:?}"
     );
+    assert!(
+        !warnings
+            .iter()
+            .any(|warning| warning.contains("more than two entries")),
+        "a two-entry bank batch must not carry the multi-entry warning: {warnings:?}"
+    );
+    assert_eq!(
+        result["live_evidence"],
+        json!([{"observation":"licensed_bank_voucher_import",
+            "report":"docs/tally/TALLY_PROTOCOL_REFERENCE.md",
+            "voucher_types":["Payment","Receipt"]}])
+    );
     assert!(result["next_step"]
         .as_str()
         .unwrap()
         .starts_with("Confirm the loaded company matches this batch"));
     // A cash/bank payload reads the group collection twice, exactly as it reads
     // the catalogue twice, and the whole sequence is consumed.
+    assert_eq!(simulator.finish().expect("requests").len(), 44);
+}
+
+/// bridge#466 through the tool call, not the builder: a three-entry Receipt
+/// passes argument validation, admission and both group reads, writes a file,
+/// and says in its own result that the shape is owner-pending and has no live
+/// observation — it must not borrow §9.13's two-entry evidence.
+#[tokio::test]
+async fn a_multi_entry_receipt_builds_through_tools_call_and_says_it_is_unqualified() {
+    let payload: ImportPayload = serde_json::from_value(json!({"company_guid":CAPTURED_GUID,"vouchers":[
+        {"bridge_txn_id":"txn-001","date":"2026-09-01","voucher_type":"Receipt","narration":"Shared deposit",
+         "entries":[{"ledger":"Cash","amount":"20.00","side":"Dr"},
+                    {"ledger":"Bridge Nested Debtor WR4","amount":"12.50","side":"Cr"},
+                    {"ledger":"WR2 Sales","amount":"7.50","side":"Cr"}]}
+    ]}))
+    .expect("multi-entry payload");
+    let simulator = SequenceSimulator::spawn(bank_build_plans()).expect("bank build plan");
+    let directory = tempfile::tempdir().unwrap();
+    let response = bank_server(directory.path(), simulator.address().port())
+        .call_tool_response("build_import_xml", serde_json::to_value(&payload).unwrap())
+        .await
+        .value;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(result["voucher_count"], 1, "{response}");
+    assert_eq!(
+        result["live_evidence"],
+        json!([{"observation":"none_recorded",
+            "report":"docs/tally/TALLY_PROTOCOL_REFERENCE_VOUCHER_WRITES.md",
+            "voucher_types":["Receipt"]}])
+    );
+    let warnings = result["warnings"].as_array().expect("warnings array");
+    assert!(
+        warnings.iter().any(|warning| warning
+            .as_str()
+            .unwrap()
+            .contains("more than two entries has not been imported into live Tally")),
+        "multi-entry warning missing: {warnings:?}"
+    );
+    let xml = std::fs::read_to_string(
+        directory
+            .path()
+            .join("imports")
+            .join(format!("{}.xml", result["batch_id"].as_str().unwrap())),
+    )
+    .expect("written import file");
+    assert_eq!(xml.matches("<ALLLEDGERENTRIES.LIST>").count(), 3, "{xml}");
+    assert!(xml.contains("<PARTYLEDGERNAME>Bridge Nested Debtor WR4</PARTYLEDGERNAME>"));
     assert_eq!(simulator.finish().expect("requests").len(), 44);
 }
 
