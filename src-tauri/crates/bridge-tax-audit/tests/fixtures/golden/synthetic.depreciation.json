@@ -707,8 +707,8 @@
         }
       ],
       "evidence": [],
-      "title_sha256_16": "0dbcc88cae0ce011",
-      "title_text": "Book depreciation differs from Income-tax Act depreciation",
+      "title_sha256_16": "ca338f76e6b74239",
+      "title_text": "Book vs Income-tax Act depreciation",
       "limits_sha256_16": "f31eb17ebd747cc9",
       "limits_text": [
         "Put-to-use date is assumed = purchase/voucher date for every addition not overridden in put_to_use_by_voucher; no separate commissioning/technical-person certificate is visible in Tally.",

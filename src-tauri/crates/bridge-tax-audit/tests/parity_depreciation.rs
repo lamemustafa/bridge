@@ -236,3 +236,30 @@ fn empty_against_empty_is_refused() {
         Err(ParityMismatch(_))
     ));
 }
+
+fn book_vs_act_mut(doc: &mut Value) -> &mut Value {
+    doc["findings"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|f| f["id"] == "depreciation/book_vs_act")
+        .unwrap()
+}
+
+/// The finding's title is part of parity: a Rust port still emitting the old title ("Book
+/// depreciation differs from Income-tax Act depreciation", which asserted a difference even at
+/// zero; its hash is the one the previous golden carried) must be caught.
+#[test]
+fn the_old_book_vs_act_title_is_reported() {
+    let mut rust = rust_dump();
+    let f = book_vs_act_mut(&mut rust);
+    assert_eq!(f["title_text"], "Book vs Income-tax Act depreciation");
+    f["title_text"] = json!("Book depreciation differs from Income-tax Act depreciation");
+    f["title_sha256_16"] = json!("0dbcc88cae0ce011");
+    let d = diffs(&rust);
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert!(
+        d[0].starts_with("depreciation/book_vs_act: title text differs"),
+        "{d:?}"
+    );
+}
