@@ -81,6 +81,18 @@ const LOWER_UNCHANGED: [u32; 55] = [
     0x16EB5, 0x16EB6, 0x16EB7, 0x16EB8,
 ];
 
+/// Python 3.13's `str.isspace()` for one character: Rust's `char::is_whitespace` plus
+/// U+001C..=U+001F, which Python counts as whitespace and Rust does not (measured over every code
+/// point: the only difference).
+pub(crate) fn py_isspace(c: char) -> bool {
+    c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
+}
+
+/// Python 3.13's `str.strip()` with no argument.
+pub(crate) fn py_strip(text: &str) -> &str {
+    text.trim_matches(py_isspace)
+}
+
 /// Python 3.13's `str.upper()`: full Unicode case mapping, pinned to Unicode 15.1.0.
 pub(crate) fn py_upper(text: &str) -> String {
     text.chars()

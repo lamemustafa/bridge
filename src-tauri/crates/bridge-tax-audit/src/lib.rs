@@ -235,7 +235,7 @@ impl Engagement {
                     .and_then(|s| TallyDate::parse(s.replace('-', "")).ok())
                     .ok_or_else(bad)?;
                 Ok(CompanyPin {
-                    guid: guid.to_ascii_lowercase(),
+                    guid: crate::support::py_lower(guid),
                     books_from,
                 })
             })

@@ -104,7 +104,7 @@ fn parse_identity_table(cfg: &toml::Table, table: &str) -> Result<BTreeMap<Strin
     for (label, v) in raw {
         let (guid, masterid) = match v {
             toml::Value::String(s) => {
-                let g = s.trim().to_string();
+                let g = crate::support::py_strip(s).to_string();
                 (if g.is_empty() { None } else { Some(g) }, None)
             }
             toml::Value::Table(t) => {
@@ -118,7 +118,7 @@ fn parse_identity_table(cfg: &toml::Table, table: &str) -> Result<BTreeMap<Strin
                 let guid = match t.get("guid") {
                     None => None,
                     Some(toml::Value::String(s)) => {
-                        let g = s.trim().to_string();
+                        let g = crate::support::py_strip(s).to_string();
                         (!g.is_empty()).then_some(g)
                     }
                     Some(_) => {
@@ -214,9 +214,11 @@ fn resolve_ids(
     let mut by_guid: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut by_mid: BTreeMap<i64, Vec<String>> = BTreeMap::new();
     for (name, m) in masters {
-        if !m.guid.is_empty() {
+        // The reference: `g = (m.guid or "").strip()`, then `if g:`, keyed by `g.lower()`.
+        let g = crate::support::py_strip(&m.guid);
+        if !g.is_empty() {
             by_guid
-                .entry(crate::support::py_lower(&m.guid))
+                .entry(crate::support::py_lower(g))
                 .or_default()
                 .push(name.clone());
         }
@@ -824,6 +826,20 @@ mod tests {
         assert_eq!(d.identity, G_CASH);
         assert_eq!(d.paths, vec!["roles.cash_groups".to_string()]);
         assert_eq!(d.label_now_on, None);
+    }
+
+    /// The reference keys masters by `guid.strip().lower()` and looks a configured GUID up the same
+    /// way, with Python's whitespace (U+001C..U+001F included) and full case mapping.
+    #[test]
+    fn a_guid_binds_whatever_its_case_and_python_whitespace() {
+        let upper = G_CASH.to_uppercase();
+        let e = engagement(&format!(
+            "\n[group_ids]\n\"Cash-in-Hand\" = \"\u{a0}{upper}\u{2003}\"\n"
+        ));
+        let b = book("Cash In Hand (New)", &format!("\u{1c}{G_CASH}\u{1f}"), None);
+        let (bound, report) = e.bind(&b).unwrap();
+        assert_eq!(bound.cash_groups, vec!["Cash In Hand (New)".to_string()]);
+        assert_eq!(report.bound_by_id, 1);
     }
 
     #[test]

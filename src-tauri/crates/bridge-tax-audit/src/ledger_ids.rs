@@ -27,13 +27,15 @@ fn missing_guid(what: &str) -> AuditError {
     AuditError::MissingGuid(what.to_string())
 }
 
-/// Trim surrounding whitespace, then lowercase (ASCII only -- a Tally GUID is hex digits and
-/// hyphens). Two engines, or two Tally exports of the same GUID in different casing, must agree
+/// Strip surrounding whitespace, then lower-case, exactly as the reference's `str.strip().lower()`
+/// (Python's whitespace and Unicode 15.1 case mapping: `support::py_strip`, `py_lower`). A Tally
+/// GUID is hex digits and hyphens, but a read carrying anything else must still tag as the
+/// reference tags it. Two engines, or two Tally exports of the same GUID in different casing, must agree
 /// on the same tag; the binding logic elsewhere in this stack already treats GUIDs as
 /// case-insensitive, so the tag has to match that, not hash the raw bytes
 /// (`docs/tax-audit/parity-spec-v1.md` §11).
 fn normalize_guid(guid: &str) -> String {
-    guid.trim().to_ascii_lowercase()
+    crate::support::py_lower(crate::support::py_strip(guid))
 }
 
 /// Short, stable, non-reversible-in-practice tag for a figure/finding/evidence id, from a Tally
