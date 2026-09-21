@@ -113,9 +113,17 @@ impl Server {
             evidence_from_runtime_read(crate::tally::runtime::RuntimeReadEvidence::empty());
         let mut received_response = None;
         let operation: Result<ToolOutcome, ToolFailure> = async {
-            let _xml = admit_saved_journal_integrity(&line, &self.settings.endpoint)?;
+            let xml = admit_saved_journal_integrity(&line, &self.settings.endpoint)?;
             if snapshot.dispatched {
                 return self.verify_import(args).await;
+            }
+            // The record's own hash only proves the record agrees with itself.
+            // The file Bridge built must hold exactly the XML this record
+            // renders (bridge#575). The native post below re-renders the same
+            // vouchers from the same record, differing only in a fresh private
+            // REMOTEID, so every accounting field it sends is the one checked.
+            if self.read_persisted_import_xml(batch_id)? != xml.as_bytes() {
+                return Err("import_batch_changed".to_string().into());
             }
             let preview = admit_fresh_saved_journal(&line, &self.settings.endpoint)?;
             // Number matching precedence is not qualified for native Create.

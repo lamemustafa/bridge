@@ -3,6 +3,12 @@
 Status: accepted for the safety contract; transport dispatch is not yet
 enabled.
 
+**Amended 2026-09-21 (Deviation, 2026-09-08: #236).** The line above is
+superseded in part: transport dispatch *is* enabled for one path,
+`post_import`, which shipped without citing this ADR.
+The text below is kept as written; read the **Amendment** at the end before
+relying on it as a description of current behavior.
+
 ## Decision
 
 Writes require an observed runtime capability, explicit operator opt-in, a
@@ -54,3 +60,165 @@ derived commitments separately before runtime wiring is considered. Fixture
 enrollment is local, explicit, and revocable; it stores only durable local
 commitments and safe status. It is not proof that a company is disposable, is
 not a Tally write, and is insufficient to arm a generic write path.
+
+## Amendment — Deviation, 2026-09-08: #236
+
+### What happened
+
+On 2026-09-08, #236 (`e1ea3c86`) added `post_import`, which posts one saved
+Journal to Tally over the XML gateway after a native operator approval. #238
+(`ea6a4219`) added a desktop action that uses the same service. Neither change
+cited this ADR or edited it. So from that date this ADR's status line ("transport
+dispatch is not yet enabled") and its Consequences ("every prepared write
+remains ineligible for dispatch") were false. This amendment records the
+deviation. The owner chose to document it rather than withdraw the path. The
+amendment changes no code.
+
+The owner accepted #236's scope on 2026-09-08 as a "quiet-company" first
+version: the approval tells the operator to pause other edits and imports and
+to keep the company and Tally mode unchanged until Bridge finishes. Support
+for concurrent external changes is open as #239.
+
+### Scope of the dispatching path
+
+Evidence base: master `4f050da`. Re-checked at `529bc12b` (for #572, #576, #577, #578 and
+#579): the "What it can send", aiming and gates bullets, rows 2, 6, 12 and 14, and
+follow-ups 3, 9, 10 and 12. The code diff since `4f050da` leaves the other rows accurate. Code paths are relative to `src-tauri/src/` unless another
+root is shown (`packaging/`, `src-tauri/tests/`, `src-tauri/crates/`, `src-tauri/src/db/`).
+
+- **Entry points.** The MCP tool `post_import` (`agent.rs`, `tool_payload`)
+  and the desktop "post a saved Journal" action
+  (`agent_desktop_journal.rs`, `DesktopJournalService::post`) both call
+  `post_import_checked` (`agent_import_post.rs`).
+- **What it can send.** Exactly one voucher per call, of type Journal, from a
+  batch Bridge built and saved earlier under the `BatchV1` identity scheme.
+  Enforced in `admit_saved_journal_integrity`: one voucher, Journal only,
+  amendments refused (`import_post_amendment_requires_file_import`). For a
+  batch not yet dispatched, before any request to Tally, the post path reads
+  the batch file Bridge persisted at build time
+  (`Server::read_persisted_import_xml`: the leaf is not followed if it is a
+  symlink, and it must be a regular, single-link file, owned by the current
+  user on Unix, size-capped) and requires it to equal,
+  byte for byte, the XML the journal record renders (#578). A difference
+  refuses with `import_batch_changed`; a missing file refuses with
+  `import_persisted_file_unavailable`. The native post re-renders the same
+  vouchers from that record, differing only in a fresh private REMOTEID, so
+  every accounting field it sends is one the check covered. This proves
+  that the record and the saved file agree. It is not proof that Bridge
+  wrote them, because anyone able to write both files in the private data
+  directory can make them agree. The native approval, which renders the same
+  record, remains the effective gate. Tally numbers the voucher
+  (`require_native_numbering`). The rendered review must fit a native message
+  box (`admit_fresh_saved_journal`: at most 1,600 characters, 24 lines, and
+  100 characters per line).
+- **What it cannot send.** Masters, other voucher types, multi-voucher
+  batches, alters and deletes. No caller-supplied XML reaches the gateway:
+  the request is re-rendered from the saved batch
+  (`render_native_journal_xml`, `agent_import.rs`).
+- **How the write is aimed.** The import request names the company only by
+  name, through `SVCURRENTCOMPANY` (`render_import_envelope`,
+  `agent_import.rs`). It carries no GUID. TALLY_PROTOCOL_REFERENCE §9.11d
+  records that a mismatched name was observed to post into whichever company
+  Tally had loaded, reporting CREATED=1 and no error. On this path, what stands
+  in for aiming is the in-queue recheck: the GUID-bound company identity,
+  last checked immediately before the POST, and, earlier in the same queued
+  operation, a unique name among the loaded companies, trimmed and compared
+  ignoring ASCII case (`post_approved_import`; `require_unique_company_scope`,
+  `tally/approved_import.rs`). That recheck, plus the quiet-company assumption,
+  is what keeps the write aimed. A change in the gap between the recheck and
+  the POST is not prevented: for example, the company being renamed so that
+  the request's name no longer matches it. (§9.11d: a name that did not match
+  the loaded company was observed to post into it, while a named company that
+  exists but is not loaded was observed to fail closed.) The
+  GUID-bound readback would then report the voucher as not found, giving
+  `reconciliation_required`. The misdirected voucher would stay in the other
+  company, with no rollback, and reconciliation reads only the intended company.
+  Nor can Bridge delete it over XML: see row 14 and #579.
+- **Gates.** For the CLI, `BRIDGE_AGENT_ENABLE_WRITES=true`, otherwise
+  `import_posting_disabled` (`agent.rs`) and the tool is absent from discovery
+  (`agent_catalog.rs`). In the MCPB, the "Allow Journal posting" setting
+  defaulted to **on** from #236 and defaults to **off** since #577
+  (`packaging/mcpb/manifest.json`, `enable_writes`). The
+  desktop service sets `writes_enabled: true` unconditionally
+  (`agent_desktop_journal.rs`, `Settings::for_desktop_journal`). The
+  environment flag gates only the MCP tool. A server run with
+  `BRIDGE_AGENT_ENABLE_IMPORT=true` and writes off still builds Journals
+  (`agent.rs`), and the MCPB sets that flag unconditionally
+  (`packaging/mcpb/manifest.json`, `mcp_config.env`) and no data directory.
+  So a default MCPB install prepares Journals, with posting off, into the
+  default data directory, which the desktop also uses when its own environment
+  names no other; the desktop can post them. Default-off removes the model's
+  `post_import`, not posting: the desktop's pick-then-post flow and the
+  native approval (the enforced gate) still stand between it and Tally. An install from before #577 may still have "on" saved
+  (`docs/agent/INSTALL.md`).
+- **A separate, non-shipping dispatch path.** `TallyRuntime::post_lab_import`
+  (`tally/runtime.rs`) posts XML without approval or the journal. It is
+  compiled only with the `lab-writes` Cargo feature, which no CI workflow
+  enables (`tests/lab_writes_ci_gate.rs`). At runtime it also requires
+  `BRIDGE_LAB_WRITES=1`, port 9001 and a matching target and deny-list GUID
+  set, but not `BRIDGE_AGENT_ENABLE_WRITES`. It posts masters and
+  multi-voucher batches. The CI gate test scans only `.github/workflows`. The
+  lab path is outside this amendment's map. It is noted so that "one
+  dispatching path" is not read as "one dispatch call site".
+
+### Clause-by-clause map
+
+"Met" means the code enforces the clause on the path above. "Partly" and
+"Not met" name exactly what is missing. The map describes code. The only live
+evidence is #236's own report that a desktop build posted a
+human-approved synthetic Journal and reconciled it without a resend. That
+report was not re-run for this amendment. #236 records live posts only through
+the desktop caller. It states that interactive Windows approval and live
+Gold/Education posting were untested.
+
+| # | ADR 0004 requirement | Status | How #236 meets it, or what is missing |
+|---|---|---|---|
+| 1 | Observed runtime capability | Partly | `qualified_import_profile` (`agent_import.rs`) requires freshly observed TallyPrime in Licensed or Education mode, with `ProductAndMode` Supported/Observed. This is product/mode capability, not observed *write* capability: nothing requires a prior observed write, and the Capability Passport is neither read nor upgraded. |
+| 2 | Explicit operator opt-in | Partly | The CLI is opt-in (above). The MCPB exposed posting to the model by default until #577 made "Allow Journal posting" off by default (an earlier install may still have "on" saved); with it on, the per-post native approval (row 7) is the only further opt-in. Journals the MCPB prepares with posting off can still be posted from the desktop (see Gates). In the desktop, pick, review, then post (`commands.rs`: `desktop_pick_journal_for_review`, `desktop_post_reviewed_journal`) is a UI convention: the post IPC takes a batch id, digest and company GUID from the webview and is not bound to an earlier pick. The native dialog is the enforcing gate there too. |
+| 3 | Synthetic company during initial validation | Not met | Nothing restricts posting to a synthetic or enrolled company. Any company that passes identity admission is eligible. |
+| 4 | Backup guidance acknowledgement | Not met | The approval preview (`admit_fresh_saved_journal`) and dialog (`tally/approved_import.rs`, `show_review`) contain no backup guidance and record no acknowledgement. |
+| 5 | Small batches | Met | Exactly one Journal per call (`admit_saved_journal_integrity`), under a review-size cap. Stricter than the ADR requires. |
+| 6 | Exact validation and preview commitments | Partly | Validation is exact. Before approval, the saved batch is re-hashed and compared byte for byte with the saved file (#578), and the company tuple, the date against `BOOKSFROM`, duplicate absence, and every ledger (exact match, bound by identity through `bind_selected`) are checked. After approval, inside the endpoint queue, the company identity and unique name scope, the date against the observed mode's boundary, ledger identity and duplicate absence are checked again (`post_approved_import`, `recheck_import_admission`); `BOOKSFROM` is not. The preview is rendered from the same saved batch, and `ApprovedImport` carries the XML rendered before approval (the operator sees the preview, not the XML). But the preview text is not committed: no digest of what the operator saw is persisted. |
+| 7 | Approval evidence | Partly | Approval runs in a separate native-dialog subprocess, so the model never supplies an approval boolean (`approved_import.rs`: `confirm`, `run_confirmation`). Decline and a 120 s timeout both refuse. On Windows only `IDYES` counts, but interactive Windows approval is untested (#236). No approval record is written: the durable intent (row 8) implies approval but carries no approval time or preview digest. |
+| 8 | Durable idempotency reservation | Met, by a different mechanism | Before the POST, `StatusRecord::dispatch_native` is appended and `sync_data`-flushed to `agent-import-ledger.jsonl`, under the admission lock, after a check that the batch was not already dispatched or changed (`post_import_checked`, the `before_dispatch` closure). A cross-process lease covers intent, the POST, the response append and readback (`dispatch_lease::acquire`). A dispatched batch is only ever reconciled, never re-sent. This is not the `tally_import_idempotency_state` or outbox tables of migration `0003_tally_safe_writes.sql`, which `post_import` does not use. |
+| 9 | Parser-derived Tally counters | Met | `parse_import_outcome` (`bridge-tally-protocol`, `import_outcome.rs`). A clean response requires every counter to be reported, and exactly created 1, altered 0, deleted 0, with zero ignored, errors, cancelled, exceptions and line errors (`is_clean_success_for(1, 0, 0)`), and an application status other than failure (`import_outcome_is_clean`). |
+| 10 | Strict company-bound read-after-write verification | Met, for detection | Readback is mandatory (`verify_import_after_current_dispatch`). It is bound to the verified company GUID and compares accounting entries, not the response. `posted_verified` requires both a clean response and a verified readback (`finalize_current_dispatch`). It detects a write that did not land in the intended company, but it cannot prevent one or find where it went (see "How the write is aimed"). |
+| 11 | First-write canary rule: one sealed synthetic ledger-canary candidate, fixture enrollment with disposable-company and backup acknowledgements, no Passport upgrade | Not met | The first dispatched write was a Journal, not a ledger canary. `post_import` does not consult the write-fixture enrollment (`commands.rs`, `enroll_tally_write_fixture`), which exists but gates nothing on this path. The one part that holds: no Passport upgrade. |
+| 12 | Lifecycle, outcome-unknown after bytes may have been sent, no automatic retry, no rollback | Met, with different terminal names | draft (`build_import_xml`) → validate → preview → approve (native) → arm (lease plus durable intent) → send (`ReadRetryPolicy::SINGLE_ATTEMPT`) → parse → verify. Terminal states are `posted_verified` and `reconciliation_required`. The ADR's separate `partial` and `failed` verdicts are folded into `reconciliation_required`. An error from `post_approved_import` maps to `import_dispatch_outcome_unknown`, except its four named admission refusals and an in-queue unobserved product/mode boundary, which keep their own codes (the latter `financial_read_profile_unqualified`), including errors *before* the intent was recorded, where `attempt_recorded: false` says no attempt exists. Failures earlier in `post_import_checked` keep their own codes. Current-dispatch responses carry `resent: false` and `automatic_retry: false`, and reconciliation responses carry `resent: false`, but `reconciliation_failure_payload` carries neither. No code path re-sends. No rollback is claimed or implemented, and none is possible over XML today, because the REMOTEID a native post sends is not recorded (#579). |
+| 13 | Domain-separated commitments for wire bytes, canonical intended state, import response, canonical readback state and identity coverage; opaque parser-derived evidence; line-error text reduced to digests | Partly | Import response: the parser's `response_sha256` is domain-separated (`import_outcome.rs`, `domain_sha256`) and is stored inside `DispatchResponse.outcome`. Line errors: kept only as ordered domain-separated digests. Counts: parser-derived only, so a caller cannot assert them. Wire bytes: `DispatchResponse.request_sha256` and `response_sha256` are plain SHA-256 over the wire bytes, not domain-separated. Canonical intended state: the batch `sha256` is plain SHA-256 over the rendered XML. Canonical readback state: only the read evidence's response digest exists. Identity coverage: no commitment exists. |
+| 14 | First qualification profile: ledger-only create/alter, RemoteID-bound preflight, exact counts, a lost response stays unknown | Partly | Counts are exact (row 9). A lost response is never promoted: without a clean persisted response, the verdict stays `reconciliation_required` even if a later readback matches (`finalize_current_dispatch`, `finalize_previous_attempt_reconciliation`). But the profile is voucher create, not ledger create/alter. The preflight is not RemoteID-bound. Each post uses a fresh random `REMOTEID`, so a public file's REMOTEID is never upserted. That value is recorded nowhere, and a voucher export shows Tally's own GUID as its REMOTEID; a delete keyed by that GUID was refused in the 21-Sep lab ("Voucher does not exist!"), so Bridge cannot delete or locate its own posts by REMOTEID (#579). Duplicate absence is checked over the batch's date window, by the `[BRIDGE:…]` narration attribution or an accounting-content fingerprint (`verify_batch`, `agent_import_verification.rs`), twice, inside the queue (`require_absent_verification_result`, `recheck_import_admission`). |
+| 15 | Consequences: private deterministic import bytes; no public byte getter or transport adapter; every prepared write ineligible for dispatch; legacy caller-attested rows not promotable; a migration persisting opaque derived commitments before runtime wiring; fixture enrollment local, explicit, revocable | Partly | No public byte getter: `ApprovedImport::xml` is `pub(super)`. Not met: the native bytes are not deterministic (a fresh `Uuid::new_v4()` REMOTEID on each render). Not met: a transport path now exists (`post_approved_import`), and prepared Journals are eligible for dispatch. Not met: no migration preceded the wiring; the path persists to the JSONL journal instead. Not applicable: the legacy caller-attested rows belong to the database contract, which this path does not use. Fixture enrollment is local, explicit and revocable, and irrelevant to this path (row 11). |
+
+### Follow-ups
+
+These are listed and not fixed here. Each one is either an implementation change,
+or an owner decision to amend the requirement instead:
+
+1. **Synthetic-company and canary gating (rows 3, 11).** Either require write-fixture enrollment
+   before `post_import`, or record the owner's decision that a single
+   human-approved Journal on any admitted company replaces the canary rule.
+2. **Backup acknowledgement (row 4)** in the approval, or an explicit decision to drop it.
+3. **Default opt-in (row 2).** The MCPB default of posting-on is resolved by #577 (now off),
+   except for installs that kept an earlier saved "on". Open: the desktop service's
+   unconditional `writes_enabled`, which can post Journals the MCPB prepared with posting off.
+4. **Approval evidence (rows 6, 7).** Persist a digest of the approved preview, and the approval
+   time, in the dispatch intent.
+5. **Domain-separated request and response commitments (row 13).**
+6. **Three write contracts.** The migration `0003` outbox and idempotency tables, the
+   canary reservation, dispatch-attempt and final-verdict tables of migrations `0015`–`0021`
+   (`db/tally_mirror.rs`), and the `agent-import-ledger.jsonl` journal. Only the journal has a
+   runtime caller. Decide which one is authoritative, and retire or connect the others.
+7. **Write capability in the Passport (row 1).** Decide whether a verified post
+   should become observed write evidence, and under what rule.
+8. **Concurrent external changes:** #239 (accepted limitation).
+9. **Aiming by name (scope, "How the write is aimed"), #574.** Narrow or close the gap between the
+   in-queue identity recheck and the POST, or record it as accepted with #239.
+10. **Batch record integrity (scope, "What it can send"), #575. Resolved by #578.** The post
+    path now re-checks the saved file's bytes, as the desktop review already did, and both use one
+    reader. Residual, by decision: the record and file are trusted local state against anyone who
+    can write both in the private data directory; the native approval is the gate for that case.
+11. **Test the call-time refusal.** No test references `import_posting_disabled` (`agent.rs`); only
+    the tool's absence from discovery is tested.
+12. **Record the REMOTEID a native post sends, #579.** Today it is recorded nowhere, so a
+    natively posted voucher cannot be deleted, located by REMOTEID, or rolled back over XML.
+    That limits recovery from a misdirected post (#574) and any future rollback.

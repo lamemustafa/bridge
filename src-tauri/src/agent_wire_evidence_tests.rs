@@ -200,7 +200,10 @@ async fn write_shaped_adapter_request_is_refused_before_any_transport() {
         let request = format!("<ENVELOPE><HEADER><TALLYREQUEST>{operation}</TALLYREQUEST><TYPE>Collection</TYPE></HEADER><BODY/></ENVELOPE>");
         assert_eq!(
             server
-                .post_read(&identity, request)
+                .post_read(
+                    &identity,
+                    crate::agent::read_profiles::ReadRequest::unrendered_for_test(request)
+                )
                 .await
                 .err()
                 .unwrap()
@@ -319,6 +322,44 @@ async fn paired_transport_refusal_retains_completed_catalogue_through_tool_and_h
             history["structuredContent"]["result"]["records"][0],
             *evidence
         );
+    }
+}
+
+/// #555: a paired read whose two halves differ is refused, as before, and the
+/// refusal now says why. The control runs the same tool call over identical halves.
+#[tokio::test]
+async fn divergent_paired_read_refusal_names_its_cause_and_identical_halves_pass() {
+    for diverge in [true, false] {
+        let mut plans = import_cycle_plans()[..10].to_vec();
+        if diverge {
+            let first = plans[5].fixture.body().into_owned();
+            let second = first.replacen("Cash", "Changed Cash", 1);
+            assert_ne!(first, second);
+            plans[7].fixture = Fixture::SyntheticXml(second);
+            // The pair is compared after its closing health check, so the
+            // refusal comes before the closing identity bracket is sent.
+            plans.truncate(9);
+        }
+        let simulator = SequenceSimulator::spawn(plans).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let mut server = server_for(simulator.address(), directory.path());
+        server.settings.import_enabled = true;
+        let response = server
+            .call_tool(
+                "validate_masters",
+                json!({"company_guid":CAPTURED_GUID,"ledgers":["Cash"]}),
+            )
+            .await;
+        let error = &response["structuredContent"]["result"]["error"];
+        if diverge {
+            assert_eq!(response["isError"], true, "{response}");
+            assert_eq!(error["code"], "agent_runtime_read_failed");
+            assert_eq!(error["cause"], "native_report_pair_changed");
+        } else {
+            assert_eq!(response["isError"], false, "{response}");
+            assert!(error.is_null(), "{response}");
+        }
+        simulator.finish().unwrap();
     }
 }
 

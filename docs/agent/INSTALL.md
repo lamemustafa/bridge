@@ -54,9 +54,14 @@ actually on.
 4. Save the extension settings and restart Claude Desktop if its tools are not
    visible. In a new chat, use **Connectors** to confirm Bridge is connected.
 
-Journal preparation and posting are available by default. Every new posting
-requires your approval in a separate Bridge dialog. Turn off **Allow Journal posting**
-in the extension settings for a read-only connector.
+Journal file preparation and bank-statement parsing are available by default;
+they write nothing to Tally. **Journal posting is off by default** while two
+known limits remain. The post names its company only by name, so if that company is renamed in the moment between Bridge's checks and the post, the voucher is still sent, and where Tally then puts it is not yet established (bridge#574). And Bridge cannot delete or roll back a voucher it
+has posted, so a wrong post must be corrected by hand in Tally (bridge#579).
+Turning on **Allow Journal posting** in the extension settings adds
+posting; every new posting still requires your approval in a separate Bridge
+dialog. Leave it off unless you accept those risks. If you installed an earlier
+version, check the setting: an earlier default may still be saved as on.
 
 Native posting currently accepts one Journal with existing ledgers and no supplied
 voucher number. Tally assigns the number. Bridge uses a private request identity
