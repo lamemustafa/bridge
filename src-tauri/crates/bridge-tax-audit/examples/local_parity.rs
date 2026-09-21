@@ -162,7 +162,9 @@ fn main() -> ExitCode {
         };
     let Some(test) = registry::find(test_id) else {
         let ids: Vec<&str> = registry::PORTED.iter().map(|t| t.id).collect();
-        return fail(format!("unknown TEST_ID {test_id:?}; expected one of {ids:?}"));
+        return fail(format!(
+            "unknown TEST_ID {test_id:?}; expected one of {ids:?}"
+        ));
     };
     if report_json.is_some()
         && !["financial_statements", "applicability_44ab"].contains(&test_id.as_str())
