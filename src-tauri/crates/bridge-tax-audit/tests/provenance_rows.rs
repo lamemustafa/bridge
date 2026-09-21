@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Every golden and every edge book has a byte row -- "| `file` | bytes | `sha256` | `path` |" --
+//! Every golden, every edge book and every root-level JSON fixture has a byte row -- "| `file` | bytes | `sha256` | `path` |" --
 //! in some Markdown file under `tests/fixtures` (`PROVENANCE.md`, or a batch's
 //! `provenance/<batch>.md`), and this test checks that row itself: the file-name cell names the
 //! file, the byte count is the file's size and the SHA-256 is its hash. The repository's
@@ -42,10 +42,23 @@ fn every_golden_and_edge_book_has_a_correct_byte_row() {
     let mut rows = Vec::new();
     markdown_rows(&root, &mut rows);
     let mut problems = Vec::new();
+    let mut files: Vec<(String, String)> = Vec::new();
     for dir in ["golden", "edge-books"] {
         for entry in std::fs::read_dir(root.join(dir)).unwrap() {
             let name = entry.unwrap().file_name().into_string().unwrap();
-            let rel = format!("{dir}/{name}");
+            files.push((format!("{dir}/{name}"), name));
+        }
+    }
+    // The JSON fixtures at the root too (the probe file, the caller data).
+    for entry in std::fs::read_dir(&root).unwrap() {
+        let p = entry.unwrap().path();
+        if p.is_file() && p.extension().is_some_and(|x| x == "json") {
+            let name = p.file_name().unwrap().to_str().unwrap().to_string();
+            files.push((name.clone(), name));
+        }
+    }
+    {
+        for (rel, name) in files {
             let bytes = std::fs::read(root.join(&rel)).unwrap();
             let matching: Vec<_> = rows.iter().filter(|r| r.3 == rel).collect();
             let [(file, count, sha, _)] = matching.as_slice() else {
