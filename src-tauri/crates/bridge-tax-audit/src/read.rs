@@ -4,9 +4,13 @@
 //! [`Read::open`] admits a directory only if its manifest is well formed (C1), every path is
 //! safe (C2), every stored file and its decoded content match their declared sha256 and length
 //! (C3, for every part, consumed or not) and the part table is consistent (C4). [`Read::check`]
-//! then applies the rules that need the engagement: period (C5), high-water bracket (C6),
-//! voucher windows (C7) and Education-mode dates (C10). The remaining rules (C5 identity, C8,
-//! C9) need parsed vouchers and live in `book.rs`.
+//! then applies the rules that need the engagement: company pin and books-from (C5), period
+//! (C5), high-water bracket (C6), voucher windows (C7) and Education-mode dates (C10). The
+//! remaining rules (C5 identity, C8, C9) need parsed parts and live in `book.rs`.
+//!
+//! Company identity is (GUID, books_from), never the name: a Tally split company keeps its
+//! parent's GUID and begins its books on the split date, so the GUID alone lets a read of one
+//! pass as the other.
 //!
 //! The verified decoded content is kept in memory and is what the book parses, so the bytes
 //! parsed are the bytes hashed. Gzip blobs make one stored-byte verification pass before their
@@ -69,6 +73,14 @@ pub trait ReadStore {
     fn stored_blob(&self, path: &str) -> Result<Option<Box<dyn io::Read + '_>>>;
 }
 
+/// The company an engagement's reads must come from: `[client.tally]` `company_guid` and
+/// `books_from`. The GUID is kept lowercase; GUID case is not identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompanyPin {
+    pub guid: String,
+    pub books_from: TallyDate,
+}
+
 /// An inclusive date window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Window {
@@ -106,6 +118,8 @@ pub struct Read {
     /// The directory root for [`Read::open`], empty for a storage-backed read.
     pub root: PathBuf,
     pub company_guid: String,
+    /// `company.books_from`, when the manifest records it.
+    pub books_from: Option<TallyDate>,
     pub read_at: String,
     pub period: Window,
     pub education_mode: Option<bool>,
@@ -925,9 +939,9 @@ impl Read {
         if !is_uuid(company_guid) || string(company, "name", "company")?.is_empty() {
             return Err(schema("company guid or name is malformed"));
         }
-        if let Some(books_from) = opt_string(company, "books_from", "company")? {
-            iso_date(books_from, "company/books_from")?;
-        }
+        let books_from = opt_string(company, "books_from", "company")?
+            .map(|s| iso_date(s, "company/books_from"))
+            .transpose()?;
         let tally = obj(&top["tally"], "tally")?;
         has(tally, &["basis", "license_tier", "education_mode"], "tally")?;
         let basis = string(tally, "basis", "tally")?;
@@ -1052,6 +1066,7 @@ impl Read {
         Ok(Self {
             root,
             company_guid: company_guid.to_string(),
+            books_from,
             read_at: string(top, "read_at", "(root)")?.to_string(),
             period,
             education_mode,
@@ -1077,8 +1092,36 @@ impl Read {
         parts
     }
 
-    /// C5 (period), C6, C7, C10.
-    pub fn check(&self, period: &Window, allow_unbracketed: bool) -> Result<()> {
+    /// C5 (client pin, period, books-from), C6, C7, C10.
+    pub fn check(
+        &self,
+        period: &Window,
+        allow_unbracketed: bool,
+        pin: Option<&CompanyPin>,
+    ) -> Result<()> {
+        if let Some(pin) = pin {
+            if !self.company_guid.eq_ignore_ascii_case(&pin.guid) {
+                return Err(AuditError::refused(
+                    "C5-client",
+                    format!(
+                        "read of company {}, engagement is pinned to {}",
+                        self.company_guid, pin.guid
+                    ),
+                ));
+            }
+            if self.books_from.as_ref() != Some(&pin.books_from) {
+                return Err(AuditError::refused(
+                    "C5-client",
+                    format!(
+                        "read's company books begin {}, engagement is pinned to books beginning {}",
+                        self.books_from
+                            .as_ref()
+                            .map_or("unrecorded".to_string(), iso),
+                        iso(&pin.books_from)
+                    ),
+                ));
+            }
+        }
         if &self.period != period {
             return Err(AuditError::refused(
                 "C5-period",
@@ -1090,6 +1133,19 @@ impl Read {
                     iso(&period.to)
                 ),
             ));
+        }
+        if let Some(books_from) = &self.books_from {
+            if self.period.from < *books_from {
+                return Err(AuditError::refused(
+                    "C5-books-from",
+                    format!(
+                        "read period starts {}, before this company's books begin {} (a split \
+company keeps its parent's GUID)",
+                        iso(&self.period.from),
+                        iso(books_from)
+                    ),
+                ));
+            }
         }
         self.check_consistency(allow_unbracketed)?;
         self.check_windows()?;

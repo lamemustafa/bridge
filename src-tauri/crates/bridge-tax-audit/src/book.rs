@@ -610,6 +610,27 @@ pub fn load_book(read: &Read, company_name: &str) -> Result<Book> {
             ),
         ));
     }
+    // v1.1: BOOKSFROM is optional in the company part; when present it must agree with the
+    // manifest's company.books_from (identity is (GUID, books_from), not the GUID alone).
+    let part_books_from = company
+        .descendants_named("COMPANY")
+        .into_iter()
+        .map(|c| c.child_text("BOOKSFROM"))
+        .find(|b| !b.is_empty());
+    if let Some(part_books_from) = part_books_from {
+        let manifest_books_from = read.books_from.as_ref().map(|d| d.as_str());
+        if manifest_books_from != Some(part_books_from.trim()) {
+            return Err(AuditError::refused(
+                "C5-identity",
+                format!(
+                    "company part BOOKSFROM {part_books_from} != manifest company.books_from {}",
+                    read.books_from
+                        .as_ref()
+                        .map_or("unrecorded".to_string(), crate::read::iso)
+                ),
+            ));
+        }
+    }
     Ok(Book {
         company_name: company_name.to_string(),
         company_guid: guid.to_string(),

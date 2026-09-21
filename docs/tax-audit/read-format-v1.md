@@ -59,12 +59,12 @@ names the read passes both, and the producer refuses the call if the manifest ha
 | Field | Meaning |
 |---|---|
 | `format` | always `"tally-read"` |
-| `format_version` | `"MAJOR.MINOR"`, here `"1.0"` (section 8) |
+| `format_version` | `"MAJOR.MINOR"`, `"1.0"` or `"1.1"` (section 8) |
 | `read_id` | producer-assigned, unique |
 | `created_at` | when the manifest was written (ISO 8601 with offset) |
 | `read_at` | when the read represents the books. Book.read_at comes from here, and post-dated status is relative to it |
 | `producer` | `name`, `version`, `kind` ∈ {`bridge`, `legacy-wrap`, `capture-wrap`, `synthetic`}, `source` |
-| `company` | `guid` (identity), `name` (display only), `books_from` |
+| `company` | `guid` and `books_from` together are the identity (a Tally split company keeps its parent's GUID; section 8.1), `name` (display only), `number` (1.1, optional: Tally's COMPANYNUMBER, evidence only; it is a local load-order number, not stable across machines, and never part of identity) |
 | `tally` | `basis` ∈ {`observed`, `not_recorded`}, `product`, `release`, `license_tier` ∈ {Silver, Gold, Education}, `education_mode`, `observed_at`, `evidence_part` (the `company_list` part that shows it). When `basis` is `observed`, the tier, the flag and the evidence part are all required |
 | `period` | `{from, to}`: the audit period the read covers |
 | `consistency` | `status` ∈ {`unchanged`, `moved`, `not_recorded`}, plus `before` and `after` high-water marks `{alter_voucher_id, alter_master_id, observed_at, part}`, and `attempts` |
@@ -132,7 +132,7 @@ read may exceed it.
 |---|---|---|---|
 | `company_list` | ≤1 | – | per company: GUID, name, books-from, licence tier, Education mode |
 | `company_high_water` | 0 or 2 (before/after) | – | COMPANY: GUID, ALTVCHID, ALTMSTID |
-| `company` | 1 (required) | – | COMPANY: GUID (identity, C5), ISINTEGRATED (stock test) |
+| `company` | 1 (required) | – | COMPANY: GUID (identity, C5), BOOKSFROM (1.1, optional; C5), ISINTEGRATED (stock test) |
 | `groups` | 1 (required) | – | GROUP@NAME, PARENT, plus classification flags (ISREVENUE, AFFECTSGROSSPROFIT, ISDEEMEDPOSITIVE, ISSUBLEDGER, RESERVEDNAME) |
 | `ledgers` | 1 (required) | request with SVFROMDATE = period start | LEDGER@NAME, PARENT, OPENINGBALANCE, PARTYGSTIN, GST registration history, INCOMETAXNUMBER, ISBILLWISEON |
 | `trial_balance` | 1 (required) | = period | LEDGER@NAME, TBALOPENING, TBALCLOSING, DEBITTOTALS, CREDITTOTALS |
@@ -152,8 +152,8 @@ Any kind a reader does not know is ignored. This is how v1.x can add kinds.
 - **P1 — Admission.** A part enters the manifest only if the producer's own typed parser accepted
   it. The read then keeps a parse-at-the-boundary rule even though it stores raw bytes.
 - **P2 — Identity.** Set the current-company pin on every company-scoped request. Re-verify the
-  company GUID before the first part and after the last. `company.guid` is the identity; the name
-  is display only.
+  company GUID before the first part and after the last. `company.guid` and `company.books_from`
+  are the identity; the name is display only.
 - **P3 — Windows.** Size voucher windows up front: monthly by default, with smaller windows
   remembered per company. The windows are contiguous, disjoint and cover the period exactly. Never
   issue an unwindowed whole-book voucher read.
@@ -179,7 +179,7 @@ path.
 | C2 | Paths are relative and inside the read, with no `.` or `..` segment, no backslash and no symlink anywhere below the read root. `storage` matches the `.gz` suffix. `manifest.json` is a regular file |
 | C3 | For every part, consumed or not: the stored bytes and the decoded content both match their sha256 and length. Decompression is capped at 512 MiB. Each parser's own returned sha256 must equal the manifest's, which closes the gap between verifying a file and parsing it |
 | C4 | Part ids are unique. Singleton kinds appear at most once. `company`, `groups`, `ledgers`, `trial_balance`, `voucher_types` and at least one `vouchers` part are present, and every voucher's type resolves through `voucher_types` to a type that is its own parent (a base type such as Contra). A type that does not resolve, or whose chain repeats, refuses the read (`C4-vtype-unresolved`); it is never read as its own base type. No reference points at an unknown part. A `stock_summary` is selected by exact `as_of` |
-| C5 | The company part's GUID equals `company.guid`. The read's period equals the client's period |
+| C5 | The company part's GUID equals `company.guid`. The read's period equals the client's period. `C5-client`: when the client config pins `[client.tally]` `company_guid` and `books_from`, both equal the manifest's company (GUID case-insensitively); a pin the manifest cannot check, because it records no `books_from`, refuses. `C5-books-from`: the read's period does not start before `company.books_from`. 1.1: a company part that carries BOOKSFROM must equal `company.books_from` (`C5-identity`); a part without it is still read |
 | C6 | High-water bracket (section 4) |
 | C7 | Voucher windows are sorted, disjoint and contiguous, and their union is exactly the period |
 | C8 | Every voucher's DATE lies inside its own part's window. This catches Education-mode widening and a wrongly declared window |
@@ -191,6 +191,10 @@ path.
 illustrative, not literal):
 
 ```toml
+[client.tally]  # the company every read must come from (C5-client)
+company_guid = "00000000-0000-4000-8000-000000000000"
+books_from = "2025-04-01"
+
 [snapshot]
 format = "tally-read-v1"
 path = "relative/path/to/read-v1"
@@ -218,6 +222,23 @@ closing_date = "2026-03-31"
   `manifest.json` (v1). Both manifests point at the same `parts/` files; content addressing means
   no byte is stored twice. v1 readers never open the v2 manifest, and v2 readers prefer it. A
   producer stops writing `manifest.json` only after every consumer has a v2 reader.
+
+### 8.1 Changes in 1.1
+
+A Tally split company keeps its parent's company GUID; the two differ in the date their books
+begin. On one measured pair the parent's books began 2025-04-01 and the split's 2026-04-01, while
+both reported the same GUID (their COMPANYNUMBER also differed). A consumer that checks the GUID
+alone therefore admits a read of the split as the parent, or the reverse. That is one pair: no
+one has yet shown that a split always changes `books_from`. 1.1 is additive:
+
+- `company.number` (optional) records COMPANYNUMBER as evidence. It is never identity, because it
+  is a load-order number local to one Tally installation.
+- The `company` part may carry BOOKSFROM. When it does, a consumer refuses a read whose manifest
+  `company.books_from` differs from it or is absent (`C5-identity`). A 1.0 read without it is
+  still read.
+- Two consumer rules that need no new field: `C5-client` (the client config's pin of
+  `company_guid` and `books_from`) and `C5-books-from` (a read's period may not start before its
+  company's books begin, which refuses a split's read for its parent's year even without a pin).
 
 ## 9. Real-world validation
 

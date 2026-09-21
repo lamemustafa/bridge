@@ -188,3 +188,135 @@ fn unknown_voucher_status_refuses_the_population() {
     let err = common::run(&scratch.dir, false).unwrap_err();
     assert!(matches!(err, AuditError::UnknownVoucherStatus(10)), "{err}");
 }
+
+// Company identity is (GUID, books_from), never the name. A Tally split company keeps its
+// parent's GUID and begins its books on the split date (one lab pair, measured 2026-09-21:
+// 20250401 vs 20260401), so the GUID alone lets a read of one pass as the other.
+
+const FIXTURE_GUID: &str = "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c";
+
+fn run_pinned(
+    read_dir: &std::path::Path,
+    guid: &str,
+    books_from: &str,
+) -> bridge_tax_audit::Result<Value> {
+    let mut e = common::engagement(read_dir, false);
+    e.company_pin = Some(bridge_tax_audit::read::CompanyPin {
+        guid: guid.to_string(),
+        books_from: bridge_tally_primitives::TallyDate::parse(books_from.replace('-', "")).unwrap(),
+    });
+    bridge_tax_audit::cash_44ab_canonical(&e, &bridge_tax_audit::rules_for(&e)?)
+}
+
+/// A read of a company whose books begin on `iso`: manifest and company part agree.
+fn set_books_from(scratch: &common::ScratchRead, iso: &str) {
+    let mut m = scratch.manifest();
+    m["company"]["books_from"] = json!(iso);
+    scratch.set_manifest(&m);
+    scratch.edit_part(
+        "company",
+        &format!("<GUID TYPE=\"String\">{FIXTURE_GUID}</GUID>"),
+        &format!(
+            "<GUID TYPE=\"String\">{FIXTURE_GUID}</GUID><BOOKSFROM TYPE=\"Date\">{}</BOOKSFROM>",
+            iso.replace('-', "")
+        ),
+        true,
+    );
+}
+
+#[test]
+fn c5_a_matching_pin_is_admitted_and_guid_case_is_not_identity() {
+    let scratch = common::ScratchRead::new("c5-pin-ok");
+    assert!(run_pinned(&scratch.dir, &FIXTURE_GUID.to_uppercase(), "2025-04-01").is_ok());
+}
+
+#[test]
+fn c5_a_pin_for_another_guid_is_refused() {
+    let scratch = common::ScratchRead::new("c5-pin-guid");
+    let r = run_pinned(
+        &scratch.dir,
+        "00000000-0000-4000-8000-000000000000",
+        "2025-04-01",
+    );
+    assert_eq!(code_of(r), "C5-client");
+}
+
+#[test]
+fn c5_a_pin_for_other_books_is_refused() {
+    let scratch = common::ScratchRead::new("c5-pin-from");
+    assert_eq!(
+        code_of(run_pinned(&scratch.dir, FIXTURE_GUID, "2019-04-01")),
+        "C5-client"
+    );
+}
+
+#[test]
+fn c5_a_pin_the_manifest_cannot_check_is_refused() {
+    let scratch = common::ScratchRead::new("c5-pin-unrecorded");
+    let mut m = scratch.manifest();
+    m["company"]["books_from"] = Value::Null;
+    scratch.set_manifest(&m);
+    assert_eq!(
+        code_of(run_pinned(&scratch.dir, FIXTURE_GUID, "2025-04-01")),
+        "C5-client"
+    );
+}
+
+#[test]
+fn c5_a_malformed_pin_is_refused() {
+    let text = std::fs::read_to_string(common::fixtures().join("synthetic-engagement.toml"))
+        .unwrap()
+        .replace(
+            "[period]",
+            "[client.tally]\ncompany_guid = \"x\"\nbooks_from = \"01-04-2025\"\n\n[period]",
+        );
+    let err = bridge_tax_audit::Engagement::from_toml(&text, &common::fixtures()).unwrap_err();
+    assert_eq!(err.code(), Some("CFG-tally-pin"));
+}
+
+#[test]
+fn c5_a_period_starting_before_books_from_is_refused_unpinned() {
+    let scratch = common::ScratchRead::new("c5-books-from");
+    set_books_from(&scratch, "2025-05-01");
+    assert_eq!(code_of(common::run(&scratch.dir, false)), "C5-books-from");
+}
+
+#[test]
+fn c5_a_company_part_booksfrom_must_equal_the_manifest() {
+    let scratch = common::ScratchRead::new("c5-part-from");
+    set_books_from(&scratch, "2025-04-01");
+    assert!(
+        common::run(&scratch.dir, false).is_ok(),
+        "agreeing BOOKSFROM is admitted"
+    );
+    let mut m = scratch.manifest();
+    m["company"]["books_from"] = json!("2019-04-01");
+    scratch.set_manifest(&m);
+    assert_eq!(code_of(common::run(&scratch.dir, false)), "C5-identity");
+    m["company"]["books_from"] = Value::Null;
+    scratch.set_manifest(&m);
+    assert_eq!(code_of(common::run(&scratch.dir, false)), "C5-identity");
+}
+
+// Negative controls for the split pair: the parent's books begin 2019-04-01, its split's on the
+// split date; both carry the same GUID.
+#[test]
+fn c5_the_split_read_for_the_parents_year_is_refused() {
+    let scratch = common::ScratchRead::new("c5-split-for-parent");
+    set_books_from(&scratch, "2025-06-01"); // the split, dated after the year being audited
+    assert_eq!(
+        code_of(run_pinned(&scratch.dir, FIXTURE_GUID, "2019-04-01")),
+        "C5-client"
+    );
+    assert_eq!(code_of(common::run(&scratch.dir, false)), "C5-books-from");
+}
+
+#[test]
+fn c5_the_parent_read_for_the_splits_year_is_refused() {
+    let scratch = common::ScratchRead::new("c5-parent-for-split");
+    set_books_from(&scratch, "2019-04-01"); // the parent, whose books still begin in 2019
+    assert_eq!(
+        code_of(run_pinned(&scratch.dir, FIXTURE_GUID, "2025-04-01")),
+        "C5-client"
+    );
+}
