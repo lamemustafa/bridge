@@ -413,6 +413,9 @@ fn runtime_refusal_cause(error: &anyhow::Error) -> Option<&'static str> {
         {
             return Some(validation.safe_code());
         }
+        if cause.is::<crate::tally::connection::NativeReportPairDrift>() {
+            return Some(crate::tally::connection::NativeReportPairDrift::SAFE_CODE);
+        }
         cause
             .downcast_ref::<crate::tally::connection::PairedReadValidationError>()
             .map(crate::tally::connection::PairedReadValidationError::safe_code)
