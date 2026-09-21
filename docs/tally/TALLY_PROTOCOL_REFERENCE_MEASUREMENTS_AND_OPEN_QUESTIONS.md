@@ -235,13 +235,26 @@ request is predicted over a budget well below the cap.
      walks the book's AlterIDs whatever the window.
    - `voucher_window_volume_unestimated` — a census could not be read, was refused as oversized, or
      timed out. A mark that cannot be read is refused under the mark parser's own code.
+   - `window_part_boundary_unsupported_in_education` — the endpoint is in Education mode and a part
+     still to be read starts or ends on a day other than the 1st, 2nd or 31st. Education serves a
+     read **starting** on such a day as a well-formed empty collection, not an error (bridge#581,
+     lab capture 2026-09-22); the end side is unmeasured in the voucher shapes and held to the same
+     rule. The mode is read from the `EDUMODE` field of the `CompanyListV2` response that brackets
+     every read, so it costs no request. The whole remaining plan is checked before each part, so a
+     divided read is refused before its first part, and the runtime refuses any single read with
+     such a boundary before sending it, or after it when only the closing bracket reports Education.
+     An `EDUMODE` other than `No` counts as Education; a list with no `EDUMODE` keeps ordinary
+     boundaries. `EDUMODE = Yes` has not been captured live.
 6. **Every part is admitted, and so is their union.** Each row of a part must lie in the part's dates
    and AlterID span. When the window was counted, a part's vouchers must be **exactly** the ones the
    census counted for it, by AlterID and GUID — a matching count is not enough, because a substituted
    voucher preserves it. And GUIDs and master IDs must be unique across the union of parts, not only
    within each response: a voucher re-dated between two parts is returned by both, each valid alone.
    Either failure refuses as `voucher_window_part_not_admitted` or
-   `voucher_source_identity_invalid`.
+   `voucher_source_identity_invalid`. A part refusal names its `cause`: `part_row_unreadable`,
+   `part_row_outside_dates`, `part_row_outside_alter_id_span`, `part_row_duplicated`, or
+   `part_census_mismatch`, which also carries `counts` (`returned` against `counted`) so that an
+   empty part reads as "returned 0 of N".
 7. **A divided read is bracketed on both marks.** `ALTVCHID` **and** `ALTMSTID` are read again after
    the last part, and either moving refuses the read as `voucher_window_changed_during_read`. Live
    (§11c.5): creating, altering, cancelling, re-dating and deleting a voucher each advance

@@ -83,6 +83,9 @@ pub struct AgentRead {
     pub body: String,
     pub encoded_bytes: usize,
     pub encoded_sha256: String,
+    /// The stricter of the date-boundary profiles the read's opening and
+    /// closing identity brackets observed: Education if either reported it.
+    pub boundary_profile: DateBoundaryProfile,
 }
 
 async fn fetch_admitted_agent_read(
@@ -90,20 +93,38 @@ async fn fetch_admitted_agent_read(
     identity: &VerifiedCompanyIdentity,
     request: super::agent_read_request::AgentReadRequest,
 ) -> anyhow::Result<(AgentRead, RuntimeReadEvidence)> {
-    bracket_verified_company_identity(client, identity).await?;
-    let request_xml = request.into_xml();
+    let opening = bracket_verified_company_identity_observing_mode(client, identity).await?;
+    if !request.window_accepted_by(opening) {
+        return Err(EducationBoundaryRefusal.into());
+    }
+    let request_xml = request.clone().into_xml();
     let (body, encoded_bytes, encoded_sha256) = client
         .fetch_native_report_paired_with_evidence(request_xml.clone())
         .await?;
     let evidence = RuntimeReadEvidence::paired(&request_xml, encoded_sha256.clone(), encoded_bytes);
-    bracket_verified_company_identity(client, identity)
+    let closing = bracket_verified_company_identity_observing_mode(client, identity)
         .await
         .map_err(|error| with_read_evidence(error, evidence.clone()))?;
+    // Education reported only after the read may have served it: which mode
+    // answered is unknown, so the read is refused as if it had been sent in
+    // Education (a licence server dropping out mid-read does this).
+    if !request.window_accepted_by(closing) {
+        return Err(with_read_evidence(
+            EducationBoundaryRefusal.into(),
+            evidence.clone(),
+        ));
+    }
+    let profile = if closing == DateBoundaryProfile::EducationRestricted {
+        closing
+    } else {
+        opening
+    };
     Ok((
         AgentRead {
             body,
             encoded_bytes,
             encoded_sha256,
+            boundary_profile: profile,
         },
         evidence,
     ))
@@ -248,6 +269,34 @@ async fn bracket_verified_company_identity(
     let companies = client.fetch_companies().await?;
     admit_company_identity(&companies, identity)
 }
+
+/// As [`bracket_verified_company_identity`], also returning the date-boundary
+/// profile the same company-list response reports. Education mode is read from
+/// the `EDUMODE` field every `CompanyListV2` row carries, so observing it here
+/// costs no request. Any `EDUMODE` field that does not say `No` is enough, even
+/// when the other capability fields do not parse. A response with no `EDUMODE`
+/// field at all keeps the mode-agnostic profile, as before bridge#581.
+async fn bracket_verified_company_identity_observing_mode(
+    client: &TallyClient,
+    identity: &VerifiedCompanyIdentity,
+) -> anyhow::Result<DateBoundaryProfile> {
+    let (companies, _, education) = client.fetch_companies_observing_education_mode().await?;
+    admit_company_identity(&companies, identity)?;
+    Ok(if education {
+        DateBoundaryProfile::EducationRestricted
+    } else {
+        DateBoundaryProfile::ModeAgnostic
+    })
+}
+
+/// An agent read was refused before it was sent: the endpoint reported
+/// Education mode, and the read's `SVFROMDATE`/`SVTODATE` is not a day that
+/// mode honours (the 1st, 2nd or 31st). Education answers such a read with a
+/// well-formed empty collection, not an error, so sending it could only
+/// produce a false empty (bridge#581).
+#[derive(Debug, thiserror::Error)]
+#[error("window_part_boundary_unsupported_in_education")]
+pub(crate) struct EducationBoundaryRefusal;
 
 fn admit_company_identity(
     companies: &[TallyCompany],

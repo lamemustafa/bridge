@@ -4,6 +4,7 @@
 use crate::local_files::directory::{ensure_private_directory, DirectoryAdmissionError};
 use crate::local_files::file as local_file;
 use crate::local_files::paths::default_data_dir;
+use bridge_tally_protocol::outstandings_shared::DateBoundaryProfile;
 
 #[path = "agent_import.rs"]
 mod agent_import;
@@ -386,6 +387,16 @@ struct ToolFailure {
     /// Why the operation named by `code` failed, when a typed, data-free cause
     /// is known. `code` keeps naming what failed.
     cause: Option<&'static str>,
+    /// How many rows a refused read returned against how many it was counted
+    /// to hold, when the refusal is that disagreement. Numbers only.
+    counts: Option<RowCounts>,
+}
+
+/// A read's returned rows against the rows a census counted for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RowCounts {
+    returned: u64,
+    counted: u64,
 }
 
 impl From<String> for ToolFailure {
@@ -394,6 +405,7 @@ impl From<String> for ToolFailure {
             code,
             evidence: None,
             cause: None,
+            counts: None,
         }
     }
 }
@@ -546,6 +558,11 @@ impl ToolFailure {
             .any(|cause| cause.is::<crate::tally::runtime::ToolCancelled>())
         {
             "request_cancelled"
+        } else if error
+            .chain()
+            .any(|cause| cause.is::<crate::tally::runtime::EducationBoundaryRefusal>())
+        {
+            "window_part_boundary_unsupported_in_education"
         } else if let Some(error) = error.chain().find_map(|cause| {
             cause.downcast_ref::<crate::tally::runtime::TrialBalanceReadError>()
         }) {
@@ -615,6 +632,7 @@ impl ToolFailure {
             code: code.to_string(),
             evidence,
             cause,
+            counts: None,
         }
     }
 
@@ -647,6 +665,18 @@ impl Server {
         identity: &VerifiedCompanyIdentity,
         request: ReadRequest,
     ) -> Result<(String, Evidence), ToolFailure> {
+        self.post_read_observing_boundary(identity, request)
+            .await
+            .map(|(body, evidence, _)| (body, evidence))
+    }
+
+    /// As [`Self::post_read`], also returning the date-boundary profile the
+    /// read's own identity bracket observed. It costs no request.
+    async fn post_read_observing_boundary(
+        &self,
+        identity: &VerifiedCompanyIdentity,
+        request: ReadRequest,
+    ) -> Result<(String, Evidence, DateBoundaryProfile), ToolFailure> {
         let request = request.into_xml();
         let admitted = crate::tally::agent_read_request::AgentReadRequest::parse(request.clone())
             .map_err(|error| error.to_string())?;
@@ -669,7 +699,7 @@ impl Server {
             duration_ms: None,
             reason_code: None,
         };
-        Ok((response.body, evidence))
+        Ok((response.body, evidence, response.boundary_profile))
     }
 
     #[cfg(test)]
@@ -708,6 +738,7 @@ impl Server {
                 code,
                 evidence,
                 cause,
+                counts,
             }) => {
                 let mut evidence = evidence.map(|value| *value).unwrap_or_else(|| Evidence {
                     request_sha256: sha256_hex(format!("{name}:{args_sha256}").as_bytes()),
@@ -743,6 +774,12 @@ impl Server {
                 if let Some(cause) = cause {
                     if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
                         error["cause"] = json!(cause);
+                    }
+                }
+                if let Some(counts) = counts {
+                    if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
+                        error["counts"] =
+                            json!({"returned": counts.returned, "counted": counts.counted});
                     }
                 }
                 ToolOutcome {

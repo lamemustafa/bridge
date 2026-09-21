@@ -221,6 +221,29 @@ pub(super) const WINDOW_CHANGED_DURING_READ: &str = "voucher_window_changed_duri
 /// only the window's vouchers if every part holds exactly its own.
 pub(super) const PART_NOT_ADMITTED: &str = "voucher_window_part_not_admitted";
 
+/// Why a part was not admitted, as the `cause` beside [`PART_NOT_ADMITTED`].
+/// A row whose date, or (for a counted window) AlterID, could not be read.
+pub(super) const PART_ROW_UNREADABLE: &str = "part_row_unreadable";
+/// A row dated outside the part it was returned for.
+pub(super) const PART_ROW_OUTSIDE_DATES: &str = "part_row_outside_dates";
+/// A row outside the AlterID span its part was limited to.
+pub(super) const PART_ROW_OUTSIDE_ALTER_ID_SPAN: &str = "part_row_outside_alter_id_span";
+/// Two rows of one part with the same AlterID.
+pub(super) const PART_ROW_DUPLICATED: &str = "part_row_duplicated";
+/// The part's vouchers are not the ones the census counted for it; the refusal
+/// also carries `counts`, returned against counted.
+pub(super) const PART_CENSUS_MISMATCH: &str = "part_census_mismatch";
+
+/// The endpoint is in Education mode and a part of the plan starts or ends on a
+/// day that mode does not honour (the 1st, 2nd and 31st are the days it does).
+/// Education answers such a read with a well-formed empty collection, not an
+/// error, so the part could only be read as falsely empty (bridge#581). Both
+/// ends are held to the rule: the start is measured live, the end is not, and
+/// an unmeasured boundary is not one Bridge admits. The same code names the
+/// runtime's refusal of any single read with such a boundary.
+pub(super) const EDUCATION_BOUNDARY_UNSUPPORTED: &str =
+    "window_part_boundary_unsupported_in_education";
+
 /// A replay of a divided read arrived without the witness of the read it
 /// repeats. A replay of AlterID-limited parts reads only up to the first read's
 /// ceilings, so without that read's marks it cannot see a voucher created above
@@ -900,6 +923,8 @@ impl Server {
         }
         let mut preflight = None;
         let mut opening: Option<CompanyMarks> = None;
+        // Observed by every read this window makes, at no request of its own.
+        let mut boundary: Option<DateBoundaryProfile> = None;
         let mut census = None;
         let mut ceiling = 0;
         let mut bytes_per_voucher = limits.default_bytes_per_voucher;
@@ -955,6 +980,7 @@ impl Server {
                             limits,
                             &mut preflight,
                             &mut opening,
+                            &mut boundary,
                         )
                         .await
                         .map_err(|failure| with_prior(failure, &preflight, &None))?,
@@ -1017,6 +1043,7 @@ impl Server {
                         continue;
                     }
                 }
+                admit_plan_boundaries(boundary, &part, &pending)?;
                 // The allowance is spent when a request is dispatched, not when a
                 // plan is made: a part divided after Tally could not serve it, or
                 // split because a sibling could not be served, costs a request
@@ -1032,8 +1059,9 @@ impl Server {
                 dispatched += 1;
                 let request =
                     voucher_window_part_read(shape, company, &part.from, &part.to, part.span)?;
-                match self.post_read(identity, request).await {
-                    Ok((xml, read_evidence)) => {
+                match self.post_read_observing_boundary(identity, request).await {
+                    Ok((xml, read_evidence, observed_boundary)) => {
+                        observe_boundary(&mut boundary, observed_boundary);
                         let parsed = parse(&xml);
                         let observed = measured_bytes_per_voucher(
                             &read_evidence,
@@ -1145,7 +1173,7 @@ impl Server {
         let mut closing = None;
         if let (true, Some(opened)) = (is_divided(&reads), opening) {
             let closed = self
-                .read_marks(identity, company, &mut closing)
+                .read_marks(identity, company, &mut closing, &mut boundary)
                 .await
                 .map_err(|failure| with_prior_closed(failure, &preflight, &evidence, &closing))?;
             if closed != opened {
@@ -1177,11 +1205,13 @@ impl Server {
         identity: &VerifiedCompanyIdentity,
         company: &str,
         evidence: &mut Option<Evidence>,
+        boundary: &mut Option<DateBoundaryProfile>,
     ) -> Result<CompanyMarks, ToolFailure> {
-        let (xml, read) = self
-            .post_read(identity, company_high_water_read(company))
+        let (xml, read, observed) = self
+            .post_read_observing_boundary(identity, company_high_water_read(company))
             .await?;
         fold_evidence(evidence, read);
+        observe_boundary(boundary, observed);
         Ok(company_marks(&xml, identity.company_guid())?)
     }
 
@@ -1198,10 +1228,14 @@ impl Server {
         limits: WindowReadLimits,
         preflight: &mut Option<Evidence>,
         observed_marks: &mut Option<CompanyMarks>,
+        boundary: &mut Option<DateBoundaryProfile>,
     ) -> Result<Preflight, ToolFailure> {
         let marks = match known_marks {
             Some(marks) => marks,
-            None => self.read_marks(identity, company, preflight).await?,
+            None => {
+                self.read_marks(identity, company, preflight, boundary)
+                    .await?
+            }
         };
         *observed_marks = Some(marks);
         let high_water = marks.vouchers;
@@ -1219,6 +1253,7 @@ impl Server {
                 high_water,
                 limits,
                 preflight,
+                boundary,
             )
             .await?;
         let census = WindowCensus::from_census_rows(rows)
@@ -1228,6 +1263,7 @@ impl Server {
 
     /// Count the window's vouchers per day, every census request bounded
     /// before it is sent. See [`census_spans`].
+    #[allow(clippy::too_many_arguments)]
     async fn census_window(
         &self,
         identity: &VerifiedCompanyIdentity,
@@ -1236,6 +1272,7 @@ impl Server {
         high_water: u64,
         limits: WindowReadLimits,
         preflight: &mut Option<Evidence>,
+        boundary: &mut Option<DateBoundaryProfile>,
     ) -> Result<Vec<CensusRow>, ToolFailure> {
         let unestimated = || ToolFailure::from(VOLUME_UNESTIMATED.to_string());
         let spans = census_spans(high_water, limits.census_capacity())
@@ -1244,8 +1281,11 @@ impl Server {
         let mut rows = Vec::new();
         for span in spans {
             let request = voucher_census_read(company, &from, &to, span)?;
-            let (xml, evidence) = match self.post_read(identity, request).await {
-                Ok(read) => read,
+            let (xml, evidence) = match self.post_read_observing_boundary(identity, request).await {
+                Ok((xml, evidence, observed)) => {
+                    observe_boundary(boundary, observed);
+                    (xml, evidence)
+                }
                 Err(failure) if census_failure(&failure.code) == CensusFailure::Refuse => {
                     // A census bounded by construction that Tally still could not
                     // serve is not divided further or retried: the gateway may
@@ -1280,6 +1320,42 @@ fn census_refusal_cause(code: &str) -> Option<&'static str> {
         "response_size_limit_exceeded" => Some("census_response_too_large"),
         _ if is_window_too_large_code(code) => Some("census_deadline_exceeded"),
         _ => None,
+    }
+}
+
+/// Record the boundary profile one read observed. Education seen on any read
+/// holds for the rest of the window: a mode that changes during a read is held
+/// to the stricter rule, never relaxed by a later licensed observation.
+fn observe_boundary(target: &mut Option<DateBoundaryProfile>, observed: DateBoundaryProfile) {
+    if target.is_none() || observed == DateBoundaryProfile::EducationRestricted {
+        *target = Some(observed);
+    }
+}
+
+/// Refuse the plan before `part` is sent when any part still to be read has a
+/// boundary the observed profile cannot serve ([`EDUCATION_BOUNDARY_UNSUPPORTED`]).
+/// Checked over the whole remaining plan, so a divided read is refused before
+/// its first part rather than after the parts that happen to precede the
+/// unservable one.
+fn admit_plan_boundaries(
+    boundary: Option<DateBoundaryProfile>,
+    part: &WindowPart,
+    pending: &[WindowPart],
+) -> Result<(), ToolFailure> {
+    let Some(profile) = boundary else {
+        return Ok(());
+    };
+    let honoured = |date: &str| {
+        bridge_tally_core::TallyDate::parse(date.to_string())
+            .is_ok_and(|date| profile.accepts_boundary(&date))
+    };
+    if std::iter::once(part)
+        .chain(pending)
+        .all(|part| honoured(&part.from) && honoured(&part.to))
+    {
+        Ok(())
+    } else {
+        Err(EDUCATION_BOUNDARY_UNSUPPORTED.to_string().into())
     }
 }
 
@@ -1371,30 +1447,34 @@ fn admit_part<T: WindowRow>(
     if whole_window {
         return Ok(());
     }
-    let refused = || ToolFailure::from(PART_NOT_ADMITTED.to_string());
+    let refused = |cause: &'static str| {
+        let mut failure = ToolFailure::from(PART_NOT_ADMITTED.to_string());
+        failure.cause = Some(cause);
+        failure
+    };
     let (from, to) = (parse_day(&part.from)?, parse_day(&part.to)?);
     let mut observed = BTreeMap::new();
     for row in rows {
         let day = row
             .window_date()
             .and_then(|value| NaiveDate::parse_from_str(value.trim(), "%Y%m%d").ok())
-            .ok_or_else(refused)?;
+            .ok_or_else(|| refused(PART_ROW_UNREADABLE))?;
         if day < from || day > to {
-            return Err(refused());
+            return Err(refused(PART_ROW_OUTSIDE_DATES));
         }
         let alter_id = row.window_alter_id();
         if let Some(span) = part.span {
             if !alter_id.is_some_and(|id| span.holds(id)) {
-                return Err(refused());
+                return Err(refused(PART_ROW_OUTSIDE_ALTER_ID_SPAN));
             }
         }
         if census.is_some() {
-            let alter_id = alter_id.ok_or_else(refused)?;
+            let alter_id = alter_id.ok_or_else(|| refused(PART_ROW_UNREADABLE))?;
             let guid = row
                 .window_guid()
                 .map(|guid| guid.trim().to_ascii_lowercase());
             if observed.insert(alter_id, guid).is_some() {
-                return Err(refused());
+                return Err(refused(PART_ROW_DUPLICATED));
             }
         }
     }
@@ -1412,7 +1492,15 @@ fn admit_part<T: WindowRow>(
     if matches {
         Ok(())
     } else {
-        Err(refused())
+        // The counts say which way it failed: fewer rows than counted is what
+        // an unhonoured filter or a deletion looks like, more is a creation,
+        // and equal counts mean the part returned different vouchers.
+        let mut failure = refused(PART_CENSUS_MISMATCH);
+        failure.counts = Some(RowCounts {
+            returned: observed.len() as u64,
+            counted: expected.len() as u64,
+        });
+        Err(failure)
     }
 }
 

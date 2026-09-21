@@ -84,8 +84,10 @@ byte count, completeness reason, and truncation state. A refused call returns
 refusal has a typed, data-free reason, the error also carries `cause`, which names why
 (for example `company_base_currency_undetermined` beside `party_ledger_master_read_failed`).
 A read whose two paired halves differ, because the book changed while Bridge was reading it,
-carries `native_report_pair_changed`.
-Like `remediation`, `cause` is omitted when `BRIDGE_AGENT_MAX_BYTES` is below 4,096, so
+carries `native_report_pair_changed`. A voucher-window part that is not admitted
+(`voucher_window_part_not_admitted`) names why, and a census disagreement also carries
+`counts`, the rows the part `returned` against the rows the census `counted`.
+Like `remediation`, `cause` and `counts` are omitted when `BRIDGE_AGENT_MAX_BYTES` is below 4,096, so
 that the code always fits. Before a tool response is written, Bridge appends a metadata-only
 `response_prepared` record to `agent-egress.jsonl`, including a unique `receipt_id`.
 After `write_all` and `flush` succeed, it appends a `stdio_write_completed` record
@@ -182,6 +184,18 @@ or cached profile does not grant admission.
 The retained Education observations in protocol sections 5.3, 5.5 and 12a remain
 valid within their recorded scope. Ordinary voucher reads retain their separate
 literal-date and returned-row validation contract.
+Every voucher, movement, presence and verification read observes the mode from the
+`CompanyListV2` response of its own identity bracket, at no extra request. In Education
+mode a read whose `SVFROMDATE` or `SVTODATE` is not on day 1, 2 or 31 is refused as
+`window_part_boundary_unsupported_in_education` before it is sent, because Education
+answers a read starting on another day with an empty collection rather than an error. A
+divided window is checked whole before its first part, and a read whose closing bracket
+reports Education is refused the same way, since either mode may have served it. Any
+`EDUMODE` value other than `No` counts as Education even when the other capability fields
+do not parse; a company list with no `EDUMODE` field keeps ordinary boundaries, and
+`EDUMODE = Yes` itself has not yet been captured from a live Education instance. The end
+side is held to the same rule without a live measurement in these shapes, so an Education
+whole-month read ending on the 30th is refused.
 A genuinely empty voucher response uses the same wider-window
 corroboration as `vouchers` before zero movement can be reported. Cancelled and
 optional rows establish response presence while contributing no accounting movement.
