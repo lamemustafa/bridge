@@ -229,6 +229,14 @@ pub(crate) enum LedgerOpeningCoverageRead {
     Drifted,
 }
 
+/// An HTTP response entity kept byte for byte, with its decoded text.
+#[derive(Debug, Clone)]
+pub(crate) struct RawTallyResponse {
+    pub(crate) text: String,
+    pub(crate) encoded_body: Vec<u8>,
+    pub(crate) encoded_sha256: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 #[error("Tally native report changed between paired reads")]
 pub(crate) struct NativeReportPairDrift;
@@ -1528,6 +1536,77 @@ impl TallyClient {
         }
         .await;
         result.map_err(|error| super::runtime::with_read_evidence(error, evidence))
+    }
+
+    /// One XML POST whose HTTP response entity is kept byte for byte, for
+    /// audit_read, which seals those bytes rather than a re-encoding of the
+    /// decoded text. The entity is what the transport received after chunked
+    /// framing is removed; content encodings other than identity are refused.
+    /// The decoded text is returned beside it for admission.
+    pub(crate) async fn post_xml_raw(&self, xml: String) -> anyhow::Result<RawTallyResponse> {
+        let response = self.http.post_xml(xml).await?;
+        self.record_observed_body_bytes(response.encoded_bytes());
+        self.record_observed_encoding(response.encoding());
+        let encoded_body = response.encoded_body().to_vec();
+        let encoded_sha256 = sha256_hex(&encoded_body);
+        Ok(RawTallyResponse {
+            text: response.into_text(),
+            encoded_body,
+            encoded_sha256,
+        })
+    }
+
+    /// [`Self::post_xml_raw`] twice, with the same health checks as
+    /// [`Self::fetch_native_report_paired_with_evidence`], admitted only when
+    /// the two response entities are byte-identical. On drift both completed
+    /// bodies are accounted for and neither is released, and the refusal is
+    /// returned before the trailing health check, so a drift is never reported
+    /// as that check's failure.
+    pub(crate) async fn post_xml_raw_paired(
+        &self,
+        xml: String,
+    ) -> anyhow::Result<RawTallyResponse> {
+        let first = self.post_xml_raw(xml.clone()).await?;
+        let mut evidence = RuntimeReadEvidence::single(
+            &xml,
+            first.encoded_sha256.clone(),
+            first.encoded_body.len(),
+        );
+        let result = async {
+            self.http
+                .get_status_decoded()
+                .await
+                .context("Tally health check between paired audit reads failed")?;
+            let second = self.post_xml_raw(xml.clone()).await?;
+            if second.encoded_body == first.encoded_body {
+                evidence.bytes = evidence.bytes.saturating_add(second.encoded_body.len());
+            } else {
+                evidence = evidence.clone().combine(RuntimeReadEvidence::single(
+                    &xml,
+                    second.encoded_sha256.clone(),
+                    second.encoded_body.len(),
+                ));
+            }
+            if second.encoded_body != first.encoded_body {
+                return Err(NativeReportPairDrift.into());
+            }
+            self.http
+                .get_status_decoded()
+                .await
+                .context("Tally health check after paired audit reads failed")?;
+            Ok(())
+        }
+        .await;
+        result.map_err(|error| super::runtime::with_read_evidence(error, evidence))?;
+        Ok(first)
+    }
+
+    /// The smallest request Tally answers: its status page. Used to learn
+    /// whether a responder that was left building an abandoned response has
+    /// finished; it proves nothing else.
+    pub(crate) async fn status_probe(&self) -> anyhow::Result<()> {
+        self.http.get_status_decoded().await?;
+        Ok(())
     }
 
     #[cfg(feature = "voucher-scan")]
