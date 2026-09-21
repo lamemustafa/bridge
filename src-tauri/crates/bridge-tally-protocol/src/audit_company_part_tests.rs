@@ -275,3 +275,16 @@ fn a_second_message_is_refused_even_when_it_is_empty() {
         Err(AuditCompanyPartError::NotExactlyOneCompany)
     );
 }
+
+#[test]
+fn a_company_elsewhere_carrying_only_books_from_is_refused() {
+    // The Rust engine reads BOOKSFROM from the first COMPANY that has one,
+    // whatever its GUID.
+    let decoy = "<COMPANY>0<BOOKSFROM>20240401</BOOKSFROM></COMPANY>";
+    let body = part(&company(&complete())).replace("<COMPANY>0</COMPANY>", decoy);
+    assert_ne!(body, part(&company(&complete())));
+    assert_eq!(
+        admit_audit_company_part(&body, GUID, "20250401"),
+        Err(AuditCompanyPartError::NotExactlyOneCompany)
+    );
+}

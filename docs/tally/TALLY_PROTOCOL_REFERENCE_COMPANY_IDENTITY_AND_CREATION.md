@@ -177,8 +177,9 @@ never through `parse`:
 - **Admission of the response** (`bridge_tally_protocol::audit_company_part`).
   - `HEADER/STATUS` is `1`, and nothing follows the envelope.
   - There is exactly one `DATA/TALLYMESSAGE` and one child `COMPANY`, and no other `COMPANY`
-    element carries a `GUID`. The consumers take the first `COMPANY` with a GUID anywhere,
-    so admission ensures that is this one. The `CMPINFO/COMPANY` object counter has no GUID.
+    element carries a `GUID` or a `BOOKSFROM`. The consumers take the first `COMPANY` with a
+    GUID anywhere, and the Rust consumer its `BOOKSFROM` from the first `COMPANY` with one,
+    so admission ensures both are this one. The `CMPINFO/COMPANY` object counter has neither.
   - The company carries a `NAME` attribute, and `GUID` and `BOOKSFROM` occur exactly once
     each.
   - `GUID` must equal the verified GUID and `BOOKSFROM` the verified date: a year-split

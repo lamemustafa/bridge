@@ -115,8 +115,10 @@ pub fn admit_audit_company_part(
                     return Err(AuditCompanyPartError::Malformed);
                 }
                 // The engines take the first `COMPANY` with a GUID anywhere in
-                // the document; a second one would be ambiguous to them.
-                if element == b"GUID"
+                // the document, and the Rust engine its `BOOKSFROM` from the
+                // first `COMPANY` that has one; any other company carrying
+                // either would be read in place of this one.
+                if matches!(element.as_slice(), b"GUID" | b"BOOKSFROM")
                     && path.last().map(Vec::as_slice) == Some(b"COMPANY".as_slice())
                     && !at(&path, &COMPANY_PATH)
                 {
