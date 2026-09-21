@@ -76,7 +76,12 @@ This is a source-configuration inventory, not a claim that an installed client
 uses a particular setting or that a tool is qualified for every runtime. Each
 call returns compact JSON with the
 company identity where scoped, a read timestamp, request/response commitments,
-byte count, completeness reason, and truncation state. Before a tool response is written, Bridge appends a metadata-only
+byte count, completeness reason, and truncation state. A refused call returns
+`result.error` with `code`, which names what failed, and `message`. Where a runtime
+refusal has a typed, data-free reason, the error also carries `cause`, which names why
+(for example `company_base_currency_undetermined` beside `party_ledger_master_read_failed`).
+Like `remediation`, `cause` is omitted when `BRIDGE_AGENT_MAX_BYTES` is below 4,096, so
+that the code always fits. Before a tool response is written, Bridge appends a metadata-only
 `response_prepared` record to `agent-egress.jsonl`, including a unique `receipt_id`.
 After `write_all` and `flush` succeed, it appends a `stdio_write_completed` record
 with the same ID and response hash plus `bytes_written`. This confirms the local
