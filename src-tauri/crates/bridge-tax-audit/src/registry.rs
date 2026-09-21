@@ -181,10 +181,14 @@ mod tests {
         ] {
             assert!(turnover_inputs_from_json(&bad).is_err(), "{bad}");
         }
-        let r =
-            report_totals_from_json(&json!({"net_profit_paise": 3, "closing_stock_paise": null}))
-                .unwrap();
-        assert_eq!((r.net_profit_paise, r.closing_stock_paise), (3, None));
+        let r = report_totals_from_json(
+            &json!({"net_profit_paise": 3, "closing_stock_paise": null, "source": null}),
+        )
+        .unwrap();
+        assert_eq!(
+            (r.net_profit_paise, r.closing_stock_paise, r.source),
+            (3, None, None)
+        );
         for bad in [
             json!({}),
             json!({"net_profit_paise": "3"}),

@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use bridge_tax_audit::applicability_44ab::{ComparisonTurnover, TurnoverInputs};
+use bridge_tax_audit::applicability_44ab::TurnoverInputs;
 use bridge_tax_audit::financial_statements::ReportTotals;
 use bridge_tax_audit::{
     applicability_44ab_canonical, cash_44ab_canonical, cash_book_integrity_canonical,
@@ -52,11 +52,7 @@ pub fn synthetic_report_totals() -> ReportTotals {
         &std::fs::read_to_string(fixtures().join("synthetic-report-totals.json")).unwrap(),
     )
     .unwrap();
-    ReportTotals {
-        net_profit_paise: v["net_profit_paise"].as_i64().unwrap(),
-        closing_stock_paise: v["closing_stock_paise"].as_i64(),
-        source: v["source"].as_str().map(str::to_string),
-    }
+    bridge_tax_audit::registry::report_totals_from_json(&v).unwrap()
 }
 
 pub fn golden_applicability_44ab() -> Value {
@@ -71,18 +67,7 @@ pub fn synthetic_turnover_inputs() -> TurnoverInputs {
         &std::fs::read_to_string(fixtures().join("synthetic-turnover-inputs.json")).unwrap(),
     )
     .unwrap();
-    let source = |key: &str| {
-        (!v[key].is_null()).then(|| ComparisonTurnover {
-            turnover_paise: v[key]["turnover_paise"].as_i64().unwrap(),
-            coverage: v[key]["coverage"].as_str().unwrap().to_string(),
-        })
-    };
-    TurnoverInputs {
-        books_turnover_paise: None,
-        gstr1: source("gstr1"),
-        gstr3b: source("gstr3b"),
-        ais: source("ais"),
-    }
+    bridge_tax_audit::registry::turnover_inputs_from_json(&v).unwrap()
 }
 
 /// The synthetic engagement, pointed at `read_dir` instead of the committed read.

@@ -213,6 +213,10 @@ const EDGE_TESTS: [&str; 4] = [
     "trial_balance",
 ];
 
+/// Synthetic goldens other than `synthetic.<id>.json`, each read by a named test:
+/// `financial_statements.noreport` by `tests/common/mod.rs` (`golden_financial_statements(false)`).
+const SYNTHETIC_VARIANTS: [&str; 1] = ["financial_statements.noreport"];
+
 fn book_names() -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(common::fixtures().join("edge-books"))
         .unwrap()
@@ -288,10 +292,15 @@ fn every_golden_belongs_to_a_book_or_a_registered_test() {
                 seen.insert((book.to_string(), test.to_string()));
             }
         } else if let Some(rest) = stem.strip_prefix("synthetic.") {
-            let id = rest.split('.').next().unwrap();
+            // A registered test's golden, or one of the named variants a test reads.
+            let (id, variant) = rest.split_once('.').unwrap_or((rest, ""));
             assert!(
                 registered.contains(&id),
                 "{file}: {id} is not a registered test"
+            );
+            assert!(
+                variant.is_empty() || SYNTHETIC_VARIANTS.contains(&rest),
+                "{file}: variant {variant:?} is not in SYNTHETIC_VARIANTS (add it with the test that reads it)"
             );
         } else {
             panic!("{file}: neither an edge nor a synthetic golden");

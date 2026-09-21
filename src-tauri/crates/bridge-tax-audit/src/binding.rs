@@ -845,6 +845,18 @@ mod tests {
         assert_eq!(report.bound_by_id, 1);
     }
 
+    /// The same, with Python-only whitespace (U+001D/U+001E) on the configured side and a non-ASCII
+    /// letter, which an ASCII-only fold would not match.
+    #[test]
+    fn a_guid_binds_across_python_only_whitespace_and_non_ascii_case() {
+        // TOML forbids raw control characters in a string, so the file carries them escaped.
+        let e = engagement("\n[group_ids]\n\"Cash-in-Hand\" = \"\\u001D\u{c4}BC-GUID-1\\u001E\"\n");
+        let b = book("Cash In Hand (New)", "\u{e4}bc-guid-1", None);
+        let (bound, report) = e.bind(&b).unwrap();
+        assert_eq!(bound.cash_groups, vec!["Cash In Hand (New)".to_string()]);
+        assert_eq!(report.bound_by_id, 1);
+    }
+
     #[test]
     fn the_same_read_reports_no_drift() {
         let e = engagement(&format!("\n[group_ids]\n\"Cash-in-Hand\" = {G_CASH:?}\n"));

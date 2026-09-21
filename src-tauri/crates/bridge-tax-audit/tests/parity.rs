@@ -63,6 +63,25 @@ fn a_repeated_id_or_an_unknown_key_is_reported() {
         "{d:?}"
     );
 
+    // A repeated finding id, and the same checks on the left side (the golden).
+    let mut rust = rust_dump();
+    let f0 = rust["findings"][0].clone();
+    rust["findings"].as_array_mut().unwrap().push(f0);
+    let d = diffs(&rust);
+    assert!(
+        d.iter()
+            .any(|x| x.starts_with("right: findings id") && x.ends_with("appears more than once")),
+        "{d:?}"
+    );
+    let mut golden = common::golden();
+    golden["extra"] = json!(1);
+    let d = compare(&golden, &rust_dump(), None).unwrap();
+    assert!(
+        d.iter()
+            .any(|x| x.starts_with("left: unknown key \"extra\"")),
+        "{d:?}"
+    );
+
     let mut rust = rust_dump();
     rust["basis"] = json!("x");
     rust["figures"][0]["basis"] = json!("x");

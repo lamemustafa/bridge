@@ -139,6 +139,10 @@ mod tests {
             ("abc-1\u{1f}", "097be456"),
             ("\u{a0}abc-1\u{2003}", "097be456"),
             ("\u{212a}-1", "4136a771"),
+            ("\u{a7cb}-1", "0d0b470a"),
+            ("\u{c4}bc-1", "bb498af8"),
+            ("\u{e4}bc-1", "bb498af8"),
+            ("\u{1d}abc-1\u{1e}", "097be456"),
         ] {
             assert_eq!(guid_tag(guid, "ledger").unwrap(), want, "{guid:?}");
         }

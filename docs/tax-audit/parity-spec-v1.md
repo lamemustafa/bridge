@@ -168,9 +168,10 @@ port reproduces that version wherever text is transformed, not its own toolchain
   toolchain's tables move.
 - **Where it is used.** The narration keys and own-account terms of `cash_book_integrity`, the
   applicability source labels and the entity type, and every GUID normalisation: ledger tags,
-  binding keys and lookups, and the company pin and its comparisons. GUIDs are also stripped with
-  Python's whitespace (`support::py_strip`: Rust's whitespace plus U+001C..U+001F, measured to be
-  the only difference). `cash_payments_40a3`'s transport-name heuristic and `depreciation`'s
+  binding keys and lookups, and the company pin and its comparisons. Ledger tags and binding also
+  strip GUIDs with Python's whitespace (`support::py_strip`: Rust's whitespace plus U+001C..U+001F,
+  measured to be the only difference), as the reference's `.strip().lower()` does; the company pin
+  and the company-GUID comparisons only lower-case, as the reference's `.lower()` does. `cash_payments_40a3`'s transport-name heuristic and `depreciation`'s
   GST/TCS check mirror case-insensitive regular expressions by upper-casing, which is **not** the
   same as Python's `re.I` with `\b` and `\s`: they differ on expanding upper-case forms (ß,
   ligatures), on U+0130, on word boundaries next to non-ASCII letters, and on U+001C..U+001F. That

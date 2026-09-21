@@ -112,9 +112,10 @@ pub(crate) fn py_upper(text: &str) -> String {
 /// point; NOT exact for every string: the final-sigma rule (capital sigma at the end of a word
 /// lowers to U+03C2) depends on the Cased and Case_Ignorable properties, which also changed between
 /// Unicode 15.1 and 17.0, and those are not pinned here (an independent review measured 52-141
-/// differing strings per context, e.g. a sigma after U+0295). Today this is used only for GUID
-/// keys, where it cannot occur in a real read; a caller lower-casing names needs the text-semantics
-/// helpers that pin it. The whole string is mapped where no exception applies, so the rule is at
+/// differing strings per context, e.g. a sigma after U+0295). Today it lower-cases GUIDs, where a
+/// sigma cannot occur in a real read, and `applicability_44ab`'s entity type, where one is not
+/// expected but nothing enforces that; a caller lower-casing names needs the text-semantics helpers
+/// that pin the rule. The whole string is mapped where no exception applies, so the rule is at
 /// least applied on the toolchain's properties.
 pub(crate) fn py_lower(text: &str) -> String {
     if !text

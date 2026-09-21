@@ -326,7 +326,8 @@ above regenerate byte-identical under it. `parity/python_golden.py`'s runner tab
 `tests/edge_books.rs` dispatches, all of them registered (`edge_runners_agree_across_the_two_sides`).
 `tests/edge_books.rs` builds every book in `edge-books/`, with no hand-kept list, and fails on a
 golden that no book names or no registered test owns. `tests/provenance_rows.rs` fails on a golden
-or edge book with no byte row.
+or edge book whose byte row is missing, names another file, or does not match the file's size
+and SHA-256 (it checks them itself, since the repository's gate skips a row it cannot parse).
 
 From batch 2 on, each batch records its own fixtures -- prose and byte table -- in
 `provenance/<batch>.md` under this directory, not in this file, so two lanes porting in parallel
