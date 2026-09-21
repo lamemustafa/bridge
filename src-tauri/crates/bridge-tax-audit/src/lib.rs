@@ -4,7 +4,7 @@
 //! This slice's end-to-end path: read a tally-read-v1 directory ([`read`], every byte verified
 //! against its manifest), build only the book fields a test needs ([`book`]), evaluate the book
 //! and result invariants ([`invariants`]), run a test ([`cash_44ab`], [`cash_payments_40a3`],
-//! [`depreciation`], [`financial_statements`]) with rule values from a vendored rules excerpt ([`rules`]), and serialise the
+//! [`depreciation`], [`financial_statements`], [`applicability_44ab`]) with rule values from a vendored rules excerpt ([`rules`]), and serialise the
 //! result canonically ([`canonical`]) so [`compare`] can diff it against the reference engine's
 //! dump under the same rules the reference's own comparer applies. `depreciation` additionally
 //! carries a module-level invariant (`depreciation::check_invariants`, DEP-1/DEP-2), threaded
@@ -24,6 +24,7 @@
 //! workspace `cargo test`/`clippy`/`fmt` steps, and the dependency-inventory and licence gates,
 //! already cover it; no crate-specific CI step is needed.
 
+pub mod applicability_44ab;
 pub mod binding;
 pub mod book;
 pub mod canonical;
@@ -81,6 +82,12 @@ pub struct Engagement {
     /// (`deed` is not a partner and is skipped, as the reference's `partners_config` pops it).
     /// Empty when the config has no `[partners]` table (e.g. a proprietorship).
     pub partner_interest_ledgers: BTreeMap<String, String>,
+    /// `[client].entity_type` ("individual", "firm", ...); `applicability_44ab` reads it (the
+    /// s.44ADA profession flag) and refuses without it. Optional for every other test.
+    pub entity_type: Option<String>,
+    /// `applicability_44ab`-only: the optional `[presumptive_history]` table, verbatim (client
+    /// confirmation of s.44AD history, never inferred from the books); `None` when absent.
+    pub presumptive_history: Option<toml::Table>,
     /// The parsed config, kept only so [`Engagement::bind`] can read `[ledger_ids]`/
     /// `[group_ids]` (`binding::bind`) without re-parsing the source text. Not part of this
     /// struct's public contract: a field a caller should read directly (`cash_groups` and the
@@ -357,6 +364,22 @@ not YYYY-MM-DD"
                 .unwrap_or_default(),
             depreciation,
             partner_interest_ledgers,
+            entity_type: client
+                .get("entity_type")
+                .map(|v| {
+                    v.as_str().map(str::to_string).ok_or_else(|| {
+                        AuditError::Config("[client].entity_type is not a string".to_string())
+                    })
+                })
+                .transpose()?,
+            presumptive_history: cfg
+                .get("presumptive_history")
+                .map(|v| {
+                    v.as_table().cloned().ok_or_else(|| {
+                        AuditError::Config("[presumptive_history] is not a table".to_string())
+                    })
+                })
+                .transpose()?,
             raw_cfg: cfg,
         })
     }
@@ -502,4 +525,67 @@ pub fn financial_statements_canonical(
     report_totals: Option<&financial_statements::ReportTotals>,
 ) -> Result<serde_json::Value> {
     financial_statements_on(engagement, &load_book(engagement)?, rules, report_totals)
+}
+
+/// Run `applicability_44ab` on a book and return its canonical parity dump. As the reference's own
+/// pack does, books turnover is `financial_statements`' `sales` figure and the cash share is
+/// `cash_44ab`'s own two figures and finding limits, both run here on the same bound engagement.
+/// `comparisons` carries the GSTR-1/GSTR-3B/AIS turnover (caller data: this crate reads no GST
+/// document); only its `gstr1`/`gstr3b`/`ais` fields are read. Refuses without
+/// `[client].entity_type`.
+pub fn applicability_44ab_on(
+    engagement: &Engagement,
+    book: &book::Book,
+    rules: &Rules,
+    comparisons: &applicability_44ab::TurnoverInputs,
+) -> Result<serde_json::Value> {
+    use findings::Value;
+    let entity_type = engagement.entity_type.clone().ok_or_else(|| {
+        AuditError::Config("applicability_44ab needs [client].entity_type".to_string())
+    })?;
+    let (bound, _report) = engagement.bind(book)?;
+    let interest: BTreeSet<String> = bound.partner_interest_ledgers.values().cloned().collect();
+    let fs = financial_statements::run(book, rules, &interest, None)?;
+    let int_of = |r: &findings::TestResult, id: &str| -> Option<i64> {
+        r.figures
+            .iter()
+            .find(|f| f.id == id)
+            .and_then(|f| match f.value {
+                Value::Int(n) => Some(n),
+                _ => None,
+            })
+    };
+    let cash = book.ledgers_under_any(&bound.cash_groups);
+    let bank = book.ledgers_under_any(&bound.bank_groups);
+    let c44 = cash_44ab::run(book, rules, &cash, &bank)?;
+    let inputs = applicability_44ab::TurnoverInputs {
+        books_turnover_paise: int_of(&fs, "financial_statements.sales"),
+        ..comparisons.clone()
+    };
+    let cash_share = applicability_44ab::CashShare {
+        receipts_bp: int_of(&c44, "cash_44ab.cash_share_receipts"),
+        payments_bp: int_of(&c44, "cash_44ab.cash_share_payments"),
+        limits: c44
+            .findings
+            .first()
+            .map(|f| f.limits.clone())
+            .unwrap_or_default(),
+    };
+    let result = applicability_44ab::run(
+        rules,
+        &entity_type,
+        &inputs,
+        &cash_share,
+        bound.presumptive_history.as_ref(),
+    )?;
+    canonical::canonical_test_result(book, &result, None)
+}
+
+/// Read, verify, build the book, run `applicability_44ab` and return its canonical parity dump.
+pub fn applicability_44ab_canonical(
+    engagement: &Engagement,
+    rules: &Rules,
+    comparisons: &applicability_44ab::TurnoverInputs,
+) -> Result<serde_json::Value> {
+    applicability_44ab_on(engagement, &load_book(engagement)?, rules, comparisons)
 }

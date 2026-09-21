@@ -7,7 +7,11 @@
 //!     TEST_ID ENGINE_RULES_TOML CLIENT_TOML READ_DIR PYTHON_DUMP_JSON RUST_DUMP_OUT
 //! ```
 //!
-//! `TEST_ID` is `cash_44ab`, `cash_payments_40a3`, `depreciation` or `financial_statements`. For
+//! `TEST_ID` is `cash_44ab`, `cash_payments_40a3`, `depreciation`, `financial_statements` or
+//! `applicability_44ab`. For `applicability_44ab`, an optional seventh argument
+//! `TURNOVER_INPUTS_JSON` feeds the GSTR-1/GSTR-3B/AIS comparison turnover as caller data -- the
+//! file `parity/python_golden.py --emit-turnover-inputs` wrote -- so both sides compare against the
+//! same numbers; without it neither side has a comparison source. For
 //! `financial_statements`, an optional seventh argument `REPORT_TOTALS_JSON` feeds Tally's own
 //! Profit & Loss report totals as caller data -- the file `parity/python_golden.py
 //! --emit-report-totals` wrote from the same read, so both sides tie against the same numbers;
@@ -48,13 +52,14 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::time::Instant;
 
+use bridge_tax_audit::applicability_44ab::{ComparisonTurnover, TurnoverInputs};
 use bridge_tax_audit::canonical::hex;
 use bridge_tax_audit::compare::compare;
 use bridge_tax_audit::financial_statements::ReportTotals;
 use bridge_tax_audit::rules::{Rules, SOURCE_SHA256, VENDORED};
 use bridge_tax_audit::{
-    cash_44ab_on, cash_payments_40a3_on, depreciation_on, financial_statements_on, load_book,
-    Engagement,
+    applicability_44ab_on, cash_44ab_on, cash_payments_40a3_on, depreciation_on,
+    financial_statements_on, load_book, Engagement,
 };
 use sha2::{Digest, Sha256};
 
@@ -154,24 +159,66 @@ fn main() -> ExitCode {
             _ => {
                 return fail(
                     "usage: TEST_ID ENGINE_RULES_TOML CLIENT_TOML READ_DIR PYTHON_DUMP_JSON \
-                     RUST_DUMP_OUT [REPORT_TOTALS_JSON]",
+                     RUST_DUMP_OUT [REPORT_TOTALS_JSON | TURNOVER_INPUTS_JSON]",
                 )
             }
         };
-    const TESTS: [&str; 4] = [
+    const TESTS: [&str; 5] = [
         "cash_44ab",
         "cash_payments_40a3",
         "depreciation",
         "financial_statements",
+        "applicability_44ab",
     ];
     if !TESTS.contains(&test_id.as_str()) {
         return fail(format!(
             "unknown TEST_ID {test_id:?}; expected one of {TESTS:?}"
         ));
     }
-    if report_json.is_some() && test_id != "financial_statements" {
-        return fail("REPORT_TOTALS_JSON applies to financial_statements only");
+    if report_json.is_some()
+        && !["financial_statements", "applicability_44ab"].contains(&test_id.as_str())
+    {
+        return fail(
+            "a seventh argument applies to financial_statements or applicability_44ab only",
+        );
     }
+    let mut comparisons = TurnoverInputs::default();
+    if let (Some(path), "applicability_44ab") = (report_json, test_id.as_str()) {
+        let parsed: serde_json::Value = match std::fs::read_to_string(path)
+            .map_err(|e| e.to_string())
+            .and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string()))
+        {
+            Ok(v) => v,
+            Err(e) => return fail(format!("{path}: {e}")),
+        };
+        let source = |key: &str| -> Result<Option<ComparisonTurnover>, String> {
+            let v = &parsed[key];
+            if v.is_null() {
+                return Ok(None);
+            }
+            match (v["turnover_paise"].as_i64(), v["coverage"].as_str()) {
+                (Some(turnover_paise), Some(coverage)) => Ok(Some(ComparisonTurnover {
+                    turnover_paise,
+                    coverage: coverage.to_string(),
+                })),
+                _ => Err(format!("{path}: {key} needs turnover_paise and coverage")),
+            }
+        };
+        comparisons = match (source("gstr1"), source("gstr3b"), source("ais")) {
+            (Ok(gstr1), Ok(gstr3b), Ok(ais)) => TurnoverInputs {
+                books_turnover_paise: None,
+                gstr1,
+                gstr3b,
+                ais,
+            },
+            (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => return fail(e),
+        };
+    }
+    let report_json = if test_id == "financial_statements" {
+        report_json
+    } else {
+        None
+    };
     let report_totals = match report_json {
         None => None,
         Some(path) => {
@@ -267,6 +314,7 @@ fn main() -> ExitCode {
         "financial_statements" => {
             financial_statements_on(&engagement, &book, &rules, report_totals.as_ref())
         }
+        "applicability_44ab" => applicability_44ab_on(&engagement, &book, &rules, &comparisons),
         _ => depreciation_on(&engagement, &book, &rules),
     };
     let rust = match rust {

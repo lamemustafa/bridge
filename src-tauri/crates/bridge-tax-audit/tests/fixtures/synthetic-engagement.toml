@@ -59,3 +59,9 @@ computers_40 = 0
 [partners.partner_a]
 capital_ledgers = ["Partner Capital - A"]
 interest_ledger = "Interest to Partners"
+
+# applicability_44ab only: client confirmation of one year's s.44AD history (invented), restated by
+# the test and never interpreted.
+[presumptive_history]
+ay = "2024-25"
+opted_44ad = true

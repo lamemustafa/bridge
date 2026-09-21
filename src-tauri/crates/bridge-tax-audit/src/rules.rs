@@ -4,7 +4,8 @@
 //! Provenance: `rules/ay2026-27.s44ab.toml` holds five byte-for-byte verbatim blocks of the
 //! reference implementation's own AY 2026-27 rules file -- `[meta]` through the end of `[s44ab]`,
 //! then `[s40a3]` in full, then the first three lines each of `[s269st]` and `[s269ss_269t]`,
-//! then `[depreciation]` in full with its three `[depreciation.blocks.<key>]` sub-tables --
+//! then `[depreciation]` in full with its three `[depreciation.blocks.<key>]` sub-tables, then
+//! `[due_dates]` as three blocks (header, the three dates, `status`) --
 //! under a header explaining why each block stops where it does (see the file itself). The
 //! source file had sha256 [`SOURCE_SHA256`] when it was read at reference commit
 //! [`SOURCE_COMMIT`]. The local parity example re-checks, against a local copy of the reference
@@ -20,12 +21,12 @@ use crate::error::{AuditError, Result};
 
 pub const VENDORED: &str = include_str!("../rules/ay2026-27.s44ab.toml");
 pub const VENDORED_SHA256: &str =
-    "eeb1a1401861da2b22ea41f944fad5f24c3d7bf149987fe4dc2d126318f67130";
+    "2f190fda42438cf9d4588bc9c1ce6f43a834acc117adf94837b6d72cb9ba3929";
 pub const SOURCE_PATH: &str = "the reference Python implementation's AY 2026-27 rules file";
 pub const SOURCE_SHA256: &str = "8a6ec80cd5d19da34392e93024dc9a43a98982b09fb457c662f627174acedf2d";
 pub const SOURCE_COMMIT: &str = "dd376ed014d922a1e2b12052763af36a565402ec";
 
-/// The values `cash_44ab` and `cash_payments_40a3` read.
+/// The rule values the ported tests read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rules {
     /// `[meta].version`, echoed into every result as `rules_version`.
@@ -49,6 +50,14 @@ pub struct Rules {
     pub depreciation_cash_addition_limit_paise: i64,
     /// `[depreciation.blocks.<key>].rate_bp`, keyed by block key.
     pub depreciation_block_rate_bp: BTreeMap<String, i64>,
+    /// `[due_dates].audit_report`, ISO date.
+    pub due_date_audit_report: String,
+    /// `[due_dates].return_audit_case`, ISO date.
+    pub due_date_return_audit_case: String,
+    /// `[due_dates].return_non_audit_firm`, ISO date.
+    pub due_date_return_non_audit_firm: String,
+    /// `[due_dates].status` ("partial" until checked against the Finance Act text).
+    pub due_dates_status: String,
 }
 
 impl Rules {
@@ -62,14 +71,25 @@ impl Rules {
                 .and_then(toml::Value::as_table)
                 .ok_or_else(|| AuditError::Config(format!("rules: no [{name}] table")))
         };
-        let (meta, s44ab, s40a3, s269st, s269ss_269t, depreciation) = (
+        let (meta, s44ab, s40a3, s269st, s269ss_269t, depreciation, due_dates) = (
             section("meta")?,
             section("s44ab")?,
             section("s40a3")?,
             section("s269st")?,
             section("s269ss_269t")?,
             section("depreciation")?,
+            section("due_dates")?,
         );
+        let date_in = |key: &str| -> Result<String> {
+            match due_dates.get(key) {
+                Some(toml::Value::Datetime(d)) if d.date.is_some() && d.time.is_none() => {
+                    Ok(d.to_string())
+                }
+                _ => Err(AuditError::Config(format!(
+                    "rules: [due_dates].{key} is not a date"
+                ))),
+            }
+        };
         let int_in = |t: &toml::Table, table_name: &str, key: &str| {
             t.get(key).and_then(toml::Value::as_integer).ok_or_else(|| {
                 AuditError::Config(format!("rules: [{table_name}].{key} is not an integer"))
@@ -150,6 +170,14 @@ impl Rules {
                     })
                     .collect::<Result<BTreeMap<String, i64>>>()?
             },
+            due_date_audit_report: date_in("audit_report")?,
+            due_date_return_audit_case: date_in("return_audit_case")?,
+            due_date_return_non_audit_firm: date_in("return_non_audit_firm")?,
+            due_dates_status: due_dates
+                .get("status")
+                .and_then(toml::Value::as_str)
+                .ok_or_else(|| AuditError::Config("rules: [due_dates].status".to_string()))?
+                .to_string(),
         })
     }
 
@@ -217,5 +245,26 @@ mod tests {
             .into_iter()
             .collect::<std::collections::BTreeMap<_, _>>()
         );
+    }
+
+    #[test]
+    fn vendored_rules_carry_the_due_dates() {
+        let rules = Rules::vendored().unwrap();
+        assert_eq!(rules.due_date_audit_report, "2026-09-30");
+        assert_eq!(rules.due_date_return_audit_case, "2026-10-31");
+        assert_eq!(rules.due_date_return_non_audit_firm, "2026-08-31");
+        assert_eq!(rules.due_dates_status, "partial");
+    }
+
+    /// The vendored excerpt is public: the source's own comment beside `return_non_audit_firm`
+    /// is private, so the excerpt stops at the value, and no private-note citation may appear.
+    #[test]
+    fn the_vendored_excerpt_is_public_safe() {
+        assert!(VENDORED
+            .lines()
+            .any(|l| l == "return_non_audit_firm = 2026-08-31"));
+        for word in ["note)", "research/", ".md"] {
+            assert!(!VENDORED.contains(word), "{word:?} in the vendored rules");
+        }
     }
 }

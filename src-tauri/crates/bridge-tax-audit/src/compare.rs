@@ -50,12 +50,16 @@ const NUMERIC_UNITS: [&str; 4] = ["paise", "bp", "count", "days"];
 /// P&L group totals, opening stock, closing stock, the TB closing field, the stale-field count,
 /// gross profit and its ratio, the stock-to-turnover ratio, net profit and its ratio) and 3
 /// voucher-population counts. Partner, report-tie and per-exclusion figures come on top.
+/// `applicability_44ab` always emits these 9: the applicable threshold, the turnover definition,
+/// turnover (a value or "not supplied"), the audit-required call, the s.44ADA flag, three due dates
+/// and the presumptive-history status. Comparison-source figures come on top.
 pub fn default_min_figures(test_id: &str) -> usize {
     match test_id {
         "cash_44ab" => 7,
         "cash_payments_40a3" => 18,
         "depreciation" => 2,
         "financial_statements" => 18,
+        "applicability_44ab" => 9,
         _ => 1,
     }
 }
