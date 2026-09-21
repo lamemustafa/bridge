@@ -242,7 +242,9 @@ and the reference agree on the same book, and nothing about reading Tally.
 
 One divergence is known and not fixed here: case mapping. Rust 1.96 carries Unicode 17.0 and the
 reference's Python 3.13 carries 15.1.0, and upper- and lower-casing each differ at 55 code points
-(all assigned after 15.1; measured over every code point). A narration holding one can change
+(measured over every code point). All 55 for lower-casing, and 51 for upper-casing, are unassigned in
+15.1; the other 4 (U+019B, U+0264, U+A7D3, U+A7D5) are older lowercase letters whose uppercase
+partner was assigned later. A narration holding one can change
 `cash_book_integrity`'s parts 3 and 5. No edge book holds one; the crate-wide fix pins case
 mapping to the reference's version.
 
