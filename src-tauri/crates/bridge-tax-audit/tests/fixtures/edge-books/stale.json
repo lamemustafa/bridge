@@ -1,0 +1,175 @@
+{
+ "comment": "stale_balances_41_1: abs(closing) of exactly Re 1 is not active, Re 1.01 is (boundary); a debtor with no TB row is not active (M31); movement on the credit side alone is not stale (M06); a zero-amount population line does not count as touching a ledger for STL-1 (M07), and neither does a line on an optional voucher; a stale ledger a population voucher posts to makes STL-1 fire, so its message is compared; stale debtor and stale creditor findings both appear.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Sundry Debtors": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Direct Expenses": null,
+  "Indirect Expenses": null,
+  "Suspense A/c": null,
+  "Petty Cash Box": "Cash-in-Hand"
+ },
+ "ledgers": [
+  {
+   "name": "D At Limit",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-d-at-limit"
+  },
+  {
+   "name": "D Over Limit",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-d-over-limit"
+  },
+  {
+   "name": "D No TB Row",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-d-no-tb-row"
+  },
+  {
+   "name": "D Zero Touched",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-d-zero-touched"
+  },
+  {
+   "name": "D Really Touched",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-d-really-touched"
+  },
+  {
+   "name": "C Stale",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-c-stale"
+  },
+  {
+   "name": "C Credit Only",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-c-credit-only"
+  },
+  {
+   "name": "Suspense",
+   "chain": [
+    "Suspense A/c"
+   ],
+   "guid": "edge-suspense"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "D At Limit",
+   "opening": 100,
+   "debit": 0,
+   "credit": 0,
+   "closing": 100
+  },
+  {
+   "ledger": "D Over Limit",
+   "opening": 101,
+   "debit": 0,
+   "credit": 0,
+   "closing": 101
+  },
+  {
+   "ledger": "D Zero Touched",
+   "opening": 500,
+   "debit": 0,
+   "credit": 0,
+   "closing": 500
+  },
+  {
+   "ledger": "D Really Touched",
+   "opening": 700,
+   "debit": 0,
+   "credit": 0,
+   "closing": 700
+  },
+  {
+   "ledger": "C Stale",
+   "opening": -900,
+   "debit": 0,
+   "credit": 0,
+   "closing": -900
+  },
+  {
+   "ledger": "C Credit Only",
+   "opening": -300,
+   "debit": 0,
+   "credit": 5,
+   "closing": -305
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "s1",
+   "date": "2025-06-01",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "D Zero Touched",
+     0
+    ],
+    [
+     "Suspense",
+     0
+    ]
+   ]
+  },
+  {
+   "guid": "s2",
+   "date": "2025-06-02",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "D Zero Touched",
+     10
+    ],
+    [
+     "Suspense",
+     -10
+    ]
+   ],
+   "status": "optional"
+  },
+  {
+   "guid": "s3",
+   "date": "2025-06-03",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "D Really Touched",
+     25
+    ],
+    [
+     "Suspense",
+     -25
+    ]
+   ]
+  }
+ ],
+ "tests": [
+  "stale_balances_41_1"
+ ]
+}

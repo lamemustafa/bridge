@@ -1,0 +1,447 @@
+{
+ "comment": "ledger_scrutiny: large is over Rs 50,000 (exactly is not); round sums; the last-days window is 7 days inclusive of its first day (2026-03-25 in, 2026-03-24 out: M08); a cash share of exactly 30% is flagged (M10) and 33.33% prints two decimals (M14); a zero cash line is not a cash leg (M09); a credit entry with a cash leg is not cash-paid; a zero-net non-journal voucher still marks a ledger as not journal-only (M12), and a journal plus a non-journal ledger is not journal-only (M11); a credit closing is contra-nature and a zero closing is not (M13); LSC-1 fires when the walk exceeds the TB debit by more than Re 1 and not at exactly Re 1 (M30).",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Sundry Debtors": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Direct Expenses": null,
+  "Indirect Expenses": null,
+  "Suspense A/c": null,
+  "Petty Cash Box": "Cash-in-Hand"
+ },
+ "ledgers": [
+  {
+   "name": "Repairs",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-repairs"
+  },
+  {
+   "name": "Share Third",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-share-third"
+  },
+  {
+   "name": "Share Thirty",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-share-thirty"
+  },
+  {
+   "name": "Zero Cash Line",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-zero-cash-line"
+  },
+  {
+   "name": "Credit Exp",
+   "chain": [
+    "Direct Expenses"
+   ],
+   "guid": "edge-credit-exp"
+  },
+  {
+   "name": "Journal Mix",
+   "chain": [
+    "Direct Expenses"
+   ],
+   "guid": "edge-journal-mix"
+  },
+  {
+   "name": "Mixed Types",
+   "chain": [
+    "Direct Expenses"
+   ],
+   "guid": "edge-mixed-types"
+  },
+  {
+   "name": "Zero Close",
+   "chain": [
+    "Direct Expenses"
+   ],
+   "guid": "edge-zero-close"
+  },
+  {
+   "name": "Understated",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-understated"
+  },
+  {
+   "name": "At Tolerance",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-at-tolerance"
+  },
+  {
+   "name": "Cash",
+   "chain": [
+    "Cash-in-Hand"
+   ],
+   "guid": "edge-cash"
+  },
+  {
+   "name": "Suspense",
+   "chain": [
+    "Suspense A/c"
+   ],
+   "guid": "edge-suspense"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Repairs",
+   "opening": 0,
+   "debit": 10300001,
+   "credit": 0,
+   "closing": 10300001
+  },
+  {
+   "ledger": "Share Third",
+   "opening": 0,
+   "debit": 3,
+   "credit": 0,
+   "closing": 3
+  },
+  {
+   "ledger": "Share Thirty",
+   "opening": 0,
+   "debit": 10000,
+   "credit": 0,
+   "closing": 10000
+  },
+  {
+   "ledger": "Zero Cash Line",
+   "opening": 0,
+   "debit": 1,
+   "credit": 0,
+   "closing": 1
+  },
+  {
+   "ledger": "Credit Exp",
+   "opening": 0,
+   "debit": 0,
+   "credit": 200000,
+   "closing": -200000
+  },
+  {
+   "ledger": "Journal Mix",
+   "opening": 0,
+   "debit": 600,
+   "credit": 100,
+   "closing": 500
+  },
+  {
+   "ledger": "Mixed Types",
+   "opening": 0,
+   "debit": 300,
+   "credit": 0,
+   "closing": 300
+  },
+  {
+   "ledger": "Zero Close",
+   "opening": 0,
+   "debit": 400,
+   "credit": 400,
+   "closing": 0
+  },
+  {
+   "ledger": "Understated",
+   "opening": 0,
+   "debit": 100,
+   "credit": 0,
+   "closing": 100
+  },
+  {
+   "ledger": "At Tolerance",
+   "opening": 0,
+   "debit": 900,
+   "credit": 0,
+   "closing": 900
+  },
+  {
+   "ledger": "Cash",
+   "opening": 0,
+   "debit": 200000,
+   "credit": 5003001,
+   "closing": -4803001
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "a1",
+   "date": "2026-03-25",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Repairs",
+     5000000
+    ],
+    [
+     "Cash",
+     -5000000
+    ]
+   ]
+  },
+  {
+   "guid": "a2",
+   "date": "2026-03-24",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Repairs",
+     300000
+    ],
+    [
+     "Suspense",
+     -300000
+    ]
+   ]
+  },
+  {
+   "guid": "a3",
+   "date": "2026-03-31",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Repairs",
+     5000001
+    ],
+    [
+     "Suspense",
+     -5000001
+    ]
+   ]
+  },
+  {
+   "guid": "b1",
+   "date": "2025-05-01",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Share Third",
+     1
+    ],
+    [
+     "Cash",
+     -1
+    ]
+   ]
+  },
+  {
+   "guid": "b2",
+   "date": "2025-05-02",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Share Third",
+     2
+    ],
+    [
+     "Suspense",
+     -2
+    ]
+   ]
+  },
+  {
+   "guid": "b3",
+   "date": "2025-05-03",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Share Thirty",
+     3000
+    ],
+    [
+     "Cash",
+     -3000
+    ]
+   ]
+  },
+  {
+   "guid": "b4",
+   "date": "2025-05-04",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Share Thirty",
+     7000
+    ],
+    [
+     "Suspense",
+     -7000
+    ]
+   ]
+  },
+  {
+   "guid": "c1",
+   "date": "2025-05-05",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Zero Cash Line",
+     1
+    ],
+    [
+     "Cash",
+     0
+    ],
+    [
+     "Suspense",
+     -1
+    ]
+   ]
+  },
+  {
+   "guid": "c2",
+   "date": "2025-05-06",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Credit Exp",
+     -200000
+    ],
+    [
+     "Cash",
+     200000
+    ]
+   ]
+  },
+  {
+   "guid": "d1",
+   "date": "2025-05-07",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Journal Mix",
+     100
+    ],
+    [
+     "Journal Mix",
+     -100
+    ]
+   ]
+  },
+  {
+   "guid": "d2",
+   "date": "2025-05-08",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Journal Mix",
+     500
+    ],
+    [
+     "Suspense",
+     -500
+    ]
+   ]
+  },
+  {
+   "guid": "e1",
+   "date": "2025-05-09",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Mixed Types",
+     100
+    ],
+    [
+     "Suspense",
+     -100
+    ]
+   ]
+  },
+  {
+   "guid": "e2",
+   "date": "2025-05-10",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Mixed Types",
+     200
+    ],
+    [
+     "Suspense",
+     -200
+    ]
+   ]
+  },
+  {
+   "guid": "f1",
+   "date": "2025-05-11",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Zero Close",
+     400
+    ],
+    [
+     "Suspense",
+     -400
+    ]
+   ]
+  },
+  {
+   "guid": "f2",
+   "date": "2025-05-12",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Zero Close",
+     -400
+    ],
+    [
+     "Suspense",
+     400
+    ]
+   ]
+  },
+  {
+   "guid": "g1",
+   "date": "2025-05-13",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Understated",
+     1000
+    ],
+    [
+     "Suspense",
+     -1000
+    ]
+   ]
+  },
+  {
+   "guid": "h1",
+   "date": "2025-05-14",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "At Tolerance",
+     1000
+    ],
+    [
+     "Suspense",
+     -1000
+    ]
+   ]
+  }
+ ],
+ "cash": [
+  "Cash"
+ ],
+ "tests": [
+  "ledger_scrutiny"
+ ]
+}

@@ -1,0 +1,500 @@
+{
+ "comment": "cash_book_integrity, all five parts. 1: two cash ledgers; negative days with several vouchers (M28), two days tied at the lowest (first wins), a day whose worst case is exactly nil (M27); a cash ledger closing nil in the TB (M26) and one closing negative with no negative day (CBI-2 fires). 2: openings that do not sum to nil, with some nil openings (M22). 3: own-account terms differing in case (M18), an empty term (M21) and a blank term; Contra withdrawal and deposit (M20); a matching narration on a Payment (M19). 4: a receipt through bank crediting an expense (M16), and a journal crediting an expense with no positive cash/bank line (M15). 5: journal cash to an expense with narrations equal only after whitespace/case folding and straße/STRASSE (M24), a pair (M25), a blank-only narration (M23), and a journal whose cash leg is a debit (M17).",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Sundry Debtors": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Direct Expenses": null,
+  "Indirect Expenses": null,
+  "Suspense A/c": null,
+  "Petty Cash Box": "Cash-in-Hand"
+ },
+ "ledgers": [
+  {
+   "name": "Cash",
+   "chain": [
+    "Cash-in-Hand"
+   ],
+   "guid": "edge-cash"
+  },
+  {
+   "name": "Till",
+   "chain": [
+    "Cash-in-Hand"
+   ],
+   "guid": "edge-till"
+  },
+  {
+   "name": "Petty",
+   "chain": [
+    "Petty Cash Box",
+    "Cash-in-Hand"
+   ],
+   "guid": "edge-petty"
+  },
+  {
+   "name": "Bank",
+   "chain": [
+    "Bank Accounts"
+   ],
+   "guid": "edge-bank"
+  },
+  {
+   "name": "Wages",
+   "chain": [
+    "Direct Expenses"
+   ],
+   "guid": "edge-wages"
+  },
+  {
+   "name": "Rent",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-rent"
+  },
+  {
+   "name": "Suspense",
+   "chain": [
+    "Suspense A/c"
+   ],
+   "guid": "edge-suspense"
+  },
+  {
+   "name": "Owner",
+   "chain": [
+    "Suspense A/c"
+   ],
+   "guid": "edge-owner"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Cash",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "Till",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "Petty",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": -40
+  },
+  {
+   "ledger": "Bank",
+   "opening": 1000,
+   "debit": 0,
+   "credit": 0,
+   "closing": 1000
+  },
+  {
+   "ledger": "Wages",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "Rent",
+   "opening": -400,
+   "debit": 0,
+   "credit": 0,
+   "closing": -400
+  },
+  {
+   "ledger": "Suspense",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "Owner",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "n1",
+   "date": "2025-06-01",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Cash",
+     -100
+    ],
+    [
+     "Suspense",
+     100
+    ]
+   ]
+  },
+  {
+   "guid": "n2",
+   "date": "2025-06-01",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Cash",
+     -20
+    ],
+    [
+     "Suspense",
+     20
+    ]
+   ]
+  },
+  {
+   "guid": "n3",
+   "date": "2025-06-02",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Cash",
+     70
+    ],
+    [
+     "Suspense",
+     -70
+    ]
+   ]
+  },
+  {
+   "guid": "n4",
+   "date": "2025-06-03",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Cash",
+     -70
+    ],
+    [
+     "Suspense",
+     70
+    ]
+   ]
+  },
+  {
+   "guid": "n5",
+   "date": "2025-06-04",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Cash",
+     120
+    ],
+    [
+     "Suspense",
+     -120
+    ]
+   ]
+  },
+  {
+   "guid": "n6",
+   "date": "2025-06-05",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Cash",
+     0
+    ],
+    [
+     "Suspense",
+     0
+    ]
+   ]
+  },
+  {
+   "guid": "n7",
+   "date": "2025-06-06",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Cash",
+     50
+    ],
+    [
+     "Suspense",
+     -50
+    ]
+   ]
+  },
+  {
+   "guid": "n8",
+   "date": "2025-06-06",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Cash",
+     -50
+    ],
+    [
+     "Suspense",
+     50
+    ]
+   ]
+  },
+  {
+   "guid": "o1",
+   "date": "2025-07-01",
+   "base_type": "Contra",
+   "lines": [
+    [
+     "Cash",
+     300
+    ],
+    [
+     "Bank",
+     -300
+    ]
+   ],
+   "narration": "self transfer to own a/c"
+  },
+  {
+   "guid": "o2",
+   "date": "2025-07-02",
+   "base_type": "Contra",
+   "lines": [
+    [
+     "Cash",
+     -200
+    ],
+    [
+     "Bank",
+     200
+    ]
+   ],
+   "narration": "Self Transfer from own a/c"
+  },
+  {
+   "guid": "o3",
+   "date": "2025-07-03",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Cash",
+     -30
+    ],
+    [
+     "Owner",
+     30
+    ]
+   ],
+   "narration": "self transfer"
+  },
+  {
+   "guid": "o4",
+   "date": "2025-07-04",
+   "base_type": "Contra",
+   "lines": [
+    [
+     "Cash",
+     10
+    ],
+    [
+     "Bank",
+     -10
+    ]
+   ],
+   "narration": "atm withdrawal"
+  },
+  {
+   "guid": "p1",
+   "date": "2025-08-01",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Bank",
+     900
+    ],
+    [
+     "Rent",
+     -900
+    ]
+   ]
+  },
+  {
+   "guid": "p2",
+   "date": "2025-08-02",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Cash",
+     -50
+    ],
+    [
+     "Rent",
+     -50
+    ],
+    [
+     "Suspense",
+     100
+    ]
+   ]
+  },
+  {
+   "guid": "q1",
+   "date": "2025-09-01",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Wages",
+     200
+    ],
+    [
+     "Cash",
+     -200
+    ]
+   ],
+   "narration": "Wages  week\t1"
+  },
+  {
+   "guid": "q2",
+   "date": "2025-09-02",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Wages",
+     300
+    ],
+    [
+     "Cash",
+     -300
+    ]
+   ],
+   "narration": "wages week 1"
+  },
+  {
+   "guid": "q3",
+   "date": "2025-09-03",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Wages",
+     40
+    ],
+    [
+     "Cash",
+     -40
+    ]
+   ],
+   "narration": "straße"
+  },
+  {
+   "guid": "q4",
+   "date": "2025-09-04",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Wages",
+     60
+    ],
+    [
+     "Cash",
+     -60
+    ]
+   ],
+   "narration": "STRASSE"
+  },
+  {
+   "guid": "q5",
+   "date": "2025-09-05",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Wages",
+     10
+    ],
+    [
+     "Cash",
+     -10
+    ]
+   ],
+   "narration": "   "
+  },
+  {
+   "guid": "q6",
+   "date": "2025-09-06",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Wages",
+     5
+    ],
+    [
+     "Cash",
+     5
+    ],
+    [
+     "Suspense",
+     -10
+    ]
+   ],
+   "narration": "wages week 1"
+  },
+  {
+   "guid": "q7",
+   "date": "2025-09-07",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Rent",
+     15
+    ],
+    [
+     "Petty",
+     -15
+    ]
+   ],
+   "narration": "petty rent"
+  },
+  {
+   "guid": "q8",
+   "date": "2025-09-08",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Rent",
+     25
+    ],
+    [
+     "Petty",
+     -25
+    ]
+   ],
+   "narration": "petty rent"
+  }
+ ],
+ "cash": [
+  "Cash",
+  "Till",
+  "Petty"
+ ],
+ "bank": [
+  "Bank"
+ ],
+ "own_account_terms": [
+  "SELF TRANSFER",
+  "",
+  "  "
+ ],
+ "tests": [
+  "cash_book_integrity"
+ ]
+}
