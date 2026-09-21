@@ -29,7 +29,7 @@ impl ApprovedImport {
         ledger_catalogue_request: AgentReadRequest,
         ledger_binding: StandardLedgerCatalogBinding,
     ) -> Result<Self, String> {
-        confirm(preview).await?;
+        approve(preview).await?;
         Ok(Self {
             xml,
             voucher_date,
@@ -75,6 +75,9 @@ impl ApprovedImport {
         ledger_catalogue_request: AgentReadRequest,
         ledger_binding: StandardLedgerCatalogBinding,
     ) -> Self {
+        // Carries the seam marker so the shipped-binary scan also covers this
+        // bypass (bridge#583).
+        std::hint::black_box(test_seam::SEAM_MARKER);
         Self {
             xml,
             voucher_date,
@@ -96,6 +99,107 @@ pub(crate) enum ApprovedImportAdmissionError {
     PreexistingIdentity,
     #[error("import_masters_changed")]
     LedgerIdentityChanged,
+}
+
+/// The native approval every real post goes through. Outside this crate's own
+/// unit tests it is exactly [`confirm`]: nothing else exists to answer it.
+#[cfg(not(test))]
+use confirm as approve;
+
+#[cfg(test)]
+use test_seam::approve;
+
+/// A scripted answer to the native approval, for this crate's unit tests only
+/// (bridge#583). It is compiled only under bare `cfg(test)`, which Cargo sets
+/// for no shipped build and no feature, variable or flag can set at runtime;
+/// `tests/approval_seam_gate.rs` holds it to that, and
+/// `scripts/check-no-test-seam.mjs` proves its marker is absent from every
+/// shipped executable.
+#[cfg(test)]
+pub(crate) mod test_seam {
+    use std::sync::{Arc, Mutex};
+
+    /// Present in any binary this module is compiled into, and in no other.
+    pub(crate) const SEAM_MARKER: &str = "bridge-test-approval-seam-5f1c9e7a";
+
+    /// What a test decided, and every preview the post path asked it about.
+    #[derive(Clone)]
+    pub(crate) struct ScriptedApproval {
+        approve: bool,
+        previews: Arc<Mutex<Vec<String>>>,
+        /// Run while the approval is pending, as something else changing the
+        /// book or the journal while an operator reads the dialog would.
+        while_pending: Option<Arc<dyn Fn() + Send + Sync>>,
+    }
+
+    impl ScriptedApproval {
+        pub(crate) fn approving() -> Self {
+            Self::new(true)
+        }
+
+        pub(crate) fn declining() -> Self {
+            Self::new(false)
+        }
+
+        /// Approves, after running `while_pending` as the dialog would wait.
+        pub(crate) fn approving_after(while_pending: impl Fn() + Send + Sync + 'static) -> Self {
+            Self {
+                while_pending: Some(Arc::new(while_pending)),
+                ..Self::new(true)
+            }
+        }
+
+        fn new(approve: bool) -> Self {
+            Self {
+                approve,
+                previews: Arc::default(),
+                while_pending: None,
+            }
+        }
+
+        pub(crate) fn previews(&self) -> Vec<String> {
+            self.previews.lock().unwrap().clone()
+        }
+    }
+
+    tokio::task_local! {
+        /// The decision for the one task a test scopes it to. A task-local
+        /// does not cross `tokio::spawn`: an approval asked from a spawned
+        /// task finds no decision and is declined, which fails safe.
+        pub(crate) static SCRIPTED_APPROVAL: ScriptedApproval;
+    }
+
+    /// The test-build approval. Unscoped, it declines at once and starts no
+    /// process, so no test can reach a real dialog or approve by default.
+    pub(super) async fn approve(preview: &str) -> Result<(), String> {
+        let decision = SCRIPTED_APPROVAL
+            .try_with(|scripted| {
+                scripted.previews.lock().unwrap().push(preview.to_string());
+                if let Some(while_pending) = &scripted.while_pending {
+                    while_pending();
+                }
+                scripted.approve
+            })
+            .unwrap_or(false);
+        std::hint::black_box(SEAM_MARKER);
+        if decision {
+            Ok(())
+        } else {
+            Err("import_approval_declined".into())
+        }
+    }
+
+    /// The real approval keeps its own preview limit; the scripted one does
+    /// not repeat it, so the limit is held here, on the real path, where it
+    /// refuses before any process is started.
+    #[tokio::test]
+    async fn the_real_approval_refuses_an_oversized_preview_before_starting_a_process() {
+        let oversized = "x".repeat(super::MAX_PREVIEW_BYTES + 1);
+        assert_eq!(
+            super::confirm(&oversized).await,
+            Err("import_review_too_large".to_string())
+        );
+    }
 }
 
 async fn confirm(preview: &str) -> Result<(), String> {

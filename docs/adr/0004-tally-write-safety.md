@@ -111,6 +111,17 @@ root is shown (`packaging/`, `src-tauri/tests/`, `src-tauri/crates/`, `src-tauri
   (`require_native_numbering`). The rendered review must fit a native message
   box (`admit_fresh_saved_journal`: at most 1,600 characters, 24 lines, and
   100 characters per line).
+- **Nothing else answers the approval (#583).** Unit tests of this crate drive
+  the whole post, through the `post_import` tool call to the simulated POST,
+  by scripting the approval with `approved_import::test_seam`. It is compiled
+  only under bare `#[cfg(test)]`; in every other build the approval is
+  exactly the native dialog (`use confirm as approve`). No feature,
+  environment variable or runtime flag enables it. `tests/approval_seam_gate.rs`
+  holds the source, build configuration and workflows to that, and
+  `scripts/check-no-test-seam.mjs` fails a build whose shipped executable
+  holds the seam's marker. It runs as Tauri's `beforeBundleCommand`, in
+  `package-mcpb.mjs`, and as required CI steps, with positive controls on the
+  debug and release unit-test executables.
 - **What it cannot send.** Masters, other voucher types, multi-voucher
   batches, alters and deletes. No caller-supplied XML reaches the gateway:
   the request is re-rendered from the saved batch

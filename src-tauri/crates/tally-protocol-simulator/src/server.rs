@@ -2,7 +2,7 @@ use std::{
     io::{self, Read, Write},
     net::{Ipv4Addr, Shutdown, SocketAddr, SocketAddrV4, TcpListener, TcpStream},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc, Arc,
     },
     thread::{self, JoinHandle},
@@ -59,6 +59,7 @@ pub struct Simulator {
 pub struct SequenceSimulator {
     address: SocketAddr,
     cancelled: Arc<AtomicBool>,
+    received: Arc<AtomicUsize>,
     worker: Option<JoinHandle<io::Result<Vec<ObservedRequest>>>>,
 }
 
@@ -121,12 +122,14 @@ impl SequenceSimulator {
         debug_assert!(address.ip().is_loopback());
         let cancelled = Arc::new(AtomicBool::new(false));
         let worker_cancelled = Arc::clone(&cancelled);
+        let received = Arc::new(AtomicUsize::new(0));
+        let worker_received = Arc::clone(&received);
         let (ready_tx, ready_rx) = mpsc::channel();
         let worker = thread::Builder::new()
             .name("tally-protocol-sequence-simulator".to_owned())
             .spawn(move || {
                 let _ = ready_tx.send(());
-                serve_sequence(listener, plans, worker_cancelled)
+                serve_sequence(listener, plans, worker_cancelled, worker_received)
             })?;
         ready_rx
             .recv_timeout(Duration::from_secs(1))
@@ -134,12 +137,21 @@ impl SequenceSimulator {
         Ok(Self {
             address,
             cancelled,
+            received,
             worker: Some(worker),
         })
     }
 
     pub fn address(&self) -> SocketAddr {
         self.address
+    }
+
+    /// How many requests have been read so far, while the sequence is still
+    /// running. A request counts once it has been read in full, before its
+    /// response is delayed or sent, so a test can act while a slow response
+    /// is still held.
+    pub fn received(&self) -> usize {
+        self.received.load(Ordering::Acquire)
     }
 
     pub fn cancel(&self) {
@@ -189,20 +201,21 @@ fn serve_once(
     plan: ScenarioPlan,
     cancelled: Arc<AtomicBool>,
 ) -> io::Result<ObservedRequest> {
-    serve_request(&listener, plan, &cancelled)
+    serve_request(&listener, plan, &cancelled, &AtomicUsize::new(0))
 }
 
 fn serve_sequence(
     listener: TcpListener,
     plans: Vec<ScenarioPlan>,
     cancelled: Arc<AtomicBool>,
+    received: Arc<AtomicUsize>,
 ) -> io::Result<Vec<ObservedRequest>> {
     let mut observed = Vec::with_capacity(plans.len());
     for plan in plans {
         if cancelled.load(Ordering::Acquire) {
             break;
         }
-        observed.push(serve_request(&listener, plan, &cancelled)?);
+        observed.push(serve_request(&listener, plan, &cancelled, &received)?);
     }
     Ok(observed)
 }
@@ -211,6 +224,7 @@ fn serve_request(
     listener: &TcpListener,
     plan: ScenarioPlan,
     cancelled: &AtomicBool,
+    received: &AtomicUsize,
 ) -> io::Result<ObservedRequest> {
     let started = Instant::now();
     let (mut stream, request) = loop {
@@ -259,6 +273,9 @@ fn serve_request(
             Err(error) => return Err(error),
         }
     };
+    if !request.is_empty() {
+        received.fetch_add(1, Ordering::AcqRel);
+    }
     let (method, path) = request_line(&request);
     let request_body = request_body(&request);
     let mut observed = ObservedRequest {

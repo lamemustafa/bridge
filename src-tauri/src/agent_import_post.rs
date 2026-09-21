@@ -696,3 +696,7 @@ fn has_unreviewable_format_character(value: &str) -> bool {
 #[cfg(test)]
 #[path = "agent_import_post_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "agent_import_post_e2e_tests.rs"]
+mod e2e_tests;
