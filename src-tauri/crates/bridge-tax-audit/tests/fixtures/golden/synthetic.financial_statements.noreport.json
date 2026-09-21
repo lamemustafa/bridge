@@ -290,6 +290,14 @@
       ]
     },
     {
+      "id": "financial_statements.report_tie_status",
+      "value": "not performed: no report part in this read",
+      "unit": "text",
+      "definition_sha256_16": "f19a311d5cbecf1a",
+      "definition_text": "Whether net profit and closing stock were tied to Tally's own Profit & Loss report: 'performed' and which of the two, when the report's totals were supplied (from the read's report part), else 'not performed' and why.",
+      "evidence": []
+    },
+    {
       "id": "financial_statements.sales",
       "value": 29750000,
       "unit": "paise",
@@ -333,7 +341,7 @@
         "3CD-40",
         "3CD-14"
       ],
-      "confidence": "computed",
+      "confidence": "needs_document",
       "facts": [
         {
           "name": "closing_stock",
@@ -384,13 +392,17 @@
           "figure_id": "financial_statements.purchases"
         },
         {
+          "name": "report_tie_status",
+          "figure_id": "financial_statements.report_tie_status"
+        },
+        {
           "name": "sales",
           "figure_id": "financial_statements.sales"
         }
       ],
       "evidence": [],
-      "title_sha256_16": "cfb7815eff5767da",
-      "title_text": "Net profit and closing stock computed from the Trial Balance; no Tally P&L/Balance Sheet report export is available for this client, so the tie below is TB-internal only",
+      "title_sha256_16": "3ffb7bca4f0564db",
+      "title_text": "Report tie not performed: no Tally Profit & Loss report part in this read; net profit and closing stock are from the Trial Balance only",
       "limits_sha256_16": "515da6d3709eaf6d",
       "limits_text": [
         "The gross profit ratio uses the stock values in the books (balance-sheet basis) at both ends. A ratio on Tally's item-level Stock Summary values is not shown here; if one is wanted, both opening and closing stock must be taken on that same basis.",

@@ -322,6 +322,14 @@
       "evidence": []
     },
     {
+      "id": "financial_statements.report_tie_status",
+      "value": "performed: net profit and closing stock",
+      "unit": "text",
+      "definition_sha256_16": "f19a311d5cbecf1a",
+      "definition_text": "Whether net profit and closing stock were tied to Tally's own Profit & Loss report: 'performed' and which of the two, when the report's totals were supplied (from the read's report part), else 'not performed' and why.",
+      "evidence": []
+    },
+    {
       "id": "financial_statements.sales",
       "value": 29750000,
       "unit": "paise",
@@ -422,6 +430,10 @@
         {
           "name": "report_net_profit",
           "figure_id": "financial_statements.report_net_profit"
+        },
+        {
+          "name": "report_tie_status",
+          "figure_id": "financial_statements.report_tie_status"
         },
         {
           "name": "sales",

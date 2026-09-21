@@ -25,6 +25,9 @@
 //!   * Tie to Tally's own report: `report_totals` is caller data (Tally's own Profit & Loss report
 //!     export). This crate does not parse that report: a native-report reader needs its own ADR and
 //!     attestation before it ships. The totals are republished as figures; FS-1 does the tie.
+//!     `report_tie_status` says whether the tie was performed and on what (net profit only, when
+//!     the report carries no closing stock); with no totals the finding says the tie was not
+//!     performed and needs a document, rather than reading as a computed tie.
 //!
 //! **Turnover.** `sales` is the engine's turnover: the Sales Accounts TB closing, GST excluded
 //! because output tax posts to separate ledgers, returns netted because they post to the same
@@ -496,6 +499,24 @@ books cannot show whether it was actually verified."
             .to_string(),
     ];
     let clauses = vec!["3CD-40".to_string(), "3CD-14".to_string()];
+    // Whether the tie to Tally's own report was performed, as a figure: the finding below is about
+    // the tie, and a reader takes its confidence as the tie's status, so "not performed" must be
+    // said, not implied. The report's closing stock is optional, so "performed" names what was tied.
+    let tie_status = match report_totals {
+        None => "not performed: no report part in this read",
+        Some(rep) if rep.closing_stock_paise.is_some() => "performed: net profit and closing stock",
+        Some(_) => "performed: net profit only",
+    };
+    let f_tie_status = r.fig(
+        "report_tie_status",
+        Value::Text(tie_status.to_string()),
+        Unit::Text,
+        "Whether net profit and closing stock were tied to Tally's own Profit & Loss report: \
+'performed' and which of the two, when the report's totals were supplied (from the read's report \
+part), else 'not performed' and why.",
+        Vec::new(),
+    );
+    facts.push(("report_tie_status".to_string(), f_tie_status));
     if let Some(rep) = report_totals {
         let source = rep
             .source
@@ -567,13 +588,13 @@ this pack."
         r.findings.push(Finding {
             id: format!("{TEST_ID}/report_tie"),
             clauses,
-            title: "Net profit and closing stock computed from the Trial Balance; no Tally \
-P&L/Balance Sheet report export is available for this client, so the tie below is TB-internal \
-only"
-                .to_string(),
+            title:
+                "Report tie not performed: no Tally Profit & Loss report part in this read; net \
+profit and closing stock are from the Trial Balance only"
+                    .to_string(),
             facts,
             evidence: Vec::new(),
-            confidence: Confidence::Computed,
+            confidence: Confidence::NeedsDocument,
             limits,
             ask_client: vec![
                 "Tally's own Profit & Loss and Balance Sheet printouts (or an export of them) as \
@@ -983,15 +1004,85 @@ mod tests {
         assert!(check_invariants(&b, &r).unwrap().is_empty());
     }
 
+    /// A read with no Profit & Loss report part: the report-tie row must not read as a performed,
+    /// computed tie (a CA takes the row's confidence as the tie's status). It says the tie was not
+    /// performed, needs a document, and carries the status as a figure.
     #[test]
-    fn no_report_is_computed_and_asks_for_one() {
+    fn no_report_part_says_the_tie_was_not_performed() {
         let b = book();
         let r = run(&b, &rules(), &BTreeSet::new(), None).unwrap();
+        assert_eq!(
+            fig(&r, "report_tie_status"),
+            Value::Text("not performed: no report part in this read".to_string())
+        );
         let f = &r.findings[0];
-        assert_eq!(f.confidence, Confidence::Computed);
-        assert!(f.title.contains("TB-internal only"));
+        assert_eq!(f.id, format!("{TEST_ID}/report_tie"));
+        assert!(f.title.starts_with(
+            "Report tie not performed: no Tally Profit & Loss report part in this read"
+        ));
+        assert_eq!(f.confidence, Confidence::NeedsDocument);
+        assert!(
+            f.facts
+                .iter()
+                .any(|(k, v)| k == "report_tie_status"
+                    && *v == format!("{TEST_ID}.report_tie_status"))
+        );
         assert_eq!(f.ask_client.len(), 1);
         assert!(check_invariants(&b, &r).unwrap().is_empty()); // FS-1 skipped, not violated
+    }
+
+    /// The with-part path is unchanged apart from the status figure: same title, same confidence rule.
+    #[test]
+    fn with_a_report_part_the_tie_is_unchanged_and_says_performed() {
+        let b = book();
+        let r = run(
+            &b,
+            &rules(),
+            &BTreeSet::new(),
+            Some(&report(480_000, Some(550_000))),
+        )
+        .unwrap();
+        assert_eq!(
+            fig(&r, "report_tie_status"),
+            Value::Text("performed: net profit and closing stock".to_string())
+        );
+        let f = &r.findings[0];
+        assert_eq!(
+            f.title,
+            "Net profit (and closing stock, where the report carries it) tied to Tally's own \
+P&L/Balance Sheet report"
+        );
+        assert_eq!(f.confidence, Confidence::Computed);
+        assert!(
+            f.facts
+                .iter()
+                .any(|(k, v)| k == "report_tie_status"
+                    && *v == format!("{TEST_ID}.report_tie_status"))
+        );
+        let off = run(
+            &b,
+            &rules(),
+            &BTreeSet::new(),
+            Some(&report(490_000, Some(550_000))),
+        )
+        .unwrap();
+        assert_eq!(
+            fig(&off, "report_tie_status"),
+            Value::Text("performed: net profit and closing stock".to_string())
+        );
+        assert_eq!(off.findings[0].confidence, Confidence::JudgementRequired);
+    }
+
+    /// The report's closing stock is optional; the status must not claim a stock tie it did not do.
+    #[test]
+    fn a_report_without_closing_stock_says_only_net_profit_was_tied() {
+        let b = book();
+        let r = run(&b, &rules(), &BTreeSet::new(), Some(&report(480_000, None))).unwrap();
+        assert_eq!(
+            fig(&r, "report_tie_status"),
+            Value::Text("performed: net profit only".to_string())
+        );
+        assert_eq!(r.findings[0].confidence, Confidence::Computed);
     }
 
     /// FS-2 re-derives on its own: a published figure that does not match the book is caught,

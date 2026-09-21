@@ -63,8 +63,12 @@ fn synthetic_read_matches_the_python_golden_with_report_totals() {
     let d = diffs(&rust, true);
     assert!(d.is_empty(), "parity failed:\n{}", d.join("\n"));
     // Anchor the pass to content, so an empty or trivial dump cannot be what passed.
-    assert_eq!(rust["figures"].as_array().unwrap().len(), 27);
+    assert_eq!(rust["figures"].as_array().unwrap().len(), 28);
     assert_eq!(rust["findings"][0]["confidence"], "computed");
+    assert_eq!(
+        value(&rust, "report_tie_status"),
+        json!("performed: net profit and closing stock")
+    );
     assert_eq!(
         rust["module_invariants_evaluated"],
         json!(["financial_statements.check_invariants"])
@@ -95,11 +99,16 @@ fn synthetic_read_matches_the_python_golden_without_report_totals() {
     let rust = rust_dump(false);
     let d = diffs(&rust, false);
     assert!(d.is_empty(), "parity failed:\n{}", d.join("\n"));
-    assert_eq!(rust["figures"].as_array().unwrap().len(), 23);
+    assert_eq!(rust["figures"].as_array().unwrap().len(), 24);
     assert!(rust["findings"][0]["title_text"]
         .as_str()
         .unwrap()
-        .contains("TB-internal only"));
+        .starts_with("Report tie not performed"));
+    assert_eq!(rust["findings"][0]["confidence"], "needs_document");
+    assert_eq!(
+        value(&rust, "report_tie_status"),
+        json!("not performed: no report part in this read")
+    );
 }
 
 #[test]
