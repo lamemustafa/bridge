@@ -14,6 +14,10 @@
 #   5. [depreciation] in full, plus its three [depreciation.blocks.<key>] sub-tables
 #      (furniture_10, plant_machinery_15, computers_40) -- depreciation.rs reads every key in all
 #      four; excludes [s43b]/[s36_1_va] immediately after it in the source, unrelated to this test.
+#   6. [due_dates] (added for applicability_44ab), as three blocks: the table header alone; its
+#      first three keys, the third cut at its value (its trailing comment names a client, and this
+#      repository is public; the substring check still holds); and `status` alone. Excludes the
+#      header's comment lines, which cite a private research note.
 # The source file's sha256 and the reference commit are recorded in src/rules.rs. This file's own
 # name predates the [s40a3]/[s269st]/[s269ss_269t]/[depreciation] additions; kept as-is rather than
 # renamed.
@@ -65,3 +69,11 @@ label = "Plant and machinery, general rate (includes motor cars not used in a hi
 [depreciation.blocks.computers_40]
 rate_bp = 4000
 label = "Computers including computer software"
+
+[due_dates]
+
+audit_report = 2026-09-30                          # s.44AB, subject to CBDT extension
+return_audit_case = 2026-10-31
+return_non_audit_firm = 2026-08-31
+
+status = "partial"

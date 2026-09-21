@@ -1081,6 +1081,10 @@ mod tests {
             depreciation_half_rate_days_threshold: 180,
             depreciation_cash_addition_limit_paise: 1_000_000,
             depreciation_block_rate_bp,
+            due_date_audit_report: String::new(),
+            due_date_return_audit_case: String::new(),
+            due_date_return_non_audit_firm: String::new(),
+            due_dates_status: String::new(),
         }
     }
 
