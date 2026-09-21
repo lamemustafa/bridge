@@ -2284,3 +2284,38 @@ test("restores the opener after lifecycle inertness clears", async () => {
   expect(document.activeElement).toBe(opener);
   root.unmount();
 });
+
+// bridge#471: SourceDraftScreen's error formatter used to discard the
+// backend's `remediation` field entirely. These two tests pin the shared
+// formatter's behaviour from both sides: a structured command error shows
+// its remediation (and code), and a shape the formatter cannot narrow still
+// falls back to this screen's own wording rather than "[object Object]" or
+// similar.
+test("a refused save shows the backend's remediation and code, not just its message", async () => {
+  mocks.invoke.mockResolvedValueOnce(draft).mockRejectedValueOnce({
+    code: "source_draft_revision_conflict",
+    message: "This draft changed while it was open.",
+    remediation: "Review the current draft, then save again.",
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host);
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Save draft").click());
+  const alert = host.querySelector('[role="alert"]');
+  expect(alert?.textContent).toContain("This draft changed while it was open.");
+  expect(alert?.textContent).toContain("[source_draft_revision_conflict]");
+  expect(alert?.textContent).toContain("Review the current draft, then save again.");
+  root.unmount();
+});
+
+test("a save failure with no recognizable shape keeps this screen's own fallback wording", async () => {
+  mocks.invoke.mockResolvedValueOnce(draft).mockRejectedValueOnce(42);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host);
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Save draft").click());
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("Bridge could not complete that source-draft action.");
+  root.unmount();
+});

@@ -48,12 +48,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use bridge_tally_primitives::TallyDate;
-use sha1::Sha1;
 use sha2::Sha256;
 
 use crate::book::{Book, Voucher};
 use crate::error::{AuditError, Result};
 use crate::findings::{Confidence, EvidenceRef, Finding, TestResult, Unit, Value};
+use crate::ledger_ids::stable_ledger_tag;
 use crate::read::{iso, Window};
 use crate::rules::Rules;
 
@@ -68,13 +68,6 @@ excluded). Put to use assumed = purchase/voucher date unless put_to_use_by_vouch
 
 fn overflow() -> AuditError {
     AuditError::Config("depreciation: a total overflowed i64 paise".to_string())
-}
-
-/// Short, stable, non-reversible-in-practice tag for a ledger name in a figure/finding id (same
-/// convention as `cash_payments_40a3::hash8`).
-fn hash8(name: &str) -> String {
-    use sha1::Digest;
-    crate::canonical::hex(&Sha1::digest(name.as_bytes()))[..8].to_string()
 }
 
 /// The reference implementation's `_hash` used inline for a voucher GUID at 12 hex characters
@@ -568,7 +561,7 @@ debit amount -- verified on data, not merely asserted.",
     );
 
     for name in &fa_ledgers {
-        let h = hash8(name);
+        let h = stable_ledger_tag(book, name)?;
         let block_val = block_by_ledger
             .get(name)
             .cloned()
@@ -770,7 +763,7 @@ unless the payment mode is shown not to be cash."
 
         for row in &b.cash_rows {
             let v = row.voucher;
-            let h = hash8(&row.ledger);
+            let h = stable_ledger_tag(book, &row.ledger)?;
             let rid = format!("{}_{h}", hash12_sha256(&v.guid));
             let f_amt = r.fig(
                 &format!("cash_flagged_addition_{rid}"),
@@ -976,7 +969,7 @@ does not equal the TB closing balance ({closing_rhs}p); difference {}p",
             ));
         }
 
-        let h = hash8(name);
+        let h = stable_ledger_tag(book, name)?;
         let block_fid = format!("{prefix}ledger_block_{h}");
         let has_movement_for_dep2 = m.additions != 0 || m.deletions != 0 || m.dep_credited != 0;
         if closing_rhs != 0 || has_movement_for_dep2 {
@@ -1041,6 +1034,8 @@ mod tests {
             chain: vec!["Fixed Assets".to_string()],
             chain_complete: true,
             opening_paise: 0,
+            guid: format!("guid-{name}"),
+            masterid: None,
         }
     }
 
@@ -1051,6 +1046,8 @@ mod tests {
             chain: vec![group.to_string()],
             chain_complete: true,
             opening_paise: 0,
+            guid: format!("guid-{name}"),
+            masterid: None,
         }
     }
 
@@ -1082,6 +1079,7 @@ mod tests {
             company_guid: "test-guid".to_string(),
             read_at: String::new(),
             groups: BTreeMap::new(),
+            group_masters: BTreeMap::new(),
             ledgers: ledgers.into_iter().map(|l| (l.name.clone(), l)).collect(),
             vouchers,
             tb: tb

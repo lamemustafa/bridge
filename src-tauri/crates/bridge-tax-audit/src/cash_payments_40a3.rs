@@ -28,12 +28,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use bridge_tally_primitives::TallyDate;
-use sha1::Sha1;
 use sha2::Sha256;
 
 use crate::book::{Book, Ledger, Voucher};
 use crate::error::{AuditError, Result};
 use crate::findings::{Confidence, EvidenceRef, Finding, TestResult, Unit, Value};
+use crate::ledger_ids::stable_ledger_tag;
 use crate::read::iso;
 use crate::rules::Rules;
 
@@ -97,14 +97,6 @@ fn transport_name_match(name: &str) -> bool {
         }
     }
     false
-}
-
-/// Short, stable, non-reversible-in-practice tag for a ledger name in a figure id: the first 8
-/// hex characters of the sha1 of the name's raw UTF-8 bytes (no NFC normalisation -- the
-/// reference implementation hashes the name as given).
-fn hash8(name: &str) -> String {
-    use sha1::Digest;
-    crate::canonical::hex(&Sha1::digest(name.as_bytes()))[..8].to_string()
 }
 
 /// The reference implementation's `_hash` used inline for a voucher GUID at 12 hex characters
@@ -516,7 +508,7 @@ scope by rules.s40a3.excluded_group_roles); {} (date, payee) pairs.",
 
     // One Finding per in-scope payee-day that is actually over the limit.
     for ((d, ledger_name), data) in rows_over_limit {
-        let h = hash8(ledger_name);
+        let h = stable_ledger_tag(book, ledger_name)?;
         let rid = format!("{}_{h}", iso(d));
         let f_amt = r.fig(
             &format!("s40a3_row_amount_{rid}"),
@@ -618,7 +610,7 @@ limit ({limit_269st} paise per person per day)."
     );
 
     for ((d, ledger_name), data) in rows_269st {
-        let h = hash8(ledger_name);
+        let h = stable_ledger_tag(book, ledger_name)?;
         let rid = format!("{}_{h}", iso(d));
         let f_amt = r.fig(
             &format!("s269st_row_amount_{rid}"),
@@ -701,7 +693,7 @@ s.269ST(a) limb (a) threshold ({limit_269st} paise per person per day) -- report
     );
 
     for ((d, ledger_name), data) in rows_269st_pay {
-        let h = hash8(ledger_name);
+        let h = stable_ledger_tag(book, ledger_name)?;
         let rid = format!("{}_{h}", iso(d));
         let f_amt = r.fig(
             &format!("s269st_payment_row_amount_{rid}"),
@@ -759,7 +751,7 @@ needed)."
         loan_total = loan_total
             .checked_add(c.amount_paise)
             .ok_or_else(overflow)?;
-        let h = hash8(&c.ledger);
+        let h = stable_ledger_tag(book, &c.ledger)?;
         let rid = format!("{}_{h}", hash12_sha256(&v.guid));
         let clause = if c.direction == "accepted" {
             "s.269SS"

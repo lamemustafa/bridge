@@ -1,6 +1,7 @@
 import React from "react";
 import { Download, RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { formatCommandErrorMessage } from "./tally-command-error";
 
 type Company = {
   name: string;
@@ -91,13 +92,7 @@ function formatBalance(amount: Amount, symbol: string, decimals: number) {
 }
 
 function formatInvokeError(cause: unknown) {
-  if (cause && typeof cause === "object") {
-    const value = cause as { message?: unknown; code?: unknown; remediation?: unknown };
-    if (typeof value.message === "string") {
-      return [value.message, typeof value.code === "string" ? `[${value.code}]` : "", typeof value.remediation === "string" ? value.remediation : ""].filter(Boolean).join(" ");
-    }
-  }
-  return cause instanceof Error ? cause.message : String(cause);
+  return formatCommandErrorMessage(cause, (value) => (value instanceof Error ? value.message : String(value)));
 }
 
 function readScope(company: Company | undefined, config: Props["config"], from: string, to: string) {

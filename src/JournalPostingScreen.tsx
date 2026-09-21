@@ -2,6 +2,7 @@ import React from "react";
 import { FileCheck2, FileText, RotateCcw, ShieldCheck } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { deriveJournalActionState } from "./journal-posting-state";
+import { formatCommandErrorMessage } from "./tally-command-error";
 
 type TallyConfig = { host: string; port: number };
 
@@ -59,14 +60,7 @@ type JournalActionResponse = {
 type Action = "pick" | "post" | "reconcile" | null;
 
 function errorMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-  if (error && typeof error === "object") {
-    const envelope = error as { message?: unknown; remediation?: unknown };
-    const message = typeof envelope.message === "string" ? envelope.message : "Journal action failed.";
-    return typeof envelope.remediation === "string" ? `${message} ${envelope.remediation}` : message;
-  }
-  return "Journal action failed.";
+  return formatCommandErrorMessage(error, "Journal action failed.");
 }
 
 function outcomeOf(action: JournalActionResponse | null) {

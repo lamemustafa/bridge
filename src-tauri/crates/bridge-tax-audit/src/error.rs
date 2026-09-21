@@ -18,6 +18,14 @@ pub enum AuditError {
     /// The engagement or rules configuration is missing a key or has the wrong type.
     #[error("config: {0}")]
     Config(String),
+    /// Two different ledgers in the same Book normalise to the same non-blank Tally GUID (a
+    /// corrupt read); see `ledger_ids::check_no_duplicate_ledger_guids`.
+    #[error("duplicate ledger GUID: {0}")]
+    DuplicateGuid(String),
+    /// A group (or a caller asking for a GUID-only tag) has no Tally GUID, so no stable id can be
+    /// derived; ledgers fall back to a name hash instead (`docs/tax-audit/parity-spec-v1.md` §11).
+    #[error("{0} has no Tally GUID; refusing to derive a stable id from its name")]
+    MissingGuid(String),
     #[error("{path}: {source}")]
     Io {
         path: String,

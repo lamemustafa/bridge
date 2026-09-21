@@ -24,6 +24,7 @@
 //! workspace `cargo test`/`clippy`/`fmt` steps, and the dependency-inventory and licence gates,
 //! already cover it; no crate-specific CI step is needed.
 
+pub mod binding;
 pub mod book;
 pub mod canonical;
 pub mod cash_44ab;
@@ -33,6 +34,7 @@ pub mod depreciation;
 pub mod error;
 pub mod findings;
 pub mod invariants;
+pub mod ledger_ids;
 pub mod read;
 pub mod rules;
 pub mod xml;
@@ -71,6 +73,11 @@ pub struct Engagement {
     /// defaulting it -- unlike `round_off_ledgers`/`loan_ledgers_configured` above, "nothing
     /// configured" is not a valid state for a client that has fixed assets at all).
     pub depreciation: Option<DepreciationConfig>,
+    /// The parsed config, kept only so [`Engagement::bind`] can read `[ledger_ids]`/
+    /// `[group_ids]` (`binding::bind`) without re-parsing the source text. Not part of this
+    /// struct's public contract: a field a caller should read directly (`cash_groups` and the
+    /// rest above) is exposed as its own field instead.
+    raw_cfg: toml::Table,
 }
 
 /// `[depreciation]` from the client config: see [`Engagement::depreciation`].
@@ -278,7 +285,16 @@ not YYYY-MM-DD"
                 .map(|table| table.keys().cloned().collect())
                 .unwrap_or_default(),
             depreciation,
+            raw_cfg: cfg,
         })
+    }
+
+    /// Bind this engagement's ledger and group names to `book` by Tally identity, or refuse.
+    /// See [`binding`] for the rule; every location `cash_44ab`, `cash_payments_40a3` and
+    /// `depreciation` read from this struct is bound. Called once, before a test runs, mirroring
+    /// the reference implementation's `run.load()` calling `bind_config()` once.
+    pub fn bind(&self, book: &book::Book) -> Result<(Self, binding::BindingReport)> {
+        binding::bind(self, book)
     }
 }
 
@@ -306,6 +322,7 @@ pub fn cash_44ab_on(
     book: &book::Book,
     rules: &Rules,
 ) -> Result<serde_json::Value> {
+    let (engagement, _report) = engagement.bind(book)?;
     let cash = book.ledgers_under_any(&engagement.cash_groups);
     let bank = book.ledgers_under_any(&engagement.bank_groups);
     let result = cash_44ab::run(book, rules, &cash, &bank)?;
@@ -323,6 +340,7 @@ pub fn cash_payments_40a3_on(
     book: &book::Book,
     rules: &Rules,
 ) -> Result<serde_json::Value> {
+    let (engagement, _report) = engagement.bind(book)?;
     let cash = book.ledgers_under_any(&engagement.cash_groups);
     let bank = book.ledgers_under_any(&engagement.bank_groups);
     let loan_ledgers_configured: BTreeSet<String> =
@@ -357,6 +375,7 @@ pub fn depreciation_on(
     book: &book::Book,
     rules: &Rules,
 ) -> Result<serde_json::Value> {
+    let (engagement, _report) = engagement.bind(book)?;
     let dep = engagement.depreciation.as_ref().ok_or_else(|| {
         AuditError::Config(
             "client config missing required key 'depreciation' (no [depreciation] table)"

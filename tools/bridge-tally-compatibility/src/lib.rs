@@ -294,7 +294,10 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// requests Bridge sends Tally — whether a window goes out whole, in which date
 /// and AlterID parts, and which windows are refused unsent — for `vouchers`,
 /// `voucher_presence`, `ledger_movement` and the import-verification read.
-pub const MAX_SURFACE_FILES: usize = 269;
+// The canonical protocol-reference index is retained for legacy links while
+// bridge#317 moves its content into six separately pinned parts. The cap grows
+// by those six pins; it remains an exact count after the coordinated reseal.
+pub const MAX_SURFACE_FILES: usize = 275;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
@@ -312,7 +315,7 @@ const REQUIRED_SURFACE_DIRECTORIES: [&str; 2] =
 /// entry and resealing. A required path cannot be dropped silently, and
 /// `gate_rejects_each_omitted_required_lifecycle_path` iterates this list, so adding it
 /// here is what covers its omission.
-const REQUIRED_SURFACE_FILES: [&str; 7] = [
+const REQUIRED_SURFACE_FILES: [&str; 14] = [
     "src-tauri/src/agent_catalog.rs",
     "src-tauri/src/agent_desktop_journal.rs",
     "src-tauri/src/agent_ledgers.rs",
@@ -320,6 +323,13 @@ const REQUIRED_SURFACE_FILES: [&str; 7] = [
     "src/JournalPostingScreen.tsx",
     "src/ErrorBoundary.tsx",
     "src/NativeLifecycleController.tsx",
+    "docs/tally/TALLY_PROTOCOL_REFERENCE.md",
+    "docs/tally/TALLY_PROTOCOL_REFERENCE_ENVIRONMENT_AND_REQUESTS.md",
+    "docs/tally/TALLY_PROTOCOL_REFERENCE_READS_AND_DATES.md",
+    "docs/tally/TALLY_PROTOCOL_REFERENCE_WRITE_RESPONSES_AND_MASTERS.md",
+    "docs/tally/TALLY_PROTOCOL_REFERENCE_VOUCHER_WRITES.md",
+    "docs/tally/TALLY_PROTOCOL_REFERENCE_COMPANY_IDENTITY_AND_CREATION.md",
+    "docs/tally/TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md",
 ];
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]

@@ -367,7 +367,7 @@ find-msvc-tools 0.1.10
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/cc-rs
 
-flate2 1.1.9
+flate2 1.1.10
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/flate2-rs
 
@@ -663,6 +663,10 @@ miniz_oxide 0.8.9
 License: MIT OR Zlib OR Apache-2.0
 Source: https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide
 
+miniz_oxide 0.9.1
+License: MIT OR Zlib OR Apache-2.0
+Source: https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide
+
 mio 1.2.2
 License: MIT
 Source: https://github.com/tokio-rs/mio
@@ -883,7 +887,7 @@ rfd 0.17.2
 License: MIT
 Source: https://github.com/PolyMeilex/rfd
 
-rust_xlsxwriter 0.99.0
+rust_xlsxwriter 0.99.1
 License: MIT OR Apache-2.0
 Source: https://github.com/jmcnamara/rust_xlsxwriter
 
@@ -3081,7 +3085,7 @@ Apache License 2.0
 
 -------------------------------------------------------------------------------
 Apache License 2.0
-- rust_xlsxwriter 0.99.0
+- rust_xlsxwriter 0.99.1
 
                                  Apache License
                            Version 2.0, January 2004
@@ -7688,7 +7692,7 @@ Apache License 2.0
 - event-listener 5.4.2
 - fastrand 2.5.0
 - find-msvc-tools 0.1.10
-- flate2 1.1.9
+- flate2 1.1.10
 - fnv 1.0.7
 - form_urlencoded 1.2.2
 - glob 0.3.4
@@ -10737,6 +10741,7 @@ Apache License 2.0
 - itoa 1.0.18
 - libc 0.2.189
 - miniz_oxide 0.8.9
+- miniz_oxide 0.9.1
 - num-conv 0.2.2
 - objc2-app-kit 0.3.2
 - objc2-core-foundation 0.3.2
