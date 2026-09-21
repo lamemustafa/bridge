@@ -832,11 +832,14 @@ mod tests {
     /// way, with Python's whitespace (U+001C..U+001F included) and full case mapping.
     #[test]
     fn a_guid_binds_whatever_its_case_and_python_whitespace() {
-        let upper = G_CASH.to_uppercase();
+        // Letters in the GUID, so its case is actually exercised.
+        let guid = "abcdef01-2345-4789-abcd-ef0123456789";
+        let upper = guid.to_uppercase();
+        assert_ne!(upper, guid);
         let e = engagement(&format!(
             "\n[group_ids]\n\"Cash-in-Hand\" = \"\u{a0}{upper}\u{2003}\"\n"
         ));
-        let b = book("Cash In Hand (New)", &format!("\u{1c}{G_CASH}\u{1f}"), None);
+        let b = book("Cash In Hand (New)", &format!("\u{1c}{guid}\u{1f}"), None);
         let (bound, report) = e.bind(&b).unwrap();
         assert_eq!(bound.cash_groups, vec!["Cash In Hand (New)".to_string()]);
         assert_eq!(report.bound_by_id, 1);
