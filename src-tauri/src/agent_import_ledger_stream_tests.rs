@@ -197,7 +197,7 @@ fn dispatched_batch_cannot_change_its_commitment() {
 fn native_dispatch_response_must_match_its_durable_wire_commitment() {
     let initial = batch("native-dispatch", "local journal test");
     let hash = "c".repeat(64);
-    let intent = StatusRecord::dispatch_native(&initial, hash.clone());
+    let intent = StatusRecord::dispatch_native(&initial, hash.clone(), Uuid::new_v4());
     let mut bytes = record(&initial);
     bytes.extend(record(&intent));
     for (response_hash, admitted) in [(hash, true), ("d".repeat(64), false)] {
@@ -224,6 +224,7 @@ fn native_dispatch_response_must_match_its_durable_wire_commitment() {
         bytes.extend(record(&StatusRecord::dispatch_native(
             &initial,
             invalid.into(),
+            Uuid::new_v4(),
         )));
         assert_eq!(
             read_snapshot(Cursor::new(bytes), None).err().as_deref(),
@@ -238,4 +239,78 @@ fn native_dispatch_response_must_match_its_durable_wire_commitment() {
         read_snapshot(Cursor::new(bytes), None).err().as_deref(),
         Some("import_ledger_invalid")
     );
+}
+
+/// bridge#579. The REMOTEID recorded with a native dispatch intent survives a
+/// journal read, and only in that record, beside its request hash.
+#[test]
+fn a_native_dispatch_intent_keeps_its_remoteid_and_nothing_else_may_carry_one() {
+    let initial = batch("native-remote", "local journal test");
+    let hash = "c".repeat(64);
+    let remote_id = Uuid::new_v4();
+    let mut bytes = record(&initial);
+    bytes.extend(record(&StatusRecord::dispatch_native(
+        &initial,
+        hash.clone(),
+        remote_id,
+    )));
+    let snapshot = read_snapshot(Cursor::new(bytes.clone()), Some("native-remote"))
+        .unwrap()
+        .unwrap();
+    assert!(snapshot.dispatched);
+    assert_eq!(
+        snapshot.native_remote_id.as_deref(),
+        Some(remote_id.hyphenated().to_string().as_str())
+    );
+    let history = read_history(Cursor::new(bytes.clone())).unwrap();
+    assert_eq!(
+        history[0].native_remote_id.as_deref(),
+        Some(remote_id.hyphenated().to_string().as_str())
+    );
+    let lineage = read_lineage(Cursor::new(bytes), "native-remote").unwrap();
+    assert_eq!(lineage.len(), 1);
+    assert_eq!(
+        lineage[0].native_remote_id.as_deref(),
+        Some(remote_id.hyphenated().to_string().as_str())
+    );
+
+    let mut intent =
+        serde_json::to_value(StatusRecord::dispatch_native(&initial, hash, remote_id)).unwrap();
+    for (field, value) in [
+        ("native_remote_id", json!(remote_id.simple().to_string())),
+        ("native_remote_id", json!("not-a-uuid")),
+        (
+            "native_remote_id",
+            json!(Uuid::nil().hyphenated().to_string()),
+        ),
+        (
+            "native_remote_id",
+            json!(remote_id.hyphenated().to_string().to_uppercase()),
+        ),
+        ("native_request_sha256", Value::Null),
+    ] {
+        let mut changed = intent.clone();
+        if value.is_null() {
+            changed.as_object_mut().unwrap().remove(field);
+        } else {
+            changed[field] = value;
+        }
+        let mut bytes = record(&initial);
+        bytes.extend(serde_json::to_vec(&changed).unwrap());
+        bytes.push(b'\n');
+        assert_eq!(
+            read_snapshot(Cursor::new(bytes), None).err().as_deref(),
+            Some("import_ledger_invalid"),
+            "{changed}"
+        );
+    }
+    intent.as_object_mut().unwrap().remove("native_remote_id");
+    let mut legacy = record(&initial);
+    legacy.extend(serde_json::to_vec(&intent).unwrap());
+    legacy.push(b'\n');
+    let snapshot = read_snapshot(Cursor::new(legacy), Some("native-remote"))
+        .unwrap()
+        .unwrap();
+    assert!(snapshot.dispatched);
+    assert_eq!(snapshot.native_remote_id, None);
 }

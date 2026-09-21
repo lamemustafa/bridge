@@ -404,6 +404,7 @@ fn review_refuses_fresh_numbered_journal_but_retains_dispatched_reconciliation()
         .append_import_record_while_admitted(&ledger::StatusRecord::dispatch_native(
             &line,
             "a".repeat(64),
+            uuid::Uuid::new_v4(),
         ))
         .unwrap();
     let review = service.review_selected_xml(xml.as_bytes()).unwrap();
@@ -459,6 +460,7 @@ async fn review_refuses_fresh_unreviewable_text_but_retains_dispatched_reconcili
         .append_import_record_while_admitted(&ledger::StatusRecord::dispatch_native(
             &line,
             "a".repeat(64),
+            uuid::Uuid::new_v4(),
         ))
         .unwrap();
     assert!(

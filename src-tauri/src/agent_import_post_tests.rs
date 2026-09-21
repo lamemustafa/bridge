@@ -689,8 +689,18 @@ fn native_request_uses_a_private_remote_identity_but_preserves_batch_attribution
     let (line, _) = batch();
     let voucher = &line.vouchers[0];
     let public = render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id);
-    let first = render_native_journal_xml("Synthetic Accounts", voucher, &line.batch_id);
-    let second = render_native_journal_xml("Synthetic Accounts", voucher, &line.batch_id);
+    let first = render_native_journal_xml(
+        "Synthetic Accounts",
+        voucher,
+        &line.batch_id,
+        Uuid::new_v4(),
+    );
+    let second = render_native_journal_xml(
+        "Synthetic Accounts",
+        voucher,
+        &line.batch_id,
+        Uuid::new_v4(),
+    );
     let remote_id = |xml: &str| {
         let mut reader = quick_xml::Reader::from_str(xml);
         loop {
@@ -947,4 +957,42 @@ async fn post_error(server: &Server, args: &Value) -> String {
         }
         Err(failure) => failure.code,
     }
+}
+
+/// bridge#579. Tally deletes a voucher only by the client REMOTEID it was
+/// created with and exports its own GUID in that attribute, so the native
+/// post must record the REMOTEID it sends, with its request hash, before
+/// sending. The recorded value must be exactly the one in the request bytes.
+#[test]
+fn the_dispatch_intent_records_the_remoteid_the_native_request_carries() {
+    let (line, _) = batch();
+    let remote_id = Uuid::new_v4();
+    let request = native_post_request(&line, remote_id).unwrap();
+    assert_eq!(request.remote_id, remote_id);
+    let sent = request
+        .xml
+        .split("<VOUCHER REMOTEID=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap();
+    assert_eq!(request.xml.matches("REMOTEID=").count(), 1);
+    assert_eq!(sent, remote_id.hyphenated().to_string());
+    assert_eq!(
+        request.request_sha256,
+        sha256_hex(&bridge_tally_protocol::encode_tally_xml_request_utf16le(
+            &request.xml
+        ))
+    );
+
+    let intent = serde_json::to_value(ledger::StatusRecord::dispatch_for(&line, &request)).unwrap();
+    assert_eq!(intent["native_remote_id"], json!(sent));
+    assert_eq!(
+        intent["native_request_sha256"],
+        json!(request.request_sha256)
+    );
+
+    // Two posts never share a REMOTEID: reuse could make Tally upsert.
+    let other = native_post_request(&line, Uuid::new_v4()).unwrap();
+    assert_ne!(other.remote_id, request.remote_id);
+    assert_ne!(other.request_sha256, request.request_sha256);
 }
