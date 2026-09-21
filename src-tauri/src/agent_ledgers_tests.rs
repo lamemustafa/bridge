@@ -954,4 +954,306 @@ mod through_the_tool {
         .await;
         assert!(items(&response).is_empty());
     }
+
+    /// #554 through the stdio server: `ledger_masters` basic is two queued
+    /// operations (the identity read, then the ledger read). The identity read's
+    /// first leg is held; while it runs the client sends `second`. Returns the
+    /// response to request 7 and how many requests reached the simulator.
+    async fn serve_ledger_masters_then(second: &[&str]) -> (Value, usize) {
+        let (responses, sent) = serve_ledger_masters_collecting(second, 1).await;
+        let response = responses
+            .into_iter()
+            .find(|value| value["id"] == 7)
+            .expect("a response to request 7");
+        (response, sent)
+    }
+
+    /// As `serve_ledger_masters_then`, returning every response in the order
+    /// written, once `expected` responses other than `initialize`'s arrived.
+    async fn serve_ledger_masters_collecting(
+        second: &[&str],
+        expected: usize,
+    ) -> (Vec<Value>, usize) {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        let mut plans = basic_plans();
+        plans[0] = plans[0]
+            .clone()
+            .with_delivery(tally_protocol_simulator::Delivery::SlowHeaders(
+                std::time::Duration::from_millis(900),
+            ));
+        let simulator = SequenceSimulator::spawn(plans).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let server = Server::new(Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".into(),
+                port: simulator.address().port(),
+            },
+            data_dir: directory.path().into(),
+            max_rows: 500,
+            max_bytes: 200_000,
+            redaction: Redaction::None,
+            import_enabled: false,
+            writes_enabled: false,
+        });
+        let (client, source) = tokio::io::duplex(1 << 20);
+        let (client_read, mut client_write) = tokio::io::split(client);
+        let (source_read, mut source_write) = tokio::io::split(source);
+        let serve = async move {
+            crate::agent::agent_protocol::serve_stdio(
+                server,
+                BufReader::new(source_read),
+                &mut source_write,
+            )
+            .await
+        };
+        let client = async move {
+            let call = json!({"jsonrpc":"2.0","id":7,"method":"tools/call","params":{
+                "name":"ledger_masters","arguments":{"company_guid":GUID}}});
+            let opening = format!(
+                "{}\n{}\n{}\n",
+                json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}),
+                json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+                call
+            );
+            client_write.write_all(opening.as_bytes()).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            for frame in second {
+                if *frame == CLOSE_INPUT {
+                    client_write.shutdown().await.unwrap();
+                    continue;
+                }
+                client_write.write_all(frame.as_bytes()).await.unwrap();
+                client_write.write_all(b"\n").await.unwrap();
+            }
+            let mut lines = BufReader::new(client_read).lines();
+            let mut responses = Vec::new();
+            let mut answered = 0;
+            while answered < expected {
+                let line = lines
+                    .next_line()
+                    .await
+                    .unwrap()
+                    .expect("every expected response");
+                let value: Value = serde_json::from_str(&line).unwrap();
+                if value["id"] != 1 {
+                    answered += 1;
+                }
+                responses.push(value);
+            }
+            drop(client_write);
+            responses
+        };
+        let (served, responses) = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            tokio::join!(serve, client)
+        })
+        .await
+        .unwrap();
+        served.unwrap();
+        simulator.cancel();
+        // `cancel` wakes the simulator with an empty connection; count only the
+        // requests Bridge actually sent.
+        let sent = simulator
+            .finish()
+            .unwrap()
+            .iter()
+            .filter(|request| !request.method.is_empty())
+            .count();
+        (responses, sent)
+    }
+
+    /// In `second`, closes the client's input instead of sending a frame.
+    const CLOSE_INPUT: &str = "<close input>";
+
+    #[tokio::test]
+    async fn closing_the_input_during_a_read_does_not_withdraw_it() {
+        // A client may write its requests, close its side and still read the
+        // answers: a closed input is not a cancellation, so the read completes
+        // in full and every request of it is sent.
+        let (response, requests) = serve_ledger_masters_then(&[CLOSE_INPUT]).await;
+        assert_eq!(response["result"]["isError"], false, "{response}");
+        assert_eq!(requests, basic_plans().len());
+    }
+
+    #[tokio::test]
+    async fn input_is_left_in_the_pipe_once_eight_requests_wait() {
+        // The bound on what a read holds: once eight requests are queued, input
+        // is not read until the call ends, so a cancellation behind them is not
+        // seen (the read completes in full, as before #554) and all eight are
+        // then answered. Without the bound the queue would grow without limit.
+        let mut frames: Vec<String> = (100..108)
+            .map(|id| json!({"jsonrpc":"2.0","id":id,"method":"tools/list"}).to_string())
+            .collect();
+        frames.push(
+            json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":7}})
+                .to_string(),
+        );
+        let frames: Vec<&str> = frames.iter().map(String::as_str).collect();
+        let (responses, sent) = serve_ledger_masters_collecting(&frames, 9).await;
+        let call = responses.iter().find(|value| value["id"] == 7).unwrap();
+        assert_eq!(call["result"]["isError"], false, "{call}");
+        assert_eq!(sent, basic_plans().len());
+    }
+
+    #[tokio::test]
+    async fn requests_sent_during_a_read_are_all_served_after_it() {
+        // Before #554 no input was read while a read ran, so a burst of requests
+        // waited in the pipe and was served in order afterwards. Watching input
+        // must not turn that into refusals: ten requests during one held read
+        // are all answered, after the read, in the order sent.
+        let burst: Vec<String> = (100..110)
+            .map(|id| json!({"jsonrpc":"2.0","id":id,"method":"tools/list"}).to_string())
+            .collect();
+        let frames: Vec<&str> = burst.iter().map(String::as_str).collect();
+        let (responses, _) = serve_ledger_masters_collecting(&frames, 11).await;
+        let ids: Vec<Value> = responses
+            .iter()
+            .map(|value| value["id"].clone())
+            .filter(|id| *id != 1)
+            .collect();
+        let expected: Vec<Value> = std::iter::once(json!(7))
+            .chain((100..110).map(|id| json!(id)))
+            .collect();
+        assert_eq!(ids, expected, "{responses:?}");
+        assert!(
+            responses.iter().all(|value| value.get("error").is_none()),
+            "{responses:?}"
+        );
+    }
+
+    /// Input that yields `data`, then waits until `fail` fires and returns an
+    /// I/O error, as a host whose pipe breaks mid-call would.
+    struct FailingInput {
+        data: std::io::Cursor<Vec<u8>>,
+        fail: tokio::sync::oneshot::Receiver<()>,
+    }
+
+    impl tokio::io::AsyncRead for FailingInput {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            use std::io::Read;
+            let remaining = buf.remaining();
+            let mut chunk = vec![0; remaining];
+            let read = self.data.read(&mut chunk).unwrap();
+            if read > 0 {
+                buf.put_slice(&chunk[..read]);
+                return std::task::Poll::Ready(Ok(()));
+            }
+            match std::future::Future::poll(std::pin::Pin::new(&mut self.fail), cx) {
+                std::task::Poll::Ready(_) => {
+                    std::task::Poll::Ready(Err(std::io::Error::other("pipe broke")))
+                }
+                std::task::Poll::Pending => std::task::Poll::Pending,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn an_input_failure_still_answers_the_call_in_flight_then_ends() {
+        // The input breaks while the identity read is held: the call stops
+        // before its next operation, its answer is still written (the output
+        // works), and only then does the session end with the input error.
+        let mut plans = basic_plans();
+        plans[0] = plans[0]
+            .clone()
+            .with_delivery(tally_protocol_simulator::Delivery::SlowHeaders(
+                std::time::Duration::from_millis(900),
+            ));
+        let simulator = SequenceSimulator::spawn(plans).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let server = Server::new(Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".into(),
+                port: simulator.address().port(),
+            },
+            data_dir: directory.path().into(),
+            max_rows: 500,
+            max_bytes: 200_000,
+            redaction: Redaction::None,
+            import_enabled: false,
+            writes_enabled: false,
+        });
+        let frames = format!(
+            "{}\n{}\n",
+            json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}),
+            json!({"jsonrpc":"2.0","id":7,"method":"tools/call","params":{
+                "name":"ledger_masters","arguments":{"company_guid":GUID}}})
+        );
+        let (fail, failed) = tokio::sync::oneshot::channel();
+        let input = FailingInput {
+            data: std::io::Cursor::new(frames.into_bytes()),
+            fail: failed,
+        };
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            let _ = fail.send(());
+        });
+        let mut output = Vec::new();
+        let served = tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            crate::agent::agent_protocol::serve_stdio(
+                server,
+                tokio::io::BufReader::new(input),
+                &mut output,
+            ),
+        )
+        .await
+        .unwrap();
+        assert!(served.is_err(), "the session ends with the input error");
+        let responses: Vec<Value> = String::from_utf8(output)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let call = responses
+            .iter()
+            .find(|value| value["id"] == 7)
+            .expect("the call in flight is still answered");
+        assert_eq!(
+            call["result"]["structuredContent"]["result"]["error"]["code"],
+            "request_cancelled"
+        );
+        simulator.cancel();
+        let sent = simulator
+            .finish()
+            .unwrap()
+            .iter()
+            .filter(|request| !request.method.is_empty())
+            .count();
+        assert_eq!(sent, identity_plans().len());
+    }
+
+    #[tokio::test]
+    async fn a_withdrawn_call_stops_before_its_next_operation() {
+        let (response, requests) = serve_ledger_masters_then(&[
+            r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":7}}"#,
+        ])
+        .await;
+        // The identity read in flight completes (abandoning it would not stop
+        // Tally); the ledger read is never sent, and the call is refused as
+        // withdrawn with partial evidence, never answered with a partial read.
+        assert_eq!(requests, identity_plans().len(), "{response}");
+        let result = &response["result"];
+        assert_eq!(result["isError"], true, "{response}");
+        assert_eq!(
+            result["structuredContent"]["result"]["error"]["code"],
+            "request_cancelled"
+        );
+        assert_eq!(result["structuredContent"]["evidence"]["state"], "partial");
+    }
+
+    #[tokio::test]
+    async fn an_unrelated_notification_does_not_stop_the_call() {
+        // Control: a cancellation naming another request, and a plain
+        // notification, arrive while the call runs; it completes in full.
+        let (response, requests) = serve_ledger_masters_then(&[
+            r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":99}}"#,
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        ])
+        .await;
+        assert_eq!(response["result"]["isError"], false, "{response}");
+        assert_eq!(requests, basic_plans().len());
+    }
 }
