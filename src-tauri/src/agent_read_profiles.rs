@@ -241,3 +241,166 @@ pub(super) fn render_agent_company_high_water(company: &str) -> String {
         xml_escape(company)
     )
 }
+
+/// A read request rendered by one of the profiles below.
+///
+/// The field is private to this module, so a `ReadRequest` can only come from
+/// a function here, and each of those renders a fixed Bridge profile.
+/// `Server::post_read` accepts nothing else. `AgentReadRequest::parse` still
+/// checks the envelope before dispatch, but it is no longer the only barrier
+/// between caller-built XML and the gateway.
+#[derive(Clone, Debug)]
+pub(super) struct ReadRequest(String);
+
+impl ReadRequest {
+    pub(super) fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub(super) fn into_xml(self) -> String {
+        self.0
+    }
+
+    /// Test-only: lets a test hand `post_read` a request no profile renders,
+    /// to prove the envelope gate behind the seal still refuses it.
+    #[cfg(test)]
+    pub(super) fn unrendered_for_test(xml: String) -> Self {
+        Self(xml)
+    }
+}
+
+pub(super) fn company_high_water_read(company: &str) -> ReadRequest {
+    ReadRequest(render_agent_company_high_water(company))
+}
+
+pub(super) fn master_domain_high_water_read(company: &str, kind: MasterKind) -> ReadRequest {
+    ReadRequest(render_agent_master_domain_high_water(company, kind))
+}
+
+pub(super) fn changed_vouchers_read(company: &str, checkpoint: u64, snapshot: u64) -> ReadRequest {
+    ReadRequest(render_agent_changed_vouchers(company, checkpoint, snapshot))
+}
+
+pub(super) fn changed_masters_read(
+    company: &str,
+    checkpoint: u64,
+    snapshot: u64,
+    kind: MasterKind,
+) -> ReadRequest {
+    ReadRequest(render_agent_changed_masters(
+        company, checkpoint, snapshot, kind,
+    ))
+}
+
+pub(super) fn standard_ledger_catalog_read(company: &str) -> anyhow::Result<ReadRequest> {
+    crate::tally::standard_ledger_catalog::render_standard_ledger_catalog_request(company)
+        .map(ReadRequest)
+}
+
+pub(super) fn native_group_snapshot_read(company: &str) -> ReadRequest {
+    ReadRequest(
+        bridge_tally_protocol::native_outstandings::render_native_group_snapshot_request(company),
+    )
+}
+
+pub(super) fn voucher_window_part_read(
+    shape: super::voucher_window::VoucherReadShape,
+    company: &str,
+    from: &str,
+    to: &str,
+    span: Option<AlterIdSpan>,
+) -> Result<ReadRequest, String> {
+    shape.render(company, from, to, span).map(ReadRequest)
+}
+
+pub(super) fn voucher_census_read(
+    company: &str,
+    from: &str,
+    to: &str,
+    span: Option<AlterIdSpan>,
+) -> Result<ReadRequest, String> {
+    render_agent_voucher_census(company, from, to, span).map(ReadRequest)
+}
+
+#[cfg(feature = "lab-writes")]
+pub(super) fn lab_inventory_vouchers_read(
+    company: &str,
+    from: &str,
+    to: &str,
+) -> Result<ReadRequest, String> {
+    render_agent_lab_inventory_vouchers(company, from, to).map(ReadRequest)
+}
+
+#[cfg(feature = "lab-writes")]
+pub(super) fn lab_master_collection_read(
+    company: &str,
+    kind: super::lab::LabMasterKind,
+    period: &bridge_tally_protocol::native_outstandings::NativeLedgerExportPeriod,
+) -> Result<ReadRequest, String> {
+    super::lab::render_lab_master_collection(company, kind, period).map(ReadRequest)
+}
+
+#[cfg(feature = "lab-writes")]
+pub(super) fn lab_write_master_collection_read(
+    company: &str,
+    kind: super::lab::import::MasterKind,
+    period: &bridge_tally_protocol::native_outstandings::NativeLedgerExportPeriod,
+) -> Result<ReadRequest, String> {
+    super::lab::import::render_master_collection_request(company, kind, period).map(ReadRequest)
+}
+
+#[cfg(feature = "lab-writes")]
+pub(super) fn lab_voucher_window_read(
+    company: &str,
+    from: &str,
+    to: &str,
+) -> Result<ReadRequest, String> {
+    super::lab::import::render_voucher_window_request(company, from, to).map(ReadRequest)
+}
+
+#[cfg(test)]
+mod sealed_read_tests {
+    use super::*;
+    use crate::tally::agent_read_request::AgentReadRequest;
+
+    /// Every sealed profile renders a read envelope the dispatch gate admits.
+    /// A profile added here that rendered anything else would fail this test
+    /// before it could reach `post_read`.
+    #[test]
+    fn every_sealed_profile_renders_an_admitted_read_envelope() {
+        let company = "Bridge Sealed Read Co";
+        let span = Some(AlterIdSpan {
+            after: 10,
+            through: 20,
+        });
+        let mut reads = vec![
+            company_high_water_read(company),
+            master_domain_high_water_read(company, MasterKind::Ledger),
+            master_domain_high_water_read(company, MasterKind::Group),
+            changed_vouchers_read(company, 1, 2),
+            changed_masters_read(company, 1, 2, MasterKind::Ledger),
+            standard_ledger_catalog_read(company).unwrap(),
+            native_group_snapshot_read(company),
+            voucher_census_read(company, "20260401", "20260430", span).unwrap(),
+        ];
+        for shape in [
+            super::super::voucher_window::VoucherReadShape::ImportVerification,
+            super::super::voucher_window::VoucherReadShape::Movement,
+            super::super::voucher_window::VoucherReadShape::EntryWildcard,
+        ] {
+            for part_span in [None, span] {
+                reads.push(
+                    voucher_window_part_read(shape, company, "20260401", "20260430", part_span)
+                        .unwrap(),
+                );
+            }
+        }
+        for read in reads {
+            assert!(
+                AgentReadRequest::parse(read.as_str().to_string()).is_ok(),
+                "{}",
+                read.as_str()
+            );
+        }
+    }
+}

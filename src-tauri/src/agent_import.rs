@@ -1,21 +1,19 @@
 use super::{
-    combine_evidence, company_json, normalized_date, parse_company_high_water, party_name,
-    render_agent_company_high_water, required_string, sha256_hex, sha256_json, Evidence, Server,
-    ToolFailure, ToolOutcome, VOUCHER_CHECKPOINT_NOT_OBSERVED,
+    combine_evidence, company_high_water_read, company_json, native_group_snapshot_read,
+    normalized_date, parse_company_high_water, party_name, required_string, sha256_hex,
+    sha256_json, standard_ledger_catalog_read, Evidence, Server, ToolFailure, ToolOutcome,
+    VOUCHER_CHECKPOINT_NOT_OBSERVED,
 };
 use crate::tally::agent_read_request::AgentReadRequest;
 use crate::tally::standard_ledger_catalog::{
     admit_standard_ledger_catalog_request, parse_standard_ledger_catalog_response,
-    render_standard_ledger_catalog_request,
 };
 use bridge_tally_core::master_binding::{
     self, BindingBasis, BindingStatus, Candidates, EntityBinding, MasterCatalog, MasterClass,
     SourceEntity,
 };
 use bridge_tally_core::ExactDecimal;
-use bridge_tally_protocol::native_outstandings::{
-    parse_native_group_snapshot, render_native_group_snapshot_request,
-};
+use bridge_tally_protocol::native_outstandings::parse_native_group_snapshot;
 use bridge_tally_protocol::outstandings_shared::DateBoundaryProfile;
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -994,11 +992,11 @@ impl Server {
         ),
         ToolFailure,
     > {
-        let request_xml = render_standard_ledger_catalog_request(company_name)
+        let read = standard_ledger_catalog_read(company_name)
             .map_err(|_| "company_name_invalid".to_string())?;
-        let request = admit_standard_ledger_catalog_request(request_xml.clone())
+        let request = admit_standard_ledger_catalog_request(read.as_str().to_string())
             .map_err(|_| "ledger_export_invalid".to_string())?;
-        let (xml, evidence) = self.post_read(identity, request_xml).await?;
+        let (xml, evidence) = self.post_read(identity, read).await?;
         let catalogue =
             parse_standard_ledger_catalog_response(&xml, company_name, identity.company_guid())
                 .map_err(|_| {
@@ -1021,8 +1019,9 @@ impl Server {
         identity: &super::VerifiedCompanyIdentity,
         company_name: &str,
     ) -> Result<(Vec<bridge_tally_protocol::TallyNamedMaster>, Evidence), ToolFailure> {
-        let request_xml = render_native_group_snapshot_request(company_name);
-        let (xml, evidence) = self.post_read(identity, request_xml).await?;
+        let (xml, evidence) = self
+            .post_read(identity, native_group_snapshot_read(company_name))
+            .await?;
         let groups = parse_native_group_snapshot(&xml, identity.company_guid()).map_err(|_| {
             ToolFailure::from("group_export_invalid".to_string())
                 .with_prior_evidence(evidence.clone())
@@ -1091,7 +1090,7 @@ impl Server {
             .as_deref()
             .ok_or_else(|| "pre_import_mark_unobserved".to_string())?;
         let (xml, evidence) = self
-            .post_read(identity, render_agent_company_high_water(&company.name))
+            .post_read(identity, company_high_water_read(&company.name))
             .await?;
         let high_water = parse_company_high_water(&xml, guid).map_err(|code| {
             ToolFailure::from(pre_import_mark_refusal(&code).to_string())

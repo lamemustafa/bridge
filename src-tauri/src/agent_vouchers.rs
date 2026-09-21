@@ -179,7 +179,7 @@ impl Server {
                 validate_then_filter_voucher_rows(wider_rows, &wider_from, &wider_to, ledger)?;
             let high_water = if wider_rows.is_empty() {
                 let (high_water_xml, high_water_evidence) = self
-                    .post_read(identity, render_agent_company_high_water(company))
+                    .post_read(identity, company_high_water_read(company))
                     .await?;
                 evidence = combine_evidence(evidence.clone(), high_water_evidence);
                 Some(company_voucher_high_water(

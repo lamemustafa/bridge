@@ -29,7 +29,7 @@ use std::path::PathBuf;
 // the same private-item-visible-to-descendant-module path this file itself
 // uses for `agent.rs`'s items.
 #[path = "agent_lab_import.rs"]
-mod import;
+pub(super) mod import;
 pub(super) use import::{lab_import_masters, lab_import_vouchers};
 
 // ---------------------------------------------------------------------------
@@ -245,10 +245,11 @@ async fn lab_post_read(
     server: &Server,
     identity: &VerifiedCompanyIdentity,
     tool: &str,
-    request: String,
+    request: ReadRequest,
 ) -> Result<(String, Evidence), ToolFailure> {
-    let (response, evidence) = server.post_read(identity, request.clone()).await?;
-    persist_lab_exchange(server, tool, &request, &response)
+    let request_xml = request.as_str().to_string();
+    let (response, evidence) = server.post_read(identity, request).await?;
+    persist_lab_exchange(server, tool, &request_xml, &response)
         .map_err(|code| ToolFailure::from(code).with_prior_evidence(evidence.clone()))?;
     Ok((response, evidence))
 }
@@ -258,7 +259,7 @@ async fn lab_post_read(
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy)]
-enum LabMasterKind {
+pub(super) enum LabMasterKind {
     Unit,
     Godown,
     StockGroup,
@@ -320,7 +321,7 @@ pub(super) async fn lab_dated_master_read(
     server: &Server,
     identity: &VerifiedCompanyIdentity,
     tool: &str,
-    render: impl FnOnce(&NativeLedgerExportPeriod) -> Result<String, String>,
+    render: impl FnOnce(&NativeLedgerExportPeriod) -> Result<ReadRequest, String>,
 ) -> Result<(String, Evidence), ToolFailure> {
     let (opening_boundary, mut evidence) = observe_lab_boundary(server).await?;
     let request = book_start_period(opening_boundary, identity.books_from_yyyymmdd())
@@ -373,7 +374,7 @@ fn book_start_period(
         .map_err(|_| "lab_master_period_unsupported".to_string())
 }
 
-fn render_lab_master_collection(
+pub(super) fn render_lab_master_collection(
     company: &str,
     kind: LabMasterKind,
     period: &NativeLedgerExportPeriod,
@@ -807,7 +808,7 @@ pub(super) async fn lab_read_inventory(
         for kind in LabMasterKind::ALL {
             let (xml, read_evidence) =
                 lab_dated_master_read(server, &identity, "lab_read_inventory.masters", |period| {
-                    render_lab_master_collection(identity.display_name(), kind, period)
+                    lab_master_collection_read(identity.display_name(), kind, period)
                 })
                 .await?;
             evidence = combine_evidence(evidence.clone(), read_evidence);
@@ -820,7 +821,7 @@ pub(super) async fn lab_read_inventory(
             masters.insert(kind.result_key().to_string(), Value::Array(items));
         }
 
-        let voucher_request = render_agent_lab_inventory_vouchers(identity.display_name(), &from, &to)
+        let voucher_request = lab_inventory_vouchers_read(identity.display_name(), &from, &to)
             .map_err(ToolFailure::from)?;
         let (voucher_xml, voucher_evidence) = lab_post_read(
             server,
@@ -1521,7 +1522,7 @@ mod tests {
         )
         .unwrap();
         let result = lab_dated_master_read(&server, &identity, "test.dated", |period| {
-            render_lab_master_collection(identity.display_name(), LabMasterKind::StockItem, period)
+            lab_master_collection_read(identity.display_name(), LabMasterKind::StockItem, period)
         })
         .await;
         let hashes = simulator

@@ -639,8 +639,9 @@ impl Server {
     async fn post_read(
         &self,
         identity: &VerifiedCompanyIdentity,
-        request: String,
+        request: ReadRequest,
     ) -> Result<(String, Evidence), ToolFailure> {
+        let request = request.into_xml();
         let admitted = crate::tally::agent_read_request::AgentReadRequest::parse(request.clone())
             .map_err(|error| error.to_string())?;
         let request_sha256 = sha256_hex(&bridge_tally_protocol::encode_tally_xml_request_utf16le(

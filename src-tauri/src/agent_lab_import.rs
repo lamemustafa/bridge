@@ -301,7 +301,7 @@ fn parse_book_value<T: for<'de> Deserialize<'de>>(
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum MasterKind {
+pub(in crate::agent) enum MasterKind {
     Unit,
     Godown,
     StockGroup,
@@ -371,7 +371,7 @@ impl MasterKind {
 /// The pre-check and read-back of a lab master write. It carries
 /// [`lab_dated_master_read`]'s book-start period, because the read-back compares
 /// `OPENINGBALANCE` against the book (bridge#568).
-fn render_master_collection_request(
+pub(in crate::agent) fn render_master_collection_request(
     company: &str,
     kind: MasterKind,
     period: &NativeLedgerExportPeriod,
@@ -1052,7 +1052,7 @@ pub(in crate::agent) async fn lab_import_masters(
         }
         let (xml, read_evidence) =
             lab_dated_master_read(server, &identity, "lab_import_masters.precheck", |period| {
-                render_master_collection_request(identity.display_name(), kind, period)
+                lab_write_master_collection_read(identity.display_name(), kind, period)
             })
             .await?;
         evidence = combine_evidence(evidence.clone(), read_evidence);
@@ -1250,7 +1250,7 @@ pub(in crate::agent) async fn lab_import_masters(
             // trust CREATED/ERRORS alone).
             let (read_xml, read_evidence) =
                 lab_dated_master_read(server, &identity, "lab_import_masters.readback", |period| {
-                    render_master_collection_request(identity.display_name(), kind, period)
+                    lab_write_master_collection_read(identity.display_name(), kind, period)
                 })
                 .await?;
             evidence = combine_evidence(evidence.clone(), read_evidence);
@@ -1365,7 +1365,7 @@ pub(in crate::agent) async fn lab_import_masters(
                 &identity,
                 "lab_import_masters.readback.reconcile",
                 |period| {
-                    render_master_collection_request(
+                    lab_write_master_collection_read(
                         identity.display_name(),
                         MasterKind::Ledger,
                         period,
@@ -1942,7 +1942,11 @@ GUID,ISCANCELLED,ALLLEDGERENTRIES.LEDGERNAME,ALLLEDGERENTRIES.AMOUNT,\
 ALLLEDGERENTRIES.ISDEEMEDPOSITIVE,ALLLEDGERENTRIES.BILLALLOCATIONS.NAME,\
 ALLLEDGERENTRIES.BILLALLOCATIONS.BILLTYPE,ALLLEDGERENTRIES.BILLALLOCATIONS.AMOUNT";
 
-fn render_voucher_window_request(company: &str, from: &str, to: &str) -> Result<String, String> {
+pub(in crate::agent) fn render_voucher_window_request(
+    company: &str,
+    from: &str,
+    to: &str,
+) -> Result<String, String> {
     let company = ValidatedCompanyName::new(company.to_string())
         .map_err(|_| "company_name_invalid".to_string())?;
     Ok(format!(
@@ -2359,7 +2363,7 @@ pub(in crate::agent) async fn lab_import_vouchers(
         // Resume pre-check (§9.3/§12a's discipline): never blind-retry. Read
         // the window this batch would occupy and check every voucher against
         // it before sending anything.
-        let probe_request = render_voucher_window_request(identity.display_name(), &from, &to)
+        let probe_request = lab_voucher_window_read(identity.display_name(), &from, &to)
             .map_err(ToolFailure::from)?;
         let (probe_xml, probe_evidence) = lab_post_read(
             server,
@@ -2445,7 +2449,7 @@ pub(in crate::agent) async fn lab_import_vouchers(
             server,
             &identity,
             "lab_import_vouchers.readback",
-            render_voucher_window_request(identity.display_name(), &from, &to)
+            lab_voucher_window_read(identity.display_name(), &from, &to)
                 .map_err(ToolFailure::from)?,
         )
         .await?;
