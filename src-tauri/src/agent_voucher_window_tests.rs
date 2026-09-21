@@ -2310,3 +2310,19 @@ async fn the_pre_post_check_refuses_a_verification_window_the_bound_would_divide
         simulator.finish().unwrap();
     }
 }
+
+#[test]
+fn a_bound_refusal_with_a_concrete_next_step_names_it() {
+    // The too-large book must say that narrowing the window does not help —
+    // the retry a caller would otherwise try first.
+    let book = refusal_remediation(BOOK_TOO_LARGE).expect("guidance");
+    assert!(
+        book.contains("A shorter date window will not help"),
+        "{book}"
+    );
+    let post = refusal_remediation("import_post_window_not_bounded").expect("guidance");
+    assert!(
+        post.contains("Build the batch again over fewer days"),
+        "{post}"
+    );
+}
