@@ -529,6 +529,9 @@ fn classify_audit_part_failure(error: &anyhow::Error) -> AuditPartFailure {
         .any(|cause| cause.is::<AuditDrainOwedAtDispatch>())
     {
         AuditPartFailureKind::DrainRequired
+    } else if error.chain().any(|cause| cause.is::<ToolCancelled>()) {
+        // Withdrawn before the operation was queued: nothing was sent.
+        AuditPartFailureKind::NotSent("request_cancelled")
     } else if let Some(transport) = error
         .chain()
         .find_map(|cause| cause.downcast_ref::<TallyTransportError>())

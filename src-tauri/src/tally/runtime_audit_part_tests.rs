@@ -958,3 +958,31 @@ async fn a_dropped_part_is_owed_and_drainable() {
     );
     assert_eq!(simulator.finish().unwrap().len(), 4);
 }
+
+/// A tool call withdrawn before the part is queued (#584) sends nothing and
+/// owes nothing.
+#[tokio::test]
+async fn a_withdrawn_call_sends_no_part_and_owes_nothing() {
+    let lab = lab();
+    let simulator = SequenceSimulator::spawn(vec![utf16(&lab.companies_xml)]).unwrap();
+    let runtime = TallyRuntime::default();
+    let withdrawn = tokio_util::sync::CancellationToken::new();
+    withdrawn.cancel();
+    let failure = TOOL_CANCELLATION
+        .scope(
+            withdrawn,
+            part(&runtime, &simulator, &lab, AuditPartShape::Single),
+        )
+        .await
+        .expect_err("withdrawn");
+    assert_eq!(
+        failure.kind,
+        AuditPartFailureKind::NotSent("request_cancelled")
+    );
+    assert!(failure.kind.retryable() && !failure.kind.owes_drain());
+    assert_eq!(
+        runtime.drain_probe(config(&simulator)).await,
+        AuditDrainStatus::Clear
+    );
+    drop(simulator);
+}
