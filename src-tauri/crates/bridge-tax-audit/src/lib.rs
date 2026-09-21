@@ -81,8 +81,11 @@ pub struct Engagement {
     pub loan_ledgers_configured: Vec<String>,
     /// `cash_book_integrity`-only: the optional `[roles].own_account_narration_terms`, the forms
     /// in which the bank prints the assessee's own other account on transfer lines (client data).
-    /// Empty when the key is absent, as the reference's `own_account_narration_terms` defaults it.
-    pub own_account_narration_terms: Vec<String>,
+    /// Kept as written and validated only when that test runs
+    /// ([`cash_book_integrity::own_account_terms`]), so a malformed value fails that one test and
+    /// not every test on the engagement -- the reference, too, reads the key only when it runs
+    /// `cash_book_integrity`. `None` when the key is absent.
+    pub own_account_narration_terms: Option<toml::Value>,
     /// `depreciation`-only: `None` when the client config carries no `[depreciation]` table at
     /// all (an engagement that never runs that test); `Some` once the table is present, at which
     /// point `block_by_ledger`, `opening_wdv_paise` and `dep_expense_ledgers` are REQUIRED within
@@ -367,10 +370,7 @@ not YYYY-MM-DD"
                 Some(_) => strings(roles, "round_off_ledgers")?,
                 None => Vec::new(),
             },
-            own_account_narration_terms: match roles.get("own_account_narration_terms") {
-                Some(_) => strings(roles, "own_account_narration_terms")?,
-                None => Vec::new(),
-            },
+            own_account_narration_terms: roles.get("own_account_narration_terms").cloned(),
             loan_ledgers_configured: cfg
                 .get("loans")
                 .and_then(toml::Value::as_table)
@@ -540,13 +540,9 @@ pub fn cash_book_integrity_on(
     let (engagement, _report) = engagement.bind(book)?;
     let cash = book.ledgers_under_any(&engagement.cash_groups);
     let bank = book.ledgers_under_any(&engagement.bank_groups);
-    let result = cash_book_integrity::run(
-        book,
-        rules,
-        &cash,
-        &bank,
-        &engagement.own_account_narration_terms,
-    )?;
+    let terms =
+        cash_book_integrity::own_account_terms(engagement.own_account_narration_terms.as_ref())?;
+    let result = cash_book_integrity::run(book, rules, &cash, &bank, &terms)?;
     let module_check = cash_book_integrity::check_invariants(book, &result)?;
     canonical::canonical_test_result(book, &result, Some(module_check))
 }

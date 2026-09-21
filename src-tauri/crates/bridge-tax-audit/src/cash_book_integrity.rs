@@ -127,6 +127,29 @@ fn under_expense(book: &Book, ledger: &str) -> bool {
 }
 
 #[allow(clippy::too_many_lines)] // one section per fact, as the reference lays them out
+/// `[roles].own_account_narration_terms` as this test reads it: absent is no terms; otherwise a
+/// list of strings, or a configuration error for this test alone.
+///
+/// Divergence, deliberate: the reference passes the value to `frozenset(...)` unchecked, so a
+/// single string (`"SELF"` rather than `["SELF"]`) becomes the set of its characters and part 3
+/// matches any narration containing any one of them. Here a string, or a list holding anything
+/// but strings, is refused.
+pub fn own_account_terms(raw: Option<&toml::Value>) -> Result<Vec<String>> {
+    let Some(raw) = raw else {
+        return Ok(Vec::new());
+    };
+    let key = "[roles].own_account_narration_terms";
+    raw.as_array()
+        .ok_or_else(|| AuditError::Config(format!("{TEST_ID}: {key} is not a list")))?
+        .iter()
+        .map(|v| {
+            v.as_str()
+                .map(str::to_string)
+                .ok_or_else(|| AuditError::Config(format!("{TEST_ID}: {key} holds a non-string")))
+        })
+        .collect()
+}
+
 pub fn run(
     book: &Book,
     rules: &Rules,
