@@ -70,7 +70,7 @@ fn overflow() -> AuditError {
 /// it): the reference engine's own regex `FREIGHT|TRANSPORT|ROAD\s?LINES|CARRIER|LOGISTIC|
 /// CARGO|ROADWAYS`, case-insensitive. Not a hardcoded list of staff or client names.
 fn transport_name_match(name: &str) -> bool {
-    let upper = name.to_uppercase();
+    let upper = crate::support::py_upper(name);
     const PLAIN: [&str; 6] = [
         "FREIGHT",
         "TRANSPORT",
@@ -853,6 +853,21 @@ line of abs amount >= the s.269SS/269T limit ({limit_ss_t} paise)."
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The reference's transport-name regex is case-insensitive (`re.I`).
+    #[test]
+    fn the_transport_name_check_ignores_case() {
+        for name in [
+            "ABC LOGISTICS",
+            "abc logistics",
+            "Sharma Road Lines",
+            "sharma roadlines",
+            "Cargo Co",
+        ] {
+            assert!(transport_name_match(name), "{name}");
+        }
+        assert!(!transport_name_match("Sharma Traders"));
+    }
 
     /// The s.269SS/269T figure definition names the voucher by `guid[-12:]` too, in the reference.
     #[test]

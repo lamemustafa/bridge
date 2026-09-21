@@ -235,7 +235,8 @@ contra-nature, LSC-1 and its tolerance, no rules table, a 4-day period), and `ca
 independent reviewer to catch what those miss, `cash_book_misc.json` (own-account terms repeated
 in different case, a Contra between two bank ledgers, zero-amount expense lines, one voucher
 matching on several lines) and `scrutiny_misc.json` (a debit cash leg, a large credit entry, a
-ledger with no TB row, a ledger under both expense groups). Two vouchers have no number
+ledger with no TB row, a ledger under both expense groups); and `cash_book_unicode.json`
+(narrations and a term Unicode 17 and 15.1 upper-case differently). Two vouchers have no number
 and a non-ASCII GUID whose 12-byte cut splits a character, so the voucher label must take the last
 12 characters, as the reference does. None of these is a Tally read: they establish that the port
 and the reference agree on the same book, and nothing about reading Tally.
@@ -244,9 +245,11 @@ One divergence is known and not fixed here: case mapping. Rust 1.96 carries Unic
 reference's Python 3.13 carries 15.1.0, and upper- and lower-casing each differ at 55 code points
 (measured over every code point). All 55 for lower-casing, and 51 for upper-casing, are unassigned in
 15.1; the other 4 (U+019B, U+0264, U+A7D3, U+A7D5) are older lowercase letters whose uppercase
-partner was assigned later. A narration holding one can change
-`cash_book_integrity`'s parts 3 and 5. No edge book holds one; the crate-wide fix pins case
-mapping to the reference's version.
+partner was assigned later. A narration holding one could change `cash_book_integrity`'s parts
+3 and 5, so every case mapping in the crate goes through `support::py_upper` / `py_lower`, pinned
+to 15.1 (parity spec §4.1). `cash_book_unicode.json` holds such narrations and such a term, and its
+reference golden -- 0 repeated narrations, 0 own-account matches -- is what the pinned mapping
+gives; unpinned Rust mapping gives a repeated pair and a deposit.
 
 `golden/edge.NAME.TEST.json` is the reference implementation's own canonical dump for that book,
 built with its own model (`tae.model`) by `parity/edge_golden.py` -- company GUID
@@ -264,7 +267,8 @@ uv run -q --with openpyxl --with xlrd --with python-docx --with jsonschema --wit
 
 once per book. `tests/edge_books.rs` builds each book in Rust, runs each named test with its module
 check, compares the whole dump with `compare` -- every field of it, the spec and test versions
-included -- and compares the row order. Of 52 hand-written
+included -- and compares the row order. Every mutation written for this crate is recorded in
+`parity/mutations.json` with its author, and `parity/mutations.py` re-runs them. Of 52 hand-written
 mutations of the four modules and the NARRATION parse (32 from an independent reviewer, 20 from the
 author; see the PR), the crate's suite fails on every one, and the edge books alone on 50: the other
 two alter how the read's XML is parsed, which the edge books bypass by building the book directly,
@@ -313,6 +317,24 @@ uv run -q --with openpyxl --with xlrd --with python-docx --with jsonschema --wit
     --test applicability_44ab --turnover-inputs tests/fixtures/synthetic-turnover-inputs.json
 ```
 
+## Regenerating, and where later batches record their fixtures
+
+From 2026-09-22 every golden is produced under Python 3.13 (`uv run --python 3.13 ...`), the
+version whose Unicode tables the crate reproduces; the ten synthetic goldens and every edge golden
+above regenerate byte-identical under it. `parity/python_golden.py`'s runner table names exactly the tests in `src/registry.rs`
+(`tests/registry.rs` checks it), and `parity/edge_golden.py`'s runners name exactly the tests
+`tests/edge_books.rs` dispatches, all of them registered (`edge_runners_agree_across_the_two_sides`).
+`tests/edge_books.rs` builds every book in `edge-books/`, with no hand-kept list, and fails on a
+golden that no book names or no registered test owns. `tests/provenance_rows.rs` fails on a golden
+or edge book whose byte row is missing, names another file, or does not match the file's size
+and SHA-256 (it checks them itself: the repository's gate checks a row's hash only when the row's
+shape and file-name cell match the file, and otherwise counts the file as named in prose).
+
+From batch 2 on, each batch records its own fixtures -- prose and byte table -- in
+`provenance/<batch>.md` under this directory, not in this file, so two lanes porting in parallel
+never edit the same table. The fixture-provenance gate reads every Markdown file under
+`tests/fixtures`.
+
 ## Bytes
 
 | Fixture | Bytes | SHA-256 | Path |
@@ -330,6 +352,7 @@ uv run -q --with openpyxl --with xlrd --with python-docx --with jsonschema --wit
 | `synthetic.cash_book_integrity.json` | 15,221 | `2ee1cbc0de9d5087956c4115610c74a8cdd15cc361296dd09b685363bdf74289` | `golden/synthetic.cash_book_integrity.json` |
 | `cash_book.json` | 8,499 | `1ae602f22368e3b549ce1430770f097758f13efb716025bcb2bab2a2e4a34f11` | `edge-books/cash_book.json` |
 | `cash_book_misc.json` | 5,333 | `23bd18a9b41d3768ce4cba9c9b5243b0822316e5fa7ab0308b83226c581c93f0` | `edge-books/cash_book_misc.json` |
+| `cash_book_unicode.json` | 2,262 | `ec61a34edc11214da0c5cac2b7b7d40abe148c0fbcfec1582379c57a21ff3bc3` | `edge-books/cash_book_unicode.json` |
 | `scrutiny.json` | 7,211 | `047e7ca918611b43b7480fef16841fadb54016360b16ebca30e9c94df05c3fb4` | `edge-books/scrutiny.json` |
 | `scrutiny_default.json` | 1,108 | `04bf6e5efb9c45601803624f8931ee563f23fbc502580fcc3c28b6870c9dd37e` | `edge-books/scrutiny_default.json` |
 | `scrutiny_misc.json` | 4,300 | `258aae0ba8d75656870d57638345b10d465edabd797f9cce4bab999f39812a8d` | `edge-books/scrutiny_misc.json` |
@@ -338,6 +361,7 @@ uv run -q --with openpyxl --with xlrd --with python-docx --with jsonschema --wit
 | `tb_rows.json` | 2,362 | `5e3df2c81094e5ea7577309b48597bc03067a4f9ba09175a610b627b62fc31cd` | `edge-books/tb_rows.json` |
 | `edge.cash_book.cash_book_integrity.json` | 32,683 | `510282f185b850cec19cacb06ec08a82c4d8d9bf3b88fd12e8aae37247584078` | `golden/edge.cash_book.cash_book_integrity.json` |
 | `edge.cash_book_misc.cash_book_integrity.json` | 21,454 | `c955eeca88f6880d43ffb93c5642a37c625c55a334323a6e15f0981097de747c` | `golden/edge.cash_book_misc.cash_book_integrity.json` |
+| `edge.cash_book_unicode.cash_book_integrity.json` | 8,864 | `6c65cd4aafc2ed0a4935ade0d222dbbbe013cd6bfc917cd6832b04b7df101bd7` | `golden/edge.cash_book_unicode.cash_book_integrity.json` |
 | `edge.scrutiny.ledger_scrutiny.json` | 69,427 | `52ba969e677ef12c09cf26fb118b6ebca4aace4a4ed5a76f0063e2409475f666` | `golden/edge.scrutiny.ledger_scrutiny.json` |
 | `edge.scrutiny_default.ledger_scrutiny.json` | 8,407 | `03c41d14a83cd4da0bb94e026f93dc36438270b9a430d84f67967ed7339e58b7` | `golden/edge.scrutiny_default.ledger_scrutiny.json` |
 | `edge.scrutiny_misc.ledger_scrutiny.json` | 44,609 | `920f462e1642ea33f8249f3bece1fded847ee83886bc678a26f46678628dcf45` | `golden/edge.scrutiny_misc.ledger_scrutiny.json` |

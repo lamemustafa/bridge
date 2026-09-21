@@ -7,10 +7,9 @@
 //!     TEST_ID ENGINE_RULES_TOML CLIENT_TOML READ_DIR PYTHON_DUMP_JSON RUST_DUMP_OUT
 //! ```
 //!
-//! `TEST_ID` is `cash_44ab`, `cash_payments_40a3`, `depreciation`, `financial_statements`,
-//! `applicability_44ab`, `trial_balance`, `stale_balances_41_1`, `ledger_scrutiny` or
-//! `cash_book_integrity` (the last two read `[roles]`: the cash groups, the bank groups for
-//! `cash_book_integrity`, and its optional `own_account_narration_terms`). For `applicability_44ab`, an optional seventh argument
+//! `TEST_ID` is any test in `bridge_tax_audit::registry::PORTED`. (`ledger_scrutiny` and
+//! `cash_book_integrity` read `[roles]`: the cash groups, the bank groups for
+//! `cash_book_integrity`, and its optional `own_account_narration_terms`.) For `applicability_44ab`, an optional seventh argument
 //! `TURNOVER_INPUTS_JSON` feeds the GSTR-1/GSTR-3B/AIS comparison turnover as caller data -- the
 //! file `parity/python_golden.py --emit-turnover-inputs` wrote -- so both sides compare against the
 //! same numbers; without it neither side has a comparison source. For
@@ -54,16 +53,11 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::time::Instant;
 
-use bridge_tax_audit::applicability_44ab::{ComparisonTurnover, TurnoverInputs};
 use bridge_tax_audit::canonical::hex;
 use bridge_tax_audit::compare::compare;
-use bridge_tax_audit::financial_statements::ReportTotals;
+use bridge_tax_audit::registry::{self, CallerData};
 use bridge_tax_audit::rules::{Rules, SOURCE_SHA256, VENDORED};
-use bridge_tax_audit::{
-    applicability_44ab_on, cash_44ab_on, cash_book_integrity_on, cash_payments_40a3_on,
-    depreciation_on, financial_statements_on, ledger_scrutiny_on, load_book,
-    stale_balances_41_1_on, trial_balance_on, Engagement,
-};
+use bridge_tax_audit::{load_book, Engagement};
 use sha2::{Digest, Sha256};
 
 fn fail(message: impl std::fmt::Display) -> ExitCode {
@@ -166,22 +160,12 @@ fn main() -> ExitCode {
                 )
             }
         };
-    const TESTS: [&str; 9] = [
-        "cash_44ab",
-        "cash_payments_40a3",
-        "depreciation",
-        "financial_statements",
-        "applicability_44ab",
-        "trial_balance",
-        "stale_balances_41_1",
-        "ledger_scrutiny",
-        "cash_book_integrity",
-    ];
-    if !TESTS.contains(&test_id.as_str()) {
+    let Some(test) = registry::find(test_id) else {
+        let ids: Vec<&str> = registry::PORTED.iter().map(|t| t.id).collect();
         return fail(format!(
-            "unknown TEST_ID {test_id:?}; expected one of {TESTS:?}"
+            "unknown TEST_ID {test_id:?}; expected one of {ids:?}"
         ));
-    }
+    };
     if report_json.is_some()
         && !["financial_statements", "applicability_44ab"].contains(&test_id.as_str())
     {
@@ -189,8 +173,8 @@ fn main() -> ExitCode {
             "a seventh argument applies to financial_statements or applicability_44ab only",
         );
     }
-    let mut comparisons = TurnoverInputs::default();
-    if let (Some(path), "applicability_44ab") = (report_json, test_id.as_str()) {
+    let mut caller = CallerData::default();
+    if let Some(path) = report_json {
         let parsed: serde_json::Value = match std::fs::read_to_string(path)
             .map_err(|e| e.to_string())
             .and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string()))
@@ -198,54 +182,15 @@ fn main() -> ExitCode {
             Ok(v) => v,
             Err(e) => return fail(format!("{path}: {e}")),
         };
-        let source = |key: &str| -> Result<Option<ComparisonTurnover>, String> {
-            let v = &parsed[key];
-            if v.is_null() {
-                return Ok(None);
-            }
-            match (v["turnover_paise"].as_i64(), v["coverage"].as_str()) {
-                (Some(turnover_paise), Some(coverage)) => Ok(Some(ComparisonTurnover {
-                    turnover_paise,
-                    coverage: coverage.to_string(),
-                })),
-                _ => Err(format!("{path}: {key} needs turnover_paise and coverage")),
-            }
+        let filled = if test_id == "financial_statements" {
+            registry::report_totals_from_json(&parsed).map(|t| caller.report_totals = Some(t))
+        } else {
+            registry::turnover_inputs_from_json(&parsed).map(|t| caller.turnover_inputs = t)
         };
-        comparisons = match (source("gstr1"), source("gstr3b"), source("ais")) {
-            (Ok(gstr1), Ok(gstr3b), Ok(ais)) => TurnoverInputs {
-                books_turnover_paise: None,
-                gstr1,
-                gstr3b,
-                ais,
-            },
-            (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => return fail(e),
-        };
-    }
-    let report_json = if test_id == "financial_statements" {
-        report_json
-    } else {
-        None
-    };
-    let report_totals = match report_json {
-        None => None,
-        Some(path) => {
-            let parsed: serde_json::Value = match std::fs::read_to_string(path)
-                .map_err(|e| e.to_string())
-                .and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string()))
-            {
-                Ok(v) => v,
-                Err(e) => return fail(format!("{path}: {e}")),
-            };
-            let Some(net_profit_paise) = parsed["net_profit_paise"].as_i64() else {
-                return fail(format!("{path}: net_profit_paise is not an integer"));
-            };
-            Some(ReportTotals {
-                net_profit_paise,
-                closing_stock_paise: parsed["closing_stock_paise"].as_i64(),
-                source: parsed["source"].as_str().map(str::to_string),
-            })
+        if let Err(e) = filled {
+            return fail(format!("{path}: {e}"));
         }
-    };
+    }
 
     // The vendored rules excerpt against the live source.
     let source = match std::fs::read_to_string(rules_toml) {
@@ -315,20 +260,7 @@ fn main() -> ExitCode {
         ),
         Err(e) => return fail(format!("the Rust slice refused to bind the config: {e}")),
     }
-    let rust = match test_id.as_str() {
-        "cash_44ab" => cash_44ab_on(&engagement, &book, &rules),
-        "cash_payments_40a3" => cash_payments_40a3_on(&engagement, &book, &rules),
-        "financial_statements" => {
-            financial_statements_on(&engagement, &book, &rules, report_totals.as_ref())
-        }
-        "applicability_44ab" => applicability_44ab_on(&engagement, &book, &rules, &comparisons),
-        "depreciation" => depreciation_on(&engagement, &book, &rules),
-        "trial_balance" => trial_balance_on(&engagement, &book, &rules),
-        "stale_balances_41_1" => stale_balances_41_1_on(&engagement, &book, &rules),
-        "ledger_scrutiny" => ledger_scrutiny_on(&engagement, &book, &rules),
-        "cash_book_integrity" => cash_book_integrity_on(&engagement, &book, &rules),
-        other => return fail(format!("no dispatch for TEST_ID {other:?}")),
-    };
+    let rust = (test.run_on)(&engagement, &book, &rules, &caller);
     let rust = match rust {
         Ok(doc) => doc,
         Err(e) => return fail(format!("the Rust slice refused: {e}")),

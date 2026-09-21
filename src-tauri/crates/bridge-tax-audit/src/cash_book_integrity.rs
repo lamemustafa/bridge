@@ -56,14 +56,11 @@ fn total<'a>(rows: impl IntoIterator<Item = &'a (&'a Voucher, i64)>) -> Result<i
     rows.into_iter().try_fold(0i64, |acc, (_, a)| add(acc, *a))
 }
 
-/// Python's `str.upper()` (full Unicode case mapping) -- except where the Unicode versions differ.
-/// Rust 1.96 carries Unicode 17.0 and the reference's Python 3.13 carries 15.1.0; measured over
-/// every code point, `to_uppercase` differs from `str.upper()` at exactly 55: U+019B, U+0264,
-/// U+1C8A, U+A7CD, U+A7CF, U+A7D3, U+A7D5, U+A7DB, U+10D70-10D85 and U+16EBB-16ED3. A narration
-/// holding one of them can change parts 3 and 5 here (a reviewer's crafted book did). Known,
-/// unfixed in this change; the crate-wide fix pins case mapping to the reference's version.
+/// Python 3.13's `str.upper()`, pinned to the reference's Unicode 15.1 by `support::py_upper`:
+/// Rust 1.96's own tables (Unicode 17.0) upper-case 55 code points differently, and a narration
+/// holding one would otherwise change parts 3 and 5 (edge book `cash_book_unicode`).
 fn upper(text: &str) -> String {
-    text.to_uppercase()
+    crate::support::py_upper(text)
 }
 
 /// Python's `" ".join(text.split()).upper()`: whitespace runs collapsed, then upper-cased.

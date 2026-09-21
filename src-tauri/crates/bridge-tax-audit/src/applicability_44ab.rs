@@ -184,7 +184,7 @@ financial_statements.py's own 'sales' figure -- never recomputed here.",
             "gstr3b" => &turnover_inputs.gstr3b,
             _ => &turnover_inputs.ais,
         };
-        let upper = source.to_uppercase();
+        let upper = crate::support::py_upper(source);
         let Some(input) = input else {
             comparison_limits.push(format!(
                 "{upper} turnover was not supplied for this engagement; not compared to books \
@@ -271,7 +271,7 @@ cash_share resolves, 'no' when it certainly does not, else 'undetermined'. This 
     );
     facts.push(("audit_required_44ab_a".to_string(), f_req));
 
-    let profession = entity_type.to_lowercase().contains("profession");
+    let profession = crate::support::py_lower(entity_type).contains("profession");
     let f_44ada = r.fig(
         "s44ada_professions_in_scope",
         Value::Text(if profession { "yes" } else { "no" }.to_string()),

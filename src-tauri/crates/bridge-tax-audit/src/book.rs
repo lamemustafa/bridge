@@ -611,7 +611,7 @@ pub fn load_book(read: &Read, company_name: &str) -> Result<Book> {
                 "company GUID not established; identity is the GUID, not the name",
             )
         })?;
-    if !guid.eq_ignore_ascii_case(&read.company_guid) {
+    if crate::support::py_lower(guid) != crate::support::py_lower(&read.company_guid) {
         return Err(AuditError::refused(
             "C5-identity",
             format!(

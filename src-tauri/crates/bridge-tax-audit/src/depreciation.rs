@@ -115,7 +115,7 @@ fn contains_word(haystack_upper: &str, word: &str) -> bool {
 /// sit on a different ledger than the asset line they accompany: the reference engine's own regex
 /// `\bCGST\b|\bSGST\b|\bIGST\b|\bGST\b|\bTCS\b`, case-insensitive.
 fn gst_tcs_match(name: &str) -> bool {
-    let upper = name.to_uppercase();
+    let upper = crate::support::py_upper(name);
     ["CGST", "SGST", "IGST", "GST", "TCS"]
         .iter()
         .any(|w| contains_word(&upper, w))
@@ -1041,6 +1041,23 @@ not mapped to any depreciation block"
 mod tests {
     use super::*;
     use crate::book::{Ledger, LedgerLine, VoucherStatus};
+
+    /// The reference's GST/TCS regex is case-insensitive (`re.I`) and word-bounded.
+    #[test]
+    fn the_gst_tcs_name_check_ignores_case_and_needs_a_word() {
+        for name in [
+            "CGST Input",
+            "cgst input",
+            "Input Igst",
+            "tcs payable",
+            "GST",
+        ] {
+            assert!(gst_tcs_match(name), "{name}");
+        }
+        for name in ["Gstin Register", "Machinery", "ABCGST", "tcsx"] {
+            assert!(!gst_tcs_match(name), "{name}");
+        }
+    }
 
     /// The reference labels a voucher with no number by `guid[-12:]`: 12 characters. Here the
     /// 12-byte cut would land inside an 'é' (a panic when byte-sliced); the expected tail is the
