@@ -288,3 +288,38 @@ fn a_company_elsewhere_carrying_only_books_from_is_refused() {
         Err(AuditCompanyPartError::NotExactlyOneCompany)
     );
 }
+
+#[test]
+fn cdata_wrapped_fields_read_as_the_consumer_reads_them() {
+    let guid_upper = GUID.to_ascii_uppercase();
+    let wrapped = complete()
+        .replacen(
+            &format!(r#"<GUID TYPE="String">{guid_upper}</GUID>"#),
+            &format!(r#"<GUID TYPE="String"><![CDATA[{guid_upper}]]></GUID>"#),
+            1,
+        )
+        .replacen(
+            r#"<BOOKSFROM TYPE="Date">20250401</BOOKSFROM>"#,
+            r#"<BOOKSFROM TYPE="Date">2025<![CDATA[04]]>01</BOOKSFROM>"#,
+            1,
+        )
+        .replacen(
+            r#"<ISINTEGRATED TYPE="Logical">Yes</ISINTEGRATED>"#,
+            r#"<ISINTEGRATED TYPE="Logical"><![CDATA[Yes]]></ISINTEGRATED>"#,
+            1,
+        );
+    assert_eq!(wrapped.matches("CDATA").count(), 3);
+    let admitted = admit_audit_company_part(&part(&company(&wrapped)), GUID, "20250401")
+        .expect("CDATA text is element text");
+    assert_eq!(admitted.guid, GUID);
+    assert_eq!(admitted.books_from_yyyymmdd, "20250401");
+    assert_eq!(admitted.is_integrated.as_deref(), Some("Yes"));
+    assert_eq!(
+        admit_audit_company_part(
+            &format!("{}<![CDATA[x]]>", part(&company(&complete()))),
+            GUID,
+            "20250401"
+        ),
+        Err(AuditCompanyPartError::Malformed)
+    );
+}

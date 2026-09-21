@@ -179,6 +179,23 @@ pub fn admit_audit_company_part(
                     value.push_str(&decoded);
                 }
             }
+            // The consumer merges CDATA into element text (bridge-tax-audit
+            // `xml.rs`), and so must admission, or a CDATA-wrapped GUID would
+            // read as empty here and correct there.
+            Event::CData(data) => {
+                let decoded = data
+                    .decode()
+                    .map_err(|_| AuditCompanyPartError::Malformed)?;
+                if path.is_empty() {
+                    return Err(AuditCompanyPartError::Malformed);
+                }
+                if let Some((_, value)) = current_text.as_mut() {
+                    value.push_str(&decoded);
+                }
+                if let Some(value) = status_text.as_mut() {
+                    value.push_str(&decoded);
+                }
+            }
             // Only a reference inside a field admission reads is resolved; the
             // rest of the company definition (addresses carry `&#13;&#10;`) is
             // stored as received and never interpreted here.

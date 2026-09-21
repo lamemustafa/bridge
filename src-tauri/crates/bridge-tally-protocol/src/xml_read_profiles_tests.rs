@@ -272,7 +272,7 @@ fn profile_ids_and_template_hashes_are_stable() {
         ),
         (
             ReadOnlyProfileId::AuditLedgersV1,
-            "fb0cd8441bd9d422dfd26300a3e6b781a37c75492363869cbac602e61ab94582",
+            "788333480a34bd0af0f5d724f2ac5cb8dd4d888c4a8db8e67039583fc295aa5f",
         ),
         (
             ReadOnlyProfileId::AuditVouchersV1,
@@ -280,7 +280,7 @@ fn profile_ids_and_template_hashes_are_stable() {
         ),
         (
             ReadOnlyProfileId::AuditStockItemsV1,
-            "74b6f7dd6d843015b863c1dc09dcef70ac19131268a3780ff90b5d5bf7ed8feb",
+            "18f8280794a476fd3b44f55c63a9f3060b7a523da82331744fe4fc0b0a151337",
         ),
     ];
     #[cfg(feature = "voucher-scan")]
@@ -649,7 +649,6 @@ fn audit_fetch_lists_are_pinned_exactly() {
             "NAME",
             "GUID",
             "MASTERID",
-            "ALTERID",
             "PARENT",
             "OPENINGBALANCE",
             "ISBILLWISEON",
@@ -663,7 +662,6 @@ fn audit_fetch_lists_are_pinned_exactly() {
         [
             "NAME",
             "GUID",
-            "ALTERID",
             "PARENT",
             "BASEUNITS",
             "OPENINGBALANCE",

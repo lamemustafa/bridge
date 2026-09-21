@@ -950,8 +950,8 @@ pub const AUDIT_COMPANY_FETCH: [&str; 4] = ["GUID", "NAME", "BOOKSFROM", "ISINTE
 /// FETCH of the tally-read v1 `ledgers` part (`AuditLedgersV1`).
 ///
 /// The fields the audit consumers were recorded reading (Lane B's recorded
-/// Python reads and the crate's traced reads of the same parts, 2026-09-21),
-/// plus `ALTERID` for the part's `alter_id_max`. It is deliberately narrower
+/// Python reads and the crate's traced reads of the same parts, 2026-09-21).
+/// It is deliberately narrower
 /// than the party-master workbook's list: no bank details, IFSC, e-mail,
 /// phone or address, because no audit consumer reads them and the read is
 /// stored (plan D-C). Adding a field needs a new profile id.
@@ -960,7 +960,7 @@ pub const AUDIT_COMPANY_FETCH: [&str; 4] = ["GUID", "NAME", "BOOKSFROM", "ISINTE
 /// dated GST registration history; the flat `PARTYGSTIN` was blank for
 /// ledgers whose GSTIN lives only there (measured 2026-09-21 on licensed
 /// Silver 7.1 with this exact FETCH token in a `Ledger` collection).
-pub const AUDIT_LEDGER_FETCH: &str = "NAME, GUID, MASTERID, ALTERID, PARENT, OPENINGBALANCE, \
+pub const AUDIT_LEDGER_FETCH: &str = "NAME, GUID, MASTERID, PARENT, OPENINGBALANCE, \
 ISBILLWISEON, PARTYGSTIN, INCOMETAXNUMBER, LEDGSTREGDETAILS.LIST";
 
 /// FETCH of one tally-read v1 `vouchers` part (`AuditVouchersV1`): the
@@ -996,11 +996,11 @@ INVENTORYENTRIESOUT.STOCKITEMNAME,INVENTORYENTRIESOUT.ACTUALQTY,INVENTORYENTRIES
 /// FETCH of the tally-read v1 `stock_items` part (`AuditStockItemsV1`).
 ///
 /// The fields the Python stock tests were recorded reading from a
-/// `stock_items` part (2026-09-21), plus `ALTERID` for the part's
-/// `alter_id_max`. `CLOSINGRATE` is read only from `stock_summary` parts and is
+/// `stock_items` part (2026-09-21). `CLOSINGRATE` is read only from
+/// `stock_summary` parts and is
 /// not fetched here. The request carries the audit period on the inference
 /// that closing figures are period-dependent; that is unmeasured.
-pub const AUDIT_STOCK_ITEM_FETCH: &str = "NAME, GUID, ALTERID, PARENT, BASEUNITS, \
+pub const AUDIT_STOCK_ITEM_FETCH: &str = "NAME, GUID, PARENT, BASEUNITS, \
 OPENINGBALANCE, OPENINGVALUE, CLOSINGBALANCE, CLOSINGVALUE";
 
 fn render_audit_company_object(company: &str) -> String {
