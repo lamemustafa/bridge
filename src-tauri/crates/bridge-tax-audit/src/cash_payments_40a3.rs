@@ -67,36 +67,14 @@ fn overflow() -> AuditError {
 }
 
 /// A generic transport-name match (heuristic only, stated as such in every finding that uses
-/// it): the reference engine's own regex `FREIGHT|TRANSPORT|ROAD\s?LINES|CARRIER|LOGISTIC|
-/// CARGO|ROADWAYS`, case-insensitive. Not a hardcoded list of staff or client names.
+/// it): the reference engine's own regex, searched with its `re.I` semantics
+/// (`support::py_re_search`). Not a hardcoded list of staff or client names.
+const TRANSPORT_NAME_RE: &str = "FREIGHT|TRANSPORT|ROAD\\s?LINES|CARRIER|LOGISTIC|CARGO|ROADWAYS";
+
 fn transport_name_match(name: &str) -> bool {
-    let upper = crate::support::py_upper(name);
-    const PLAIN: [&str; 6] = [
-        "FREIGHT",
-        "TRANSPORT",
-        "CARRIER",
-        "LOGISTIC",
-        "CARGO",
-        "ROADWAYS",
-    ];
-    if PLAIN.iter().any(|k| upper.contains(k)) {
-        return true;
-    }
-    // ROAD\s?LINES: "ROAD", then zero or one whitespace character, then "LINES".
-    let chars: Vec<char> = upper.chars().collect();
-    let n = chars.len();
-    for start in 0..n {
-        if chars[start..].starts_with(&['R', 'O', 'A', 'D']) {
-            let mut i = start + 4;
-            if i < n && chars[i].is_whitespace() {
-                i += 1;
-            }
-            if chars[i..].starts_with(&['L', 'I', 'N', 'E', 'S']) {
-                return true;
-            }
-        }
-    }
-    false
+    let alts = crate::support::re_alternatives(TRANSPORT_NAME_RE);
+    let alts: Vec<&[crate::support::ReTok]> = alts.iter().map(Vec::as_slice).collect();
+    crate::support::py_re_search(name, &alts)
 }
 
 /// The reference implementation's `_hash` used inline for a voucher GUID at 12 hex characters
@@ -853,6 +831,19 @@ line of abs amount >= the s.269SS/269T limit ({limit_ss_t} paise)."
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The pattern searched here is the reference's own, byte for byte (the probe file records it
+    /// from the reference module).
+    #[test]
+    fn the_pattern_is_the_reference_s() {
+        let v = crate::support::text_probe_tests::probes();
+        assert_eq!(
+            v["header"]["reference_regexes"]["transport"]
+                .as_str()
+                .unwrap(),
+            TRANSPORT_NAME_RE
+        );
+    }
 
     /// The reference's transport-name regex is case-insensitive (`re.I`).
     #[test]
