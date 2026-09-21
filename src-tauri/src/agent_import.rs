@@ -383,7 +383,7 @@ impl Server {
                 "bridge_txn_id is client-supplied, unique within this batch, 1-64 ASCII characters from [A-Za-z0-9_-]",
                 "new files accept Journal, Payment, Receipt and Contra, the voucher types with recorded live import/readback evidence",
                 "a Journal takes any balanced set of entries and may carry a voucher_number",
-                "Payment, Receipt and Contra take two or more entries with at least one debit and one credit, no ledger on both sides (more than two entries is admitted pending the owner's confirmation and not yet imported live), and neither voucher_number nor reference: neither element's fate on these types has been observed, and the bank's own reference belongs in the narration, which survives",
+                "Payment, Receipt and Contra take two or more entries with at least one debit and one credit, no ledger on both sides (more than two entries is admitted pending the owner's confirmation; no Bridge-built file of that shape has been imported and verified), and neither voucher_number nor reference: neither element's fate on these types has been observed, and the bank's own reference belongs in the narration, which survives",
                 "a Payment credits, and a Receipt debits, a ledger whose live group ancestry reaches Bank Accounts or Cash-in-Hand; both Contra legs must name one, and a leg that cannot be established is refused",
                 "the other leg of a Payment or Receipt must be established as holding no money: a ledger under any money group is refused there, because money on both sides is a Contra whatever the type says, and so is one whose group ancestry cannot be resolved at all",
                 "each voucher has at least two entries and exact debit total equals credit total",
@@ -391,7 +391,7 @@ impl Server {
                 "dates must be within the selected company's BOOKSFROM through today",
                 "ledger names must exactly match the live catalogue; validate_masters before build_import_xml",
                 "a batch may contain at most 100 distinct ledger names of at most 1024 characters each"
-            ], "limits": {"import_mode_qualification": "New files require freshly observed supported TallyPrime product and licence mode before and after the build reads. Release and licence tier are reported as observed facts. Journal, Payment, Receipt and Contra are the voucher types with recorded import/readback evidence, each only in the exact file shape this schema admits, except that a Payment, Receipt or Contra with more than two entries is admitted pending the owner's confirmation (bridge#466) before any live import of that shape, and its build reports live_evidence none_recorded; every other voucher type is refused. Only an unnumbered single-voucher Journal batch is eligible for post_import; the other types are import-only."}}}),
+            ], "limits": {"import_mode_qualification": "New files require freshly observed supported TallyPrime product and licence mode before and after the build reads. Release and licence tier are reported as observed facts. Journal, Payment, Receipt and Contra are the voucher types with recorded import/readback evidence, each only in the exact file shape this schema admits, except that a Payment, Receipt or Contra with more than two entries is admitted pending the owner's confirmation (bridge#466): hand-built files of that shape were imported and read back over the gateway, but no Bridge-built one has been imported and verified, and its build reports live_evidence hand_built_gateway_readback; every other voucher type is refused. Only an unnumbered single-voucher Journal batch is eligible for post_import; the other types are import-only."}}}),
             evidence: local_evidence("voucher_schema"),
             company_guid: None,
             truncated: false,
@@ -1434,7 +1434,7 @@ fn build_import_guidance(
     // live import of it. Comments and docs are not what an operator reads, so
     // the result says so itself, beside the party choice it made.
     let multi_entry_warning = multi_entry_bank.then_some(
-        "A Payment, Receipt or Contra with more than two entries has not been imported into live Tally; this shape is admitted pending the owner's confirmation (bridge#466). Where such a voucher names several counterparties, the file names the first as the voucher's party; Tally 7.1 has been observed to read back its own choice of party instead, and verify_import does not compare it. verify_import still compares every entry.",
+        "A Payment, Receipt or Contra with more than two entries is admitted pending the owner's confirmation (bridge#466). Hand-built files of this shape were imported and read back with every entry over the gateway on licensed TallyPrime 7.1 Silver, but no Bridge-built file of it has been imported and verified. Where such a voucher names several counterparties, the file names the first as the voucher's party; on two-entry Payments and Receipts, Tally 7.1 Silver read back the bank ledger as the party rather than the counterparty written, and verify_import does not compare the party. verify_import still compares every entry.",
     );
     let warnings = |first: &str| {
         json!(std::iter::once(first)
@@ -1490,11 +1490,13 @@ fn live_evidence(vouchers: &[ImportVoucher]) -> Vec<Value> {
                 "docs/agent/ASSESSMENT-2026-09-06.md",
             ),
             // §9.13 imported two-entry vouchers only. A bank voucher with more
-            // entries is admitted by bridge#466's owner-pending decision and has
-            // no live observation of its own, so it must not borrow that one.
+            // entries is admitted by bridge#466's owner-pending decision and must
+            // not borrow that. What it does rest on is §9.3's correction table:
+            // hand-built XML of this shape imported and read back over the
+            // gateway, never a Bridge-built file checked by verify_import.
             Some(_) if voucher.entries.len() > 2 => (
-                "none_recorded",
-                "docs/tally/TALLY_PROTOCOL_REFERENCE_VOUCHER_WRITES.md",
+                "hand_built_gateway_readback",
+                "docs/tally/TALLY_PROTOCOL_REFERENCE_WRITE_RESPONSES_AND_MASTERS.md",
             ),
             Some(_) => (
                 "licensed_bank_voucher_import",

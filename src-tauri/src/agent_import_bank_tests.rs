@@ -627,8 +627,9 @@ async fn a_payment_and_receipt_batch_builds_against_the_captured_masters() {
 
 /// bridge#466 through the tool call, not the builder: a three-entry Receipt
 /// passes argument validation, admission and both group reads, writes a file,
-/// and says in its own result that the shape is owner-pending and has no live
-/// observation — it must not borrow §9.13's two-entry evidence.
+/// and says in its own result that the shape is owner-pending and rests only on
+/// §9.3's hand-built gateway readback — it must not borrow §9.13's two-entry
+/// evidence.
 #[tokio::test]
 async fn a_multi_entry_receipt_builds_through_tools_call_and_says_it_is_unqualified() {
     let payload: ImportPayload = serde_json::from_value(json!({"company_guid":CAPTURED_GUID,"vouchers":[
@@ -648,8 +649,8 @@ async fn a_multi_entry_receipt_builds_through_tools_call_and_says_it_is_unqualif
     assert_eq!(result["voucher_count"], 1, "{response}");
     assert_eq!(
         result["live_evidence"],
-        json!([{"observation":"none_recorded",
-            "report":"docs/tally/TALLY_PROTOCOL_REFERENCE_VOUCHER_WRITES.md",
+        json!([{"observation":"hand_built_gateway_readback",
+            "report":"docs/tally/TALLY_PROTOCOL_REFERENCE_WRITE_RESPONSES_AND_MASTERS.md",
             "voucher_types":["Receipt"]}])
     );
     let warnings = result["warnings"].as_array().expect("warnings array");
@@ -657,7 +658,7 @@ async fn a_multi_entry_receipt_builds_through_tools_call_and_says_it_is_unqualif
         warnings.iter().any(|warning| warning
             .as_str()
             .unwrap()
-            .contains("more than two entries has not been imported into live Tally")),
+            .contains("no Bridge-built file of it has been imported and verified")),
         "multi-entry warning missing: {warnings:?}"
     );
     let xml = std::fs::read_to_string(
