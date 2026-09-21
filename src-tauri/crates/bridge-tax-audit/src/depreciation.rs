@@ -82,19 +82,7 @@ fn hash12_sha256(text: &str) -> String {
     crate::canonical::hex(&Sha256::digest(text.as_bytes()))[..12].to_string()
 }
 
-fn guid_tail12(guid: &str) -> &str {
-    let cut = guid.len().saturating_sub(12);
-    &guid[cut..]
-}
-
-fn voucher_label(v: &Voucher) -> String {
-    let num = if v.number.is_empty() {
-        guid_tail12(&v.guid)
-    } else {
-        v.number.as_str()
-    };
-    format!("{} {} on {}", v.vtype, num, iso(&v.date))
-}
+use crate::support::voucher_label;
 
 fn is_word_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
@@ -1053,6 +1041,24 @@ not mapped to any depreciation block"
 mod tests {
     use super::*;
     use crate::book::{Ledger, LedgerLine, VoucherStatus};
+
+    /// The reference labels a voucher with no number by `guid[-12:]`: 12 characters. Here the
+    /// 12-byte cut would land inside an 'é' (a panic when byte-sliced); the expected tail is the
+    /// reference's own `"invented-guid-ééééééa"[-12:]`.
+    #[test]
+    fn a_voucher_without_a_number_is_labelled_by_the_last_12_characters_of_its_guid() {
+        let v = Voucher {
+            guid: "invented-guid-ééééééa".to_string(),
+            date: TallyDate::parse("20250601").unwrap(),
+            vtype: "Payment".to_string(),
+            base_type: "Payment".to_string(),
+            number: String::new(),
+            status: VoucherStatus::Regular,
+            lines: Vec::new(),
+            narration: String::new(),
+        };
+        assert_eq!(voucher_label(&v), "Payment guid-ééééééa on 2025-06-01");
+    }
 
     fn period() -> Window {
         Window {
