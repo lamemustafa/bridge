@@ -233,8 +233,10 @@ The four rest on different observations, and each build reports its own in
 - `Payment`, `Receipt`, `Contra` — a licensed TallyPrime 7.1 Gold bank-statement
   import observed 2026-09-10; see
   [reference §9.13](../tally/TALLY_PROTOCOL_REFERENCE.md). These three are
-  admitted only as two entries over two distinct ledgers with no voucher number
-  and no reference, and their money side must be a ledger whose live group
+  admitted with two or more entries (at least one debit and one credit, no
+  ledger on both sides; more than two is bridge#466, owner-pending and not yet
+  qualified live) with no voucher number and no reference, and every leg on
+  their money side must be a ledger whose live group
   ancestry reaches a reserved `Bank Accounts`, `Cash-in-Hand` or `Bank OD A/c`
   identity, while
   their counterparty side must be established as holding no money — money on

@@ -383,7 +383,7 @@ impl Server {
                 "bridge_txn_id is client-supplied, unique within this batch, 1-64 ASCII characters from [A-Za-z0-9_-]",
                 "new files accept Journal, Payment, Receipt and Contra, the voucher types with recorded live import/readback evidence",
                 "a Journal takes any balanced set of entries and may carry a voucher_number",
-                "Payment, Receipt and Contra take exactly two entries over two distinct ledgers, and neither voucher_number nor reference: neither element's fate on these types has been observed, and the bank's own reference belongs in the narration, which survives",
+                "Payment, Receipt and Contra take two or more entries with at least one debit and one credit, no ledger on both sides, and neither voucher_number nor reference: neither element's fate on these types has been observed, and the bank's own reference belongs in the narration, which survives",
                 "a Payment credits, and a Receipt debits, a ledger whose live group ancestry reaches Bank Accounts or Cash-in-Hand; both Contra legs must name one, and a leg that cannot be established is refused",
                 "the other leg of a Payment or Receipt must be established as holding no money: a ledger under any money group is refused there, because money on both sides is a Contra whatever the type says, and so is one whose group ancestry cannot be resolved at all",
                 "each voucher has at least two entries and exact debit total equals credit total",
@@ -1634,22 +1634,38 @@ fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
     Ok(())
 }
 
-/// Payment, Receipt and Contra are admitted only in the two-entry shape that
-/// was imported and read back live: one debit, one credit, two distinct
-/// ledgers, and neither a supplied voucher number nor a reference.
+/// Payment, Receipt and Contra take two or more entries with at least one on
+/// each side, and neither a supplied voucher number nor a reference.
 ///
-/// A multi-leg Payment is a perfectly ordinary Tally voucher and is
-/// deliberately not admitted. No such file has been imported and read back
-/// here, and the readback pairing that verify_import relies on has never been
-/// exercised on one; a Journal remains available for a batch that needs it.
+/// More than two entries is bridge#466 (one bank line settling two parties,
+/// or a payment funded from two accounts). Tally stores and reads back a
+/// multi-entry bank voucher with every entry (§9.3 correction table), and
+/// verify_import pairs entries as a sorted multiset, so a repeated ledger on
+/// one side pairs as two entries. What keeps a disguised Contra out is that
+/// every leg is classified (`constrained_legs`), not only the first on each
+/// side. The every-leg rule and the party choice (`render_voucher_xml`) are
+/// defaults chosen overnight 2026-09-22 and await the owner's confirmation;
+/// no Bridge-built multi-entry file has yet been imported and verified live.
+///
+/// One ledger on both sides would net inside the voucher, so it is refused.
 fn validate_bank_voucher_shape(voucher: &ImportVoucher) -> Result<(), String> {
-    let [first, second] = voucher.entries.as_slice() else {
-        return Err("voucher_entry_pair_required".to_string());
-    };
-    if first.side == second.side {
+    let debits = voucher
+        .entries
+        .iter()
+        .filter(|entry| entry.side == EntrySide::Dr)
+        .collect::<Vec<_>>();
+    let credits = voucher
+        .entries
+        .iter()
+        .filter(|entry| entry.side == EntrySide::Cr)
+        .collect::<Vec<_>>();
+    if debits.is_empty() || credits.is_empty() {
         return Err("voucher_entry_pair_required".to_string());
     }
-    if first.ledger == second.ledger {
+    if debits
+        .iter()
+        .any(|debit| credits.iter().any(|credit| credit.ledger == debit.ledger))
+    {
         return Err("voucher_entry_ledger_repeated".to_string());
     }
     // A supplied VOUCHERNUMBER's fate is decided by the *voucher type's*
@@ -1696,9 +1712,15 @@ fn constrained_legs(
                 .bank_shape()
                 .into_iter()
                 .flat_map(move |shape| {
-                    shape.legs.iter().filter_map(move |(side, requirement)| {
-                        entry_for_side(voucher, side)
-                            .map(|entry| (voucher, side, entry.ledger.as_str(), *requirement))
+                    // Every entry on a constrained side, not only the first:
+                    // money at any counterparty position is a disguised
+                    // Contra (bridge#466).
+                    shape.legs.iter().flat_map(move |(side, requirement)| {
+                        voucher
+                            .entries
+                            .iter()
+                            .filter(move |entry| &entry.side == side)
+                            .map(move |entry| (voucher, side, entry.ledger.as_str(), *requirement))
                     })
                 })
         })
@@ -2249,6 +2271,11 @@ fn render_voucher_xml(voucher: &ImportVoucher, remote_id: Uuid, attribution_id: 
         .as_ref()
         .map(|_| format!("<EFFECTIVEDATE>{date}</EFFECTIVEDATE>"))
         .unwrap_or_default();
+    // PARTYLEDGERNAME is the first entry on the counterparty side, in the
+    // voucher's own order: the single counterparty when there is one, and a
+    // deterministic choice when several parties share a voucher (bridge#466,
+    // OWNER-PENDING default; omitting the element is the alternative still to
+    // be measured live).
     let party = shape
         .as_ref()
         .and_then(BankVoucherShape::party_side)
