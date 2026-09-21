@@ -115,7 +115,7 @@ fn contains_word(haystack_upper: &str, word: &str) -> bool {
 /// sit on a different ledger than the asset line they accompany: the reference engine's own regex
 /// `\bCGST\b|\bSGST\b|\bIGST\b|\bGST\b|\bTCS\b`, case-insensitive.
 fn gst_tcs_match(name: &str) -> bool {
-    let upper = name.to_uppercase();
+    let upper = crate::support::py_upper(name);
     ["CGST", "SGST", "IGST", "GST", "TCS"]
         .iter()
         .any(|w| contains_word(&upper, w))

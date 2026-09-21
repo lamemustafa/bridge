@@ -216,7 +216,7 @@ fn resolve_ids(
     for (name, m) in masters {
         if !m.guid.is_empty() {
             by_guid
-                .entry(m.guid.to_lowercase())
+                .entry(crate::support::py_lower(&m.guid))
                 .or_default()
                 .push(name.clone());
         }
@@ -230,7 +230,7 @@ fn resolve_ids(
         let mut name: Option<String> = None;
         if let Some(guid) = ident.guid.as_deref() {
             let hits = by_guid
-                .get(&guid.to_lowercase())
+                .get(&crate::support::py_lower(guid))
                 .cloned()
                 .unwrap_or_default();
             if hits.len() > 1 {

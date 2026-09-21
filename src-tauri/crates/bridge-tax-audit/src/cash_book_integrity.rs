@@ -63,7 +63,7 @@ fn total<'a>(rows: impl IntoIterator<Item = &'a (&'a Voucher, i64)>) -> Result<i
 /// holding one of them can change parts 3 and 5 here (a reviewer's crafted book did). Known,
 /// unfixed in this change; the crate-wide fix pins case mapping to the reference's version.
 fn upper(text: &str) -> String {
-    text.to_uppercase()
+    crate::support::py_upper(text)
 }
 
 /// Python's `" ".join(text.split()).upper()`: whitespace runs collapsed, then upper-cased.

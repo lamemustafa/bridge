@@ -70,7 +70,7 @@ fn overflow() -> AuditError {
 /// it): the reference engine's own regex `FREIGHT|TRANSPORT|ROAD\s?LINES|CARRIER|LOGISTIC|
 /// CARGO|ROADWAYS`, case-insensitive. Not a hardcoded list of staff or client names.
 fn transport_name_match(name: &str) -> bool {
-    let upper = name.to_uppercase();
+    let upper = crate::support::py_upper(name);
     const PLAIN: [&str; 6] = [
         "FREIGHT",
         "TRANSPORT",
