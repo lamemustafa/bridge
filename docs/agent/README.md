@@ -236,7 +236,8 @@ The four rest on different observations, and each build reports its own in
   admitted with two or more entries (at least one debit and one credit, no
   ledger on both sides; more than two is bridge#466, owner-pending and not yet
   qualified live: hand-built files of that shape were imported and read back
-  over the gateway ([reference §9.3](../tally/TALLY_PROTOCOL_REFERENCE_WRITE_RESPONSES_AND_MASTERS.md)), but no Bridge-built one has been imported and verified,
+  over the gateway ([reference §9.3](../tally/TALLY_PROTOCOL_REFERENCE_WRITE_RESPONSES_AND_MASTERS.md);
+  a Contra only with a repeated ledger), but no Bridge-built one has been imported and verified,
   so such a voucher reports `live_evidence` as `hand_built_gateway_readback` and
   its build result warns so) with no voucher number and no reference, and every leg on
   their money side must be a ledger whose live group
