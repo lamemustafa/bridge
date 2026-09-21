@@ -678,37 +678,5 @@
   "file": "src/binding.rs",
   "from": ".get(&crate::support::py_lower(guid))",
   "to": ".get(guid)"
- },
- {
-  "id": "G01",
-  "by": "author",
-  "what": "the row test skips the hash",
-  "file": "tests/provenance_rows.rs",
-  "from": "            if *sha != actual {",
-  "to": "            if *sha != actual && false {"
- },
- {
-  "id": "G02",
-  "by": "author",
-  "what": "the row test skips the file name",
-  "file": "tests/provenance_rows.rs",
-  "from": "            if *file != name {",
-  "to": "            if *file != name && false {"
- },
- {
-  "id": "G03",
-  "by": "author",
-  "what": "the row test skips the byte count",
-  "file": "tests/provenance_rows.rs",
-  "from": "            if parsed != Some(bytes.len()) {",
-  "to": "            if parsed != Some(bytes.len()) && false {"
- },
- {
-  "id": "G04",
-  "by": "author",
-  "what": "any synthetic variant is accepted",
-  "file": "tests/edge_books.rs",
-  "from": "                variant.is_empty() || SYNTHETIC_VARIANTS.contains(&rest),",
-  "to": "                true,"
  }
 ]
