@@ -3,8 +3,9 @@
 //! in some Markdown file under `tests/fixtures` (`PROVENANCE.md`, or a batch's
 //! `provenance/<batch>.md`), and this test checks that row itself: the file-name cell names the
 //! file, the byte count is the file's size and the SHA-256 is its hash. The repository's
-//! fixture-provenance gate treats a row it cannot parse as prose and skips its hash, so a mistyped
-//! row would otherwise hide a changed golden; here it fails.
+//! fixture-provenance gate checks a row's hash only when the row's shape and file-name cell match
+//! the file; otherwise it counts the file as named in prose and checks nothing, so a mistyped row
+//! would hide a changed golden there. Here it fails.
 
 mod common;
 
