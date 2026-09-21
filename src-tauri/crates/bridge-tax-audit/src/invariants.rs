@@ -305,24 +305,79 @@ mod tests {
             .collect()
     }
 
+    fn ledger(name: &str) -> crate::book::Ledger {
+        crate::book::Ledger {
+            name: name.to_string(),
+            parent: "Indirect Expenses".to_string(),
+            chain: vec!["Indirect Expenses".to_string()],
+            chain_complete: true,
+            opening_paise: 0,
+            guid: String::new(),
+            masterid: None,
+        }
+    }
+
+    fn map0(b: &Book) -> Vec<(String, String)> {
+        book_invariants(b)
+            .unwrap()
+            .1
+            .into_iter()
+            .filter(|v| v.invariant == "MAP-0")
+            .map(|v| (v.subject, v.detail))
+            .collect()
+    }
+
+    /// MAP-0 is neither looser nor stricter than the join every test uses: exact, case-sensitive
+    /// lookup in `book.ledgers`. A line naming "Round Off" against a master stored as "ROUND OFF"
+    /// is joined by no test, so MAP-0 names it (the reference pins the same case).
+    #[test]
+    fn map0_matches_the_join_rule_a_case_only_difference_fires() {
+        let mut b = book();
+        b.ledgers
+            .insert("ROUND OFF".to_string(), ledger("ROUND OFF"));
+        b.vouchers = vec![Voucher {
+            lines: lines(&[("Round Off", 100), ("ROUND OFF", -100)]),
+            ..voucher("a", VoucherStatus::Regular)
+        }];
+        assert!(!b.ledgers.contains_key("Round Off")); // the join misses it...
+        assert_eq!(
+            map0(&b), // ...so MAP-0 fires, once
+            vec![(
+                "Round Off".to_string(),
+                "1 in-books voucher line(s) post to it; the book has no ledger master for it"
+                    .to_string()
+            )]
+        );
+    }
+
+    /// Several unknown ledgers are reported in name order, one each, each with its own count.
+    #[test]
+    fn map0_reports_several_ledgers_in_name_order() {
+        let mut b = book();
+        b.vouchers = vec![Voucher {
+            lines: lines(&[("Zeta", 100), ("Alpha", -60), ("Alpha", -40)]),
+            ..voucher("a", VoucherStatus::Regular)
+        }];
+        let got: Vec<(String, String)> = map0(&b)
+            .into_iter()
+            .map(|(s, d)| (s, d[..1].to_string()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("Alpha".to_string(), "2".to_string()),
+                ("Zeta".to_string(), "1".to_string())
+            ]
+        );
+    }
+
     /// MAP-0: a line whose ledger has no master is skipped by MAP-1 and by every role lookup;
     /// when its lines net to zero POP-1 is silent too. MAP-0 names it, once per ledger, counting
     /// in-books lines only. The same book, detail and count as the reference's own test.
     #[test]
     fn map0_names_a_ledger_with_no_master() {
         let mut b = book();
-        b.ledgers.insert(
-            "X".to_string(),
-            crate::book::Ledger {
-                name: "X".to_string(),
-                parent: "Indirect Expenses".to_string(),
-                chain: vec!["Indirect Expenses".to_string()],
-                chain_complete: true,
-                opening_paise: 0,
-                guid: String::new(),
-                masterid: None,
-            },
-        );
+        b.ledgers.insert("X".to_string(), ledger("X"));
         b.tb.insert(
             "X".to_string(),
             TbRow {
@@ -361,11 +416,7 @@ mod tests {
             )]
         );
         // Negative control: with Ghost's master present, nothing fires.
-        let ghost = crate::book::Ledger {
-            name: "Ghost".to_string(),
-            ..b.ledgers["X"].clone()
-        };
-        b.ledgers.insert("Ghost".to_string(), ghost);
+        b.ledgers.insert("Ghost".to_string(), ledger("Ghost"));
         assert!(book_invariants(&b).unwrap().1.is_empty());
     }
 

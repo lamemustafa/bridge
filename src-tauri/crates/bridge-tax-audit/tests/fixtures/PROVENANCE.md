@@ -182,7 +182,7 @@ excluded instead of flagging, so the four POP-4 violations those figures used to
 fixture are gone. Nothing else in either golden changed; the other four goldens are byte-identical.
 
 Both `financial_statements` goldens were regenerated again at reference-implementation commit
-`0cb05cd5ec24cdb20f2eb55028dbaae95d452772` for the report tie's status: each gains the text figure
+`41a392a2adaa9a19128e0baa65dc8138ef1d7a10` for the report tie's status: each gains the text figure
 `report_tie_status` ("performed: net profit and closing stock" with the synthetic report totals,
 "not performed: no report part in this read" without them), cited as a fact of the report-tie
 finding. In the no-report golden that finding's title now says the tie was not performed and its
@@ -190,7 +190,7 @@ confidence is `needs_document` instead of `computed`. Nothing else in either gol
 other four goldens are byte-identical.
 
 All six goldens were regenerated at reference-implementation commit
-`40d853ce2d4a025140acea0701e4e698af52e655` for the book invariant MAP-0 (every in-books voucher
+`b559cad6bebd68fcfe84dd59e590359572c2a7f2` for the book invariant MAP-0 (every in-books voucher
 line posts to a ledger the book's masters carry): each gains only `"MAP-0"` in
 `book_invariants_evaluated`. The fixture has no such line, so no violation is added.
 
