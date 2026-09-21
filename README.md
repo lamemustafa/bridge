@@ -38,11 +38,18 @@ reading. When writing is off, the write tools do not merely refuse — they are
 **absent from the tool list entirely**, so an assistant cannot see that they
 exist.
 
-- **The Claude Desktop extension turns Journal posting on by default.** It shows
-  in the extension settings as **Allow Journal posting**. Every posting still
-  waits for your approval in a separate Bridge dialog, and the assistant cannot
-  approve it — but the tools are there from the moment you install. Turn that
-  setting off if you want a read-only connector.
+- **The Claude Desktop extension turns Journal posting off by default.** Two
+  known defects in posting are being fixed: it aims the voucher at the loaded
+  company by name, so a post can land in whichever company Tally has loaded
+  ([#574](https://github.com/lamemustafa/bridge/issues/574)), and its post-write
+  check does not compare what Tally stored against your approved batch
+  ([#575](https://github.com/lamemustafa/bridge/issues/575)). Turning on
+  **Allow Journal posting** in the extension settings adds `post_import`; every
+  posting still waits for your approval in a separate Bridge dialog. Leave it
+  off unless you accept those risks. Journal file preparation and bank-statement
+  parsing, which write nothing to Tally, stay available with the setting off.
+  If you installed an earlier version, check the setting: an earlier default
+  may still be saved as on.
 - **A source build turns writing off by default.** Preparing a file needs
   `BRIDGE_AGENT_ENABLE_IMPORT`; posting additionally needs
   `BRIDGE_AGENT_ENABLE_WRITES`, which grants both.
