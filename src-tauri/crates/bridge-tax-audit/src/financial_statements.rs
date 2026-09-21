@@ -161,12 +161,14 @@ fn voucher_label(v: &Voucher) -> String {
     format!("{} {} on {}", v.vtype, num, iso(&v.date))
 }
 
+/// The excluded vouchers' refs carry the "excluded_voucher" kind: listing them is this figure's
+/// purpose, and POP-4 checks that each really is outside the books population.
 fn voucher_evidence(vouchers: &[&Voucher]) -> Vec<EvidenceRef> {
     let mut sorted: Vec<&Voucher> = vouchers.to_vec();
     sorted.sort_by(|a, b| (iso(&a.date), &a.guid).cmp(&(iso(&b.date), &b.guid)));
     sorted
         .into_iter()
-        .map(|v| EvidenceRef::with_label("voucher", &v.guid, &voucher_label(v)))
+        .map(|v| EvidenceRef::with_label("excluded_voucher", &v.guid, &voucher_label(v)))
         .collect()
 }
 
