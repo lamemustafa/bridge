@@ -196,7 +196,7 @@ section: **"invariant list" has to mean invariants evaluated, each with its outc
 "violations found." Otherwise an invariant never implemented in Rust reads as "no violations."**
 
 Every invariant report is a pair: `<name>_invariants_evaluated` (a sorted list of invariant
-**codes**, e.g. `["ID-1", "MAP-0", "MAP-1", "POP-0", "POP-1", "POP-2", "POP-3"]`) and
+**codes**, e.g. `["ID-1", "MAP-0", "MAP-1", "POP-0", "POP-1", "POP-2", "POP-3", "POP-5"]`) and
 `<name>_invariant_violations` (a sorted list of `{"invariant": code, "subject": str, "detail": str}`,
 NFC-normalised, empty when nothing fired). The comparison tool compares **both** lists, as sets for
 `*_evaluated` and as sorted lists for `*_violations`. A code present in `book_invariants_evaluated`
@@ -207,7 +207,7 @@ Three reports, one dump:
 
 | Report | Source | Codes |
 |---|---|---|
-| `book_*` | the reference engine's book-level invariant functions, run on the Book | `ID-1`, `POP-0`, `POP-1`, `POP-2`, `POP-3`, `MAP-0`, `MAP-1` |
+| `book_*` | the reference engine's book-level invariant functions, run on the Book | `ID-1`, `POP-0`, `POP-1`, `POP-2`, `POP-3`, `POP-5`, `MAP-0`, `MAP-1` |
 | `result_*` | result-level checks: findings cite real figures, evidence resolves, no non-accounting evidence leaks in | `REND-0`, `EVID-1`, `POP-4` |
 | `module_*` | the test module's own invariant check, if it defines one | `<test_id>.check_invariants`, or nothing at all if the module has none |
 
