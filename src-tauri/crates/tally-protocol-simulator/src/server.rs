@@ -250,14 +250,20 @@ fn serve_request(
         // A client that gave up while this responder was busy may already have
         // reset the connection, and on macOS configuring such a socket fails
         // (EINVAL). It carries no request for this plan: wait for the next.
-        if stream
+        match stream
             .set_nonblocking(false)
             .and_then(|()| stream.set_nodelay(true))
             .and_then(|()| stream.set_read_timeout(Some(REQUEST_READ_POLL_INTERVAL)))
             .and_then(|()| stream.set_write_timeout(Some(Duration::from_secs(2))))
-            .is_err()
         {
-            continue;
+            Ok(()) => {}
+            Err(error)
+                if client_stopped_reading(&error)
+                    || error.kind() == io::ErrorKind::InvalidInput =>
+            {
+                continue;
+            }
+            Err(error) => return Err(error),
         }
         let remaining_read_deadline = REQUEST_READ_DEADLINE
             .checked_sub(started.elapsed())
@@ -442,8 +448,8 @@ fn client_stopped_reading(error: &io::Error) -> bool {
         io::ErrorKind::BrokenPipe
             | io::ErrorKind::ConnectionAborted
             | io::ErrorKind::ConnectionReset
-            // macOS reports a write or shutdown on a socket whose client has
-            // already gone as ENOTCONN.
+            // macOS reports a read, write or shutdown on a socket whose client
+            // has already gone as ENOTCONN.
             | io::ErrorKind::NotConnected
             | io::ErrorKind::TimedOut
             | io::ErrorKind::WouldBlock
