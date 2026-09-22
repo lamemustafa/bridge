@@ -468,6 +468,11 @@ async fn a_refused_corroboration_read_reports_its_own_window() {
     let refused = cycle[11].clone().with_http_status(500);
     let response = call_vouchers(empty_window_then(vec![cycle[0].clone(), refused])).await;
     assert_eq!(response["isError"], true, "{response}");
+    // Tally's refusal of the wider read, reported as the generic read failure.
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"],
+        "agent_runtime_read_failed"
+    );
     let window = &response["structuredContent"]["result"]["error"]["window"];
     assert_eq!(window["from"], "20260731", "{window}");
     assert_eq!(window["to"], "20260803", "{window}");
