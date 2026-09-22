@@ -122,6 +122,9 @@ pub struct Engagement {
     /// [`Engagement::bind`] for every test, as the reference's binding does, and the source is
     /// then replaced by `{ kind = "ledgers", ledgers = [...] }`. `None` when absent.
     pub trade_creditors_source: Option<toml::Value>,
+    /// `loans_interest`-only: `[loans]`, filled by [`Engagement::bind`] ([`LoansConfig`]); empty on
+    /// an engagement that has not been bound.
+    pub loans: LoansConfig,
     /// `creditor_ageing_43bh`-only: the optional `[creditor_ageing_43bh]` table. Filled by
     /// [`Engagement::bind`]; see [`CreditorAgeingConfig`] for what is typed when.
     pub creditor_ageing: CreditorAgeingConfig,
@@ -155,6 +158,25 @@ pub struct Engagement {
     raw_cfg: toml::Table,
     /// The directory `[snapshot].path` and a legacy trade-creditor source are relative to.
     base_dir: PathBuf,
+}
+
+/// `[loans]` from the client config, bound. Empty when the config has no `[loans]` table: the
+/// reference's `loan_ledgers_config` then gives `{}`, which `loans_interest` takes as nothing to
+/// report.
+///
+/// **Typed lazily**, as [`CreditorAgeingConfig`] is: [`Engagement::bind`] binds the three name
+/// locations and refuses a malformed one (`BIND-ID-MALFORMED`); every other value is kept as
+/// written and typed only when `loans_interest` runs.
+#[derive(Debug, Clone, Default)]
+pub struct LoansConfig {
+    /// `[loans]` is present but is not a table: `loans_interest` refuses when it runs, as the
+    /// reference's `cfg.get("loans", {}).get(...)` fails there.
+    pub not_a_table: bool,
+    /// `[loans.loan_ledgers]`, keyed by each loan ledger's bound name: its entry as written, with
+    /// `interest_ledger` (when present) replaced by the bound name.
+    pub loan_ledgers: BTreeMap<String, toml::Value>,
+    /// `[loans].shared_interest_ledgers`, bound; empty when absent.
+    pub shared_interest_ledgers: Vec<String>,
 }
 
 /// `[creditor_ageing_43bh]` from the client config, every key optional: the reference's
@@ -788,6 +810,7 @@ not YYYY-MM-DD"
                 .transpose()?,
             creditor_groups: None,
             trade_creditors_source: roles.get("trade_creditors_source").cloned(),
+            loans: LoansConfig::default(),
             creditor_ageing: CreditorAgeingConfig::default(),
             statutory_dues: StatutoryDuesConfig::default(),
             base_dir: base_dir.to_path_buf(),

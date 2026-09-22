@@ -2950,5 +2950,45 @@
   "file": "src/book_keeping_quality.rs",
   "from": ".entry((n, l.ledger.clone()))",
   "to": ".entry((0, l.ledger.clone()))"
+ },
+ {
+  "id": "LB-01",
+  "by": "author (Lane B)",
+  "what": "a loan's interest_ledger not bound",
+  "file": "src/binding.rs",
+  "from": "                let name = lbinder.bind_one(name, &location)?;",
+  "to": "                let name = name.to_string();"
+ },
+ {
+  "id": "LB-02",
+  "by": "author (Lane B)",
+  "what": "shared_interest_ledgers not bound",
+  "file": "src/binding.rs",
+  "from": "&[\"loans\", \"shared_interest_ledgers\"]",
+  "to": "&[\"loans\", \"shared_interest_ledgers_off\"]"
+ },
+ {
+  "id": "LB-03",
+  "by": "author (Lane B)",
+  "what": "the bound interest ledger not written back",
+  "file": "src/binding.rs",
+  "from": "                t.insert(\"interest_ledger\".to_string(), toml::Value::from(name));",
+  "to": "                let _ = name;"
+ },
+ {
+  "id": "LB-04",
+  "by": "author (Lane B)",
+  "what": "a non-string interest_ledger not refused as malformed",
+  "file": "src/binding.rs",
+  "from": "                let name = v.as_str().ok_or_else(|| {",
+  "to": "                let name = v.as_str().or(Some(\"5\")).ok_or_else(|| {"
+ },
+ {
+  "id": "LB-05",
+  "by": "author (Lane B)",
+  "what": "a [loans.loan_ledgers] that is not a table not refused",
+  "file": "src/binding.rs",
+  "from": "    let raw_loan_ledgers = table_at(&engagement.raw_cfg, &[\"loans\", \"loan_ledgers\"])?;",
+  "to": "    let raw_loan_ledgers = table_at(&engagement.raw_cfg, &[\"loans\", \"loan_ledgers\"]).unwrap_or(None);"
  }
 ]
