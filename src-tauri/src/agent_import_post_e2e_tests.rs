@@ -34,6 +34,20 @@ fn catalogue() -> String {
     ))
 }
 
+/// The captured Currency masters of a book with exactly one (`I₹`).
+fn single_currency() -> String {
+    captured(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+    ))
+}
+
+/// The captured Currency masters of a book with two (`$` and the base).
+fn two_currencies() -> String {
+    captured(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/currency_multi_live.utf16le.xml"
+    ))
+}
+
 fn empty_collection() -> String {
     captured(include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/agent/native-empty-collection.utf16le.xml"
@@ -101,6 +115,10 @@ fn verified_company() -> Vec<ScenarioPlan> {
 /// Every read `post_import` makes before it asks for approval, on a book where
 /// the batch's vouchers are absent.
 fn before_approval() -> Vec<ScenarioPlan> {
+    before_approval_with_currencies(single_currency())
+}
+
+fn before_approval_with_currencies(currencies: String) -> Vec<ScenarioPlan> {
     let mut plans = Vec::new();
     // verify_import_for_post: opening mode, identity, the window's mark, the
     // window, its replay, and the closing mode an absence needs.
@@ -110,9 +128,11 @@ fn before_approval() -> Vec<ScenarioPlan> {
     plans.extend(paired(empty_collection()));
     plans.extend(paired(empty_collection()));
     plans.extend(probe());
-    // The post's own identity, ledger catalogue and qualified mode.
+    // The post's own identity, ledger catalogue, Currency masters and
+    // qualified mode.
     plans.extend(verified_company());
     plans.extend(paired(catalogue()));
+    plans.extend(paired(currencies));
     plans.extend(probe());
     plans
 }
@@ -129,13 +149,19 @@ fn created_one() -> String {
 }
 
 /// What the dispatch sends after approval, up to and including the import:
-/// the opening mode and company admission, the ledger catalogue, the closing
-/// mode and admission, the absence read twice, then the one POST. The index of
-/// the POST is `before_approval().len() + after_approval(..).len() - 1`.
+/// the opening mode and company admission, the ledger catalogue, the Currency
+/// masters, the closing mode and admission, the absence read twice, the aim
+/// snapshot, then the one POST. The index of the POST is
+/// `before_approval().len() + after_approval(..).len() - 1`.
 fn after_approval(post: ScenarioPlan) -> Vec<ScenarioPlan> {
+    after_approval_with_currencies(single_currency(), post)
+}
+
+fn after_approval_with_currencies(currencies: String, post: ScenarioPlan) -> Vec<ScenarioPlan> {
     let mut plans = probe();
     plans.push(xml(companies()));
     plans.extend(paired(catalogue()));
+    plans.extend(paired(currencies));
     plans.extend(probe());
     plans.push(xml(companies()));
     plans.extend(paired(empty_collection()));
@@ -523,6 +549,7 @@ fn bank_before_approval(catalogue: String, groups: String) -> Vec<ScenarioPlan> 
     plans.extend(verified_company());
     plans.extend(paired(catalogue));
     plans.extend(paired(groups));
+    plans.extend(paired(single_currency()));
     plans.extend(probe());
     plans
 }
@@ -534,6 +561,7 @@ fn bank_after_approval(catalogue: String, groups: String, post: ScenarioPlan) ->
     plans.push(xml(companies()));
     plans.extend(paired(catalogue));
     plans.extend(paired(groups));
+    plans.extend(paired(single_currency()));
     plans.extend(probe());
     plans.push(xml(companies()));
     plans.extend(paired(empty_collection()));
@@ -816,8 +844,9 @@ async fn a_classification_changed_since_the_build_is_refused_before_approval() {
         (catalogue(), groups_with_debtor_group_under_bank()),
     ] {
         let mut plans = bank_before_approval(catalogue, groups);
-        // The qualified mode probe after the group read is never sent.
-        plans.truncate(plans.len() - probe().len());
+        // The Currency masters and the qualified mode probe after the group
+        // read are never sent.
+        plans.truncate(plans.len() - paired(single_currency()).len() - probe().len());
         let expected = plans.len();
         let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
         let directory = tempfile::tempdir().unwrap();
@@ -1230,4 +1259,110 @@ async fn a_native_post_reads_back_as_posted_verified() {
         "{response}"
     );
     assert_journaled_clean_create(directory.path());
+}
+
+// bridge#551: a post goes only into a book with exactly one Currency master,
+// checked before approval and again inside the queue.
+
+/// The refusal both surfaces report for the captured two-master book: the
+/// plain reason, naming both masters, with no attempt recorded.
+fn assert_refused_as_multi_currency(result: &Value) {
+    assert_eq!(
+        result["error"]["code"], "import_multi_currency_unsupported",
+        "{result}"
+    );
+    assert_eq!(result["attempt_recorded"], json!(false), "{result}");
+    let message = result["error"]["message"].as_str().unwrap();
+    assert!(
+        message.starts_with("This company has more than one currency defined ("),
+        "{message}"
+    );
+    assert!(
+        message.contains("Bridge does not post into multi-currency books yet"),
+        "{message}"
+    );
+    let names =
+        bridge_tally_protocol::native_outstandings::parse_company_currency(&two_currencies())
+            .unwrap()
+            .names;
+    assert_eq!(names.len(), 2);
+    for name in &names {
+        assert!(message.contains(name.as_str()), "{name} in {message}");
+    }
+}
+
+#[tokio::test]
+async fn a_book_with_two_currency_masters_is_refused_before_approval_on_both_surfaces() {
+    for desktop in [false, true] {
+        let mut plans = before_approval_with_currencies(two_currencies());
+        // The qualified mode probe after the Currency read is never sent.
+        plans.truncate(plans.len() - probe().len());
+        let expected = plans.len();
+        let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let server = server_at(simulator.address(), directory.path());
+        let (line, args) = saved_batch(&server);
+        let scripted = ScriptedApproval::approving();
+        let result = if desktop {
+            let outcome = SCRIPTED_APPROVAL
+                .scope(
+                    scripted.clone(),
+                    server.post_import_checked(&args, Some(&line.sha256), PostScope::JournalOnly),
+                )
+                .await
+                .expect("a refusal is reported as the post's outcome");
+            // What the desktop's webview receives.
+            super::super::desktop_journal::DesktopJournalOperation::from_outcome(outcome).result
+                ["result"]
+                .clone()
+        } else {
+            let response = SCRIPTED_APPROVAL
+                .scope(scripted.clone(), server.call_tool("post_import", args))
+                .await;
+            let result = response["structuredContent"]["result"].clone();
+            assert_eq!(
+                result["error"]["currencies_seen"].as_array().map(Vec::len),
+                Some(2),
+                "{response}"
+            );
+            result
+        };
+        let observed = sent(simulator);
+        assert_refused_as_multi_currency(&result);
+        assert!(scripted.previews().is_empty(), "approval must not be asked");
+        assert_eq!(observed.len(), expected, "{result}");
+        assert!(!String::from_utf8(journal(directory.path()))
+            .unwrap()
+            .contains("\"dispatch_intent\""));
+    }
+}
+
+/// A master added while approval waits: the queue's own Currency read refuses,
+/// after the aim snapshot and before the intent, so the POST is never sent.
+#[tokio::test]
+async fn a_currency_master_added_after_approval_is_refused_in_the_queue() {
+    let mut plans = before_approval();
+    let mut after = after_approval_with_currencies(two_currencies(), xml(created_one()));
+    after.pop();
+    let expected = plans.len() + after.len();
+    plans.extend(after);
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let scripted = ScriptedApproval::approving();
+    let response = SCRIPTED_APPROVAL
+        .scope(scripted.clone(), server.call_tool("post_import", args))
+        .await;
+    let observed = sent(simulator);
+    assert_refused_as_multi_currency(&response["structuredContent"]["result"]);
+    assert_eq!(scripted.previews().len(), 1, "approval was asked once");
+    assert_eq!(
+        observed.len(),
+        expected,
+        "the POST is never sent: {response}"
+    );
+    assert!(!String::from_utf8(journal(directory.path()))
+        .unwrap()
+        .contains("\"dispatch_intent\""));
 }

@@ -1,8 +1,8 @@
 use super::{
-    combine_evidence, company_high_water_read, company_json, native_group_snapshot_read,
-    normalized_date, parse_company_high_water, party_name, required_string, sha256_hex,
-    sha256_json, standard_ledger_catalog_read, Evidence, Server, ToolFailure, ToolOutcome,
-    VOUCHER_CHECKPOINT_NOT_OBSERVED,
+    combine_evidence, company_currency_read, company_high_water_read, company_json,
+    native_group_snapshot_read, normalized_date, parse_company_high_water, party_name,
+    required_string, sha256_hex, sha256_json, standard_ledger_catalog_read, Evidence, Server,
+    ToolFailure, ToolOutcome, VOUCHER_CHECKPOINT_NOT_OBSERVED,
 };
 use crate::tally::agent_read_request::AgentReadRequest;
 use crate::tally::standard_ledger_catalog::{

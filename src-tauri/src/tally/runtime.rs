@@ -3241,6 +3241,14 @@ impl TallyRuntime {
                         }
                         None => (None, admission_evidence),
                     };
+                    // Every post re-reads the company's Currency masters in the
+                    // same brackets: it goes only into a book with exactly one
+                    // (bridge#551), and one can be added while approval waits.
+                    let (currencies, currency_evidence) =
+                        fetch_admitted_agent_read(&client, &identity, request.currency_request())
+                            .await
+                            .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
+                    let admission_evidence = admission_evidence.combine(currency_evidence);
                     let (profile, mode_evidence) = observe_read_boundary(&client)
                         .await
                         .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
@@ -3308,6 +3316,7 @@ impl TallyRuntime {
                         second: &second_read.body,
                         catalogue: &catalogue.body,
                         groups: groups.as_ref().map(|groups| groups.body.as_str()),
+                        currencies: &currencies.body,
                         company_marks: &before_marks.text,
                         ledger_binding: request.ledger_binding(),
                     })

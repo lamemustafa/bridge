@@ -22,6 +22,9 @@ pub(crate) struct ApprovedImport {
     /// classification is re-derived from it inside the queue. A Journal has
     /// none, so it adds no group read to the queue.
     group_collection_request: Option<AgentReadRequest>,
+    /// The company's Currency masters, re-read inside the queue: a post goes
+    /// only into a book with exactly one (bridge#551).
+    currency_request: AgentReadRequest,
     /// The all-company change marks, read last before the POST to confirm the
     /// aim and again right after it to see where the voucher went (#574).
     company_marks_request: AgentReadRequest,
@@ -33,6 +36,7 @@ pub(crate) struct QueuedAdmission<'a> {
     pub(crate) second: &'a str,
     pub(crate) catalogue: &'a str,
     pub(crate) groups: Option<&'a str>,
+    pub(crate) currencies: &'a str,
     pub(crate) company_marks: &'a str,
     pub(crate) ledger_binding: &'a StandardLedgerCatalogBinding,
 }
@@ -47,6 +51,7 @@ impl ApprovedImport {
         ledger_catalogue_request: AgentReadRequest,
         ledger_binding: StandardLedgerCatalogBinding,
         group_collection_request: Option<AgentReadRequest>,
+        currency_request: AgentReadRequest,
         company_marks_request: AgentReadRequest,
     ) -> Result<Self, String> {
         approve(preview).await?;
@@ -57,6 +62,7 @@ impl ApprovedImport {
             ledger_catalogue_request,
             ledger_binding,
             group_collection_request,
+            currency_request,
             company_marks_request,
         })
     }
@@ -79,6 +85,10 @@ impl ApprovedImport {
 
     pub(super) fn group_collection_request(&self) -> Option<AgentReadRequest> {
         self.group_collection_request.clone()
+    }
+
+    pub(super) fn currency_request(&self) -> AgentReadRequest {
+        self.currency_request.clone()
     }
 
     pub(super) fn company_marks_request(&self) -> AgentReadRequest {
@@ -104,6 +114,7 @@ impl ApprovedImport {
         voucher_date: TallyDate,
         ledger_catalogue_request: AgentReadRequest,
         ledger_binding: StandardLedgerCatalogBinding,
+        currency_request: AgentReadRequest,
         company_marks_request: AgentReadRequest,
     ) -> Self {
         // Carries the seam marker so the shipped-binary scan also covers this
@@ -119,6 +130,7 @@ impl ApprovedImport {
             ledger_catalogue_request,
             ledger_binding,
             group_collection_request: None,
+            currency_request,
             company_marks_request,
         }
     }
@@ -148,6 +160,15 @@ pub(crate) enum ApprovedImportAdmissionError {
     /// That snapshot could not be read, so the aim cannot be confirmed.
     #[error("post_company_scope_unconfirmed")]
     CompanyScopeUnconfirmed,
+    /// The company defines more than one Currency master. Bridge's amounts are
+    /// plain base-currency figures, and which master is the base cannot be
+    /// identified yet (bridge#601), so no leg can be shown to be in it
+    /// (bridge#551). Carries every master's NAME, for the refusal to name.
+    #[error("import_multi_currency_unsupported")]
+    MultiCurrencyBook { currencies: Vec<String> },
+    /// The company's Currency masters read as none, or as one with no NAME.
+    #[error("import_base_currency_undetermined")]
+    BaseCurrencyUndetermined,
 }
 
 /// The native approval every real post goes through. Outside this crate's own

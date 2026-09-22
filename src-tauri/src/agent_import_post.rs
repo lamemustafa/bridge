@@ -3,6 +3,7 @@
 use super::*;
 use crate::agent::evidence_from_runtime_read;
 use crate::tally::approved_import::{ApprovedImport, ApprovedImportAdmissionError};
+use bridge_tally_protocol::native_outstandings::{parse_company_currency, BaseCurrencyName};
 use bridge_tally_protocol::{parse_import_outcome, TallyImportApplicationStatus};
 
 /// The batch's verification window is one the pre-flight bound (§11c) would
@@ -152,6 +153,8 @@ impl Server {
         let mut received_response = None;
         // Where the voucher went, once a POST has been sent (#574).
         let mut post_location: Option<Value> = None;
+        // The Currency masters of a book refused for having several (#551).
+        let mut currencies_seen: Option<Vec<String>> = None;
         let operation: Result<ToolOutcome, ToolFailure> = async {
             let xml = admit_saved_voucher_integrity(&line, &self.settings.endpoint, scope)?;
             if snapshot.dispatched {
@@ -235,6 +238,22 @@ impl Server {
             } else {
                 None
             };
+            // Bridge's amounts are plain base-currency figures, so a post goes
+            // only into a book with exactly one Currency master (bridge#551).
+            // Read before approval, so a refused book is never asked about, and
+            // sent with the approval so the queue reads it again.
+            let (currencies, evidence) = self
+                .post_read(&identity, company_currency_read(&company.name))
+                .await?;
+            accumulated = combine_evidence(accumulated.clone(), evidence);
+            admit_post_currency(&currencies).map_err(|refusal| {
+                currencies_seen = refused_currencies(&refusal);
+                ToolFailure::from(refusal.to_string())
+            })?;
+            let currency_request = crate::tally::agent_read_request::AgentReadRequest::parse(
+                company_currency_read(&company.name).into_xml(),
+            )
+            .map_err(|error| error.to_string())?;
             let mode = self.qualified_import_profile().await?;
             validate_post_profile_with_evidence(&payload, &mode, &mut accumulated)?;
             let company_marks_request = crate::tally::agent_read_request::AgentReadRequest::parse(
@@ -249,6 +268,7 @@ impl Server {
                 ledger_catalogue_request,
                 ledger_binding,
                 group_collection_request,
+                currency_request,
                 company_marks_request.clone(),
             )
             .await?;
@@ -271,6 +291,7 @@ impl Server {
                             queued.second,
                             queued.catalogue,
                             queued.groups,
+                            queued.currencies,
                             queued.ledger_binding,
                         )?;
                         admit_queued_aim(
@@ -301,6 +322,10 @@ impl Server {
                 )
                 .await;
             let posted = posted.map_err(|error| {
+                currencies_seen = error
+                    .chain()
+                    .find_map(|cause| cause.downcast_ref::<ApprovedImportAdmissionError>())
+                    .and_then(refused_currencies);
                 let code = if error.chain().any(|cause| {
                     cause.is::<crate::tally::approved_import::AmbiguousImportCompany>()
                 }) {
@@ -354,6 +379,20 @@ impl Server {
                     )
                 }) {
                     "post_company_scope_unconfirmed"
+                } else if error.chain().any(|cause| {
+                    matches!(
+                        cause.downcast_ref::<ApprovedImportAdmissionError>(),
+                        Some(ApprovedImportAdmissionError::MultiCurrencyBook { .. })
+                    )
+                }) {
+                    "import_multi_currency_unsupported"
+                } else if error.chain().any(|cause| {
+                    matches!(
+                        cause.downcast_ref::<ApprovedImportAdmissionError>(),
+                        Some(ApprovedImportAdmissionError::BaseCurrencyUndetermined)
+                    )
+                }) {
+                    "import_base_currency_undetermined"
                 } else {
                     "import_dispatch_outcome_unknown"
                 };
@@ -438,6 +477,9 @@ impl Server {
                 );
                 if let Some(located) = post_location {
                     outcome.payload["result"]["post_location"] = located;
+                }
+                if let Some(currencies) = currencies_seen {
+                    name_refused_currencies(&mut outcome.payload, &currencies);
                 }
                 Ok(outcome)
             }
@@ -651,6 +693,7 @@ fn recheck_import_admission(
     second: &str,
     catalogue: &str,
     groups: Option<&str>,
+    currencies: &str,
     ledger_binding: &bridge_tally_protocol::StandardLedgerCatalogBinding,
 ) -> anyhow::Result<()> {
     let observed = parse_import_vouchers(first, company_guid).map_err(anyhow::Error::msg)?;
@@ -695,7 +738,63 @@ fn recheck_import_admission(
         // wiring fault; refuse rather than post on half a check.
         _ => return Err(ApprovedImportAdmissionError::AdmissionInconsistent.into()),
     }
+    // A Currency master can be added while approval waits (bridge#551).
+    admit_post_currency(currencies)?;
     Ok(())
+}
+
+/// Admit a post on the company's Currency masters (bridge#551). Bridge's
+/// amounts are plain base-currency figures, and a foreign-currency ledger's
+/// balance can read as a plain amount too, so only the ledger's own currency
+/// tells them apart (TALLY_PROTOCOL_REFERENCE §8.2d). Which master is the base
+/// cannot be identified among several until bridge#601, so until then a post
+/// goes only into a book with exactly one, where every ledger is in the base.
+/// When #601 lands, each leg's `CURRENCYNAME` is compared with the base instead.
+fn admit_post_currency(currencies: &str) -> Result<(), ApprovedImportAdmissionError> {
+    let currency = parse_company_currency(currencies)
+        .map_err(|_| ApprovedImportAdmissionError::BaseCurrencyUndetermined)?;
+    if BaseCurrencyName::of_single_master(&currency).is_some() {
+        Ok(())
+    } else if currency.currency_count > 1 {
+        Err(ApprovedImportAdmissionError::MultiCurrencyBook {
+            currencies: currency.names,
+        })
+    } else {
+        Err(ApprovedImportAdmissionError::BaseCurrencyUndetermined)
+    }
+}
+
+fn refused_currencies(refusal: &ApprovedImportAdmissionError) -> Option<Vec<String>> {
+    match refusal {
+        ApprovedImportAdmissionError::MultiCurrencyBook { currencies } => Some(currencies.clone()),
+        _ => None,
+    }
+}
+
+/// How many Currency masters a refusal names; the rest are counted.
+const REFUSAL_CURRENCIES_NAMED: usize = 8;
+
+/// Say plainly why a multi-currency book was refused, naming the masters seen.
+/// The message is replaced only where no attempt is recorded: any other state
+/// keeps its instruction to reconcile.
+fn name_refused_currencies(payload: &mut Value, currencies: &[String]) {
+    let named = currencies
+        .iter()
+        .take(REFUSAL_CURRENCIES_NAMED)
+        .cloned()
+        .collect::<Vec<_>>();
+    let error = &mut payload["result"]["error"];
+    error["currencies_seen"] = json!(named);
+    if payload["result"]["attempt_recorded"] == json!(false) {
+        let mut list = named.join(", ");
+        if currencies.len() > named.len() {
+            list.push_str(&format!(" and {} more", currencies.len() - named.len()));
+        }
+        payload["result"]["error"]["message"] = json!(format!(
+            "This company has more than one currency defined ({list}); Bridge does not post \
+             into multi-currency books yet. Nothing was sent to Tally."
+        ));
+    }
 }
 
 /// One native post: the request bytes, their wire digest, and the fresh

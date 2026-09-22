@@ -160,4 +160,9 @@ pub struct CompanyCurrency {
     /// assuming paise precision.
     pub decimal_places: u8,
     pub is_inr: bool,
+    /// Every master's NAME, in read order (`symbol` is the first). Kept out
+    /// of serialization so every output that carries this struct is unchanged;
+    /// it exists so a refusal can name the masters it saw.
+    #[serde(skip)]
+    pub names: Vec<String>,
 }
