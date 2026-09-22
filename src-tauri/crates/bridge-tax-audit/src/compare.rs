@@ -54,6 +54,14 @@ const NUMERIC_UNITS: [&str; 4] = ["paise", "bp", "count", "days"];
 /// `applicability_44ab` always emits these 9: the applicable threshold, the turnover definition,
 /// turnover (a value or "not supplied"), the audit-required call, the s.44ADA flag, three due dates
 /// and the presumptive-history status. Comparison-source figures come on top.
+/// `tds_tcs_26as` always emits these 30, with no documents and no configured ledger: the 26AS row
+/// and books claim counts, the TDS and TCS ledger movements, the Part I and Part VI tax totals, the
+/// folded-row count, three figures for each of the two match categories, a count per 26AS-only
+/// reason (four) and per books-only reason (three) plus the two unclassified counts, the
+/// capitalisation count, the books sales/purchases and four AIS totals, and the books advance tax.
+/// Configured-ledger, alias, per-row and TIS figures come on top.
+/// `twentysixas_receipts` emits nothing structural: every figure belongs to one deductor party and
+/// class with a Part I row, so 1 is its floor, and a run with no such row has nothing to compare.
 pub fn default_min_figures(test_id: &str) -> usize {
     crate::registry::find(test_id).map_or(1, |t| t.min_figures)
 }

@@ -75,7 +75,7 @@ pub const PORTED: &[PortedTest] = &[
     },
     PortedTest {
         id: "tds_tcs_26as",
-        min_figures: 40,
+        min_figures: 30,
         run_on: |e, b, r, c| crate::tds_tcs_26as_on(e, b, r, &c.traces),
     },
     PortedTest {
@@ -85,7 +85,7 @@ pub const PORTED: &[PortedTest] = &[
     },
     PortedTest {
         id: "twentysixas_receipts",
-        min_figures: 10,
+        min_figures: 1,
         run_on: |e, b, r, c| crate::twentysixas_receipts_on(e, b, r, &c.traces),
     },
 ];

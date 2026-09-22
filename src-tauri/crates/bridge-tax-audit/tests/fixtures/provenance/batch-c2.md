@@ -32,6 +32,23 @@ TAN-shaped (`TAN-INVENTED-A`, `TAN-EDGE-A`, ...).
 - They do not establish anything about a real assessee's documents, or about reading a document:
   this crate reads none. Real-client rows are used only in local parity runs and are not here.
 
+## Real books (local only; nothing from them is in this repository)
+
+`examples/local_parity` compared the port with the reference on three real client reads, each with
+that client's own reference-engine config and the Form 26AS/AIS/TIS rows the reference's own
+adapters parsed from that client's documents: byte-identical dumps and 0 differences for both tests
+on all three. `twentysixas_receipts` raises a substantive difference finding (a deductor's Form
+26AS amount against the books) on all three. `tds_tcs_26as` does real work on two: a TCS
+capitalisation finding on one and an `amount_differs` finding on the other. The third is thin for
+it: one Form 26AS row, AIS figures only, and no finding beyond the PAN-view scope limit the test
+always states. No real book reaches a folded deductor, a books-only claim, a different-period
+reason or a TIS row; the edge books above carry those.
+
+The figure floors in `registry.rs` are structural, not fixture totals: `tds_tcs_26as` always emits
+30 figures (the three real books gave 37 to 40), and every `twentysixas_receipts` figure belongs
+to a party with a Part I row, so its floor is 1 (the three real books gave 3 to 10).
+`tests/registry.rs` pins both against a run with no documents.
+
 ## Reference commit and invocations
 
 Produced at the reference engine commit `4632491210c6383d46d9203c61716d191fd7fd6c`, under Python 3.13:
