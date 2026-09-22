@@ -334,33 +334,48 @@ book (read-only there). The request strings were the branch's own at `cf618c00`.
 | Paired reads | every Tally request is sent twice, back to back (the repeated-source read), so wire traffic is about twice the data |
 | End to end after the #520 rectify (census spans of 8,192; a build of the tree committed as `986c1d77`) | inventory-heavy book, mark ~250,000: one-day `vouchers` complete in 34.3 s (31 census spans, 2 data parts); one-month `ledger_movement` complete in 104.7 s (31 census spans, 5 data parts of at most 6.6 MB, and the replay closed against the first read's marks). Every request under 16 MiB and 2 s |
 
-## 11d. Education refuses Bridge's report-family TDL with a blocking dialog — **VERIFIED live, 2026-09-22**
+## 11d. Education refuses Bridge's report-family TDL with a blocking dialog — **VERIFIED live for `ledgers_v1`, 2026-09-22; the rest inferred**
 
 On a TallyPrime 7.1 instance in Education mode, `ledgers_v1`'s custom report raised a modal
 **Error** dialog, `Cannot understand. Bad formula! '$$NumItems:BRIDGE Ledger Collection V1'`, and sent
-no response. The dialog holds the XML gateway until someone dismisses it on the Tally screen, which
-from the network looks like a busy or dead gateway (bridge#45). A formula-free ledger `Collection`
-export to the same instance returned `STATUS 1` promptly with no dialog.
+no response. The dialog holds the XML gateway until someone dismisses it on the Tally screen. From
+the network, that looks like a busy or dead gateway (bridge#45). A formula-free ledger `Collection`
+export to the same instance returned `STATUS 1` promptly, with no dialog.
 
-Every builder that passes a spaced collection identifier to a `$$` function (the
-`function-argument-with-space` entries of `scripts/check-tally-request-builder-hazards.mjs`) is
-therefore refused **before it is sent** once Education has been observed, with
+Only `ledgers_v1` was observed. Two things are **inferred**: that the other builders using the same
+construct raise it too, and that the space in the argument is the cause. Those builders are every
+`function-argument-with-space` entry of `scripts/check-tally-request-builder-hazards.mjs`:
+`vouchers_v2`/`v3`, the ledger canary and the period-balance report.
+
+All of them are refused **before sending** once Bridge knows the endpoint is in Education, with
 `education_report_family_unsupported`. Admission is unchanged: nothing is sent, and nothing is
 promoted.
 
-- The sync period-balance tie-out reads the mode from the `CompanyListV2` identity read that already
-  precedes it, or from the run's own probe. The run then carries on and records the gaps
-  `report_tie_out_unavailable` and `education_report_family_unsupported`.
-- The selected-ledger and selected-voucher qualifiers read it from their opening identity bracket.
-- The live-read tool and the native-outstandings qualification are configured for a mode rather than
-  observing one. In Education, the live-read tool records the refusal in its receipt for the ledger
-  and voucher steps, and the native-outstandings qualification refuses on load (its identity brackets
-  read through `ledgers_v1`).
-- `groups_request` has no production caller and compiles only for tests.
+- **Sync period-balance tie-out.** Reads the mode from the `CompanyListV2` identity read that
+  already precedes it, or from the run's own probe. The run carries on and records
+  `report_tie_out_unavailable` and `education_report_family_unsupported`. A later window's
+  successful report clears the second code, as it does the other tie-out codes.
+- **Selected-ledger and selected-voucher qualifiers.** Read the mode from their opening identity
+  bracket.
+- **The live-read tool.** Takes its mode from its configuration; it does not observe it. In
+  Education, the ledger step is recorded as failed with `education_report_family_unsupported`, and
+  the voucher steps as not attempted.
+  - **Residual:** a run configured as `Licensed` against an endpoint that is actually in Education
+    still sends `ledgers_v1`. The tool's company read (`CompanyListV1`) carries no `EDUMODE`. Moving
+    it to an observed mode means changing its profile sequence, which is not done here.
+- **The native-outstandings qualification.** Accepts only an Education configuration, and its
+  identity brackets read through `ledgers_v1`. It therefore refuses on load, so the tool **cannot
+  run** until Phase 2 Unit A.
+- **`groups_request`.** Has no production caller, and compiles only for tests.
 
 Reading ledgers and vouchers in Education waits for the Collection-based profiles (Phase 2 Unit A,
-`IMPROVEMENT_PLAN_2026H2.md` §8.12). Whether Education accepts `$$` functions whose arguments have no
-space, or a `COMPUTE` of `$GUID:Company:##SVCurrentCompany`, is **unmeasured**.
+`IMPROVEMENT_PLAN_2026H2.md` §8.12).
+
+**Unmeasured:**
+- whether Education accepts `$$` functions whose arguments contain no space;
+- whether Education accepts a `COMPUTE` of `$GUID:Company:##SVCurrentCompany`;
+- whether Education accepts `CompanyListV1`, a custom report with no `$$` function that the
+  live-read tool still sends.
 
 ## 11a. Scale measurements — 11,287-voucher corpus
 

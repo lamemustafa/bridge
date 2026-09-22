@@ -228,12 +228,13 @@ impl ReadOnlyProfileId {
         sha256_hex(&encode_tally_xml_request_utf16le(&self.template()))
     }
 
-    /// Whether Education-mode Tally refuses this profile's TDL. Each of these
-    /// is a custom report (`TYPE=Data`) that passes a spaced collection
-    /// identifier to a `$$` function (`$$NumItems:BRIDGE Ledger Collection
-    /// V1`). Education answers it with a blocking "Bad formula!" dialog on the
-    /// Tally screen, which holds the XML gateway until someone dismisses it
-    /// (bridge#45). A caller that knows the endpoint is in Education must
+    /// Whether this profile must not be sent to an Education-mode Tally. Each
+    /// of these is a custom report (`TYPE=Data`) that passes a spaced
+    /// collection identifier to a `$$` function (`$$NumItems:BRIDGE Ledger
+    /// Collection V1`). Education answered `ledgers_v1` with a blocking "Bad
+    /// formula!" dialog on the Tally screen, which holds the XML gateway until
+    /// someone dismisses it (bridge#45). That the others, which carry the same
+    /// construct, do the same is inferred, not observed. A caller that knows the endpoint is in Education must
     /// refuse such a read before sending it, with
     /// [`EDUCATION_REPORT_FAMILY_UNSUPPORTED`]. A test renders every profile
     /// and checks this against [`first_spaced_function_argument`].
@@ -302,8 +303,8 @@ pub const EDUCATION_REPORT_FAMILY_UNSUPPORTED: &str = "education_report_family_u
 /// The first `$$Function:argument` in `tdl` whose argument holds whitespace,
 /// read the way `scripts/check-tally-request-builder-hazards.mjs` reads a
 /// source literal: a quoted argument is only its quoted text (so
-/// `$$Date:"20260401" AND ...` is not a hit), and an unquoted one runs to the
-/// next `<` or line break. Tests use it to keep every Education refusal in
+/// `$$Date:"20260401" AND ...` is not a hit), and an unquoted one, or one
+/// whose quote never closes, runs to the next `<` or line break. Tests use it to keep every Education refusal in
 /// step with the TDL a builder actually renders.
 #[doc(hidden)]
 pub fn first_spaced_function_argument(tdl: &str) -> Option<String> {
@@ -323,11 +324,13 @@ pub fn first_spaced_function_argument(tdl: &str) -> Option<String> {
             }
             if bytes.get(name_end) == Some(&b':') {
                 let rest = &tdl[name_end + 1..];
-                let argument = if let Some(quoted) = rest.strip_prefix('"') {
-                    &quoted[..quoted.find('"').unwrap_or(quoted.len())]
-                } else {
-                    &rest[..rest.find(['<', '\n', '\r']).unwrap_or(rest.len())]
-                };
+                // A quote with no closing quote is scanned as unquoted, as
+                // the script does, so a malformed literal is still checked.
+                let closed = rest
+                    .strip_prefix('"')
+                    .and_then(|quoted| quoted.find('"').map(|end| &quoted[..end]));
+                let argument = closed
+                    .unwrap_or_else(|| &rest[..rest.find(['<', '\n', '\r']).unwrap_or(rest.len())]);
                 if argument.chars().any(char::is_whitespace) {
                     return Some(tdl[start..name_end + 1].to_string() + argument);
                 }

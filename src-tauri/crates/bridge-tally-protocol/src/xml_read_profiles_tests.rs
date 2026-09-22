@@ -811,6 +811,12 @@ fn a_spaced_function_argument_is_read_as_the_hazard_script_reads_it() {
         (tabbed.clone(), Some(tabbed)),
         (second, Some(spaced("_ok", "a b"))),
         ("$$".to_string(), None),
+        // An unclosed quote is scanned as unquoted, up to the next `<`.
+        (
+            format!("{}<x y>", spaced("Fn", "\"open quote")),
+            Some(spaced("Fn", "\"open quote")),
+        ),
+        (format!("{}<x y>", "$$Fn:\"unclosed"), None),
     ] {
         assert_eq!(first_spaced_function_argument(&tdl), hit, "{tdl}");
     }

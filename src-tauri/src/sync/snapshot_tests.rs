@@ -476,6 +476,59 @@ impl TallyConnector for EducationReportConnector {
     }
 }
 
+/// Refuses the first period report in Education, then returns one.
+struct EducationThenReportConnector {
+    inner: FakeConnector,
+    reports: Mutex<usize>,
+}
+
+#[async_trait]
+impl TallyConnector for EducationThenReportConnector {
+    async fn probe(&self) -> Result<ProbeResult, TallyError> {
+        self.inner.probe().await
+    }
+
+    async fn probe_fresh(&self) -> Result<ProbeResult, TallyError> {
+        self.inner.probe_fresh().await
+    }
+
+    async fn discover_companies(&self) -> Result<Vec<CompanyRef>, TallyError> {
+        self.inner.discover_companies().await
+    }
+
+    async fn read_pack_window(
+        &self,
+        context: &RequestContext,
+    ) -> Result<CanonicalPackWindow, TallyError> {
+        self.inner.read_pack_window(context).await
+    }
+
+    async fn read_core_period_balance_report(
+        &self,
+        context: &RequestContext,
+    ) -> Result<bridge_tally_core::report_tie_out::LedgerPeriodBalanceReport, TallyError> {
+        let first = {
+            let mut reports = self.reports.lock().unwrap();
+            *reports += 1;
+            *reports == 1
+        };
+        if first {
+            return Err(TallyError::Unsupported {
+                code: "education_report_family_unsupported".to_string(),
+            });
+        }
+        Ok(
+            bridge_tally_core::report_tie_out::LedgerPeriodBalanceReport {
+                source_identity: context.company.identity.clone(),
+                window: context.window.clone(),
+                ordinary_books_scope_observed: true,
+                source_reported_count: 0,
+                balances: Vec::new(),
+            },
+        )
+    }
+}
+
 fn core_groups(count: usize) -> CanonicalPackWindow {
     CanonicalPackWindow::without_source_count_evidence(PackBatch::CoreAccounting(
         CoreAccountingBatch {
@@ -3935,4 +3988,37 @@ async fn an_education_refused_period_report_is_named_in_the_gaps() {
             education
         );
     }
+}
+
+/// A later window's report that succeeds clears the Education refusal code, as
+/// it clears the other tie-out codes: the code would otherwise outlive the
+/// state it explained. The refused window's missing evidence is still reported
+/// as `report_tie_out_unavailable` by the reconciliation.
+#[tokio::test]
+async fn a_later_report_clears_the_education_refusal_code() {
+    let (_, mirror, store, plan) = setup().await;
+    let connector = EducationThenReportConnector {
+        inner: FakeConnector {
+            batch: Mutex::new(VecDeque::from([Err(TallyError::ReadResponseTooLarge {
+                scope: ReadResponseScope::VoucherWindow,
+            })])),
+            company: plan.company.clone(),
+            requests: Mutex::new(Vec::new()),
+        },
+        reports: Mutex::new(0),
+    };
+    let result = FullSnapshotEngine::new(&mirror, &store, &connector)
+        .run(&plan, &AtomicCancellation::default())
+        .await
+        .expect("the split run completes");
+    assert_eq!(*connector.reports.lock().unwrap(), 2, "one report per leaf");
+    assert!(!result
+        .state
+        .gap_codes
+        .contains("education_report_family_unsupported"));
+    assert!(result
+        .proof
+        .gaps
+        .iter()
+        .any(|gap| gap.safe_reason_code == "report_tie_out_unavailable"));
 }

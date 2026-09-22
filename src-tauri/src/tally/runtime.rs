@@ -851,9 +851,10 @@ pub(crate) struct EducationBoundaryRefusal;
 
 /// A read was refused before it was sent: the endpoint reported Education mode,
 /// and the request is one of Bridge's custom reports whose TDL passes a spaced
-/// collection identifier to a `$$` function. Education answers that with a
-/// blocking "Bad formula!" dialog on the Tally screen, which holds the XML
-/// gateway until someone dismisses it (bridge#45). Such a read needs a licensed
+/// collection identifier to a `$$` function. Education answered one such report
+/// (`ledgers_v1`) with a blocking "Bad formula!" dialog on the Tally screen,
+/// which holds the XML gateway until someone dismisses it (bridge#45); the
+/// others carry the same construct. Such a read needs a licensed
 /// Tally until the Collection-based reads replace it.
 #[derive(Debug, thiserror::Error)]
 #[error("education_report_family_unsupported")]

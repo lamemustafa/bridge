@@ -308,11 +308,12 @@ mod tests {
         legacy_company_list_request,
     };
 
-    /// Every builder the hazard gate records as passing a spaced identifier to
-    /// a `$$` function, which Education answers with a blocking dialog on the
-    /// Tally screen (bridge#45), is kept from an Education responder, and the
-    /// two sets move together: a new such builder fails here until its guard is
-    /// named.
+    /// The builders the hazard gate records as passing a spaced identifier to
+    /// a `$$` function (Education answered one with a blocking dialog,
+    /// bridge#45) are exactly the ones listed here with their guards, so a new
+    /// such builder fails this test until it is listed. The guards themselves
+    /// are proven by their own tests (connector, runtime, transport, tools),
+    /// not here, and a new caller of a listed builder is not caught here.
     #[test]
     fn every_report_formula_hazard_is_kept_from_an_education_responder() {
         use bridge_tally_protocol::xml_read_profiles::{

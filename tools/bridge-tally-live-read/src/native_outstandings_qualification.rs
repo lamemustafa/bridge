@@ -1114,10 +1114,11 @@ fn require_unchanged_identity(
 }
 
 /// Every identity bracket reads the party through `ledgers_v1`, a custom report
-/// whose TDL Education answers with a blocking dialog on the Tally screen
-/// (bridge#45), and this qualification runs only in Education. It is refused on
-/// load, before any consent or request, until the Collection-based reads
-/// (Phase 2 Unit A) replace that bracket.
+/// whose TDL raised a blocking dialog on an Education Tally's screen
+/// (bridge#45), and this qualification accepts only an Education configuration.
+/// It is therefore refused on load, before any consent or request, so the tool
+/// cannot run until the Collection-based reads (Phase 2 Unit A) replace that
+/// bracket.
 fn refuse_education_identity_reads(
     config: &NativeProbeConfig,
 ) -> Result<(), NativeOutstandingsQualificationError> {
@@ -1910,6 +1911,22 @@ mod tests {
         let mut licensed = education;
         licensed.mode = TallyMode::Licensed;
         assert!(refuse_education_identity_reads(&licensed).is_ok());
+    }
+
+    #[test]
+    fn load_refuses_an_education_config_before_anything_else_is_read() {
+        let path = std::env::temp_dir().join(format!(
+            "bridge-native-probe-education-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, serde_json::to_vec(&config(9000)).unwrap()).unwrap();
+        let refused = LoadedNativeOutstandingsProbe::load(&path)
+            .err()
+            .map(|e| e.safe_code());
+        std::fs::remove_file(&path).unwrap();
+        // Without the refusal, load would go on to resolve the repository and
+        // fixture paths and fail on those instead.
+        assert_eq!(refused, Some("education_report_family_unsupported"));
     }
 
     #[tokio::test]

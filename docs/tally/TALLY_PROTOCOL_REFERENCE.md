@@ -291,9 +291,9 @@ base revision.
 <a id="11c5-live-evidence-2026-09-21"></a>
 
 [11c.5 Live evidence, 2026-09-21](./TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md#11c5-live-evidence-2026-09-21)
-<a id="11d-education-refuses-bridges-report-family-tdl-with-a-blocking-dialog--verified-live-2026-09-22"></a>
+<a id="11d-education-refuses-bridges-report-family-tdl-with-a-blocking-dialog--verified-live-for-ledgers_v1-2026-09-22-the-rest-inferred"></a>
 
-[11d. Education refuses Bridge's report-family TDL with a blocking dialog — **VERIFIED live, 2026-09-22**](./TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md#11d-education-refuses-bridges-report-family-tdl-with-a-blocking-dialog--verified-live-2026-09-22)
+[11d. Education refuses Bridge's report-family TDL with a blocking dialog — **VERIFIED live for `ledgers_v1`, 2026-09-22; the rest inferred**](./TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md#11d-education-refuses-bridges-report-family-tdl-with-a-blocking-dialog--verified-live-for-ledgers_v1-2026-09-22-the-rest-inferred)
 <a id="11a-scale-measurements--11287-voucher-corpus"></a>
 
 [11a. Scale measurements — 11,287-voucher corpus](./TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md#11a-scale-measurements--11287-voucher-corpus)

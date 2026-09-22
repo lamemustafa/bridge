@@ -281,11 +281,16 @@ impl LiveRunInputs {
     }
 }
 
-/// The run's read transport. For an Education endpoint it refuses, before
-/// sending, the ledger and voucher profiles whose report TDL Education cannot
-/// parse, so the receipt records `education_report_family_unsupported` instead
-/// of the read raising a blocking dialog on the Tally screen (bridge#45). A
-/// ledger or voucher read in Education waits for the Collection-based profiles
+/// The run's read transport. For a run configured for Education, it refuses
+/// the ledger and voucher profiles before sending: their report TDL raised a
+/// blocking dialog on an Education Tally's screen (bridge#45). The receipt then
+/// records the ledger step as failed with `education_report_family_unsupported`,
+/// and the voucher steps as not attempted.
+///
+/// The mode is the configuration's, not observed: this tool's company read
+/// (`CompanyListV1`) carries no `EDUMODE`, so a run configured as `Licensed`
+/// against an endpoint that is actually in Education is not protected. A ledger
+/// or voucher read in Education waits for the Collection-based profiles
 /// (Phase 2 Unit A).
 fn read_transport(config: &LiveRunConfig) -> Result<ReadOnlyTransport, LiveReadError> {
     let transport = ReadOnlyTransport::new(read_loopback(config.endpoint_family), config.port)
