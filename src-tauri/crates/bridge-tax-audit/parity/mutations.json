@@ -2654,5 +2654,37 @@
   "file": "src/loans_interest.rs",
   "from": "!net_reversals || is_receipt(&pop[*n].base_type)",
   "to": "is_receipt(&pop[*n].base_type)"
+ },
+ {
+  "id": "Y01",
+  "by": "author",
+  "what": "the no-party bucket cited as a ledger (EVID-1)",
+  "file": "src/cash_payments_40a3.rs",
+  "from": "    if ledger_name == UNIDENTIFIED_PARTY {",
+  "to": "    if false {"
+ },
+ {
+  "id": "Y02",
+  "by": "author",
+  "what": "the no-party row ref loses its label",
+  "file": "src/cash_payments_40a3.rs",
+  "from": "EvidenceRef::with_label(\"row\", UNIDENTIFIED_PARTY_ROW, UNIDENTIFIED_PARTY)",
+  "to": "EvidenceRef::new(\"row\", UNIDENTIFIED_PARTY_ROW)"
+ },
+ {
+  "id": "Y03",
+  "by": "author",
+  "what": "the s.269ST receipt leg cites a ledger again",
+  "file": "src/cash_payments_40a3.rs",
+  "from": "        evidence.push(party_ref(ledger_name));\n        r.findings.push(Finding {\n            id: format!(\"{TEST_ID}/s269st/{rid}\"),",
+  "to": "        evidence.push(EvidenceRef::new(\"ledger\", ledger_name));\n        r.findings.push(Finding {\n            id: format!(\"{TEST_ID}/s269st/{rid}\"),"
+ },
+ {
+  "id": "Y04",
+  "by": "author",
+  "what": "the s.269ST payment leg cites a ledger again",
+  "file": "src/cash_payments_40a3.rs",
+  "from": "        evidence.push(party_ref(ledger_name));\n        r.findings.push(Finding {\n            id: format!(\"{TEST_ID}/s269st_payment/{rid}\"),",
+  "to": "        evidence.push(EvidenceRef::new(\"ledger\", ledger_name));\n        r.findings.push(Finding {\n            id: format!(\"{TEST_ID}/s269st_payment/{rid}\"),"
  }
 ]

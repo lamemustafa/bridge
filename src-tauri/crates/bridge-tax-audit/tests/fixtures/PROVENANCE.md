@@ -376,12 +376,20 @@ so no POP-5 violation appears. A unit test (`invariants::tests::
 pop5_names_blank_and_repeated_voucher_guids_in_the_population`) reaches the violation texts, which
 are the reference's own.
 
+Then at `3fa9d5d4` (the engine's own fix, on top of the evidence fixes in `fffe2191`), `cash_payments_40a3` cites its no-party
+bucket on both s.269ST legs as a `row` ref, never as a `ledger` one: the placeholder names no ledger
+in the books, so EVID-1 reported both citations. Every golden in this file, batch 2a's
+(`provenance/batch-2a.md`), batch C2's (`provenance/batch-c2.md`, with its TRACES documents) and
+every edge golden was regenerated at `3fa9d5d4` from an archive of that commit. The only change is in
+`synthetic.cash_payments_40a3.json`: two evidence refs become `row` refs, and its two EVID-1
+violations are gone. Every other golden is byte-identical.
+
 ## Bytes
 
 | Fixture | Bytes | SHA-256 | Path |
 | --- | ---: | --- | --- |
 | `synthetic.cash_44ab.json` | 5,854 | `becbc7c673937f5accd8871a394ffb4e5af0c7cca2a324926684f42d28b0e9bf` | `golden/synthetic.cash_44ab.json` |
-| `synthetic.cash_payments_40a3.json` | 72,310 | `1fe6547f9348bf32b33459f2a6a9af27e221d9e3e48e769383adafd8076b7bbe` | `golden/synthetic.cash_payments_40a3.json` |
+| `synthetic.cash_payments_40a3.json` | 72,062 | `d637fe3e2a79dba108c306b1b186848a80c82988c62ad491cab6db54f103b1e6` | `golden/synthetic.cash_payments_40a3.json` |
 | `synthetic.depreciation.json` | 27,639 | `533bab261ac0c02d8687f6df6b915a5764cead1609abbea0c504926dcba64cd2` | `golden/synthetic.depreciation.json` |
 | `synthetic.financial_statements.json` | 16,718 | `0f4d5895cd3b6e5dadc04bf60514ed33357fa4c0734bad2d72176f8c2c354a3f` | `golden/synthetic.financial_statements.json` |
 | `synthetic.financial_statements.noreport.json` | 15,695 | `2025d1fcdcef63acdef082021b6cded6eea2d54959575f401e6c4798f09c9d3d` | `golden/synthetic.financial_statements.noreport.json` |

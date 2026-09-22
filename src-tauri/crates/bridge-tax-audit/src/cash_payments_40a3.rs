@@ -47,6 +47,19 @@ excluded); Contra excluded throughout.";
 /// identified real party (module docstring).
 const UNIDENTIFIED_PARTY: &str = "\u{2039}cash leg with no identified party\u{203a}";
 
+/// How an s.269ST finding on that bucket cites it: a "row" ref, never a "ledger" one -- the
+/// placeholder names no ledger in the books (EVID-1; the reference's `UNIDENTIFIED_PARTY_ROW`).
+const UNIDENTIFIED_PARTY_ROW: &str = "cash_payments_40a3:unidentified_party";
+
+/// The party an s.269ST row is about, as evidence: its ledger, or the no-party bucket as a row.
+fn party_ref(ledger_name: &str) -> EvidenceRef {
+    if ledger_name == UNIDENTIFIED_PARTY {
+        EvidenceRef::with_label("row", UNIDENTIFIED_PARTY_ROW, UNIDENTIFIED_PARTY)
+    } else {
+        EvidenceRef::new("ledger", ledger_name)
+    }
+}
+
 /// Tally's own reserved/standard group names (not client data) that put a payee ledger out of
 /// s.40A(3) "expenditure" scope, keyed by the rules-configured role name. A ledger's chain
 /// contains at most one of these in practice (they sit under different primary groups).
@@ -588,7 +601,7 @@ population voucher that day.",
             evidence_for_vouchers(&data.vouchers),
         );
         let mut evidence = evidence_for_vouchers(&data.vouchers);
-        evidence.push(EvidenceRef::new("ledger", ledger_name));
+        evidence.push(party_ref(ledger_name));
         r.findings.push(Finding {
             id: format!("{TEST_ID}/s269st/{rid}"),
             clauses: vec!["s.269ST(a)".to_string()],
@@ -671,7 +684,7 @@ voucher that day.",
             evidence_for_vouchers(&data.vouchers),
         );
         let mut evidence = evidence_for_vouchers(&data.vouchers);
-        evidence.push(EvidenceRef::new("ledger", ledger_name));
+        evidence.push(party_ref(ledger_name));
         r.findings.push(Finding {
             id: format!("{TEST_ID}/s269st_payment/{rid}"),
             clauses: vec!["s.269ST(a)".to_string()],
