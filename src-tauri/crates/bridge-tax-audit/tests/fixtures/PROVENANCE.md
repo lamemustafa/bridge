@@ -392,13 +392,23 @@ Then at `250eaedf7430fda005327530fcd7f14212c4e33c` (the second phase of the CA-f
 invariant report changes. (Against Bridge master the regenerated `synthetic.cash_payments_40a3.json`
 also carries `3fa9d5d4`'s two `row` refs above; that golden already had them here.)
 
+Then at `6813a635682b8dc953ddc367458d7beefd6ddebe` (the small batch after the second wording pass, engine `ab108123` to `6813a635`),
+every golden in this file, in every batch file under `provenance/` and every edge golden was
+regenerated from an archive of that commit. 9 of 56 change, in text only: 13 figure definitions that
+wrote an amount in paise now write it in rupees with Indian grouping (`src/support.rs`'s `rupees`, the
+reference's `tae/rupees.py`): the s.40A(3), s.269ST and s.269SS/269T limits in
+`synthetic.cash_payments_40a3.json`, the cash on both flagged additions in `synthetic.depreciation.json`, and the
+s.269SS/269T limit in `synthetic.loans_interest.json` and its six edge goldens. No figure or finding id,
+value, unit or evidence ref moves, and no invariant report changes. The engine's other changes in that
+range (one rule for an empty or missing value across its renderers) are outside the dump.
+
 ## Bytes
 
 | Fixture | Bytes | SHA-256 | Path |
 | --- | ---: | --- | --- |
 | `synthetic.cash_44ab.json` | 5,880 | `94d58bcf9a18413ef024eed4537c18e41aed5eeb7fb6ddc964d193ea6e1abe5a` | `golden/synthetic.cash_44ab.json` |
-| `synthetic.cash_payments_40a3.json` | 72,122 | `4011beda7534f560a26e9821089a0a52aa9063dbc2041fb9fd948e56e806f902` | `golden/synthetic.cash_payments_40a3.json` |
-| `synthetic.depreciation.json` | 28,224 | `6c1e91fe421e101f5698743306fabaf3b48933227ca2faa2277b0111185e1d66` | `golden/synthetic.depreciation.json` |
+| `synthetic.cash_payments_40a3.json` | 72,108 | `f9efbd693830005738b44cd1482ef7cd9e1cfd4b1805c6c01cb81f29dbb5cca2` | `golden/synthetic.cash_payments_40a3.json` |
+| `synthetic.depreciation.json` | 28,219 | `251b34d0491e392b640ffb3df997027704e747868cbd79b6bd6dd3d2ef4a245d` | `golden/synthetic.depreciation.json` |
 | `synthetic.financial_statements.json` | 16,955 | `90f3f13974b2699f8c19dc172d697cc9ed4c77adddf0d9d59f4305d8081fa5e4` | `golden/synthetic.financial_statements.json` |
 | `synthetic.financial_statements.noreport.json` | 15,888 | `2134a63248e05f06f7755fd7588dba8acaccebc471dfba383f4171806b637a69` | `golden/synthetic.financial_statements.noreport.json` |
 | `synthetic-report-totals.json` | 134 | `e772509bd6ebc52afc23ef9742b6b1f2a090737533abe3761a7448124411b7e3` | `synthetic-report-totals.json` |

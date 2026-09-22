@@ -83,7 +83,7 @@ fn hash12_sha256(text: &str) -> String {
     crate::canonical::hex(&Sha256::digest(text.as_bytes()))[..12].to_string()
 }
 
-use crate::support::voucher_label;
+use crate::support::{rupees, voucher_label};
 
 /// Heuristic-only, used solely to confirm on data (never to compute a figure) that GST/TCS lines
 /// sit on a different ledger than the asset line they accompany: the reference engine's own regex,
@@ -742,9 +742,9 @@ unless the payment mode is shown not to be cash."
                 Unit::Paise,
                 &format!(
                     "Addition to a Fixed Assets ledger (tag {h}) on {} where the payment side \
-shows cash of {} paise ({}), over the rules' s.43(1) cash limit for an addition.",
+shows cash of {} ({}), over the rules' s.43(1) cash limit for an addition.",
                     iso(&v.date),
-                    row.cash_paise,
+                    rupees(i128::from(row.cash_paise)),
                     row.cash_reason
                 ),
                 vec![EvidenceRef::with_label(

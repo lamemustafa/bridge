@@ -3190,5 +3190,77 @@
   "file": "src/cash_payments_40a3.rs",
   "from": "        evidence.push(party_ref(ledger_name));\n        r.findings.push(Finding {\n            id: format!(\"{TEST_ID}/s269st_payment/{rid}\"),",
   "to": "        evidence.push(EvidenceRef::new(\"ledger\", ledger_name));\n        r.findings.push(Finding {\n            id: format!(\"{TEST_ID}/s269st_payment/{rid}\"),"
+ },
+ {
+  "id": "SB-01",
+  "by": "author (Lane B)",
+  "what": "rupees: western grouping (thousands only)",
+  "file": "src/support.rs",
+  "from": "        while head.len() > 2 {",
+  "to": "        while head.len() > 3 {"
+ },
+ {
+  "id": "SB-02",
+  "by": "author (Lane B)",
+  "what": "rupees: paise written without zero padding",
+  "file": "src/support.rs",
+  "from": "format!(\"{sign}₹{grouped}.{frac:02}\")",
+  "to": "format!(\"{sign}₹{grouped}.{frac}\")"
+ },
+ {
+  "id": "SB-03",
+  "by": "author (Lane B)",
+  "what": "rupees: ASCII hyphen for a negative amount",
+  "file": "src/support.rs",
+  "from": "let sign = if paise < 0 { \"−\" } else { \"\" };",
+  "to": "let sign = if paise < 0 { \"-\" } else { \"\" };"
+ },
+ {
+  "id": "SB-04",
+  "by": "author (Lane B)",
+  "what": "40a3: s.40A(3) limit back in paise",
+  "file": "src/cash_payments_40a3.rs",
+  "from": "rupees(i128::from(limit_40a3))",
+  "to": "limit_40a3"
+ },
+ {
+  "id": "SB-05",
+  "by": "author (Lane B)",
+  "what": "40a3: s.269ST receipt limit back in paise",
+  "file": "src/cash_payments_40a3.rs",
+  "from": "\n            rupees(i128::from(limit_269st))",
+  "to": "\n            limit_269st"
+ },
+ {
+  "id": "SB-06",
+  "by": "author (Lane B)",
+  "what": "40a3: s.269ST payment threshold back in paise",
+  "file": "src/cash_payments_40a3.rs",
+  "from": "limit_269st_text = rupees(i128::from(limit_269st))",
+  "to": "limit_269st_text = limit_269st"
+ },
+ {
+  "id": "SB-07",
+  "by": "author (Lane B)",
+  "what": "40a3: s.269SS/269T candidate limit back in paise",
+  "file": "src/cash_payments_40a3.rs",
+  "from": "rupees(i128::from(limit_ss_t))",
+  "to": "limit_ss_t"
+ },
+ {
+  "id": "SB-08",
+  "by": "author (Lane B)",
+  "what": "depreciation: cash on a flagged addition back in paise",
+  "file": "src/depreciation.rs",
+  "from": "rupees(i128::from(row.cash_paise)),",
+  "to": "row.cash_paise,"
+ },
+ {
+  "id": "SB-09",
+  "by": "author (Lane B)",
+  "what": "loans_interest: s.269SS/269T limit back in paise",
+  "file": "src/loans_interest.rs",
+  "from": "limit_269_text = rupees(limit_269)",
+  "to": "limit_269_text = limit_269"
  }
 ]

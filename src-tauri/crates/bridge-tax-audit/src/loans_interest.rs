@@ -25,7 +25,7 @@ use crate::findings::{Confidence, EvidenceRef, Finding, TestResult, Unit, Value}
 use crate::ledger_ids::stable_ledger_tag;
 use crate::rules::Rules;
 use crate::support::{
-    count, ledgers_by_tag, overflow, py_lower, py_repr_str, py_strip, voucher_label,
+    count, ledgers_by_tag, overflow, py_lower, py_repr_str, py_strip, rupees, voucher_label,
 };
 use crate::tds_payees::{deductor_status, py_format_g};
 
@@ -811,7 +811,8 @@ not yet paid, or the repayment itself reaches the s.269SS/269T limit.",
         Unit::Count,
         &format!(
             "Reportable taken/repaid rows in cash/journal/other mode at or over the s.269SS/269T \
-limit ({limit_269} paise)."
+limit ({limit_269_text}).",
+            limit_269_text = rupees(limit_269)
         ),
         Vec::new(),
     );
