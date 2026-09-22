@@ -872,6 +872,26 @@ generalisations from a single company, and the rule behind them is not establish
 **UNVERIFIED — XML-driven rename.** Neither capture used one; both renames were performed in the
 UI. Deletion was not exercised at all. Per P6, neither may be built upon.
 
+### 12a.10 An opening bill keeps a date before `BOOKSFROM` — **VERIFIED 2026-09-22; single captured book**
+
+**Scope:** TallyPrime 7.1 Silver, licensed, one synthetic book (`BRIDGE CORPUS FOREX`,
+`BOOKSFROM` 20250401), the production Bills Receivable request as of 20250930. Committed as
+`bills_receivable_forex_live` (`LEDGER_CURRENCY_CAPTURE_PROVENANCE.md`).
+
+**Measured:** two opening bills, `FX-OPEN-1` and `INR-OPEN-1`, report `BILLDATE` and `BILLDUE` as
+`31-Mar-25`, the day before `BOOKSFROM`, with `BILLOVERDUE` `183` (20250331 to the as-of date).
+`BOOKSFROM` is therefore not a lower bound on a Bills row's dates, and a parser that treats it as
+one refuses the whole read (bridge#612).
+
+**Not measured:**
+- an opening bill dated more than a day before `BOOKSFROM`, or one with a credit period;
+- whether a due date can precede its bill date;
+- whether an as-of Bills report can list a bill dated after its as-of date. The parser assumes it
+  cannot and refuses such a row.
+
+How Bridge resolves the two-digit years is a design choice, documented at
+`native_outstandings/date.rs`.
+
 ---
 
 ## 13. Open questions

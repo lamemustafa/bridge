@@ -345,6 +345,9 @@ base revision.
 <a id="12a9-a-ledger-guid-survived-an-observed-ui-rename--coverage-must-compare-guid-to-name"></a>
 
 [12a.9 A ledger GUID survived an observed UI rename — coverage must compare GUID to name](./TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md#12a9-a-ledger-guid-survived-an-observed-ui-rename--coverage-must-compare-guid-to-name)
+<a id="12a10-an-opening-bill-keeps-a-date-before-booksfrom--verified-2026-09-22-single-captured-book"></a>
+
+[12a.10 An opening bill keeps a date before `BOOKSFROM` — **VERIFIED 2026-09-22; single captured book**](./TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md#12a10-an-opening-bill-keeps-a-date-before-booksfrom--verified-2026-09-22-single-captured-book)
 <a id="13-open-questions"></a>
 
 [13. Open questions](./TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md#13-open-questions)

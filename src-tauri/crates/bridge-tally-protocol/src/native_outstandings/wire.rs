@@ -31,7 +31,7 @@ use crate::tolerant_xml::{
 };
 use crate::{PartyLedgerMasterFieldObservation, TallyNamedMaster};
 
-use super::date::{parse_native_display_date, NativeDisplayDateRole};
+use super::date::{parse_native_bill_date, parse_native_due_date};
 use super::model::{LedgerSnapshotEntry, NativeBillRow, NativeOutstandingsError};
 
 struct PendingBillRow {
@@ -45,8 +45,9 @@ struct PendingBillRow {
 }
 
 /// Parses the flat Bills Receivable/Payable response into fully resolved
-/// rows. The pinned book window resolves their two-digit display dates (see
-/// [`super::date::parse_native_display_date`]).
+/// rows. The pinned book window resolves each bill date's two-digit year, and
+/// the bill date its due date's (see [`super::date::parse_native_bill_date`]
+/// and [`super::date::parse_native_due_date`]).
 pub fn parse_native_bill_rows(
     xml: &str,
     books_from: &bridge_tally_primitives::TallyDate,
@@ -250,18 +251,8 @@ fn finalize_bill_row(
             "bills_fixed_row_missing_billoverdue",
         ));
     }
-    let bill_date = parse_native_display_date(
-        &row.bill_date_raw,
-        books_from,
-        as_of,
-        NativeDisplayDateRole::BillDate,
-    )?;
-    let due_date = parse_native_display_date(
-        &due_date_raw,
-        books_from,
-        as_of,
-        NativeDisplayDateRole::DueDate,
-    )?;
+    let bill_date = parse_native_bill_date(&row.bill_date_raw, books_from, as_of)?;
+    let due_date = parse_native_due_date(&due_date_raw, &bill_date)?;
     Ok(NativeBillRow {
         party: row.party,
         reference: row.reference,

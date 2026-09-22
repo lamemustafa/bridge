@@ -39,7 +39,7 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE.md",
-      "sha256": "954e2f05e4b5d3d2064ef7931fdf6a36e25840c7bc54b37da5520755ed59abbe"
+      "sha256": "5738ec5fa78916cf25424bda62cc48be709a989199ff5274ef7f6f847fdd3107"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_COMPANY_IDENTITY_AND_CREATION.md",
@@ -51,7 +51,7 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md",
-      "sha256": "f8329f3cc1bfdfdfa41a2b94169389318c9f122c74a666b42dc04fc801b2017f"
+      "sha256": "5e57be6b4b054486f7caa6eb21f015c4232782a64f264b775fa6e01847a7d425"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_READS_AND_DATES.md",
@@ -283,11 +283,11 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/date.rs",
-      "sha256": "86f04db077b8d0f6fd11d9f2600e82260570a1c14eb45ab266f1a74c9636f52e"
+      "sha256": "9e7dc25634d5a7887e9d08552298a518e8213debc76f866c21c3939d1d948ee7"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/mod.rs",
-      "sha256": "008f0d39247202576b11f55d7d49329f8177b25409c8f9c4dc6743a0823bdee8"
+      "sha256": "e8e101d7a095f403d8adeec89934108da53b057163a59d1a2697ef60eca26ffc"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/model.rs",
@@ -299,7 +299,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/wire.rs",
-      "sha256": "066bacb029bfbf810e75fc7168576cc6801897782dca015d40e529ae79071705"
+      "sha256": "039dd200e405f934ad06b16beffb5ec3c95e619b0b5b8912716d8bc48d617f08"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_trial_balance/mod.rs",
@@ -1106,5 +1106,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "cbe35e56de5cd3593d03b83931ba76089e93b3eda1f78fa4fd3641edadd365f5"
+  "manifest_sha256": "ecfba49bb593d615335ba3251e845864e784ce2083c435ae58cb810b93e09693"
 }

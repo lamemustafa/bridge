@@ -8,8 +8,8 @@
 //! documented at each module:
 //!
 //! - [`request`] — exact request XML for both native reports.
-//! - [`date`] — Tally's `D-MMM-YY` display dates, resolved against the
-//!   pinned company's `BooksFrom` century only.
+//! - [`date`] — Tally's `D-MMM-YY` display dates: a bill date resolved in the
+//!   pinned company's book window, a due date against its bill date.
 //! - [`wire`] — the flat, inverted-`STATUS` Bills grammar and the
 //!   `DATA`-scoped Ledger collection grammar (`CMPINFO` counter trap).
 //! - [`model`] — row and result types; reuses `OutstandingsReport` so this
@@ -27,7 +27,10 @@ mod wire;
 pub use compute::{
     age_in_days, compute_native_outstandings, NativeGroupSnapshot, NativeMasterSnapshot,
 };
-pub use date::{parse_native_display_date, NativeDisplayDateRole};
+pub use date::{
+    parse_native_bill_date, parse_native_due_date, DUE_DATE_LOOKBACK_YEARS,
+    OPENING_BILL_LOOKBACK_YEARS,
+};
 pub use ledger_currency::{
     classify_ledger_currencies, BaseCurrencyName, ForeignCurrencyLedger, LedgerCurrencies,
     LedgerCurrencyRefusal,
