@@ -751,8 +751,9 @@ fn recheck_import_admission(
 /// goes only into a book with exactly one. That every ledger of such a book is
 /// in the base is an inference (a ledger's currency is one of the book's
 /// masters), not a measurement. When #601 lands, each leg's `CURRENCYNAME` is
-/// compared with the base instead. A response that parses to no master, or to
-/// one without a NAME, or does not parse, is `BaseCurrencyUndetermined`.
+/// compared with the base instead. A response that parses to no master, or
+/// does not parse (a master without a NAME does not), is
+/// `BaseCurrencyUndetermined`.
 fn admit_post_currency(currencies: &str) -> Result<(), ApprovedImportAdmissionError> {
     let currency = parse_company_currency(currencies)
         .map_err(|_| ApprovedImportAdmissionError::BaseCurrencyUndetermined)?;

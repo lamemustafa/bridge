@@ -1133,16 +1133,27 @@ fn a_post_is_admitted_only_into_a_book_with_one_currency_master() {
     .unwrap();
     assert!(serialized.get("names").is_none(), "{serialized}");
     // No base can be named from a response that does not parse, from one with
-    // no master, or from one whose only master has no NAME. The last two are
-    // explicit edits of the one-master capture, not live evidence.
+    // no master, or from one whose only master has no NAME (which the parser
+    // itself refuses). The last two are explicit edits of the one-master
+    // capture, not live evidence.
     let single = captured_currencies(include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
     ));
+    // The row's own close: CMPINFO's `<CURRENCY>0</CURRENCY>` comes earlier.
     let row_start = single.find("<CURRENCY NAME=").unwrap();
-    let row_end = single.find("</CURRENCY>").unwrap() + "</CURRENCY>".len();
+    let row_end =
+        row_start + single[row_start..].find("</CURRENCY>").unwrap() + "</CURRENCY>".len();
     let no_master = format!("{}{}", &single[..row_start], &single[row_end..]);
+    assert_eq!(
+        bridge_tally_protocol::native_outstandings::parse_company_currency(&no_master)
+            .unwrap()
+            .currency_count,
+        0,
+        "the edit must leave a readable collection with no master"
+    );
     assert_eq!(single.matches(" NAME=\"I₹\"").count(), 1);
     let nameless = single.replace(" NAME=\"I₹\"", " NAME=\"\"");
+    assert!(bridge_tally_protocol::native_outstandings::parse_company_currency(&nameless).is_err());
     for undetermined in ["<ENVELOPE/>", no_master.as_str(), nameless.as_str()] {
         assert_eq!(
             admit_post_currency(undetermined),

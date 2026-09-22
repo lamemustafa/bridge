@@ -1435,9 +1435,18 @@ async fn a_payment_into_a_book_with_two_currency_masters_is_refused_before_and_a
 #[tokio::test]
 async fn currency_masters_without_a_base_are_refused_in_the_queue_with_their_own_code() {
     let single = single_currency();
+    // The row's own close: CMPINFO's `<CURRENCY>0</CURRENCY>` comes earlier.
     let row_start = single.find("<CURRENCY NAME=").unwrap();
-    let row_end = single.find("</CURRENCY>").unwrap() + "</CURRENCY>".len();
+    let row_end =
+        row_start + single[row_start..].find("</CURRENCY>").unwrap() + "</CURRENCY>".len();
     let no_master = format!("{}{}", &single[..row_start], &single[row_end..]);
+    assert_eq!(
+        bridge_tally_protocol::native_outstandings::parse_company_currency(&no_master)
+            .unwrap()
+            .currency_count,
+        0,
+        "the edit must leave a readable collection with no master"
+    );
     let mut plans = before_approval();
     let mut after = after_approval_with_currencies(no_master, xml(created_one()));
     after.pop();
