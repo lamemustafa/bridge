@@ -3692,20 +3692,25 @@ impl TallyRuntime {
                             body.require_stable(PairedReadValidationError::CurrencyMaster)?;
                         evidence =
                             RuntimeReadEvidence::paired(&request, encoded_sha256, encoded_bytes);
-                        let mut currency = parse_company_currency(&body)?;
-                        if currency.currency_count > 1 {
+                        // A parse failure is reported only after the closing
+                        // extent and identity bracket, as it always was.
+                        let parsed = parse_company_currency(&body);
+                        let base_name = match &parsed {
                             // Several masters do not say which is the base: the
                             // company's own CURRENCYNAME does, by the base
                             // master's ORIGINALNAME (bridge#551). Only this case
-                            // costs the extra read.
-                            let request =
-                                render_company_base_currency_request(identity.display_name());
-                            let body = client.fetch_native_report_paired(request).await?;
-                            let (body, _, _) = body
-                                .require_stable(PairedReadValidationError::CompanyBaseCurrency)?;
-                            let name = parse_company_currency_name(&body, identity.company_guid())?;
-                            currency = currency.with_company_currency_name(&name);
-                        }
+                            // costs the extra read, inside the same bracket.
+                            Ok(currency) if currency.currency_count > 1 => {
+                                let request =
+                                    render_company_base_currency_request(identity.display_name());
+                                let body = client.fetch_native_report_paired(request).await?;
+                                let (body, _, _) = body.require_stable(
+                                    PairedReadValidationError::CompanyBaseCurrency,
+                                )?;
+                                Some(parse_company_currency_name(&body, identity.company_guid()))
+                            }
+                            _ => None,
+                        };
                         let closing_extent = client.fetch_company_book_extent(&identity).await?;
                         if closing_extent != extent {
                             return Err(anyhow::Error::new(
@@ -3713,6 +3718,10 @@ impl TallyRuntime {
                             ));
                         }
                         bracket_verified_company_identity(&client, &identity).await?;
+                        let mut currency = parsed?;
+                        if let Some(name) = base_name {
+                            currency = currency.with_company_currency_name(&name?);
+                        }
                         Ok(CompanyCurrencyRead {
                             currency,
                             extent,

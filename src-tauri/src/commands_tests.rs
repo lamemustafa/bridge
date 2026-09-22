@@ -556,7 +556,7 @@ fn party_master_currency_admission_does_not_misdiagnose_multiple_masters() {
     assert!(error.message.contains("multiple Currency masters"));
     assert!(error
         .message
-        .contains("could not establish the selected company's base currency from this read"));
+        .contains("could not match exactly one of them to the selected company's base currency"));
     assert!(!error.message.contains("more than one base currency"));
     assert!(error
         .remediation

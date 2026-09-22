@@ -8,11 +8,26 @@ fn currency_source() -> String {
 }
 
 fn currency_plans(currency: String) -> Vec<ScenarioPlan> {
+    currency_plans_with_base(currency, None)
+}
+
+/// As [`currency_plans`], with the paired base-currency read a company with
+/// several Currency masters sends, answered by a synthetic `Company`
+/// collection naming `base` for the company under test (bridge#551).
+fn currency_plans_with_base(currency: String, base: Option<(&str, &str)>) -> Vec<ScenarioPlan> {
     let company = xml(companies());
     let extent = xml(extents());
     let mut plans = vec![company.clone()];
     pair(&mut plans, extent.clone());
     pair(&mut plans, xml(currency));
+    if let Some((guid, currency_name)) = base {
+        pair(
+            &mut plans,
+            xml(format!(
+                "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"Synthetic Book\" RESERVEDNAME=\"\"><GUID TYPE=\"String\">{guid}</GUID><CURRENCYNAME TYPE=\"String\">{currency_name}</CURRENCYNAME></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"
+            )),
+        );
+    }
     pair(&mut plans, extent);
     plans.push(company);
     plans
@@ -184,7 +199,10 @@ async fn agent_outstandings_rejects_unadmitted_currency_before_native_read() {
         };
         assert_ne!(faulty, captured);
         let response = encode(&faulty, WireEncoding::Utf16Le);
-        let simulator = SequenceSimulator::spawn(currency_plans(faulty)).unwrap();
+        // Two masters also send the base-currency read. Neither duplicated
+        // row carries an ORIGINALNAME, so the base stays undetermined.
+        let base = (fault == "multiple").then_some(("eebb9a9f-1679-4468-9e8f-814c729674cb", "₹"));
+        let simulator = SequenceSimulator::spawn(currency_plans_with_base(faulty, base)).unwrap();
         let result = TallyRuntime::default()
             .detect_base_currency_with_extent(
                 TallyConfig {
@@ -223,9 +241,45 @@ async fn agent_outstandings_rejects_unadmitted_currency_before_native_read() {
             evidence
         };
         let requests = simulator.finish().unwrap();
-        assert_eq!(requests.len(), 14);
+        assert_eq!(requests.len(), if fault == "multiple" { 18 } else { 14 });
         assert_eq!(evidence.request_sha256, requests[5].request_body_sha256);
         assert_eq!(evidence.response_sha256, sha256_hex(&response));
         assert_eq!(evidence.bytes, response.len() * 2);
     }
+}
+
+/// A base-currency response that names no row for this company is refused, and
+/// like a malformed currency response it is refused only after the closing
+/// extent and identity bracket went out: all 18 scripted requests arrive.
+#[tokio::test]
+async fn an_unusable_base_currency_is_refused_after_the_closing_bracket() {
+    let captured = currency_source();
+    let start = captured.find("<CURRENCY ").unwrap();
+    let end = start + captured[start..].find("</CURRENCY>").unwrap() + "</CURRENCY>".len();
+    let mut multiple = captured.clone();
+    multiple.insert_str(end, &captured[start..end]);
+    let simulator = SequenceSimulator::spawn(currency_plans_with_base(
+        multiple,
+        Some(("00000000-0000-4000-8000-0000000000ff", "₹")),
+    ))
+    .unwrap();
+    let error = TallyRuntime::default()
+        .detect_base_currency_with_extent(
+            TallyConfig {
+                host: simulator.address().ip().to_string(),
+                port: simulator.address().port(),
+            },
+            &identity_for_guid(&companies(), "eebb9a9f-1679-4468-9e8f-814c729674cb"),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<NativeOutstandingsError>()),
+        Some(NativeOutstandingsError::InvalidResponse(
+            "company_currency_row_missing"
+        ))
+    ));
+    assert_eq!(simulator.finish().unwrap().len(), 18);
 }
