@@ -731,6 +731,107 @@ async fn failed_period_read_preserves_its_error_after_a_closing_identity_request
     assert_eq!(methods, ["POST", "POST", "POST"]);
 }
 
+/// The period report is a custom report whose TDL Education answers with a
+/// blocking dialog on the Tally screen (bridge#45). With Education observed,
+/// by the identity read that precedes it or by the run's own probe, it is
+/// refused before it is sent. Licensed, the same read goes out.
+#[tokio::test]
+async fn the_period_report_is_refused_before_sending_when_education_is_observed() {
+    let _simulator_guard = simulator_test_lock().lock().await;
+    let company_guid = "synthetic-company-guid";
+    let collection = |edumode: &str| {
+        format!(
+            r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><GUID TYPE="String">{company_guid}</GUID><COMPANYNUMBER TYPE="Number">100001</COMPANYNUMBER><BOOKSFROM TYPE="Date">20260401</BOOKSFROM><EDUMODE TYPE="Logical">{edumode}</EDUMODE></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
+        )
+    };
+    let education_profile = bridge_tally_core::CapabilityProfile {
+        profile_version: 4,
+        product: "TallyPrime".to_string(),
+        release: Some("7.1".to_string()),
+        license_tier: None,
+        mode: Some("Education".to_string()),
+        transports: Default::default(),
+        features: Default::default(),
+        packs: Default::default(),
+    };
+    for (case, responses, probed_education) in [
+        (
+            "identity read reports Education",
+            vec![collection("Yes")],
+            false,
+        ),
+        ("probe reported Education", vec![collection("No")], true),
+        (
+            "licensed",
+            vec![
+                collection("No"),
+                "<ENVELOPE><HEADER><STATUS>0</STATUS></HEADER></ENVELOPE>".to_string(),
+                collection("No"),
+            ],
+            false,
+        ),
+    ] {
+        let licensed = case == "licensed";
+        let (address, server) = spawn_method_routed_server_refusing_extra_requests(responses).await;
+        let config = TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        };
+        let company = CompanyRef {
+            identity: company_source_identity(
+                &format!("tally_xml_http:http://{address}"),
+                company_guid,
+                "100001",
+                "Synthetic Company",
+                "20260401",
+            ),
+            display_name: "Synthetic Company".to_string(),
+        };
+        let context = RequestContext {
+            run_id: "run-period-education".to_string(),
+            company: company.clone(),
+            pack: CapabilityPackId::CoreAccounting,
+            schema_version: CORE_ACCOUNTING_SCHEMA_VERSION,
+            window: ReadWindow {
+                from_yyyymmdd: "20260701".to_string(),
+                to_yyyymmdd: "20260701".to_string(),
+            },
+            query_profile: bridge_tally_core::CanonicalText::parse(CORE_QUERY_PROFILE).unwrap(),
+            filters_sha256: bridge_tally_core::CanonicalText::parse("0".repeat(64)).unwrap(),
+        };
+        let connector =
+            RuntimeTallyConnector::new(TallyRuntime::default(), config, company, context.clone())
+                .unwrap();
+        if probed_education {
+            assert_eq!(
+                connector
+                    .observe_snapshot_profile(&education_profile)
+                    .unwrap(),
+                DateBoundaryProfile::EducationRestricted
+            );
+        }
+        let error = connector
+            .read_core_period_balance_report(&context)
+            .await
+            .expect_err(case);
+        let methods = server.await.expect("join period server");
+        if licensed {
+            // The report was sent (and its rejection is the reported failure).
+            assert!(
+                matches!(&error, TallyError::Protocol { code } if code == "application_response_rejected"),
+                "{case}: {error:?}"
+            );
+            assert_eq!(methods, ["POST", "POST", "POST"], "{case}");
+        } else {
+            assert!(
+                matches!(&error, TallyError::Unsupported { code } if code == "education_report_family_unsupported"),
+                "{case}: {error:?}"
+            );
+            assert_eq!(methods, ["POST"], "{case}: only the identity read went out");
+        }
+    }
+}
+
 /// `discover_companies` requests the native `Company` collection
 /// (`ReadOnlyProfile::CompanyListV2`) and must fail closed -- rejecting the
 /// whole discovery read -- when a company row in that collection omits its

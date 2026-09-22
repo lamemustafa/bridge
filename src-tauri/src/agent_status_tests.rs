@@ -36,8 +36,10 @@ async fn tally_status_uses_observed_gateway_product_and_preserves_wire_evidence(
             assert_ne!(altered, captured);
             altered
         } else if fault == "education" {
-            // A single metadata fault exercises the flag mapping, not live
-            // qualification of an Education-mode Tally endpoint.
+            // Only EDUMODE flips, leaving SILVER=Yes and GOLD=No: the
+            // combination a live Education instance reported on 22 Sep 2026
+            // (bridge#581). It exercises the flag mapping, not a qualification
+            // of an Education endpoint.
             let altered = captured.replace(
                 "<EDUMODE TYPE=\"Logical\">No</EDUMODE>",
                 "<EDUMODE TYPE=\"Logical\">Yes</EDUMODE>",

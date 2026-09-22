@@ -720,7 +720,8 @@ fn parse_company_gateway_capability_row(
 /// mode must not have that restriction switched off by a field it cannot parse,
 /// so for this one question an uncertain `EDUMODE` counts as Education. A
 /// response with no `EDUMODE` field at all returns `false`: nothing in it
-/// speaks to the mode. `IsEducationalMode=Yes` has not been captured live.
+/// speaks to the mode. A live Education instance was observed on 22 Sep 2026
+/// reporting `EDUMODE=Yes` alongside `SILVER=Yes` and `GOLD=No` (bridge#581).
 ///
 /// Only fields inside the collection's `DATA` are read, as the strict parser
 /// reads rows only beneath `ENVELOPE/BODY/DATA/COLLECTION`: the `DESC/CMPINFO`
