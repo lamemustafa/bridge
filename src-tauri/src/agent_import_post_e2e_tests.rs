@@ -296,7 +296,7 @@ async fn an_approved_post_sends_exactly_the_request_its_intent_recorded() {
     );
     assert_eq!(
         scripted.previews(),
-        [admit_fresh_saved_journal(&line, &server.settings.endpoint).unwrap()]
+        [admit_fresh_saved_voucher(&line, &server.settings.endpoint).unwrap()]
     );
 }
 
@@ -328,7 +328,7 @@ async fn a_declined_post_sends_nothing_and_journals_no_intent() {
     );
     assert_eq!(
         scripted.previews(),
-        [admit_fresh_saved_journal(&line, &server.settings.endpoint).unwrap()]
+        [admit_fresh_saved_voucher(&line, &server.settings.endpoint).unwrap()]
     );
 }
 
@@ -416,4 +416,399 @@ async fn a_dispatch_admission_that_fails_sends_nothing() {
         json!(true),
         "{response}"
     );
+}
+
+// ADR 0004 as amended 2026-09-22: one Payment, Receipt or Contra posts under
+// every Journal safeguard, and its legs are classified again from the ledgers'
+// parents and the group tree before approval and inside the queue.
+
+const BANK_BATCH: &str = "bridge-00000000-0000-4000-8000-000000000466";
+
+fn groups() -> String {
+    captured(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-party-groups.utf16le.xml"
+    ))
+}
+
+/// `body` with the one occurrence of `from` replaced by `to`.
+fn replaced_once(body: &str, from: &str, to: &str) -> String {
+    assert_eq!(body.matches(from).count(), 1, "{from} must occur once");
+    body.replace(from, to)
+}
+
+/// The counterparty ledger moved directly under a cash group.
+fn catalogue_with_debtor_under_cash() -> String {
+    replaced_once(
+        &catalogue(),
+        ">Bridge Nested Debtors WR4</PARENT>",
+        ">Cash-in-Hand</PARENT>",
+    )
+}
+
+/// The counterparty ledger's own group moved under Bank Accounts; the ledger
+/// row itself is byte-identical.
+fn groups_with_debtor_group_under_bank() -> String {
+    replaced_once(
+        &groups(),
+        ">Sundry Debtors</PARENT>",
+        ">Bank Accounts</PARENT>",
+    )
+}
+
+/// A second money ledger, for a Contra: `WR2 Sales` read as a bank account in
+/// every read of the run.
+fn catalogue_with_sales_as_bank() -> String {
+    replaced_once(
+        &catalogue(),
+        ">Sales Accounts</PARENT>",
+        ">Bank Accounts</PARENT>",
+    )
+}
+
+/// `before_approval`, for a bank voucher: the post's classification reads the
+/// group collection after the catalogue, before the qualified mode.
+fn bank_before_approval(catalogue: String, groups: String) -> Vec<ScenarioPlan> {
+    let mut plans = Vec::new();
+    plans.extend(probe());
+    plans.extend(verified_company());
+    plans.extend(paired(marks()));
+    plans.extend(paired(empty_collection()));
+    plans.extend(paired(empty_collection()));
+    plans.extend(probe());
+    plans.extend(verified_company());
+    plans.extend(paired(catalogue));
+    plans.extend(paired(groups));
+    plans.extend(probe());
+    plans
+}
+
+/// `after_approval`, for a bank voucher: the queue re-reads the group
+/// collection right after the catalogue, inside the same admission brackets.
+fn bank_after_approval(catalogue: String, groups: String, post: ScenarioPlan) -> Vec<ScenarioPlan> {
+    let mut plans = probe();
+    plans.push(xml(companies()));
+    plans.extend(paired(catalogue));
+    plans.extend(paired(groups));
+    plans.extend(probe());
+    plans.push(xml(companies()));
+    plans.extend(paired(empty_collection()));
+    plans.extend(paired(empty_collection()));
+    plans.push(post);
+    plans
+}
+
+/// A built, never-dispatched single-voucher bank batch, as `build_import_xml`
+/// leaves one.
+fn saved_bank_batch(server: &Server, voucher: Value) -> (ImportLedgerLine, Value) {
+    let origin = super::super::super::canonical_loopback_origin(&server.settings.endpoint).unwrap();
+    let mut line: ImportLedgerLine = serde_json::from_value(json!({
+        "batch_id":BANK_BATCH, "identity_scheme":"batch_v1",
+        "company_guid":GUID,
+        "endpoint_origin":origin,
+        "company":{"name":"WR2 Unicode Lab","guid":GUID,"company_number":"100004","books_from":"20260401"},
+        "txn_ids":[voucher["bridge_txn_id"].clone()],"date_from":"20260901","date_to":"20260901",
+        "sha256":"", "built_at":"2026-09-22T00:00:00Z", "status":"built",
+        "pre_import_mark":{"kind":"company_high_water","value":10,"master_value":7},
+        "vouchers":[voucher]
+    }))
+    .unwrap();
+    let rendered = render_import_xml("WR2 Unicode Lab", &line.vouchers, &line.batch_id);
+    line.sha256 = sha256_hex(rendered.as_bytes());
+    server.append_import_ledger(&line).unwrap();
+    fs::write(
+        server
+            .imports_dir()
+            .unwrap()
+            .join(format!("{}.xml", line.batch_id)),
+        rendered,
+    )
+    .unwrap();
+    let args = json!({"company_guid":GUID,"batch_id":line.batch_id});
+    (line, args)
+}
+
+fn payment() -> Value {
+    json!({"bridge_txn_id":"payment-466","date":"20260901","voucher_type":"Payment",
+        "narration":"Synthetic test only","entries":[
+            {"ledger":"Bridge Nested Debtor WR4","amount":"12.50","side":"Dr"},
+            {"ledger":"Cash","amount":"12.50","side":"Cr"}]})
+}
+
+fn receipt() -> Value {
+    json!({"bridge_txn_id":"receipt-466","date":"20260901","voucher_type":"Receipt",
+        "narration":"Synthetic test only","entries":[
+            {"ledger":"Cash","amount":"7.50","side":"Dr"},
+            {"ledger":"Bridge Nested Debtor WR4","amount":"7.50","side":"Cr"}]})
+}
+
+fn contra() -> Value {
+    json!({"bridge_txn_id":"contra-466","date":"20260901","voucher_type":"Contra",
+        "narration":"Synthetic test only","entries":[
+            {"ledger":"WR2 Sales","amount":"5.00","side":"Dr"},
+            {"ledger":"Cash","amount":"5.00","side":"Cr"}]})
+}
+
+/// Each bank type posts through the tool call exactly as a Journal does: the
+/// POST is the request its intent recorded, rendered by the code's own
+/// renderer from the recorded REMOTEID, and the approval was asked about a
+/// preview that names the type and the classification it relies on.
+#[tokio::test]
+async fn each_bank_type_posts_the_request_its_intent_recorded() {
+    for (voucher, catalogue, type_name, rule) in [
+        (
+            payment(),
+            catalogue(),
+            "Payment",
+            "every Cr ledger is bank/cash; every Dr ledger holds no money",
+        ),
+        (
+            receipt(),
+            catalogue(),
+            "Receipt",
+            "every Dr ledger is bank/cash; every Cr ledger holds no money",
+        ),
+        (
+            contra(),
+            catalogue_with_sales_as_bank(),
+            "Contra",
+            "every ledger is bank/cash",
+        ),
+    ] {
+        let mut plans = bank_before_approval(catalogue.clone(), groups());
+        let after = bank_after_approval(catalogue.clone(), groups(), xml(created_one()));
+        let post_at = plans.len() + after.len() - 1;
+        plans.extend(after);
+        let simulator = SequenceSimulator::spawn(plans).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let server = server_at(simulator.address(), directory.path());
+        let (line, args) = saved_bank_batch(&server, voucher);
+        let scripted = ScriptedApproval::approving();
+        let response = SCRIPTED_APPROVAL
+            .scope(scripted.clone(), server.call_tool("post_import", args))
+            .await;
+        let observed = sent(simulator);
+        assert_eq!(observed.len(), post_at + 1, "{type_name}: {response}");
+
+        let intent = dispatch_intent(directory.path());
+        let recorded_sha = intent["native_request_sha256"].as_str().unwrap();
+        let remote_id = Uuid::parse_str(intent["native_remote_id"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            observed[post_at].request_body_sha256, recorded_sha,
+            "{type_name}"
+        );
+        let rendered = native_post_request(&line, remote_id).unwrap();
+        assert_eq!(rendered.request_sha256, recorded_sha, "{type_name}");
+        assert!(
+            rendered.xml.contains(&format!("VCHTYPE=\"{type_name}\"")),
+            "{type_name}: {}",
+            rendered.xml
+        );
+        let previews = scripted.previews();
+        assert_eq!(
+            previews,
+            [admit_fresh_saved_voucher(&line, &server.settings.endpoint).unwrap()]
+        );
+        assert!(
+            previews[0].starts_with(&format!("Create ONE {type_name} in ")),
+            "{}",
+            previews[0]
+        );
+        assert!(
+            previews[0].contains(&format!("Checked in Tally: {rule}.")),
+            "{}",
+            previews[0]
+        );
+    }
+}
+
+fn three_entry_receipt() -> Value {
+    json!({"bridge_txn_id":"receipt-3-466","date":"20260901","voucher_type":"Receipt",
+        "narration":"Synthetic test only","entries":[
+            {"ledger":"Cash","amount":"3.00","side":"Dr"},
+            {"ledger":"Bridge Nested Debtor WR4","amount":"1.00","side":"Cr"},
+            {"ledger":"Café Naïve Traders","amount":"2.00","side":"Cr"}]})
+}
+
+/// The SECOND counterparty of the three-entry Receipt moved under a cash group;
+/// the first counterparty's row is byte-identical.
+fn catalogue_with_second_counterparty_under_cash() -> String {
+    let body = catalogue();
+    let start = body
+        .find("<LEDGER NAME=\"Café Naïve Traders\"")
+        .expect("ledger row");
+    let end = start + body[start..].find("</LEDGER>").expect("row end");
+    let row = &body[start..end];
+    let moved = replaced_once(row, ">Sundry Debtors</PARENT>", ">Cash-in-Hand</PARENT>");
+    format!("{}{}{}", &body[..start], moved, &body[end..])
+}
+
+/// A multi-entry bank voucher (bridge#466, #585) posts like any other: the
+/// preview lists every entry, and the POST is the recorded request.
+#[tokio::test]
+async fn a_three_entry_receipt_posts_the_request_its_intent_recorded() {
+    let mut plans = bank_before_approval(catalogue(), groups());
+    let after = bank_after_approval(catalogue(), groups(), xml(created_one()));
+    let post_at = plans.len() + after.len() - 1;
+    plans.extend(after);
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (line, args) = saved_bank_batch(&server, three_entry_receipt());
+    let scripted = ScriptedApproval::approving();
+    let response = SCRIPTED_APPROVAL
+        .scope(scripted.clone(), server.call_tool("post_import", args))
+        .await;
+    let observed = sent(simulator);
+    assert_eq!(observed.len(), post_at + 1, "{response}");
+    let intent = dispatch_intent(directory.path());
+    let recorded_sha = intent["native_request_sha256"].as_str().unwrap();
+    assert_eq!(observed[post_at].request_body_sha256, recorded_sha);
+    let remote_id = Uuid::parse_str(intent["native_remote_id"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        native_post_request(&line, remote_id)
+            .unwrap()
+            .request_sha256,
+        recorded_sha
+    );
+    let previews = scripted.previews();
+    assert_eq!(previews.len(), 1);
+    for entry in [
+        "Dr 3.00  \"Cash\"",
+        "Cr 1.00  \"Bridge Nested Debtor WR4\"",
+        "Cr 2.00  \"Café Naïve Traders\"",
+    ] {
+        assert!(previews[0].contains(entry), "{entry}: {}", previews[0]);
+    }
+}
+
+/// Every leg is classified again in the queue, not only the first on each
+/// side: the second counterparty turning into money refuses the post.
+#[tokio::test]
+async fn a_second_counterparty_moved_under_cash_after_approval_is_refused() {
+    let mut plans = bank_before_approval(catalogue(), groups());
+    let after = bank_after_approval(
+        catalogue_with_second_counterparty_under_cash(),
+        groups(),
+        xml(created_one()),
+    );
+    let expected = plans.len() + after.len() - 1;
+    plans.extend(after);
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_bank_batch(&server, three_entry_receipt());
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    let observed = sent(simulator);
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"],
+        "import_bank_classification_changed",
+        "{response}"
+    );
+    assert_eq!(observed.len(), expected, "{response}");
+    assert!(!String::from_utf8(journal(directory.path()))
+        .unwrap()
+        .contains("\"dispatch_intent\""));
+}
+
+/// Refused inside the queue, after approval: no intent, and nothing past the
+/// queued reads. The POST's plan and one after it stay in the sequence, so a
+/// post that went ahead would be served and observed here.
+async fn refused_in_the_queue(queued_catalogue: String, queued_groups: String) {
+    let mut plans = bank_before_approval(catalogue(), groups());
+    let after = bank_after_approval(queued_catalogue, queued_groups, xml(created_one()));
+    let expected = plans.len() + after.len() - 1;
+    plans.extend(after);
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_bank_batch(&server, payment());
+    let before = journal(directory.path());
+    let scripted = ScriptedApproval::approving();
+    let response = SCRIPTED_APPROVAL
+        .scope(scripted.clone(), server.call_tool("post_import", args))
+        .await;
+    let observed = sent(simulator);
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["error"]["code"], "import_bank_classification_changed",
+        "{response}"
+    );
+    assert_eq!(scripted.previews().len(), 1, "approval was asked once");
+    assert_eq!(observed.len(), expected, "{response}");
+    assert_eq!(
+        appended_kinds(&before, &journal(directory.path())),
+        ["verification_status"]
+    );
+}
+
+/// A ledger re-parented after approval keeps its name and GUID, so the
+/// catalogue binding still matches; only the classification sees it.
+#[tokio::test]
+async fn a_counterparty_moved_under_cash_after_approval_is_refused_before_the_post() {
+    refused_in_the_queue(catalogue_with_debtor_under_cash(), groups()).await;
+}
+
+/// A group re-parented after approval changes no ledger row at all.
+#[tokio::test]
+async fn a_counterparty_group_moved_under_bank_after_approval_is_refused_before_the_post() {
+    refused_in_the_queue(catalogue(), groups_with_debtor_group_under_bank()).await;
+}
+
+/// Already changed since the build: refused before approval is asked, and no
+/// request follows the classification reads.
+#[tokio::test]
+async fn a_classification_changed_since_the_build_is_refused_before_approval() {
+    for (catalogue, groups) in [
+        (catalogue_with_debtor_under_cash(), groups()),
+        (catalogue(), groups_with_debtor_group_under_bank()),
+    ] {
+        let mut plans = bank_before_approval(catalogue, groups);
+        // The qualified mode probe after the group read is never sent.
+        plans.truncate(plans.len() - probe().len());
+        let expected = plans.len();
+        let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let server = server_at(simulator.address(), directory.path());
+        let (_, args) = saved_bank_batch(&server, payment());
+        let scripted = ScriptedApproval::approving();
+        let response = SCRIPTED_APPROVAL
+            .scope(scripted.clone(), server.call_tool("post_import", args))
+            .await;
+        let observed = sent(simulator);
+        assert_eq!(
+            response["structuredContent"]["result"]["error"]["code"],
+            "import_bank_classification_changed",
+            "{response}"
+        );
+        assert!(scripted.previews().is_empty(), "approval must not be asked");
+        assert_eq!(observed.len(), expected, "{response}");
+        assert!(!String::from_utf8(journal(directory.path()))
+            .unwrap()
+            .contains("\"dispatch_intent\""));
+    }
+}
+
+/// The desktop's post stays Journal-only: the same saved Payment the agent can
+/// post is refused before any request.
+#[tokio::test]
+async fn the_desktop_scope_refuses_a_bank_voucher_before_any_request() {
+    let simulator = SequenceSimulator::spawn(with_sentinel(Vec::new())).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (line, args) = saved_bank_batch(&server, payment());
+    let refused = server
+        .post_import_checked(&args, Some(&line.sha256), PostScope::JournalOnly)
+        .await
+        .expect("a refusal is reported as the post's outcome");
+    assert_eq!(
+        refused.payload["result"]["error"]["code"], "import_post_requires_one_journal",
+        "{}",
+        refused.payload
+    );
+    assert!(sent(simulator).is_empty());
 }

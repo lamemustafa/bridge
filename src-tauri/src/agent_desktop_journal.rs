@@ -60,7 +60,11 @@ impl DesktopJournalService {
         company_guid: &str,
     ) -> DesktopJournalOperation {
         let args = json!({"batch_id":batch_id,"company_guid":company_guid});
-        match self.server.post_import_checked(&args, Some(sha256)).await {
+        match self
+            .server
+            .post_import_checked(&args, Some(sha256), super::post::PostScope::JournalOnly)
+            .await
+        {
             Ok(outcome) => DesktopJournalOperation::from_outcome(outcome),
             Err(failure) => {
                 // This Err boundary precedes approval/dispatch. It does not

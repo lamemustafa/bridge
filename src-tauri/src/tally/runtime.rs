@@ -3164,6 +3164,7 @@ impl TallyRuntime {
             &str,
             &str,
             &str,
+            Option<&str>,
             &bridge_tally_protocol::StandardLedgerCatalogBinding,
         ) -> anyhow::Result<()>,
         F: Fn() -> Result<(), String>,
@@ -3217,6 +3218,22 @@ impl TallyRuntime {
                     .await
                     .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
                     let admission_evidence = admission_evidence.combine(catalogue_evidence);
+                    // A bank voucher's legs are classified from the ledgers'
+                    // parents (in the catalogue above) and the group tree, so
+                    // both are re-read here, inside the same identity brackets,
+                    // after approval and before the POST.
+                    let (groups, admission_evidence) = match request.group_collection_request() {
+                        Some(group_request) => {
+                            let (groups, group_evidence) =
+                                fetch_admitted_agent_read(&client, &identity, group_request)
+                                    .await
+                                    .map_err(|error| {
+                                        with_read_evidence(error, admission_evidence.clone())
+                                    })?;
+                            (Some(groups), admission_evidence.combine(group_evidence))
+                        }
+                        None => (None, admission_evidence),
+                    };
                     let (profile, mode_evidence) = observe_read_boundary(&client)
                         .await
                         .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
@@ -3258,6 +3275,7 @@ impl TallyRuntime {
                         &first_read.body,
                         &second_read.body,
                         &catalogue.body,
+                        groups.as_ref().map(|groups| groups.body.as_str()),
                         request.ledger_binding(),
                     )
                     .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;

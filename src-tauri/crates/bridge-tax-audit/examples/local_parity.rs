@@ -40,7 +40,8 @@
 //! written for the reference implementation's FULL pack, though, and a real client TOML typically
 //! binds many labels this port never reads (`gst_outward`, `related_parties`, ...);
 //! `narrow_identity_tables` below strips `[ledger_ids]`/`[group_ids]` down to just the labels the
-//! ten locations this port's `Engagement` reads actually use, before `Engagement::from_toml` ever
+//! locations this port's `Engagement` reads actually use (a legacy trade-creditor source's names
+//! included, read relative to `CLIENT_TOML`'s directory as the reference reads them), before `Engagement::from_toml` ever
 //! sees them, so `BIND-ID-UNUSED` never fires on a label this port simply does not consume.
 //! `python_golden.py`'s own `bind_config` call sees the FULL, unnarrowed tables (it binds every
 //! location the reference implementation reads, not just the ones this port reads), so its
@@ -88,7 +89,7 @@ fn vendored_blocks_are_verbatim(source: &str) -> bool {
 /// binds only for a role this port does not implement (see this file's doc comment and `docs/tax-audit/config-identity-binding-v1.md` section 4).
 /// A label absent from `cfg` entirely is simply not collected; this never adds anything to `cfg`,
 /// only removes stale table entries.
-fn narrow_identity_tables(cfg: &mut toml::Table) {
+fn narrow_identity_tables(cfg: &mut toml::Table, base: &Path) -> Result<(), String> {
     let mut ledger_labels = std::collections::BTreeSet::new();
     let mut group_labels = std::collections::BTreeSet::new();
     let strs = |v: &toml::Value| -> Vec<String> {
@@ -101,12 +102,40 @@ fn narrow_identity_tables(cfg: &mut toml::Table) {
             .unwrap_or_default()
     };
     if let Some(roles) = cfg.get("roles").and_then(toml::Value::as_table) {
-        for key in ["cash_groups", "bank_groups"] {
+        for key in ["cash_groups", "bank_groups", "creditor_groups"] {
             if let Some(v) = roles.get(key) {
                 group_labels.extend(strs(v));
             }
         }
         if let Some(v) = roles.get("round_off_ledgers") {
+            ledger_labels.extend(strs(v));
+        }
+        let legacy = bridge_tax_audit::legacy_trade_creditor_names(
+            roles.get("trade_creditors_source"),
+            base,
+        )
+        .map_err(|e| e.to_string())?;
+        ledger_labels.extend(legacy.unwrap_or_default());
+    }
+    if let Some(sd) = cfg.get("statutory_dues").and_then(toml::Value::as_table) {
+        if let Some(t) = sd.get("nature_by_ledger").and_then(toml::Value::as_table) {
+            ledger_labels.extend(t.keys().cloned());
+        }
+        if let Some(v) = sd.get("salary_expense_ledgers") {
+            ledger_labels.extend(strs(v));
+        }
+    }
+    if let Some(ca) = cfg
+        .get("creditor_ageing_43bh")
+        .and_then(toml::Value::as_table)
+    {
+        if let Some(t) = ca
+            .get("supplier_classification")
+            .and_then(toml::Value::as_table)
+        {
+            ledger_labels.extend(t.keys().cloned());
+        }
+        if let Some(v) = ca.get("mse_interest_ledgers") {
             ledger_labels.extend(strs(v));
         }
     }
@@ -160,6 +189,7 @@ fn narrow_identity_tables(cfg: &mut toml::Table) {
     if let Some(toml::Value::Table(t)) = cfg.get_mut("group_ids") {
         t.retain(|k, _| group_labels.contains(k));
     }
+    Ok(())
 }
 
 fn main() -> ExitCode {
@@ -239,11 +269,20 @@ fn main() -> ExitCode {
     };
     let mut snapshot = toml::Table::new();
     snapshot.insert("format".into(), "tally-read-v1".into());
-    snapshot.insert("path".into(), read_dir.as_str().into());
+    // Absolute, because the engagement's base is the client config's own directory (a legacy
+    // trade-creditor source is relative to it, as the reference resolves it).
+    let read_abs = std::fs::canonicalize(read_dir.as_str())
+        .map_or_else(|_| read_dir.clone(), |p| p.display().to_string());
+    snapshot.insert("path".into(), read_abs.as_str().into());
     snapshot.insert("allow_unbracketed_read".into(), true.into());
     cfg.insert("snapshot".into(), snapshot.into());
-    narrow_identity_tables(&mut cfg);
-    let engagement = match Engagement::from_toml(&cfg.to_string(), Path::new(".")) {
+    let base = Path::new(client_toml.as_str())
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    if let Err(e) = narrow_identity_tables(&mut cfg, base) {
+        return fail(format!("{client_toml}: {e}"));
+    }
+    let engagement = match Engagement::from_toml(&cfg.to_string(), base) {
         Ok(e) => e,
         Err(e) => return fail(e),
     };

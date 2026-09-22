@@ -23,6 +23,14 @@
 #   9. [s194j] (added for tds_payees), as three blocks: the table header alone; its three value
 #      lines verbatim; and `status` cut at its value. Excludes the header's comment lines and the
 #      status line's trailing comment, which cite private research notes.
+#   10. [s43b_h] in full (added for creditor_ageing_43bh): both MSMED day limits, authority, status.
+#   11. [s43b] (added for statutory_dues_43b), as two blocks: the table header alone, then
+#       authority and status. Excludes the header's comment lines, which name the reference's own
+#       module history.
+#   12. [s36_1_va] (added for statutory_dues_43b), as three blocks: the header alone; `due_day`
+#       cut at its value (its trailing comment cites a private research note, and this repository
+#       is public; the substring check still holds); and authority and status. Excludes the
+#       header's comment lines.
 # The source file's sha256 and the reference commit are recorded in src/rules.rs. This file's own
 # name predates the [s40a3]/[s269st]/[s269ss_269t]/[depreciation] additions; kept as-is rather than
 # renamed.
@@ -113,3 +121,21 @@ technical_services_rate_bp = 200                    # also film royalty and call
 authority = "s.194J(1) first proviso, clause (B)(i)-(iv), as amended by Finance Act 2025; director fees under clause (ba) have no threshold"
 
 status = "VP"
+
+[s43b_h]
+msme_days_with_agreement = 45
+msme_days_without_agreement = 15
+authority = "s.43B(h); s.15 MSMED Act 2006"
+status = "verified"
+
+[s43b]
+
+authority = "s.43B and its proviso (payment on or before the s.139(1) return due date); Explanation 5 (employees' contributions are governed by s.36(1)(va), not this proviso)"
+status = "confirm"
+
+[s36_1_va]
+
+due_day = 15
+
+authority = "s.36(1)(va); Explanations 1 and 2 (Finance Act 2021, from AY 2021-22); Checkmate Services P Ltd v CIT (2022) (SC)"
+status = "confirm"

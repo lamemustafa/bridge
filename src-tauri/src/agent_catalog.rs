@@ -365,7 +365,7 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
                         bank_statement::input_schema(),
                     ),
                     "post_import" => (
-                        "Ask the local user to review and approve ONE saved Journal in a native dialog, then attempt posting once and read it back. Requires opt-in. Repeating the original batch only reconciles; never rebuild the same event after a timeout. The model cannot approve it. No master creation, sales, purchase, tax, inventory, alteration or deletion.",
+                        "Ask the local user to review and approve ONE saved Journal, Payment, Receipt or Contra in a native dialog, then attempt posting once and read it back. Requires opt-in. A Payment, Receipt or Contra is refused (import_bank_classification_changed) if any leg's cash/bank classification changed since the build, checked before approval and again after approval inside the endpoint queue, before the final duplicate check and the post. Repeating the original batch only reconciles; never rebuild the same event after a timeout. The model cannot approve it. No master creation, sales, purchase, tax, inventory, alteration or deletion.",
                         json!({"type":"object", "additionalProperties":false, "required":["company_guid","batch_id"], "properties":{"company_guid":{"type":"string"},"batch_id":{"type":"string","minLength":43,"maxLength":43}}}),
                     ),
                     "verify_import" => (

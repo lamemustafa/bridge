@@ -1,6 +1,5 @@
 # Engagement for the synthetic read beside this file. Invented; see PROVENANCE.md.
-# Shape: the keys of a reference-engine client config that cash_44ab, cash_payments_40a3,
-# depreciation and financial_statements read, and nothing else.
+# Shape: the keys of a reference-engine client config that the ported tests read, and nothing else.
 [client]
 label = "Lakeview Hardware Demo"
 entity_type = "individual"
@@ -21,6 +20,10 @@ bank_groups = ["Bank Accounts", "Bank OD A/c"]
 # cash_payments_40a3 only: a role ledger-name set (not a group) excluded from being a s.269ST
 # party, same as a Duties & Taxes line.
 round_off_ledgers = ["Round Off"]
+# creditor_ageing_43bh only: its trade creditors are every ledger under the read's own Sundry
+# Creditors group.
+creditor_groups = ["Sundry Creditors"]
+trade_creditors_source = { kind = "groups" }
 
 # cash_payments_40a3 only: [loans.loan_ledgers.<ledger>] names a ledger the client has already
 # configured for the (not yet ported) loans_interest test; "Sunrise NBFC Loan" is covered here,
@@ -65,6 +68,29 @@ interest_ledger = "Interest to Partners"
 [presumptive_history]
 ay = "2024-25"
 opted_44ad = true
+
+# creditor_ageing_43bh only: an invented Udyam classification for four of the creditors, so each
+# branch is reached (micro: FIFO lots past the window; small: only its opening balance still open;
+# medium and trader: outside s.43B(h)); every other creditor stays "unknown". The lag is invented
+# too, so ages are not measured from the bill date alone. mse_interest_ledgers is left out: the
+# edge books carry an MSMED-interest ledger.
+[creditor_ageing_43bh]
+acceptance_lag_days = 3
+
+[creditor_ageing_43bh.supplier_classification]
+"Comfort Furnishings" = "micro"
+"Harbour Mill Supplies" = "small"
+"Metro Hardware Distributors" = "medium"
+"Riverside Traders" = "trader"
+
+# statutory_dues_43b only: an invented mapping of three existing ledgers to s.43B natures, so the
+# test reaches its branches on the synthetic read (GST payable in debit at year end; a liability
+# whose opening balance is still wholly unpaid; one whose opening is paid down and which closes
+# owing). The employee-contribution walk and the coverage finding are reached by the edge books.
+[statutory_dues.nature_by_ledger]
+"GST Payable" = "gst_payable"
+"Harbour Mill Supplies" = "other_statutory"
+"Tidewater Fasteners" = "bonus"
 
 # tds_payees only (invented): nature_by_ledger and payee_aliases are REQUIRED once [tds] exists,
 # as the reference engine's tds_config requires them. Freight is a s.194C contract, shop rent a
