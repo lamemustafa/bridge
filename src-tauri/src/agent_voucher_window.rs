@@ -1458,12 +1458,12 @@ where
         &timed, identity, company, from, to, shape, source, limits, parse,
     )
     .await;
-    let mut timings = timed.into_timings();
+    let timings = timed.into_timings();
     match read {
         Ok(mut outcome) => {
-            // A request that failed and was recovered from, a part divided
-            // after Tally could not serve it, is in `parts`; the read stands.
-            timings.failed = None;
+            // `failed` is already `None`: a read that stands ended on a request
+            // that succeeded, a part or the closing marks. A part Tally could
+            // not serve and the read divided is in `parts`, not in `failed`.
             outcome.timings = timings;
             Ok(outcome)
         }
