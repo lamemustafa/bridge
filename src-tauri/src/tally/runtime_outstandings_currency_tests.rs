@@ -274,7 +274,21 @@ async fn operator_outstandings(
         )
         .await;
     simulator.cancel();
-    (result, simulator.finish().unwrap().len())
+    (result, requests_sent(simulator))
+}
+
+/// The requests the client sent. `cancel` wakes the simulator with a
+/// connection of its own, which the simulator records as a cancelled,
+/// unprocessed entry when it was already waiting for the next request; that
+/// entry is the harness's, not a request, and whether it appears depends on
+/// scheduling (it did under load, 15 against 14).
+fn requests_sent(simulator: SequenceSimulator) -> usize {
+    simulator
+        .finish()
+        .unwrap()
+        .iter()
+        .filter(|request| !request.cancelled)
+        .count()
 }
 
 /// bridge#604: the desktop read of an operator's INR assertion reads the
@@ -404,5 +418,5 @@ async fn the_desktop_command_refuses_several_currency_masters_before_any_bill() 
     assert!(response.working_paper_export_id.is_none());
     simulator.cancel();
     // The company list, then the currency read's 14 requests, and no more.
-    assert_eq!(simulator.finish().unwrap().len(), 15);
+    assert_eq!(requests_sent(simulator), 15);
 }
