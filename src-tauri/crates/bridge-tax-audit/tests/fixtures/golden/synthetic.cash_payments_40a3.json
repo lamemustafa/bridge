@@ -1033,9 +1033,9 @@
       ],
       "evidence": [
         {
-          "kind": "ledger",
-          "id": "‹cash leg with no identified party›",
-          "label": ""
+          "kind": "row",
+          "id": "cash_payments_40a3:unidentified_party",
+          "label": "‹cash leg with no identified party›"
         },
         {
           "kind": "voucher",
@@ -1221,9 +1221,9 @@
       ],
       "evidence": [
         {
-          "kind": "ledger",
-          "id": "‹cash leg with no identified party›",
-          "label": ""
+          "kind": "row",
+          "id": "cash_payments_40a3:unidentified_party",
+          "label": "‹cash leg with no identified party›"
         },
         {
           "kind": "voucher",
@@ -1748,18 +1748,7 @@
     "POP-4",
     "REND-0"
   ],
-  "result_invariant_violations": [
-    {
-      "invariant": "EVID-1",
-      "subject": "cash_payments_40a3",
-      "detail": "unresolved ledger:‹cash leg with no identified party›"
-    },
-    {
-      "invariant": "EVID-1",
-      "subject": "cash_payments_40a3",
-      "detail": "unresolved ledger:‹cash leg with no identified party›"
-    }
-  ],
+  "result_invariant_violations": [],
   "module_invariants_evaluated": [],
   "module_invariant_violations": []
 }
