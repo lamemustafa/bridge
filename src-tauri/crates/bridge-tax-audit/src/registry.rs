@@ -19,6 +19,8 @@ use crate::Engagement;
 pub struct CallerData {
     pub report_totals: Option<ReportTotals>,
     pub turnover_inputs: TurnoverInputs,
+    /// The assessee's Form 26AS/AIS/TIS rows (`tds_tcs_26as`, `twentysixas_receipts`).
+    pub traces: crate::documents::TracesDocuments,
 }
 
 /// One ported test.
@@ -87,9 +89,19 @@ pub const PORTED: &[PortedTest] = &[
         run_on: |e, b, r, _| crate::tds_payees_on(e, b, r),
     },
     PortedTest {
+        id: "tds_tcs_26as",
+        min_figures: 30,
+        run_on: |e, b, r, c| crate::tds_tcs_26as_on(e, b, r, &c.traces),
+    },
+    PortedTest {
         id: "trial_balance",
         min_figures: 1,
         run_on: |e, b, r, _| crate::trial_balance_on(e, b, r),
+    },
+    PortedTest {
+        id: "twentysixas_receipts",
+        min_figures: 1,
+        run_on: |e, b, r, c| crate::twentysixas_receipts_on(e, b, r, &c.traces),
     },
 ];
 
