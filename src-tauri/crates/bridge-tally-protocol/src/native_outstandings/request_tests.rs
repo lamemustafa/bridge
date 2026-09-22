@@ -130,8 +130,9 @@ fn escapes_company_names_in_both_requests() {
     .expect("mode-agnostic profile accepts valid calendar dates");
     let ledger_xml = render_native_ledger_snapshot_request("A & B <Co>", &snapshot_period);
     assert!(ledger_xml.contains("A &amp; B &lt;Co&gt;"));
-    assert!(ledger_xml
-        .contains("<FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE, ISBILLWISEON</FETCH>"));
+    assert!(ledger_xml.contains(
+        "<FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE, ISBILLWISEON, CURRENCYNAME</FETCH>"
+    ));
     assert!(ledger_xml
         .contains("<COMPUTE>BRIDGECOMPANYGUID:$GUID:Company:##SVCurrentCompany</COMPUTE>"));
     assert!(ledger_xml.contains(r#"<SVFROMDATE TYPE="Date">20240401</SVFROMDATE>"#));

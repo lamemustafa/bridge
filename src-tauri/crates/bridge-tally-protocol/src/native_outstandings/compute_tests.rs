@@ -21,6 +21,7 @@ fn reserved_root_policy_matches_canonical_window_for_marker_carrying_parents() {
             closing_balance: Some(ExactDecimal::zero()),
             opening_balance: ExactDecimal::zero(),
             bill_wise_on: false,
+            currency_name: None,
         }];
         compute_residuals(&[], &[], &ledgers, NativeGroupSnapshot::Complete(&groups))
             .expect("shared reserved-root forms must terminate group ancestry");
@@ -43,6 +44,7 @@ fn reserved_root_policy_matches_canonical_window_for_marker_carrying_parents() {
             closing_balance: Some(ExactDecimal::zero()),
             opening_balance: ExactDecimal::zero(),
             bill_wise_on: false,
+            currency_name: None,
         }];
 
         assert!(matches!(

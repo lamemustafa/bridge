@@ -94,6 +94,10 @@ pub struct LedgerSnapshotEntry {
     pub closing_balance: Option<ExactDecimal>,
     pub opening_balance: ExactDecimal,
     pub bill_wise_on: bool,
+    /// The ledger's own `CURRENCYNAME` (bridge#551), `None` when the element
+    /// was absent or empty. Compared with the base master's NAME by
+    /// [`classify_ledger_currencies`](super::classify_ledger_currencies).
+    pub currency_name: Option<String>,
 }
 
 /// A party's unallocated residual: the gap between the ledger's own

@@ -144,7 +144,12 @@ pub fn render_native_bills_request(
 /// fetch exactly the fields the on-account residual computation needs, plus
 /// Tally's computed `BRIDGECOMPANYGUID` so the party/ledger export can bind
 /// this specific response to its selected company: `NAME`, `PARENT`, `CLOSINGBALANCE`,
-/// `OPENINGBALANCE`, `ISBILLWISEON`.
+/// `OPENINGBALANCE`, `ISBILLWISEON`, and `CURRENCYNAME`, the ledger's own
+/// currency (the Currency master's NAME, e.g. `I₹`, `Rs.` or `$`; bridge#551).
+/// A foreign-currency ledger's bills and a zero foreign balance arrive as
+/// plain amounts, so only this field tells such a ledger from a base one.
+/// Measured on 7.1: present on every row, and changing nothing else in the
+/// response (`LEDGER_CURRENCY_CAPTURE_PROVENANCE.md`).
 ///
 /// **`SVFROMDATE`/`SVTODATE` are load-bearing here and must match the bills
 /// request exactly.** `CLOSINGBALANCE` is as-of scoped; see
@@ -162,7 +167,7 @@ pub fn render_native_ledger_snapshot_request(
     period: &NativeLedgerSnapshotPeriod,
 ) -> String {
     format!(
-        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">{from}</SVFROMDATE><SVTODATE TYPE="Date">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Ledgers" ISMODIFY="Yes"><FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE, ISBILLWISEON</FETCH><COMPUTE>BRIDGECOMPANYGUID:$GUID:Company:##SVCurrentCompany</COMPUTE></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">{from}</SVFROMDATE><SVTODATE TYPE="Date">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Ledgers" ISMODIFY="Yes"><FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE, ISBILLWISEON, CURRENCYNAME</FETCH><COMPUTE>BRIDGECOMPANYGUID:$GUID:Company:##SVCurrentCompany</COMPUTE></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
         company = xml_escape(company),
         from = period.from().as_str(),
         to = period.to().as_str(),

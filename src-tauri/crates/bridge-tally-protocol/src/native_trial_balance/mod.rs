@@ -28,6 +28,11 @@ pub struct NativeTrialBalanceRow {
     pub debit: NativeTrialBalanceAmount,
     pub credit: NativeTrialBalanceAmount,
     pub closing: NativeTrialBalanceAmount,
+    /// The ledger's own `CURRENCYNAME` (bridge#551), `None` when the element
+    /// was absent or empty. Read, not yet reported: it is kept out of the
+    /// serialized row until the trial balance acts on it.
+    #[serde(skip)]
+    pub currency_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -62,13 +67,15 @@ impl std::error::Error for NativeTrialBalanceError {}
 
 /// Renders the only supported native Trial Balance read. Both dates come from
 /// the already-admitted snapshot period: `TBALOPENING` and `TBALCLOSING` are
-/// meaningful only for the same validated window.
+/// meaningful only for the same validated window. `CURRENCYNAME` is each
+/// ledger's own currency (bridge#551); it was measured on this collection
+/// with the snapshot's FETCH, not yet with these TBAL fields.
 pub fn render_native_trial_balance_request(
     company: &str,
     period: &NativeLedgerSnapshotPeriod,
 ) -> String {
     format!(
-        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">{from}</SVFROMDATE><SVTODATE TYPE="Date">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Ledgers" ISMODIFY="Yes"><FETCH>NAME, GUID, PARENT, TBALOPENING, DEBITTOTALS, CREDITTOTALS, TBALCLOSING</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">{from}</SVFROMDATE><SVTODATE TYPE="Date">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Ledgers" ISMODIFY="Yes"><FETCH>NAME, GUID, PARENT, TBALOPENING, DEBITTOTALS, CREDITTOTALS, TBALCLOSING, CURRENCYNAME</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
         company = xml_escape(company),
         from = period.from().as_str(),
         to = period.to().as_str(),
