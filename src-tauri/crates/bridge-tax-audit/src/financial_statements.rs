@@ -766,6 +766,7 @@ mod tests {
                 ledger: "Sales".to_string(),
                 amount_paise: 0,
             }],
+            ..Default::default()
         }
     }
 

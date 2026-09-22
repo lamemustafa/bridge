@@ -16,6 +16,8 @@ It writes:
 - the extra characters `re.I` matches for each ASCII letter;
 - Python's effective Cased and Case_Ignorable sets for the final-sigma rule, found by probing
   `str.lower()` itself;
+- the non-ASCII code points Python's `\\d` matches, measured over every code point, for the
+  quantity and rate readers in `src/book.rs`;
 - the code points `str.isprintable()` rejects, over every code point (for `repr()`);
 - the probe file: Python's own results on the acceptance set (Latin, Latin-1/Ext-A/B, modifier
   letters and combining diacriticals, currency symbols, Devanagari
@@ -95,6 +97,8 @@ def main() -> int:
             cased.append(ord(c))
         elif b:
             ignorable.append(ord(c))
+    digit = re.compile(r"\d")
+    decimals = [cp for cp in range(0x80, 0x110000) if digit.fullmatch(chr(cp))]
     ci_rows = "\n".join(f"    ('{l}', &[{', '.join(f'0x{c:04X}' for c in cs)}])," for l, cs in ci.items() if cs)
     out = (
         "// SPDX-License-Identifier: Apache-2.0\n"
@@ -113,6 +117,10 @@ def main() -> int:
         "/// cased neighbour). It includes characters that are also Cased (U+0345, modifier letters):\n"
         "/// CPython skips them before asking whether they are cased, so here they are ignorable only.\n"
         + rust_ranges("PY_CASE_IGNORABLE", ranges(ignorable))
+        + "\n/// Non-ASCII code points Python's `\\d` matches: its decimal digits, which `re` and `float()`\n"
+        "/// read as numbers where this crate's readers take ASCII only (`book.rs` refuses text holding\n"
+        "/// one).\n"
+        + rust_ranges("PY_DECIMAL_NON_ASCII", ranges(decimals))
         + "\n/// Code points Python's `str.isprintable()` rejects (every code point measured; `repr()`\n"
         "/// escapes them). Surrogates are included, though a Rust `char` is never one.\n"
         + "#[cfg_attr(not(test), allow(dead_code))] // first caller: batch C2 (#596)\n"
