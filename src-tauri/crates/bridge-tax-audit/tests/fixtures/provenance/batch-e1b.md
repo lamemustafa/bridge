@@ -37,7 +37,8 @@ Lane E, 2026-09-22. Every book here is invented; none is a Tally read and none h
     Stock-in-Hand subgroup; GST heads and payment ledgers with and without TB rows; re-issue terms
     through Python's `upper()` (a sharp s matching its SS spelling); write-offs (one row per
     voucher and debtor with that debtor's credit lines summed, two journals sharing a GUID kept as
-    two rows but cited once, a zero line skipped, a zero write-off-ledger line not qualifying); every
+    two rows but cited once, a zero line skipped, a journal whose only debtor line is zero giving
+    no row, a zero write-off-ledger line not qualifying); every
     Contra direction case (a narration naming both keywords is a mismatch when either disagrees),
     including a zero net cash line skipped;
   - `bkq_quiet`: nothing to report, every input empty.
@@ -83,12 +84,12 @@ from an archive of that commit with no client data, under Python 3.13:
 | `bkq_channel.json` | 9,054 | `db4c43d3f64d2f6515676769b4ed6a170207bf52816dcf8beed786f2a11c5f9c` | `edge-books/bkq_channel.json` |
 | `bkq_channel_alone.json` | 3,845 | `7f705760290ce9ef8e3ff3d55d85b929d43855a02e49b311ee4be48e83286164` | `edge-books/bkq_channel_alone.json` |
 | `bkq_channel_zero.json` | 2,489 | `118e1112f554d9bc3bb3964288a7d6a4b1edb0453d234fa09e6a2c37a0510c25` | `edge-books/bkq_channel_zero.json` |
-| `bkq_misc.json` | 10,070 | `f910d1fc537aae459a1d6cd0c5cd544307ff9a57a4ae294861a3b201ec8d279a` | `edge-books/bkq_misc.json` |
+| `bkq_misc.json` | 10,356 | `e7e23ce5751b1479c0c40f5f8b557aac39e1dcac54e9bd678238d53a749348a2` | `edge-books/bkq_misc.json` |
 | `bkq_order.json` | 6,758 | `06c6500c322d5a8b7b49cf4b8cd947d9677bc917d22ed9e72b9128fa8d6a0e0b` | `edge-books/bkq_order.json` |
 | `bkq_quiet.json` | 2,141 | `502057ad49326bd5d72350dcafd2ae5c209879a4f9076786031637afc608765f` | `edge-books/bkq_quiet.json` |
 | `edge.bkq_channel.book_keeping_quality.json` | 16,610 | `0fa8e387bf850d4b108b00433b436be01a66de2b972c22d473b307ae6d954bce` | `golden/edge.bkq_channel.book_keeping_quality.json` |
 | `edge.bkq_channel_alone.book_keeping_quality.json` | 12,715 | `af10348dc851a5e419d730402af8ddd3d819bc43c9b7adad175d35ca30c372ad` | `golden/edge.bkq_channel_alone.book_keeping_quality.json` |
 | `edge.bkq_channel_zero.book_keeping_quality.json` | 9,207 | `60ed70f9f6580c5169d18ae3d43fb6ff254702f37164e850771a7b2e0453a5ff` | `golden/edge.bkq_channel_zero.book_keeping_quality.json` |
-| `edge.bkq_misc.book_keeping_quality.json` | 25,864 | `3f9fa21d83716eab1d6bf713f63f0fb673196b535559224ab53713a2c415228b` | `golden/edge.bkq_misc.book_keeping_quality.json` |
+| `edge.bkq_misc.book_keeping_quality.json` | 25,864 | `b926a90e9a1384ee04e3ea1d2912d1a050470f1a39acc03c9020ab4d7050f5ea` | `golden/edge.bkq_misc.book_keeping_quality.json` |
 | `edge.bkq_order.book_keeping_quality.json` | 18,878 | `d0a731eb1b5bd7df16f6d0ad15657a51f886b851419b3c7ac9093a85d8a05ea3` | `golden/edge.bkq_order.book_keeping_quality.json` |
 | `edge.bkq_quiet.book_keeping_quality.json` | 4,843 | `bcb7170ec8d81338e6e5f2656ec910c4259bb83f00d1073a6efa411af791c6df` | `golden/edge.bkq_quiet.book_keeping_quality.json` |

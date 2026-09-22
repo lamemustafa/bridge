@@ -149,7 +149,7 @@
     },
     {
       "id": "book_keeping_quality.entry_order_unparseable_masterid_count",
-      "value": 16,
+      "value": 17,
       "unit": "count",
       "definition_sha256_16": "818d17dafd85b348",
       "definition_text": "Population vouchers with no usable creation-order number; excluded from every entry-order figure.",
@@ -662,12 +662,12 @@
     {
       "invariant": "POP-1",
       "subject": "Discount Allowed",
-      "detail": "vouchers 800 vs TB movement 0 paise"
+      "detail": "vouchers 810 vs TB movement 0 paise"
     },
     {
       "invariant": "POP-1",
       "subject": "Expenses",
-      "detail": "vouchers 425 vs TB movement 0 paise"
+      "detail": "vouchers 415 vs TB movement 0 paise"
     },
     {
       "invariant": "POP-1",

@@ -1,5 +1,5 @@
 {
- "comment": "book_keeping_quality stock, GST, re-issue, write-off and contra sections: Stock-in-Hand ledgers untouched (one with a TB movement of 201 paise, so BKQ-1 fires and its message is compared; one moved exactly 100 paise, within the Re 1 tolerance), one under a Stock-in-Hand subgroup, one touched twice by one voucher (counted once), and one touched only by an optional voucher; GST heads summing TB closings, a configured ledger with no TB row counting zero; two payment ledgers, one with no TB row; re-issue terms matched case-insensitively through Python's upper() (a term with a German sharp s matches its SS spelling); a write-off journal crediting one debtor twice (one row, both amounts summed; a zero line is skipped), two journals sharing one GUID and date (two rows, cited once), a debtor under a Sundry Debtors subgroup, a non-debtor credit, and journals whose write-off ledger line is zero, that have none, or that are not a Journal at all; Contra narrations: WITHDRAWAL with cash credited and DEPOSIT with cash debited disagree, WITHDRAWAL with cash debited agrees, a narration naming both keywords is a mismatch when either disagrees, a WITHDRAWAL narration whose cash lines net to zero is skipped, and an optional voucher is outside the population.",
+ "comment": "book_keeping_quality stock, GST, re-issue, write-off and contra sections: Stock-in-Hand ledgers untouched (one with a TB movement of 201 paise, so BKQ-1 fires and its message is compared; one moved exactly 100 paise, within the Re 1 tolerance), one under a Stock-in-Hand subgroup, one touched twice by one voucher (counted once), and one touched only by an optional voucher; GST heads summing TB closings, a configured ledger with no TB row counting zero; two payment ledgers, one with no TB row; re-issue terms matched case-insensitively through Python's upper() (a term with a German sharp s matches its SS spelling); a write-off journal crediting one debtor twice (one row, both amounts summed; a zero line is skipped), two journals sharing one GUID and date (two rows, cited once), a write-off journal whose only debtor line is zero (no row), a debtor under a Sundry Debtors subgroup, a non-debtor credit, and journals whose write-off ledger line is zero, that have none, or that are not a Journal at all; Contra narrations: WITHDRAWAL with cash credited and DEPOSIT with cash debited disagree, WITHDRAWAL with cash debited agrees, a narration naming both keywords is a mismatch when either disagrees, a WITHDRAWAL narration whose cash lines net to zero is skipped, and an optional voucher is outside the population.",
  "groups": {
   "Current Assets": null,
   "Cash-in-Hand": "Current Assets",
@@ -461,6 +461,25 @@
     [
      "Debtor One",
      -60
+    ]
+   ]
+  },
+  {
+   "guid": "wo-zero",
+   "date": "2025-06-06",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Discount Allowed",
+     10
+    ],
+    [
+     "Debtor Two",
+     0
+    ],
+    [
+     "Expenses",
+     -10
     ]
    ]
   },
