@@ -54,6 +54,7 @@ async fn refusal(
     let assertion = PartyLedgerMasterCurrencyAssertion {
         assertion: OutstandingsCurrencyAssertion::Inr,
         decimal_places: 2,
+        base: single_master_base_for_tests(),
         currency_read_extent: parsed_extent,
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

@@ -2073,7 +2073,7 @@ fn company_sweep_result(
     }
 }
 
-enum CompanySweepFailure {
+pub(crate) enum CompanySweepFailure {
     ReasonCode(&'static str),
     /// A company-list transport/protocol failure is not evidence that the
     /// operator selected the wrong tuple. Keep the command's typed reason so
@@ -2106,6 +2106,43 @@ fn establish_inr_currency(
         return Ok(OutstandingsCurrencyAssertion::Inr);
     }
     Err("company_currency_probe_failed")
+}
+
+/// One company of the sweep: its own currency read, the INR admission, then
+/// outstandings under that read, whose single master's NAME each ledger's own
+/// currency is compared with (bridge#551).
+pub(crate) async fn sweep_company_outstandings(
+    runtime: &TallyRuntime,
+    config: &TallyConfig,
+    identity: &VerifiedCompanyIdentity,
+    as_of: &TallyDate,
+    currency_assertion: OutstandingsCurrencyAssertion,
+    ageing_anchor: crate::tally::OutstandingsAgeingAnchor,
+) -> Result<OutstandingsLoadResult, CompanySweepFailure> {
+    let Ok(currency) = runtime
+        .detect_base_currency_with_extent(config.clone(), identity)
+        .await
+    else {
+        return Err(CompanySweepFailure::ReasonCode(
+            "company_currency_probe_failed",
+        ));
+    };
+    if let Some(reason_code) =
+        company_sweep_currency_preflight_failure(currency.currency_count(), currency.is_inr())
+    {
+        return Err(CompanySweepFailure::ReasonCode(reason_code));
+    }
+    runtime
+        .fetch_outstandings_under_currency_read(
+            config.clone(),
+            identity,
+            as_of.clone(),
+            currency,
+            currency_assertion,
+            ageing_anchor,
+        )
+        .await
+        .map_err(|_| CompanySweepFailure::OutstandingsRead)
 }
 
 /// Reads outstandings for several companies in one action.
@@ -2143,30 +2180,15 @@ pub async fn fetch_tally_outstandings_all_companies(
         {
             Err(error) => Err(CompanySweepFailure::CompanyVerification(error)),
             Ok(identity) => {
-                match runtime
-                    .detect_base_currency(request.config.clone(), &identity)
-                    .await
-                {
-                    Err(_) => Err(CompanySweepFailure::ReasonCode(
-                        "company_currency_probe_failed",
-                    )),
-                    Ok(currency) => match company_sweep_currency_preflight_failure(
-                        currency.currency_count,
-                        currency.is_inr,
-                    ) {
-                        Some(reason_code) => Err(CompanySweepFailure::ReasonCode(reason_code)),
-                        None => runtime
-                            .fetch_outstandings(
-                                request.config.clone(),
-                                &identity,
-                                as_of.clone(),
-                                request.currency_assertion,
-                                request.ageing_anchor,
-                            )
-                            .await
-                            .map_err(|_| CompanySweepFailure::OutstandingsRead),
-                    },
-                }
+                sweep_company_outstandings(
+                    &runtime,
+                    &request.config,
+                    &identity,
+                    &as_of,
+                    request.currency_assertion,
+                    request.ageing_anchor,
+                )
+                .await
             }
         };
         entries.push(CompanyOutstandingsEntry {

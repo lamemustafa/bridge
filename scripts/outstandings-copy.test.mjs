@@ -53,6 +53,22 @@ test("a foreign-currency ledger names the blocked book without inviting a repeat
   assert.equal(state.tallyReadAttempted, true);
 });
 
+test("a ledger kept in another currency names the ledger without inviting a repeat", () => {
+  for (const code of ["ledger_currency_base_unmatched", "foreign_currency_ledger_present"]) {
+    const state = outstandingsPartialState(code, undefined, undefined, "Synthetic FX Debtor");
+    assert.match(state.title, /not available for this company/i, code);
+    assert.match(state.message, /ledger Synthetic FX Debtor/, code);
+    assert.match(state.message, /rather than count amounts in another currency as rupees/i, code);
+    assert.equal(state.retryable, false, code);
+    assert.equal(state.tallyReadAttempted, true, code);
+  }
+  for (const code of ["ledger_currency_base_unmatched", "ledger_currency_unobserved"]) {
+    const state = outstandingsPartialState(code);
+    assert.doesNotMatch(state.message, /could not prove every requested segment/i, code);
+    assert.equal(state.retryable, false, code);
+  }
+});
+
 test("missing, empty, or zero-only counters name the unconfirmed effective-date boundary", () => {
   const state = outstandingsPartialState(
     "native_outstandings_as_of_unconfirmed_without_effective_date_evidence",

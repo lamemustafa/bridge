@@ -22,13 +22,14 @@ use crate::warning_codes::WarningCode;
 use bridge_tally_core::{ExactDecimal, TallyDate};
 use bridge_tally_protocol::native_outstandings::{
     compute_native_outstandings, parse_company_currency, parse_native_bill_rows,
-    parse_native_group_snapshot, parse_native_ledger_snapshot, render_company_currency_request,
-    render_native_bills_request, render_native_group_snapshot_request,
-    render_native_ledger_export_request, render_native_ledger_snapshot_request,
-    AgeingAnchor as NativeAgeingAnchor, CompanyCurrency, LedgerSnapshotEntry,
-    NativeBillsReportKind, NativeGroupSnapshot, NativeLedgerExportPeriod,
-    NativeLedgerExportPeriodError, NativeLedgerSnapshotPeriod, NativeMasterSnapshot,
-    NativeOutstandingsError, NativeOverdueCrosscheck,
+    parse_native_group_snapshot, parse_native_ledger_snapshot_classified,
+    render_company_currency_request, render_native_bills_request,
+    render_native_group_snapshot_request, render_native_ledger_export_request,
+    render_native_ledger_snapshot_request, AgeingAnchor as NativeAgeingAnchor, BaseCurrencyName,
+    ClassifiedLedgerSnapshot, CompanyCurrency, LedgerCurrencyRefusal, NativeBillsReportKind,
+    NativeGroupSnapshot, NativeLedgerExportPeriod, NativeLedgerExportPeriodError,
+    NativeLedgerSnapshotPeriod, NativeMasterSnapshot, NativeOutstandingsError,
+    NativeOverdueCrosscheck,
 };
 #[cfg(feature = "voucher-scan")]
 use bridge_tally_protocol::outstandings::{
@@ -945,14 +946,18 @@ pub enum OutstandingsCurrencyAssertion {
 }
 
 /// An INR admission that is inseparable from the company extent observed
-/// during the currency read. Party/ledger masters, MCP outstandings and the
+/// during the currency read. Party/ledger masters, MCP outstandings, the
 /// desktop single-company outstandings read (bridge#604, carrying the
-/// operator's assertion) consume this witness.
+/// operator's assertion) and the all-companies sweep consume this witness.
 #[derive(Debug, Clone)]
 pub(crate) struct PartyLedgerMasterCurrencyAssertion {
     assertion: OutstandingsCurrencyAssertion,
     decimal_places: u8,
     currency_read_extent: CompanyBookExtent,
+    /// The base Currency master's NAME, which each ledger's own
+    /// `CURRENCYNAME` is compared with (bridge#551). `None` where no single
+    /// master's NAME was read; every ledger then refuses as unmatched.
+    base: Option<bridge_tally_protocol::native_outstandings::BaseCurrencyName>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1027,15 +1032,12 @@ impl CompanyCurrencyRead {
         PartyLedgerMasterCurrencyAssertion {
             assertion,
             decimal_places: self.currency.decimal_places,
+            base: bridge_tally_protocol::native_outstandings::BaseCurrencyName::of_single_master(
+                &self.currency,
+            ),
             currency_read_extent: self.extent,
         }
     }
-}
-
-#[derive(Clone)]
-enum NativeOutstandingsCurrency {
-    Operator(OutstandingsCurrencyAssertion),
-    Observed(PartyLedgerMasterCurrencyAssertion),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -1473,8 +1475,65 @@ enum NativeLedgerSnapshotPeriodAdmission {
 }
 
 enum NativeLedgerSnapshotAdmission {
-    Snapshot(Vec<LedgerSnapshotEntry>),
+    Snapshot(ClassifiedLedgerSnapshot),
     Partial(OutstandingsLoadResult),
+}
+
+/// A one-master base for tests that build a witness without a currency read.
+/// Their captured ledger snapshots predate `CURRENCYNAME`, so every ledger's
+/// currency is absent and classifies as this base.
+#[cfg(test)]
+pub(crate) fn single_master_base_for_tests() -> Option<BaseCurrencyName> {
+    BaseCurrencyName::of_single_master(&CompanyCurrency {
+        symbol: "I\u{20b9}".to_string(),
+        mailing_name: "INR".to_string(),
+        currency_count: 1,
+        decimal_places: 2,
+        is_inr: true,
+        names: vec!["I\u{20b9}".to_string()],
+    })
+}
+
+/// A one-master INR witness bound to `extent_xml`, the company extent a test
+/// scripts for the read, as a currency read would have observed it.
+#[cfg(test)]
+pub(crate) fn inr_witness_for_tests(
+    extent_xml: &str,
+    identity: &VerifiedCompanyIdentity,
+) -> PartyLedgerMasterCurrencyAssertion {
+    PartyLedgerMasterCurrencyAssertion {
+        assertion: OutstandingsCurrencyAssertion::Inr,
+        decimal_places: 2,
+        base: single_master_base_for_tests(),
+        currency_read_extent:
+            bridge_tally_protocol::outstandings_shared::parse_company_book_extent_v2(
+                extent_xml,
+                &identity.company_book_extent_expectation().unwrap(),
+            )
+            .unwrap(),
+    }
+}
+
+/// A one-master base admits every ledger or refuses, so no ledger is foreign
+/// in a production read. Only a base among several masters (bridge#601) can
+/// set one aside, and that lands with the result that discloses it; until
+/// then a foreign ledger withholds every figure, naming the first.
+fn foreign_ledger_withholds_figures(
+    snapshot: &ClassifiedLedgerSnapshot,
+) -> Option<OutstandingsLoadResult> {
+    let foreign = snapshot.foreign.first()?;
+    let mut reason = OutstandingsPartialReason::code("foreign_currency_ledger_present");
+    reason.foreign_currency_ledger_name = Some(foreign.ledger.clone());
+    Some(partial_result(reason))
+}
+
+/// What a native outstandings read compares each ledger's own currency with
+/// (bridge#551).
+enum LedgerClassification {
+    /// The base Currency master's NAME.
+    Against(BaseCurrencyName),
+    /// A witness without a known base: every ledger refuses as unmatched.
+    BaseUnknown,
 }
 
 fn admit_native_ledger_snapshot_period(
@@ -1491,20 +1550,37 @@ fn admit_native_ledger_snapshot_period(
 }
 
 fn admit_native_ledger_snapshot(
-    snapshot: anyhow::Result<Vec<LedgerSnapshotEntry>>,
+    snapshot: anyhow::Result<ClassifiedLedgerSnapshot>,
 ) -> anyhow::Result<NativeLedgerSnapshotAdmission> {
     match snapshot {
         Ok(snapshot) => Ok(NativeLedgerSnapshotAdmission::Snapshot(snapshot)),
         Err(error) => {
-            let Some(NativeOutstandingsError::ForeignCurrencyLedgerBalance { ledger_name }) = error
+            match error
                 .chain()
                 .find_map(|cause| cause.downcast_ref::<NativeOutstandingsError>())
-            else {
-                return Err(error);
-            };
-            Ok(NativeLedgerSnapshotAdmission::Partial(partial_result(
-                OutstandingsPartialReason::foreign_currency_ledger_balance(ledger_name.clone()),
-            )))
+            {
+                Some(NativeOutstandingsError::ForeignCurrencyLedgerBalance { ledger_name }) => {
+                    Ok(NativeLedgerSnapshotAdmission::Partial(partial_result(
+                        OutstandingsPartialReason::foreign_currency_ledger_balance(
+                            ledger_name.clone(),
+                        ),
+                    )))
+                }
+                // The ledgers' own currencies disagree with the base, or one
+                // is unobserved where several masters exist: in-band, with
+                // the ledger it names when there is one.
+                Some(NativeOutstandingsError::LedgerCurrency(refusal)) => {
+                    let mut reason = OutstandingsPartialReason::code(refusal.code());
+                    reason.foreign_currency_ledger_name = match refusal {
+                        LedgerCurrencyRefusal::BaseUnmatched { ledger } => ledger.clone(),
+                        LedgerCurrencyRefusal::Unobserved { ledger } => Some(ledger.clone()),
+                    };
+                    Ok(NativeLedgerSnapshotAdmission::Partial(partial_result(
+                        reason,
+                    )))
+                }
+                _ => Err(error),
+            }
         }
     }
 }
@@ -3422,44 +3498,6 @@ impl TallyRuntime {
         .await
     }
 
-    /// Outstandings via Tally's own `TYPE=Data` bills reports plus one ledger
-    /// snapshot.
-    ///
-    /// Four paired reads, bracketed by a GUID-pinned company extent probe
-    /// before and after. The extent probe is what binds identity: the native
-    /// report carries **no GUID anywhere**, so it cannot be identity-checked
-    /// from its own bytes. It does fail closed on an unloaded company
-    /// (`STATUS=0`, `LINEERROR: Could not set 'SVCurrentCompany'`, verified
-    /// live 2026-08-07), which the Collection path does not -- that path
-    /// silently substitutes whichever company is loaded.
-    ///
-    /// The bills reports alone are **not** complete: unallocated "on account"
-    /// balances carry no bill reference and appear in neither report. The
-    /// ledger snapshot recovers them exactly, as
-    /// `CLOSINGBALANCE - sum(BILLCL)` per party -- measured to 0.00 to the
-    /// paisa on every bill-carrying party of both a bill-dominated book (6 of
-    /// 10 parties exact, residual Rs 1,05,000) and an on-account-dominated one
-    /// (7 of 7 exact, residual Rs 2.79 crore against Rs 10.36 lakh of named
-    /// bills). Reporting the bills reports without that residual would show
-    /// 3.7% of exposure on the second book, with no error.
-    async fn fetch_outstandings_native(
-        &self,
-        config: TallyConfig,
-        identity: &VerifiedCompanyIdentity,
-        as_of: TallyDate,
-        currency_assertion: OutstandingsCurrencyAssertion,
-        ageing_anchor: OutstandingsAgeingAnchor,
-    ) -> anyhow::Result<(OutstandingsLoadResult, RuntimeReadEvidence)> {
-        self.fetch_outstandings_native_with_currency(
-            config,
-            identity,
-            as_of,
-            NativeOutstandingsCurrency::Operator(currency_assertion),
-            ageing_anchor,
-        )
-        .await
-    }
-
     /// The desktop single-company outstandings read, under the INR assertion
     /// the screen sends: settled by Tally's own currency read, or confirmed by
     /// the operator for a book with one Currency master that Tally does not
@@ -3488,14 +3526,37 @@ impl TallyRuntime {
         if let Some(reason) = operator_currency_refusal(currency.currency_count()) {
             return Ok(partial_result(reason));
         }
+        self.fetch_outstandings_under_currency_read(
+            config,
+            identity,
+            as_of,
+            currency,
+            currency_assertion,
+            ageing_anchor,
+        )
+        .await
+    }
+
+    /// Outstandings under a currency read the caller has already admitted:
+    /// the desktop read above, and the all-companies sweep, which admits INR
+    /// itself. The read's extent binds the assertion, and its single master's
+    /// NAME is the base each ledger's own currency is compared with
+    /// (bridge#551).
+    pub(crate) async fn fetch_outstandings_under_currency_read(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+        as_of: TallyDate,
+        currency: CompanyCurrencyRead,
+        currency_assertion: OutstandingsCurrencyAssertion,
+        ageing_anchor: OutstandingsAgeingAnchor,
+    ) -> anyhow::Result<OutstandingsLoadResult> {
         match self
             .fetch_outstandings_native_with_currency(
                 config,
                 identity,
                 as_of,
-                NativeOutstandingsCurrency::Observed(
-                    currency.bind_party_ledger_master_assertion(currency_assertion),
-                ),
+                currency.bind_party_ledger_master_assertion(currency_assertion),
                 ageing_anchor,
             )
             .await
@@ -3533,18 +3594,38 @@ impl TallyRuntime {
             config,
             identity,
             as_of,
-            NativeOutstandingsCurrency::Observed(currency_assertion),
+            currency_assertion,
             ageing_anchor,
         )
         .await
     }
 
+    /// Outstandings via Tally's own `TYPE=Data` bills reports plus one ledger
+    /// snapshot.
+    ///
+    /// Four paired reads, bracketed by a GUID-pinned company extent probe
+    /// before and after. The extent probe is what binds identity: the native
+    /// report carries **no GUID anywhere**, so it cannot be identity-checked
+    /// from its own bytes. It does fail closed on an unloaded company
+    /// (`STATUS=0`, `LINEERROR: Could not set 'SVCurrentCompany'`, verified
+    /// live 2026-08-07), which the Collection path does not -- that path
+    /// silently substitutes whichever company is loaded.
+    ///
+    /// The bills reports alone are **not** complete: unallocated "on account"
+    /// balances carry no bill reference and appear in neither report. The
+    /// ledger snapshot recovers them exactly, as
+    /// `CLOSINGBALANCE - sum(BILLCL)` per party -- measured to 0.00 to the
+    /// paisa on every bill-carrying party of both a bill-dominated book (6 of
+    /// 10 parties exact, residual Rs 1,05,000) and an on-account-dominated one
+    /// (7 of 7 exact, residual Rs 2.79 crore against Rs 10.36 lakh of named
+    /// bills). Reporting the bills reports without that residual would show
+    /// 3.7% of exposure on the second book, with no error.
     async fn fetch_outstandings_native_with_currency(
         &self,
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
         as_of: TallyDate,
-        currency_assertion: NativeOutstandingsCurrency,
+        currency_assertion: PartyLedgerMasterCurrencyAssertion,
         ageing_anchor: OutstandingsAgeingAnchor,
     ) -> anyhow::Result<(OutstandingsLoadResult, RuntimeReadEvidence)> {
         let _lease = self.begin_ordinary_read(&config)?;
@@ -3567,12 +3648,15 @@ impl TallyRuntime {
                         let company = identity.display_name();
                         let expected_company_guid = identity.company_guid();
                         let extent = client.fetch_company_book_extent(&identity).await?;
-                        let currency_assertion = match &currency_assertion {
-                            NativeOutstandingsCurrency::Operator(assertion) => *assertion,
-                            NativeOutstandingsCurrency::Observed(witness) => {
-                                witness.require_opening_extent(&extent)?.assertion
-                            }
-                        };
+                        // The base each ledger's own currency is compared with
+                        // (bridge#551).
+                        let classify_against = currency_assertion.base.clone().map_or(
+                            LedgerClassification::BaseUnknown,
+                            LedgerClassification::Against,
+                        );
+                        let currency_assertion = currency_assertion
+                            .require_opening_extent(&extent)?
+                            .assertion;
                         if &as_of < extent.books_from() {
                             return Ok((
                                 partial_result("as_of_precedes_books_from"),
@@ -3718,14 +3802,28 @@ impl TallyRuntime {
                             parse_native_bill_rows(&receivable_body, &books_from, &as_of)?;
                         let payable_rows =
                             parse_native_bill_rows(&payable_body, &books_from, &as_of)?;
-                        let ledger_rows = match admit_native_ledger_snapshot(
-                            parse_native_ledger_snapshot(&ledger_body).map_err(anyhow::Error::from),
+                        let snapshot = match classify_against {
+                            LedgerClassification::Against(base) => {
+                                parse_native_ledger_snapshot_classified(&ledger_body, &base)
+                            }
+                            LedgerClassification::BaseUnknown => {
+                                Err(NativeOutstandingsError::LedgerCurrency(
+                                    LedgerCurrencyRefusal::BaseUnmatched { ledger: None },
+                                ))
+                            }
+                        };
+                        let snapshot = match admit_native_ledger_snapshot(
+                            snapshot.map_err(anyhow::Error::from),
                         )? {
                             NativeLedgerSnapshotAdmission::Snapshot(snapshot) => snapshot,
                             NativeLedgerSnapshotAdmission::Partial(partial) => {
                                 return Ok((partial, read_evidence.clone()));
                             }
                         };
+                        if let Some(partial) = foreign_ledger_withholds_figures(&snapshot) {
+                            return Ok((partial, read_evidence.clone()));
+                        }
+                        let ledger_rows = snapshot.base;
                         let group_rows =
                             parse_native_group_snapshot(&group_body, expected_company_guid)?;
 
@@ -3873,62 +3971,6 @@ impl TallyRuntime {
         .await
     }
 
-    /// With `voucher-scan` off, the legacy scan cannot execute in any shipped
-    /// build (its only width-calibration constructors are `#[cfg(test)]` and
-    /// `#[cfg(feature = "live-calibration-harness")]`, and this crate's
-    /// default build has neither), so this simply *is* the native path: no
-    /// `Option`, no branch, no dead arm to compile in and never take.
-    #[cfg(not(feature = "voucher-scan"))]
-    pub async fn fetch_outstandings(
-        &self,
-        config: TallyConfig,
-        identity: &VerifiedCompanyIdentity,
-        as_of: TallyDate,
-        currency_assertion: OutstandingsCurrencyAssertion,
-        ageing_anchor: OutstandingsAgeingAnchor,
-    ) -> anyhow::Result<OutstandingsLoadResult> {
-        self.fetch_outstandings_native(config, identity, as_of, currency_assertion, ageing_anchor)
-            .await
-            .map(|(result, _)| result)
-    }
-
-    #[cfg(not(feature = "voucher-scan"))]
-    pub async fn fetch_outstandings_with_evidence(
-        &self,
-        config: TallyConfig,
-        identity: &VerifiedCompanyIdentity,
-        as_of: TallyDate,
-        currency_assertion: OutstandingsCurrencyAssertion,
-        ageing_anchor: OutstandingsAgeingAnchor,
-    ) -> anyhow::Result<(OutstandingsLoadResult, RuntimeReadEvidence)> {
-        self.fetch_outstandings_native(config, identity, as_of, currency_assertion, ageing_anchor)
-            .await
-    }
-
-    #[cfg(feature = "voucher-scan")]
-    pub async fn fetch_outstandings_with_evidence(
-        &self,
-        config: TallyConfig,
-        identity: &VerifiedCompanyIdentity,
-        as_of: TallyDate,
-        currency_assertion: OutstandingsCurrencyAssertion,
-        ageing_anchor: OutstandingsAgeingAnchor,
-    ) -> anyhow::Result<(OutstandingsLoadResult, RuntimeReadEvidence)> {
-        if self.outstandings_segment_policy.is_none() {
-            return self
-                .fetch_outstandings_native(
-                    config,
-                    identity,
-                    as_of,
-                    currency_assertion,
-                    ageing_anchor,
-                )
-                .await;
-        }
-
-        anyhow::bail!("outstandings_read_evidence_unavailable")
-    }
-
     #[cfg(feature = "voucher-scan")]
     pub async fn fetch_outstandings(
         &self,
@@ -3955,15 +3997,14 @@ impl TallyRuntime {
         // Tally data was read".
         let Some(segment_policy) = self.outstandings_segment_policy else {
             return self
-                .fetch_outstandings_native(
+                .fetch_operator_outstandings(
                     config,
                     identity,
                     as_of,
                     currency_assertion,
                     ageing_anchor,
                 )
-                .await
-                .map(|(result, _)| result);
+                .await;
         };
         let Some(_coverage) = self.unallocated_balance_coverage.as_ref() else {
             return Ok(partial_result("unallocated_direct_postings_not_covered"));

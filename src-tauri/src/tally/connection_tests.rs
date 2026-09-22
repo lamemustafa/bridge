@@ -820,7 +820,7 @@ async fn paired_ledger_opening_coverage_reports_intra_pair_drift() {
 }
 
 /// The outstandings bracket (`fetch_company_book_extent`, feeding both
-/// `fetch_outstandings_native` and `fetch_ledgers`) must fail closed with
+/// `fetch_outstandings_native_with_currency` and `fetch_ledgers`) must fail closed with
 /// a typed error when both paired reads agree but neither carries
 /// `ALTMSTID`. This is the exact case the review flagged: two
 /// witness-less extents compare equal, so the ordinary `first != second`
