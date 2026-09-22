@@ -11,7 +11,10 @@ use bridge_tally_protocol::bills_native_outstandings_probe::{
 };
 #[cfg(feature = "bills-native-outstandings-probe-transport")]
 use bridge_tally_protocol::encode_tally_xml_request_utf16le;
-use bridge_tally_protocol::{xml_read_profiles::ReadOnlyProfile, TallyTextEncoding};
+use bridge_tally_protocol::{
+    xml_read_profiles::{ReadOnlyProfile, EDUCATION_REPORT_FAMILY_UNSUPPORTED},
+    TallyTextEncoding,
+};
 #[cfg(feature = "bills-native-outstandings-probe-transport")]
 use bridge_tally_transport::TransportPolicy;
 use bridge_tally_transport::{
@@ -224,6 +227,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 #[derive(Clone)]
 pub struct ReadOnlyTransport {
     inner: TallyHttpTransport,
+    education: bool,
 }
 
 impl ReadOnlyTransport {
@@ -232,13 +236,37 @@ impl ReadOnlyTransport {
             host: loopback.host().to_string(),
             port,
         })?;
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            education: false,
+        })
+    }
+
+    /// The same transport for an endpoint in Education mode: it refuses, before
+    /// sending, every profile whose TDL Education cannot parse
+    /// ([`ReadOnlyProfileId::education_refuses_report_formula`]). Education
+    /// answers those with a blocking dialog on the Tally screen that holds the
+    /// gateway until someone dismisses it (bridge#45).
+    ///
+    /// [`ReadOnlyProfileId::education_refuses_report_formula`]:
+    /// bridge_tally_protocol::xml_read_profiles::ReadOnlyProfileId::education_refuses_report_formula
+    pub fn education_restricted(self) -> Self {
+        Self {
+            education: true,
+            ..self
+        }
     }
 
     pub async fn send(
         &self,
         profile: ReadOnlyProfile<'_>,
     ) -> Result<ReadOnlyResponse, ReadOnlyTransportError> {
+        if self.education && profile.id().education_refuses_report_formula() {
+            return Err(ReadOnlyTransportError {
+                code: EDUCATION_REPORT_FAMILY_UNSUPPORTED,
+                http_status: None,
+            });
+        }
         let inner = self.inner.post_xml(profile.render()).await?;
         Ok(ReadOnlyResponse { inner })
     }

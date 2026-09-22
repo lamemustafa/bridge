@@ -211,6 +211,9 @@ pub(crate) struct AuditPart {
     /// Time spent on the data request or requests, excluding the brackets.
     pub(crate) elapsed: std::time::Duration,
     pub(crate) evidence: RuntimeReadEvidence,
+    /// The stricter of the date-boundary profiles the two brackets observed:
+    /// Education if either reported it.
+    pub(crate) boundary_profile: DateBoundaryProfile,
 }
 
 /// Why a part was not admitted. No failure carries a body: a part is admitted
@@ -242,6 +245,12 @@ pub(crate) enum AuditPartFailureKind {
     PairDrift,
     /// The company was absent, ambiguous or changed at a bracket.
     IdentityChanged,
+    /// Education mode was observed and would not honour this part's
+    /// `SVFROMDATE`/`SVTODATE`: it answers such a window with a well-formed
+    /// empty collection (bridge#581). Refused before sending when the opening
+    /// bracket reports it, and after the read, discarding the body, when only
+    /// the closing bracket does.
+    EducationBoundary,
     /// A complete response whose export status was not success, such as an
     /// error envelope for a company Tally could not select.
     ResponseRejected,
@@ -267,6 +276,7 @@ impl AuditPartFailureKind {
             Self::NotSent(code) | Self::Other(code) => code,
             Self::PairDrift => "audit_part_pair_drift",
             Self::IdentityChanged => "audit_part_company_identity_changed",
+            Self::EducationBoundary => "audit_part_window_unsupported_in_education",
             Self::ResponseRejected => "audit_part_response_rejected",
         }
     }
@@ -529,6 +539,11 @@ fn classify_audit_part_failure(error: &anyhow::Error) -> AuditPartFailure {
         .any(|cause| cause.is::<AuditDrainOwedAtDispatch>())
     {
         AuditPartFailureKind::DrainRequired
+    } else if error
+        .chain()
+        .any(|cause| cause.is::<EducationBoundaryRefusal>())
+    {
+        AuditPartFailureKind::EducationBoundary
     } else if error.chain().any(|cause| cause.is::<ToolCancelled>()) {
         // Withdrawn before the operation was queued: nothing was sent.
         AuditPartFailureKind::NotSent("request_cancelled")
@@ -599,10 +614,18 @@ fn classify_audit_part_failure(error: &anyhow::Error) -> AuditPartFailure {
 async fn fetch_admitted_audit_part(
     client: &TallyClient,
     identity: &VerifiedCompanyIdentity,
-    request_xml: String,
+    request: super::agent_read_request::AgentReadRequest,
     shape: AuditPartShape,
 ) -> anyhow::Result<AuditPart> {
-    bracket_verified_company_identity(client, identity).await?;
+    // As for every admitted agent read (bridge#581): the mode comes from the
+    // bracket's own company list, and a window Education would serve empty is
+    // refused before it is sent.
+    let opening = bracket_verified_company_identity_observing_mode(client, identity).await?;
+    if !request.window_accepted_by(opening) {
+        return Err(EducationBoundaryRefusal.into());
+    }
+    let window = request.clone();
+    let request_xml = request.into_xml();
     let started = Instant::now();
     let raw = match shape {
         AuditPartShape::Single => client.post_xml_raw(request_xml.clone()).await?,
@@ -630,15 +653,29 @@ async fn fetch_admitted_audit_part(
             evidence.clone(),
         ));
     }
-    bracket_verified_company_identity(client, identity)
+    let closing = bracket_verified_company_identity_observing_mode(client, identity)
         .await
         .map_err(|error| with_read_evidence(error, evidence.clone()))?;
+    // Education reported only after the part may have been served by it: which
+    // mode answered is unknown, so the part is refused as if sent in Education.
+    if !window.window_accepted_by(closing) {
+        return Err(with_read_evidence(
+            EducationBoundaryRefusal.into(),
+            evidence.clone(),
+        ));
+    }
+    let boundary_profile = if closing == DateBoundaryProfile::EducationRestricted {
+        closing
+    } else {
+        opening
+    };
     Ok(AuditPart {
         encoded_body: raw.encoded_body,
         encoded_sha256: raw.encoded_sha256,
         body: raw.text,
         elapsed,
         evidence,
+        boundary_profile,
     })
 }
 
@@ -801,14 +838,36 @@ async fn bracket_verified_company_identity_observing_mode(
     })
 }
 
-/// An agent read was refused before it was sent: the endpoint reported
-/// Education mode, and the read's `SVFROMDATE`/`SVTODATE` is not a day that
-/// mode honours (the 1st, 2nd or 31st). Education answers such a read with a
-/// well-formed empty collection, not an error, so sending it could only
-/// produce a false empty (bridge#581).
+/// A read refused because Education mode would not honour its
+/// `SVFROMDATE`/`SVTODATE` (the 1st, 2nd or 31st only). Education answers such
+/// a read with a well-formed empty collection, not an error (bridge#581), so it
+/// is refused before sending when the opening identity bracket reports
+/// Education, and after the read, discarding it, when only the closing bracket
+/// does. Raised by agent reads (reported as this code) and audit parts
+/// (reported as `audit_part_window_unsupported_in_education`).
 #[derive(Debug, thiserror::Error)]
 #[error("window_part_boundary_unsupported_in_education")]
 pub(crate) struct EducationBoundaryRefusal;
+
+/// A read was refused before it was sent: the endpoint reported Education mode,
+/// and the request is one of Bridge's custom reports whose TDL passes a spaced
+/// collection identifier to a `$$` function. Education answered one such report
+/// (`ledgers_v1`) with a blocking "Bad formula!" dialog on the Tally screen,
+/// which holds the XML gateway until someone dismisses it (bridge#45); the
+/// others carry the same construct. Such a read needs a licensed
+/// Tally until the Collection-based reads replace it.
+#[derive(Debug, thiserror::Error)]
+#[error("education_report_family_unsupported")]
+pub(crate) struct EducationReportFamilyRefusal;
+
+/// Refuses a report-formula read when the bracket that precedes it observed
+/// Education mode ([`EducationReportFamilyRefusal`]).
+fn refuse_report_formula_in_education(profile: DateBoundaryProfile) -> anyhow::Result<()> {
+    if profile == DateBoundaryProfile::EducationRestricted {
+        return Err(EducationReportFamilyRefusal.into());
+    }
+    Ok(())
+}
 
 fn admit_company_identity(
     companies: &[TallyCompany],
@@ -2392,6 +2451,29 @@ impl TallyRuntime {
         .await
     }
 
+    /// As [`Self::fetch_companies`], also returning whether the same
+    /// `CompanyListV2` response may come from an Education-mode endpoint
+    /// ([`TallyClient::fetch_companies_observing_education_mode`]). No further
+    /// request is made.
+    pub async fn fetch_companies_observing_education_mode(
+        &self,
+        config: TallyConfig,
+    ) -> anyhow::Result<(Vec<TallyCompany>, bool)> {
+        let _lease = self.begin_ordinary_read(&config)?;
+        self.execute(
+            config,
+            ReadOperation::CompanyList,
+            ReadRetryPolicy::transient_default(),
+            |client| async move {
+                client
+                    .fetch_companies_observing_education_mode()
+                    .await
+                    .map(|(companies, _, education)| (companies, education))
+            },
+        )
+        .await
+    }
+
     /// Reads the documented company collection and retains evidence for the
     /// exact raw response bytes used to produce the parsed company list. As in
     /// the shared retry runtime, only the terminal attempt contributes evidence.
@@ -2737,7 +2819,10 @@ impl TallyRuntime {
             move |client| {
                 let identity = identity.clone();
                 async move {
-                    bracket_verified_company_identity(&client, &identity).await?;
+                    refuse_report_formula_in_education(
+                        bracket_verified_company_identity_observing_mode(&client, &identity)
+                            .await?,
+                    )?;
                     let observation = client
                         .qualify_selected_ledgers(identity.display_name(), identity.company_guid())
                         .await?;
@@ -2828,6 +2913,11 @@ impl TallyRuntime {
     ///   would not.
     /// - It proves nothing about the state of the book between the brackets
     ///   (see [`AuditPart`]).
+    /// - A part whose window Education would not honour is refused as
+    ///   `EducationBoundary`. An admitted part reports the stricter
+    ///   `boundary_profile` its brackets saw; a caller reading a window in parts
+    ///   must carry Education forward once seen and plan every later part on
+    ///   days Education honours.
     /// - It checks the export status and the company the request names, not
     ///   the rows; admitting the rows is the caller's. The company binding
     ///   covers the `SVCURRENTCOMPANY` static variable only: TDL embedded in a
@@ -2846,8 +2936,7 @@ impl TallyRuntime {
     ) -> Result<AuditPart, AuditPartFailure> {
         let endpoint = EndpointKey::from_config(&config)
             .map_err(|_| AuditPartFailure::new(AuditPartFailureKind::Other("endpoint_invalid")))?;
-        let request_xml = request.into_xml();
-        if !request_scopes_company(&request_xml, identity.display_name()) {
+        if !request_scopes_company(&request.clone().into_xml(), identity.display_name()) {
             return Err(AuditPartFailure::new(
                 AuditPartFailureKind::RequestNotCompanyScoped,
             ));
@@ -2869,7 +2958,7 @@ impl TallyRuntime {
                 ReadRetryPolicy::SINGLE_ATTEMPT,
                 move |client| {
                     let identity = identity.clone();
-                    let request_xml = request_xml.clone();
+                    let request = request.clone();
                     let registry = Arc::clone(&registry);
                     let endpoint = armed_endpoint.clone();
                     async move {
@@ -2880,9 +2969,7 @@ impl TallyRuntime {
                             ticket,
                             settled: false,
                         };
-                        match fetch_admitted_audit_part(&client, &identity, request_xml, shape)
-                            .await
-                        {
+                        match fetch_admitted_audit_part(&client, &identity, request, shape).await {
                             Ok(part) => {
                                 armed.settle(false);
                                 Ok(part)
@@ -4086,7 +4173,10 @@ impl TallyRuntime {
                 let from = from.clone();
                 let to = to.clone();
                 async move {
-                    bracket_verified_company_identity(&client, &identity).await?;
+                    refuse_report_formula_in_education(
+                        bracket_verified_company_identity_observing_mode(&client, &identity)
+                            .await?,
+                    )?;
                     let observation = client
                         .qualify_selected_vouchers(
                             identity.display_name(),

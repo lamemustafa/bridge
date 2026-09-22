@@ -736,6 +736,38 @@
   "to": "    (0x0346, 0x0346),"
  },
  {
+  "id": "P01",
+  "by": "author",
+  "what": "POP-5 blank GUIDs not reported",
+  "file": "src/invariants.rs",
+  "from": "    if let Some(blank) = guid_counts.get(\"\") {",
+  "to": "    if let Some(blank) = guid_counts.get(\"never\") {"
+ },
+ {
+  "id": "P02",
+  "by": "author",
+  "what": "POP-5 repeats need three",
+  "file": "src/invariants.rs",
+  "from": "        if !guid.is_empty() && *count > 1 {",
+  "to": "        if !guid.is_empty() && *count > 2 {"
+ },
+ {
+  "id": "P03",
+  "by": "author",
+  "what": "POP-5 counts excluded vouchers too",
+  "file": "src/invariants.rs",
+  "from": "    for v in &population {\n        *guid_counts",
+  "to": "    for v in &book.vouchers {\n        *guid_counts"
+ },
+ {
+  "id": "P04",
+  "by": "author",
+  "what": "POP-5 not listed as evaluated",
+  "file": "src/invariants.rs",
+  "from": "            \"ID-1\", \"POP-0\", \"POP-1\", \"POP-2\", \"POP-3\", \"POP-5\", \"MAP-0\", \"MAP-1\",\n        ],",
+  "to": "            \"ID-1\", \"POP-0\", \"POP-1\", \"POP-2\", \"POP-3\", \"MAP-0\", \"MAP-1\",\n        ],"
+ },
+ {
   "id": "C1-01",
   "by": "author (Lane C)",
   "what": "Contra not skipped",

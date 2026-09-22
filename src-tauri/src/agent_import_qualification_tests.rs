@@ -88,25 +88,33 @@ async fn an_unshaped_bank_voucher_is_refused_before_dispatch_or_persistence() {
     // port: no live read may be attempted and no local file may appear.
     for (reason, mutate) in [
         (
-            "voucher_entry_pair_required",
-            Box::new(|voucher: &mut ImportVoucher| {
-                voucher.entries.push(ImportEntry {
-                    ledger: "Rounding".into(),
-                    amount: "1.00".into(),
-                    side: EntrySide::Dr,
-                });
-                voucher.entries.push(ImportEntry {
-                    ledger: "Rounding Off".into(),
-                    amount: "1.00".into(),
-                    side: EntrySide::Cr,
-                });
-            }) as Box<dyn Fn(&mut ImportVoucher)>,
-        ),
-        (
             "voucher_entry_ledger_repeated",
             Box::new(|voucher: &mut ImportVoucher| {
                 let ledger = voucher.entries[0].ledger.clone();
                 voucher.entries[1].ledger = ledger;
+            }) as Box<dyn Fn(&mut ImportVoucher)>,
+        ),
+        (
+            // A ledger on both sides of a multi-entry voucher.
+            "voucher_entry_ledger_repeated",
+            Box::new(|voucher: &mut ImportVoucher| {
+                let debit = voucher
+                    .entries
+                    .iter()
+                    .find(|entry| entry.side == EntrySide::Dr)
+                    .unwrap()
+                    .ledger
+                    .clone();
+                voucher.entries.push(ImportEntry {
+                    ledger: debit.clone(),
+                    amount: "1.00".into(),
+                    side: EntrySide::Cr,
+                });
+                voucher.entries.push(ImportEntry {
+                    ledger: "Rounding Off".into(),
+                    amount: "1.00".into(),
+                    side: EntrySide::Dr,
+                });
             }),
         ),
         (

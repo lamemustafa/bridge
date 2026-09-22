@@ -15,6 +15,9 @@ async fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(code) => {
             eprintln!("bridge_tally_native_outstandings_probe_failed:{code}");
+            if code == "education_report_family_unsupported" {
+                eprintln!("{}", bridge_tally_live_read::EDUCATION_REPORT_FAMILY_NOTICE);
+            }
             ExitCode::FAILURE
         }
     }

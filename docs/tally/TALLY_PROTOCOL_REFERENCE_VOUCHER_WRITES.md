@@ -259,8 +259,11 @@ Contras and the ten reallocation Journals each went in on their own file, so:
 
 **What Bridge builds from it.** `build_import_xml` renders exactly this shape for Payment,
 Receipt and Contra, and leaves the Journal shape byte-identical to the file §9.8's own
-measurement ran on. Each of the three is admitted only as two entries over two distinct ledgers,
-carrying neither a supplied voucher number nor a `REFERENCE`: no file carrying either has been
+measurement ran on. Each of the three is admitted with two or more entries, at least one debit
+and one credit, no ledger on both sides, and every leg classified (bridge#466: the multi-entry
+rule and party choice are the owner's decisions of 2026-09-22; one Bridge-built three-entry Receipt
+was imported over the gateway and verified live, and Tally read the bank ledger back as its party,
+but no multi-entry Payment or Contra has been, and none of the three, including that Receipt, through Tally's Import menu), carrying neither a supplied voucher number nor a `REFERENCE`: no file carrying either has been
 imported and read back on these types, and `verify_import` compares accounting entries rather
 than those annotations, so nothing downstream would notice Tally dropping or rewriting one.
 

@@ -708,3 +708,116 @@ fn audit_fetch_lists_are_pinned_exactly() {
         ]
     );
 }
+
+fn every_profile_id() -> Vec<ReadOnlyProfileId> {
+    // The match makes a new profile fail to compile here until it is listed.
+    fn listed(id: ReadOnlyProfileId) {
+        match id {
+            ReadOnlyProfileId::CompanyListV1
+            | ReadOnlyProfileId::CompanyListV2
+            | ReadOnlyProfileId::CompanyBookExtentV1
+            | ReadOnlyProfileId::CompanyBookExtentV2
+            | ReadOnlyProfileId::StandardLedgerIdentityV1
+            | ReadOnlyProfileId::StandardLedgerCatalogV1
+            | ReadOnlyProfileId::LedgersV1
+            | ReadOnlyProfileId::LedgerCanaryReadbackV1
+            | ReadOnlyProfileId::VouchersV2
+            | ReadOnlyProfileId::VouchersV3
+            | ReadOnlyProfileId::AuditCompanyObjectV1
+            | ReadOnlyProfileId::AuditLedgersV1
+            | ReadOnlyProfileId::AuditVouchersV1
+            | ReadOnlyProfileId::AuditStockItemsV1 => {}
+            #[cfg(feature = "voucher-scan")]
+            ReadOnlyProfileId::LedgerOpeningCoverageV1
+            | ReadOnlyProfileId::VoucherOutstandingsV1
+            | ReadOnlyProfileId::VoucherEmptyPartitionWitnessV1 => {}
+        }
+    }
+    #[cfg_attr(not(feature = "voucher-scan"), allow(unused_mut))]
+    let mut ids = vec![
+        ReadOnlyProfileId::CompanyListV1,
+        ReadOnlyProfileId::CompanyListV2,
+        ReadOnlyProfileId::CompanyBookExtentV1,
+        ReadOnlyProfileId::CompanyBookExtentV2,
+        ReadOnlyProfileId::StandardLedgerIdentityV1,
+        ReadOnlyProfileId::StandardLedgerCatalogV1,
+        ReadOnlyProfileId::LedgersV1,
+        ReadOnlyProfileId::LedgerCanaryReadbackV1,
+        ReadOnlyProfileId::VouchersV2,
+        ReadOnlyProfileId::VouchersV3,
+        ReadOnlyProfileId::AuditCompanyObjectV1,
+        ReadOnlyProfileId::AuditLedgersV1,
+        ReadOnlyProfileId::AuditVouchersV1,
+        ReadOnlyProfileId::AuditStockItemsV1,
+    ];
+    #[cfg(feature = "voucher-scan")]
+    ids.extend([
+        ReadOnlyProfileId::LedgerOpeningCoverageV1,
+        ReadOnlyProfileId::VoucherOutstandingsV1,
+        ReadOnlyProfileId::VoucherEmptyPartitionWitnessV1,
+    ]);
+    ids.iter().copied().for_each(listed);
+    ids
+}
+
+#[test]
+fn education_refuses_exactly_the_profiles_that_render_a_spaced_function_argument() {
+    let mut refused = Vec::new();
+    for id in every_profile_id() {
+        let hazard = first_spaced_function_argument(&id.template());
+        assert_eq!(
+            id.education_refuses_report_formula(),
+            hazard.is_some(),
+            "{}: {hazard:?}",
+            id.as_str()
+        );
+        refused.extend(hazard.map(|h| (id.as_str(), h)));
+    }
+    let ledgers = spaced("NumItems", "BRIDGE Ledger Collection V1");
+    let vouchers = spaced("NumItems", "BRIDGE Voucher Collection V1");
+    assert_eq!(
+        refused,
+        [
+            ("ledgers_v1", ledgers.clone()),
+            ("ledger_canary_readback_v1", ledgers),
+            ("vouchers_v2", vouchers.clone()),
+            ("vouchers_v3", vouchers),
+        ]
+    );
+}
+
+/// `$$name:argument`, assembled at run time: a literal would itself be a hit
+/// for `scripts/check-tally-request-builder-hazards.mjs`.
+fn spaced(name: &str, argument: &str) -> String {
+    format!("{}{name}:{argument}", "$".repeat(2))
+}
+
+#[test]
+fn a_spaced_function_argument_is_read_as_the_hazard_script_reads_it() {
+    let numitems = spaced("NumItems", "BRIDGE Ledger Collection V1");
+    let quoted = spaced("Fn", "\"quoted with space\"");
+    let tabbed = spaced("Fn", "tab\there");
+    let second = format!("$$9x:a{}{}<", "\u{20}", spaced("_ok", "a b"));
+    for (tdl, hit) in [
+        (format!("<SET>{numitems}</SET>"), Some(numitems.clone())),
+        ("<SET>$$NumItems:AllLedgerEntries</SET>".to_string(), None),
+        (
+            "$Date >= $$Date:\"20260401\" AND $Date <= $$Date:\"20260430\"".to_string(),
+            None,
+        ),
+        ("$$String:##SVFromDate:\"YYYYMMDD\"".to_string(), None),
+        ("$GUID:Company:##SVCurrentCompany".to_string(), None),
+        (quoted, Some(spaced("Fn", "quoted with space"))),
+        (tabbed.clone(), Some(tabbed)),
+        (second, Some(spaced("_ok", "a b"))),
+        ("$$".to_string(), None),
+        // An unclosed quote is scanned as unquoted, up to the next `<`.
+        (
+            format!("{}<x y>", spaced("Fn", "\"open quote")),
+            Some(spaced("Fn", "\"open quote")),
+        ),
+        (format!("{}<x y>", "$$Fn:\"unclosed"), None),
+    ] {
+        assert_eq!(first_spaced_function_argument(&tdl), hit, "{tdl}");
+    }
+}
