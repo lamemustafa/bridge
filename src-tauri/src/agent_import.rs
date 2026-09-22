@@ -383,7 +383,7 @@ impl Server {
                 "bridge_txn_id is client-supplied, unique within this batch, 1-64 ASCII characters from [A-Za-z0-9_-]",
                 "new files accept Journal, Payment, Receipt and Contra, the voucher types with recorded live import/readback evidence",
                 "a Journal takes any balanced set of entries and may carry a voucher_number",
-                "Payment, Receipt and Contra take exactly two entries over two distinct ledgers, and neither voucher_number nor reference: neither element's fate on these types has been observed, and the bank's own reference belongs in the narration, which survives",
+                "Payment, Receipt and Contra take two or more entries with at least one debit and one credit, no ledger on both sides (for more than two entries, one Bridge-built three-entry Receipt has been imported over the gateway and verified; no multi-entry Payment or Contra has been, and none of the three, including that Receipt, through Tally's Import menu), and neither voucher_number nor reference: neither element's fate on these types has been observed, and the bank's own reference belongs in the narration, which survives",
                 "a Payment credits, and a Receipt debits, a ledger whose live group ancestry reaches Bank Accounts or Cash-in-Hand; both Contra legs must name one, and a leg that cannot be established is refused",
                 "the other leg of a Payment or Receipt must be established as holding no money: a ledger under any money group is refused there, because money on both sides is a Contra whatever the type says, and so is one whose group ancestry cannot be resolved at all",
                 "each voucher has at least two entries and exact debit total equals credit total",
@@ -391,7 +391,7 @@ impl Server {
                 "dates must be within the selected company's BOOKSFROM through today",
                 "ledger names must exactly match the live catalogue; validate_masters before build_import_xml",
                 "a batch may contain at most 100 distinct ledger names of at most 1024 characters each"
-            ], "limits": {"import_mode_qualification": "New files require freshly observed supported TallyPrime product and licence mode before and after the build reads. Release and licence tier are reported as observed facts. Journal, Payment, Receipt and Contra are the voucher types with recorded import/readback evidence, each only in the exact file shape this schema admits; a multi-entry Payment, Receipt or Contra and every other voucher type are refused. Only an unnumbered single-voucher Journal batch is eligible for post_import; the other types are import-only."}}}),
+            ], "limits": {"import_mode_qualification": "New files require freshly observed supported TallyPrime product and licence mode before and after the build reads. Release and licence tier are reported as observed facts. Journal, Payment, Receipt and Contra are the voucher types with recorded import/readback evidence, each only in the exact file shape this schema admits, except that a Payment, Receipt or Contra with more than two entries (bridge#466) rests on narrower evidence: hand-built files of that shape were imported and read back over the gateway (a Contra only with a repeated ledger) and one Bridge-built three-entry Receipt was imported over the gateway and verified, but no multi-entry Payment or Contra has been, and none of the three, including that Receipt, through Tally's Import menu, and its build reports live_evidence hand_built_gateway_readback; every other voucher type is refused. Only an unnumbered single-voucher Journal batch is eligible for post_import; the other types are import-only."}}}),
             evidence: local_evidence("voucher_schema"),
             company_guid: None,
             truncated: false,
@@ -739,6 +739,9 @@ impl Server {
                         .voucher_type
                         .bank_shape()
                         .is_some_and(|shape| shape.party_side().is_some())
+                }),
+                line.vouchers.iter().any(|voucher| {
+                    voucher.voucher_type.bank_shape().is_some() && voucher.entries.len() > 2
                 }),
             );
             let next_step = match &amendment {
@@ -1387,6 +1390,7 @@ fn build_import_guidance(
     native_post_eligible: bool,
     bank_types: bool,
     names_a_counterparty: bool,
+    multi_entry_bank: bool,
 ) -> (Value, &'static str) {
     let preflight_warning =
         "The preflight observes the current verification window. The import or subsequent changes can make later readback exceed the source limits.";
@@ -1426,6 +1430,12 @@ fn build_import_guidance(
     let allocation_warning = names_a_counterparty.then_some(
         "This batch names a counterparty on a Payment or Receipt and carries no bill allocation, so each amount lands On Account. If that ledger is configured for bill-wise accounting, the entry will need allocating in Tally afterwards; Bridge does not read that configuration and cannot warn per ledger.",
     );
+    // bridge#466: the shape rests on narrower live evidence than two entries.
+    // Comments and docs are not what an operator reads, so the result says so
+    // itself, beside the party choice it made.
+    let multi_entry_warning = multi_entry_bank.then_some(
+        "A Payment, Receipt or Contra with more than two entries rests on narrower evidence than a two-entry one (bridge#466). Hand-built files of this shape were imported and read back with every entry over the gateway on licensed TallyPrime 7.1 Silver (for a Contra, only with a ledger repeated; three distinct ledgers not observed), and one Bridge-built three-entry Receipt was imported over the gateway and verified, but no multi-entry Payment or Contra has been, and none of the three, including that Receipt, through Tally's Import menu. Where such a voucher names several counterparties, the file names the first as the voucher's party; on two-entry Payments and Receipts and on that three-entry Receipt, Tally 7.1 Silver read back the bank ledger as the party rather than the counterparty written, and verify_import does not compare the party. verify_import still compares every entry.",
+    );
     let warnings = |first: &str| {
         json!(std::iter::once(first)
             .chain(std::iter::once(preflight_warning))
@@ -1434,6 +1444,7 @@ fn build_import_guidance(
             .chain(stale_classification_warning)
             .chain(release_evidence_warning)
             .chain(allocation_warning)
+            .chain(multi_entry_warning)
             .collect::<Vec<_>>())
     };
     let manual_import_next_step = "Confirm the loaded company matches this batch, import the file in Tally (Gateway of Tally → Import → Vouchers), then call verify_import";
@@ -1477,6 +1488,16 @@ fn live_evidence(vouchers: &[ImportVoucher]) -> Vec<Value> {
             None => (
                 "synthetic_lab_readback",
                 "docs/agent/ASSESSMENT-2026-09-06.md",
+            ),
+            // §9.13 imported two-entry vouchers only. A bank voucher with more
+            // entries (bridge#466) must not borrow that. It keeps the weaker
+            // label even after one Bridge-built three-entry Receipt was imported
+            // over the gateway and verified: that is one type, one sample, and
+            // not Tally's Import menu. §9.3's correction table records hand-built
+            // XML of this shape imported and read back over the gateway.
+            Some(_) if voucher.entries.len() > 2 => (
+                "hand_built_gateway_readback",
+                "docs/tally/TALLY_PROTOCOL_REFERENCE_WRITE_RESPONSES_AND_MASTERS.md",
             ),
             Some(_) => (
                 "licensed_bank_voucher_import",
@@ -1634,22 +1655,43 @@ fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
     Ok(())
 }
 
-/// Payment, Receipt and Contra are admitted only in the two-entry shape that
-/// was imported and read back live: one debit, one credit, two distinct
-/// ledgers, and neither a supplied voucher number nor a reference.
+/// Payment, Receipt and Contra take two or more entries with at least one on
+/// each side, and neither a supplied voucher number nor a reference.
 ///
-/// A multi-leg Payment is a perfectly ordinary Tally voucher and is
-/// deliberately not admitted. No such file has been imported and read back
-/// here, and the readback pairing that verify_import relies on has never been
-/// exercised on one; a Journal remains available for a batch that needs it.
+/// More than two entries is bridge#466 (one bank line settling two parties,
+/// or a payment funded from two accounts). Tally stores and reads back a
+/// multi-entry bank voucher with every entry (§9.3 correction table), and
+/// verify_import pairs entries as a sorted multiset, so a repeated ledger on
+/// one side pairs as two entries. What keeps a disguised Contra out is that
+/// every leg is classified (`constrained_legs`), not only the first on each
+/// side. The every-leg rule and the party choice (`render_voucher_xml`) are
+/// the owner's decisions of 2026-09-22. One Bridge-built three-entry Receipt
+/// has been imported over the gateway and verified live; no multi-entry
+/// Payment or Contra has been, and none of the three, including that Receipt,
+/// through Tally's Import menu.
+///
+/// One ledger on both sides would net inside the voucher, so it is refused.
 fn validate_bank_voucher_shape(voucher: &ImportVoucher) -> Result<(), String> {
-    let [first, second] = voucher.entries.as_slice() else {
-        return Err("voucher_entry_pair_required".to_string());
-    };
-    if first.side == second.side {
+    let debits = voucher
+        .entries
+        .iter()
+        .filter(|entry| entry.side == EntrySide::Dr)
+        .collect::<Vec<_>>();
+    let credits = voucher
+        .entries
+        .iter()
+        .filter(|entry| entry.side == EntrySide::Cr)
+        .collect::<Vec<_>>();
+    // Unreachable while validate_payload's entry-count, positive-amount and
+    // balance checks run first; kept so this function stays correct on its own
+    // if that order changes.
+    if debits.is_empty() || credits.is_empty() {
         return Err("voucher_entry_pair_required".to_string());
     }
-    if first.ledger == second.ledger {
+    if debits
+        .iter()
+        .any(|debit| credits.iter().any(|credit| credit.ledger == debit.ledger))
+    {
         return Err("voucher_entry_ledger_repeated".to_string());
     }
     // A supplied VOUCHERNUMBER's fate is decided by the *voucher type's*
@@ -1696,9 +1738,15 @@ fn constrained_legs(
                 .bank_shape()
                 .into_iter()
                 .flat_map(move |shape| {
-                    shape.legs.iter().filter_map(move |(side, requirement)| {
-                        entry_for_side(voucher, side)
-                            .map(|entry| (voucher, side, entry.ledger.as_str(), *requirement))
+                    // Every entry on a constrained side, not only the first:
+                    // money at any counterparty position is a disguised
+                    // Contra (bridge#466).
+                    shape.legs.iter().flat_map(move |(side, requirement)| {
+                        voucher
+                            .entries
+                            .iter()
+                            .filter(move |entry| &entry.side == side)
+                            .map(move |entry| (voucher, side, entry.ledger.as_str(), *requirement))
                     })
                 })
         })
@@ -1717,8 +1765,10 @@ struct CashBankRefusals {
     /// it, and 400 copies of one problem is not 400 problems.
     ///
     /// This is what bounds the result. `validate_payload` already caps a batch
-    /// at `MAX_MASTER_NAMES` distinct ledger names, and a ledger can be
-    /// constrained at most once per side, so these rows cannot exceed 200
+    /// at `MAX_MASTER_NAMES` distinct ledger names, rows are deduplicated by
+    /// (ledger, requirement), and there are only two requirements (money and
+    /// counterparty) — a ledger repeated on one side of a multi-entry voucher
+    /// still yields one row — so these rows cannot exceed 200
     /// however many vouchers the batch carries. Emitting one row per leg had no
     /// such bound: a 1,000-voucher batch produced up to 2,000 rows, and once
     /// that passed the response cap the whole actionable refusal collapsed into
@@ -2249,6 +2299,12 @@ fn render_voucher_xml(voucher: &ImportVoucher, remote_id: Uuid, attribution_id: 
         .as_ref()
         .map(|_| format!("<EFFECTIVEDATE>{date}</EFFECTIVEDATE>"))
         .unwrap_or_default();
+    // PARTYLEDGERNAME is the first entry on the counterparty side, in the
+    // voucher's own order: the single counterparty when there is one, and a
+    // deterministic choice when several parties share a voucher (bridge#466,
+    // owner decision 2026-09-22; Tally 7.1 Silver read the bank ledger back as
+    // the party on a three-entry Receipt, and omitting the element was not
+    // tried).
     let party = shape
         .as_ref()
         .and_then(BankVoucherShape::party_side)

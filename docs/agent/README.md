@@ -233,8 +233,15 @@ The four rest on different observations, and each build reports its own in
 - `Payment`, `Receipt`, `Contra` — a licensed TallyPrime 7.1 Gold bank-statement
   import observed 2026-09-10; see
   [reference §9.13](../tally/TALLY_PROTOCOL_REFERENCE.md). These three are
-  admitted only as two entries over two distinct ledgers with no voucher number
-  and no reference, and their money side must be a ledger whose live group
+  admitted with two or more entries (at least one debit and one credit, no
+  ledger on both sides; more than two is bridge#466 and rests on narrower
+  evidence: hand-built files of that shape were imported and read back
+  over the gateway ([reference §9.3](../tally/TALLY_PROTOCOL_REFERENCE_WRITE_RESPONSES_AND_MASTERS.md);
+  a Contra only with a repeated ledger), and one Bridge-built three-entry Receipt was imported
+  over the gateway and verified, but no multi-entry Payment or Contra has been, and none of the three, including that Receipt, through Tally's Import menu,
+  so such a voucher reports `live_evidence` as `hand_built_gateway_readback` and
+  its build result warns so) with no voucher number and no reference, and every leg on
+  their money side must be a ledger whose live group
   ancestry reaches a reserved `Bank Accounts`, `Cash-in-Hand` or `Bank OD A/c`
   identity, while
   their counterparty side must be established as holding no money — money on
