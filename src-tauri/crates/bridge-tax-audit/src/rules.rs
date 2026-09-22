@@ -22,7 +22,7 @@ use crate::error::{AuditError, Result};
 
 pub const VENDORED: &str = include_str!("../rules/ay2026-27.s44ab.toml");
 pub const VENDORED_SHA256: &str =
-    "4c08f19756da92a32144c21f7e87486e777860919ab04000e36e6287a9d30f51";
+    "5e4af91263e8287f06a98c2c06536e303e4d3290fcc97b4d4bccc56ee1ee9614";
 pub const SOURCE_PATH: &str = "the reference Python implementation's AY 2026-27 rules file";
 pub const SOURCE_SHA256: &str = "8a6ec80cd5d19da34392e93024dc9a43a98982b09fb457c662f627174acedf2d";
 pub const SOURCE_COMMIT: &str = "dd376ed014d922a1e2b12052763af36a565402ec";
@@ -63,6 +63,24 @@ pub struct Rules {
     /// when the rules file has no `[ledger_scrutiny]` table: the reference's `ledger_scrutiny`
     /// then falls back to its own default, and no other test needs the table.
     pub ledger_scrutiny_large_entry_paise: Option<i64>,
+    /// `tds_payees`: `[s194c]`, `None` when the rules carry no such table (the test then refuses,
+    /// as the reference's `rules["s194c"]` raises).
+    pub s194c: Option<S194c>,
+    /// `tds_payees`: `[s194i].per_month_per_payee_paise`; `None` without `[s194i]`.
+    pub s194i_per_month_per_payee_paise: Option<i64>,
+    /// `tds_payees`: `[deductor].individual_huf_prev_year_turnover_paise`; `None` without
+    /// `[deductor]`.
+    pub deductor_individual_huf_prev_year_turnover_paise: Option<i64>,
+    /// `tds_payees`: `[s194j].aggregate_paise`. `None` without `[s194j]`, which the test does not
+    /// refuse: it falls back to its own default, as the reference does.
+    pub s194j_aggregate_paise: Option<i64>,
+}
+
+/// `[s194c]`: the single-sum and aggregate limits of s.194C(5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct S194c {
+    pub single_sum_paise: i64,
+    pub aggregate_paise: i64,
 }
 
 impl Rules {
@@ -95,6 +113,7 @@ impl Rules {
                 ))),
             }
         };
+        let optional = |name: &str| table.get(name).and_then(toml::Value::as_table);
         let int_in = |t: &toml::Table, table_name: &str, key: &str| {
             t.get(key).and_then(toml::Value::as_integer).ok_or_else(|| {
                 AuditError::Config(format!("rules: [{table_name}].{key} is not an integer"))
@@ -190,6 +209,22 @@ impl Rules {
                 Some(ls) => Some(int_in(ls, "ledger_scrutiny", "large_entry_paise")?),
                 None => None,
             },
+            s194c: match optional("s194c") {
+                Some(t) => Some(S194c {
+                    single_sum_paise: int_in(t, "s194c", "single_sum_paise")?,
+                    aggregate_paise: int_in(t, "s194c", "aggregate_paise")?,
+                }),
+                None => None,
+            },
+            s194i_per_month_per_payee_paise: optional("s194i")
+                .map(|t| int_in(t, "s194i", "per_month_per_payee_paise"))
+                .transpose()?,
+            deductor_individual_huf_prev_year_turnover_paise: optional("deductor")
+                .map(|t| int_in(t, "deductor", "individual_huf_prev_year_turnover_paise"))
+                .transpose()?,
+            s194j_aggregate_paise: optional("s194j")
+                .map(|t| int_in(t, "s194j", "aggregate_paise"))
+                .transpose()?,
         })
     }
 
@@ -268,6 +303,24 @@ mod tests {
         assert_eq!(rules.due_dates_status, "partial");
     }
 
+    #[test]
+    fn vendored_rules_carry_the_tds_payees_values() {
+        let rules = Rules::vendored().unwrap();
+        assert_eq!(
+            rules.s194c,
+            Some(S194c {
+                single_sum_paise: 3_000_000,
+                aggregate_paise: 10_000_000,
+            })
+        );
+        assert_eq!(rules.s194i_per_month_per_payee_paise, Some(5_000_000));
+        assert_eq!(
+            rules.deductor_individual_huf_prev_year_turnover_paise,
+            Some(1_000_000_000)
+        );
+        assert_eq!(rules.s194j_aggregate_paise, Some(5_000_000));
+    }
+
     /// The vendored excerpt is public: the source's own comment beside `return_non_audit_firm`
     /// is private, so the excerpt stops at the value, and no private-note citation may appear.
     #[test]
@@ -275,7 +328,7 @@ mod tests {
         assert!(VENDORED
             .lines()
             .any(|l| l == "return_non_audit_firm = 2026-08-31"));
-        for word in ["note)", "research/", ".md"] {
+        for word in ["note)", "research/", ".md", "gap register"] {
             assert!(!VENDORED.contains(word), "{word:?} in the vendored rules");
         }
     }

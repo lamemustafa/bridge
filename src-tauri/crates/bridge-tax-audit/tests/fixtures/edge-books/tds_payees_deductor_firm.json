@@ -1,0 +1,80 @@
+{
+ "comment": "tds_payees deductor status: a firm: always a deductor, turnover irrelevant.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Bank OD A/c": "Loans (Liability)",
+  "Sundry Debtors": "Current Assets",
+  "Loans & Advances (Asset)": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Duties & Taxes": "Current Liabilities",
+  "Loans (Liability)": null,
+  "Unsecured Loans": "Loans (Liability)",
+  "Secured Loans": "Loans (Liability)",
+  "Direct Expenses": null,
+  "Indirect Expenses": null,
+  "Purchase Accounts": null,
+  "Sales Accounts": null,
+  "Fixed Assets": null,
+  "Suspense A/c": null
+ },
+ "ledgers": [
+  {
+   "name": "Freight",
+   "chain": [
+    "Direct Expenses"
+   ],
+   "guid": "edge-tds_payees_deductor_firm-000"
+  },
+  {
+   "name": "Contractor B",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_deductor_firm-001"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Freight",
+   "opening": 0,
+   "debit": 100,
+   "credit": 0,
+   "closing": 100
+  },
+  {
+   "ledger": "Contractor B",
+   "opening": 0,
+   "debit": 0,
+   "credit": 100,
+   "closing": -100
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "x01",
+   "date": "2025-04-02",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Freight",
+     100
+    ],
+    [
+     "Contractor B",
+     -100
+    ]
+   ]
+  }
+ ],
+ "tests": [
+  "tds_payees"
+ ],
+ "nature_by_ledger": {
+  "Freight": "194C"
+ },
+ "entity_type": "firm"
+}

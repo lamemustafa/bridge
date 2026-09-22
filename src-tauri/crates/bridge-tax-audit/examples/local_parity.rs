@@ -79,9 +79,10 @@ fn vendored_blocks_are_verbatim(source: &str) -> bool {
         .all(|block| source.contains(block))
 }
 
-/// Narrows `[ledger_ids]`/`[group_ids]` to the labels the seven locations this port's `Engagement`
+/// Narrows `[ledger_ids]`/`[group_ids]` to the labels the ten locations this port's `Engagement`
 /// actually reads (`roles.cash_groups`, `roles.bank_groups`, `roles.round_off_ledgers`,
-/// `loans.loan_ledgers`'s keys, `depreciation.block_by_ledger`'s keys,
+/// `tds.nature_by_ledger`'s and `tds.payee_aliases`' keys, `tds_payees.s194j_category_by_ledger`'s
+/// keys, `loans.loan_ledgers`'s keys, `depreciation.block_by_ledger`'s keys,
 /// `depreciation.dep_expense_ledgers` and `partners.*.interest_ledger`) use, so
 /// `Engagement::bind`'s `BIND-ID-UNUSED` check never refuses over a label a real client TOML
 /// binds only for a role this port does not implement (see this file's doc comment and `docs/tax-audit/config-identity-binding-v1.md` section 4).
@@ -107,6 +108,20 @@ fn narrow_identity_tables(cfg: &mut toml::Table) {
         }
         if let Some(v) = roles.get("round_off_ledgers") {
             ledger_labels.extend(strs(v));
+        }
+    }
+    for (table, key) in [
+        ("tds", "nature_by_ledger"),
+        ("tds", "payee_aliases"),
+        ("tds_payees", "s194j_category_by_ledger"),
+    ] {
+        if let Some(t) = cfg
+            .get(table)
+            .and_then(toml::Value::as_table)
+            .and_then(|t| t.get(key))
+            .and_then(toml::Value::as_table)
+        {
+            ledger_labels.extend(t.keys().cloned());
         }
     }
     if let Some(t) = cfg

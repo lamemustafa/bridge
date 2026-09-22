@@ -1,8 +1,10 @@
 //! Bind an [`Engagement`]'s ledger and group names to the Book by Tally identity, or refuse.
 //!
 //! An engagement config names ledgers and groups by display text: `[roles].cash_groups`,
-//! `[roles].round_off_ledgers`, `[loans.loan_ledgers]`'s keys, `[depreciation].block_by_ledger`'s
-//! keys, `[depreciation].dep_expense_ledgers` and `[partners.*].interest_ledger` -- every location
+//! `[roles].round_off_ledgers`, `[tds].nature_by_ledger`'s and `[tds].payee_aliases`' keys,
+//! `[tds_payees].s194j_category_by_ledger`'s keys, `[loans.loan_ledgers]`'s keys,
+//! `[depreciation].block_by_ledger`'s keys, `[depreciation].dep_expense_ledgers` and
+//! `[partners.*].interest_ledger` -- every location
 //! this crate's [`Engagement`] reads. Staff rename ledgers between reads, and a name that stops matching used to drop out of
 //! a role silently: the figures moved and nothing said why. [`bind`] is the one place a
 //! configured name meets the Book; every one of the locations above is bound once, before any
@@ -24,9 +26,8 @@
 //!   drift can judge.
 //!
 //! **Scope.** This port's registry above is a strict subset of the reference implementation's
-//! (which also binds names inside `tds`, `gst_outward`, `related_parties`, `statutory_dues`, a
-//! legacy trade-creditor JSON source, and more): only the locations `cash_44ab`,
-//! `cash_payments_40a3` and `depreciation` actually read. A real client config's `[ledger_ids]`/
+//! (which also binds names inside `gst_outward`, `related_parties`, `statutory_dues`, a legacy
+//! trade-creditor JSON source, and more): only the locations the ported tests actually read. A real client config's `[ledger_ids]`/
 //! `[group_ids]` tables are written for the reference implementation's full pack and will
 //! typically carry many labels this port never looks at; [`BIND_ID_UNUSED`] is checked only
 //! against the locations this module reads, so this crate never refuses over a label some other,
@@ -396,6 +397,20 @@ rebind the client configuration's identity table against the read the names were
         Ok(pairs)
     }
 
+    /// A table keyed by name, re-keyed by each key's bound name, values unchanged
+    /// ([`Self::bind_keys`]).
+    fn rebind_map<V: Clone>(
+        &mut self,
+        map: &BTreeMap<String, V>,
+        location: &str,
+    ) -> Result<BTreeMap<String, V>> {
+        let pairs = self.bind_keys(map.keys().cloned(), location)?;
+        Ok(pairs
+            .into_iter()
+            .map(|(orig, bound)| (bound, map[&orig].clone()))
+            .collect())
+    }
+
     fn check_unused(&self) -> Result<()> {
         let unused: Vec<String> = self
             .current
@@ -514,6 +529,19 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
     let round_off_ledgers =
         lbinder.bind_list(&engagement.round_off_ledgers, "roles.round_off_ledgers")?;
 
+    // `[tds]` and `[tds_payees]` bind before `[depreciation]`, in the reference's order
+    // (`LEDGER_PATHS`). A payee alias's VALUE is a payee entity label, not a ledger, and is left
+    // as written.
+    let mut tds = engagement.tds.clone();
+    if let Some(t) = tds.as_mut() {
+        t.nature_by_ledger = lbinder.rebind_map(&t.nature_by_ledger, "tds.nature_by_ledger")?;
+        t.payee_aliases = lbinder.rebind_map(&t.payee_aliases, "tds.payee_aliases")?;
+        t.s194j_category_by_ledger = lbinder.rebind_map(
+            &t.s194j_category_by_ledger,
+            "tds_payees.s194j_category_by_ledger",
+        )?;
+    }
+
     let loan_pairs = lbinder.bind_keys(
         engagement.loan_ledgers_configured.iter().cloned(),
         "loans.loan_ledgers",
@@ -596,6 +624,7 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
         loan_ledgers_configured,
         depreciation,
         partner_interest_ledgers,
+        tds,
         ..engagement.clone()
     };
     Ok((bound, report))
