@@ -1422,8 +1422,9 @@ fn build_import_guidance(
     // afterwards, so a regroup between build and hand import is invisible to
     // verify_import.
     // post_import closes the gap for its own path: it classifies every leg
-    // again before approval and inside the queue just before the POST. A hand
-    // import of the file has no such check, so the warning keeps saying so.
+    // again before approval and again after approval inside the endpoint
+    // queue, before the final duplicate check and the post. A hand import of
+    // the file has no such check, so the warning keeps saying so.
     let stale_classification_warning = bank_types.then_some(
         "This file's Payment, Receipt and Contra split came from the group collection read during this build. Regrouping a ledger afterwards is an ordinary Tally operation and would silently make the voucher type wrong — a counterparty moved under a cash or bank group should have become a Contra. post_import classifies every leg again before approval and after approval inside the endpoint queue, before the final duplicate check and the post, and refuses a changed one, but a manual import of this file is not checked, and verify_import compares the entries as built, not current ancestry. If any master changed since this batch was built, discard it and build again.",
     );
