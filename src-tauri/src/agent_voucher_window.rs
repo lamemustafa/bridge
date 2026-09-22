@@ -221,6 +221,13 @@ pub(super) const WINDOW_CHANGED_DURING_READ: &str = "voucher_window_changed_duri
 /// only the window's vouchers if every part holds exactly its own.
 pub(super) const PART_NOT_ADMITTED: &str = "voucher_window_part_not_admitted";
 
+/// A window read for a sealed record was refused unread: it must read the
+/// company's marks itself, so the opening and closing marks it proves one
+/// state of the book with are both among its own retained reads. A caller's
+/// count or marks, or a replay against another read's witness, would leave the
+/// record resting on a read it does not hold.
+pub(super) const AUDIT_WINDOW_NEEDS_ITS_OWN_MARKS: &str = "audit_window_needs_its_own_marks";
+
 /// Why a part was not admitted, as the `cause` beside [`PART_NOT_ADMITTED`].
 /// A row whose date, or (for a counted window) AlterID, could not be read.
 pub(super) const PART_ROW_UNREADABLE: &str = "part_row_unreadable";
@@ -673,7 +680,9 @@ pub(super) struct WindowServed {
     /// Tally refused one of the read's data requests as too large or timed out.
     pub(super) refused_a_part: bool,
     /// One copy of every data response, summed: `post_read` reports both bodies
-    /// of a paired read, so half of its evidence bytes.
+    /// of a paired read, so half of its evidence bytes. Valid only for a read
+    /// through [`AgentReader`], the paired reader; the one caller (import
+    /// verification) reads through it.
     pub(super) data_bytes: u64,
 }
 
@@ -877,29 +886,337 @@ enum Preflight {
     },
 }
 
+/// What one request of a window read is for. A reader may label, retain or
+/// time a request by it; admission never depends on it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum WindowReadKind {
+    /// The company's high-water marks, before or after the window.
+    Marks,
+    /// One span of the pre-flight census.
+    Census,
+    /// One planned part of the window.
+    Part(WindowPart),
+}
+
+/// How a window read reaches Tally. [`read_voucher_window_with`] plans,
+/// admits and brackets; a reader only sends one request and returns its
+/// decoded response, evidence and observed date-boundary profile. A reader
+/// changes transport and retention, never admission: every part still passes
+/// the same census witness, `admit_part`, union and bracket checks.
+pub(super) trait WindowReader {
+    /// How many copies of each response body the reader's evidence `bytes`
+    /// count: 2 for a paired read, 1 for a single read. The executor divides by
+    /// this to measure one response, so a single reader is never planned at
+    /// half its real cost (and so at twice a safe part size).
+    fn evidence_copies(&self) -> u64;
+
+    /// Whether this reader's reads become a sealed record. Such a window must
+    /// read its own marks ([`AUDIT_WINDOW_NEEDS_ITS_OWN_MARKS`]).
+    fn seals_its_reads(&self) -> bool {
+        false
+    }
+
+    /// Called once at the start of every window read, before any request: a
+    /// reader that retains reads starts each window empty.
+    fn begin_window(&self) {}
+
+    async fn read(
+        &self,
+        identity: &VerifiedCompanyIdentity,
+        request: ReadRequest,
+        kind: WindowReadKind,
+    ) -> Result<(String, Evidence, DateBoundaryProfile), ToolFailure>;
+}
+
+/// The agent tools' reader: the paired, identity-bracketed agent read, exactly
+/// as the window read sent before readers existed.
+pub(super) struct AgentReader<'a>(pub(super) &'a Server);
+
+impl WindowReader for AgentReader<'_> {
+    /// `post_read_observing_boundary` reports both accepted bodies of the pair.
+    fn evidence_copies(&self) -> u64 {
+        2
+    }
+
+    async fn read(
+        &self,
+        identity: &VerifiedCompanyIdentity,
+        request: ReadRequest,
+        _kind: WindowReadKind,
+    ) -> Result<(String, Evidence, DateBoundaryProfile), ToolFailure> {
+        self.0.post_read_observing_boundary(identity, request).await
+    }
+}
+
+/// One admitted request of an audit window read, kept as it arrived.
+#[derive(Debug, Clone)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "sealed by the audit_read orchestrator, plan step 7"
+    )
+)]
+pub(super) struct RetainedWindowRead {
+    pub(super) kind: WindowReadKind,
+    /// SHA-256 of the UTF-16LE request Bridge sent.
+    pub(super) request_sha256: String,
+    pub(super) part: crate::tally::runtime::AuditPart,
+}
+
+/// The audit_read reader: every request is one [`fetch_audit_part`] (single,
+/// unpaired, identity-bracketed, Education-guarded, drain-debted), and every
+/// admitted response is retained byte for byte, in order. A failed read keeps
+/// its typed kind for [`audit_window_failure`].
+///
+/// Nothing retained is meaningful unless the whole window read succeeds, so
+/// [`AuditWindowReader::into_retained`] yields it only then: part of a window
+/// is never sealed.
+///
+/// [`fetch_audit_part`]: crate::tally::runtime::TallyRuntime::fetch_audit_part
+pub(super) struct AuditWindowReader<'a> {
+    runtime: &'a TallyRuntime,
+    config: TallyConfig,
+    retained: std::sync::Mutex<Vec<RetainedWindowRead>>,
+    failure: std::sync::Mutex<Option<crate::tally::runtime::AuditPartFailureKind>>,
+}
+
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "driven by the audit_read orchestrator, plan step 7"
+    )
+)]
+impl<'a> AuditWindowReader<'a> {
+    pub(super) fn new(runtime: &'a TallyRuntime, config: TallyConfig) -> Self {
+        Self {
+            runtime,
+            config,
+            retained: std::sync::Mutex::default(),
+            failure: std::sync::Mutex::default(),
+        }
+    }
+
+    /// Read one window for a sealed record. The reader is consumed, so it can
+    /// serve neither a second window nor two windows at once, and the retained
+    /// reads come back only beside the outcome they belong to. The window
+    /// always reads its own marks ([`AUDIT_WINDOW_NEEDS_ITS_OWN_MARKS`]).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn read_window<T, P>(
+        self,
+        identity: &VerifiedCompanyIdentity,
+        company: &str,
+        from: &str,
+        to: &str,
+        shape: VoucherReadShape,
+        limits: WindowReadLimits,
+        parse: P,
+    ) -> AuditWindowRead<T>
+    where
+        T: WindowRow,
+        P: FnMut(&str) -> Result<Vec<T>, String>,
+    {
+        let outcome = read_voucher_window_with(
+            &self,
+            identity,
+            company,
+            from,
+            to,
+            shape,
+            WindowPlanSource::Estimate { known_marks: None },
+            limits,
+            parse,
+        )
+        .await;
+        let failure = outcome
+            .as_ref()
+            .err()
+            .map(|failure| audit_window_failure(failure, &self));
+        let retained = self.into_retained(&outcome);
+        AuditWindowRead {
+            outcome,
+            retained,
+            failure,
+        }
+    }
+
+    /// Every read of the window, in the order sent, but only when `outcome`,
+    /// the result of this reader's window read, succeeded. A read is retained
+    /// when its response arrives, before the executor admits it, so a failed
+    /// window can hold a refused part. Returning nothing on any failure is what
+    /// keeps part of a failed window from ever being sealed. Private: only
+    /// [`Self::read_window`] pairs it with its own window's outcome.
+    fn into_retained<T>(
+        self,
+        outcome: &Result<WindowReadOutcome<T>, ToolFailure>,
+    ) -> Option<Vec<RetainedWindowRead>> {
+        if outcome.is_err() || self.failure_kind().is_some() {
+            return None;
+        }
+        Some(
+            self.retained
+                .into_inner()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+
+    fn failure_kind(&self) -> Option<crate::tally::runtime::AuditPartFailureKind> {
+        *self
+            .failure
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+impl WindowReader for AuditWindowReader<'_> {
+    /// Each audit part is read once ([`AuditPartShape::Single`]).
+    ///
+    /// [`AuditPartShape::Single`]: crate::tally::runtime::AuditPartShape::Single
+    fn evidence_copies(&self) -> u64 {
+        1
+    }
+
+    fn seals_its_reads(&self) -> bool {
+        true
+    }
+
+    /// A reader reused for another window, say a retry after
+    /// [`AuditWindowFailure::WindowChanged`], must not carry the earlier
+    /// attempt's reads or failure into it.
+    fn begin_window(&self) {
+        self.retained
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        *self
+            .failure
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
+
+    async fn read(
+        &self,
+        identity: &VerifiedCompanyIdentity,
+        request: ReadRequest,
+        kind: WindowReadKind,
+    ) -> Result<(String, Evidence, DateBoundaryProfile), ToolFailure> {
+        let xml = request.into_xml();
+        let request_sha256 = sha256_hex(&bridge_tally_protocol::encode_tally_xml_request_utf16le(
+            &xml,
+        ));
+        let admitted = crate::tally::agent_read_request::AgentReadRequest::parse(xml)
+            .map_err(|error| ToolFailure::from(error.to_string()))?;
+        match self
+            .runtime
+            .fetch_audit_part(
+                self.config.clone(),
+                identity,
+                admitted,
+                crate::tally::runtime::AuditPartShape::Single,
+            )
+            .await
+        {
+            Ok(part) => {
+                let evidence = Evidence {
+                    request_sha256: request_sha256.clone(),
+                    response_sha256: part.encoded_sha256.clone(),
+                    // One unpaired body: the audit part is read once.
+                    bytes: part.encoded_body.len(),
+                    state: "complete",
+                    read_at: None,
+                    duration_ms: Some(part.elapsed.as_millis()),
+                    reason_code: None,
+                };
+                let body = part.body.clone();
+                let boundary = part.boundary_profile;
+                self.retained
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(RetainedWindowRead {
+                        kind,
+                        request_sha256,
+                        part,
+                    });
+                Ok((body, evidence, boundary))
+            }
+            Err(failure) => {
+                *self
+                    .failure
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(failure.kind);
+                Err(ToolFailure::from(failure.kind.code().to_string()))
+            }
+        }
+    }
+}
+
+/// One audit window read: its outcome, and, only when that outcome succeeded,
+/// every read it made; on failure, why ([`AuditWindowReader::read_window`]).
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "read by the audit_read orchestrator, plan step 7")
+)]
+pub(super) struct AuditWindowRead<T> {
+    pub(super) outcome: Result<WindowReadOutcome<T>, ToolFailure>,
+    pub(super) retained: Option<Vec<RetainedWindowRead>>,
+    pub(super) failure: Option<AuditWindowFailure>,
+}
+
+/// Why an audit window read failed, typed for the audit_read orchestrator.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum AuditWindowFailure {
+    /// One of the window's requests failed as a part, with its typed kind.
+    Part(crate::tally::runtime::AuditPartFailureKind),
+    /// The company's marks moved across a divided window: someone else was
+    /// writing. The parts no longer describe one state of the book.
+    WindowChanged,
+    /// A refusal of the window itself (plan, census or admission), by code.
+    Refused(String),
+}
+
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "read by the audit_read orchestrator, plan step 7")
+)]
+impl AuditWindowFailure {
+    /// Whether the orchestrator may read the same window again later. Someone
+    /// else writing is the normal case on a multi-user book, so a window that
+    /// changed under the read is retryable; a refused plan or admission is not.
+    ///
+    /// A part that ran past its deadline is not retryable as the same window:
+    /// the executor never divides an audit part, so the same plan would send
+    /// the same request and owe another drain. Such a window needs smaller
+    /// parts, not another attempt.
+    pub(super) fn retryable(&self) -> bool {
+        match self {
+            Self::Part(crate::tally::runtime::AuditPartFailureKind::Deadline) => false,
+            Self::Part(kind) => kind.retryable(),
+            Self::WindowChanged => true,
+            Self::Refused(_) => false,
+        }
+    }
+}
+
+/// Classify a failed audit window read. A failed request is named by the
+/// reader's retained kind, since the window stops at the first one; otherwise
+/// the executor's own refusal code decides.
+fn audit_window_failure(
+    failure: &ToolFailure,
+    reader: &AuditWindowReader<'_>,
+) -> AuditWindowFailure {
+    if let Some(kind) = reader.failure_kind() {
+        return AuditWindowFailure::Part(kind);
+    }
+    if failure.code == WINDOW_CHANGED_DURING_READ {
+        return AuditWindowFailure::WindowChanged;
+    }
+    AuditWindowFailure::Refused(failure.code.clone())
+}
+
 impl Server {
-    /// Read a voucher window of `shape`, divided so that no request is
-    /// predicted over the budget (protocol reference §11c).
-    ///
-    /// `parse` turns one response into rows. Rows from every part are returned
-    /// together in order, so a caller sees what one undivided read would have
-    /// produced.
-    ///
-    /// A divided read is admitted part by part and as a whole:
-    ///
-    /// - every row of a part must lie in that part's dates and AlterID span, and
-    ///   when the window was counted, a part's vouchers must be exactly the ones
-    ///   the census counted for it ([`PART_NOT_ADMITTED`]);
-    /// - GUIDs and master IDs must be unique across the union of parts, not
-    ///   only within each response;
-    /// - it is bracketed: both company marks are read again after the last part,
-    ///   and marks that moved refuse the read. Parts read at different moments
-    ///   describe one state of the book only if nothing changed between them,
-    ///   and a day read in AlterID spans covers only the AlterIDs that existed
-    ///   when it was counted.
-    ///
-    /// Every data request counts against the read allowance when it is
-    /// dispatched, including a part divided after Tally could not serve it.
+    /// Read a voucher window through the agent's own paired read. See
+    /// [`read_voucher_window_with`].
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn read_voucher_window<T, P>(
         &self,
@@ -910,405 +1227,477 @@ impl Server {
         shape: VoucherReadShape,
         source: WindowPlanSource,
         limits: WindowReadLimits,
-        mut parse: P,
+        parse: P,
     ) -> Result<WindowReadOutcome<T>, ToolFailure>
     where
         T: WindowRow,
         P: FnMut(&str) -> Result<Vec<T>, String>,
     {
-        let first = parse_day(from)?;
-        let last = parse_day(to)?;
-        if first > last {
-            return Err("invalid_date_range".to_string().into());
+        read_voucher_window_with(
+            &AgentReader(self),
+            identity,
+            company,
+            from,
+            to,
+            shape,
+            source,
+            limits,
+            parse,
+        )
+        .await
+    }
+}
+
+/// Read a voucher window of `shape`, divided so that no request is
+/// predicted over the budget (protocol reference §11c).
+///
+/// `parse` turns one response into rows. Rows from every part are returned
+/// together in order, so a caller sees what one undivided read would have
+/// produced.
+///
+/// A divided read is admitted part by part and as a whole:
+///
+/// - every row of a part must lie in that part's dates and AlterID span, and
+///   when the window was counted, a part's vouchers must be exactly the ones
+///   the census counted for it ([`PART_NOT_ADMITTED`]);
+/// - GUIDs and master IDs must be unique across the union of parts, not
+///   only within each response;
+/// - it is bracketed: both company marks are read again after the last part,
+///   and marks that moved refuse the read. Parts read at different moments
+///   describe one state of the book only if nothing changed between them,
+///   and a day read in AlterID spans covers only the AlterIDs that existed
+///   when it was counted.
+///
+/// Every data request counts against the read allowance when it is
+/// dispatched, including a part divided after Tally could not serve it.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn read_voucher_window_with<R, T, P>(
+    reader: &R,
+    identity: &VerifiedCompanyIdentity,
+    company: &str,
+    from: &str,
+    to: &str,
+    shape: VoucherReadShape,
+    source: WindowPlanSource,
+    limits: WindowReadLimits,
+    mut parse: P,
+) -> Result<WindowReadOutcome<T>, ToolFailure>
+where
+    R: WindowReader,
+    T: WindowRow,
+    P: FnMut(&str) -> Result<Vec<T>, String>,
+{
+    reader.begin_window();
+    if reader.seals_its_reads()
+        && !matches!(source, WindowPlanSource::Estimate { known_marks: None })
+    {
+        return Err(AUDIT_WINDOW_NEEDS_ITS_OWN_MARKS.to_string().into());
+    }
+    let first = parse_day(from)?;
+    let last = parse_day(to)?;
+    if first > last {
+        return Err("invalid_date_range".to_string().into());
+    }
+    let mut preflight = None;
+    let mut opening: Option<CompanyMarks> = None;
+    // Observed by every read this window makes, at no request of its own.
+    let mut boundary: Option<DateBoundaryProfile> = None;
+    let mut census = None;
+    let mut ceiling = 0;
+    let mut bytes_per_voucher = limits.default_bytes_per_voucher;
+    // A stack whose pops are in order and whose parts always tile the part
+    // of the window not yet read, so the rows arrive in order.
+    // A replay reads exactly the parts it was given: it never re-plans from
+    // a measurement, which could merge parts back into a request the first
+    // read already found Tally could not serve.
+    let replaying = matches!(source, WindowPlanSource::Replay { .. });
+    let mut pending: Vec<WindowPart> = match source {
+        WindowPlanSource::Replay { parts, witness } => {
+            for part in &parts {
+                let (part_from, part_to) = (parse_day(&part.from)?, parse_day(&part.to)?);
+                if part_from > part_to {
+                    return Err("invalid_date_range".to_string().into());
+                }
+                if part_from < first || part_to > last {
+                    return Err("window_not_honoured".to_string().into());
+                }
+            }
+            match witness {
+                Some(witness) => {
+                    opening = Some(witness.marks);
+                    ceiling = witness.marks.vouchers.max(
+                        witness
+                            .census
+                            .as_ref()
+                            .map_or(0, WindowCensus::max_alter_id),
+                    );
+                    census = witness.census;
+                }
+                None if is_divided(&parts) => {
+                    return Err(REPLAY_UNWITNESSED.to_string().into());
+                }
+                None => {}
+            }
+            parts.into_iter().rev().collect()
         }
-        let mut preflight = None;
-        let mut opening: Option<CompanyMarks> = None;
-        // Observed by every read this window makes, at no request of its own.
-        let mut boundary: Option<DateBoundaryProfile> = None;
-        let mut census = None;
-        let mut ceiling = 0;
-        let mut bytes_per_voucher = limits.default_bytes_per_voucher;
-        // A stack whose pops are in order and whose parts always tile the part
-        // of the window not yet read, so the rows arrive in order.
-        // A replay reads exactly the parts it was given: it never re-plans from
-        // a measurement, which could merge parts back into a request the first
-        // read already found Tally could not serve.
-        let replaying = matches!(source, WindowPlanSource::Replay { .. });
-        let mut pending: Vec<WindowPart> = match source {
-            WindowPlanSource::Replay { parts, witness } => {
-                for part in &parts {
-                    let (part_from, part_to) = (parse_day(&part.from)?, parse_day(&part.to)?);
-                    if part_from > part_to {
-                        return Err("invalid_date_range".to_string().into());
-                    }
-                    if part_from < first || part_to > last {
+        source => {
+            let estimate = match source {
+                WindowPlanSource::Counted(counted) => {
+                    if !counted.within(first, last) {
                         return Err("window_not_honoured".to_string().into());
                     }
+                    whole_or_counted(counted, None, limits)
                 }
-                match witness {
-                    Some(witness) => {
-                        opening = Some(witness.marks);
-                        ceiling = witness.marks.vouchers.max(
-                            witness
-                                .census
-                                .as_ref()
-                                .map_or(0, WindowCensus::max_alter_id),
-                        );
-                        census = witness.census;
-                    }
-                    None if is_divided(&parts) => {
-                        return Err(REPLAY_UNWITNESSED.to_string().into());
-                    }
-                    None => {}
-                }
-                parts.into_iter().rev().collect()
-            }
-            source => {
-                let estimate = match source {
-                    WindowPlanSource::Counted(counted) => {
-                        if !counted.within(first, last) {
-                            return Err("window_not_honoured".to_string().into());
-                        }
-                        whole_or_counted(counted, None, limits)
-                    }
-                    WindowPlanSource::Estimate { known_marks } => self
-                        .estimate_window_volume(
-                            identity,
-                            company,
-                            (first, last),
-                            known_marks,
-                            limits,
-                            &mut preflight,
-                            &mut opening,
-                            &mut boundary,
-                        )
-                        .await
-                        .map_err(|failure| with_prior(failure, &preflight, &None))?,
-                    WindowPlanSource::Replay { .. } => unreachable!("handled above"),
-                };
-                match estimate {
-                    Preflight::Whole => vec![WindowPart {
-                        from: from.to_string(),
-                        to: to.to_string(),
-                        span: None,
-                    }],
-                    Preflight::Counted {
-                        census: counted,
-                        marks,
-                    } => {
-                        ceiling = marks
-                            .map_or(0, |marks| marks.vouchers)
-                            .max(counted.max_alter_id());
-                        let plan = plan_window_reads(
-                            first,
-                            last,
-                            &counted,
-                            None,
-                            ceiling,
-                            bytes_per_voucher,
-                            limits.budget_bytes,
-                            limits.max_reads,
-                        )
-                        .map_err(|refusal| {
-                            with_prior(refusal.code().to_string().into(), &preflight, &None)
-                        })?;
-                        census = Some(counted);
-                        stack_of(&plan)
-                    }
-                }
-            }
-        };
-        let mut rows = Vec::new();
-        let mut evidence: Option<Evidence> = None;
-        let mut reads: Vec<WindowPart> = Vec::new();
-        let mut measured = false;
-        let mut dispatched = 0_usize;
-        let mut refused_a_part = false;
-        // #485: the smallest span already known to be unservable on THIS call,
-        // so a sibling of the same size is split without spending a deadline.
-        let mut smallest_failed_days: Option<i64> = None;
-        let outcome: Result<(), ToolFailure> = async {
-            while let Some(part) = pending.pop() {
-                if shape.splits_on_oversize()
-                    && part.span.is_none()
-                    && must_split_before_reading(
-                        window_span_days(&part.from, &part.to),
-                        smallest_failed_days,
+                WindowPlanSource::Estimate { known_marks } => estimate_window_volume(
+                    reader,
+                    identity,
+                    company,
+                    (first, last),
+                    known_marks,
+                    limits,
+                    &mut preflight,
+                    &mut opening,
+                    &mut boundary,
+                )
+                .await
+                .map_err(|failure| with_prior(failure, &preflight, &None))?,
+                WindowPlanSource::Replay { .. } => unreachable!("handled above"),
+            };
+            match estimate {
+                Preflight::Whole => vec![WindowPart {
+                    from: from.to_string(),
+                    to: to.to_string(),
+                    span: None,
+                }],
+                Preflight::Counted {
+                    census: counted,
+                    marks,
+                } => {
+                    ceiling = marks
+                        .map_or(0, |marks| marks.vouchers)
+                        .max(counted.max_alter_id());
+                    let plan = plan_window_reads(
+                        first,
+                        last,
+                        &counted,
+                        None,
+                        ceiling,
+                        bytes_per_voucher,
+                        limits.budget_bytes,
+                        limits.max_reads,
                     )
-                {
-                    // Known too big. Split without spending a deadline to confirm it.
-                    if let Some((left, right)) = halve_part(&part, census.as_ref(), ceiling) {
-                        pending.push(right);
-                        pending.push(left);
+                    .map_err(|refusal| {
+                        with_prior(refusal.code().to_string().into(), &preflight, &None)
+                    })?;
+                    census = Some(counted);
+                    stack_of(&plan)
+                }
+            }
+        }
+    };
+    let mut rows = Vec::new();
+    let mut evidence: Option<Evidence> = None;
+    let mut reads: Vec<WindowPart> = Vec::new();
+    let mut measured = false;
+    let mut dispatched = 0_usize;
+    let mut refused_a_part = false;
+    // #485: the smallest span already known to be unservable on THIS call,
+    // so a sibling of the same size is split without spending a deadline.
+    let mut smallest_failed_days: Option<i64> = None;
+    let outcome: Result<(), ToolFailure> = async {
+        while let Some(part) = pending.pop() {
+            if shape.splits_on_oversize()
+                && part.span.is_none()
+                && must_split_before_reading(
+                    window_span_days(&part.from, &part.to),
+                    smallest_failed_days,
+                )
+            {
+                // Known too big. Split without spending a deadline to confirm it.
+                if let Some((left, right)) = halve_part(&part, census.as_ref(), ceiling) {
+                    pending.push(right);
+                    pending.push(left);
+                    continue;
+                }
+            }
+            admit_plan_boundaries(boundary, &part, &pending)?;
+            // The allowance is spent when a request is dispatched, not when a
+            // plan is made: a part divided after Tally could not serve it, or
+            // split because a sibling could not be served, costs a request
+            // no plan counted.
+            if dispatched >= limits.max_reads {
+                return Err(PlanRefusal::TooManyReads {
+                    reads: dispatched + 1 + pending.len(),
+                }
+                .code()
+                .to_string()
+                .into());
+            }
+            dispatched += 1;
+            let request =
+                voucher_window_part_read(shape, company, &part.from, &part.to, part.span)?;
+            match reader
+                .read(identity, request, WindowReadKind::Part(part.clone()))
+                .await
+            {
+                Ok((xml, read_evidence, observed_boundary)) => {
+                    observe_boundary(&mut boundary, observed_boundary);
+                    let parsed = parse(&xml);
+                    let observed = measured_bytes_per_voucher(
+                        &read_evidence,
+                        reader.evidence_copies(),
+                        parsed.as_ref().map_or(0, Vec::len),
+                    );
+                    // Account for this part before anything below can refuse.
+                    fold_evidence(&mut evidence, read_evidence);
+                    let parsed = parsed.map_err(ToolFailure::from)?;
+                    admit_part(&part, (first, last), &parsed, census.as_ref())?;
+                    rows.extend(parsed);
+                    reads.push(part.clone());
+                    // Plan the rest at the book's own measured cost: the
+                    // first measurement replaces the default, and a later,
+                    // heavier part raises it. A lighter part never lowers
+                    // it again, so one light part cannot loosen the plan.
+                    if replaying {
                         continue;
                     }
-                }
-                admit_plan_boundaries(boundary, &part, &pending)?;
-                // The allowance is spent when a request is dispatched, not when a
-                // plan is made: a part divided after Tally could not serve it, or
-                // split because a sibling could not be served, costs a request
-                // no plan counted.
-                if dispatched >= limits.max_reads {
-                    return Err(PlanRefusal::TooManyReads {
-                        reads: dispatched + 1 + pending.len(),
+                    let (Some(counted), Some(observed)) = (census.as_ref(), observed) else {
+                        continue;
+                    };
+                    let next = if measured {
+                        bytes_per_voucher.max(observed)
+                    } else {
+                        planning_figure(limits.default_bytes_per_voucher, observed)
+                    };
+                    measured = true;
+                    if next == bytes_per_voucher {
+                        continue;
                     }
-                    .code()
-                    .to_string()
-                    .into());
-                }
-                dispatched += 1;
-                let request =
-                    voucher_window_part_read(shape, company, &part.from, &part.to, part.span)?;
-                match self.post_read_observing_boundary(identity, request).await {
-                    Ok((xml, read_evidence, observed_boundary)) => {
-                        observe_boundary(&mut boundary, observed_boundary);
-                        let parsed = parse(&xml);
-                        let observed = measured_bytes_per_voucher(
-                            &read_evidence,
-                            parsed.as_ref().map_or(0, Vec::len),
-                        );
-                        // Account for this part before anything below can refuse.
-                        fold_evidence(&mut evidence, read_evidence);
-                        let parsed = parsed.map_err(ToolFailure::from)?;
-                        admit_part(&part, (first, last), &parsed, census.as_ref())?;
-                        rows.extend(parsed);
-                        reads.push(part.clone());
-                        // Plan the rest at the book's own measured cost: the
-                        // first measurement replaces the default, and a later,
-                        // heavier part raises it. A lighter part never lowers
-                        // it again, so one light part cannot loosen the plan.
-                        if replaying {
-                            continue;
-                        }
-                        let (Some(counted), Some(observed)) = (census.as_ref(), observed) else {
-                            continue;
-                        };
-                        let next = if measured {
-                            bytes_per_voucher.max(observed)
-                        } else {
-                            planning_figure(limits.default_bytes_per_voucher, observed)
-                        };
-                        measured = true;
-                        if next == bytes_per_voucher {
-                            continue;
-                        }
-                        bytes_per_voucher = next;
-                        let end_day = parse_day(&part.to)?;
-                        // The rest of the window starts after this part: inside
-                        // the same day when this was a span short of the ceiling.
-                        let (rest, resume_after) = match part.span {
-                            Some(span) if span.through < ceiling => (end_day, Some(span.through)),
-                            _ => match end_day.succ_opt() {
-                                Some(next_day) => (next_day, None),
-                                None => continue,
-                            },
-                        };
-                        if rest > last {
-                            continue;
-                        }
-                        let allowance = limits.max_reads.saturating_sub(dispatched);
-                        let plan = plan_window_reads(
-                            rest,
-                            last,
-                            counted,
-                            resume_after,
-                            ceiling,
-                            bytes_per_voucher,
-                            limits.budget_bytes,
-                            allowance,
-                        )
-                        .map_err(|refusal| ToolFailure::from(refusal.code().to_string()))?;
-                        // `pending` tiles exactly what follows this part, so
-                        // replacing it with a plan of the same stretch loses none.
-                        pending = stack_of(&plan);
+                    bytes_per_voucher = next;
+                    let end_day = parse_day(&part.to)?;
+                    // The rest of the window starts after this part: inside
+                    // the same day when this was a span short of the ceiling.
+                    let (rest, resume_after) = match part.span {
+                        Some(span) if span.through < ceiling => (end_day, Some(span.through)),
+                        _ => match end_day.succ_opt() {
+                            Some(next_day) => (next_day, None),
+                            None => continue,
+                        },
+                    };
+                    if rest > last {
+                        continue;
                     }
-                    Err(failure) if shape.splits_on_oversize() && window_is_too_large(&failure) => {
-                        // Record the span so sibling branches do not pay a
-                        // deadline to learn the same thing. `min` because a
-                        // later, smaller failure is the tighter bound.
-                        if part.span.is_none() {
-                            if let Some(span) = window_span_days(&part.from, &part.to) {
-                                smallest_failed_days = Some(
-                                    smallest_failed_days.map_or(span, |known| known.min(span)),
-                                );
-                            }
+                    let allowance = limits.max_reads.saturating_sub(dispatched);
+                    let plan = plan_window_reads(
+                        rest,
+                        last,
+                        counted,
+                        resume_after,
+                        ceiling,
+                        bytes_per_voucher,
+                        limits.budget_bytes,
+                        allowance,
+                    )
+                    .map_err(|refusal| ToolFailure::from(refusal.code().to_string()))?;
+                    // `pending` tiles exactly what follows this part, so
+                    // replacing it with a plan of the same stretch loses none.
+                    pending = stack_of(&plan);
+                }
+                Err(failure) if shape.splits_on_oversize() && window_is_too_large(&failure) => {
+                    // Record the span so sibling branches do not pay a
+                    // deadline to learn the same thing. `min` because a
+                    // later, smaller failure is the tighter bound.
+                    if part.span.is_none() {
+                        if let Some(span) = window_span_days(&part.from, &part.to) {
+                            smallest_failed_days =
+                                Some(smallest_failed_days.map_or(span, |known| known.min(span)));
                         }
-                        refused_a_part = true;
-                        // The failed attempt was a request; keep what it observed.
-                        if let Some(attempt) = failure.evidence.clone() {
-                            fold_evidence(&mut evidence, *attempt);
-                        }
-                        // A part that cannot be divided further is not something
-                        // splitting can fix, and returning the parts that did work
-                        // would be a read over an incomplete window. Refuse.
-                        let (left, right) = halve_part(&part, census.as_ref(), ceiling)
-                            .ok_or_else(|| {
-                                ToolFailure::from(shape.day_not_readable_code().to_string())
-                            })?;
-                        pending.push(right);
-                        pending.push(left);
                     }
-                    Err(failure) => return Err(failure),
-                }
-            }
-            Ok(())
-        }
-        .await;
-        if let Err(failure) = outcome {
-            return Err(with_prior(failure, &preflight, &evidence));
-        }
-        // The union of parts must hold each voucher once. Each response is
-        // admitted on its own by its parser; only here can a voucher returned by
-        // two parts — re-dated between them, or served by a filter Tally did not
-        // honour — be seen.
-        //
-        // Import verification admits its own union under its own refusal code
-        // (`ImportReadSource::admit`), which is kept rather than preempted here.
-        if shape != VoucherReadShape::ImportVerification {
-            admit_union(&rows).map_err(|code| with_prior(code.into(), &preflight, &evidence))?;
-        }
-        // Close the bracket on a divided read, whether it was planned divided,
-        // divided after Tally could not serve a part, or replayed. One undivided
-        // request is one observation, exactly as before the bound.
-        let mut closing = None;
-        if let (true, Some(opened)) = (is_divided(&reads), opening) {
-            let closed = self
-                .read_marks(identity, company, &mut closing, &mut boundary)
-                .await
-                .map_err(|failure| with_prior_closed(failure, &preflight, &evidence, &closing))?;
-            if closed != opened {
-                return Err(with_prior_closed(
-                    WINDOW_CHANGED_DURING_READ.to_string().into(),
-                    &preflight,
-                    &evidence,
-                    &closing,
-                ));
-            }
-        }
-        // Unreachable while every plan holds at least one part; kept total
-        // rather than panicking on a future change to that.
-        let evidence =
-            evidence.unwrap_or_else(|| super::agent_import::local_evidence("voucher_window_empty"));
-        Ok(WindowReadOutcome {
-            rows,
-            evidence,
-            preflight_evidence: preflight,
-            closing_evidence: closing,
-            reads,
-            witness: opening.map(|marks| WindowWitness { marks, census }),
-            refused_a_part,
-        })
-    }
-
-    async fn read_marks(
-        &self,
-        identity: &VerifiedCompanyIdentity,
-        company: &str,
-        evidence: &mut Option<Evidence>,
-        boundary: &mut Option<DateBoundaryProfile>,
-    ) -> Result<CompanyMarks, ToolFailure> {
-        let (xml, read, observed) = self
-            .post_read_observing_boundary(identity, company_high_water_read(company))
-            .await?;
-        fold_evidence(evidence, read);
-        observe_boundary(boundary, observed);
-        Ok(company_marks(&xml, identity.company_guid())?)
-    }
-
-    /// Establish what `window` holds, cheapest first: the company's voucher
-    /// high-water mark bounds every window of the book at once; only when that
-    /// bound is not enough is the window itself counted.
-    #[allow(clippy::too_many_arguments)]
-    async fn estimate_window_volume(
-        &self,
-        identity: &VerifiedCompanyIdentity,
-        company: &str,
-        (first, last): (NaiveDate, NaiveDate),
-        known_marks: Option<CompanyMarks>,
-        limits: WindowReadLimits,
-        preflight: &mut Option<Evidence>,
-        observed_marks: &mut Option<CompanyMarks>,
-        boundary: &mut Option<DateBoundaryProfile>,
-    ) -> Result<Preflight, ToolFailure> {
-        let marks = match known_marks {
-            Some(marks) => marks,
-            None => {
-                self.read_marks(identity, company, preflight, boundary)
-                    .await?
-            }
-        };
-        *observed_marks = Some(marks);
-        let high_water = marks.vouchers;
-        // Every voucher carries a distinct AlterID no greater than the high-water
-        // mark (§10), so the book — and therefore any window of it — holds at
-        // most `high_water` vouchers.
-        if high_water.saturating_mul(limits.default_bytes_per_voucher) <= limits.budget_bytes {
-            return Ok(Preflight::Whole);
-        }
-        let rows = self
-            .census_window(
-                identity,
-                company,
-                (first, last),
-                high_water,
-                limits,
-                preflight,
-                boundary,
-            )
-            .await?;
-        let census = WindowCensus::from_census_rows(rows)
-            .ok_or_else(|| ToolFailure::from(VOLUME_UNESTIMATED.to_string()))?;
-        Ok(whole_or_counted(census, Some(marks), limits))
-    }
-
-    /// Count the window's vouchers per day, every census request bounded
-    /// before it is sent. See [`census_spans`].
-    #[allow(clippy::too_many_arguments)]
-    async fn census_window(
-        &self,
-        identity: &VerifiedCompanyIdentity,
-        company: &str,
-        (first, last): (NaiveDate, NaiveDate),
-        high_water: u64,
-        limits: WindowReadLimits,
-        preflight: &mut Option<Evidence>,
-        boundary: &mut Option<DateBoundaryProfile>,
-    ) -> Result<Vec<CensusRow>, ToolFailure> {
-        let unestimated = || ToolFailure::from(VOLUME_UNESTIMATED.to_string());
-        let spans = census_spans(high_water, limits.census_capacity())
-            .map_err(|code| ToolFailure::from(code.to_string()))?;
-        let (from, to) = (stamp(first), stamp(last));
-        let mut rows = Vec::new();
-        for span in spans {
-            let request = voucher_census_read(company, &from, &to, span)?;
-            let (xml, evidence) = match self.post_read_observing_boundary(identity, request).await {
-                Ok((xml, evidence, observed)) => {
-                    observe_boundary(boundary, observed);
-                    (xml, evidence)
-                }
-                Err(failure) if census_failure(&failure.code) == CensusFailure::Refuse => {
-                    // A census bounded by construction that Tally still could not
-                    // serve is not divided further or retried: the gateway may
-                    // still be building it. Keep what the attempt observed, and
-                    // which of the two it was.
-                    let mut refused = unestimated();
-                    refused.cause = census_refusal_cause(&failure.code);
-                    refused.evidence = failure.evidence;
-                    return Err(refused);
+                    refused_a_part = true;
+                    // The failed attempt was a request; keep what it observed.
+                    if let Some(attempt) = failure.evidence.clone() {
+                        fold_evidence(&mut evidence, *attempt);
+                    }
+                    // A part that cannot be divided further is not something
+                    // splitting can fix, and returning the parts that did work
+                    // would be a read over an incomplete window. Refuse.
+                    let (left, right) =
+                        halve_part(&part, census.as_ref(), ceiling).ok_or_else(|| {
+                            ToolFailure::from(shape.day_not_readable_code().to_string())
+                        })?;
+                    pending.push(right);
+                    pending.push(left);
                 }
                 Err(failure) => return Err(failure),
-            };
-            fold_evidence(preflight, evidence);
-            rows.extend(
-                parse_voucher_census(&xml, (&from, &to), span).map_err(|code| {
-                    let mut refused = unestimated();
-                    refused.cause = census_refusal_cause(&code);
-                    refused
-                })?,
-            );
+            }
         }
-        Ok(rows)
+        Ok(())
     }
+    .await;
+    if let Err(failure) = outcome {
+        return Err(with_prior(failure, &preflight, &evidence));
+    }
+    // The union of parts must hold each voucher once. Each response is
+    // admitted on its own by its parser; only here can a voucher returned by
+    // two parts — re-dated between them, or served by a filter Tally did not
+    // honour — be seen.
+    //
+    // Import verification admits its own union under its own refusal code
+    // (`ImportReadSource::admit`), which is kept rather than preempted here.
+    if shape != VoucherReadShape::ImportVerification {
+        admit_union(&rows).map_err(|code| with_prior(code.into(), &preflight, &evidence))?;
+    }
+    // Close the bracket on a divided read, whether it was planned divided,
+    // divided after Tally could not serve a part, or replayed. One undivided
+    // request is one observation, exactly as before the bound, except for a
+    // reader that seals its reads: its record states the marks it read, so an
+    // undivided window must also show they did not move.
+    let mut closing = None;
+    if let (true, Some(opened)) = (is_divided(&reads) || reader.seals_its_reads(), opening) {
+        let closed = read_marks(reader, identity, company, &mut closing, &mut boundary)
+            .await
+            .map_err(|failure| with_prior_closed(failure, &preflight, &evidence, &closing))?;
+        if closed != opened {
+            return Err(with_prior_closed(
+                WINDOW_CHANGED_DURING_READ.to_string().into(),
+                &preflight,
+                &evidence,
+                &closing,
+            ));
+        }
+    }
+    // Unreachable while every plan holds at least one part; kept total
+    // rather than panicking on a future change to that.
+    let evidence =
+        evidence.unwrap_or_else(|| super::agent_import::local_evidence("voucher_window_empty"));
+    Ok(WindowReadOutcome {
+        rows,
+        evidence,
+        preflight_evidence: preflight,
+        closing_evidence: closing,
+        reads,
+        witness: opening.map(|marks| WindowWitness { marks, census }),
+        refused_a_part,
+    })
+}
+
+async fn read_marks<R: WindowReader>(
+    reader: &R,
+    identity: &VerifiedCompanyIdentity,
+    company: &str,
+    evidence: &mut Option<Evidence>,
+    boundary: &mut Option<DateBoundaryProfile>,
+) -> Result<CompanyMarks, ToolFailure> {
+    let (xml, read, observed) = reader
+        .read(
+            identity,
+            company_high_water_read(company),
+            WindowReadKind::Marks,
+        )
+        .await?;
+    fold_evidence(evidence, read);
+    observe_boundary(boundary, observed);
+    Ok(company_marks(&xml, identity.company_guid())?)
+}
+
+/// Establish what `window` holds, cheapest first: the company's voucher
+/// high-water mark bounds every window of the book at once; only when that
+/// bound is not enough is the window itself counted.
+#[allow(clippy::too_many_arguments)]
+async fn estimate_window_volume<R: WindowReader>(
+    reader: &R,
+    identity: &VerifiedCompanyIdentity,
+    company: &str,
+    (first, last): (NaiveDate, NaiveDate),
+    known_marks: Option<CompanyMarks>,
+    limits: WindowReadLimits,
+    preflight: &mut Option<Evidence>,
+    observed_marks: &mut Option<CompanyMarks>,
+    boundary: &mut Option<DateBoundaryProfile>,
+) -> Result<Preflight, ToolFailure> {
+    let marks = match known_marks {
+        Some(marks) => marks,
+        None => read_marks(reader, identity, company, preflight, boundary).await?,
+    };
+    *observed_marks = Some(marks);
+    let high_water = marks.vouchers;
+    // Every voucher carries a distinct AlterID no greater than the high-water
+    // mark (§10), so the book — and therefore any window of it — holds at
+    // most `high_water` vouchers.
+    if high_water.saturating_mul(limits.default_bytes_per_voucher) <= limits.budget_bytes {
+        return Ok(Preflight::Whole);
+    }
+    let rows = census_window(
+        reader,
+        identity,
+        company,
+        (first, last),
+        high_water,
+        limits,
+        preflight,
+        boundary,
+    )
+    .await?;
+    let census = WindowCensus::from_census_rows(rows)
+        .ok_or_else(|| ToolFailure::from(VOLUME_UNESTIMATED.to_string()))?;
+    // A sealed record admits its data against the census it seals beside it,
+    // even when the whole window would fit one request.
+    if reader.seals_its_reads() {
+        return Ok(Preflight::Counted {
+            census,
+            marks: Some(marks),
+        });
+    }
+    Ok(whole_or_counted(census, Some(marks), limits))
+}
+
+/// Count the window's vouchers per day, every census request bounded
+/// before it is sent. See [`census_spans`].
+#[allow(clippy::too_many_arguments)]
+async fn census_window<R: WindowReader>(
+    reader: &R,
+    identity: &VerifiedCompanyIdentity,
+    company: &str,
+    (first, last): (NaiveDate, NaiveDate),
+    high_water: u64,
+    limits: WindowReadLimits,
+    preflight: &mut Option<Evidence>,
+    boundary: &mut Option<DateBoundaryProfile>,
+) -> Result<Vec<CensusRow>, ToolFailure> {
+    let unestimated = || ToolFailure::from(VOLUME_UNESTIMATED.to_string());
+    let spans = census_spans(high_water, limits.census_capacity())
+        .map_err(|code| ToolFailure::from(code.to_string()))?;
+    let (from, to) = (stamp(first), stamp(last));
+    let mut rows = Vec::new();
+    for span in spans {
+        let request = voucher_census_read(company, &from, &to, span)?;
+        let (xml, evidence) = match reader.read(identity, request, WindowReadKind::Census).await {
+            Ok((xml, evidence, observed)) => {
+                observe_boundary(boundary, observed);
+                (xml, evidence)
+            }
+            Err(failure) if census_failure(&failure.code) == CensusFailure::Refuse => {
+                // A census bounded by construction that Tally still could not
+                // serve is not divided further or retried: the gateway may
+                // still be building it. Keep what the attempt observed, and
+                // which of the two it was.
+                let mut refused = unestimated();
+                refused.cause = census_refusal_cause(&failure.code);
+                refused.evidence = failure.evidence;
+                return Err(refused);
+            }
+            Err(failure) => return Err(failure),
+        };
+        fold_evidence(preflight, evidence);
+        rows.extend(
+            parse_voucher_census(&xml, (&from, &to), span).map_err(|code| {
+                let mut refused = unestimated();
+                refused.cause = census_refusal_cause(&code);
+                refused
+            })?,
+        );
+    }
+    Ok(rows)
 }
 
 /// Why a census refused its window as unestimated, as a data-free cause beside
@@ -1529,11 +1918,12 @@ fn whole_or_counted(
     }
 }
 
-/// Bytes per voucher of one paired read. `post_read` reports both accepted
-/// bodies, so one response is half of it.
-fn measured_bytes_per_voucher(evidence: &Evidence, rows: usize) -> Option<u64> {
+/// Bytes per voucher of one response. The reader's evidence counts `copies`
+/// bodies ([`WindowReader::evidence_copies`]: 2 for the paired agent read, 1
+/// for a single audit read), so one response is that share of it.
+fn measured_bytes_per_voucher(evidence: &Evidence, copies: u64, rows: usize) -> Option<u64> {
     let rows = u64::try_from(rows).ok().filter(|rows| *rows > 0)?;
-    let body = u64::try_from(evidence.bytes / 2).ok()?;
+    let body = u64::try_from(evidence.bytes).ok()? / copies.max(1);
     Some(body.div_ceil(rows))
 }
 
