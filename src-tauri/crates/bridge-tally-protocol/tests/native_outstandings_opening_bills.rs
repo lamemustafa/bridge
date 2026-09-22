@@ -36,3 +36,27 @@ fn a_captured_bills_report_with_opening_bills_before_books_from_parses() {
         .collect::<Vec<_>>();
     assert_eq!(opening, ["FX-OPEN-1", "INR-OPEN-1"]);
 }
+
+/// Each due date is read against its own bill date, never the as-of date: read
+/// ten years later, the same captured rows keep every due date in 2025 rather
+/// than a century past the as-of date.
+#[test]
+fn a_due_date_is_read_against_its_bill_date_not_the_as_of_date() {
+    let rows = parse_native_bill_rows(
+        &decode(include_bytes!(
+            "fixtures/bills_receivable_forex_live.utf16le.xml"
+        )),
+        &TallyDate::parse("20250401").unwrap(),
+        &TallyDate::parse("20350930").unwrap(),
+    )
+    .unwrap();
+    assert_eq!(rows.len(), 18);
+    for row in &rows {
+        assert!(
+            row.due_date.as_str().starts_with("2025"),
+            "{} due {}",
+            row.reference,
+            row.due_date.as_str()
+        );
+    }
+}
