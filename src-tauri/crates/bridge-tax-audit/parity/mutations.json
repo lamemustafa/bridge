@@ -946,10 +946,10 @@
  {
   "id": "C2-27",
   "by": "author (Lane C)",
-  "what": "the scope-limit finding only when something fires",
+  "what": "the always-stated PAN-view scope-limit finding dropped",
   "file": "src/tds_tcs_26as.rs",
-  "from": "    r.findings.push(Finding {\n        id: format!(\"{TEST_ID}/pan_view_scope_limit\"),",
-  "to": "    if not_separate > 99 { r.findings.push(Finding {\n        id: format!(\"{TEST_ID}/pan_view_scope_limit\"),"
+  "from": "    });\n    Ok(r)\n}",
+  "to": "    });\n    r.findings.pop();\n    Ok(r)\n}"
  },
  {
   "id": "C2-28",
