@@ -454,6 +454,17 @@ const REMEDIATION_MIN_RESPONSE_BUDGET: usize = 4_096;
 /// This never softens a refusal — it only says what to do about one.
 fn refusal_remediation(code: &str) -> Option<&'static str> {
     match code {
+        // Currency admission causes (bridge#551): the company's base currency
+        // was identified and is not INR, or could not be matched.
+        "company_base_currency_not_inr" => Some(
+            "This company's base currency is not INR, and Bridge supports INR-based books \
+             only. Retrying cannot change that; choose a company whose base currency is INR.",
+        ),
+        "company_base_currency_undetermined" => Some(
+            "This company defines several Currency masters, and Bridge could not match exactly \
+             one of them to the company's own base currency, so it will not label these \
+             figures INR. Retrying the unchanged read will not help.",
+        ),
         "empty_book_first_import" => Some(
             "This company has never held a voucher, so Tally reports no voucher high-water \
              mark and Bridge has no \"before\" to attribute an import against. Record one \
@@ -763,7 +774,11 @@ impl Server {
                 // these ~250 extra bytes could cost the caller the one thing it
                 // most needs, leaving it worse off than before this field existed.
                 // Guidance is a convenience; the refusal code is not.
-                if let Some(remediation) = refusal_remediation(&code) {
+                // A typed cause's guidance is more specific than its code's.
+                if let Some(remediation) = cause
+                    .and_then(refusal_remediation)
+                    .or_else(|| refusal_remediation(&code))
+                {
                     if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
                         error["remediation"] = json!(remediation);
                     }

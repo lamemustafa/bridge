@@ -590,18 +590,63 @@ mod through_the_tool {
     /// extent-bracketed currency read, then the profile probe and the
     /// extent-bracketed master/balance/group triple.
     fn compliance_plans(masters: String, balances: String) -> Vec<ScenarioPlan> {
+        let currency = xml(captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+        )));
+        compliance_plans_with_currency(masters, balances, &[currency])
+    }
+
+    /// The captured two-currency book (an INR base with `$` added) as the
+    /// currency read now returns it, each master with its `ORIGINALNAME` (`I₹`
+    /// is `₹`, `$` is `$`; measured 22 Sep 2026, bridge#551).
+    fn forex_currency() -> String {
+        let with_names = captured(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/currency_multi_live.utf16le.xml"
+        ))
+        .replacen(
+            "<MAILINGNAME TYPE=\"String\">USD</MAILINGNAME>",
+            "<MAILINGNAME TYPE=\"String\">USD</MAILINGNAME><ORIGINALNAME TYPE=\"String\">$</ORIGINALNAME>",
+            1,
+        )
+        .replacen(
+            "<MAILINGNAME TYPE=\"String\">INR</MAILINGNAME>",
+            "<MAILINGNAME TYPE=\"String\">INR</MAILINGNAME><ORIGINALNAME TYPE=\"String\">₹</ORIGINALNAME>",
+            1,
+        );
+        assert_eq!(with_names.matches("<ORIGINALNAME").count(), 2);
+        with_names
+    }
+
+    /// A synthetic `Company` collection in the measured shape: every loaded
+    /// company with its GUID and base-currency `CURRENCYNAME`. The company
+    /// under test is `GUID`; the other row is invented.
+    fn base_currency_collection(currency_name: &str) -> String {
+        format!(
+            "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+<COMPANY NAME=\"Synthetic Other Book\" RESERVEDNAME=\"\"><GUID TYPE=\"String\">00000000-0000-4000-8000-00000000abcd</GUID><CURRENCYNAME TYPE=\"String\">Rs.</CURRENCYNAME></COMPANY>\
+<COMPANY NAME=\"Synthetic Book\" RESERVEDNAME=\"\"><GUID TYPE=\"String\">{GUID}</GUID><CURRENCYNAME TYPE=\"String\">{currency_name}</CURRENCYNAME></COMPANY>\
+</COLLECTION></DATA></BODY></ENVELOPE>"
+        )
+    }
+
+    /// `compliance_plans` with the currency segment given: each entry is one
+    /// paired read (the currency masters, then any base-currency read).
+    fn compliance_plans_with_currency(
+        masters: String,
+        balances: String,
+        currency_reads: &[ScenarioPlan],
+    ) -> Vec<ScenarioPlan> {
         let company = xml(companies());
         let extent = xml(include_str!(
             "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
         )
         .to_owned());
-        let currency = xml(captured(include_bytes!(
-            "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
-        )));
         let mut plans = identity_plans();
         plans.push(company.clone());
         pair(&mut plans, extent.clone());
-        pair(&mut plans, currency);
+        for read in currency_reads {
+            pair(&mut plans, read.clone());
+        }
         pair(&mut plans, extent.clone());
         plans.push(company.clone());
         plans.extend([status(), company.clone(), company.clone()]);
@@ -723,9 +768,102 @@ mod through_the_tool {
         plans.push(company.clone());
         pair(&mut plans, extent.clone());
         pair(&mut plans, currency);
+        // Several masters send the base-currency read. These masters carry
+        // no ORIGINALNAME, so no master matches it.
+        pair(&mut plans, xml(base_currency_collection("₹")));
         pair(&mut plans, extent);
         plans.push(company);
         plans
+    }
+
+    /// Identity, a two-master currency read and the company's base currency,
+    /// ending where admission refuses.
+    fn two_currency_refusal_plans(currency_name: &str) -> Vec<ScenarioPlan> {
+        let company = xml(companies());
+        let extent = xml(include_str!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+        )
+        .to_owned());
+        let mut plans = identity_plans();
+        plans.push(company.clone());
+        pair(&mut plans, extent.clone());
+        pair(&mut plans, xml(forex_currency()));
+        pair(&mut plans, xml(base_currency_collection(currency_name)));
+        pair(&mut plans, extent);
+        plans.push(company);
+        plans
+    }
+
+    /// The base-currency read is paired like the currency read: two reads that
+    /// disagree refuse before admission.
+    #[tokio::test]
+    async fn a_base_currency_that_changes_between_its_paired_reads_is_refused() {
+        let company = xml(companies());
+        let extent = xml(include_str!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+        )
+        .to_owned());
+        let mut plans = identity_plans();
+        plans.push(company);
+        pair(&mut plans, extent);
+        pair(&mut plans, xml(forex_currency()));
+        plans.extend([
+            xml(base_currency_collection("₹")),
+            status(),
+            xml(base_currency_collection("$")),
+            status(),
+        ]);
+        let (response, _) = call(plans, json!({"company_guid":GUID,"fields":"compliance"})).await;
+        let error = refusal(&response);
+        assert_eq!(error["code"], "party_ledger_master_read_failed");
+        assert_eq!(error["cause"], "company_base_currency_changed");
+    }
+
+    /// An INR-based book with a second currency is admitted: its company
+    /// CURRENCYNAME `₹` is exactly one master's ORIGINALNAME, and that master
+    /// is INR (bridge#551). Every scripted read is consumed.
+    #[tokio::test]
+    async fn an_inr_book_with_a_second_currency_is_admitted() {
+        let plans = compliance_plans_with_currency(
+            masters(),
+            balances(),
+            &[xml(forex_currency()), xml(base_currency_collection("₹"))],
+        );
+        let total = plans.len();
+        let (response, requests) =
+            call(plans, json!({"company_guid":GUID,"fields":"compliance"})).await;
+        assert_eq!(response["isError"], false, "{response}");
+        assert_eq!(items(&response).len(), 9);
+        assert_eq!(requests, total);
+    }
+
+    /// A book whose base currency is identified and is not INR is refused as
+    /// such, and a company currency that names no master's ORIGINALNAME leaves
+    /// the base undetermined.
+    #[tokio::test]
+    async fn a_second_currency_book_is_refused_by_what_its_base_currency_is() {
+        for (currency_name, cause) in [
+            ("$", "company_base_currency_not_inr"),
+            ("I₹", "company_base_currency_undetermined"),
+        ] {
+            let (response, _) = call(
+                two_currency_refusal_plans(currency_name),
+                json!({"company_guid":GUID,"fields":"compliance"}),
+            )
+            .await;
+            let error = refusal(&response);
+            assert_eq!(
+                error["code"], "party_ledger_master_read_failed",
+                "{currency_name}"
+            );
+            assert_eq!(error["cause"], cause, "{currency_name}");
+            let remediation = error["remediation"].as_str().unwrap_or_default();
+            assert_eq!(
+                remediation.contains("INR-based books only"),
+                cause == "company_base_currency_not_inr",
+                "{remediation}"
+            );
+        }
     }
 
     /// Identity, then a currency pair whose second read disagrees with its

@@ -320,29 +320,55 @@ fn company_sweep_preserves_a_company_listing_transport_reason() {
 
 #[test]
 fn company_sweep_currency_preflight_names_undetermined_base_currency() {
+    use bridge_tally_protocol::native_outstandings::{CompanyCurrency, CurrencyMaster};
+    let master = |name: &str, original: &str, mailing: &str| CurrencyMaster {
+        name: name.to_string(),
+        original_name: Some(original.to_string()),
+        mailing_name: mailing.to_string(),
+        decimal_places: 2,
+    };
+    let two =
+        || CompanyCurrency::from_masters(vec![master("$", "$", "USD"), master("I₹", "₹", "INR")]);
     assert_eq!(
-        company_sweep_currency_preflight_failure(2, false),
+        company_sweep_currency_preflight_failure(&two()),
         Some("company_base_currency_undetermined"),
-        "several currency masters do not identify the company's base currency"
+        "several currency masters alone do not identify the company's base currency"
+    );
+    let mut flagged = two();
+    flagged.is_inr = true;
+    assert_eq!(
+        company_sweep_currency_preflight_failure(&flagged),
+        Some("company_base_currency_undetermined"),
+        "an INR flag is not authoritative while the base is undetermined"
     );
     assert_eq!(
-        company_sweep_currency_preflight_failure(2, true),
-        Some("company_base_currency_undetermined"),
-        "the parser's INR flag is not authoritative when several currency masters exist"
+        company_sweep_currency_preflight_failure(&two().with_company_currency_name("₹")),
+        None,
+        "the company's CURRENCYNAME identifies its INR base among several masters"
     );
     assert_eq!(
-        company_sweep_currency_preflight_failure(1, false),
+        company_sweep_currency_preflight_failure(&two().with_company_currency_name("$")),
+        Some("company_base_currency_not_inr"),
+        "an identified non-INR base is unsupported"
+    );
+    assert_eq!(
+        company_sweep_currency_preflight_failure(&CompanyCurrency::from_masters(vec![master(
+            "$",
+            "$",
+            "US Dollar"
+        )])),
         Some("company_base_currency_not_inr"),
         "one non-Indian currency identifies an unsupported base currency"
     );
-    assert_eq!(company_sweep_currency_preflight_failure(1, true), None);
+    let inr = CompanyCurrency::from_masters(vec![master("I₹", "₹", "INR")]);
+    assert_eq!(company_sweep_currency_preflight_failure(&inr), None);
     assert_eq!(
-        establish_inr_currency(1, true),
+        establish_inr_currency(inr.inr_admission()),
         Ok(OutstandingsCurrencyAssertion::Inr),
-        "the backend boundary receives a typed INR admission only after the probe established one INR master"
+        "the backend boundary receives a typed INR admission only after the probe established an INR base"
     );
     assert_eq!(
-        company_sweep_currency_preflight_failure(0, false),
+        company_sweep_currency_preflight_failure(&CompanyCurrency::from_masters(Vec::new())),
         Some("company_currency_probe_failed"),
         "an impossible empty collection remains fail-closed"
     );

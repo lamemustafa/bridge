@@ -228,6 +228,9 @@ base revision.
 <a id="910a1-multiple-currency-master-rows-do-not-identify-the-base-currency"></a>
 
 [9.10a.1 Multiple Currency-master rows do not identify the base currency](./TALLY_PROTOCOL_REFERENCE_COMPANY_IDENTITY_AND_CREATION.md#910a1-multiple-currency-master-rows-do-not-identify-the-base-currency)
+<a id="910a2-the-companys-currencyname-names-its-base-master-by-originalname--verified-2026-09-22-on-three-books-a-rule-not-a-proof"></a>
+
+[9.10a.2 The company's `CURRENCYNAME` names its base master by `ORIGINALNAME` — **VERIFIED 2026-09-22 on three books; a rule, not a proof**](./TALLY_PROTOCOL_REFERENCE_COMPANY_IDENTITY_AND_CREATION.md#910a2-the-companys-currencyname-names-its-base-master-by-originalname--verified-2026-09-22-on-three-books-a-rule-not-a-proof)
 <a id="910b-originalname-at-company-level-hangs-the-gateway--trap"></a>
 
 [9.10b `ORIGINALNAME` at `COMPANY` level hangs the gateway — **TRAP**](./TALLY_PROTOCOL_REFERENCE_COMPANY_IDENTITY_AND_CREATION.md#910b-originalname-at-company-level-hangs-the-gateway--trap)

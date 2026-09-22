@@ -361,7 +361,47 @@ setting. With more than one row, the read therefore cannot establish which curre
 monetary figures. Bridge must fail closed rather than infer INR from any individual row. This does
 **not** say that the Tally company is misconfigured or that it has more than one base currency;
 only that this read cannot establish one. The parser's `currency_count == 1` admission rule and
-the party/ledger-master recovery text rely on this boundary.
+the party/ledger-master recovery text rely on this boundary. §9.10a.2 adds the read that does
+identify the base.
+
+#### 9.10a.2 The company's `CURRENCYNAME` names its base master by `ORIGINALNAME` — **VERIFIED 2026-09-22 on three books; a rule, not a proof**
+
+Measured on licensed TallyPrime 7.1 with plain `Collection` exports: no formula, no filter
+(bridge#551).
+
+**Company collection.** Fetching `NAME, GUID, CURRENCYNAME` lists every loaded company, each with a
+`CURRENCYNAME`. For the books with several masters:
+- `BRIDGE CORPUS FOREX` (INR base, `$` added) reports `₹`.
+- A second INR book with a `USD` currency added also reports `₹`.
+- A USD-based control book (base `$`, with `₹` added) reports `$`.
+
+`BASECURRENCYSYMBOL`, `BASECURRENCYNAME` and `FORMALNAME` came back empty or absent.
+
+**Currency collection.** With `ORIGINALNAME` added to the fetch:
+- On the INR books, master `NAME` `I₹` has `ORIGINALNAME` `₹`, next to `$`/`$` or `UUSD`/`USD`.
+- On the control book, `$`/`$` and `I₹`/`₹`.
+- A single-master book reads `Rs.`/`Rs.`.
+
+**The match is on `ORIGINALNAME`, not `NAME`.** Matching the company value against master `NAME`
+finds nothing on the INR books. Ledgers carry the master `NAME` (`I₹`, `$`).
+
+**Bridge's rule** for a book with more than one master: the base is the one master whose
+`ORIGINALNAME` equals the company's `CURRENCYNAME`, character for character.
+- Exactly one match whose `MAILINGNAME` is `INR` or `Indian Rupees`: the book is admitted as INR.
+- Exactly one match that is not INR: refused as `company_base_currency_not_inr`. Bridge supports
+  INR-based books only.
+- No match, or more than one: refused as `company_base_currency_undetermined`.
+
+A single-master book keeps the §9.10a.1 rule and sends no extra read. The `Company` read is paired
+like the currency read, and a disagreement between the two reads refuses as
+`company_base_currency_changed`.
+
+**What is not established:**
+- that `ORIGINALNAME` rather than `NAME` is the match on a book whose base master was never renamed
+  (the two fields are then the same);
+- that row order, `RESERVEDNAME` or `MASTERID` mean anything. They are never used.
+
+These are exports. §9.10b's trap is `ORIGINALNAME` sent as a `COMPANY` child in an **import**.
 
 ### 9.10b `ORIGINALNAME` at `COMPANY` level hangs the gateway — **TRAP**
 

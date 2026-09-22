@@ -75,13 +75,16 @@ fn captured_currency_collections_recognize_both_indian_spellings_without_guessin
             2,
             true,
         ),
+        // Two masters: this read alone does not name the base currency, so no
+        // row is reported as the base (before bridge#551 the first row, `$`,
+        // was).
         (
             MULTI_LIVE,
             "b64c0d5feb528fa02f81de576de5c766a95e1da1000975b1e2932868ae34118b",
-            "$",
-            "USD",
+            "",
+            "",
             2,
-            2,
+            0,
             false,
         ),
     ] {
@@ -279,5 +282,206 @@ fn constructed_forex_composite_boundaries_remain_fail_closed() {
     assert_eq!(
         parse_native_ledger_snapshot(&malformed),
         Err(NativeOutstandingsError::InvalidAmount)
+    );
+}
+
+/// The captured two-currency book (an INR base with `$` added), as the currency
+/// read now returns it: each master also carries its `ORIGINALNAME`. The
+/// values are the ones measured on 22 Sep 2026 (bridge#551): master `I₹` has
+/// `ORIGINALNAME` `₹`, and master `$` has `$`.
+fn multi_with_original_names() -> String {
+    let xml = decode_utf16le(MULTI_LIVE);
+    let with_names = xml
+        .replacen(
+            "<MAILINGNAME TYPE=\"String\">USD</MAILINGNAME>",
+            "<MAILINGNAME TYPE=\"String\">USD</MAILINGNAME><ORIGINALNAME TYPE=\"String\">$</ORIGINALNAME>",
+            1,
+        )
+        .replacen(
+            "<MAILINGNAME TYPE=\"String\">INR</MAILINGNAME>",
+            "<MAILINGNAME TYPE=\"String\">INR</MAILINGNAME><ORIGINALNAME TYPE=\"String\">₹</ORIGINALNAME>",
+            1,
+        );
+    assert_eq!(
+        with_names.matches("<ORIGINALNAME").count(),
+        2,
+        "both rows gain a name"
+    );
+    with_names
+}
+
+#[test]
+fn the_base_among_several_masters_is_the_one_whose_original_name_is_the_company_currency() {
+    let masters = parse_company_currency(&multi_with_original_names()).expect("parses");
+    assert_eq!(masters.currency_count, 2);
+    assert!(!masters.base_determined);
+    assert_eq!(
+        masters.inr_admission(),
+        Err("company_base_currency_undetermined")
+    );
+
+    // An INR-based book with a second currency: its company CURRENCYNAME is
+    // the INR master's ORIGINALNAME.
+    let inr = masters.clone().with_company_currency_name("₹");
+    assert!(inr.base_determined && inr.is_inr);
+    assert_eq!(
+        (inr.symbol.as_str(), inr.mailing_name.as_str()),
+        ("I₹", "INR")
+    );
+    assert_eq!(inr.inr_admission(), Ok(()));
+
+    // A USD-based book: the base is found, and it is not INR.
+    let usd = masters.clone().with_company_currency_name("$");
+    assert!(usd.base_determined && !usd.is_inr);
+    assert_eq!(usd.symbol, "$");
+    assert_eq!(usd.inr_admission(), Err("company_base_currency_not_inr"));
+
+    // The master's NAME is not the match: `I₹` names a master, but no
+    // master's ORIGINALNAME is `I₹`.
+    for unmatched in ["I₹", "Rs.", "", "₹ "] {
+        let currency = masters.clone().with_company_currency_name(unmatched);
+        assert!(!currency.base_determined, "{unmatched:?}");
+        assert_eq!(
+            currency.inr_admission(),
+            Err("company_base_currency_undetermined"),
+            "{unmatched:?}"
+        );
+    }
+}
+
+#[test]
+fn two_masters_with_the_same_original_name_leave_the_base_undetermined() {
+    let xml = multi_with_original_names().replacen(
+        "<ORIGINALNAME TYPE=\"String\">$</ORIGINALNAME>",
+        "<ORIGINALNAME TYPE=\"String\">₹</ORIGINALNAME>",
+        1,
+    );
+    let currency = parse_company_currency(&xml)
+        .expect("parses")
+        .with_company_currency_name("₹");
+    assert!(!currency.base_determined);
+    assert_eq!(
+        currency.inr_admission(),
+        Err("company_base_currency_undetermined")
+    );
+}
+
+#[test]
+fn masters_read_without_original_names_stay_undetermined() {
+    let currency = parse_company_currency(&decode_utf16le(MULTI_LIVE))
+        .expect("parses")
+        .with_company_currency_name("₹");
+    assert!(!currency.base_determined);
+}
+
+#[test]
+fn a_single_master_is_the_base_and_ignores_the_company_currency_name() {
+    for bytes in [MODERN_LIVE, LEGACY_LIVE] {
+        let currency = parse_company_currency(&decode_utf16le(bytes)).expect("parses");
+        assert!(currency.base_determined && currency.is_inr);
+        assert_eq!(currency.inr_admission(), Ok(()));
+        assert_eq!(currency.clone().with_company_currency_name("$"), currency);
+    }
+    let empty = CompanyCurrency::from_masters(Vec::new());
+    assert_eq!(empty.inr_admission(), Err("company_currency_probe_failed"));
+}
+
+#[test]
+fn a_repeated_original_name_on_one_master_is_refused() {
+    let xml = multi_with_original_names().replacen(
+        "<ORIGINALNAME TYPE=\"String\">$</ORIGINALNAME>",
+        "<ORIGINALNAME TYPE=\"String\">$</ORIGINALNAME><ORIGINALNAME TYPE=\"String\">₹</ORIGINALNAME>",
+        1,
+    );
+    assert_eq!(
+        parse_company_currency(&xml),
+        Err(NativeOutstandingsError::InvalidResponse(
+            "currency_duplicate_original_name"
+        ))
+    );
+}
+
+/// A synthetic Company collection in the shape measured on 22 Sep 2026: every
+/// loaded company is listed, each with its GUID and CURRENCYNAME. The names
+/// and GUIDs are invented.
+fn company_collection(rows: &[(&str, &str, Option<&str>)]) -> String {
+    let body: String = rows
+        .iter()
+        .map(|(name, guid, currency)| {
+            let currency = currency.map_or(String::new(), |value| {
+                format!("<CURRENCYNAME TYPE=\"String\">{value}</CURRENCYNAME>")
+            });
+            format!(
+                "<COMPANY NAME=\"{name}\" RESERVEDNAME=\"\"><GUID TYPE=\"String\">{guid}</GUID>{currency}<NUMCURRENCIES TYPE=\"Number\">2</NUMCURRENCIES></COMPANY>"
+            )
+        })
+        .collect();
+    format!(
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO><COMPANY>0</COMPANY></CMPINFO></DESC><DATA><COLLECTION>{body}</COLLECTION></DATA></BODY></ENVELOPE>"
+    )
+}
+
+#[test]
+fn the_company_currency_name_is_taken_from_the_row_with_the_company_guid() {
+    let xml = company_collection(&[
+        (
+            "Synthetic Other Book",
+            "11111111-aaaa-4000-8000-000000000001",
+            Some("Rs."),
+        ),
+        (
+            "Synthetic Forex Book",
+            "22222222-BBBB-4000-8000-000000000002",
+            Some("₹"),
+        ),
+        (
+            "Synthetic Usd Book",
+            "33333333-cccc-4000-8000-000000000003",
+            Some("$"),
+        ),
+    ]);
+    assert_eq!(
+        parse_company_currency_name(&xml, "22222222-bbbb-4000-8000-000000000002"),
+        Ok("₹".to_string())
+    );
+    assert_eq!(
+        parse_company_currency_name(&xml, "33333333-cccc-4000-8000-000000000003"),
+        Ok("$".to_string())
+    );
+    for (xml, guid, code) in [
+        (
+            xml.clone(),
+            "44444444-dddd-4000-8000-000000000004",
+            "company_currency_row_missing",
+        ),
+        (
+            company_collection(&[
+                ("A", "55555555-eeee-4000-8000-000000000005", Some("₹")),
+                ("B", "55555555-EEEE-4000-8000-000000000005", Some("$")),
+            ]),
+            "55555555-eeee-4000-8000-000000000005",
+            "company_currency_row_ambiguous",
+        ),
+        (
+            company_collection(&[("A", "66666666-ffff-4000-8000-000000000006", None)]),
+            "66666666-ffff-4000-8000-000000000006",
+            "company_currency_name_missing",
+        ),
+        (
+            company_collection(&[("A", "66666666-ffff-4000-8000-000000000006", Some(""))]),
+            "66666666-ffff-4000-8000-000000000006",
+            "company_currency_name_missing",
+        ),
+    ] {
+        assert_eq!(
+            parse_company_currency_name(&xml, guid),
+            Err(NativeOutstandingsError::InvalidResponse(code)),
+            "{code}"
+        );
+    }
+    let failed = company_collection(&[]).replace("<STATUS>1</STATUS>", "<STATUS>0</STATUS>");
+    assert_eq!(
+        parse_company_currency_name(&failed, "x"),
+        Err(NativeOutstandingsError::TallyReportedFailure)
     );
 }
