@@ -39,7 +39,7 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE.md",
-      "sha256": "954e2f05e4b5d3d2064ef7931fdf6a36e25840c7bc54b37da5520755ed59abbe"
+      "sha256": "5738ec5fa78916cf25424bda62cc48be709a989199ff5274ef7f6f847fdd3107"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_COMPANY_IDENTITY_AND_CREATION.md",
@@ -51,7 +51,7 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md",
-      "sha256": "f8329f3cc1bfdfdfa41a2b94169389318c9f122c74a666b42dc04fc801b2017f"
+      "sha256": "0d068acf87796ed5010477e3982d74f0ba7d6d8861c1b0dbe092f407c825578a"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_READS_AND_DATES.md",
@@ -283,11 +283,11 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/date.rs",
-      "sha256": "2db8145edac723ec87a1a27d1486859f958460933182b61fd13961f0107370ee"
+      "sha256": "0899274676c0cb0d98f0034e3886af630eb3d615c97281465e5af4b2bedc9961"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/mod.rs",
-      "sha256": "008f0d39247202576b11f55d7d49329f8177b25409c8f9c4dc6743a0823bdee8"
+      "sha256": "7bdb6ed0cff24b62b8ca14cb2c50e0e6055b241574a642dc013d0e4642f5d32b"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/model.rs",
@@ -299,7 +299,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/wire.rs",
-      "sha256": "066bacb029bfbf810e75fc7168576cc6801897782dca015d40e529ae79071705"
+      "sha256": "039dd200e405f934ad06b16beffb5ec3c95e619b0b5b8912716d8bc48d617f08"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_trial_balance/mod.rs",
@@ -1106,5 +1106,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "4c20017774daced6b0265c9b2b68f18a91bb781af9c683122f35e26d06b061bf"
+  "manifest_sha256": "ab59c1aad65927702729048f2c3a4b48832a884d6eeb07b9143c2c5e0f02ff50"
 }
