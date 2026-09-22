@@ -32,6 +32,20 @@ fn captured_companies() -> String {
     .unwrap()
 }
 
+/// The captured Currency masters of a book with exactly one (`I₹`).
+fn captured_single_currency() -> String {
+    let bytes = include_bytes!(
+        "../../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+    );
+    String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap()
+}
+
 fn captured_catalogue() -> String {
     let bytes = include_bytes!(
         "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ledger-catalogue.utf16le.xml"
@@ -106,6 +120,12 @@ fn approved_import(companies: &str, date: &str) -> ApprovedImport {
         ReadOnlyProfile::StandardLedgerCatalogV1 { company: &company }.render(),
     )
     .expect("static catalog read is admitted");
+    let currency_request = AgentReadRequest::parse(
+        bridge_tally_protocol::native_outstandings::render_company_currency_request(
+            identity.display_name(),
+        ),
+    )
+    .expect("currency read is admitted");
     // The marks request's bytes are not under test here; the queue sends it
     // once, last before the POST, and once after (#574).
     ApprovedImport::approved_for_test(
@@ -113,6 +133,7 @@ fn approved_import(companies: &str, date: &str) -> ApprovedImport {
         bridge_tally_core::TallyDate::parse(date).unwrap(),
         ledger_catalogue_request.clone(),
         binding,
+        currency_request,
         ledger_catalogue_request,
     )
 }
@@ -144,6 +165,8 @@ fn queued_plans(
         company_plan(opening_companies.clone()),
     ];
     plans.extend(paired(catalogue, &opening_companies));
+    // The Currency masters, re-read in the same brackets (bridge#551).
+    plans.extend(paired(captured_single_currency(), &opening_companies));
     plans.extend([
         status_plan(),
         company_plan(final_companies.clone()),
@@ -191,14 +214,16 @@ fn expected_queued_evidence(
     let mut evidence = single_observation(observed, responses, 0)
         .combine(single_observation(observed, responses, 1))
         .combine(single_observation(observed, responses, 2));
-    evidence = evidence.combine(paired_observation(observed, responses, 4));
-    let closing = single_observation(observed, responses, 9)
-        .combine(single_observation(observed, responses, 10));
+    evidence = evidence
+        .combine(paired_observation(observed, responses, 4))
+        .combine(paired_observation(observed, responses, 10));
+    let closing = single_observation(observed, responses, 15)
+        .combine(single_observation(observed, responses, 16));
     evidence = evidence
         .combine(closing)
-        .combine(single_observation(observed, responses, 11));
+        .combine(single_observation(observed, responses, 17));
     if include_absence_reads {
-        for index in [13, 19] {
+        for index in [19, 25] {
             evidence = evidence.combine(paired_observation(observed, responses, index));
         }
     }
@@ -223,7 +248,7 @@ async fn queued_education_change_refuses_before_final_absence_reads() {
         education,
         None,
     );
-    plans.truncate(12);
+    plans.truncate(18);
     let responses = plans
         .iter()
         .map(ScenarioPlan::response_bytes)
@@ -259,7 +284,7 @@ async fn queued_education_change_refuses_before_final_absence_reads() {
     let observed = simulator.finish().unwrap();
     assert_eq!(
         observed.len(),
-        12,
+        18,
         "final mode refusal precedes absence reads"
     );
     assert_eq!(
@@ -285,7 +310,7 @@ async fn queued_company_refusal_retains_captured_source_and_final_identity_evide
         replaced,
         None,
     );
-    plans.truncate(12);
+    plans.truncate(18);
     let responses = plans
         .iter()
         .map(ScenarioPlan::response_bytes)
@@ -321,7 +346,7 @@ async fn queued_company_refusal_retains_captured_source_and_final_identity_evide
     let observed = simulator.finish().unwrap();
     assert_eq!(
         observed.len(),
-        12,
+        18,
         "final identity refusal precedes absence reads"
     );
     assert_eq!(
@@ -396,17 +421,17 @@ async fn queued_catalogue_rename_refuses_before_intent_or_post() {
         "changed master binding precedes intent"
     );
     let observed = simulator.finish().unwrap();
-    // 24 admission requests and the marks snapshot (#574); the refusal
+    // 30 admission requests and the marks snapshot (#574); the refusal
     // comes after that last read and before the intent and the POST.
     assert_eq!(
         observed.len(),
-        25,
+        31,
         "catalogue refusal precedes intent and POST"
     );
     assert_eq!(
         error.downcast_ref::<RuntimeReadFailure>().unwrap().evidence,
         expected_queued_evidence(&observed, &responses, true)
-            .combine(single_observation(&observed, &responses, 24)),
+            .combine(single_observation(&observed, &responses, 30)),
         "captured queued absence and catalogue evidence survive the master-binding refusal, with the marks snapshot"
     );
 }
@@ -449,24 +474,24 @@ async fn queued_import_keeps_admission_separate_from_raw_import_wire() {
         .expect("captured admission permits a valid date");
     assert!(dispatched.load(Ordering::Acquire));
     let observed = simulator.finish().unwrap();
-    // 24 admission requests, the marks snapshot, then the POST. The marks read
+    // 30 admission requests, the marks snapshot, then the POST. The marks read
     // after the POST is the caller's, once the response is journaled.
-    assert_eq!(observed.len(), 26);
+    assert_eq!(observed.len(), 32);
     assert_eq!(
         dispatch.admission_evidence,
         expected_queued_evidence(&observed, &responses, true)
-            .combine(single_observation(&observed, &responses, 24))
+            .combine(single_observation(&observed, &responses, 30))
     );
     assert_eq!(dispatch.company_marks_before, companies);
     assert_eq!(
         dispatch.response_evidence.request_sha256,
-        observed[25].request_body_sha256
+        observed[31].request_body_sha256
     );
     assert_eq!(
         dispatch.response_evidence.response_sha256,
-        sha256_hex(&responses[25])
+        sha256_hex(&responses[31])
     );
-    assert_eq!(dispatch.response_evidence.bytes, responses[25].len());
+    assert_eq!(dispatch.response_evidence.bytes, responses[31].len());
     assert_ne!(
         dispatch.response_evidence.request_sha256,
         dispatch.admission_evidence.request_sha256
@@ -521,17 +546,17 @@ async fn queued_import_refuses_attribution_after_final_profile_and_catalogue_rea
         "refusal precedes durable intent"
     );
     let observed = simulator.finish().unwrap();
-    // 24 admission requests and the marks snapshot (#574); the refusal
+    // 30 admission requests and the marks snapshot (#574); the refusal
     // comes after that last read and before the intent and the POST.
     assert_eq!(
         observed.len(),
-        25,
+        31,
         "final absence refusal precedes intent and import POST"
     );
     assert_eq!(
         error.downcast_ref::<RuntimeReadFailure>().unwrap().evidence,
         expected_queued_evidence(&observed, &responses, true)
-            .combine(single_observation(&observed, &responses, 24)),
+            .combine(single_observation(&observed, &responses, 30)),
         "initial mode/company and all three queued source reads survive refusal, with the marks snapshot"
     );
 }

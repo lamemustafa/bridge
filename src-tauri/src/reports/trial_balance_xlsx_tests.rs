@@ -31,6 +31,7 @@ fn captured_read() -> TrialBalanceRead {
             currency_count: 1,
             decimal_places: 3,
             is_inr: true,
+            names: Vec::new(),
         },
         totals: crate::reports::trial_balance::observed_totals(&report).unwrap(),
         report,

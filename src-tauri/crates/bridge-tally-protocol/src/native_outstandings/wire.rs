@@ -1183,6 +1183,7 @@ pub fn parse_company_currency(xml: &str) -> Result<CompanyCurrency, NativeOutsta
     }
 
     let currency_count = rows.len();
+    let names = rows.iter().map(|row| row.symbol.clone()).collect();
     let CurrencyRow {
         symbol,
         mailing_name,
@@ -1201,6 +1202,7 @@ pub fn parse_company_currency(xml: &str) -> Result<CompanyCurrency, NativeOutsta
         currency_count,
         decimal_places,
         is_inr,
+        names,
     })
 }
 
