@@ -286,6 +286,16 @@ fn only_the_targets_master_mark_decides_whether_masters_moved() {
     // Another company's masters, and the target's own vouchers, are not ours.
     assert_eq!(unchanged(&with_masters(&book, OTHER, 99)), Some(true));
     assert_eq!(unchanged(&with_vouchers(&book, TARGET, 11)), Some(true));
+    // A year-split sibling shares the GUID under another name; it is not the
+    // target, whether or not its masters move.
+    let mut split = book.clone();
+    split.push(marks("Synthetic Target (2024-25)", TARGET, 5));
+    let mut split_moved = split.clone();
+    split_moved[3].masters = 9;
+    assert_eq!(
+        target_masters_unchanged(&split, &split_moved, TARGET, "Synthetic Target"),
+        Some(true)
+    );
 }
 
 #[test]
