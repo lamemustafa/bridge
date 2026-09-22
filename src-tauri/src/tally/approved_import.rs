@@ -20,11 +20,25 @@ pub(crate) struct ApprovedImport {
     ledger_binding: StandardLedgerCatalogBinding,
     /// The group collection, for a Payment, Receipt or Contra: its legs'
     /// classification is re-derived from it inside the queue. A Journal has
-    /// none and its queued request sequence is unchanged.
+    /// none, so it adds no group read to the queue.
     group_collection_request: Option<AgentReadRequest>,
+    /// The all-company change marks, read last before the POST to confirm the
+    /// aim and again right after it to see where the voucher went (#574).
+    company_marks_request: AgentReadRequest,
+}
+
+/// What the queue read for the last admission before the POST.
+pub(crate) struct QueuedAdmission<'a> {
+    pub(crate) first: &'a str,
+    pub(crate) second: &'a str,
+    pub(crate) catalogue: &'a str,
+    pub(crate) groups: Option<&'a str>,
+    pub(crate) company_marks: &'a str,
+    pub(crate) ledger_binding: &'a StandardLedgerCatalogBinding,
 }
 
 impl ApprovedImport {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn confirm(
         xml: String,
         preview: &str,
@@ -33,6 +47,7 @@ impl ApprovedImport {
         ledger_catalogue_request: AgentReadRequest,
         ledger_binding: StandardLedgerCatalogBinding,
         group_collection_request: Option<AgentReadRequest>,
+        company_marks_request: AgentReadRequest,
     ) -> Result<Self, String> {
         approve(preview).await?;
         Ok(Self {
@@ -42,6 +57,7 @@ impl ApprovedImport {
             ledger_catalogue_request,
             ledger_binding,
             group_collection_request,
+            company_marks_request,
         })
     }
 
@@ -65,6 +81,10 @@ impl ApprovedImport {
         self.group_collection_request.clone()
     }
 
+    pub(super) fn company_marks_request(&self) -> AgentReadRequest {
+        self.company_marks_request.clone()
+    }
+
     /// Recheck the operator-approved dates after the endpoint queue admits this
     /// request. The observed product/mode can change while native approval waits.
     pub(super) fn require_boundary_profile(
@@ -84,6 +104,7 @@ impl ApprovedImport {
         voucher_date: TallyDate,
         ledger_catalogue_request: AgentReadRequest,
         ledger_binding: StandardLedgerCatalogBinding,
+        company_marks_request: AgentReadRequest,
     ) -> Self {
         // Carries the seam marker so the shipped-binary scan also covers this
         // bypass (bridge#583).
@@ -98,6 +119,7 @@ impl ApprovedImport {
             ledger_catalogue_request,
             ledger_binding,
             group_collection_request: None,
+            company_marks_request,
         }
     }
 }
@@ -118,6 +140,14 @@ pub(crate) enum ApprovedImportAdmissionError {
     /// with one: a wiring fault, refused before any request is sent.
     #[error("import_post_admission_inconsistent")]
     AdmissionInconsistent,
+    /// The snapshot sent last before the POST no longer shows exactly one
+    /// loaded company with the target's GUID and name, or shows another loaded
+    /// company sharing its name (#574).
+    #[error("post_company_scope_changed")]
+    CompanyScopeChanged,
+    /// That snapshot could not be read, so the aim cannot be confirmed.
+    #[error("post_company_scope_unconfirmed")]
+    CompanyScopeUnconfirmed,
 }
 
 /// The native approval every real post goes through. Outside this crate's own

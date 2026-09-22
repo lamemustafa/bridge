@@ -46,7 +46,7 @@
     "enable_writes": {
       "type": "boolean",
       "title": "Allow voucher posting (Journal, Payment, Receipt, Contra)",
-      "description": "Off by default. Turning this on lets the connector post one approved Journal, Payment, Receipt or Contra into Tally. Two known limits remain: the post names its company only by name, so if that company is renamed in the moment between Bridge's checks and the post, the voucher is still sent, and where Tally then puts it is not yet established (bridge#574), and Bridge cannot delete or roll back a voucher it has posted, so a wrong post must be corrected by hand in Tally (bridge#579). Leave it off unless you accept that risk. Reads, bank-statement parsing and voucher file preparation are available either way.",
+      "description": "Off by default. Turning this on lets the connector post one approved Journal, Payment, Receipt or Contra into Tally. Two known limits remain: the post names its company only by name, and Tally cannot bind an import to a company's GUID. Bridge confirms the company as its last request before the post, and afterwards reports which companies changed, but another loaded company renamed to, or loaded under, the exact same name in that moment would still receive the voucher (bridge#574), and Bridge cannot delete or roll back a voucher it has posted, so a wrong post must be corrected by hand in Tally (bridge#579). Leave it off unless you accept that risk. Reads, bank-statement parsing and voucher file preparation are available either way.",
       "default": false
     }
   }
