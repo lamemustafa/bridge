@@ -466,7 +466,7 @@ fn a_repeated_tis_category_is_refused() {
     let mut again = docs.tis[0].clone();
     again.row = 99;
     docs.tis.push(again);
-    let err = tds_tcs_26as::run(
+    let Err(err) = tds_tcs_26as::run(
         &book,
         &rules,
         &period(&s),
@@ -474,8 +474,8 @@ fn a_repeated_tis_category_is_refused() {
         &docs.ais,
         &docs.tis,
         &tds_26as_config(&s),
-    )
-    .err()
-    .expect("a repeated TIS category is refused");
+    ) else {
+        panic!("a repeated TIS category is refused");
+    };
     assert!(format!("{err}").contains("would repeat"), "{err}");
 }
