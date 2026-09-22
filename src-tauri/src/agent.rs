@@ -390,6 +390,9 @@ struct ToolFailure {
     /// How many rows a refused read returned against how many it was counted
     /// to hold, when the refusal is that disagreement. Numbers only.
     counts: Option<RowCounts>,
+    /// What each request of a window read cost up to its failure (#595), when
+    /// the failure came out of one. Data-free.
+    window_timings: Option<Box<WindowReadTimings>>,
 }
 
 /// A read's returned rows against the rows a census counted for it.
@@ -406,6 +409,7 @@ impl From<String> for ToolFailure {
             evidence: None,
             cause: None,
             counts: None,
+            window_timings: None,
         }
     }
 }
@@ -633,6 +637,7 @@ impl ToolFailure {
             evidence,
             cause,
             counts: None,
+            window_timings: None,
         }
     }
 
@@ -739,6 +744,7 @@ impl Server {
                 evidence,
                 cause,
                 counts,
+                window_timings,
             }) => {
                 let mut evidence = evidence.map(|value| *value).unwrap_or_else(|| Evidence {
                     request_sha256: sha256_hex(format!("{name}:{args_sha256}").as_bytes()),
@@ -780,6 +786,15 @@ impl Server {
                     if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
                         error["counts"] =
                             json!({"returned": counts.returned, "counted": counts.counted});
+                    }
+                }
+                // Same budget rule again, and the per-part list, which grows
+                // with the window, is given up first: it is kept only while it
+                // takes at most a quarter of the response budget.
+                if let Some(timings) = window_timings {
+                    if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
+                        error["window"] =
+                            window_timings_within(&timings, self.settings.max_bytes / 4);
                     }
                 }
                 ToolOutcome {

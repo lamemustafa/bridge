@@ -1338,6 +1338,85 @@ async fn a_divided_read_is_bracketed_by_the_high_water_mark() {
     }
 }
 
+/// #595: every request of a window read is timed by what it was for. The
+/// second part is held 200 ms on each of its two paired bodies, so it alone
+/// costs at least 400 ms; each part also reports one body's bytes and its rows.
+#[tokio::test]
+async fn a_window_read_times_its_marks_census_and_each_part() {
+    let first = xml_plan(relabelled(&vouchers_kept(1), &[(1, "20260801")]));
+    let second = xml_plan(relabelled(
+        &vouchers_kept(2),
+        &[(2, "20260801"), (3, "20260801")],
+    ))
+    .with_delivery(tally_protocol_simulator::Delivery::SlowHeaders(
+        std::time::Duration::from_millis(200),
+    ));
+    let third = xml_plan(empty_collection());
+    let mut plans = paired(&xml_plan(three_vouchers()));
+    for body in [&first, &second, &third] {
+        plans.extend(paired(body));
+    }
+    plans.extend(paired(&marks_plan(3, 7)));
+    let (outcome, observed) = read_window(
+        plans,
+        ("20260801", "20260802"),
+        VoucherReadShape::EntryWildcard,
+        WindowPlanSource::Estimate {
+            known_marks: Some(marks_of(3)),
+        },
+        three_a_read(),
+    )
+    .await;
+    assert_eq!(observed.len(), 30);
+    let timings = outcome.unwrap().timings;
+    // The marks were known: only the closing bracket read them.
+    assert_eq!(timings.marks.requests, 1);
+    assert_eq!(timings.census.requests, 1);
+    let spans = timings
+        .parts
+        .iter()
+        .map(|part| {
+            (
+                part.from.as_str(),
+                part.to.as_str(),
+                part.after,
+                part.through,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        spans,
+        [
+            ("20260801", "20260801", Some(0), Some(1)),
+            ("20260801", "20260801", Some(1), Some(3)),
+            ("20260802", "20260802", None, None),
+        ]
+    );
+    assert!(timings.parts.iter().all(|part| part.served));
+    assert_eq!(
+        timings
+            .parts
+            .iter()
+            .map(|part| part.rows)
+            .collect::<Vec<_>>(),
+        [Some(1), Some(2), Some(0)]
+    );
+    assert_eq!(
+        timings
+            .parts
+            .iter()
+            .map(|part| part.bytes)
+            .collect::<Vec<_>>(),
+        [&first, &second, &third]
+            .map(|body| Some(wire_len(body)))
+            .to_vec()
+    );
+    assert!(timings.parts[1].ms >= 400, "{timings:?}");
+    assert!(timings.parts[0].ms < timings.parts[1].ms, "{timings:?}");
+    assert!(timings.parts[2].ms < timings.parts[1].ms, "{timings:?}");
+    assert_eq!(timings.failed, None);
+}
+
 #[tokio::test]
 async fn a_census_the_transport_refuses_is_not_divided_but_refused() {
     // Every census is bounded before it is sent: here the mark (4) is within
@@ -1857,6 +1936,23 @@ async fn a_census_that_times_out_refuses_the_window_and_sends_nothing_more() {
         .expect("a census deadline refuses the window");
     assert_eq!(failure.code, VOLUME_UNESTIMATED);
     assert_eq!(failure.cause, Some("census_deadline_exceeded"));
+    // #595: the failure carries what the read cost up to it. The marks were
+    // known, so the one request sent was the census, and it took the deadline.
+    let timings = failure
+        .window_timings
+        .as_deref()
+        .expect("a failed window read carries its timings");
+    assert_eq!(timings.marks, RequestTally::default());
+    assert_eq!(timings.census.requests, 1);
+    assert!(timings.census.ms >= 19_000, "{timings:?}");
+    assert!(timings.parts.is_empty());
+    assert_eq!(
+        timings.failed,
+        Some(FailedRequest {
+            kind: "census",
+            ms: timings.census.ms
+        })
+    );
     simulator.cancel();
     let observed = simulator.finish().unwrap();
     assert_eq!(
@@ -2453,6 +2549,12 @@ async fn a_read_after_tally_refused_the_whole_window_does_not_admit_it_whole() {
     .await;
     let read = outcome.unwrap();
     assert!(read.refused_a_part);
+    // #595: the refused request is timed as a part Tally did not serve, and
+    // the read that stands reports no failure.
+    assert!(!read.timings.parts[0].served);
+    assert_eq!(read.timings.parts[0].bytes, None);
+    assert!(read.timings.parts[1..].iter().all(|part| part.served));
+    assert_eq!(read.timings.failed, None);
     let served = WindowServed::of(&read.reads, &read.evidence, read.refused_a_part);
     assert!(served.data_bytes <= WINDOW_READ_BUDGET_BYTES);
     assert!(!served.fits_one_request());
@@ -3639,4 +3741,42 @@ async fn an_audit_window_admits_its_data_against_the_census_it_read() {
     .await;
     assert!(outcome.is_ok());
     assert_eq!(retained.map(|reads| reads.len()), Some(4));
+}
+
+/// #595: a refusal's timings give up their per-part list, and only it, when
+/// the whole would not fit the share of the response budget allowed to them.
+#[test]
+fn window_timings_drop_only_their_parts_when_over_the_allowance() {
+    let part = PartTiming {
+        from: "20260801".into(),
+        to: "20260801".into(),
+        after: None,
+        through: None,
+        served: true,
+        bytes: Some(10),
+        rows: Some(1),
+        ms: 5,
+    };
+    let timings = WindowReadTimings {
+        marks: RequestTally { requests: 1, ms: 2 },
+        census: RequestTally { requests: 3, ms: 4 },
+        parts: vec![part; 3],
+        failed: Some(FailedRequest {
+            kind: "part",
+            ms: 5,
+        }),
+    };
+    let whole = serde_json::to_value(&timings).unwrap();
+    let size = whole.to_string().len();
+    assert_eq!(window_timings_within(&timings, size), whole);
+    let trimmed = window_timings_within(&timings, size - 1);
+    assert_eq!(
+        trimmed,
+        json!({
+            "marks": {"requests": 1, "ms": 2},
+            "census": {"requests": 3, "ms": 4},
+            "failed": {"kind": "part", "ms": 5},
+            "parts_omitted": 3,
+        })
+    );
 }

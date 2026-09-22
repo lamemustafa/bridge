@@ -262,3 +262,91 @@ async fn empty_ledger_selection_does_not_replace_source_emptiness() {
         assert_eq!(simulator.finish().unwrap().len(), 28);
     }
 }
+
+/// #595, through the tool call: a `vouchers` result carries what each request
+/// of its window read cost, and so does a refusal of that read.
+#[tokio::test]
+async fn the_vouchers_tool_reports_its_window_timings_on_success_and_refusal() {
+    let bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-three-vouchers.utf16le.xml"
+    );
+    let words = bytes
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect::<Vec<_>>();
+    let vouchers = ScenarioPlan::new(Fixture::SyntheticXml(String::from_utf16(&words).unwrap()))
+        .with_encoding(WireEncoding::Utf16Le)
+        .with_framing(ResponseFraming::ContentLength);
+    let call = |plans: Vec<ScenarioPlan>| async move {
+        let simulator = SequenceSimulator::spawn(plans).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let response = server_for(simulator.address(), directory.path())
+            .call_tool(
+                "vouchers",
+                json!({"company_guid":CAPTURED_GUID, "from":"20260801","to":"20260802"}),
+            )
+            .await;
+        simulator.cancel();
+        simulator.finish().unwrap();
+        response
+    };
+
+    // Ten vouchers at the mark: the window is read whole, in one part.
+    let cycle = import_cycle_plans();
+    let mut plans = cycle[..4].to_vec();
+    plans.extend(cycle[10..16].iter().cloned());
+    plans.extend([
+        cycle[0].clone(),
+        vouchers.clone(),
+        cycle[1].clone(),
+        vouchers.clone(),
+        cycle[1].clone(),
+        cycle[0].clone(),
+    ]);
+    let body = response_bytes(&plans[11]);
+    let response = call(plans).await;
+    assert_eq!(response["isError"], false, "{response}");
+    let window = &response["structuredContent"]["result"]["window"];
+    assert_eq!(window["marks"]["requests"], 1);
+    assert_eq!(window["census"]["requests"], 0);
+    let parts = window["parts"].as_array().unwrap();
+    assert_eq!(parts.len(), 1);
+    assert_eq!(parts[0]["from"], "20260801");
+    assert_eq!(parts[0]["to"], "20260802");
+    assert_eq!(parts[0]["served"], true);
+    assert_eq!(parts[0]["rows"], 3);
+    assert_eq!(parts[0]["bytes"], body.len());
+    assert!(parts[0]["ms"].is_u64());
+    assert!(window.get("failed").is_none());
+
+    // A mark far over the budget needs a census, and Tally declares the census
+    // response over the transport cap: the refusal carries the timings too.
+    let heavy = format!(
+        "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY>\
+         <GUID>{CAPTURED_GUID}</GUID><ALTVCHID>5000</ALTVCHID><ALTMSTID>7</ALTMSTID>\
+         </COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"
+    );
+    let heavy = ScenarioPlan::new(Fixture::SyntheticXml(heavy))
+        .with_encoding(WireEncoding::Utf16Le)
+        .with_framing(ResponseFraming::ContentLength);
+    let mut plans = cycle[..4].to_vec();
+    plans.extend(cycle[10..16].iter().cloned());
+    plans[5] = heavy.clone();
+    plans[7] = heavy;
+    plans.extend([
+        cycle[0].clone(),
+        vouchers.with_framing(ResponseFraming::DeclaredContentLength {
+            bytes: bridge_tally_transport::XML_RESPONSE_MAX_BYTES + 1,
+        }),
+    ]);
+    let response = call(plans).await;
+    assert_eq!(response["isError"], true, "{response}");
+    let error = &response["structuredContent"]["result"]["error"];
+    assert_eq!(error["code"], crate::agent::VOLUME_UNESTIMATED);
+    let window = &error["window"];
+    assert_eq!(window["marks"]["requests"], 1);
+    assert_eq!(window["census"]["requests"], 1);
+    assert_eq!(window["parts"], json!([]));
+    assert_eq!(window["failed"]["kind"], "census");
+    assert!(window["failed"]["ms"].is_u64());
+}

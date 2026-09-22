@@ -803,6 +803,166 @@ pub(super) struct WindowReadOutcome<T> {
     /// out, and the read went on in smaller parts. The parts' sizes then say
     /// nothing about the request Tally refused.
     pub(super) refused_a_part: bool,
+    /// What each request of this read cost in wall time (#595).
+    pub(super) timings: WindowReadTimings,
+}
+
+/// The wall time of every request a window read sent, by what it was for:
+/// the marks and census reads as totals, the data parts one by one in the
+/// order sent, a part Tally could not serve included. Measured around the
+/// reader's own call, so a paired read counts both of its bodies and its
+/// identity bracket. Data-free: dates the caller asked for, counts, bytes and
+/// milliseconds.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub(super) struct WindowReadTimings {
+    pub(super) marks: RequestTally,
+    pub(super) census: RequestTally,
+    pub(super) parts: Vec<PartTiming>,
+    /// On a failed read only: the last request sent, when it failed — a
+    /// deadline, a transport refusal. `None` on a read that stands, and on a
+    /// failure found after the last request succeeded (a parse refusal, a
+    /// moved bracket).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) failed: Option<FailedRequest>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub(super) struct FailedRequest {
+    /// `marks`, `census` or `part`.
+    pub(super) kind: &'static str,
+    pub(super) ms: u128,
+}
+
+/// `timings` as JSON, its per-part list replaced by a count when the whole
+/// would take more than `max_bytes`.
+pub(super) fn window_timings_within(timings: &WindowReadTimings, max_bytes: usize) -> Value {
+    let mut value = serde_json::to_value(timings).unwrap_or(Value::Null);
+    if value.to_string().len() > max_bytes {
+        if let Some(object) = value.as_object_mut() {
+            object.remove("parts");
+            object.insert("parts_omitted".to_string(), json!(timings.parts.len()));
+        }
+    }
+    value
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub(super) struct RequestTally {
+    pub(super) requests: u64,
+    pub(super) ms: u128,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub(super) struct PartTiming {
+    pub(super) from: String,
+    pub(super) to: String,
+    /// The part's AlterID span, when it was divided by AlterID.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) after: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) through: Option<u64>,
+    /// Whether Tally served it. A part it could not serve is divided and its
+    /// halves follow as parts of their own.
+    pub(super) served: bool,
+    /// One response body's length as the reader counted it: its evidence
+    /// bytes over [`WindowReader::evidence_copies`]. `None` when not served.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) bytes: Option<u64>,
+    /// The rows the part parsed to. `None` when not served or not parsed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) rows: Option<usize>,
+    pub(super) ms: u128,
+}
+
+/// Times every request of one window read around its reader, and changes
+/// nothing else: each call is passed through as it is.
+struct TimedReader<'r, R> {
+    inner: &'r R,
+    timings: std::sync::Mutex<WindowReadTimings>,
+}
+
+impl<'r, R: WindowReader> TimedReader<'r, R> {
+    fn new(inner: &'r R) -> Self {
+        Self {
+            inner,
+            timings: std::sync::Mutex::default(),
+        }
+    }
+
+    fn timings(&self) -> std::sync::MutexGuard<'_, WindowReadTimings> {
+        self.timings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Record the rows the last part sent parsed to.
+    fn note_rows(&self, rows: usize) {
+        if let Some(part) = self.timings().parts.last_mut() {
+            part.rows = Some(rows);
+        }
+    }
+
+    fn into_timings(self) -> WindowReadTimings {
+        self.timings
+            .into_inner()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+impl<R: WindowReader> WindowReader for TimedReader<'_, R> {
+    fn evidence_copies(&self) -> u64 {
+        self.inner.evidence_copies()
+    }
+
+    fn seals_its_reads(&self) -> bool {
+        self.inner.seals_its_reads()
+    }
+
+    fn begin_window(&self) {
+        self.inner.begin_window();
+    }
+
+    async fn read(
+        &self,
+        identity: &VerifiedCompanyIdentity,
+        request: ReadRequest,
+        kind: WindowReadKind,
+    ) -> Result<(String, Evidence, DateBoundaryProfile), ToolFailure> {
+        let started = std::time::Instant::now();
+        let result = self.inner.read(identity, request, kind.clone()).await;
+        let ms = started.elapsed().as_millis();
+        let mut timings = self.timings();
+        timings.failed = result.is_err().then_some(FailedRequest {
+            kind: match kind {
+                WindowReadKind::Marks => "marks",
+                WindowReadKind::Census => "census",
+                WindowReadKind::Part(_) => "part",
+            },
+            ms,
+        });
+        let tally = |tally: &mut RequestTally| {
+            tally.requests += 1;
+            tally.ms += ms;
+        };
+        match kind {
+            WindowReadKind::Marks => tally(&mut timings.marks),
+            WindowReadKind::Census => tally(&mut timings.census),
+            WindowReadKind::Part(part) => timings.parts.push(PartTiming {
+                from: part.from,
+                to: part.to,
+                after: part.span.map(|span| span.after),
+                through: part.span.map(|span| span.through),
+                served: result.is_ok(),
+                bytes: result.as_ref().ok().map(|(_, evidence, _)| {
+                    evidence.bytes as u64 / self.inner.evidence_copies().max(1)
+                }),
+                rows: None,
+                ms,
+            }),
+        }
+        drop(timings);
+        result
+    }
 }
 
 impl<T> WindowReadOutcome<T> {
@@ -1280,7 +1440,7 @@ pub(super) async fn read_voucher_window_with<R, T, P>(
     shape: VoucherReadShape,
     source: WindowPlanSource,
     limits: WindowReadLimits,
-    mut parse: P,
+    parse: P,
 ) -> Result<WindowReadOutcome<T>, ToolFailure>
 where
     R: WindowReader,
@@ -1293,6 +1453,45 @@ where
     {
         return Err(AUDIT_WINDOW_NEEDS_ITS_OWN_MARKS.to_string().into());
     }
+    let timed = TimedReader::new(reader);
+    let read = read_voucher_window_timed(
+        &timed, identity, company, from, to, shape, source, limits, parse,
+    )
+    .await;
+    let mut timings = timed.into_timings();
+    match read {
+        Ok(mut outcome) => {
+            // A request that failed and was recovered from, a part divided
+            // after Tally could not serve it, is in `parts`; the read stands.
+            timings.failed = None;
+            outcome.timings = timings;
+            Ok(outcome)
+        }
+        Err(mut failure) => {
+            failure.window_timings = Some(Box::new(timings));
+            Err(failure)
+        }
+    }
+}
+
+/// [`read_voucher_window_with`] once admitted, every request timed.
+#[allow(clippy::too_many_arguments)]
+async fn read_voucher_window_timed<R, T, P>(
+    reader: &TimedReader<'_, R>,
+    identity: &VerifiedCompanyIdentity,
+    company: &str,
+    from: &str,
+    to: &str,
+    shape: VoucherReadShape,
+    source: WindowPlanSource,
+    limits: WindowReadLimits,
+    mut parse: P,
+) -> Result<WindowReadOutcome<T>, ToolFailure>
+where
+    R: WindowReader,
+    T: WindowRow,
+    P: FnMut(&str) -> Result<Vec<T>, String>,
+{
     let first = parse_day(from)?;
     let last = parse_day(to)?;
     if first > last {
@@ -1443,6 +1642,9 @@ where
                 Ok((xml, read_evidence, observed_boundary)) => {
                     observe_boundary(&mut boundary, observed_boundary);
                     let parsed = parse(&xml);
+                    if let Ok(parsed) = &parsed {
+                        reader.note_rows(parsed.len());
+                    }
                     let observed = measured_bytes_per_voucher(
                         &read_evidence,
                         reader.evidence_copies(),
@@ -1578,6 +1780,8 @@ where
         reads,
         witness: opening.map(|marks| WindowWitness { marks, census }),
         refused_a_part,
+        // Filled in by `read_voucher_window_with`, which owns the timer.
+        timings: WindowReadTimings::default(),
     })
 }
 
