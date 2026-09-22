@@ -86,7 +86,8 @@ fn vendored_blocks_are_verbatim(source: &str) -> bool {
 /// Narrows `[ledger_ids]`/`[group_ids]` to the labels the locations this port's `Engagement`
 /// actually reads (`roles.cash_groups`, `roles.bank_groups`, `roles.round_off_ledgers`,
 /// `tds.nature_by_ledger`'s and `tds.payee_aliases`' keys, `tds_payees.s194j_category_by_ledger`'s
-/// keys, `loans.loan_ledgers`'s keys, `depreciation.block_by_ledger`'s keys,
+/// keys, `loans.loan_ledgers`'s keys, each loan's `interest_ledger`, `loans.shared_interest_ledgers`,
+/// `depreciation.block_by_ledger`'s keys,
 /// `depreciation.dep_expense_ledgers`, `partners.*.interest_ledger`, `tds_tcs_26as`'s three ledger
 /// lists and its `deductor_aliases` values) use, so
 /// `Engagement::bind`'s `BIND-ID-UNUSED` check never refuses over a label a real client TOML
@@ -157,13 +158,19 @@ fn narrow_identity_tables(cfg: &mut toml::Table, base: &Path) -> Result<(), Stri
             ledger_labels.extend(t.keys().cloned());
         }
     }
-    if let Some(t) = cfg
-        .get("loans")
-        .and_then(toml::Value::as_table)
-        .and_then(|loans| loans.get("loan_ledgers"))
-        .and_then(toml::Value::as_table)
-    {
-        ledger_labels.extend(t.keys().cloned());
+    if let Some(loans) = cfg.get("loans").and_then(toml::Value::as_table) {
+        if let Some(t) = loans.get("loan_ledgers").and_then(toml::Value::as_table) {
+            ledger_labels.extend(t.keys().cloned());
+            ledger_labels.extend(t.values().filter_map(|entry| {
+                entry
+                    .get("interest_ledger")
+                    .and_then(toml::Value::as_str)
+                    .map(String::from)
+            }));
+        }
+        if let Some(v) = loans.get("shared_interest_ledgers") {
+            ledger_labels.extend(strs(v));
+        }
     }
     if let Some(dep) = cfg.get("depreciation").and_then(toml::Value::as_table) {
         if let Some(t) = dep.get("block_by_ledger").and_then(toml::Value::as_table) {

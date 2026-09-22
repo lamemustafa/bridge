@@ -2,7 +2,8 @@
 //!
 //! An engagement config names ledgers and groups by display text: `[roles].cash_groups`,
 //! `[roles].round_off_ledgers`, `[tds].nature_by_ledger`'s and `[tds].payee_aliases`' keys,
-//! `[tds_payees].s194j_category_by_ledger`'s keys, `[loans.loan_ledgers]`'s keys,
+//! `[tds_payees].s194j_category_by_ledger`'s keys, `[loans.loan_ledgers]`'s keys, each loan's
+//! `interest_ledger` and `[loans].shared_interest_ledgers`,
 //! `[depreciation].block_by_ledger`'s keys, `[depreciation].dep_expense_ledgers`,
 //! `[partners.*].interest_ledger`, `[tds_tcs_26as]`'s three ledger lists and its
 //! `deductor_aliases` values (the keys are TANs),
@@ -636,10 +637,46 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
             .collect::<Result<_>>()?;
     }
 
+    // `[loans]`'s three name locations, in the reference's LEDGER_PATHS order: the loan ledgers
+    // (the table's keys), each loan's `interest_ledger`, then `shared_interest_ledgers`. A loan
+    // entry that is not a table has no `interest_ledger` location, as the reference's `_expand`
+    // skips it; `loans_interest` refuses it when it runs. Each `interest_ledger` is named by the
+    // loan's key as written, and lands on the entry under the loan's bound name, as the
+    // reference's `bind_config` does since its commit 76310f60.
+    let raw_loan_ledgers = table_at(&engagement.raw_cfg, &["loans", "loan_ledgers"])?;
     let loan_pairs = lbinder.bind_keys(
-        engagement.loan_ledgers_configured.iter().cloned(),
+        raw_loan_ledgers.into_iter().flat_map(|t| t.keys().cloned()),
         "loans.loan_ledgers",
     )?;
+    let mut loan_ledgers = BTreeMap::new();
+    for (orig, bound) in &loan_pairs {
+        let mut entry = raw_loan_ledgers.expect("a key came from the table")[orig].clone();
+        if let Some(t) = entry.as_table_mut() {
+            if let Some(v) = t.get("interest_ledger") {
+                let location = format!("loans.loan_ledgers.{orig}.interest_ledger");
+                let name = v.as_str().ok_or_else(|| {
+                    AuditError::refused(
+                        BIND_ID_MALFORMED,
+                        format!("{location}: expected a name, got {v}"),
+                    )
+                })?;
+                let name = lbinder.bind_one(name, &location)?;
+                t.insert("interest_ledger".to_string(), toml::Value::from(name));
+            }
+        }
+        loan_ledgers.insert(bound.clone(), entry);
+    }
+    let loans = crate::LoansConfig {
+        not_a_table: engagement
+            .raw_cfg
+            .get("loans")
+            .is_some_and(|v| !v.is_table()),
+        loan_ledgers,
+        shared_interest_ledgers: lbinder.bind_list(
+            &list_at(&engagement.raw_cfg, &["loans", "shared_interest_ledgers"])?,
+            "loans.shared_interest_ledgers",
+        )?,
+    };
     let loan_ledgers_configured: Vec<String> = loan_pairs.into_iter().map(|(_, b)| b).collect();
 
     let mut depreciation = engagement.depreciation.clone();
@@ -776,6 +813,7 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
         bank_groups,
         round_off_ledgers,
         loan_ledgers_configured,
+        loans,
         depreciation,
         partner_interest_ledgers,
         creditor_groups,
@@ -1870,6 +1908,117 @@ deductor_aliases = 5\n"
     #[test]
     fn no_drift_no_review_rows() {
         assert!(review_register_rows(&[]).is_empty());
+    }
+
+    // ---- [loans]: loan_ledgers keys, each loan's interest_ledger, shared_interest_ledgers ----
+
+    fn book_with_loan(
+        loan: &str,
+        loan_guid: &str,
+        interest: &str,
+        interest_guid: &str,
+    ) -> book::Book {
+        let mut b = book("Cash-in-Hand", "", None);
+        b.ledgers.insert(
+            loan.to_string(),
+            ledger(loan, "Unsecured Loans", loan_guid, None),
+        );
+        b.ledgers.insert(
+            interest.to_string(),
+            ledger(interest, "Indirect Expenses", interest_guid, None),
+        );
+        b
+    }
+
+    fn loan_entry(bound: &Engagement, loan: &str) -> toml::Table {
+        bound.loans.loan_ledgers[loan].as_table().unwrap().clone()
+    }
+
+    #[test]
+    fn a_renamed_loan_ledger_keeps_its_interest_ledger() {
+        // The reference raised KeyError here before 76310f60; it now binds the entry whole.
+        let e = engagement(&format!(
+            "\n[ledger_ids]\n\"Old Loan\" = {G_ROUNDOFF:?}\n\
+             \n[loans.loan_ledgers.\"Old Loan\"]\nlender = \"x\"\nlender_type = \"nbfc\"\n\
+             interest_ledger = \"Loan Interest\"\n"
+        ));
+        let b = book_with_loan("New Loan", G_ROUNDOFF, "Loan Interest", G_OTHER);
+        let (bound, report) = e.bind(&b).unwrap();
+        assert_eq!(
+            bound.loans.loan_ledgers.keys().collect::<Vec<_>>(),
+            ["New Loan"]
+        );
+        let entry = loan_entry(&bound, "New Loan");
+        assert_eq!(entry["interest_ledger"].as_str(), Some("Loan Interest"));
+        assert_eq!(entry["lender"].as_str(), Some("x"));
+        assert_eq!(bound.loan_ledgers_configured, ["New Loan"]);
+        assert_eq!(report.drifts.len(), 1);
+        assert_eq!(report.drifts[0].paths, ["loans.loan_ledgers"]);
+    }
+
+    #[test]
+    fn a_renamed_interest_ledger_is_bound_and_its_label_is_used() {
+        // A [ledger_ids] label used only by an interest_ledger (or the shared list) is a used label,
+        // as in the reference; before these locations were bound it was refused BIND-ID-UNUSED.
+        let e = engagement(&format!(
+            "\n[ledger_ids]\n\"Old Interest\" = {G_OTHER:?}\n\
+             \n[loans]\nshared_interest_ledgers = [\"Old Interest\"]\n\
+             \n[loans.loan_ledgers.\"Loan A\"]\nlender = \"x\"\nlender_type = \"nbfc\"\n\
+             interest_ledger = \"Old Interest\"\n"
+        ));
+        let b = book_with_loan("Loan A", "", "New Interest", G_OTHER);
+        let (bound, report) = e.bind(&b).unwrap();
+        assert_eq!(
+            loan_entry(&bound, "Loan A")["interest_ledger"].as_str(),
+            Some("New Interest")
+        );
+        assert_eq!(bound.loans.shared_interest_ledgers, ["New Interest"]);
+        assert_eq!(
+            report.drifts[0].paths,
+            [
+                "loans.loan_ledgers.Loan A.interest_ledger",
+                "loans.shared_interest_ledgers"
+            ]
+        );
+        // The unbound engagement is untouched.
+        assert!(e.loans.loan_ledgers.is_empty());
+    }
+
+    #[test]
+    fn an_unknown_interest_or_shared_ledger_refuses_naming_its_location() {
+        let b = book_with_loan("Loan A", "", "Loan Interest", "");
+        let err = engagement(
+            "\n[loans.loan_ledgers.\"Loan A\"]\nlender = \"x\"\nlender_type = \"nbfc\"\n\
+             interest_ledger = \"Loan interest\"\n",
+        )
+        .bind(&b)
+        .unwrap_err();
+        assert_eq!(err.code(), Some(BIND_NAME_UNKNOWN));
+        assert!(format!("{err}").contains("loans.loan_ledgers.Loan A.interest_ledger"));
+        let err = engagement("\n[loans]\nshared_interest_ledgers = [\"Loan interest\"]\n")
+            .bind(&b)
+            .unwrap_err();
+        assert_eq!(err.code(), Some(BIND_NAME_UNKNOWN));
+        assert!(format!("{err}").contains("loans.shared_interest_ledgers"));
+    }
+
+    #[test]
+    fn a_malformed_loans_location_refuses() {
+        let b = book_with_loan("Loan A", "", "Loan Interest", "");
+        for extra in [
+            "\n[loans]\nloan_ledgers = [\"Loan A\"]\n",
+            "\n[loans.loan_ledgers.\"Loan A\"]\nlender = \"x\"\ninterest_ledger = 5\n",
+            "\n[loans]\nshared_interest_ledgers = \"Loan Interest\"\n",
+        ] {
+            let err = engagement(extra).bind(&b).unwrap_err();
+            assert_eq!(err.code(), Some(BIND_ID_MALFORMED), "{extra}");
+        }
+        // A loan entry that is not a table has no interest_ledger location: it binds its key and
+        // is kept as written, for loans_interest to refuse when it runs.
+        let (bound, _) = engagement("\n[loans.loan_ledgers]\n\"Loan A\" = 5\n")
+            .bind(&b)
+            .unwrap();
+        assert_eq!(bound.loans.loan_ledgers["Loan A"], toml::Value::Integer(5));
     }
 
     // ---- config parse errors surface through Engagement::from_toml, not bind ----
