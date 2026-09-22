@@ -699,6 +699,7 @@ mod tests {
                 },
             ],
             narration: String::new(),
+            ..Default::default()
         };
         let book = Book {
             company_name: "Invented".to_string(),

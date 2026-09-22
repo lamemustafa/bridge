@@ -757,6 +757,7 @@ mod tests {
                         amount_paise: -10_000,
                     },
                 ],
+                ..Default::default()
             }],
             tb: BTreeMap::from([(
                 "Cash".to_string(),

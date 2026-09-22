@@ -1086,5 +1086,261 @@
   "file": "src/lib.rs",
   "from": "                    .get(\"tds_payees\")\n",
   "to": "                    .get(\"tds_payees-absent\")\n"
+ },
+ {
+  "id": "E1A-01",
+  "by": "author",
+  "what": "top-level entries never preferred over nested",
+  "file": "src/book.rs",
+  "from": "let chosen = if top.is_empty() {",
+  "to": "let chosen = if !top.is_empty() {"
+ },
+ {
+  "id": "E1A-02",
+  "by": "author",
+  "what": "IN/OUT lists never replace the others",
+  "file": "src/book.rs",
+  "from": "    if !io_present {\n",
+  "to": "    if true || !io_present {\n"
+ },
+ {
+  "id": "E1A-03",
+  "by": "author",
+  "what": "an IN/OUT list naming no item still counts as present",
+  "file": "src/book.rs",
+  "from": ".any(|(tag, _)| v.children_named(tag).any(|ie| names_item(&ie)));",
+  "to": ".any(|(tag, _)| v.children_named(tag).next().is_some());"
+ },
+ {
+  "id": "E1A-04",
+  "by": "author",
+  "what": "IN and OUT directions swapped",
+  "file": "src/book.rs",
+  "from": "(\"INVENTORYENTRIESIN.LIST\", 1),",
+  "to": "(\"INVENTORYENTRIESIN.LIST\", -1),"
+ },
+ {
+  "id": "E1A-05",
+  "by": "author",
+  "what": "an IN/OUT line keeps its RATE",
+  "file": "src/book.rs",
+  "from": "                rate_paise: None,\n                amount_paise: flip(ie.child_text(\"AMOUNT\"), part)?,\n                direction: Some(direction),",
+  "to": "                rate_paise: rate_paise(ie.child_text(\"RATE\"), part)?,\n                amount_paise: flip(ie.child_text(\"AMOUNT\"), part)?,\n                direction: Some(direction),"
+ },
+ {
+  "id": "E1A-06",
+  "by": "author",
+  "what": "quantity always from ACTUALQTY",
+  "file": "src/book.rs",
+  "from": "\"\" => ie.child_text(\"ACTUALQTY\"),\n                billed => billed,",
+  "to": "\"\" => ie.child_text(\"ACTUALQTY\"),\n                _ => ie.child_text(\"ACTUALQTY\"),"
+ },
+ {
+  "id": "E1A-07",
+  "by": "author",
+  "what": "qty_field_present needs both elements",
+  "file": "src/book.rs",
+  "from": "qty_field_present: ie.child(\"BILLEDQTY\").is_some()\n                    || ie.child(\"ACTUALQTY\").is_some(),",
+  "to": "qty_field_present: ie.child(\"BILLEDQTY\").is_some()\n                    && ie.child(\"ACTUALQTY\").is_some(),"
+ },
+ {
+  "id": "E1A-08",
+  "by": "author",
+  "what": "inventory amount not flipped",
+  "file": "src/book.rs",
+  "from": "                amount_paise: flip(ie.child_text(\"AMOUNT\"), part)?,\n                direction: None,",
+  "to": "                amount_paise: paise(ie.child_text(\"AMOUNT\"), part)?,\n                direction: None,"
+ },
+ {
+  "id": "E1A-09",
+  "by": "author",
+  "what": "a top-level entry naming no item is kept",
+  "file": "src/book.rs",
+  "from": "            .children_named(\"ALLINVENTORYENTRIES.LIST\")\n            .filter(names_item)",
+  "to": "            .children_named(\"ALLINVENTORYENTRIES.LIST\")\n            .filter(|_| true)"
+ },
+ {
+  "id": "E1A-10",
+  "by": "author",
+  "what": "a nested allocation naming no item is kept",
+  "file": "src/book.rs",
+  "from": "                .flat_map(|le| le.children_named(\"INVENTORYALLOCATIONS.LIST\"))\n                .filter(names_item)",
+  "to": "                .flat_map(|le| le.children_named(\"INVENTORYALLOCATIONS.LIST\"))\n                .filter(|_| true)"
+ },
+ {
+  "id": "E1A-11",
+  "by": "author",
+  "what": "digits-and-commas run shortest first",
+  "file": "src/book.rs",
+  "from": "for len in (0..=longest).rev() {",
+  "to": "for len in 0..=longest {"
+ },
+ {
+  "id": "E1A-12",
+  "by": "author",
+  "what": "commas not part of the number",
+  "file": "src/book.rs",
+  "from": "let longest = run(body, |c| c.is_ascii_digit() || *c == ',');",
+  "to": "let longest = run(body, |c| c.is_ascii_digit());"
+ },
+ {
+  "id": "E1A-13",
+  "by": "author",
+  "what": "no leading minus sign",
+  "file": "src/book.rs",
+  "from": "        if sign && chars.get(at) != Some(&'-') {",
+  "to": "        if sign {"
+ },
+ {
+  "id": "E1A-14",
+  "by": "author",
+  "what": "rate searched, not anchored",
+  "file": "src/book.rs",
+  "from": "    let Some(end) = number_match_end(&chars, start) else {\n        return Ok(None);\n    };",
+  "to": "    let Some((start, end)) = (start..chars.len()).find_map(|at| number_match_end(&chars, at).map(|e| (at, e))) else {\n        return Ok(None);\n    };"
+ },
+ {
+  "id": "E1A-15",
+  "by": "author",
+  "what": "a leading-dot rate not given its zero",
+  "file": "src/book.rs",
+  "from": "let zero = if body.starts_with('.') { \"0\" } else { \"\" };",
+  "to": "let zero = \"\";"
+ },
+ {
+  "id": "E1A-16",
+  "by": "author",
+  "what": "non-ASCII digits read, not refused",
+  "file": "src/book.rs",
+  "from": ".any(|c| !c.is_ascii() && crate::support::py_is_decimal(c))",
+  "to": ".any(|_| false)"
+ },
+ {
+  "id": "E1A-17",
+  "by": "author",
+  "what": "an empty MASTERID kept as Some(\"\")",
+  "file": "src/book.rs",
+  "from": "masterid: (!masterid.is_empty()).then(|| masterid.to_string()),",
+  "to": "masterid: Some(masterid.to_string()),"
+ },
+ {
+  "id": "E1A-18",
+  "by": "author",
+  "what": "default status Regular",
+  "file": "src/book.rs",
+  "from": "            status: VoucherStatus::Unknown,\n            lines: Vec::new(),",
+  "to": "            status: VoucherStatus::Regular,\n            lines: Vec::new(),"
+ },
+ {
+  "id": "E1A-R01",
+  "by": "reviewer",
+  "what": "io_present consults only the IN list",
+  "file": "src/book.rs",
+  "from": ".any(|(tag, _)| v.children_named(tag).any(|ie| names_item(&ie)));",
+  "to": ".take(1).any(|(tag, _)| v.children_named(tag).any(|ie| names_item(&ie)));"
+ },
+ {
+  "id": "E1A-R02",
+  "by": "reviewer",
+  "what": "io_present consults only the OUT list",
+  "file": "src/book.rs",
+  "from": ".any(|(tag, _)| v.children_named(tag).any(|ie| names_item(&ie)));",
+  "to": ".skip(1).any(|(tag, _)| v.children_named(tag).any(|ie| names_item(&ie)));"
+ },
+ {
+  "id": "E1A-R03",
+  "by": "reviewer",
+  "what": "zero put before the sign on a leading-dot rate",
+  "file": "src/book.rs",
+  "from": "paise(&format!(\"{sign}{zero}{body}\"), part)",
+  "to": "paise(&format!(\"{zero}{sign}{body}\"), part)"
+ },
+ {
+  "id": "E1A-R04",
+  "by": "reviewer",
+  "what": "leading-dot test on the signed lexeme",
+  "file": "src/book.rs",
+  "from": "let zero = if body.starts_with('.') {",
+  "to": "let zero = if lexeme.starts_with('.') {"
+ },
+ {
+  "id": "E1A-R05",
+  "by": "reviewer",
+  "what": "quantity parsed at f32 precision",
+  "file": "src/book.rs",
+  "from": "        .parse::<f64>()\n        .map(Some)",
+  "to": "        .parse::<f32>()\n        .map(|f| Some(f64::from(f)))"
+ },
+ {
+  "id": "E1A-R06",
+  "by": "reviewer",
+  "what": "non-ASCII refusal narrowed to Arabic-Indic digits",
+  "file": "src/book.rs",
+  "from": ".any(|c| !c.is_ascii() && crate::support::py_is_decimal(c))",
+  "to": ".any(|c| ('\\u{660}'..='\\u{669}').contains(&c))"
+ },
+ {
+  "id": "E1A-R10",
+  "by": "reviewer",
+  "what": "rate refusal dropped, quantity refusal kept",
+  "file": "src/book.rs",
+  "from": "    refuse_non_ascii_digits(text, \"a rate\", part)?;\n",
+  "to": "\n"
+ },
+ {
+  "id": "E1A-R11",
+  "by": "reviewer",
+  "what": "quantity refusal dropped, rate refusal kept",
+  "file": "src/book.rs",
+  "from": "    refuse_non_ascii_digits(text, \"a quantity\", part)?;\n",
+  "to": "\n"
+ },
+ {
+  "id": "E1A-R13",
+  "by": "reviewer",
+  "what": "nested allocations read from every ledger-entry depth, not only the voucher's own",
+  "file": "src/book.rs",
+  "from": "            v.children_named(\"ALLLEDGERENTRIES.LIST\")\n                .flat_map",
+  "to": "            v.descendants_named(\"ALLLEDGERENTRIES.LIST\")\n                .into_iter()\n                .flat_map"
+ },
+ {
+  "id": "E1A-R14",
+  "by": "reviewer",
+  "what": "the digits after the dot must be two or more",
+  "file": "src/book.rs",
+  "from": "                if digits > 0 {",
+  "to": "                if digits > usize::from(dot) {"
+ },
+ {
+  "id": "E1A-R15",
+  "by": "reviewer",
+  "what": "inventory skipped on a non-regular voucher",
+  "file": "src/book.rs",
+  "from": "        let inventory = inventory_lines(v, part)?;",
+  "to": "        let inventory = if matches!(status, VoucherStatus::Regular) { inventory_lines(v, part)? } else { Vec::new() };"
+ },
+ {
+  "id": "E1A-19",
+  "by": "author",
+  "what": "refusal widened back to every numeric character",
+  "file": "src/book.rs",
+  "from": ".any(|c| !c.is_ascii() && crate::support::py_is_decimal(c))",
+  "to": ".any(|c| !c.is_ascii() && c.is_numeric())"
+ },
+ {
+  "id": "E1A-S01",
+  "by": "reviewer",
+  "what": "IN/OUT branch AMOUNT not flipped (paise instead of flip)",
+  "file": "src/book.rs",
+  "from": "                qty: quantity(ie.child_text(\"ACTUALQTY\"), part)?,\n                rate_paise: None,\n                amount_paise: flip(ie.child_text(\"AMOUNT\"), part)?,\n                direction: Some(direction),",
+  "to": "                qty: quantity(ie.child_text(\"ACTUALQTY\"), part)?,\n                rate_paise: None,\n                amount_paise: paise(ie.child_text(\"AMOUNT\"), part)?,\n                direction: Some(direction),"
+ },
+ {
+  "id": "E1A-S02",
+  "by": "reviewer",
+  "what": "IN/OUT branch qty_field_present forced to always true",
+  "file": "src/book.rs",
+  "from": "                direction: Some(direction),\n                qty_field_present: ie.child(\"ACTUALQTY\").is_some(),",
+  "to": "                direction: Some(direction),\n                qty_field_present: true,"
  }
 ]
