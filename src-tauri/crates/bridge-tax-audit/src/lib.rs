@@ -44,6 +44,7 @@ pub mod findings;
 pub mod invariants;
 pub mod ledger_ids;
 pub mod ledger_scrutiny;
+pub mod loans_interest;
 pub mod read;
 pub mod registry;
 pub mod rules;
@@ -896,6 +897,48 @@ pub fn depreciation_on(
         &dep.put_to_use_by_voucher,
     )?;
     let module_check = depreciation::check_invariants(book, &result)?;
+    canonical::canonical_test_result(book, &result, Some(module_check))
+}
+
+/// Run `loans_interest` on a book and return its canonical parity dump, with the module's own
+/// LOAN-1/2/3 invariants. The previous-year turnover is `[tds].previous_year_turnover_paise`, as
+/// the reference's pack reads it; absent without a `[tds]` table.
+pub fn loans_interest_on(
+    engagement: &Engagement,
+    book: &book::Book,
+    rules: &Rules,
+) -> Result<serde_json::Value> {
+    let entity_type = engagement.entity_type.clone().ok_or_else(|| {
+        AuditError::Config("loans_interest needs [client].entity_type".to_string())
+    })?;
+    let (bound, _report) = engagement.bind(book)?;
+    if bound.loans.not_a_table {
+        return Err(AuditError::Config("[loans] is not a table".to_string()));
+    }
+    let loans = loans_interest::loan_config(&bound.loans.loan_ledgers)?;
+    let cash = book.ledgers_under_any(&bound.cash_groups);
+    let bank = book.ledgers_under_any(&bound.bank_groups);
+    let shared: BTreeSet<String> = bound
+        .loans
+        .shared_interest_ledgers
+        .iter()
+        .cloned()
+        .collect();
+    let turnover = bound
+        .tds
+        .as_ref()
+        .and_then(|t| t.previous_year_turnover_paise);
+    let result = loans_interest::run(
+        book,
+        rules,
+        &entity_type,
+        &loans,
+        turnover,
+        &cash,
+        &bank,
+        &shared,
+    )?;
+    let module_check = loans_interest::check_invariants(book, &result)?;
     canonical::canonical_test_result(book, &result, Some(module_check))
 }
 

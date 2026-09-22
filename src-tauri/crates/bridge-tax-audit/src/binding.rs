@@ -2021,6 +2021,38 @@ deductor_aliases = 5\n"
         assert_eq!(bound.loans.loan_ledgers["Loan A"], toml::Value::Integer(5));
     }
 
+    #[test]
+    fn a_malformed_loans_value_fails_only_loans_interest() {
+        let rules = crate::rules::Rules::vendored().unwrap();
+        let b = book_with_loan("Loan A", "", "Loan Interest", "");
+        let with = |extra: &str| {
+            let mut e = engagement(extra);
+            e.entity_type = Some("firm".to_string());
+            e
+        };
+        // The control: a well-formed loan runs.
+        let ok = with(
+            "\n[loans.loan_ledgers.\"Loan A\"]\nlender = \"x\"\nlender_type = \"nbfc\"\n\
+             interest_ledger = \"Loan Interest\"\n",
+        );
+        assert!(crate::loans_interest_on(&ok, &b, &rules).is_ok());
+        for extra in [
+            "\n[[loans]]\nloan_ledgers = {}\n",
+            "\n[loans.loan_ledgers]\n\"Loan A\" = 5\n",
+            "\n[loans.loan_ledgers.\"Loan A\"]\nlender_type = \"nbfc\"\n",
+            "\n[loans.loan_ledgers.\"Loan A\"]\nlender = \"x\"\nlender_type = 3\n",
+        ] {
+            let e = with(extra);
+            assert!(e.bind(&b).is_ok(), "{extra}");
+            assert!(crate::cash_44ab_on(&e, &b, &rules).is_ok(), "{extra}");
+            assert!(
+                crate::cash_payments_40a3_on(&e, &b, &rules).is_ok(),
+                "{extra}"
+            );
+            assert!(crate::loans_interest_on(&e, &b, &rules).is_err(), "{extra}");
+        }
+    }
+
     // ---- config parse errors surface through Engagement::from_toml, not bind ----
 
     #[test]

@@ -38,7 +38,11 @@ to drop, e.g. ["ledger_scrutiny"]; the Rust side must map each one, see `tests/e
 `previous_year_turnover_paise` (default absent); and for `tds_tcs_26as`/`twentysixas_receipts`:
 `form26as`, `ais`, `tis` (invented document rows in the shape `parity/python_golden.py
 --emit-traces-documents` writes; default []) and `tds_ledgers`, `tcs_ledgers`,
-`advance_tax_ledgers`, `deductor_aliases` (default empty).
+`advance_tax_ledgers`, `deductor_aliases` (default empty); and for `loans_interest`: `entity_type` and
+`previous_year_turnover_paise` as for `tds_payees`, `loans` ({loan ledger: {lender, lender_type,
+interest_ledger?}}, default {}), `shared_interest_ledgers` (default []) and `net_reversals` (a boolean,
+default false: true sets the module's NET_REVERSALS switch, reaching the dormant reversal rule in `run` and
+in the module invariant alike).
 """
 from __future__ import annotations
 
@@ -55,8 +59,8 @@ def main() -> int:
     engine, spec_path, out_dir = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
     sys.path.insert(0, str(Path(engine).resolve()))
     from tae.adapters.traces_documents import AisRow, TisRow
-    from tae.audit_tests import (cash_book_integrity, creditor_ageing_43bh, ledger_scrutiny, stale_balances_41_1,
-                                 statutory_dues_43b, tds_payees, tds_tcs_26as, trial_balance,
+    from tae.audit_tests import (cash_book_integrity, creditor_ageing_43bh, ledger_scrutiny, loans_interest,
+                                 stale_balances_41_1, statutory_dues_43b, tds_payees, tds_tcs_26as, trial_balance,
                                  twentysixas_receipts)
     from tae.model import Form26ASRow
     from tae.config import load_rules
@@ -127,6 +131,16 @@ def main() -> int:
     sd = spec.get("statutory_dues", {})
     post_year = {k: [(date.fromisoformat(d), a) for d, a in v] for k, v in ca.get("post_year_payments", {}).items()}
 
+    def loans_interest_run():
+        # The switch is a module global the reference's run() and check_invariants() both read; the
+        # canonical dump below calls check_invariants in this same process, before anything resets it.
+        loans_interest.NET_REVERSALS = typed(spec, "net_reversals", lambda x: isinstance(x, bool), "true or false",
+                                             absent=False, nullable=False)
+        return loans_interest, loans_interest.run(
+            eng, rules, {k: dict(v) for k, v in spec.get("loans", {}).items()},
+            spec.get("previous_year_turnover_paise"), cash, bank,
+            frozenset(spec.get("shared_interest_ledgers", [])))
+
     # One runner per test an edge book may name: the module and its result, run as the reference's
     # pack runs it.
     runners = {
@@ -137,6 +151,7 @@ def main() -> int:
             supplier_classification=ca.get("supplier_classification", {}), post_year_payments=post_year,
             mse_interest_ledgers=frozenset(ca.get("mse_interest_ledgers", [])))),
         "ledger_scrutiny": lambda: (ledger_scrutiny, ledger_scrutiny.run(eng, rules, cash)),
+        "loans_interest": loans_interest_run,
         "stale_balances_41_1": lambda: (stale_balances_41_1, stale_balances_41_1.run(eng, rules)),
         "statutory_dues_43b": lambda: (statutory_dues_43b, statutory_dues_43b.run(
             eng, rules, dict(sd.get("nature_by_ledger", {})), frozenset(sd.get("salary_expense_ledgers", [])))),

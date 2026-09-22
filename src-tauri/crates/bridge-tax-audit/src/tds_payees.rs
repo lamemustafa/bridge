@@ -240,7 +240,11 @@ fn summarise<'a>(row: &'a Row<'a>) -> Result<Summary<'a>> {
 /// The reference's `deductor_status`: "deductor" | "not_deductor" | "unknown". An individual/HUF
 /// is never assumed either way without a supplied previous-year turnover. The entity types match
 /// exactly, as the reference compares them.
-fn deductor_status(entity_type: &str, threshold: i64, turnover: Option<i64>) -> &'static str {
+pub(crate) fn deductor_status(
+    entity_type: &str,
+    threshold: i64,
+    turnover: Option<i64>,
+) -> &'static str {
     if entity_type == "individual" || entity_type == "huf" {
         return match turnover {
             None => "unknown",
@@ -253,7 +257,7 @@ fn deductor_status(entity_type: &str, threshold: i64, turnover: Option<i64>) -> 
 
 /// Python's `format(x, "g")`: six significant digits, trailing zeros dropped, scientific notation
 /// below 1e-4 or from 1e6. The reference formats the deductor turnover limit in crore this way.
-fn py_format_g(x: f64) -> String {
+pub(crate) fn py_format_g(x: f64) -> String {
     if x == 0.0 {
         return if x.is_sign_negative() { "-0" } else { "0" }.to_string();
     }
