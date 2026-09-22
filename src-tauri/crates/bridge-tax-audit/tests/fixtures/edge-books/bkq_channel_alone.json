@@ -1,0 +1,229 @@
+{
+ "comment": "book_keeping_quality with channel sale lines and one named-customer line that is priced but worth zero (named sales total zero): the margin finding carries the no-comparison limit and no named_customer_margin_bp; a GST head with no payment ledger gives head figures and no GST finding; purchase quantities 1, 1 and 1e16 summed in population order (1.0000000000000002e16) price a sale of 1e16 units at 29999999999999997 paise just above cost, where the reverse order would put it below.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Sundry Debtors": "Current Assets",
+  "Local Debtors": "Sundry Debtors",
+  "Stock-in-Hand": "Current Assets",
+  "Finished Goods": "Stock-in-Hand",
+  "Current Liabilities": null,
+  "Duties & Taxes": "Current Liabilities",
+  "Sundry Creditors": "Current Liabilities",
+  "Sales Accounts": null,
+  "Purchase Accounts": null,
+  "Indirect Expenses": null
+ },
+ "ledgers": [
+  {
+   "name": "Cash",
+   "chain": [
+    "Cash-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-0"
+  },
+  {
+   "name": "Bank",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-1"
+  },
+  {
+   "name": "Sales",
+   "chain": [
+    "Sales Accounts"
+   ],
+   "guid": "edge-bkq-2"
+  },
+  {
+   "name": "Purchases",
+   "chain": [
+    "Purchase Accounts"
+   ],
+   "guid": "edge-bkq-3"
+  },
+  {
+   "name": "Supplier",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-bkq-4"
+  },
+  {
+   "name": "Customer",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-5"
+  },
+  {
+   "name": "Expenses",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-bkq-6"
+  },
+  {
+   "name": "UPI Collections",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-7"
+  },
+  {
+   "name": "Output CGST",
+   "chain": [
+    "Duties & Taxes",
+    "Current Liabilities"
+   ],
+   "guid": "edge-bkq-8"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Output CGST",
+   "opening": 0,
+   "debit": 0,
+   "credit": 900,
+   "closing": -900
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "ap-1",
+   "date": "2025-04-01",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Purchases",
+     1
+    ],
+    [
+     "Supplier",
+     -1
+    ]
+   ],
+   "inventory": [
+    {
+     "item": "Bulk",
+     "qty": 1,
+     "amount": 10000000000000000
+    }
+   ]
+  },
+  {
+   "guid": "ap-2",
+   "date": "2025-04-02",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Purchases",
+     1
+    ],
+    [
+     "Supplier",
+     -1
+    ]
+   ],
+   "inventory": [
+    {
+     "item": "Bulk",
+     "qty": 1,
+     "amount": 10000000000000000
+    }
+   ]
+  },
+  {
+   "guid": "ap-3",
+   "date": "2025-04-03",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Purchases",
+     1
+    ],
+    [
+     "Supplier",
+     -1
+    ]
+   ],
+   "inventory": [
+    {
+     "item": "Bulk",
+     "qty": 1e+16,
+     "amount": 10000000000000000
+    }
+   ]
+  },
+  {
+   "guid": "ai-1",
+   "date": "2025-04-10",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "UPI Collections",
+     500
+    ],
+    [
+     "Sales",
+     -500
+    ]
+   ],
+   "inventory": [
+    {
+     "item": "Bulk",
+     "qty": 1e+16,
+     "amount": -29999999999999997
+    }
+   ]
+  },
+  {
+   "guid": "an-1",
+   "date": "2025-04-11",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Customer",
+     10
+    ],
+    [
+     "Sales",
+     -10
+    ]
+   ],
+   "inventory": [
+    {
+     "item": "Bulk",
+     "qty": 1,
+     "amount": 0
+    }
+   ]
+  }
+ ],
+ "cash": [
+  "Cash"
+ ],
+ "book_keeping_quality": {
+  "payment_channel_debtors": [
+   "UPI Collections"
+  ],
+  "tax_ledgers": {
+   "CGST": [
+    "Output CGST"
+   ]
+  },
+  "gst_payment_ledgers": [],
+  "reissue_narration_terms": [],
+  "writeoff_discount_ledgers": []
+ },
+ "tests": [
+  "book_keeping_quality"
+ ]
+}

@@ -92,6 +92,25 @@ pub struct BindingReport {
     pub bound_by_name: usize,
 }
 
+/// The reference binding's `names_at` for a `list` location: a list of names, or
+/// [`BIND_ID_MALFORMED`] naming the location.
+fn names_at(value: &toml::Value, location: &str) -> Result<Vec<String>> {
+    value
+        .as_array()
+        .and_then(|items| {
+            items
+                .iter()
+                .map(|x| x.as_str().map(str::to_string))
+                .collect::<Option<Vec<_>>>()
+        })
+        .ok_or_else(|| {
+            AuditError::refused(
+                BIND_ID_MALFORMED,
+                format!("{location}: expected a list of names, got {value}"),
+            )
+        })
+}
+
 fn malformed(table: &str, label: &str, detail: &str) -> AuditError {
     AuditError::refused(BIND_ID_MALFORMED, format!("[{table}].{label:?}: {detail}"))
 }
@@ -595,6 +614,50 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
     let round_off_ledgers =
         lbinder.bind_list(&engagement.round_off_ledgers, "roles.round_off_ledgers")?;
 
+    // `book_keeping_quality`'s name locations, in the reference's `LEDGER_PATHS` order (after
+    // `round_off_ledgers`, before `[tds]`): the three lists, then every `tax_ledgers` head.
+    // Read from the raw config, as the reference's binding reads its own; typed lazily
+    // (`BookKeepingQualityConfig`).
+    let roles = engagement
+        .raw_cfg
+        .get("roles")
+        .and_then(toml::Value::as_table);
+    let mut book_keeping_quality = crate::BookKeepingQualityConfig::default();
+    for (key, slot) in [
+        (
+            "payment_channel_debtors",
+            &mut book_keeping_quality.payment_channel_debtors,
+        ),
+        (
+            "gst_payment_ledgers",
+            &mut book_keeping_quality.gst_payment_ledgers,
+        ),
+        (
+            "writeoff_discount_ledgers",
+            &mut book_keeping_quality.writeoff_discount_ledgers,
+        ),
+    ] {
+        if let Some(value) = roles.and_then(|r| r.get(key)) {
+            let location = format!("roles.{key}");
+            *slot = Some(lbinder.bind_list(&names_at(value, &location)?, &location)?);
+        }
+    }
+    if let Some(value) = roles.and_then(|r| r.get("tax_ledgers")) {
+        book_keeping_quality.tax_ledgers = Some(match value.as_table() {
+            None => crate::TaxLedgers::NotATable,
+            Some(heads) => crate::TaxLedgers::Heads(
+                heads
+                    .iter()
+                    .map(|(head, names)| {
+                        let location = format!("roles.tax_ledgers.{head}");
+                        let bound = lbinder.bind_list(&names_at(names, &location)?, &location)?;
+                        Ok((head.clone(), bound))
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            ),
+        });
+    }
+
     // `[tds]` and `[tds_payees]` bind before `[loans]` and `[depreciation]`, as they come before
     // both in the reference's `LEDGER_PATHS` (only which refusal is reported first depends on it).
     // A payee alias's VALUE is a payee entity label, not a ledger, and is left as written.
@@ -784,6 +847,7 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
         statutory_dues,
         tds,
         tds_tcs_26as,
+        book_keeping_quality,
         ..engagement.clone()
     };
     Ok((bound, report))
@@ -1893,5 +1957,149 @@ deductor_aliases = 5\n"
     fn helper_engagement_err_reports_config_errors() {
         let err = engagement_err("cash_groups = 5\n"); // shadows the valid list with a bad type
         assert!(matches!(err, AuditError::Config(_)));
+    }
+
+    // ---- book_keeping_quality locations ----
+
+    fn bkq(extra: &str) -> Result<crate::book_keeping_quality::Inputs> {
+        let e = engagement(extra);
+        let (bound, _) = e.bind(&book("Cash-in-Hand", G_CASH, None))?;
+        let roles = bound.raw_cfg.get("roles").and_then(toml::Value::as_table);
+        bound.book_keeping_quality.inputs(roles)
+    }
+
+    const BKQ_ALL: &str = "payment_channel_debtors = [\"Sales\"]\n\
+                           gst_payment_ledgers = []\n\
+                           writeoff_discount_ledgers = [\"Cash\"]\n\
+                           reissue_narration_terms = [\"re-issue\"]\n\
+                           tax_ledgers = { CGST = [\"Sales\"] }\n";
+
+    /// The four name locations bind; the typed inputs come out as the reference passes them.
+    #[test]
+    fn bkq_locations_bind_and_type() {
+        let i = bkq(BKQ_ALL).unwrap();
+        assert_eq!(
+            i.payment_channel_debtors,
+            BTreeSet::from(["Sales".to_string()])
+        );
+        assert!(i.gst_payment_ledgers.is_empty());
+        assert_eq!(
+            i.writeoff_discount_ledgers,
+            BTreeSet::from(["Cash".to_string()])
+        );
+        assert_eq!(i.reissue_narration_terms, vec!["re-issue".to_string()]);
+        assert_eq!(
+            i.tax_ledgers_by_head,
+            BTreeMap::from([("Sales".to_string(), "CGST".to_string())])
+        );
+    }
+
+    /// A renamed ledger follows its GUID in every book_keeping_quality location: each of the
+    /// three lists and a tax_ledgers head.
+    #[test]
+    fn bkq_locations_bind_by_identity() {
+        let extra = format!(
+            "payment_channel_debtors = [\"Old Cash\"]\n\
+             gst_payment_ledgers = [\"Old Cash\"]\n\
+             writeoff_discount_ledgers = [\"Old Cash\"]\n\
+             reissue_narration_terms = []\n\
+             tax_ledgers = {{ CGST = [\"Old Cash\"] }}\n\
+             [ledger_ids]\n\"Old Cash\" = {G_CASH:?}\n"
+        );
+        let i = bkq(&extra).unwrap();
+        let cash = BTreeSet::from(["Cash".to_string()]);
+        assert_eq!(i.payment_channel_debtors, cash);
+        assert_eq!(i.gst_payment_ledgers, cash);
+        assert_eq!(i.writeoff_discount_ledgers, cash);
+        assert_eq!(
+            i.tax_ledgers_by_head,
+            BTreeMap::from([("Cash".to_string(), "CGST".to_string())])
+        );
+    }
+
+    /// A malformed or unknown name refuses binding, as the reference's binding refuses it for
+    /// every test; a missing key or a non-table tax_ledgers refuses only book_keeping_quality.
+    #[test]
+    fn bkq_locations_refuse_as_the_reference_does() {
+        let bind_err = |extra: &str| {
+            engagement(extra)
+                .bind(&book("Cash-in-Hand", G_CASH, None))
+                .unwrap_err()
+        };
+        for bad in [
+            "payment_channel_debtors = \"Sales\"\n",
+            "gst_payment_ledgers = [1]\n",
+            "tax_ledgers = { CGST = \"Sales\" }\n",
+        ] {
+            assert_eq!(bind_err(bad).code(), Some(BIND_ID_MALFORMED), "{bad}");
+        }
+        assert_eq!(
+            bind_err("writeoff_discount_ledgers = [\"Nowhere\"]\n").code(),
+            Some(BIND_NAME_UNKNOWN)
+        );
+        for key in [
+            "payment_channel_debtors",
+            "gst_payment_ledgers",
+            "writeoff_discount_ledgers",
+            "reissue_narration_terms",
+            "tax_ledgers",
+        ] {
+            let without: String = BKQ_ALL
+                .lines()
+                .filter(|l| !l.starts_with(key))
+                .map(|l| format!("{l}\n"))
+                .collect();
+            let err = bkq(&without).unwrap_err();
+            assert!(
+                err.to_string().contains(&format!("roles.{key}")),
+                "{key}: {err}"
+            );
+        }
+        let not_table = BKQ_ALL.replace("{ CGST = [\"Sales\"] }", "\"CGST\"");
+        assert!(bkq(&not_table)
+            .unwrap_err()
+            .to_string()
+            .contains("not a table"));
+    }
+
+    /// `reissue_narration_terms` is read by `list()`: a string's characters, a table's keys, and a
+    /// list whose items must be text.
+    #[test]
+    fn bkq_reissue_terms_are_read_as_list_reads_them() {
+        let with =
+            |terms: &str| bkq(&BKQ_ALL.replace("reissue_narration_terms = [\"re-issue\"]", terms));
+        assert_eq!(
+            with("reissue_narration_terms = \"ab\"")
+                .unwrap()
+                .reissue_narration_terms,
+            vec!["a".to_string(), "b".to_string()]
+        );
+        assert_eq!(
+            with("reissue_narration_terms = { x = 1 }")
+                .unwrap()
+                .reissue_narration_terms,
+            vec!["x".to_string()]
+        );
+        assert!(with("reissue_narration_terms = [\"a\", 1]").is_err());
+        assert!(with("reissue_narration_terms = 5").is_err());
+    }
+
+    /// A ledger under two different heads is refused (the file order that decides it in the
+    /// reference is not kept); under the same head twice it is not.
+    #[test]
+    fn bkq_a_ledger_under_two_heads_is_refused() {
+        let two = BKQ_ALL.replace(
+            "{ CGST = [\"Sales\"] }",
+            "{ CGST = [\"Sales\"], SGST = [\"Sales\"] }",
+        );
+        assert!(bkq(&two)
+            .unwrap_err()
+            .to_string()
+            .contains("is listed under GST heads"));
+        let same = BKQ_ALL.replace(
+            "{ CGST = [\"Sales\"] }",
+            "{ CGST = [\"Sales\", \"Sales\"] }",
+        );
+        assert!(bkq(&same).is_ok());
     }
 }

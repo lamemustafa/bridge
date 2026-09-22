@@ -1,0 +1,739 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "book_keeping_quality",
+  "test_version": "1",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "ba2601e59ad709f4",
+  "population_note_text": "Books population (optional, cancelled and post-dated vouchers excluded).",
+  "figures": [
+    {
+      "id": "book_keeping_quality.contra_direction_cash_amount_paise_6260cd1bca68",
+      "value": 25000,
+      "unit": "paise",
+      "definition_sha256_16": "b5b7674941198a3b",
+      "definition_text": "Net Cash-line amount (Dr+/Cr-) on this Contra voucher.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "c-2",
+          "label": "Contra c-2 on 2025-07-02"
+        }
+      ]
+    },
+    {
+      "id": "book_keeping_quality.contra_direction_cash_amount_paise_a6f7ef47ee8d",
+      "value": -40000,
+      "unit": "paise",
+      "definition_sha256_16": "b5b7674941198a3b",
+      "definition_text": "Net Cash-line amount (Dr+/Cr-) on this Contra voucher.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "c-1",
+          "label": "Contra c-1 on 2025-07-01"
+        }
+      ]
+    },
+    {
+      "id": "book_keeping_quality.contra_direction_cash_amount_paise_b63888b6e03e",
+      "value": 7000,
+      "unit": "paise",
+      "definition_sha256_16": "b5b7674941198a3b",
+      "definition_text": "Net Cash-line amount (Dr+/Cr-) on this Contra voucher.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "c-0",
+          "label": "Contra c-0 on 2025-07-01"
+        }
+      ]
+    },
+    {
+      "id": "book_keeping_quality.contra_direction_cash_amount_paise_c32cd24a9077",
+      "value": 3000,
+      "unit": "paise",
+      "definition_sha256_16": "b5b7674941198a3b",
+      "definition_text": "Net Cash-line amount (Dr+/Cr-) on this Contra voucher.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "c-4",
+          "label": "Contra c-4 on 2025-07-04"
+        }
+      ]
+    },
+    {
+      "id": "book_keeping_quality.contra_direction_mismatch_count",
+      "value": 4,
+      "unit": "count",
+      "definition_sha256_16": "bb720fd237265f61",
+      "definition_text": "Contra vouchers whose narration claims a direction that their own Cash line's sign contradicts.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "c-0",
+          "label": "Contra c-0 on 2025-07-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "c-1",
+          "label": "Contra c-1 on 2025-07-01"
+        },
+        {
+          "kind": "voucher",
+          "id": "c-2",
+          "label": "Contra c-2 on 2025-07-02"
+        },
+        {
+          "kind": "voucher",
+          "id": "c-4",
+          "label": "Contra c-4 on 2025-07-04"
+        }
+      ]
+    },
+    {
+      "id": "book_keeping_quality.contra_direction_mismatch_total_paise",
+      "value": 75000,
+      "unit": "paise",
+      "definition_sha256_16": "36ad34272911a171",
+      "definition_text": "Sum of the Cash line amounts, each taken without its sign, across the Contra vouchers whose narration claims a direction that their own Cash line's sign contradicts.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.debtor_writeoff_count",
+      "value": 4,
+      "unit": "count",
+      "definition_sha256_16": "0ab2d91ab0decbbd",
+      "definition_text": "Journal vouchers debiting a configured discount/write-off ledger and crediting a Sundry Debtors ledger.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "wo-1",
+          "label": "Journal wo-1 on 2025-06-01, Debtor One"
+        },
+        {
+          "kind": "voucher",
+          "id": "wo-1",
+          "label": "Journal wo-1 on 2025-06-01, Debtor Two"
+        },
+        {
+          "kind": "voucher",
+          "id": "wo-dup",
+          "label": "Journal wo-dup on 2025-06-05, Debtor One"
+        }
+      ]
+    },
+    {
+      "id": "book_keeping_quality.debtor_writeoff_total_paise",
+      "value": 650,
+      "unit": "paise",
+      "definition_sha256_16": "3492a3ed8a1f1c7e",
+      "definition_text": "Sum of the debtor-ledger credit line(s) across the journal vouchers debiting a configured discount/write-off ledger and crediting a Sundry Debtors ledger.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.entry_order_after_last_sale_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "e22112308bcb97ee",
+      "definition_text": "Population vouchers (any base type) created after the sales voucher with the latest in Tally's creation order.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.entry_order_after_last_sale_value_paise",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "cfd76eef82dcab67",
+      "definition_text": "Sum of the debit-side (gross) amount of every population voucher (any base type) created after the sales voucher with the latest in Tally's creation order.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.entry_order_unparseable_masterid_count",
+      "value": 16,
+      "unit": "count",
+      "definition_sha256_16": "818d17dafd85b348",
+      "definition_text": "Population vouchers with no usable creation-order number; excluded from every entry-order figure.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.gst_setoff_configured_payment_ledger_count",
+      "value": 2,
+      "unit": "count",
+      "definition_sha256_16": "fe87d166a0d6c51a",
+      "definition_text": "GST payment ledgers set for this client; a books test with none configured does not apply and reports only the tax ledgers' own balances, if any.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.gst_setoff_head_closing_paise_CGST",
+      "value": -1800000,
+      "unit": "paise",
+      "definition_sha256_16": "c8d3c741a4f6e754",
+      "definition_text": "Sum of TB closing balances across every ledger configured under GST head 'CGST' (Dr+/Cr-).",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.gst_setoff_head_closing_paise_IGST",
+      "value": -500000,
+      "unit": "paise",
+      "definition_sha256_16": "6c3a85ea6e5a734b",
+      "definition_text": "Sum of TB closing balances across every ledger configured under GST head 'IGST' (Dr+/Cr-).",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.gst_setoff_head_closing_paise_SGST",
+      "value": -1700000,
+      "unit": "paise",
+      "definition_sha256_16": "450fcaae95ce3f6f",
+      "definition_text": "Sum of TB closing balances across every ledger configured under GST head 'SGST' (Dr+/Cr-).",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.gst_setoff_payment_ledger_closing_paise_67e0c480",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "4972603cbfc34f91",
+      "definition_text": "TB closing balance of one configured GST payment ledger (tag 67e0c480).",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.gst_setoff_payment_ledger_closing_paise_c4364eda",
+      "value": 3400000,
+      "unit": "paise",
+      "definition_sha256_16": "dcafcd6a8cdafc1c",
+      "definition_text": "TB closing balance of one configured GST payment ledger (tag c4364eda).",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.gst_setoff_payment_ledger_debit_movement_paise_67e0c480",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "d09c4b339a9577cb",
+      "definition_text": "TB period debit total of one configured GST payment ledger (tag 67e0c480) -- the payments posted to it during the year.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.gst_setoff_payment_ledger_debit_movement_paise_c4364eda",
+      "value": 3400000,
+      "unit": "paise",
+      "definition_sha256_16": "148ab78ec2130fb4",
+      "definition_text": "TB period debit total of one configured GST payment ledger (tag c4364eda) -- the payments posted to it during the year.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.pc_configured_debtor_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "6ca90eba2037e636",
+      "definition_text": "Debtor ledgers configured as a consolidated payment-channel debtor; a books test with none configured does not apply and reports zero throughout this section.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.reissue_narration_match_count",
+      "value": 2,
+      "unit": "count",
+      "definition_sha256_16": "1e37612e8fd0242e",
+      "definition_text": "Population vouchers whose narration matches a configured re-issue/amendment/transfer term.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "ri-1",
+          "label": "Sales ri-1 on 2025-05-03"
+        },
+        {
+          "kind": "voucher",
+          "id": "ri-2",
+          "label": "Journal ri-2 on 2025-05-04"
+        }
+      ]
+    },
+    {
+      "id": "book_keeping_quality.reissue_narration_match_value_paise",
+      "value": 1250,
+      "unit": "paise",
+      "definition_sha256_16": "63cb38ba9b191467",
+      "definition_text": "Sum of the debit-side (gross) amount of every population voucher whose narration matches a configured re-issue/amendment/transfer term.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.stock_ledger_total_count",
+      "value": 6,
+      "unit": "count",
+      "definition_sha256_16": "cd9ce783b89ad0f6",
+      "definition_text": "Ledgers under Tally's 'Stock-in-Hand' group.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.stock_ledger_touch_count_09eec2c4",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "d6fb47b5fa8bebfa",
+      "definition_text": "Population vouchers touching one Stock-in-Hand ledger (tag 09eec2c4) all year.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.stock_ledger_touch_count_1e9cd272",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "4c09461082efec09",
+      "definition_text": "Population vouchers touching one Stock-in-Hand ledger (tag 1e9cd272) all year.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.stock_ledger_touch_count_b0d0045c",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "e88150c62125dc41",
+      "definition_text": "Population vouchers touching one Stock-in-Hand ledger (tag b0d0045c) all year.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.stock_ledger_touch_count_d6fd5c6f",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "f64602232850dc05",
+      "definition_text": "Population vouchers touching one Stock-in-Hand ledger (tag d6fd5c6f) all year.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.stock_ledger_touch_count_eedf0903",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "768f6e46da1cb649",
+      "definition_text": "Population vouchers touching one Stock-in-Hand ledger (tag eedf0903) all year.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.stock_ledger_touch_count_f0abf6f2",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "e812e7677a9b2c46",
+      "definition_text": "Population vouchers touching one Stock-in-Hand ledger (tag f0abf6f2) all year.",
+      "evidence": []
+    },
+    {
+      "id": "book_keeping_quality.stock_ledger_untouched_count",
+      "value": 5,
+      "unit": "count",
+      "definition_sha256_16": "fc6b6ffdc71ab767",
+      "definition_text": "Ledgers under Tally's 'Stock-in-Hand' group with zero population vouchers touching them all year.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Closing Stock Keyed",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "FG Stock",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Stock At Tolerance",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Stock Moved Untouched",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Stock Optional Only",
+          "label": ""
+        }
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "book_keeping_quality/contra_direction/6260cd1bca68",
+      "clauses": [],
+      "confidence": "judgement_required",
+      "facts": [
+        {
+          "name": "cash_amount",
+          "figure_id": "book_keeping_quality.contra_direction_cash_amount_paise_6260cd1bca68"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "c-2",
+          "label": "Contra c-2 on 2025-07-02"
+        }
+      ],
+      "title_sha256_16": "b6c538103d797726",
+      "title_text": "Contra narration and the voucher's own Cash-line direction disagree, on 2025-07-02",
+      "limits_sha256_16": "5011b63d56b345a5",
+      "limits_text": [
+        "The narration, not the entry, may be the error: if a later bank statement ties to this amount and date, to the paisa, on the side actually booked (not the side the narration names), the entry is more likely correct and only its narration text is wrong."
+      ],
+      "ask_client_sha256_16": "6e3b92687aaa909e",
+      "ask_client_text": [
+        "Does a later bank statement tie, to the paisa, to this amount on the side actually booked?"
+      ]
+    },
+    {
+      "id": "book_keeping_quality/contra_direction/a6f7ef47ee8d",
+      "clauses": [],
+      "confidence": "judgement_required",
+      "facts": [
+        {
+          "name": "cash_amount",
+          "figure_id": "book_keeping_quality.contra_direction_cash_amount_paise_a6f7ef47ee8d"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "c-1",
+          "label": "Contra c-1 on 2025-07-01"
+        }
+      ],
+      "title_sha256_16": "7043f1aa071d0f08",
+      "title_text": "Contra narration and the voucher's own Cash-line direction disagree, on 2025-07-01",
+      "limits_sha256_16": "5011b63d56b345a5",
+      "limits_text": [
+        "The narration, not the entry, may be the error: if a later bank statement ties to this amount and date, to the paisa, on the side actually booked (not the side the narration names), the entry is more likely correct and only its narration text is wrong."
+      ],
+      "ask_client_sha256_16": "6e3b92687aaa909e",
+      "ask_client_text": [
+        "Does a later bank statement tie, to the paisa, to this amount on the side actually booked?"
+      ]
+    },
+    {
+      "id": "book_keeping_quality/contra_direction/b63888b6e03e",
+      "clauses": [],
+      "confidence": "judgement_required",
+      "facts": [
+        {
+          "name": "cash_amount",
+          "figure_id": "book_keeping_quality.contra_direction_cash_amount_paise_b63888b6e03e"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "c-0",
+          "label": "Contra c-0 on 2025-07-01"
+        }
+      ],
+      "title_sha256_16": "7043f1aa071d0f08",
+      "title_text": "Contra narration and the voucher's own Cash-line direction disagree, on 2025-07-01",
+      "limits_sha256_16": "5011b63d56b345a5",
+      "limits_text": [
+        "The narration, not the entry, may be the error: if a later bank statement ties to this amount and date, to the paisa, on the side actually booked (not the side the narration names), the entry is more likely correct and only its narration text is wrong."
+      ],
+      "ask_client_sha256_16": "6e3b92687aaa909e",
+      "ask_client_text": [
+        "Does a later bank statement tie, to the paisa, to this amount on the side actually booked?"
+      ]
+    },
+    {
+      "id": "book_keeping_quality/contra_direction/c32cd24a9077",
+      "clauses": [],
+      "confidence": "judgement_required",
+      "facts": [
+        {
+          "name": "cash_amount",
+          "figure_id": "book_keeping_quality.contra_direction_cash_amount_paise_c32cd24a9077"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "c-4",
+          "label": "Contra c-4 on 2025-07-04"
+        }
+      ],
+      "title_sha256_16": "b6a13027bb788031",
+      "title_text": "Contra narration and the voucher's own Cash-line direction disagree, on 2025-07-04",
+      "limits_sha256_16": "5011b63d56b345a5",
+      "limits_text": [
+        "The narration, not the entry, may be the error: if a later bank statement ties to this amount and date, to the paisa, on the side actually booked (not the side the narration names), the entry is more likely correct and only its narration text is wrong."
+      ],
+      "ask_client_sha256_16": "6e3b92687aaa909e",
+      "ask_client_text": [
+        "Does a later bank statement tie, to the paisa, to this amount on the side actually booked?"
+      ]
+    },
+    {
+      "id": "book_keeping_quality/debtor_writeoff",
+      "clauses": [],
+      "confidence": "judgement_required",
+      "facts": [
+        {
+          "name": "writeoff_count",
+          "figure_id": "book_keeping_quality.debtor_writeoff_count"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "wo-1",
+          "label": "Journal wo-1 on 2025-06-01, Debtor One"
+        },
+        {
+          "kind": "voucher",
+          "id": "wo-1",
+          "label": "Journal wo-1 on 2025-06-01, Debtor Two"
+        },
+        {
+          "kind": "voucher",
+          "id": "wo-dup",
+          "label": "Journal wo-dup on 2025-06-05, Debtor One"
+        }
+      ],
+      "title_sha256_16": "a6249a5de48610e3",
+      "title_text": "4 journal entries write a Sundry Debtors ledger off against a configured discount/write-off ledger",
+      "limits_sha256_16": "cf97cea26361db13",
+      "limits_text": [
+        "Whether each write-off is an actual bad debt, a negotiated discount, or a correction of a duplicate or erroneous invoice is not visible from the voucher alone."
+      ],
+      "ask_client_sha256_16": "795409713fe5ea4e",
+      "ask_client_text": [
+        "Confirm the reason recorded for each write-off.",
+        "Confirm whether the invoice being written off had output GST charged on it originally."
+      ]
+    },
+    {
+      "id": "book_keeping_quality/gst_setoff",
+      "clauses": [],
+      "confidence": "judgement_required",
+      "facts": [
+        {
+          "name": "CGST_closing",
+          "figure_id": "book_keeping_quality.gst_setoff_head_closing_paise_CGST"
+        },
+        {
+          "name": "IGST_closing",
+          "figure_id": "book_keeping_quality.gst_setoff_head_closing_paise_IGST"
+        },
+        {
+          "name": "SGST_closing",
+          "figure_id": "book_keeping_quality.gst_setoff_head_closing_paise_SGST"
+        },
+        {
+          "name": "payment_closing_67e0c480",
+          "figure_id": "book_keeping_quality.gst_setoff_payment_ledger_closing_paise_67e0c480"
+        },
+        {
+          "name": "payment_closing_c4364eda",
+          "figure_id": "book_keeping_quality.gst_setoff_payment_ledger_closing_paise_c4364eda"
+        },
+        {
+          "name": "payment_debit_movement_67e0c480",
+          "figure_id": "book_keeping_quality.gst_setoff_payment_ledger_debit_movement_paise_67e0c480"
+        },
+        {
+          "name": "payment_debit_movement_c4364eda",
+          "figure_id": "book_keeping_quality.gst_setoff_payment_ledger_debit_movement_paise_c4364eda"
+        }
+      ],
+      "evidence": [],
+      "title_sha256_16": "e098da05b271e5f5",
+      "title_text": "Output GST head balances and the configured GST payment ledger, reported as plain Trial Balance figures",
+      "limits_sha256_16": "9282c5f01d20ee93",
+      "limits_text": [
+        "The books do not show whether a monthly journal actually set off input credit against output liability; a large, growing balance on an output-tax ledger alongside all payments running through one ledger is consistent with the set-off never having been journalised, so the balances are accumulated gross amounts, but that reading needs the CA's own judgement on this data."
+      ],
+      "ask_client_sha256_16": "c34e3d2795e803a5",
+      "ask_client_text": [
+        "Confirm whether the monthly GST liability was set off against input credit by journal entry, and if so, ask for those entries."
+      ]
+    },
+    {
+      "id": "book_keeping_quality/reissue_narration",
+      "clauses": [],
+      "confidence": "judgement_required",
+      "facts": [
+        {
+          "name": "match_count",
+          "figure_id": "book_keeping_quality.reissue_narration_match_count"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "ri-1",
+          "label": "Sales ri-1 on 2025-05-03"
+        },
+        {
+          "kind": "voucher",
+          "id": "ri-2",
+          "label": "Journal ri-2 on 2025-05-04"
+        }
+      ],
+      "title_sha256_16": "a8ff8e4a7647f7aa",
+      "title_text": "2 vouchers have a narration matching a configured re-issue/amendment/transfer term",
+      "limits_sha256_16": "159a9a2592dbc66d",
+      "limits_text": [
+        "A narration match is not proof that a sale was actually re-issued, amended or transferred; some other administrative meaning may explain the same word."
+      ],
+      "ask_client_sha256_16": "2cdcde8c80240cca",
+      "ask_client_text": [
+        "For each of these, confirm whether an earlier invoice for the same supply was formally cancelled in Tally before this one was raised.",
+        "Confirm whether any of these fall outside the s.34(2) credit-note window (30 November following the financial year)."
+      ]
+    },
+    {
+      "id": "book_keeping_quality/stock_untouched",
+      "clauses": [
+        "3CD-35"
+      ],
+      "confidence": "judgement_required",
+      "facts": [
+        {
+          "name": "untouched_count",
+          "figure_id": "book_keeping_quality.stock_ledger_untouched_count"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Closing Stock Keyed",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "FG Stock",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Stock At Tolerance",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Stock Moved Untouched",
+          "label": ""
+        },
+        {
+          "kind": "ledger",
+          "id": "Stock Optional Only",
+          "label": ""
+        }
+      ],
+      "title_sha256_16": "cdd81fbee042a945",
+      "title_text": "5 of 6 Stock-in-Hand ledgers have zero vouchers touching them for the year",
+      "limits_sha256_16": "18b3338314d9b352",
+      "limits_text": [
+        "A zero-touch stock ledger is consistent with the closing figure having been keyed in directly rather than built up from purchase, sale or stock-journal vouchers; valuing the closing figure is a separate stock test's job, not this one."
+      ],
+      "ask_client_sha256_16": "33de5a5cdc193a77",
+      "ask_client_text": [
+        "Confirm how the closing quantity and value on each of these ledgers was arrived at."
+      ]
+    }
+  ],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-0",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3",
+    "POP-5"
+  ],
+  "book_invariant_violations": [
+    {
+      "invariant": "POP-1",
+      "subject": "Bank",
+      "detail": "vouchers -5000 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Cash",
+      "detail": "vouchers 4745 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Customer",
+      "detail": "vouchers 1000 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Debtor One",
+      "detail": "vouchers -870 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Discount Allowed",
+      "detail": "vouchers 800 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Expenses",
+      "detail": "vouchers 425 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "GST Cash Ledger",
+      "detail": "vouchers 0 vs TB movement 3400000 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Output CGST",
+      "detail": "vouchers 0 vs TB movement -1800000 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Output IGST",
+      "detail": "vouchers 0 vs TB movement -500000 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Output SGST",
+      "detail": "vouchers 0 vs TB movement -1700000 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Purchases",
+      "detail": "vouchers -2000 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Sales",
+      "detail": "vouchers -1050 vs TB movement 0 paise"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Stock Moved Untouched",
+      "detail": "vouchers 0 vs TB movement 201 paise"
+    },
+    {
+      "invariant": "POP-3",
+      "subject": "closing_paise",
+      "detail": "TB closing_paise sums to 9301 paise"
+    },
+    {
+      "invariant": "POP-3",
+      "subject": "opening_paise",
+      "detail": "TB opening_paise sums to 607000 paise"
+    },
+    {
+      "invariant": "POP-5",
+      "subject": "wo-dup",
+      "detail": "2 in-books vouchers share this GUID"
+    }
+  ],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [],
+  "module_invariants_evaluated": [
+    "book_keeping_quality.check_invariants"
+  ],
+  "module_invariant_violations": [
+    {
+      "invariant": "book_keeping_quality.check_invariants",
+      "subject": "book_keeping_quality",
+      "detail": "BKQ-1: Stock Moved Untouched reported as untouched (0 vouchers) but TB movement is 201p (opening 100000p -> closing 100201p)"
+    }
+  ]
+}

@@ -1,0 +1,617 @@
+{
+ "comment": "book_keeping_quality stock, GST, re-issue, write-off and contra sections: Stock-in-Hand ledgers untouched (one with a TB movement of 201 paise, so BKQ-1 fires and its message is compared; one moved exactly 100 paise, within the Re 1 tolerance), one under a Stock-in-Hand subgroup, one touched twice by one voucher (counted once), and one touched only by an optional voucher; GST heads summing TB closings, a configured ledger with no TB row counting zero; two payment ledgers, one with no TB row; re-issue terms matched case-insensitively through Python's upper() (a term with a German sharp s matches its SS spelling); a write-off journal crediting one debtor twice (one row, both amounts summed; a zero line is skipped), two journals sharing one GUID and date (two rows, cited once), a debtor under a Sundry Debtors subgroup, a non-debtor credit, and journals whose write-off ledger line is zero, that have none, or that are not a Journal at all; Contra narrations: WITHDRAWAL with cash credited and DEPOSIT with cash debited disagree, WITHDRAWAL with cash debited agrees, a narration naming both keywords is a mismatch when either disagrees, a WITHDRAWAL narration whose cash lines net to zero is skipped, and an optional voucher is outside the population.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Sundry Debtors": "Current Assets",
+  "Local Debtors": "Sundry Debtors",
+  "Stock-in-Hand": "Current Assets",
+  "Finished Goods": "Stock-in-Hand",
+  "Current Liabilities": null,
+  "Duties & Taxes": "Current Liabilities",
+  "Sundry Creditors": "Current Liabilities",
+  "Sales Accounts": null,
+  "Purchase Accounts": null,
+  "Indirect Expenses": null
+ },
+ "ledgers": [
+  {
+   "name": "Cash",
+   "chain": [
+    "Cash-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-0"
+  },
+  {
+   "name": "Bank",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-1"
+  },
+  {
+   "name": "Sales",
+   "chain": [
+    "Sales Accounts"
+   ],
+   "guid": "edge-bkq-2"
+  },
+  {
+   "name": "Purchases",
+   "chain": [
+    "Purchase Accounts"
+   ],
+   "guid": "edge-bkq-3"
+  },
+  {
+   "name": "Supplier",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-bkq-4"
+  },
+  {
+   "name": "Customer",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-5"
+  },
+  {
+   "name": "Expenses",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-bkq-6"
+  },
+  {
+   "name": "Closing Stock Keyed",
+   "chain": [
+    "Stock-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-7"
+  },
+  {
+   "name": "Stock Moved Untouched",
+   "chain": [
+    "Stock-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-8"
+  },
+  {
+   "name": "Stock Touched",
+   "chain": [
+    "Stock-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-9"
+  },
+  {
+   "name": "Stock Optional Only",
+   "chain": [
+    "Stock-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-10"
+  },
+  {
+   "name": "Output CGST",
+   "chain": [
+    "Duties & Taxes",
+    "Current Liabilities"
+   ],
+   "guid": "edge-bkq-11"
+  },
+  {
+   "name": "Output SGST",
+   "chain": [
+    "Duties & Taxes",
+    "Current Liabilities"
+   ],
+   "guid": "edge-bkq-12"
+  },
+  {
+   "name": "Output IGST",
+   "chain": [
+    "Duties & Taxes",
+    "Current Liabilities"
+   ],
+   "guid": "edge-bkq-13"
+  },
+  {
+   "name": "SGST No TB",
+   "chain": [
+    "Duties & Taxes",
+    "Current Liabilities"
+   ],
+   "guid": "edge-bkq-14"
+  },
+  {
+   "name": "GST Cash Ledger",
+   "chain": [
+    "Duties & Taxes",
+    "Current Liabilities"
+   ],
+   "guid": "edge-bkq-15"
+  },
+  {
+   "name": "GST Pay No TB",
+   "chain": [
+    "Duties & Taxes",
+    "Current Liabilities"
+   ],
+   "guid": "edge-bkq-16"
+  },
+  {
+   "name": "Discount Allowed",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-bkq-17"
+  },
+  {
+   "name": "Debtor One",
+   "chain": [
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-18"
+  },
+  {
+   "name": "Debtor Two",
+   "chain": [
+    "Local Debtors",
+    "Sundry Debtors",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-19"
+  },
+  {
+   "name": "Stock At Tolerance",
+   "chain": [
+    "Stock-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-20"
+  },
+  {
+   "name": "FG Stock",
+   "chain": [
+    "Finished Goods",
+    "Stock-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-bkq-21"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Closing Stock Keyed",
+   "opening": 500000,
+   "debit": 0,
+   "credit": 0,
+   "closing": 500000
+  },
+  {
+   "ledger": "Stock Moved Untouched",
+   "opening": 100000,
+   "debit": 0,
+   "credit": 0,
+   "closing": 100201
+  },
+  {
+   "ledger": "Stock Touched",
+   "opening": 0,
+   "debit": 3000,
+   "credit": 1000,
+   "closing": 2000
+  },
+  {
+   "ledger": "Stock Optional Only",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "Stock At Tolerance",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 100
+  },
+  {
+   "ledger": "FG Stock",
+   "opening": 7000,
+   "debit": 0,
+   "credit": 0,
+   "closing": 7000
+  },
+  {
+   "ledger": "Output CGST",
+   "opening": 0,
+   "debit": 0,
+   "credit": 1800000,
+   "closing": -1800000
+  },
+  {
+   "ledger": "Output SGST",
+   "opening": 0,
+   "debit": 0,
+   "credit": 1700000,
+   "closing": -1700000
+  },
+  {
+   "ledger": "Output IGST",
+   "opening": 0,
+   "debit": 0,
+   "credit": 500000,
+   "closing": -500000
+  },
+  {
+   "ledger": "GST Cash Ledger",
+   "opening": 0,
+   "debit": 3400000,
+   "credit": 0,
+   "closing": 3400000
+  },
+  {
+   "ledger": "Cash",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "st-1",
+   "date": "2025-05-01",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Stock Touched",
+     3000
+    ],
+    [
+     "Stock Touched",
+     -1000
+    ],
+    [
+     "Purchases",
+     -2000
+    ]
+   ]
+  },
+  {
+   "guid": "st-opt",
+   "date": "2025-05-02",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Stock Optional Only",
+     10
+    ],
+    [
+     "Purchases",
+     -10
+    ]
+   ],
+   "status": "optional"
+  },
+  {
+   "guid": "ri-1",
+   "date": "2025-05-03",
+   "base_type": "Sales",
+   "lines": [
+    [
+     "Customer",
+     1000
+    ],
+    [
+     "Sales",
+     -1000
+    ]
+   ],
+   "narration": "Reissue of bill 12"
+  },
+  {
+   "guid": "ri-2",
+   "date": "2025-05-04",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Expenses",
+     250
+    ],
+    [
+     "Cash",
+     -250
+    ]
+   ],
+   "narration": "sent to strasse office"
+  },
+  {
+   "guid": "ri-3",
+   "date": "2025-05-05",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Expenses",
+     5
+    ],
+    [
+     "Cash",
+     -5
+    ]
+   ],
+   "narration": "re-issued"
+  },
+  {
+   "guid": "wo-1",
+   "date": "2025-06-01",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Discount Allowed",
+     600
+    ],
+    [
+     "Debtor One",
+     -300
+    ],
+    [
+     "Debtor One",
+     -200
+    ],
+    [
+     "Debtor Two",
+     -50
+    ],
+    [
+     "Debtor Two",
+     0
+    ],
+    [
+     "Sales",
+     -50
+    ]
+   ]
+  },
+  {
+   "guid": "wo-2",
+   "date": "2025-06-02",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Expenses",
+     100
+    ],
+    [
+     "Debtor One",
+     -100
+    ]
+   ]
+  },
+  {
+   "guid": "wo-3",
+   "date": "2025-06-03",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Discount Allowed",
+     100
+    ],
+    [
+     "Debtor One",
+     -100
+    ]
+   ]
+  },
+  {
+   "guid": "wo-4",
+   "date": "2025-06-04",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Discount Allowed",
+     0
+    ],
+    [
+     "Debtor One",
+     -70
+    ],
+    [
+     "Expenses",
+     70
+    ]
+   ]
+  },
+  {
+   "guid": "wo-dup",
+   "date": "2025-06-05",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Discount Allowed",
+     40
+    ],
+    [
+     "Debtor One",
+     -40
+    ]
+   ]
+  },
+  {
+   "guid": "wo-dup",
+   "date": "2025-06-05",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Discount Allowed",
+     60
+    ],
+    [
+     "Debtor One",
+     -60
+    ]
+   ]
+  },
+  {
+   "guid": "c-1",
+   "date": "2025-07-01",
+   "base_type": "Contra",
+   "lines": [
+    [
+     "Cash",
+     -40000
+    ],
+    [
+     "Bank",
+     40000
+    ]
+   ],
+   "narration": "Cash withdrawal from bank"
+  },
+  {
+   "guid": "c-2",
+   "date": "2025-07-02",
+   "base_type": "Contra",
+   "lines": [
+    [
+     "Cash",
+     25000
+    ],
+    [
+     "Bank",
+     -25000
+    ]
+   ],
+   "narration": "deposit into bank"
+  },
+  {
+   "guid": "c-3",
+   "date": "2025-07-03",
+   "base_type": "Contra",
+   "lines": [
+    [
+     "Cash",
+     10000
+    ],
+    [
+     "Bank",
+     -10000
+    ]
+   ],
+   "narration": "Withdrawal for wages"
+  },
+  {
+   "guid": "c-4",
+   "date": "2025-07-04",
+   "base_type": "Contra",
+   "lines": [
+    [
+     "Cash",
+     3000
+    ],
+    [
+     "Bank",
+     -3000
+    ]
+   ],
+   "narration": "withdrawal then deposit"
+  },
+  {
+   "guid": "c-5",
+   "date": "2025-07-05",
+   "base_type": "Contra",
+   "lines": [
+    [
+     "Cash",
+     100
+    ],
+    [
+     "Cash",
+     -100
+    ],
+    [
+     "Bank",
+     0
+    ]
+   ],
+   "narration": "withdrawal"
+  },
+  {
+   "guid": "c-6",
+   "date": "2025-07-06",
+   "base_type": "Contra",
+   "lines": [
+    [
+     "Cash",
+     -500
+    ],
+    [
+     "Bank",
+     500
+    ]
+   ],
+   "narration": "withdrawal",
+   "status": "optional"
+  },
+  {
+   "guid": "c-0",
+   "date": "2025-07-01",
+   "base_type": "Contra",
+   "lines": [
+    [
+     "Cash",
+     7000
+    ],
+    [
+     "Bank",
+     -7000
+    ]
+   ],
+   "narration": "DEPOSIT slip 4"
+  }
+ ],
+ "cash": [
+  "Cash"
+ ],
+ "book_keeping_quality": {
+  "payment_channel_debtors": [],
+  "tax_ledgers": {
+   "CGST": [
+    "Output CGST"
+   ],
+   "SGST": [
+    "Output SGST",
+    "SGST No TB"
+   ],
+   "IGST": [
+    "Output IGST"
+   ]
+  },
+  "gst_payment_ledgers": [
+   "GST Cash Ledger",
+   "GST Pay No TB"
+  ],
+  "reissue_narration_terms": [
+   "REISSUE",
+   "Straße"
+  ],
+  "writeoff_discount_ledgers": [
+   "Discount Allowed"
+  ]
+ },
+ "tests": [
+  "book_keeping_quality"
+ ]
+}
