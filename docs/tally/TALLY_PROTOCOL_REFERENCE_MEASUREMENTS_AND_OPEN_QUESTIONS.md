@@ -244,7 +244,8 @@ request is predicted over a budget well below the cap.
      divided read is refused before its first part, and the runtime refuses any single read with
      such a boundary before sending it, or after it when only the closing bracket reports Education.
      An `EDUMODE` other than `No` counts as Education; a list with no `EDUMODE` keeps ordinary
-     boundaries. `EDUMODE = Yes` has not been captured live.
+     boundaries. `EDUMODE = Yes` was observed live on 2026-09-22, alongside `SILVER = Yes` and
+     `GOLD = No`, so Education still reports Silver and the mode is read from `EDUMODE` alone.
 6. **Every part is admitted, and so is their union.** Each row of a part must lie in the part's dates
    and AlterID span. When the window was counted, a part's vouchers must be **exactly** the ones the
    census counted for it, by AlterID and GUID — a matching count is not enough, because a substituted
@@ -332,6 +333,34 @@ book (read-only there). The request strings were the branch's own at `cf618c00`.
 | End to end (`bridge_mcp` @ `cf618c00`, before #520) | whole-FY, one-day and one-month `vouchers`, a quarter and a month of `ledger_movement`, on three books: complete, every part under 16 MiB and 2 s. A voucher created between two parts refused the read as `voucher_window_changed_during_read`; a ledger renamed between two parts did not (fixed by rule 7) |
 | Paired reads | every Tally request is sent twice, back to back (the repeated-source read), so wire traffic is about twice the data |
 | End to end after the #520 rectify (census spans of 8,192; a build of the tree committed as `986c1d77`) | inventory-heavy book, mark ~250,000: one-day `vouchers` complete in 34.3 s (31 census spans, 2 data parts); one-month `ledger_movement` complete in 104.7 s (31 census spans, 5 data parts of at most 6.6 MB, and the replay closed against the first read's marks). Every request under 16 MiB and 2 s |
+
+## 11d. Education refuses Bridge's report-family TDL with a blocking dialog — **VERIFIED live, 2026-09-22**
+
+On a TallyPrime 7.1 instance in Education mode, `ledgers_v1`'s custom report raised a modal
+**Error** dialog, `Cannot understand. Bad formula! '$$NumItems:BRIDGE Ledger Collection V1'`, and sent
+no response. The dialog holds the XML gateway until someone dismisses it on the Tally screen, which
+from the network looks like a busy or dead gateway (bridge#45). A formula-free ledger `Collection`
+export to the same instance returned `STATUS 1` promptly with no dialog.
+
+Every builder that passes a spaced collection identifier to a `$$` function (the
+`function-argument-with-space` entries of `scripts/check-tally-request-builder-hazards.mjs`) is
+therefore refused **before it is sent** once Education has been observed, with
+`education_report_family_unsupported`. Admission is unchanged: nothing is sent, and nothing is
+promoted.
+
+- The sync period-balance tie-out reads the mode from the `CompanyListV2` identity read that already
+  precedes it, or from the run's own probe. The run then carries on and records the gaps
+  `report_tie_out_unavailable` and `education_report_family_unsupported`.
+- The selected-ledger and selected-voucher qualifiers read it from their opening identity bracket.
+- The live-read tool and the native-outstandings qualification are configured for a mode rather than
+  observing one. In Education, the live-read tool records the refusal in its receipt for the ledger
+  and voucher steps, and the native-outstandings qualification refuses on load (its identity brackets
+  read through `ledgers_v1`).
+- `groups_request` has no production caller and compiles only for tests.
+
+Reading ledgers and vouchers in Education waits for the Collection-based profiles (Phase 2 Unit A,
+`IMPROVEMENT_PLAN_2026H2.md` §8.12). Whether Education accepts `$$` functions whose arguments have no
+space, or a `COMPUTE` of `$GUID:Company:##SVCurrentCompany`, is **unmeasured**.
 
 ## 11a. Scale measurements — 11,287-voucher corpus
 

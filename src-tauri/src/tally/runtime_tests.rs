@@ -1938,3 +1938,84 @@ fn telemetry_preview_is_privacy_reduced_and_checksummed() {
     );
     assert_eq!(preview_value["authenticity_claim"], "none");
 }
+
+/// Both selected-read qualifiers send a custom report whose TDL Education
+/// answers with a blocking dialog on the Tally screen (bridge#45). When the
+/// identity bracket before it reports Education, the qualifier refuses before
+/// sending: only that one company-list request reaches the endpoint.
+#[tokio::test]
+async fn selected_read_qualification_is_refused_before_sending_in_education() {
+    for vouchers in [false, true] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind qualification server");
+        let address = listener.local_addr().expect("qualification server address");
+        let company_list = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="BRIDGE SYNTHETIC BOOK"><GUID TYPE="String">00000000-0000-4000-8000-000000000001</GUID><COMPANYNUMBER TYPE="Number">100001</COMPANYNUMBER><BOOKSFROM TYPE="Date">20260401</BOOKSFROM><EDUMODE TYPE="Logical">Yes</EDUMODE></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept identity bracket");
+            let request = read_http_request(&mut socket).await;
+            socket
+                .write_all(&utf16_xml_response(company_list))
+                .await
+                .expect("write identity bracket response");
+            drop(listener);
+            request
+        });
+        let runtime = TallyRuntime::default();
+        let config = TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        };
+        let session = runtime.session(config.clone()).expect("runtime session");
+        let observed_at_unix_ms = chrono::Utc::now().timestamp_millis();
+        *session.cached_probe.write().expect("capability cache") = Some(CachedProbe {
+            review_id: "review-education".to_string(),
+            observed_at_unix_ms,
+            freshness_origin_unix_ms: observed_at_unix_ms,
+            result: synthetic_probe_result(),
+            reserved: false,
+        });
+        drop(session);
+        let reservation = runtime
+            .reserve_cached_probe_fresh(&config, "review-education", 300_000)
+            .expect("reserve reviewed setup")
+            .expect("fresh review");
+        let identity = VerifiedCompanyIdentity::from_observed_companies(
+            "BRIDGE SYNTHETIC BOOK".to_string(),
+            "00000000-0000-4000-8000-000000000001".to_string(),
+            "100001".to_string(),
+            "20260401".to_string(),
+            &[TallyCompany {
+                name: "BRIDGE SYNTHETIC BOOK".to_string(),
+                guid: Some("00000000-0000-4000-8000-000000000001".to_string()),
+                company_number: Some("100001".to_string()),
+                books_from: Some("20260401".to_string()),
+            }],
+        )
+        .expect("synthetic qualification identity is complete");
+        let refused = if vouchers {
+            runtime
+                .qualify_selected_vouchers(
+                    config,
+                    &reservation,
+                    &identity,
+                    "20260401".to_string(),
+                    "20260430".to_string(),
+                )
+                .await
+        } else {
+            runtime
+                .qualify_selected_ledgers(config, &reservation, &identity)
+                .await
+        }
+        .expect_err("Education refuses the report before it is sent");
+        assert!(
+            refused
+                .chain()
+                .any(|cause| cause.is::<EducationReportFamilyRefusal>()),
+            "{vouchers}: {refused:#}"
+        );
+        let request = server.await.expect("identity bracket server");
+        assert!(request.starts_with(b"POST /"), "{vouchers}");
+    }
+}

@@ -440,6 +440,42 @@ impl TallyConnector for ReportConnector {
     }
 }
 
+/// A connector whose period report is refused in Education before sending.
+struct EducationReportConnector {
+    inner: FakeConnector,
+}
+
+#[async_trait]
+impl TallyConnector for EducationReportConnector {
+    async fn probe(&self) -> Result<ProbeResult, TallyError> {
+        self.inner.probe().await
+    }
+
+    async fn probe_fresh(&self) -> Result<ProbeResult, TallyError> {
+        self.inner.probe_fresh().await
+    }
+
+    async fn discover_companies(&self) -> Result<Vec<CompanyRef>, TallyError> {
+        self.inner.discover_companies().await
+    }
+
+    async fn read_pack_window(
+        &self,
+        context: &RequestContext,
+    ) -> Result<CanonicalPackWindow, TallyError> {
+        self.inner.read_pack_window(context).await
+    }
+
+    async fn read_core_period_balance_report(
+        &self,
+        _context: &RequestContext,
+    ) -> Result<bridge_tally_core::report_tie_out::LedgerPeriodBalanceReport, TallyError> {
+        Err(TallyError::Unsupported {
+            code: "education_report_family_unsupported".to_string(),
+        })
+    }
+}
+
 fn core_groups(count: usize) -> CanonicalPackWindow {
     CanonicalPackWindow::without_source_count_evidence(PackBatch::CoreAccounting(
         CoreAccountingBatch {
@@ -3853,4 +3889,50 @@ async fn durable_store_rejects_corruption_and_plan_drift() {
         store.load(&plan.resume_key).await,
         Err(SnapshotError::CorruptState)
     ));
+}
+
+/// A period report refused before sending in Education (bridge#45) leaves the
+/// tie-out unavailable and says why; any other unsupported report does not.
+#[tokio::test]
+async fn an_education_refused_period_report_is_named_in_the_gaps() {
+    for education in [true, false] {
+        let (_, mirror, store, plan) = setup().await;
+        let fake = FakeConnector {
+            batch: Mutex::new(VecDeque::new()),
+            company: plan.company.clone(),
+            requests: Mutex::new(Vec::new()),
+        };
+        let result = if education {
+            FullSnapshotEngine::new(&mirror, &store, &EducationReportConnector { inner: fake })
+                .run(&plan, &AtomicCancellation::default())
+                .await
+        } else {
+            FullSnapshotEngine::new(&mirror, &store, &fake)
+                .run(&plan, &AtomicCancellation::default())
+                .await
+        }
+        .expect("the run completes without the tie-out");
+        assert!(
+            result
+                .state
+                .gap_codes
+                .contains("report_tie_out_unavailable"),
+            "{education}"
+        );
+        assert_eq!(
+            result
+                .state
+                .gap_codes
+                .contains("education_report_family_unsupported"),
+            education
+        );
+        assert_eq!(
+            result
+                .proof
+                .gaps
+                .iter()
+                .any(|gap| gap.safe_reason_code == "education_report_family_unsupported"),
+            education
+        );
+    }
 }

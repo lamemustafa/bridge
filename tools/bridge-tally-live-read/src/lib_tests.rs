@@ -316,3 +316,35 @@ fn public_save_consumes_a_repository_bound_target_and_rechecks_no_overwrite() {
     fs::remove_dir(local).unwrap();
     fs::remove_dir(directory).unwrap();
 }
+
+#[tokio::test]
+async fn an_education_run_refuses_the_ledger_and_voucher_reads_before_sending_them() {
+    let company = ValidatedCompanyName::new("Synthetic Co").unwrap();
+    let range = ValidatedDateRange::new("20260401", "20260430").unwrap();
+    let simulator = tally_protocol_simulator::SequenceSimulator::spawn(vec![ScenarioPlan::new(
+        Fixture::EmptyExport,
+    )
+    .with_encoding(WireEncoding::Utf16Le)])
+    .unwrap();
+    let port = simulator.address().port();
+    let education = read_transport(&config(port)).unwrap();
+    for profile in [
+        ReadOnlyProfile::LedgersV1 { company: &company },
+        ReadOnlyProfile::VouchersV2 {
+            company: &company,
+            range: &range,
+        },
+    ] {
+        let refused = education.send(profile).await.unwrap_err();
+        assert_eq!(refused.safe_code(), "education_report_family_unsupported");
+    }
+    assert_eq!(simulator.received(), 0);
+    let mut licensed = config(port);
+    licensed.mode = TallyMode::Licensed;
+    let sent = read_transport(&licensed)
+        .unwrap()
+        .send(ReadOnlyProfile::LedgersV1 { company: &company })
+        .await;
+    assert!(sent.is_ok(), "{sent:?}");
+    assert_eq!(simulator.finish().unwrap().len(), 1);
+}

@@ -225,7 +225,29 @@ impl ReadOnlyProfileId {
     /// sentinels in every dynamic slot. This changes if any emitted byte in the
     /// fixed profile changes, but is independent of a live company or range.
     pub fn template_sha256(self) -> String {
-        let template = match self {
+        sha256_hex(&encode_tally_xml_request_utf16le(&self.template()))
+    }
+
+    /// Whether Education-mode Tally refuses this profile's TDL. Each of these
+    /// is a custom report (`TYPE=Data`) that passes a spaced collection
+    /// identifier to a `$$` function (`$$NumItems:BRIDGE Ledger Collection
+    /// V1`). Education answers it with a blocking "Bad formula!" dialog on the
+    /// Tally screen, which holds the XML gateway until someone dismisses it
+    /// (bridge#45). A caller that knows the endpoint is in Education must
+    /// refuse such a read before sending it, with
+    /// [`EDUCATION_REPORT_FAMILY_UNSUPPORTED`]. A test renders every profile
+    /// and checks this against [`first_spaced_function_argument`].
+    pub fn education_refuses_report_formula(self) -> bool {
+        matches!(
+            self,
+            Self::LedgersV1 | Self::LedgerCanaryReadbackV1 | Self::VouchersV2 | Self::VouchersV3
+        )
+    }
+
+    /// The exact request rendered with fixed safe sentinels in every dynamic
+    /// slot.
+    fn template(self) -> String {
+        match self {
             Self::CompanyListV1 => render_company_list(),
             Self::CompanyListV2 => render_company_list_v2(),
             Self::CompanyBookExtentV1 => render_company_book_extent(TEMPLATE_COMPANY),
@@ -268,9 +290,52 @@ impl ReadOnlyProfileId {
             Self::AuditStockItemsV1 => {
                 render_audit_stock_items(TEMPLATE_COMPANY, TEMPLATE_FROM, TEMPLATE_TO)
             }
-        };
-        sha256_hex(&encode_tally_xml_request_utf16le(&template))
+        }
     }
+}
+
+/// The safe code for a read refused before dispatch because the endpoint is
+/// in Education mode and the request's TDL is one Education cannot parse
+/// ([`ReadOnlyProfileId::education_refuses_report_formula`]; bridge#45).
+pub const EDUCATION_REPORT_FAMILY_UNSUPPORTED: &str = "education_report_family_unsupported";
+
+/// The first `$$Function:argument` in `tdl` whose argument holds whitespace,
+/// read the way `scripts/check-tally-request-builder-hazards.mjs` reads a
+/// source literal: a quoted argument is only its quoted text (so
+/// `$$Date:"20260401" AND ...` is not a hit), and an unquoted one runs to the
+/// next `<` or line break. Tests use it to keep every Education refusal in
+/// step with the TDL a builder actually renders.
+#[doc(hidden)]
+pub fn first_spaced_function_argument(tdl: &str) -> Option<String> {
+    let bytes = tdl.as_bytes();
+    let mut at = 0;
+    while let Some(offset) = tdl[at..].find("$$") {
+        let start = at + offset;
+        let mut name_end = start + 2;
+        if name_end < bytes.len()
+            && (bytes[name_end].is_ascii_alphabetic() || bytes[name_end] == b'_')
+        {
+            name_end += 1;
+            while name_end < bytes.len()
+                && (bytes[name_end].is_ascii_alphanumeric() || bytes[name_end] == b'_')
+            {
+                name_end += 1;
+            }
+            if bytes.get(name_end) == Some(&b':') {
+                let rest = &tdl[name_end + 1..];
+                let argument = if let Some(quoted) = rest.strip_prefix('"') {
+                    &quoted[..quoted.find('"').unwrap_or(quoted.len())]
+                } else {
+                    &rest[..rest.find(['<', '\n', '\r']).unwrap_or(rest.len())]
+                };
+                if argument.chars().any(char::is_whitespace) {
+                    return Some(tdl[start..name_end + 1].to_string() + argument);
+                }
+            }
+        }
+        at = start + 2;
+    }
+    None
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -849,6 +849,25 @@ async fn bracket_verified_company_identity_observing_mode(
 #[error("window_part_boundary_unsupported_in_education")]
 pub(crate) struct EducationBoundaryRefusal;
 
+/// A read was refused before it was sent: the endpoint reported Education mode,
+/// and the request is one of Bridge's custom reports whose TDL passes a spaced
+/// collection identifier to a `$$` function. Education answers that with a
+/// blocking "Bad formula!" dialog on the Tally screen, which holds the XML
+/// gateway until someone dismisses it (bridge#45). Such a read needs a licensed
+/// Tally until the Collection-based reads replace it.
+#[derive(Debug, thiserror::Error)]
+#[error("education_report_family_unsupported")]
+pub(crate) struct EducationReportFamilyRefusal;
+
+/// Refuses a report-formula read when the bracket that precedes it observed
+/// Education mode ([`EducationReportFamilyRefusal`]).
+fn refuse_report_formula_in_education(profile: DateBoundaryProfile) -> anyhow::Result<()> {
+    if profile == DateBoundaryProfile::EducationRestricted {
+        return Err(EducationReportFamilyRefusal.into());
+    }
+    Ok(())
+}
+
 fn admit_company_identity(
     companies: &[TallyCompany],
     identity: &VerifiedCompanyIdentity,
@@ -2431,6 +2450,29 @@ impl TallyRuntime {
         .await
     }
 
+    /// As [`Self::fetch_companies`], also returning whether the same
+    /// `CompanyListV2` response may come from an Education-mode endpoint
+    /// ([`TallyClient::fetch_companies_observing_education_mode`]). No further
+    /// request is made.
+    pub async fn fetch_companies_observing_education_mode(
+        &self,
+        config: TallyConfig,
+    ) -> anyhow::Result<(Vec<TallyCompany>, bool)> {
+        let _lease = self.begin_ordinary_read(&config)?;
+        self.execute(
+            config,
+            ReadOperation::CompanyList,
+            ReadRetryPolicy::transient_default(),
+            |client| async move {
+                client
+                    .fetch_companies_observing_education_mode()
+                    .await
+                    .map(|(companies, _, education)| (companies, education))
+            },
+        )
+        .await
+    }
+
     /// Reads the documented company collection and retains evidence for the
     /// exact raw response bytes used to produce the parsed company list. As in
     /// the shared retry runtime, only the terminal attempt contributes evidence.
@@ -2776,7 +2818,10 @@ impl TallyRuntime {
             move |client| {
                 let identity = identity.clone();
                 async move {
-                    bracket_verified_company_identity(&client, &identity).await?;
+                    refuse_report_formula_in_education(
+                        bracket_verified_company_identity_observing_mode(&client, &identity)
+                            .await?,
+                    )?;
                     let observation = client
                         .qualify_selected_ledgers(identity.display_name(), identity.company_guid())
                         .await?;
@@ -4127,7 +4172,10 @@ impl TallyRuntime {
                 let from = from.clone();
                 let to = to.clone();
                 async move {
-                    bracket_verified_company_identity(&client, &identity).await?;
+                    refuse_report_formula_in_education(
+                        bracket_verified_company_identity_observing_mode(&client, &identity)
+                            .await?,
+                    )?;
                     let observation = client
                         .qualify_selected_vouchers(
                             identity.display_name(),
