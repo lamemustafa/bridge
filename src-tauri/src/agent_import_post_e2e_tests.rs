@@ -539,6 +539,14 @@ fn catalogue_with_sales_as_bank() -> String {
 /// `before_approval`, for a bank voucher: the post's classification reads the
 /// group collection after the catalogue, before the qualified mode.
 fn bank_before_approval(catalogue: String, groups: String) -> Vec<ScenarioPlan> {
+    bank_before_approval_with_currencies(catalogue, groups, single_currency())
+}
+
+fn bank_before_approval_with_currencies(
+    catalogue: String,
+    groups: String,
+    currencies: String,
+) -> Vec<ScenarioPlan> {
     let mut plans = Vec::new();
     plans.extend(probe());
     plans.extend(verified_company());
@@ -549,7 +557,7 @@ fn bank_before_approval(catalogue: String, groups: String) -> Vec<ScenarioPlan> 
     plans.extend(verified_company());
     plans.extend(paired(catalogue));
     plans.extend(paired(groups));
-    plans.extend(paired(single_currency()));
+    plans.extend(paired(currencies));
     plans.extend(probe());
     plans
 }
@@ -557,11 +565,20 @@ fn bank_before_approval(catalogue: String, groups: String) -> Vec<ScenarioPlan> 
 /// `after_approval`, for a bank voucher: the queue re-reads the group
 /// collection right after the catalogue, inside the same admission brackets.
 fn bank_after_approval(catalogue: String, groups: String, post: ScenarioPlan) -> Vec<ScenarioPlan> {
+    bank_after_approval_with_currencies(catalogue, groups, single_currency(), post)
+}
+
+fn bank_after_approval_with_currencies(
+    catalogue: String,
+    groups: String,
+    currencies: String,
+    post: ScenarioPlan,
+) -> Vec<ScenarioPlan> {
     let mut plans = probe();
     plans.push(xml(companies()));
     plans.extend(paired(catalogue));
     plans.extend(paired(groups));
-    plans.extend(paired(single_currency()));
+    plans.extend(paired(currencies));
     plans.extend(probe());
     plans.push(xml(companies()));
     plans.extend(paired(empty_collection()));
@@ -1365,4 +1382,91 @@ async fn a_currency_master_added_after_approval_is_refused_in_the_queue() {
     assert!(!String::from_utf8(journal(directory.path()))
         .unwrap()
         .contains("\"dispatch_intent\""));
+}
+
+/// A Payment is held to the same gate as a Journal: refused before approval on
+/// a two-master book, and in the queue when the master arrives after approval.
+#[tokio::test]
+async fn a_payment_into_a_book_with_two_currency_masters_is_refused_before_and_after_approval() {
+    for in_queue in [false, true] {
+        let plans = if in_queue {
+            let mut plans = bank_before_approval(catalogue(), groups());
+            let mut after = bank_after_approval_with_currencies(
+                catalogue(),
+                groups(),
+                two_currencies(),
+                xml(created_one()),
+            );
+            after.pop();
+            plans.extend(after);
+            plans
+        } else {
+            let mut plans =
+                bank_before_approval_with_currencies(catalogue(), groups(), two_currencies());
+            plans.truncate(plans.len() - probe().len());
+            plans
+        };
+        let expected = plans.len();
+        let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let server = server_at(simulator.address(), directory.path());
+        let (_, args) = saved_bank_batch(&server, payment());
+        let scripted = ScriptedApproval::approving();
+        let response = SCRIPTED_APPROVAL
+            .scope(scripted.clone(), server.call_tool("post_import", args))
+            .await;
+        let observed = sent(simulator);
+        assert_refused_as_multi_currency(&response["structuredContent"]["result"]);
+        assert_eq!(
+            scripted.previews().len(),
+            usize::from(in_queue),
+            "{response}"
+        );
+        assert_eq!(observed.len(), expected, "{response}");
+        assert!(!String::from_utf8(journal(directory.path()))
+            .unwrap()
+            .contains("\"dispatch_intent\""));
+    }
+}
+
+/// Currency masters the queue cannot name a base from (none, here: an explicit
+/// edit of the one-master capture) refuse with their own code, and nothing is
+/// posted.
+#[tokio::test]
+async fn currency_masters_without_a_base_are_refused_in_the_queue_with_their_own_code() {
+    let single = single_currency();
+    let row_start = single.find("<CURRENCY NAME=").unwrap();
+    let row_end = single.find("</CURRENCY>").unwrap() + "</CURRENCY>".len();
+    let no_master = format!("{}{}", &single[..row_start], &single[row_end..]);
+    let mut plans = before_approval();
+    let mut after = after_approval_with_currencies(no_master, xml(created_one()));
+    after.pop();
+    let expected = plans.len() + after.len();
+    plans.extend(after);
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    let observed = sent(simulator);
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["error"]["code"], "import_base_currency_undetermined",
+        "{response}"
+    );
+    assert_eq!(result["attempt_recorded"], json!(false), "{response}");
+    assert!(
+        result["error"].get("currencies_seen").is_none(),
+        "{response}"
+    );
+    assert_eq!(
+        observed.len(),
+        expected,
+        "the POST is never sent: {response}"
+    );
 }

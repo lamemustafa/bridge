@@ -369,7 +369,8 @@ Bridge-built files of those types have been imported and verified.
    leg changed; nothing is sent. Every post, of any type, is refused with
    `import_multi_currency_unsupported` if the company defines more than one
    currency: Bridge does not post into multi-currency books yet. This is checked
-   before approval and again inside the queue.
+   before approval and again inside the queue. A Currency read that names no
+   usable master refuses with `import_base_currency_undetermined`.
 2. Call `post_import` with the original `company_guid` and `batch_id`.
 3. Review the native dialog's company, endpoint, date, numbering, reference,
    narration, every debit/credit entry, and totals; for a bank voucher, also the

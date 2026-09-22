@@ -1126,11 +1126,30 @@ fn a_post_is_admitted_only_into_a_book_with_one_currency_master() {
         admit_post_currency(&multi),
         Err(ApprovedImportAdmissionError::MultiCurrencyBook { currencies: names })
     );
-    // A response that cannot be read as the masters refuses too.
-    assert_eq!(
-        admit_post_currency("<ENVELOPE/>"),
-        Err(ApprovedImportAdmissionError::BaseCurrencyUndetermined)
-    );
+    // Kept out of every serialized output that carries the struct.
+    let serialized = serde_json::to_value(
+        bridge_tally_protocol::native_outstandings::parse_company_currency(&multi).unwrap(),
+    )
+    .unwrap();
+    assert!(serialized.get("names").is_none(), "{serialized}");
+    // No base can be named from a response that does not parse, from one with
+    // no master, or from one whose only master has no NAME. The last two are
+    // explicit edits of the one-master capture, not live evidence.
+    let single = captured_currencies(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+    ));
+    let row_start = single.find("<CURRENCY NAME=").unwrap();
+    let row_end = single.find("</CURRENCY>").unwrap() + "</CURRENCY>".len();
+    let no_master = format!("{}{}", &single[..row_start], &single[row_end..]);
+    assert_eq!(single.matches(" NAME=\"I₹\"").count(), 1);
+    let nameless = single.replace(" NAME=\"I₹\"", " NAME=\"\"");
+    for undetermined in ["<ENVELOPE/>", no_master.as_str(), nameless.as_str()] {
+        assert_eq!(
+            admit_post_currency(undetermined),
+            Err(ApprovedImportAdmissionError::BaseCurrencyUndetermined),
+            "{undetermined}"
+        );
+    }
 }
 
 #[test]
@@ -1146,9 +1165,10 @@ fn a_multi_currency_refusal_names_the_masters_in_plain_words_only_when_nothing_w
     assert_eq!(
         error["message"],
         "This company has more than one currency defined (C1, C2, C3, C4, C5, C6, C7, C8 and 2 \
-         more); Bridge does not post into multi-currency books yet. Nothing was sent to Tally."
+         more); Bridge does not post into multi-currency books yet. Nothing was posted."
     );
     assert_eq!(error["currencies_seen"].as_array().unwrap().len(), 8);
+    assert_eq!(error["currencies_total"], 10);
     // An unknown attempt keeps its instruction to reconcile.
     for attempted in [json!(true), Value::Null] {
         assert_eq!(refused(attempted)["message"], "generic");

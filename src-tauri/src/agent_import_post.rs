@@ -748,8 +748,11 @@ fn recheck_import_admission(
 /// balance can read as a plain amount too, so only the ledger's own currency
 /// tells them apart (TALLY_PROTOCOL_REFERENCE §8.2d). Which master is the base
 /// cannot be identified among several until bridge#601, so until then a post
-/// goes only into a book with exactly one, where every ledger is in the base.
-/// When #601 lands, each leg's `CURRENCYNAME` is compared with the base instead.
+/// goes only into a book with exactly one. That every ledger of such a book is
+/// in the base is an inference (a ledger's currency is one of the book's
+/// masters), not a measurement. When #601 lands, each leg's `CURRENCYNAME` is
+/// compared with the base instead. A response that parses to no master, or to
+/// one without a NAME, or does not parse, is `BaseCurrencyUndetermined`.
 fn admit_post_currency(currencies: &str) -> Result<(), ApprovedImportAdmissionError> {
     let currency = parse_company_currency(currencies)
         .map_err(|_| ApprovedImportAdmissionError::BaseCurrencyUndetermined)?;
@@ -785,6 +788,7 @@ fn name_refused_currencies(payload: &mut Value, currencies: &[String]) {
         .collect::<Vec<_>>();
     let error = &mut payload["result"]["error"];
     error["currencies_seen"] = json!(named);
+    error["currencies_total"] = json!(currencies.len());
     if payload["result"]["attempt_recorded"] == json!(false) {
         let mut list = named.join(", ");
         if currencies.len() > named.len() {
@@ -792,7 +796,7 @@ fn name_refused_currencies(payload: &mut Value, currencies: &[String]) {
         }
         payload["result"]["error"]["message"] = json!(format!(
             "This company has more than one currency defined ({list}); Bridge does not post \
-             into multi-currency books yet. Nothing was sent to Tally."
+             into multi-currency books yet. Nothing was posted."
         ));
     }
 }

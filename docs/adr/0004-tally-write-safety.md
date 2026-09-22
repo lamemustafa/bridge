@@ -253,7 +253,13 @@ or an owner decision to amend the requirement instead:
     several until #601. Until then every post reads the company's Currency masters before
     approval and again inside the queue, in the same identity brackets as the catalogue, and is
     refused unless there is exactly one (`import_multi_currency_unsupported`, naming the masters
-    seen, or `import_base_currency_undetermined` when none can be read). This refuses every post
+    seen, or `import_base_currency_undetermined` when the response parses to no master, to one
+    without a name, or not at all). A transport failure of that read is reported as any failed read
+    before approval, and as `import_dispatch_outcome_unknown` with `attempt_recorded: false` in the
+    queue, as for the catalogue re-read. That a one-master book holds every ledger in the base is
+    an inference, not a measurement (TALLY_PROTOCOL_REFERENCE §8.2d).
+    A master added during the few requests between the queue's read and the POST is not caught,
+    the same window as the catalogue re-read (#239). This refuses every post
     into a book that defines a second currency, even one whose legs are all in the base. When
     #601 can name the base, each leg's own `CURRENCYNAME` is compared with it instead.
 
