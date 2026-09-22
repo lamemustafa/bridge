@@ -1151,3 +1151,83 @@ fn the_simulated_post_answer_parses_as_one_clean_create() {
     assert_eq!(outcome.counters().created, 1);
     assert!(import_outcome_is_clean(Some(&outcome)));
 }
+
+/// A Journal Bridge posted live (bridge#582's lab qualification), as its
+/// export was captured: `native-namespaced-journal`. The batch below is the
+/// one that produced it, so a readback serving this capture is the post's own
+/// voucher, attributed by its `[BRIDGE:…]` marker.
+fn captured_posted_journal() -> String {
+    captured(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-namespaced-journal.utf16le.xml"
+    ))
+}
+
+fn saved_captured_batch(server: &Server) -> Value {
+    let origin = super::super::super::canonical_loopback_origin(&server.settings.endpoint).unwrap();
+    let mut line: ImportLedgerLine = serde_json::from_value(json!({
+        "batch_id":"bridge-6c79872c-aab6-4be5-a181-18182c8148be", "identity_scheme":"batch_v1",
+        "company_guid":GUID,
+        "endpoint_origin":origin,
+        "company":{"name":"WR2 Unicode Lab","guid":GUID,"company_number":"100004","books_from":"20260401"},
+        "txn_ids":["BRIDGE_MCP_LIVE_20260906_A1"],"date_from":"20260907","date_to":"20260907",
+        "sha256":"", "built_at":"2026-09-06T21:40:26.641Z", "status":"built",
+        "pre_import_mark":{"kind":"company_high_water","value":8,"master_value":7},
+        "vouchers":[{"bridge_txn_id":"BRIDGE_MCP_LIVE_20260906_A1","date":"20260907",
+            "voucher_type":"Journal","narration":"Bridge MCP batch namespace qualification",
+            "reference":null,"voucher_number":null,
+            "entries":[{"ledger":"Bridge Nested Debtor WR4","amount":"12.61","side":"Dr"},
+                {"ledger":"Cash","amount":"12.61","side":"Cr"}]}]
+    }))
+    .unwrap();
+    let rendered = render_import_xml("WR2 Unicode Lab", &line.vouchers, &line.batch_id);
+    line.sha256 = sha256_hex(rendered.as_bytes());
+    server.append_import_ledger(&line).unwrap();
+    fs::write(
+        server
+            .imports_dir()
+            .unwrap()
+            .join(format!("{}.xml", line.batch_id)),
+        rendered,
+    )
+    .unwrap();
+    json!({"company_guid":GUID,"batch_id":line.batch_id})
+}
+
+/// The whole native post, end to end: absent before, one clean create, the
+/// location snapshot, then the readback finds the post's own voucher. This is
+/// the only simulator test that reaches `posted_verified`; the others stop at
+/// the POST, so their final result is the readback failing for want of plans.
+#[tokio::test]
+async fn a_native_post_reads_back_as_posted_verified() {
+    let mut plans = before_approval();
+    plans.extend(after_approval(xml(created_one())));
+    plans.push(xml(company_marks(11, 50, "WR2 Unicode Lab")));
+    // The readback: the same verification read the pre-post check made, now
+    // serving the captured voucher.
+    plans.extend(probe());
+    plans.extend(verified_company());
+    plans.extend(paired(marks()));
+    plans.extend(paired(captured_posted_journal()));
+    plans.extend(paired(captured_posted_journal()));
+    plans.extend(probe());
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let args = saved_captured_batch(&server);
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    let _ = sent(simulator);
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(response["isError"], json!(false), "{response}");
+    assert_eq!(result["dispatch"]["state"], "posted_verified", "{response}");
+    assert_eq!(result["counts"]["posted_verified"], 1, "{response}");
+    assert_eq!(
+        result["post_location"]["state"], "target_only",
+        "{response}"
+    );
+    assert_journaled_clean_create(directory.path());
+}
