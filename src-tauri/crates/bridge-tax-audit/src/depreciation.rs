@@ -84,41 +84,16 @@ fn hash12_sha256(text: &str) -> String {
 
 use crate::support::voucher_label;
 
-fn is_word_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '_'
-}
-
-/// Whether `word` occurs in `haystack_upper` as a whole "word" (flanked by non-word characters
-/// or the string's edges) -- an ASCII approximation of the reference regex's `\bWORD\b`, matching
-/// the same manual-scan convention `cash_payments_40a3::transport_name_match` uses instead of
-/// adding a regex dependency.
-fn contains_word(haystack_upper: &str, word: &str) -> bool {
-    let chars: Vec<char> = haystack_upper.chars().collect();
-    let wchars: Vec<char> = word.chars().collect();
-    let (n, wn) = (chars.len(), wchars.len());
-    if wn == 0 || wn > n {
-        return false;
-    }
-    for start in 0..=(n - wn) {
-        if chars[start..start + wn] == wchars[..] {
-            let before_ok = start == 0 || !is_word_char(chars[start - 1]);
-            let after_ok = start + wn == n || !is_word_char(chars[start + wn]);
-            if before_ok && after_ok {
-                return true;
-            }
-        }
-    }
-    false
-}
-
 /// Heuristic-only, used solely to confirm on data (never to compute a figure) that GST/TCS lines
-/// sit on a different ledger than the asset line they accompany: the reference engine's own regex
-/// `\bCGST\b|\bSGST\b|\bIGST\b|\bGST\b|\bTCS\b`, case-insensitive.
+/// sit on a different ledger than the asset line they accompany: the reference engine's own regex,
+/// searched with its `re.I` and `\b` semantics (`support::py_re_search`).
+const GST_TCS_RE: &str = "\\bCGST\\b|\\bSGST\\b|\\bIGST\\b|\\bGST\\b|\\bTCS\\b";
+
 fn gst_tcs_match(name: &str) -> bool {
-    let upper = crate::support::py_upper(name);
-    ["CGST", "SGST", "IGST", "GST", "TCS"]
-        .iter()
-        .any(|w| contains_word(&upper, w))
+    static ALTS: std::sync::OnceLock<Vec<Vec<crate::support::ReTok>>> = std::sync::OnceLock::new();
+    let alts = ALTS.get_or_init(|| crate::support::re_alternatives(GST_TCS_RE));
+    let alts: Vec<&[crate::support::ReTok]> = alts.iter().map(Vec::as_slice).collect();
+    crate::support::py_re_search(name, &alts)
 }
 
 /// Proleptic-Gregorian day number (days since 1970-01-01) for a [`TallyDate`], Howard Hinnant's
@@ -1041,6 +1016,19 @@ not mapped to any depreciation block"
 mod tests {
     use super::*;
     use crate::book::{Ledger, LedgerLine, VoucherStatus};
+
+    /// The pattern searched here is the reference's own, byte for byte (the probe file records it
+    /// from the reference module).
+    #[test]
+    fn the_pattern_is_the_reference_s() {
+        let v = crate::support::text_probe_tests::probes();
+        assert_eq!(
+            v["header"]["reference_regexes"]["gst_tcs"]
+                .as_str()
+                .unwrap(),
+            GST_TCS_RE
+        );
+    }
 
     /// The reference's GST/TCS regex is case-insensitive (`re.I`) and word-bounded.
     #[test]

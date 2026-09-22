@@ -47,6 +47,7 @@ pub mod registry;
 pub mod rules;
 pub mod stale_balances_41_1;
 mod support;
+mod text_tables;
 pub mod trial_balance;
 pub mod xml;
 
