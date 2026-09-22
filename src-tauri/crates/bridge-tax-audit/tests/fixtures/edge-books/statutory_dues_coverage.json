@@ -1,0 +1,61 @@
+{
+ "comment": "statutory_dues_43b: salary expense with neither a PF nor an ESI nature mapped, so both coverage questions are raised; a nature with nothing posted.",
+ "groups": {
+  "Current Assets": null,
+  "Bank Accounts": "Current Assets",
+  "Current Liabilities": null,
+  "Duties & Taxes": "Current Liabilities",
+  "Provisions": "Current Liabilities",
+  "Indirect Expenses": null
+ },
+ "ledgers": [
+  {
+   "name": "GST Payable",
+   "chain": [
+    "Duties & Taxes",
+    "Current Liabilities"
+   ],
+   "guid": "edge-sdc-gst"
+  },
+  {
+   "name": "Wages",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-sdc-wages"
+  },
+  {
+   "name": "Bank",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-sdc-bank"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "GST Payable",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  }
+ ],
+ "vouchers": [],
+ "cash": [],
+ "bank": [
+  "Bank"
+ ],
+ "statutory_dues": {
+  "nature_by_ledger": {
+   "GST Payable": "gst_payable"
+  },
+  "salary_expense_ledgers": [
+   "Wages"
+  ]
+ },
+ "tests": [
+  "statutory_dues_43b"
+ ]
+}

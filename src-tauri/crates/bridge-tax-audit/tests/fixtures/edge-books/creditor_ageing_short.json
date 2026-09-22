@@ -1,0 +1,104 @@
+{
+ "comment": "creditor_ageing_43bh, a one-month period and a 20-day lag: an opening lot inside the 15-day window after the lag, beside a bill dated before the period start that is past it, so the clause 22 view removes nothing from the bill's amount; two vouchers sharing one GUID.",
+ "period": [
+  "2026-03-01",
+  "2026-03-31"
+ ],
+ "groups": {
+  "Current Assets": null,
+  "Bank Accounts": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Purchase Accounts": null,
+  "Indirect Expenses": null
+ },
+ "ledgers": [
+  {
+   "name": "Short Micro",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-cc-short"
+  },
+  {
+   "name": "Purchases",
+   "chain": [
+    "Purchase Accounts"
+   ],
+   "guid": "edge-cc-purch"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Short Micro",
+   "opening": -1000,
+   "debit": 0,
+   "credit": 600,
+   "closing": -1600
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "edge-ca-201",
+   "date": "2026-02-01",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Short Micro",
+     -500
+    ],
+    [
+     "Purchases",
+     500
+    ]
+   ]
+  },
+  {
+   "guid": "edge-cc-dup",
+   "date": "2026-03-05",
+   "base_type": "Purchase",
+   "number": "DUP-FIRST",
+   "lines": [
+    [
+     "Short Micro",
+     -40
+    ],
+    [
+     "Purchases",
+     40
+    ]
+   ]
+  },
+  {
+   "guid": "edge-cc-dup",
+   "date": "2026-03-06",
+   "base_type": "Purchase",
+   "number": "DUP-SECOND",
+   "lines": [
+    [
+     "Short Micro",
+     -60
+    ],
+    [
+     "Purchases",
+     60
+    ]
+   ]
+  }
+ ],
+ "cash": [],
+ "bank": [],
+ "creditors": [
+  "Short Micro"
+ ],
+ "creditor_ageing": {
+  "acceptance_lag_days": 20,
+  "supplier_classification": {
+   "Short Micro": "micro"
+  }
+ },
+ "tests": [
+  "creditor_ageing_43bh"
+ ]
+}

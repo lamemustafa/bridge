@@ -24,7 +24,8 @@ use bridge_tax_audit::compare::compare;
 use bridge_tax_audit::read::Window;
 use bridge_tax_audit::rules::Rules;
 use bridge_tax_audit::{
-    cash_book_integrity, ledger_scrutiny, stale_balances_41_1, tds_payees, trial_balance, TdsConfig,
+    cash_book_integrity, creditor_ageing_43bh, ledger_scrutiny, stale_balances_41_1,
+    statutory_dues_43b, tds_payees, trial_balance, TdsConfig,
 };
 use serde_json::Value;
 
@@ -192,6 +193,8 @@ fn rules(s: &Value) -> Rules {
     for table in strs(&s["rules_without"]) {
         match table.as_str() {
             "ledger_scrutiny" => rules.ledger_scrutiny_large_entry_paise = None,
+            "s43b" => rules.s43b = None,
+            "s36_1_va" => rules.s36_1_va_due_day = None,
             "s194j" => rules.s194j_aggregate_paise = None,
             other => panic!("rules_without {other} is not wired here"),
         }
@@ -209,6 +212,39 @@ fn period(s: &Value) -> Window {
     Window {
         from: date(from),
         to: date(to),
+    }
+}
+
+/// `creditor_ageing_43bh`'s parameters from a spec's `creditor_ageing` table, each defaulting as
+/// the reference's `run()` defaults it.
+fn creditor_ageing_params(c: &Value) -> creditor_ageing_43bh::Params {
+    creditor_ageing_43bh::Params {
+        acceptance_lag_days: c["acceptance_lag_days"].as_i64().unwrap_or(0),
+        supplier_classification: c["supplier_classification"]
+            .as_object()
+            .map(|m| {
+                m.iter()
+                    .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_string()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        post_year_payments: c["post_year_payments"]
+            .as_object()
+            .map(|m| {
+                m.iter()
+                    .map(|(k, rows)| {
+                        let rows = rows
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .map(|r| (date(r[0].as_str().unwrap()), int(&r[1])))
+                            .collect();
+                        (k.clone(), rows)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        mse_interest_ledgers: strs(&c["mse_interest_ledgers"]).into_iter().collect(),
     }
 }
 
@@ -281,6 +317,37 @@ fn check(name: &str) {
                 let c = cash_book_integrity::check_invariants(&book, &r).unwrap();
                 (r, c)
             }
+            "creditor_ageing_43bh" => {
+                let creditors: BTreeSet<String> = strs(&s["creditors"]).into_iter().collect();
+                let r = creditor_ageing_43bh::run(
+                    &book,
+                    &rules,
+                    &period(&s),
+                    &creditors,
+                    &creditor_ageing_params(&s["creditor_ageing"]),
+                )
+                .unwrap();
+                let c = creditor_ageing_43bh::check_invariants(&book, &r).unwrap();
+                (r, c)
+            }
+            "statutory_dues_43b" => {
+                let sd = &s["statutory_dues"];
+                let nature_by_ledger: BTreeMap<String, String> = sd["nature_by_ledger"]
+                    .as_object()
+                    .map(|m| {
+                        m.iter()
+                            .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let salary: BTreeSet<String> =
+                    strs(&sd["salary_expense_ledgers"]).into_iter().collect();
+                let r =
+                    statutory_dues_43b::run(&book, &rules, &period(&s), &nature_by_ledger, &salary)
+                        .unwrap();
+                let c = statutory_dues_43b::check_invariants(&book, &r).unwrap();
+                (r, c)
+            }
             "tds_payees" => {
                 let entity_type = s["entity_type"].as_str().unwrap_or("individual");
                 let r = tds_payees::run(&book, &rules, entity_type, &tds_config(&s)).unwrap();
@@ -302,10 +369,12 @@ fn check(name: &str) {
 
 /// The tests an edge book may name: the arms of `check` above, and exactly the keys of
 /// `parity/edge_golden.py`'s `runners` (`edge_runners_agree_across_the_two_sides`).
-const EDGE_TESTS: [&str; 5] = [
+const EDGE_TESTS: [&str; 7] = [
     "cash_book_integrity",
+    "creditor_ageing_43bh",
     "ledger_scrutiny",
     "stale_balances_41_1",
+    "statutory_dues_43b",
     "tds_payees",
     "trial_balance",
 ];

@@ -29,9 +29,12 @@ paise (debit positive), `direction` 1 or -1, each absent or null meaning None, `
 boolean defaulting to true when absent; any other type is refused, here and in
 `tests/edge_books.rs`), `cash`, `bank`, `own_account_terms`, `rules_without` (top-level rules tables
 to drop, e.g. ["ledger_scrutiny"]; the Rust side must map each one, see `tests/edge_books.rs`),
-`tests`, and for `tds_payees`: `entity_type` (default "individual"), `nature_by_ledger`,
-`payee_aliases`, `s194j_category_by_ledger` (each default {}) and `previous_year_turnover_paise`
-(default absent).
+`creditors` (the trade-creditor ledger names `creditor_ageing_43bh` ages), `creditor_ageing`
+({acceptance_lag_days?, supplier_classification?, mse_interest_ledgers?, post_year_payments?: {ledger:
+[[ISO date, paise], ...]}}; each key defaults as the reference's `run()` defaults it),
+`statutory_dues` ({nature_by_ledger?, salary_expense_ledgers?}), `tests`, and for `tds_payees`:
+`entity_type` (default "individual"), `nature_by_ledger`, `payee_aliases`, `s194j_category_by_ledger`
+(each default {}) and `previous_year_turnover_paise` (default absent).
 """
 from __future__ import annotations
 
@@ -47,8 +50,8 @@ STATUS = ("regular", "optional", "cancelled", "postdated")
 def main() -> int:
     engine, spec_path, out_dir = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
     sys.path.insert(0, str(Path(engine).resolve()))
-    from tae.audit_tests import (cash_book_integrity, ledger_scrutiny, stale_balances_41_1, tds_payees,
-                                 trial_balance)
+    from tae.audit_tests import (cash_book_integrity, creditor_ageing_43bh, ledger_scrutiny, stale_balances_41_1,
+                                 statutory_dues_43b, tds_payees, trial_balance)
     from tae.config import load_rules
     from tae.model import (Book, Engagement, Group, InventoryLine, Ledger, LedgerLine, Period, TBRow, Voucher,
                            VoucherStatus)
@@ -107,14 +110,23 @@ def main() -> int:
         rules.pop(table)
     cash, bank = set(spec.get("cash", [])), set(spec.get("bank", []))
     terms = frozenset(spec.get("own_account_terms", []))
+    ca = spec.get("creditor_ageing", {})
+    sd = spec.get("statutory_dues", {})
+    post_year = {k: [(date.fromisoformat(d), a) for d, a in v] for k, v in ca.get("post_year_payments", {}).items()}
 
     # One runner per test an edge book may name: the module and its result, run as the reference's
     # pack runs it.
     runners = {
         "cash_book_integrity": lambda: (cash_book_integrity,
                                         cash_book_integrity.run(eng, rules, cash, bank, terms)),
+        "creditor_ageing_43bh": lambda: (creditor_ageing_43bh, creditor_ageing_43bh.run(
+            eng, rules, set(spec.get("creditors", [])), acceptance_lag_days=ca.get("acceptance_lag_days", 0),
+            supplier_classification=ca.get("supplier_classification", {}), post_year_payments=post_year,
+            mse_interest_ledgers=frozenset(ca.get("mse_interest_ledgers", [])))),
         "ledger_scrutiny": lambda: (ledger_scrutiny, ledger_scrutiny.run(eng, rules, cash)),
         "stale_balances_41_1": lambda: (stale_balances_41_1, stale_balances_41_1.run(eng, rules)),
+        "statutory_dues_43b": lambda: (statutory_dues_43b, statutory_dues_43b.run(
+            eng, rules, dict(sd.get("nature_by_ledger", {})), frozenset(sd.get("salary_expense_ledgers", [])))),
         "tds_payees": lambda: (tds_payees, tds_payees.run(
             eng, rules, dict(spec.get("nature_by_ledger", {})), dict(spec.get("payee_aliases", {})),
             spec.get("previous_year_turnover_paise"), dict(spec.get("s194j_category_by_ledger", {})))),
