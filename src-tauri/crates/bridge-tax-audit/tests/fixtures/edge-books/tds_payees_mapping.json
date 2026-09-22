@@ -1,0 +1,195 @@
+{
+ "comment": "tds_payees mapping: a ledger mapped to an empty nature maps nothing, so its credit on a 194C voucher is a payee; a ledger mapped to an unknown nature ('194X') is mapped without being reported, so its credit is not a payee; a debit line on an unmapped ledger (round off) in a mapped voucher is not a payee.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Bank OD A/c": "Loans (Liability)",
+  "Sundry Debtors": "Current Assets",
+  "Loans & Advances (Asset)": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Duties & Taxes": "Current Liabilities",
+  "Loans (Liability)": null,
+  "Unsecured Loans": "Loans (Liability)",
+  "Secured Loans": "Loans (Liability)",
+  "Direct Expenses": null,
+  "Indirect Expenses": null,
+  "Purchase Accounts": null,
+  "Sales Accounts": null,
+  "Fixed Assets": null,
+  "Suspense A/c": null
+ },
+ "ledgers": [
+  {
+   "name": "Freight",
+   "chain": [
+    "Direct Expenses"
+   ],
+   "guid": "edge-tds_payees_mapping-000"
+  },
+  {
+   "name": "Misc Charges",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-tds_payees_mapping-001"
+  },
+  {
+   "name": "Odd Charges",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-tds_payees_mapping-002"
+  },
+  {
+   "name": "Round Off",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-tds_payees_mapping-003"
+  },
+  {
+   "name": "Contractor P",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_mapping-004"
+  },
+  {
+   "name": "Contractor Q",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_mapping-005"
+  },
+  {
+   "name": "Contractor R",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_mapping-006"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Freight",
+   "opening": 0,
+   "debit": 3000000,
+   "credit": 0,
+   "closing": 3000000
+  },
+  {
+   "ledger": "Misc Charges",
+   "opening": 0,
+   "debit": 0,
+   "credit": 500000,
+   "closing": -500000
+  },
+  {
+   "ledger": "Odd Charges",
+   "opening": 0,
+   "debit": 0,
+   "credit": 200000,
+   "closing": -200000
+  },
+  {
+   "ledger": "Round Off",
+   "opening": 0,
+   "debit": 5000,
+   "credit": 0,
+   "closing": 5000
+  },
+  {
+   "ledger": "Contractor P",
+   "opening": 0,
+   "debit": 0,
+   "credit": 500000,
+   "closing": -500000
+  },
+  {
+   "ledger": "Contractor Q",
+   "opening": 0,
+   "debit": 0,
+   "credit": 800000,
+   "closing": -800000
+  },
+  {
+   "ledger": "Contractor R",
+   "opening": 0,
+   "debit": 0,
+   "credit": 1005000,
+   "closing": -1005000
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "m01",
+   "date": "2025-06-10",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Freight",
+     1000000
+    ],
+    [
+     "Misc Charges",
+     -500000
+    ],
+    [
+     "Contractor P",
+     -500000
+    ]
+   ]
+  },
+  {
+   "guid": "m02",
+   "date": "2025-07-10",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Freight",
+     1000000
+    ],
+    [
+     "Odd Charges",
+     -200000
+    ],
+    [
+     "Contractor Q",
+     -800000
+    ]
+   ]
+  },
+  {
+   "guid": "m03",
+   "date": "2025-08-10",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Freight",
+     1000000
+    ],
+    [
+     "Round Off",
+     5000
+    ],
+    [
+     "Contractor R",
+     -1005000
+    ]
+   ]
+  }
+ ],
+ "tests": [
+  "tds_payees"
+ ],
+ "nature_by_ledger": {
+  "Freight": "194C",
+  "Misc Charges": "",
+  "Odd Charges": "194X"
+ }
+}

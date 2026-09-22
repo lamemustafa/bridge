@@ -1,0 +1,248 @@
+{
+ "comment": "tds_payees 194-I: a calendar month totalling exactly Rs 50,000 to one payee is not over and Rs 50,000.01 is; two months each under the limit are not flagged even though they sum over it; one voucher booking a 194C and a 194-I expense attributes its full credit to each nature.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Bank OD A/c": "Loans (Liability)",
+  "Sundry Debtors": "Current Assets",
+  "Loans & Advances (Asset)": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Duties & Taxes": "Current Liabilities",
+  "Loans (Liability)": null,
+  "Unsecured Loans": "Loans (Liability)",
+  "Secured Loans": "Loans (Liability)",
+  "Direct Expenses": null,
+  "Indirect Expenses": null,
+  "Purchase Accounts": null,
+  "Sales Accounts": null,
+  "Fixed Assets": null,
+  "Suspense A/c": null
+ },
+ "ledgers": [
+  {
+   "name": "Rent",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-tds_payees_194i-000"
+  },
+  {
+   "name": "Rent Godown",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-tds_payees_194i-001"
+  },
+  {
+   "name": "Freight",
+   "chain": [
+    "Direct Expenses"
+   ],
+   "guid": "edge-tds_payees_194i-002"
+  },
+  {
+   "name": "Landlord P",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_194i-003"
+  },
+  {
+   "name": "Landlord Q",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_194i-004"
+  },
+  {
+   "name": "Landlord R",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_194i-005"
+  },
+  {
+   "name": "Transporter M",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_194i-006"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Rent",
+   "opening": 0,
+   "debit": 16100001,
+   "credit": 0,
+   "closing": 16100001
+  },
+  {
+   "ledger": "Rent Godown",
+   "opening": 0,
+   "debit": 2000000,
+   "credit": 0,
+   "closing": 2000000
+  },
+  {
+   "ledger": "Freight",
+   "opening": 0,
+   "debit": 100000,
+   "credit": 0,
+   "closing": 100000
+  },
+  {
+   "ledger": "Landlord P",
+   "opening": 0,
+   "debit": 0,
+   "credit": 5000000,
+   "closing": -5000000
+  },
+  {
+   "ledger": "Landlord Q",
+   "opening": 0,
+   "debit": 0,
+   "credit": 5000001,
+   "closing": -5000001
+  },
+  {
+   "ledger": "Landlord R",
+   "opening": 0,
+   "debit": 0,
+   "credit": 8000000,
+   "closing": -8000000
+  },
+  {
+   "ledger": "Transporter M",
+   "opening": 0,
+   "debit": 0,
+   "credit": 200000,
+   "closing": -200000
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "i01",
+   "date": "2025-05-10",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Rent",
+     3000000
+    ],
+    [
+     "Landlord P",
+     -3000000
+    ]
+   ]
+  },
+  {
+   "guid": "i02",
+   "date": "2025-05-20",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Rent Godown",
+     2000000
+    ],
+    [
+     "Landlord P",
+     -2000000
+    ]
+   ]
+  },
+  {
+   "guid": "i03",
+   "date": "2025-06-05",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Rent",
+     3000000
+    ],
+    [
+     "Landlord Q",
+     -3000000
+    ]
+   ]
+  },
+  {
+   "guid": "i04",
+   "date": "2025-06-25",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Rent",
+     2000001
+    ],
+    [
+     "Landlord Q",
+     -2000001
+    ]
+   ]
+  },
+  {
+   "guid": "i05",
+   "date": "2025-07-15",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Rent",
+     4000000
+    ],
+    [
+     "Landlord R",
+     -4000000
+    ]
+   ]
+  },
+  {
+   "guid": "i06",
+   "date": "2025-08-15",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Rent",
+     4000000
+    ],
+    [
+     "Landlord R",
+     -4000000
+    ]
+   ]
+  },
+  {
+   "guid": "i07",
+   "date": "2025-09-01",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Rent",
+     100000
+    ],
+    [
+     "Freight",
+     100000
+    ],
+    [
+     "Transporter M",
+     -200000
+    ]
+   ]
+  }
+ ],
+ "tests": [
+  "tds_payees"
+ ],
+ "nature_by_ledger": {
+  "Rent": "194I",
+  "Rent Godown": "194I",
+  "Freight": "194C"
+ }
+}

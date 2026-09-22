@@ -264,6 +264,7 @@ mod tests {
             number: String::new(),
             status,
             lines: Vec::new(),
+            ..Default::default()
         }
     }
 

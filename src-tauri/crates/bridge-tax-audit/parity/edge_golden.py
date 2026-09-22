@@ -21,10 +21,17 @@ tables (15.1.0) are the ones the crate's case mapping reproduces (`src/support.r
 
 Spec keys: `period` ([start, end], ISO; default the AY 2026-27 previous year), `groups` ({name:
 parent or null}), `ledgers` ([{name, chain, guid}]), `tb` ([{ledger, opening, debit, credit,
-closing}]), `vouchers` ([{guid, date, base_type, vtype?, number?, status?, narration?, lines:
-[[ledger, paise], ...]}]; `number` defaults to the GUID, so pass `""` to test a voucher with no
-number), `cash`, `bank`, `own_account_terms`, `rules_without` (top-level rules tables to drop, e.g.
-["ledger_scrutiny"]; the Rust side must map each one, see `tests/edge_books.rs`), `tests`.
+closing}]), `vouchers` ([{guid, date, base_type, vtype?, number?, status?, narration?, masterid?,
+inventory?, lines: [[ledger, paise], ...]}]; `number` defaults to the GUID, so pass `""` to test a
+voucher with no number; `masterid` is text, absent meaning none; `inventory` is [{item, qty?, rate?,
+amount?, direction?, qty_field_present?}], `qty` a number read as a float, `rate`/`amount` integer
+paise (debit positive), `direction` 1 or -1, each absent or null meaning None, `qty_field_present` a
+boolean defaulting to true when absent; any other type is refused, here and in
+`tests/edge_books.rs`), `cash`, `bank`, `own_account_terms`, `rules_without` (top-level rules tables
+to drop, e.g. ["ledger_scrutiny"]; the Rust side must map each one, see `tests/edge_books.rs`),
+`tests`, and for `tds_payees`: `entity_type` (default "individual"), `nature_by_ledger`,
+`payee_aliases`, `s194j_category_by_ledger` (each default {}) and `previous_year_turnover_paise`
+(default absent).
 """
 from __future__ import annotations
 
@@ -40,9 +47,11 @@ STATUS = ("regular", "optional", "cancelled", "postdated")
 def main() -> int:
     engine, spec_path, out_dir = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
     sys.path.insert(0, str(Path(engine).resolve()))
-    from tae.audit_tests import cash_book_integrity, ledger_scrutiny, stale_balances_41_1, trial_balance
+    from tae.audit_tests import (cash_book_integrity, ledger_scrutiny, stale_balances_41_1, tds_payees,
+                                 trial_balance)
     from tae.config import load_rules
-    from tae.model import Book, Engagement, Group, Ledger, LedgerLine, Period, TBRow, Voucher, VoucherStatus
+    from tae.model import (Book, Engagement, Group, InventoryLine, Ledger, LedgerLine, Period, TBRow, Voucher,
+                           VoucherStatus)
     from tae.parity import canonical
 
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
@@ -53,20 +62,46 @@ def main() -> int:
     ledgers = {l["name"]: Ledger(name=l["name"], parent=l["chain"][0] if l["chain"] else "",
                                  chain=tuple(l["chain"]), chain_complete=True, guid=l.get("guid", ""))
                for l in spec["ledgers"]}
-    vouchers = [Voucher(guid=v["guid"], masterid=None, alterid=None, date=date.fromisoformat(v["date"]),
+    # Typed strictly, the same way tests/edge_books.rs reads them, so that a mistyped key fails on
+    # both sides instead of building two different books.
+    def typed(d, key, ok, what, absent=None, nullable=True):
+        if key not in d or (nullable and d[key] is None):
+            return absent
+        if not ok(d[key]):
+            raise SystemExit(f"{spec_path.name}: {key} must be {what}, got {d[key]!r}")
+        return d[key]
+
+    def integer(x):
+        return isinstance(x, int) and not isinstance(x, bool)
+
+    def inventory_line(i):
+        qty = typed(i, "qty", lambda x: integer(x) or isinstance(x, float), "a number or null")
+        if not isinstance(i.get("item"), str):
+            raise SystemExit(f"{spec_path.name}: item must be text, got {i.get('item')!r}")
+        return InventoryLine(item=i["item"],
+                             qty=None if qty is None else float(qty),
+                             rate_paise=typed(i, "rate", integer, "an integer or null"),
+                             amount_paise=typed(i, "amount", integer, "an integer or null"),
+                             direction=typed(i, "direction", lambda x: x in (1, -1) and integer(x), "1, -1 or null"),
+                             qty_field_present=typed(i, "qty_field_present", lambda x: isinstance(x, bool),
+                                                     "true or false", absent=True, nullable=False))
+
+    vouchers = [Voucher(guid=v["guid"], masterid=typed(v, "masterid", lambda x: isinstance(x, str), "text", nullable=False), alterid=None, date=date.fromisoformat(v["date"]),
                         vtype=v.get("vtype", v["base_type"]), base_type=v["base_type"],
                         number=v.get("number", v["guid"]), reference="", party_field="", party_gstin="",
                         narration=v.get("narration", ""), status=status[v.get("status", "regular")],
                         status_source="edge-book",
-                        lines=tuple(LedgerLine(ledger=l, amount_paise=a) for l, a in v["lines"]))
+                        lines=tuple(LedgerLine(ledger=l, amount_paise=a) for l, a in v["lines"]),
+                        inventory=tuple(inventory_line(i) for i in v.get("inventory", ())))
                 for v in spec["vouchers"]]
     tb = {t["ledger"]: TBRow(ledger=t["ledger"], opening_paise=t["opening"], debit_paise=t["debit"],
                              credit_paise=t["credit"], closing_paise=t["closing"]) for t in spec["tb"]}
     book = Book(company_name="Invented edge book",
                 period=Period(date.fromisoformat(start), date.fromisoformat(end)), groups=groups,
                 ledgers=ledgers, vouchers=vouchers, tb=tb, company_guid="invented-edge-company")
-    eng = Engagement("individual", "2026-27", book)
-    rules = load_rules("2026-27", "individual")
+    entity_type = spec.get("entity_type", "individual")
+    eng = Engagement(entity_type, "2026-27", book)
+    rules = load_rules("2026-27", entity_type)
     for table in spec.get("rules_without", []):
         rules = copy.copy(rules)
         rules.pop(table)
@@ -80,6 +115,9 @@ def main() -> int:
                                         cash_book_integrity.run(eng, rules, cash, bank, terms)),
         "ledger_scrutiny": lambda: (ledger_scrutiny, ledger_scrutiny.run(eng, rules, cash)),
         "stale_balances_41_1": lambda: (stale_balances_41_1, stale_balances_41_1.run(eng, rules)),
+        "tds_payees": lambda: (tds_payees, tds_payees.run(
+            eng, rules, dict(spec.get("nature_by_ledger", {})), dict(spec.get("payee_aliases", {})),
+            spec.get("previous_year_turnover_paise"), dict(spec.get("s194j_category_by_ledger", {})))),
         "trial_balance": lambda: (trial_balance, trial_balance.run(eng, rules)),
     }
     for test in spec["tests"]:
