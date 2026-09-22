@@ -734,5 +734,285 @@
   "file": "src/text_tables.rs",
   "from": "    (0x0345, 0x0345),",
   "to": "    (0x0346, 0x0346),"
+ },
+ {
+  "id": "C2-01",
+  "by": "author (Lane C)",
+  "what": "Part VI rows read as Part I",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "        if a.part != \"I\" {\n            continue;\n        }\n        let Some(party)",
+  "to": "        if a.part == \"none\" {\n            continue;\n        }\n        let Some(party)"
+ },
+ {
+  "id": "C2-02",
+  "by": "author (Lane C)",
+  "what": "an empty alias is a party",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "            .filter(|p| !p.is_empty())\n        else {",
+  "to": "            .filter(|_| true)\n        else {"
+ },
+ {
+  "id": "C2-03",
+  "by": "author (Lane C)",
+  "what": "section spaces kept",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "    py_upper(&section.replace(' ', \"\"))",
+  "to": "    py_upper(section)"
+ },
+ {
+  "id": "C2-04",
+  "by": "author (Lane C)",
+  "what": "section case kept",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "    py_upper(&section.replace(' ', \"\"))",
+  "to": "    section.replace(' ', \"\")"
+ },
+ {
+  "id": "C2-05",
+  "by": "author (Lane C)",
+  "what": "a Debit Note is not billing",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "const BILLED_TYPES: [&str; 3] = [\"Sales\", \"Debit Note\", \"Credit Note\"];",
+  "to": "const BILLED_TYPES: [&str; 2] = [\"Sales\", \"Credit Note\"];"
+ },
+ {
+  "id": "C2-06",
+  "by": "author (Lane C)",
+  "what": "Direct Incomes not income",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "const INCOME_GROUPS: [&str; 2] = [\"Direct Incomes\", \"Indirect Incomes\"];",
+  "to": "const INCOME_GROUPS: [&str; 1] = [\"Indirect Incomes\"];"
+ },
+ {
+  "id": "C2-07",
+  "by": "author (Lane C)",
+  "what": "the Re 1 tolerance is inclusive",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "            if diff.checked_abs().ok_or_else(|| overflow(TEST_ID))? > TOL_PAISE {",
+  "to": "            if diff.checked_abs().ok_or_else(|| overflow(TEST_ID))? >= TOL_PAISE {"
+ },
+ {
+  "id": "C2-08",
+  "by": "author (Lane C)",
+  "what": "books amount not negated",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "            let amount = l\n                .amount_paise\n                .checked_neg()\n                .ok_or_else(|| overflow(TEST_ID))?;",
+  "to": "            let amount = l.amount_paise;"
+ },
+ {
+  "id": "C2-09",
+  "by": "author (Lane C)",
+  "what": "voucher label falls back to the GUID",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "        &format!(\"{} {} on {}\", v.vtype, v.number, iso(&v.date)),",
+  "to": "        &crate::support::voucher_label(v),"
+ },
+ {
+  "id": "C2-10",
+  "by": "author (Lane C)",
+  "what": "TR-4 not checked",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "        let Some(party) = party.filter(|p| book.ledgers.contains_key(*p)) else {",
+  "to": "        let Some(party) = party.filter(|_| true) else {"
+ },
+ {
+  "id": "C2-11",
+  "by": "author (Lane C)",
+  "what": "TR-2 part not checked",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "            if a.part != \"I\" {\n                out.push",
+  "to": "            if a.part == \"none\" {\n                out.push"
+ },
+ {
+  "id": "C2-12",
+  "by": "author (Lane C)",
+  "what": "Part VI read as TDS",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "        \"VI\" => Some(\"tcs\"),",
+  "to": "        \"VI\" => Some(\"tds\"),"
+ },
+ {
+  "id": "C2-13",
+  "by": "author (Lane C)",
+  "what": "match tolerance exclusive",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "        let cat = if gap <= TOL_PAISE {",
+  "to": "        let cat = if gap < TOL_PAISE {"
+ },
+ {
+  "id": "C2-14",
+  "by": "author (Lane C)",
+  "what": "a party-less voucher never attributed",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "                Some(only) if others.len() == 1 && alias_targets.contains(only) => {",
+  "to": "                Some(only) if false && alias_targets.contains(only) => {"
+ },
+ {
+  "id": "C2-15",
+  "by": "author (Lane C)",
+  "what": "a party-less voucher attributed to any single ledger",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "                Some(only) if others.len() == 1 && alias_targets.contains(only) => {",
+  "to": "                Some(only) if others.len() == 1 => {"
+ },
+ {
+  "id": "C2-16",
+  "by": "author (Lane C)",
+  "what": "a zero role line makes a claim",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "                .any(|l| role.contains(&l.ledger) && l.amount_paise != 0)",
+  "to": "                .any(|l| role.contains(&l.ledger))"
+ },
+ {
+  "id": "C2-17",
+  "by": "author (Lane C)",
+  "what": "different period tests only the latest date",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "    if agg.max_date.as_str() < period.from.as_str() || agg.min_date.as_str() > period.to.as_str() {",
+  "to": "    if agg.max_date.as_str() < period.from.as_str() {"
+ },
+ {
+  "id": "C2-18",
+  "by": "author (Lane C)",
+  "what": "an empty alias still has no alias",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "    if alias.is_none() {\n        return REASON_26AS_NO_ALIAS;",
+  "to": "    if alias.is_none_or(String::is_empty) {\n        return REASON_26AS_NO_ALIAS;"
+ },
+ {
+  "id": "C2-19",
+  "by": "author (Lane C)",
+  "what": "books-only period tests any voucher",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "    if row.vouchers.iter().all(outside) {",
+  "to": "    if row.vouchers.iter().any(outside) {"
+ },
+ {
+  "id": "C2-20",
+  "by": "author (Lane C)",
+  "what": "rows of one party not folded",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "        folded += rows.len() - 1;",
+  "to": "        folded += 0;"
+ },
+ {
+  "id": "C2-21",
+  "by": "author (Lane C)",
+  "what": "combined note dropped",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "        let together = if rows.len() > 1 {",
+  "to": "        let together = if rows.len() > 99 {"
+ },
+ {
+  "id": "C2-22",
+  "by": "author (Lane C)",
+  "what": "alias not shown by repr",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "                py_repr_str(alias)\n",
+  "to": "                alias\n"
+ },
+ {
+  "id": "C2-23",
+  "by": "author (Lane C)",
+  "what": "TCS capitalisation reads any voucher type",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "        if v.base_type != \"Purchase\" || !matched_tcs_parties.contains(v.party_field.as_str()) {",
+  "to": "        if !matched_tcs_parties.contains(v.party_field.as_str()) {"
+ },
+ {
+  "id": "C2-24",
+  "by": "author (Lane C)",
+  "what": "TCS capitalisation ignores the Fixed Assets test",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "        if !fixed_asset {\n            continue;\n        }",
+  "to": "        if !fixed_asset && false {\n            continue;\n        }"
+ },
+ {
+  "id": "C2-25",
+  "by": "author (Lane C)",
+  "what": "books sales not negated",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "    let books_sales = movement_under(\"Sales Accounts\")?\n        .checked_neg()\n        .ok_or_else(|| overflow(TEST_ID))?;",
+  "to": "    let books_sales = movement_under(\"Sales Accounts\")?;"
+ },
+ {
+  "id": "C2-26",
+  "by": "author (Lane C)",
+  "what": "advance tax uses credit",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "            .filter_map(|n| book.tb.get(n))\n            .map(|t| t.debit_paise),\n    )?;\n    fig(\n        &mut r,\n        \"books_advance_tax_paise\",",
+  "to": "            .filter_map(|n| book.tb.get(n))\n            .map(|t| t.credit_paise),\n    )?;\n    fig(\n        &mut r,\n        \"books_advance_tax_paise\","
+ },
+ {
+  "id": "C2-27",
+  "by": "author (Lane C)",
+  "what": "the scope-limit finding only when something fires",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "    r.findings.push(Finding {\n        id: format!(\"{TEST_ID}/pan_view_scope_limit\"),",
+  "to": "    if not_separate > 99 { r.findings.push(Finding {\n        id: format!(\"{TEST_ID}/pan_view_scope_limit\"),"
+ },
+ {
+  "id": "C2-28",
+  "by": "author (Lane C)",
+  "what": "a repeated figure id not refused",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "    if r.figures.iter().any(|f| f.id == id) {",
+  "to": "    if false {"
+ },
+ {
+  "id": "C2-29",
+  "by": "author (Lane C)",
+  "what": "TT-1 folded rows not counted",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "        let got = matched + differs + only_26as + folded;",
+  "to": "        let got = matched + differs + only_26as;"
+ },
+ {
+  "id": "C2-30",
+  "by": "author (Lane C)",
+  "what": "TT-4 part not checked",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "                    Some(d) if d.part != part => out.push(format!(",
+  "to": "                    Some(d) if d.part == \"none\" => out.push(format!("
+ },
+ {
+  "id": "C2-31",
+  "by": "author (Lane C)",
+  "what": "TT-3 recomputed from credits",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "                .filter_map(|n| book.tb.get(*n))\n                .map(|t| t.debit_paise),",
+  "to": "                .filter_map(|n| book.tb.get(*n))\n                .map(|t| t.credit_paise),"
+ },
+ {
+  "id": "C2-32",
+  "by": "author (Lane C)",
+  "what": "[tds_tcs_26as] never read",
+  "file": "src/lib.rs",
+  "from": "            .get(\"tds_tcs_26as\")\n",
+  "to": "            .get(\"tds_tcs_26as-absent\")\n"
+ },
+ {
+  "id": "C2-33",
+  "by": "author (Lane C)",
+  "what": "alias values not bound",
+  "file": "src/binding.rs",
+  "from": "                    lbinder.bind_one(ledger, \"tds_tcs_26as.deductor_aliases\")?,",
+  "to": "                    ledger.clone(),"
+ },
+ {
+  "id": "C2-34",
+  "by": "author (Lane C)",
+  "what": "PARTYLEDGERNAME not read",
+  "file": "src/book.rs",
+  "from": "            party_field: v.child_text(\"PARTYLEDGERNAME\").to_string(),",
+  "to": "            party_field: String::new(),"
+ },
+ {
+  "id": "C2-35",
+  "by": "author (Lane C)",
+  "what": "tds_tcs_26as parity floor raised above its synthetic count (lowering a floor is not observable)",
+  "file": "src/registry.rs",
+  "from": "        id: \"tds_tcs_26as\",\n        min_figures: 40,",
+  "to": "        id: \"tds_tcs_26as\",\n        min_figures: 41,"
  }
 ]
