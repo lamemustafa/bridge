@@ -118,13 +118,14 @@ fn before_approval() -> Vec<ScenarioPlan> {
 }
 
 /// Tally's answer to one created voucher.
+/// Tally's answer to one created voucher: a captured live response
+/// (licensed-lab import, sanitized), not a hand-written shape. The earlier
+/// hand-written ENVELOPE did not parse as an import outcome at all.
 fn created_one() -> String {
-    "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA>\
-     <IMPORTRESULT><CREATED>1</CREATED><ALTERED>0</ALTERED><DELETED>0</DELETED>\
-     <LASTVCHID>11</LASTVCHID><LASTMID>0</LASTMID><COMBINED>0</COMBINED>\
-     <IGNORED>0</IGNORED><ERRORS>0</ERRORS><CANCELLED>0</CANCELLED></IMPORTRESULT>\
-     </DATA></BODY></ENVELOPE>"
-        .to_string()
+    include_str!(
+        "../crates/bridge-tally-protocol/tests/fixtures/live_education_w4_voucher_sanitized.xml"
+    )
+    .to_string()
 }
 
 /// What the dispatch sends after approval, up to and including the import:
@@ -154,6 +155,30 @@ fn dispatch_intent(directory: &std::path::Path) -> Value {
         .collect::<Vec<_>>();
     assert_eq!(intents.len(), 1, "{intents:?}");
     intents[0].clone()
+}
+
+/// The one dispatch response a run journaled, with Tally's answer parsed.
+/// A POST answered with `created_one()` must journal a parsed, clean single
+/// create; `None` here means the post ran without a parsed outcome.
+fn journaled_outcome(
+    directory: &std::path::Path,
+) -> Option<bridge_tally_protocol::TallyImportOutcome> {
+    let responses = String::from_utf8(journal(directory))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|record| record["record_type"] == "dispatch_response")
+        .collect::<Vec<_>>();
+    assert_eq!(responses.len(), 1, "{responses:?}");
+    serde_json::from_value::<ledger::DispatchResponse>(responses[0]["response"].clone())
+        .unwrap()
+        .outcome
+}
+
+fn assert_journaled_clean_create(directory: &std::path::Path) {
+    let outcome = journaled_outcome(directory).expect("the POST answer was parsed and journaled");
+    assert_eq!(outcome.counters().created, 1);
+    assert!(import_outcome_is_clean(Some(&outcome)));
 }
 
 fn server_at(address: std::net::SocketAddr, directory: &std::path::Path) -> Server {
@@ -290,6 +315,7 @@ async fn an_approved_post_sends_exactly_the_request_its_intent_recorded() {
     assert!(observed.len() > post_at, "{response}");
 
     let intent = dispatch_intent(directory.path());
+    assert_journaled_clean_create(directory.path());
     let recorded_sha = intent["native_request_sha256"].as_str().unwrap();
     let recorded_id = intent["native_remote_id"].as_str().unwrap();
     assert_eq!(observed[post_at].request_body_sha256, recorded_sha);
@@ -389,6 +415,7 @@ async fn the_dispatch_intent_is_journaled_before_the_post_is_received() {
     assert!(!while_held.iter().any(|kind| kind == "dispatch_response"));
     let observed = sent(simulator);
     assert!(observed.len() > post_at);
+    assert_journaled_clean_create(directory.path());
 }
 
 /// A dispatch admission that fails stops the send. While the approval is
@@ -609,6 +636,7 @@ async fn each_bank_type_posts_the_request_its_intent_recorded() {
         assert_eq!(observed.len(), post_at + 1, "{type_name}: {response}");
 
         let intent = dispatch_intent(directory.path());
+        assert_journaled_clean_create(directory.path());
         let recorded_sha = intent["native_request_sha256"].as_str().unwrap();
         let remote_id = Uuid::parse_str(intent["native_remote_id"].as_str().unwrap()).unwrap();
         assert_eq!(
@@ -680,6 +708,7 @@ async fn a_three_entry_receipt_posts_the_request_its_intent_recorded() {
     let observed = sent(simulator);
     assert_eq!(observed.len(), post_at + 1, "{response}");
     let intent = dispatch_intent(directory.path());
+    assert_journaled_clean_create(directory.path());
     let recorded_sha = intent["native_request_sha256"].as_str().unwrap();
     assert_eq!(observed[post_at].request_body_sha256, recorded_sha);
     let remote_id = Uuid::parse_str(intent["native_remote_id"].as_str().unwrap()).unwrap();
@@ -920,7 +949,7 @@ async fn located_after(marks_after: String) -> Value {
 
 async fn located_after_response(post_response: String, marks_after: String) -> Value {
     let mut plans = before_approval();
-    plans.extend(after_approval(xml(post_response)));
+    plans.extend(after_approval(xml(post_response.clone())));
     plans.push(xml(marks_after));
     let simulator = SequenceSimulator::spawn(plans).unwrap();
     let directory = tempfile::tempdir().unwrap();
@@ -936,6 +965,15 @@ async fn located_after_response(post_response: String, marks_after: String) -> V
     assert_eq!(
         dispatch_intent(directory.path())["record_type"],
         "dispatch_intent"
+    );
+    let created = parse_import_outcome(&post_response)
+        .expect("the POST answer parses")
+        .counters()
+        .created;
+    assert_eq!(
+        journaled_outcome(directory.path()).map(|outcome| outcome.counters().created),
+        Some(created),
+        "the journaled outcome is the parsed POST answer"
     );
     response["structuredContent"]["result"]["post_location"].clone()
 }
@@ -1030,6 +1068,7 @@ async fn the_response_is_journaled_before_the_location_snapshot_is_answered() {
         "{while_held:?} {response}"
     );
     let _ = sent(simulator);
+    assert_journaled_clean_create(directory.path());
     assert_eq!(
         response["structuredContent"]["result"]["post_location"]["state"], "target_only",
         "{response}"
@@ -1100,4 +1139,95 @@ async fn a_post_whose_response_cannot_be_journaled_still_reports_where_it_landed
         result["post_location"]["state"], "target_only",
         "{response}"
     );
+}
+
+/// The simulated POST answer every test above posts against must be one Tally
+/// actually sends, and must parse as exactly one clean create. When it did not
+/// parse, every test here ran the post with no parsed outcome, so none of them
+/// exercised the clean-success path.
+#[test]
+fn the_simulated_post_answer_parses_as_one_clean_create() {
+    let outcome = parse_import_outcome(&created_one()).expect("the POST answer parses");
+    assert_eq!(outcome.counters().created, 1);
+    assert!(import_outcome_is_clean(Some(&outcome)));
+}
+
+/// A Journal Bridge posted live (bridge#582's lab qualification), as its
+/// export was captured: `native-namespaced-journal`. The batch below is the
+/// one that produced it, so a readback serving this capture is the post's own
+/// voucher, attributed by its `[BRIDGE:…]` marker.
+fn captured_posted_journal() -> String {
+    captured(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-namespaced-journal.utf16le.xml"
+    ))
+}
+
+fn saved_captured_batch(server: &Server) -> Value {
+    let origin = super::super::super::canonical_loopback_origin(&server.settings.endpoint).unwrap();
+    let mut line: ImportLedgerLine = serde_json::from_value(json!({
+        "batch_id":"bridge-6c79872c-aab6-4be5-a181-18182c8148be", "identity_scheme":"batch_v1",
+        "company_guid":GUID,
+        "endpoint_origin":origin,
+        "company":{"name":"WR2 Unicode Lab","guid":GUID,"company_number":"100004","books_from":"20260401"},
+        "txn_ids":["BRIDGE_MCP_LIVE_20260906_A1"],"date_from":"20260907","date_to":"20260907",
+        "sha256":"", "built_at":"2026-09-06T21:40:26.641Z", "status":"built",
+        "pre_import_mark":{"kind":"company_high_water","value":8,"master_value":7},
+        "vouchers":[{"bridge_txn_id":"BRIDGE_MCP_LIVE_20260906_A1","date":"20260907",
+            "voucher_type":"Journal","narration":"Bridge MCP batch namespace qualification",
+            "reference":null,"voucher_number":null,
+            "entries":[{"ledger":"Bridge Nested Debtor WR4","amount":"12.61","side":"Dr"},
+                {"ledger":"Cash","amount":"12.61","side":"Cr"}]}]
+    }))
+    .unwrap();
+    let rendered = render_import_xml("WR2 Unicode Lab", &line.vouchers, &line.batch_id);
+    line.sha256 = sha256_hex(rendered.as_bytes());
+    server.append_import_ledger(&line).unwrap();
+    fs::write(
+        server
+            .imports_dir()
+            .unwrap()
+            .join(format!("{}.xml", line.batch_id)),
+        rendered,
+    )
+    .unwrap();
+    json!({"company_guid":GUID,"batch_id":line.batch_id})
+}
+
+/// The whole native post, end to end: absent before, one clean create, the
+/// location snapshot, then the readback finds the post's own voucher. This is
+/// the only simulator test that reaches `posted_verified`; the others stop at
+/// the POST, so their final result is the readback failing for want of plans.
+#[tokio::test]
+async fn a_native_post_reads_back_as_posted_verified() {
+    let mut plans = before_approval();
+    plans.extend(after_approval(xml(created_one())));
+    plans.push(xml(company_marks(11, 50, "WR2 Unicode Lab")));
+    // The readback: the same verification read the pre-post check made, now
+    // serving the captured voucher.
+    plans.extend(probe());
+    plans.extend(verified_company());
+    plans.extend(paired(marks()));
+    plans.extend(paired(captured_posted_journal()));
+    plans.extend(paired(captured_posted_journal()));
+    plans.extend(probe());
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let args = saved_captured_batch(&server);
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    let _ = sent(simulator);
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(response["isError"], json!(false), "{response}");
+    assert_eq!(result["dispatch"]["state"], "posted_verified", "{response}");
+    assert_eq!(result["counts"]["posted_verified"], 1, "{response}");
+    assert_eq!(
+        result["post_location"]["state"], "target_only",
+        "{response}"
+    );
+    assert_journaled_clean_create(directory.path());
 }
