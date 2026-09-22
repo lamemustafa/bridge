@@ -63,14 +63,14 @@ jobs:
           fi
 
           changed_files="$(git diff --name-only "$base" "$GITHUB_SHA")"
-          if printf '%s\n' "$changed_files" | grep -Eq '^(\.github/workflows/ci\.yml|\.github/actions/setup-windows-native/|rust-toolchain\.toml|src-tauri/|tools/)'; then
+          if printf '%s\n' "$changed_files" | grep -Eq '^(\.github/workflows/|\.github/actions/setup-windows-native/|rust-toolchain\.toml|src-tauri/|tools/|scripts/package-mcpb\.mjs|scripts/check-no-test-seam(\.test)?\.mjs)'; then
             echo 'native=true' >> "$GITHUB_OUTPUT"
           else
             echo 'native=false' >> "$GITHUB_OUTPUT"
           fi
 
           # tools/ is deliberately excluded: it is not shipped in the bundle, which validates the artifact and its resources.
-          if printf '%s\n' "$changed_files" | grep -Eq '^(\.github/workflows/ci\.yml|\.github/actions/setup-windows-native/|packaging/mcpb/|package\.json|pnpm-lock\.yaml|\.node-version|vite\.config\.ts|tsconfig\.json|postcss\.config\.js|index\.html|src/|src-tauri/(src/|crates/|Cargo\.lock|Cargo\.toml|.*/Cargo\.toml|tauri\.conf\.json|build\.rs|icons/)|LICENSE$|NOTICE$|THIRD_PARTY_LICENSES\.txt$|THIRD_PARTY_LICENSES_RUST\.txt$|packaging/pdfium/|scripts/(fetch-pdfium(\.test)?\.py|capture-package-log(\.test)?\.py|check-mcpb-bundle(\.test)?\.py|package-mcpb\.mjs|check-license-metadata\.mjs|check-dependency-inventory\.mjs|check-windows-bundle-resources\.ps1|check-macos-bundle-resources(\.mutation)?\.mjs)$)'; then
+          if printf '%s\n' "$changed_files" | grep -Eq '^(\.github/workflows/ci\.yml|\.github/actions/setup-windows-native/|packaging/mcpb/|package\.json|pnpm-lock\.yaml|\.node-version|vite\.config\.ts|tsconfig\.json|postcss\.config\.js|index\.html|src/|src-tauri/(src/|crates/|Cargo\.lock|Cargo\.toml|.*/Cargo\.toml|tauri\.conf\.json|build\.rs|icons/)|LICENSE$|NOTICE$|THIRD_PARTY_LICENSES\.txt$|THIRD_PARTY_LICENSES_RUST\.txt$|packaging/pdfium/|scripts/(fetch-pdfium(\.test)?\.py|capture-package-log(\.test)?\.py|check-mcpb-bundle(\.test)?\.py|package-mcpb\.mjs|check-license-metadata\.mjs|check-dependency-inventory\.mjs|check-windows-bundle-resources\.ps1|check-macos-bundle-resources(\.mutation)?\.mjs|check-no-test-seam(\.test)?\.mjs)$|\.cargo/|src-tauri/\.cargo/)'; then
             echo 'bundle=true' >> "$GITHUB_OUTPUT"
           else
             echo 'bundle=false' >> "$GITHUB_OUTPUT"
@@ -391,6 +391,12 @@ jobs:
           cargo test --locked --manifest-path src-tauri/Cargo.toml -p bridge-bank-statement --no-fail-fast -- --ignored
           cargo test --locked --manifest-path src-tauri/Cargo.toml -p bridge --lib --no-fail-fast -- --ignored bank_statement a_parsed_statement_builds_an_import_file_by_proposals_id
       # Nextest does not execute doctests. Keep these as a separate required step.
+      # bridge#583: the test-only approval seam must be visible to the scan
+      # that proves shipped binaries lack it. This reuses the unit-test build
+      # above and fails if that executable does not hold the seam's marker.
+      - name: Prove the approval-seam scan sees a test build
+        shell: bash
+        run: node scripts/check-no-test-seam.mjs --test-harness
       - name: Test native workspace doctests
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml --workspace --doc --no-fail-fast
       - name: Test Tally qualification tools workspace
@@ -588,6 +594,20 @@ jobs:
       # tauri build uses --bins, including the auto-discovered bridge_mcp.
       # Stage that fresh release binary instead of rebuilding without Tauri's
       # custom-protocol feature and native build environment.
+      # bridge#583: no shipped executable may hold the test-only approval seam.
+      # tauri build already ran this as its beforeBundleCommand; it is repeated
+      # here on the exact files uploaded, and on the release-profile unit-test
+      # executable as the positive control that the optimiser keeps the marker.
+      - name: Prove shipped executables lack the test-only approval seam
+        shell: bash
+        run: |
+          set -euo pipefail
+          ext="${{ runner.os == 'Windows' && '.exe' || '' }}"
+          node scripts/check-no-test-seam.mjs "src-tauri/target/release/bridge$ext" "src-tauri/target/release/bridge_mcp$ext"
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            node scripts/check-no-test-seam.mjs src-tauri/target/release/bundle/macos
+          fi
+          node scripts/check-no-test-seam.mjs --test-harness --release
       - name: Stage host MCPB binary, PDFium and legal resources
         shell: bash
         run: >-
