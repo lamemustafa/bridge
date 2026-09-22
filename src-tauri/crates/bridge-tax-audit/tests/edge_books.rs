@@ -21,11 +21,13 @@ use bridge_tax_audit::book::{
 };
 use bridge_tax_audit::canonical::canonical_test_result;
 use bridge_tax_audit::compare::compare;
+use bridge_tax_audit::documents::traces_documents_from_json;
 use bridge_tax_audit::read::Window;
 use bridge_tax_audit::rules::Rules;
 use bridge_tax_audit::{
     cash_book_integrity, creditor_ageing_43bh, ledger_scrutiny, stale_balances_41_1,
-    statutory_dues_43b, tds_payees, trial_balance, TdsConfig,
+    statutory_dues_43b, tds_payees, tds_tcs_26as, trial_balance, twentysixas_receipts,
+    Tds26asConfig, TdsConfig,
 };
 use serde_json::Value;
 
@@ -150,6 +152,7 @@ fn build(s: &Value) -> Book {
                     })
                     .collect(),
                 narration: text("narration", ""),
+                party_field: text("party", ""),
                 masterid: typed(v, "masterid", false, "text", |m| {
                     m.as_str().map(str::to_string)
                 }),
@@ -276,6 +279,24 @@ fn tds_config(s: &Value) -> TdsConfig {
     }
 }
 
+/// The `[tds_tcs_26as]` values `parity/edge_golden.py` passes both 26AS tests.
+fn tds_26as_config(s: &Value) -> Tds26asConfig {
+    let set = |key: &str| strs(&s[key]).into_iter().collect();
+    Tds26asConfig {
+        tds_ledgers: set("tds_ledgers"),
+        tcs_ledgers: set("tcs_ledgers"),
+        advance_tax_ledgers: set("advance_tax_ledgers"),
+        deductor_aliases: s["deductor_aliases"]
+            .as_object()
+            .map(|o| {
+                o.iter()
+                    .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_string()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
 /// Build the book, run every test the spec names, and compare each whole dump with the reference's.
 fn check(name: &str) {
     let s = spec(name);
@@ -358,6 +379,28 @@ fn check(name: &str) {
                 assert!(diffs.is_empty(), "{name} {test}:\n{}", diffs.join("\n"));
                 continue;
             }
+            "twentysixas_receipts" => {
+                let docs = traces_documents_from_json(&s).unwrap();
+                let aliases = tds_26as_config(&s).deductor_aliases;
+                let r = twentysixas_receipts::run(&book, &rules, &docs.form26as, &aliases).unwrap();
+                let c = twentysixas_receipts::check_invariants(&book, &docs.form26as, &r).unwrap();
+                (r, c)
+            }
+            "tds_tcs_26as" => {
+                let docs = traces_documents_from_json(&s).unwrap();
+                let r = tds_tcs_26as::run(
+                    &book,
+                    &rules,
+                    &period(&s),
+                    &docs.form26as,
+                    &docs.ais,
+                    &docs.tis,
+                    &tds_26as_config(&s),
+                )
+                .unwrap();
+                let c = tds_tcs_26as::check_invariants(&book, &docs.form26as, &r).unwrap();
+                (r, c)
+            }
             other => panic!("{name}: no edge dispatch for {other} (EDGE_TESTS: {EDGE_TESTS:?})"),
         };
         let rust = canonical_test_result(&book, &result, Some(module_check)).unwrap();
@@ -369,14 +412,16 @@ fn check(name: &str) {
 
 /// The tests an edge book may name: the arms of `check` above, and exactly the keys of
 /// `parity/edge_golden.py`'s `runners` (`edge_runners_agree_across_the_two_sides`).
-const EDGE_TESTS: [&str; 7] = [
+const EDGE_TESTS: [&str; 9] = [
     "cash_book_integrity",
     "creditor_ageing_43bh",
     "ledger_scrutiny",
     "stale_balances_41_1",
     "statutory_dues_43b",
     "tds_payees",
+    "tds_tcs_26as",
     "trial_balance",
+    "twentysixas_receipts",
 ];
 
 /// Synthetic goldens other than `synthetic.<id>.json`, each read by a named test:
@@ -542,4 +587,245 @@ fn mistyped_voucher_keys_are_refused() {
         .is_err();
         assert!(refused, "masterid {masterid} was not refused");
     }
+}
+
+/// The 26AS module invariants catch what a correct run never produces, so each is driven here with a
+/// tampered result: TR-2 (a supply figure's evidence naming a Part VI row) and TT-4 (a TDS match
+/// pair's evidence naming a Part VI row). The untampered `tds_tcs_26as` run is clean, its control;
+/// `each_26as_invariant_fires_on_its_own_tampering` shows the untampered receipts run raises no
+/// TR-2.
+#[test]
+fn the_26as_invariants_catch_a_row_of_the_wrong_part() {
+    let s = spec("tds26as_receipts");
+    let (book, rules) = (build(&s), crate::rules(&s));
+    let docs = traces_documents_from_json(&s).unwrap();
+    let aliases = tds_26as_config(&s).deductor_aliases;
+    let mut r = twentysixas_receipts::run(&book, &rules, &docs.form26as, &aliases).unwrap();
+    let part_vi = docs.form26as.iter().find(|a| a.part == "VI").unwrap();
+    let vi_id = format!("{}#{}", part_vi.doc, part_vi.row);
+    let supply = r
+        .figures
+        .iter_mut()
+        .find(|f| f.id.starts_with("twentysixas_receipts.supply_26as_amount_"))
+        .unwrap();
+    let doc = supply
+        .evidence
+        .iter_mut()
+        .find(|e| e.kind == "document_row")
+        .unwrap();
+    doc.id = vi_id.clone();
+    let v = twentysixas_receipts::check_invariants(&book, &docs.form26as, &r).unwrap();
+    assert!(
+        v.iter()
+            .any(|m| m.starts_with("TR-2:") && m.contains("Part VI row")),
+        "{v:?}"
+    );
+
+    let s = spec("tds26as_matching");
+    let (book, rules) = (build(&s), crate::rules(&s));
+    let docs = traces_documents_from_json(&s).unwrap();
+    let cfg = tds_26as_config(&s);
+    let mut r = tds_tcs_26as::run(
+        &book,
+        &rules,
+        &period(&s),
+        &docs.form26as,
+        &docs.ais,
+        &docs.tis,
+        &cfg,
+    )
+    .unwrap();
+    assert!(tds_tcs_26as::check_invariants(&book, &docs.form26as, &r)
+        .unwrap()
+        .is_empty());
+    let part_vi = docs.form26as.iter().find(|a| a.part == "VI").unwrap();
+    let pair = r
+        .figures
+        .iter_mut()
+        .find(|f| f.id.starts_with("tds_tcs_26as.match_pair_tds_"))
+        .unwrap();
+    let doc = pair
+        .evidence
+        .iter_mut()
+        .find(|e| e.kind == "document_row")
+        .unwrap();
+    doc.id = format!("{}#{}", part_vi.doc, part_vi.row);
+    let v = tds_tcs_26as::check_invariants(&book, &docs.form26as, &r).unwrap();
+    assert!(
+        v.iter()
+            .any(|m| m.starts_with("TT-4:") && m.contains("(kind tds) matches a 26AS part-VI row")),
+        "{v:?}"
+    );
+}
+
+/// Each remaining 26AS module invariant fires on a result tampered the one way it guards against,
+/// and only there: the untampered runs are the control (clean for `tds_tcs_26as`; for
+/// `twentysixas_receipts`, nothing beyond the TR-4 missing-ledger report that book is built to
+/// raise), and each tampering must add a violation matching its own check.
+#[test]
+fn each_26as_invariant_fires_on_its_own_tampering() {
+    use bridge_tax_audit::findings::{TestResult, Value as V};
+    fn int(f: &bridge_tax_audit::findings::Figure) -> i64 {
+        match f.value {
+            V::Int(n) => n,
+            _ => panic!("{} is not an integer", f.id),
+        }
+    }
+    fn by_prefix<'a>(
+        r: &'a mut TestResult,
+        prefix: &str,
+    ) -> impl Iterator<Item = &'a mut bridge_tax_audit::findings::Figure> {
+        let prefix = prefix.to_string();
+        r.figures
+            .iter_mut()
+            .filter(move |f| f.id.starts_with(&prefix))
+    }
+
+    let s = spec("tds26as_receipts");
+    let (book, rules) = (build(&s), crate::rules(&s));
+    let docs = traces_documents_from_json(&s).unwrap();
+    let aliases = tds_26as_config(&s).deductor_aliases;
+    let clean = twentysixas_receipts::run(&book, &rules, &docs.form26as, &aliases).unwrap();
+    let check =
+        |r: &TestResult| twentysixas_receipts::check_invariants(&book, &docs.form26as, r).unwrap();
+    let base = check(&clean);
+    assert!(
+        !base.is_empty()
+            && base
+                .iter()
+                .all(|m| m.starts_with("TR-4:") && m.contains("no resolvable ledger")),
+        "{base:?}"
+    );
+    let fires = |tamper: &dyn Fn(&mut TestResult), needle: &str| {
+        let mut r = clean.clone();
+        tamper(&mut r);
+        let added: Vec<String> = check(&r)
+            .into_iter()
+            .filter(|m| !base.contains(m))
+            .collect();
+        assert!(
+            added.iter().any(|m| m.contains(needle)),
+            "{needle}: {added:?}"
+        );
+    };
+    let p = "twentysixas_receipts.";
+    fires(
+        &|r| {
+            let f = by_prefix(r, &format!("{p}supply_26as_amount_"))
+                .next()
+                .unwrap();
+            f.value = V::Int(int(f) + 1);
+        },
+        "but the sum of its own referenced 26AS rows is",
+    );
+    fires(
+        &|r| {
+            let f = by_prefix(r, &format!("{p}supply_26as_amount_"))
+                .next()
+                .unwrap();
+            let e = f
+                .evidence
+                .iter_mut()
+                .find(|e| e.kind == "document_row")
+                .unwrap();
+            e.id = "form26as:nowhere#0".to_string();
+        },
+        "evidence form26as:nowhere#0 does not resolve to a Form 26AS row",
+    );
+    fires(
+        &|r| {
+            let row = by_prefix(r, &format!("{p}supply_26as_amount_"))
+                .next()
+                .unwrap()
+                .evidence
+                .iter()
+                .find(|e| e.kind == "document_row")
+                .unwrap()
+                .clone();
+            by_prefix(r, &format!("{p}interest_26as_amount_"))
+                .next()
+                .unwrap()
+                .evidence
+                .push(row);
+        },
+        "TR-3: 26AS row",
+    );
+    fires(
+        &|r| {
+            let resolvable = by_prefix(r, &format!("{p}supply_books_amount_"))
+                .find(|f| {
+                    !base
+                        .iter()
+                        .any(|m| m.contains(&format!("{} carries no", f.id)))
+                })
+                .unwrap();
+            resolvable.value = V::Int(int(resolvable) + 1);
+        },
+        "but a fresh population walk for",
+    );
+
+    let s = spec("tds26as_matching");
+    let (book, rules) = (build(&s), crate::rules(&s));
+    let docs = traces_documents_from_json(&s).unwrap();
+    let clean = tds_tcs_26as::run(
+        &book,
+        &rules,
+        &period(&s),
+        &docs.form26as,
+        &docs.ais,
+        &docs.tis,
+        &tds_26as_config(&s),
+    )
+    .unwrap();
+    let check = |r: &TestResult| tds_tcs_26as::check_invariants(&book, &docs.form26as, r).unwrap();
+    assert!(check(&clean).is_empty());
+    for (name, needle) in [
+        ("twentysixas_agg_count", "!= twentysixas_agg_count"),
+        ("books_claim_count", "!= books_claim_count"),
+        (
+            "twentysixas_only_unclassified_count",
+            "TT-2: twentysixas_only_unclassified_count = 1 (must be zero)",
+        ),
+        (
+            "books_only_unclassified_count",
+            "TT-2: books_only_unclassified_count = 1 (must be zero)",
+        ),
+        (
+            "books_tds_ledger_movement_paise",
+            "TT-3: books_tds_ledger_movement_paise",
+        ),
+    ] {
+        let mut r = clean.clone();
+        let f = r
+            .figures
+            .iter_mut()
+            .find(|f| f.id == format!("tds_tcs_26as.{name}"))
+            .unwrap();
+        f.value = V::Int(int(f) + 1);
+        let v = check(&r);
+        assert!(v.iter().any(|m| m.contains(needle)), "{name}: {v:?}");
+    }
+}
+
+/// A TIS category given twice would repeat a figure id: the reference raises, and so does this.
+#[test]
+fn a_repeated_tis_category_is_refused() {
+    let s = spec("tds26as_matching");
+    let (book, rules) = (build(&s), crate::rules(&s));
+    let mut docs = traces_documents_from_json(&s).unwrap();
+    let mut again = docs.tis[0].clone();
+    again.row = 99;
+    docs.tis.push(again);
+    let Err(err) = tds_tcs_26as::run(
+        &book,
+        &rules,
+        &period(&s),
+        &docs.form26as,
+        &docs.ais,
+        &docs.tis,
+        &tds_26as_config(&s),
+    ) else {
+        panic!("a repeated TIS category is refused");
+    };
+    assert!(format!("{err}").contains("would repeat"), "{err}");
 }

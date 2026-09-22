@@ -396,3 +396,29 @@ fn a_voucher_narration_is_read_and_stripped() {
     assert_eq!(narration("CS/1"), "Counter sale  week 1");
     assert_eq!(narration("R/1"), "Synthetic voucher R/1");
 }
+
+/// A voucher's PARTYLEDGERNAME reaches the book Python-stripped, as the reference's adapter reads
+/// it (`_t(v, "PARTYLEDGERNAME")`); a voucher without one reads empty.
+#[test]
+fn a_voucher_party_field_is_read_and_stripped() {
+    let scratch = common::ScratchRead::new("party-field");
+    scratch.edit_part(
+        "vouchers-2025-04-01",
+        "<NARRATION TYPE=\"String\">Synthetic voucher CS/1</NARRATION>",
+        "<NARRATION TYPE=\"String\">Synthetic voucher CS/1</NARRATION>\
+         <PARTYLEDGERNAME TYPE=\"String\"> \t Pinecrest Builders \n</PARTYLEDGERNAME>",
+        true,
+    );
+    let e = common::engagement(&scratch.dir, false);
+    let book = bridge_tax_audit::load_book(&e).unwrap();
+    let party = |number: &str| {
+        book.vouchers
+            .iter()
+            .find(|v| v.number == number)
+            .unwrap_or_else(|| panic!("{number}"))
+            .party_field
+            .clone()
+    };
+    assert_eq!(party("CS/1"), "Pinecrest Builders");
+    assert_eq!(party("R/1"), "");
+}

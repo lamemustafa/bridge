@@ -123,7 +123,6 @@ def main() -> int:
         + rust_ranges("PY_DECIMAL_NON_ASCII", ranges(decimals))
         + "\n/// Code points Python's `str.isprintable()` rejects (every code point measured; `repr()`\n"
         "/// escapes them). Surrogates are included, though a Rust `char` is never one.\n"
-        + "#[cfg_attr(not(test), allow(dead_code))] // first caller: batch C2 (#596)\n"
         + rust_ranges("PY_NOT_PRINTABLE", not_printable)
     )
     (ROOT / "src" / "text_tables.rs").write_text(out, encoding="utf-8")

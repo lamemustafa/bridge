@@ -103,3 +103,17 @@ acceptance_lag_days = 3
 [tds.payee_aliases]
 "Coastal Freight Carriers" = "Coastal-Bayside carrier group"
 "Bayside Cargo Logistics" = "Coastal-Bayside carrier group"
+
+# tds_tcs_26as and twentysixas_receipts only (invented): all four keys are REQUIRED once the table
+# exists, as the reference engine's tds_tcs_26as_config requires them. The synthetic read has no
+# TDS/TCS ledger, so the role ledger lists are empty; deductor_aliases maps invented TAN strings
+# (deliberately not TAN-shaped) to two debtors, so twentysixas_receipts compares their Form 26AS
+# amounts with the books. The rows themselves are synthetic-traces-documents.json.
+[tds_tcs_26as]
+tds_ledgers = []
+tcs_ledgers = []
+advance_tax_ledgers = []
+
+[tds_tcs_26as.deductor_aliases]
+"TAN-INVENTED-A" = "Pinecrest Builders"
+"TAN-INVENTED-B" = "Harborview Textiles"
