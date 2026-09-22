@@ -19,6 +19,7 @@
 
 mod compute;
 mod date;
+mod ledger_currency;
 mod model;
 mod request;
 mod wire;
@@ -27,6 +28,10 @@ pub use compute::{
     age_in_days, compute_native_outstandings, NativeGroupSnapshot, NativeMasterSnapshot,
 };
 pub use date::{parse_native_display_date, NativeDisplayDateRole};
+pub use ledger_currency::{
+    classify_ledger_currencies, BaseCurrencyName, ForeignCurrencyLedger, LedgerCurrencies,
+    LedgerCurrencyRefusal,
+};
 pub use model::{
     AgeingAnchor, CompanyCurrency, LedgerSnapshotEntry, NativeBillRow, NativeOutstandingsError,
     NativeOutstandingsResult, NativeOverdueCrosscheck, PartyResidual,

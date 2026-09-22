@@ -819,6 +819,8 @@ fn parse_ledger_row(
     let mut closing_balance = None;
     let mut opening_balance = None;
     let mut bill_wise_on = None;
+    // Outer option: the element was seen; inner: it held text.
+    let mut currency_name: Option<Option<String>> = None;
     let mut response_company_guid = None;
     let mut response_company_guid_seen = false;
     loop {
@@ -868,6 +870,19 @@ fn parse_ledger_row(
                         }
                         bill_wise_on = Some(parse_tally_boolean(&text)?);
                     }
+                    b"CURRENCYNAME" => {
+                        // Verbatim, like PARENT: compared by exact codepoint
+                        // with the base master's NAME (`I₹`, `Rs.`).
+                        let text = read_element_identifier_text(reader, child.name())?;
+                        if currency_name.is_some() {
+                            return Err(NativeOutstandingsError::InvalidResponse(
+                                "ledger_duplicate_currency_name",
+                            ));
+                        }
+                        // Emptiness is judged on the trimmed view, as for
+                        // PARENT; the retained value is verbatim.
+                        currency_name = Some((!text.trim().is_empty()).then_some(text));
+                    }
                     b"BRIDGECOMPANYGUID" => {
                         let text = read_element_text(reader, child.name())?;
                         if std::mem::replace(&mut response_company_guid_seen, true) {
@@ -878,6 +893,13 @@ fn parse_ledger_row(
                         response_company_guid = (!text.is_empty()).then_some(text);
                     }
                     _ => skip_subtree(reader)?,
+                }
+            }
+            Event::Empty(child) if child.name().as_ref().eq_ignore_ascii_case(b"CURRENCYNAME") => {
+                if currency_name.replace(None).is_some() {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "ledger_duplicate_currency_name",
+                    ));
                 }
             }
             Event::Empty(child)
@@ -915,6 +937,7 @@ fn parse_ledger_row(
             bill_wise_on: bill_wise_on.ok_or(NativeOutstandingsError::InvalidResponse(
                 "ledger_bill_wise_flag_missing",
             ))?,
+            currency_name: currency_name.flatten(),
         },
         response_company_guid,
     })

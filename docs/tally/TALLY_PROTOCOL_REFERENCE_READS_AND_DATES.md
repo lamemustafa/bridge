@@ -488,6 +488,50 @@ No fixture in this repository was captured with this FETCH list before this date
 observed shapes (empty and `SHAPELAB-MANUAL-1`/`Yes`/`No`) into an existing captured voucher
 fixture, following §8.2a's own convention for a shape not yet exercised in the committed corpus.
 
+### 8.2d A ledger's `CURRENCYNAME` is the NAME of the Currency master it is kept in — **VERIFIED 2026-09-23; TallyPrime 7.1, synthetic and client-derived books**
+
+**Scope:** TallyPrime 7.1 Silver, licensed, `education_mode: false`. `CURRENCYNAME` appended to the
+`FETCH` of the production `List of Ledgers` snapshot. Two books are captured and committed:
+- `BRIDGE CORPUS FOREX` (INR base plus a `$` master), as `ledgers_currency_forex_live`;
+- `Bridge Billwise Lab` (one master), as `ledgers_currency_single_live`.
+
+Three client-derived lab copies were read the same way, counts only (see "Every ledger carries the
+field" below).
+
+**The field names a master by its NAME, not its ORIGINALNAME.**
+- On FOREX, the `$` ledgers carry `$` and the rupee ledgers carry `I₹`, which is the rupee master's
+  NAME. Its ORIGINALNAME is `₹`.
+- On Billwise every ledger carries `Rs.`, where NAME and ORIGINALNAME are both `Rs.`.
+- The base master's NAME therefore differs by book: `I₹`, `₹` or `Rs.` have been seen. A comparison
+  must use the NAME read from the same book, never a constant.
+
+**The company's own `CURRENCYNAME` is the base master's ORIGINALNAME, not its NAME.** Measured on
+the Company Object export with `CURRENCYNAME` added (not committed): `₹` on FOREX, `Rs.` on
+Billwise. On FOREX that differs from the `I₹` its ledgers carry. The company field identifies the
+base master (bridge#551); ledgers are compared with that master's NAME.
+
+**Every ledger carries the field.** No ledger row in any book read lacked `CURRENCYNAME` or had it
+empty:
+- FOREX: 10 of 10;
+- Billwise: 13 of 13;
+- the client-derived copies: 109 of 109 across three books, each with one master.
+
+On each single-master book every value equals that master's NAME.
+
+**Adding the field changes nothing else.** On FOREX the response was otherwise byte-identical to
+the same request without it. The same holds for the native Trial Balance request
+(`TBALOPENING, DEBITTOTALS, CREDITTOTALS, TBALCLOSING` plus `CURRENCYNAME`): measured on FOREX and
+Billwise, not committed.
+
+**Why it matters.** A foreign-currency ledger's bills arrive from the Bills reports as plain
+amounts, and a zero foreign balance closes as a plain `0.00` (`FOREX_LEDGER_CAPTURE_PROVENANCE.md`).
+Only this field tells such a ledger from a base one.
+
+**Not measured:**
+- whether a book with a single Currency master can hold a ledger in another currency. It is inferred
+  not to, because Tally assigns a ledger its currency from the masters;
+- releases before 7.1.
+
 ---
 
 ### 8.3 GST duty head — the vocabulary is irregular and `TAXTYPE` qualifies it — **VERIFIED 2026-09-12; single instance**
