@@ -1018,9 +1018,9 @@
  {
   "id": "C1-36",
   "by": "author (Lane C)",
-  "what": "tds_payees parity accepts too few figures",
+  "what": "tds_payees parity floor raised above the synthetic dump's 30 figures (proves the registry enforces the floor; lowering it is not observable by design, a floor only refuses)",
   "file": "src/registry.rs",
   "from": "        id: \"tds_payees\",\n        min_figures: 30,",
-  "to": "        id: \"tds_payees\",\n        min_figures: 0,"
+  "to": "        id: \"tds_payees\",\n        min_figures: 31,"
  }
 ]

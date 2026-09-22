@@ -21,6 +21,9 @@ Lane C, 2026-09-22. Every book here is invented; none is a Tally read and none h
   `Duties & Taxes` named with "TDS" in upper, lower and mixed case (one outside that group not
   counted), non-ASCII payee names, and a voucher without a number whose GUID ends in non-ASCII
   characters. Each `golden/edge.tds_payees_*.tds_payees.json` is the reference's dump of that book.
+- `edge-books/tds_payees_mapping.json` pins how a mapping is read: an empty nature maps nothing (so
+  that ledger's credit is a payee), an unknown nature (`194X`) maps the ledger without reporting it
+  (so its credit is not a payee), and a debit line on an unmapped ledger is not a payee.
 - No book exercises a difference between Python's and Rust's lower-casing: the TDS-ledger match is
   on "tds", which only ASCII `T`, `D` and `S` lower-case to, so none is reachable there.
 - They do not establish anything about a real client's books, about reading Tally, or about a
@@ -81,3 +84,5 @@ rules file, whose SHA-256 is unchanged (`src/rules.rs`).
 | `edge.tds_payees_goods_and_cash.tds_payees.json` | 19,985 | `2f3065355f12a1f1733133a801021d61f100cef0af775577a17e5a854a7e7368` | `golden/edge.tds_payees_goods_and_cash.tds_payees.json` |
 | `edge.tds_payees_ledgers_unicode.tds_payees.json` | 22,631 | `876b7c8720dfd7cbabb55a9c05f02accc49ea4b12c84beb68dfdc22c5071fc63` | `golden/edge.tds_payees_ledgers_unicode.tds_payees.json` |
 | `synthetic.tds_payees.json` | 15,588 | `3da41c7a74b5d074c7748f3a2bcc69922d3c2021bc74309ed1e8f771e52c571f` | `golden/synthetic.tds_payees.json` |
+| `tds_payees_mapping.json` | 3,511 | `27acd14da73229f8ed201a3fdad502912dc1ac1b8e3a2a1ee8c8c0f6d11cf774` | `edge-books/tds_payees_mapping.json` |
+| `edge.tds_payees_mapping.tds_payees.json` | 15,027 | `ffbcc931966971d54afdfd4aeed1eab3a08b6c7060b1d1eb517e5cf982f2ba26` | `golden/edge.tds_payees_mapping.tds_payees.json` |
