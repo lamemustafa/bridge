@@ -3,8 +3,9 @@
 //! An engagement config names ledgers and groups by display text: `[roles].cash_groups`,
 //! `[roles].round_off_ledgers`, `[tds].nature_by_ledger`'s and `[tds].payee_aliases`' keys,
 //! `[tds_payees].s194j_category_by_ledger`'s keys, `[loans.loan_ledgers]`'s keys,
-//! `[depreciation].block_by_ledger`'s keys, `[depreciation].dep_expense_ledgers` and
-//! `[partners.*].interest_ledger` -- every location
+//! `[depreciation].block_by_ledger`'s keys, `[depreciation].dep_expense_ledgers`,
+//! `[partners.*].interest_ledger`, `[tds_tcs_26as]`'s three ledger lists and its
+//! `deductor_aliases` values (the keys are TANs) -- every location
 //! this crate's [`Engagement`] reads. Staff rename ledgers between reads, and a name that stops matching used to drop out of
 //! a role silently: the figures moved and nothing said why. [`bind`] is the one place a
 //! configured name meets the Book; every one of the locations above is bound once, before any
