@@ -679,6 +679,8 @@ pub(crate) struct ApprovedImportDispatch {
     pub(crate) body: String,
     pub(crate) response_evidence: RuntimeReadEvidence,
     pub(crate) admission_evidence: RuntimeReadEvidence,
+    /// Every loaded company's change marks, read last before the POST (#574).
+    pub(crate) company_marks_before: String,
 }
 
 /// Commitments to completed runtime source observations, using actual encoded
@@ -943,8 +945,9 @@ pub enum OutstandingsCurrencyAssertion {
 }
 
 /// An INR admission that is inseparable from the company extent observed
-/// during the currency read. Party/ledger masters and MCP outstandings consume
-/// this witness; desktop outstandings retains its explicit operator assertion.
+/// during the currency read. Party/ledger masters, MCP outstandings and the
+/// desktop single-company outstandings read (bridge#604, carrying the
+/// operator's assertion) consume this witness.
 #[derive(Debug, Clone)]
 pub(crate) struct PartyLedgerMasterCurrencyAssertion {
     assertion: OutstandingsCurrencyAssertion,
@@ -1293,6 +1296,16 @@ pub struct UnallocatedParty {
     pub party: String,
     pub amount: ExactDecimal,
     pub direction: ExposureDirection,
+}
+
+/// Why an operator's currency assertion may not be read for a book with
+/// `currency_count` Currency masters ([`TallyRuntime::fetch_operator_outstandings`]).
+fn operator_currency_refusal(currency_count: usize) -> Option<&'static str> {
+    match currency_count {
+        0 => Some("company_currency_probe_failed"),
+        1 => None,
+        _ => Some("company_base_currency_undetermined"),
+    }
 }
 
 fn partial_result(reason: impl Into<OutstandingsPartialReason>) -> OutstandingsLoadResult {
@@ -3160,13 +3173,7 @@ impl TallyRuntime {
         before_dispatch: F,
     ) -> anyhow::Result<ApprovedImportDispatch>
     where
-        A: Fn(
-            &str,
-            &str,
-            &str,
-            Option<&str>,
-            &bridge_tally_protocol::StandardLedgerCatalogBinding,
-        ) -> anyhow::Result<()>,
+        A: Fn(super::approved_import::QueuedAdmission<'_>) -> anyhow::Result<()>,
         F: Fn() -> Result<(), String>,
     {
         let _lease = self.begin_ordinary_read(&config)?;
@@ -3253,8 +3260,9 @@ impl TallyRuntime {
                         with_read_evidence(error.into(), admission_evidence.clone())
                     })?;
                     // Keep duplicate absence as the final source admission. The
-                    // helper retains its required identity/health brackets; no
-                    // unrelated profile or catalogue read follows this verdict.
+                    // helper retains its required identity/health brackets; only
+                    // the company-marks snapshot that aims the POST (#574)
+                    // follows this verdict, and no profile or catalogue read.
                     let (first_read, first_evidence) = fetch_admitted_agent_read(
                         &client,
                         &identity,
@@ -3271,13 +3279,38 @@ impl TallyRuntime {
                     .await
                     .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
                     let admission_evidence = admission_evidence.combine(second_evidence);
-                    recheck_admission(
-                        &first_read.body,
-                        &second_read.body,
-                        &catalogue.body,
-                        groups.as_ref().map(|groups| groups.body.as_str()),
-                        request.ledger_binding(),
-                    )
+                    // The last Tally request before the POST (#574): every
+                    // loaded company's change marks, one unpaired read. The
+                    // import names its company only by name, so the aim is
+                    // confirmed on this snapshot, and only local work (the
+                    // recheck and the durable intent) follows it.
+                    let marks_xml = request.company_marks_request().into_xml();
+                    // The typed refusal is the error itself, with the transport
+                    // failure as context: a context value is not reachable by
+                    // `downcast_ref` on the chain, and a failed read here means
+                    // nothing was sent, never an unknown outcome.
+                    let before_marks = client.post_xml_raw(marks_xml.clone()).await.map_err(|error| {
+                        with_read_evidence(
+                            anyhow::Error::new(
+                                super::approved_import::ApprovedImportAdmissionError::CompanyScopeUnconfirmed,
+                            )
+                            .context(format!("{error:#}")),
+                            admission_evidence.clone(),
+                        )
+                    })?;
+                    let admission_evidence = admission_evidence.combine(RuntimeReadEvidence::single(
+                        &marks_xml,
+                        before_marks.encoded_sha256.clone(),
+                        before_marks.encoded_body.len(),
+                    ));
+                    recheck_admission(super::approved_import::QueuedAdmission {
+                        first: &first_read.body,
+                        second: &second_read.body,
+                        catalogue: &catalogue.body,
+                        groups: groups.as_ref().map(|groups| groups.body.as_str()),
+                        company_marks: &before_marks.text,
+                        ledger_binding: request.ledger_binding(),
+                    })
                     .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
                     before_dispatch().map_err(|error| {
                         with_read_evidence(anyhow::Error::msg(error), admission_evidence.clone())
@@ -3291,8 +3324,33 @@ impl TallyRuntime {
                         body,
                         response_evidence,
                         admission_evidence,
+                        company_marks_before: before_marks.text,
                     })
                 }
+            },
+        )
+        .await
+    }
+
+    /// Every loaded company's change marks, one unpaired read through the
+    /// endpoint queue (#574). Sent after a native post's response has been
+    /// journaled, so a slow or failed read can delay nothing that records the
+    /// post. The request is the same admitted marks request the POST was
+    /// aimed with.
+    pub(crate) async fn read_company_marks_once(
+        &self,
+        config: TallyConfig,
+        request: super::agent_read_request::AgentReadRequest,
+    ) -> anyhow::Result<String> {
+        let _lease = self.begin_ordinary_read(&config)?;
+        let xml = request.into_xml();
+        self.execute(
+            config,
+            ReadOperation::CompanyList,
+            ReadRetryPolicy::SINGLE_ATTEMPT,
+            move |client| {
+                let xml = xml.clone();
+                async move { client.post_xml_raw(xml).await.map(|marks| marks.text) }
             },
         )
         .await
@@ -3367,6 +3425,61 @@ impl TallyRuntime {
             ageing_anchor,
         )
         .await
+    }
+
+    /// The desktop single-company outstandings read, under the INR assertion
+    /// the screen sends: settled by Tally's own currency read, or confirmed by
+    /// the operator for a book with one Currency master that Tally does not
+    /// name INR (bridge#604). It reads the masters itself, whatever the
+    /// screen read before, and refuses without reading any bill:
+    /// - several masters: the book can hold a foreign-currency ledger, whose
+    ///   bills the Bills reports return as plain amounts, indistinguishable
+    ///   from rupees;
+    /// - none (the probe read no master): several cannot be ruled out.
+    ///
+    /// With one master the assertion stands, bound to the extent the currency
+    /// read observed, as the agent read binds its witness. A book that changed
+    /// since that read is the same retryable partial as one that changed
+    /// during the outstandings read.
+    pub(crate) async fn fetch_operator_outstandings(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+        as_of: TallyDate,
+        currency_assertion: OutstandingsCurrencyAssertion,
+        ageing_anchor: OutstandingsAgeingAnchor,
+    ) -> anyhow::Result<OutstandingsLoadResult> {
+        let currency = self
+            .detect_base_currency_with_extent(config.clone(), identity)
+            .await?;
+        if let Some(reason) = operator_currency_refusal(currency.currency_count()) {
+            return Ok(partial_result(reason));
+        }
+        match self
+            .fetch_outstandings_native_with_currency(
+                config,
+                identity,
+                as_of,
+                NativeOutstandingsCurrency::Observed(
+                    currency.bind_party_ledger_master_assertion(currency_assertion),
+                ),
+                ageing_anchor,
+            )
+            .await
+        {
+            Ok((result, _)) => Ok(result),
+            Err(error)
+                if matches!(
+                    error
+                        .chain()
+                        .find_map(|cause| cause.downcast_ref::<PairedReadValidationError>()),
+                    Some(PairedReadValidationError::CurrencyToMasterExtent)
+                ) =>
+            {
+                Ok(partial_result("book_changed_during_read"))
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// MCP monetary reads require the observed currency's company extent;

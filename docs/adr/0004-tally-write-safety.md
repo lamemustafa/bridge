@@ -224,8 +224,20 @@ or an owner decision to amend the requirement instead:
 7. **Write capability in the Passport (row 1).** Decide whether a verified post
    should become observed write evidence, and under what rule.
 8. **Concurrent external changes:** #239 (accepted limitation).
-9. **Aiming by name (scope, "How the write is aimed"), #574.** Narrow or close the gap between the
-   in-queue identity recheck and the POST, or record it as accepted with #239.
+9. **Aiming by name (scope, "How the write is aimed"), #574. Narrowed.** Live on licensed 7.1
+   Silver (2026-09-21/22): a name matching no loaded company fails closed over the gateway
+   whichever company is selected; a rename between build and post is refused at admission; a
+   post into another company lacking one of the voucher's ledgers is rejected by Tally. What
+   remains is a rename, in the moments before the POST, to another loaded company's exact name
+   whose ledgers all overlap. The queue now reads every loaded company's change marks as its last
+   Tally request before the POST and refuses unless exactly one company has the target's GUID
+   and name and none shares its name (`post_company_scope_changed`, or
+   `post_company_scope_unconfirmed` if that read fails). It reads them again right after the
+   POST, once its response is journaled, and reports which companies' voucher marks moved
+   (`post_location` in the result). This flags a possibly misdirected post; concurrent writers on
+   a shared book can make it ambiguous, and it cannot prevent one, because Tally cannot bind an
+   import to a GUID. The interval between that snapshot and the POST, local work only, stays accepted with
+   #239. Locating the voucher inside another company, and removing it, are not built.
 10. **Batch record integrity (scope, "What it can send"), #575. Resolved by #578.** The post
     path now re-checks the saved file's bytes, as the desktop review already did, and both use one
     reader. Residual, by decision: the record and file are trusted local state against anyone who
@@ -270,8 +282,9 @@ without its group read, or a Journal with one, is refused as a wiring fault
 
 The approval names the type in its first line ("Create ONE Payment in …") and
 states which side had to be bank or cash; the dialog title and button are
-type-neutral ("approve one voucher", "Post voucher"). A Journal's queued request
-sequence is unchanged: it carries no group request. Known limits of the preview:
+type-neutral ("approve one voucher", "Post voucher"). A Journal carries no group
+request. (Since #574 every post, a Journal included, also reads the all-company
+marks last before the POST and once after it.) Known limits of the preview:
 it lists entries in the saved order while the posted XML puts debits first, and
 it does not say which ledger becomes the voucher's party (Tally 7.1 Silver read
 the bank ledger back as the party on Payments and Receipts). A preview over the

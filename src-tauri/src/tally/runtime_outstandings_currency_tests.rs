@@ -7,6 +7,12 @@ fn currency_source() -> String {
     ))
 }
 
+fn multi_currency_source() -> String {
+    decode(include_bytes!(
+        "../../crates/bridge-tally-protocol/tests/fixtures/currency_multi_live.utf16le.xml"
+    ))
+}
+
 fn currency_plans(currency: String) -> Vec<ScenarioPlan> {
     let company = xml(companies());
     let extent = xml(extents());
@@ -228,4 +234,189 @@ async fn agent_outstandings_rejects_unadmitted_currency_before_native_read() {
         assert_eq!(evidence.response_sha256, sha256_hex(&response));
         assert_eq!(evidence.bytes, response.len() * 2);
     }
+}
+
+/// The currency read, then a complete native outstandings read on one
+/// unchanged extent, as `agent_outstandings_currency_witness_brackets_native_source`
+/// scripts it with no fault.
+fn currency_then_native_plans(currency: String) -> Vec<ScenarioPlan> {
+    let extent = extents();
+    let mut plans = currency_plans(currency);
+    plans.extend([status(), xml(companies()), xml(companies())]);
+    pair(&mut plans, xml(extent.clone()));
+    for bytes in [
+        include_bytes!("../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ageing-receivable.utf16le.xml").as_slice(),
+        include_bytes!("../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ageing-groups.utf16le.xml").as_slice(),
+        include_bytes!("../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ageing-payable.utf16le.xml").as_slice(),
+        include_bytes!("../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ageing-ledgers.utf16le.xml").as_slice(),
+    ] {
+        pair(&mut plans, xml(decode(bytes)));
+    }
+    pair(&mut plans, xml(extent));
+    plans.extend([xml(companies()), status(), xml(companies())]);
+    plans
+}
+
+async fn operator_outstandings(
+    plans: Vec<ScenarioPlan>,
+) -> (anyhow::Result<OutstandingsLoadResult>, usize) {
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let result = TallyRuntime::default()
+        .fetch_operator_outstandings(
+            TallyConfig {
+                host: simulator.address().ip().to_string(),
+                port: simulator.address().port(),
+            },
+            &identity_for_guid(&companies(), "eebb9a9f-1679-4468-9e8f-814c729674cb"),
+            TallyDate::parse("20260801").unwrap(),
+            OutstandingsCurrencyAssertion::Inr,
+            OutstandingsAgeingAnchor::DueDate,
+        )
+        .await;
+    simulator.cancel();
+    (result, requests_sent(simulator))
+}
+
+/// The requests the client sent. `cancel` wakes the simulator with a
+/// connection of its own, which the simulator records as a cancelled,
+/// unprocessed entry when it was already waiting for the next request; that
+/// entry is the harness's, not a request, and whether it appears depends on
+/// scheduling (it did under load, 15 against 14).
+fn requests_sent(simulator: SequenceSimulator) -> usize {
+    simulator
+        .finish()
+        .unwrap()
+        .iter()
+        .filter(|request| !request.cancelled)
+        .count()
+}
+
+/// bridge#604: the desktop read of an operator's INR assertion reads the
+/// currency masters itself, and refuses a book with several (which can hold a
+/// foreign-currency ledger whose bills Tally returns as plain amounts) or with
+/// none (several not ruled out) before any bill is read. Spare native
+/// responses are queued so that a read past the refusal would be served and
+/// counted.
+#[tokio::test]
+async fn operator_outstandings_refuse_several_or_no_currency_masters_before_any_bill() {
+    let captured = currency_source();
+    let start = captured.find("<CURRENCY ").unwrap();
+    let end = start + captured[start..].find("</CURRENCY>").unwrap() + "</CURRENCY>".len();
+    let mut none = captured.clone();
+    none.replace_range(start..end, "");
+    for (fault, currency, reason) in [
+        // A live capture of a book with `I₹` and `$` masters.
+        (
+            "multiple",
+            multi_currency_source(),
+            "company_base_currency_undetermined",
+        ),
+        ("empty", none, "company_currency_probe_failed"),
+    ] {
+        let (result, requests) = operator_outstandings(currency_then_native_plans(currency)).await;
+        let result = result.unwrap();
+        assert!(
+            matches!(&result, OutstandingsLoadResult::Partial { reason: got, .. } if *got == reason.into()),
+            "{fault}: {result:?}"
+        );
+        // The currency read's 14 requests, and not one more.
+        assert_eq!(requests, 14, "{fault}");
+    }
+}
+
+/// bridge#604: with one Currency master the operator's assertion stands, as
+/// before: a master Tally names INR, and one it does not (the case the
+/// screen's confirmation exists for), both read through to a complete report.
+#[tokio::test]
+async fn operator_outstandings_with_one_currency_master_read_through() {
+    let captured = currency_source();
+    let foreign = captured.replace(
+        "<MAILINGNAME TYPE=\"String\">INR</MAILINGNAME>",
+        "<MAILINGNAME TYPE=\"String\">USD</MAILINGNAME>",
+    );
+    assert_ne!(foreign, captured);
+    for currency in [captured, foreign] {
+        let (result, requests) = operator_outstandings(currency_then_native_plans(currency)).await;
+        assert!(matches!(
+            result.unwrap(),
+            OutstandingsLoadResult::Complete {
+                currency_assertion: OutstandingsCurrencyAssertion::Inr,
+                ..
+            }
+        ),);
+        assert_eq!(requests, 44);
+    }
+}
+
+/// bridge#604: the operator's assertion is bound to the extent the currency
+/// read observed, as the agent read's witness is. A book that changed between
+/// the two reads is the retryable partial a change during the read gives,
+/// before any bill is read.
+#[tokio::test]
+async fn operator_outstandings_refuse_a_book_changed_since_the_currency_read() {
+    let extent = extents();
+    let changed = extent.replace(
+        "<ALTMSTID TYPE=\"Number\"> 224</ALTMSTID>",
+        "<ALTMSTID TYPE=\"Number\"> 225</ALTMSTID>",
+    );
+    assert_ne!(changed, extent);
+    let mut plans = currency_plans(currency_source());
+    plans.extend([status(), xml(companies()), xml(companies())]);
+    pair(&mut plans, xml(changed));
+    // Served only if the read went on past the changed extent.
+    pair(&mut plans, xml(decode(include_bytes!(
+        "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ageing-receivable.utf16le.xml"
+    ))));
+    let (result, requests) = operator_outstandings(plans).await;
+    let result = result.unwrap();
+    assert!(
+        matches!(&result, OutstandingsLoadResult::Partial { reason, .. }
+            if *reason == "book_changed_during_read".into()),
+        "{result:?}"
+    );
+    assert_eq!(requests, 21);
+}
+
+/// bridge#604, through the desktop command's own body: an operator's INR
+/// assertion for a book with several Currency masters comes back as a partial
+/// result, with no working paper, and no bill is read.
+#[tokio::test]
+async fn the_desktop_command_refuses_several_currency_masters_before_any_bill() {
+    let mut plans = vec![xml(companies())];
+    plans.extend(currency_then_native_plans(multi_currency_source()));
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let rows = parse_companies_from_collection(&companies()).unwrap();
+    let row = rows
+        .iter()
+        .find(|row| row.guid.as_deref() == Some("eebb9a9f-1679-4468-9e8f-814c729674cb"))
+        .unwrap();
+    let request: crate::commands::OutstandingsRequest = serde_json::from_value(serde_json::json!({
+        "config": {"host": simulator.address().ip().to_string(), "port": simulator.address().port()},
+        "selected_company": {
+            "display_name": row.name,
+            "company_guid": row.guid,
+            "company_number": row.company_number,
+            "books_from_yyyymmdd": row.books_from,
+        },
+        "currency_assertion": "INR",
+        "as_of_yyyymmdd": "20260801",
+    }))
+    .unwrap();
+    let response = crate::commands::read_screen_outstandings(
+        request,
+        &TallyRuntime::default(),
+        &crate::reports::outstandings_working_paper_store::WorkingPaperExportStore::default(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(&response.result, OutstandingsLoadResult::Partial { reason, .. }
+            if *reason == "company_base_currency_undetermined".into()),
+        "{:?}",
+        response.result
+    );
+    assert!(response.working_paper_export_id.is_none());
+    simulator.cancel();
+    // The company list, then the currency read's 14 requests, and no more.
+    assert_eq!(requests_sent(simulator), 15);
 }
