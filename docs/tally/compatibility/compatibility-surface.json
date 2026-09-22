@@ -551,7 +551,7 @@
     },
     {
       "path": "src-tauri/src/agent_voucher_window.rs",
-      "sha256": "d8165da58a50b1db912294dda6c030c2ed215c15f943f03c1864ffd16e80d89f"
+      "sha256": "47c6962d94100255b2ffa93cbdfadc34830d339482c0ba6cbcb547f946fdfb5c"
     },
     {
       "path": "src-tauri/src/agent_vouchers.rs",
@@ -1102,5 +1102,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "f43bd7cf5bbd8cc2d8362bc05b31d84e0a2530b11977283b9f91f0506e696e53"
+  "manifest_sha256": "5ef14859082b6c3952d66d6ddefbb43ddd2d120410a8debf474119b64c0ac25c"
 }
