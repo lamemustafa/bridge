@@ -975,6 +975,20 @@ mod tests {
         // An opening debit is an advance, never a negative lot.
         let w = walk_creditor(0, 250, &[(1, -100)]).unwrap();
         assert_eq!((w.lots.len(), w.advance, w.opening_remaining), (0, 150, 0));
+        // A nil opening is no lot at all: the reference's walk_creditor(1 Apr, 0, [(6 Apr, -1000)])
+        // gives ([[6 Apr, 1000]], 0, 0).
+        let w = walk_creditor(0, 0, &[(5, -1_000)]).unwrap();
+        assert_eq!(
+            w,
+            Walk {
+                lots: vec![Lot {
+                    day: 5,
+                    paise: 1_000
+                }],
+                advance: 0,
+                opening_remaining: 0
+            }
+        );
     }
 
     #[test]

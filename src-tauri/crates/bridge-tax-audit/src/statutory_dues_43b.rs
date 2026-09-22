@@ -1032,6 +1032,27 @@ mod tests {
         assert_eq!(adv, 30);
     }
 
+    #[test]
+    fn a_period_starting_mid_month_takes_the_opening_lot_from_the_day_before() {
+        // The reference, walk_contribution_due_dates([(16 Apr, 50)], 15, 120, 2 Apr 2025): the day
+        // before the period is 1 April, so the opening lot is April's, due 15 May, and a payment on
+        // 16 April is on time.
+        let (lots, adv) =
+            walk_contribution_due_dates(&[(day("2025-04-16"), 50)], 15, 120, day("2025-04-02"))
+                .unwrap();
+        assert_eq!(lots.len(), 1);
+        assert_eq!(lots[0].due_day_number, day("2025-05-15"));
+        assert_eq!(
+            (
+                lots[0].paid_on_time_paise,
+                lots[0].paid_late_paise,
+                lots[0].remaining_paise
+            ),
+            (50, 0, 70)
+        );
+        assert_eq!(adv, 0);
+    }
+
     /// S43B-1's three reporting branches, which `run()` never reaches (its own figures always carry
     /// their ledgers and match the TB). The expected messages are the reference's own
     /// `check_invariants` on the same hand-made result.
