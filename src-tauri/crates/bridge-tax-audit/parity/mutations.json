@@ -988,8 +988,8 @@
   "by": "author (Lane C)",
   "what": "[tds_tcs_26as] never read",
   "file": "src/lib.rs",
-  "from": "            .get(\"tds_tcs_26as\")\n",
-  "to": "            .get(\"tds_tcs_26as-absent\")\n"
+  "from": "            .get(\"tds_tcs_26as\")\n            .map(|t| -> Result<Tds26asConfig> {",
+  "to": "            .get(\"tds_tcs_26as-absent\")\n            .map(|t| -> Result<Tds26asConfig> {"
  },
  {
   "id": "C2-33",
