@@ -364,8 +364,8 @@ Bridge-built files of those types have been imported and verified.
    Receipt or Contra** using the file workflow above. Sales, purchases, tax,
    inventory and master creation remain unavailable. For a Payment, Receipt or
    Contra, `post_import` classifies every leg again from the ledgers' current
-   parents and the group tree, before approval and inside the queue immediately
-   before posting, and refuses with `import_bank_classification_changed` if any
+   parents and the group tree, before approval and again after approval inside
+   the endpoint queue (before the final duplicate check and the post), and refuses with `import_bank_classification_changed` if any
    leg changed; nothing is sent.
 2. Call `post_import` with the original `company_guid` and `batch_id`.
 3. Review the native dialog's company, endpoint, date, numbering, reference,
@@ -435,7 +435,7 @@ user rather than silently creating or choosing a ledger.
    matching a single saved, admitted batch and its original private file.
 3. Review the company, date, reference, narration, ledger entries and totals.
    Choose **Post Journal**, then review and approve the independent native
-   dialog. The app uses the same validation, dispatch and readback service as
+   dialog (its button reads **Post voucher**). The app uses the same validation, dispatch and readback service as
    MCP. Changing app connection settings cannot redirect an open review.
 4. If an attempt is already recorded or its outcome is uncertain, use
    **Reconcile original batch**. This action only reads and cannot open an

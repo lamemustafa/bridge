@@ -321,6 +321,13 @@ impl Server {
                     )
                 }) {
                     "import_bank_classification_changed"
+                } else if error.chain().any(|cause| {
+                    matches!(
+                        cause.downcast_ref::<ApprovedImportAdmissionError>(),
+                        Some(ApprovedImportAdmissionError::AdmissionInconsistent)
+                    )
+                }) {
+                    "import_post_admission_inconsistent"
                 } else {
                     "import_dispatch_outcome_unknown"
                 };
@@ -494,7 +501,7 @@ fn reconciliation_failure_payload(
 }
 
 fn mark_reconciliation_required(payload: &mut Value) {
-    payload["result"]["error"] = json!({"code":"import_reconciliation_required", "message":"The saved attempt has not been confirmed as the intended new Journal. Reconcile this original batch without resending it."});
+    payload["result"]["error"] = json!({"code":"import_reconciliation_required", "message":"The saved attempt has not been confirmed as the intended new voucher. Reconcile this original batch without resending it."});
 }
 
 fn import_outcome_is_clean(outcome: Option<&bridge_tally_protocol::TallyImportOutcome>) -> bool {
@@ -622,7 +629,7 @@ fn recheck_import_admission(
         }
         // A bank voucher without its group read, or a Journal with one, is a
         // wiring fault; refuse rather than post on half a check.
-        _ => return Err(ApprovedImportAdmissionError::BankClassificationChanged.into()),
+        _ => return Err(ApprovedImportAdmissionError::AdmissionInconsistent.into()),
     }
     Ok(())
 }

@@ -77,7 +77,7 @@ impl DesktopJournalError {
             ),
             "import_post_requires_one_journal" => (
                 "Bridge's desktop review posts one unnumbered Journal, and this saved batch is a different shape.",
-                "Import this file in Tally (Gateway of Tally → Import → Vouchers), then verify it. The desktop posts Journals only: a Payment, Receipt or Contra can be posted from the assistant with voucher posting on, and a batch holding more than one voucher must be imported. The file itself is unchanged and correct.",
+                "Import this file in Tally (Gateway of Tally → Import → Vouchers), then verify it. The desktop app posts Journals only. With voucher posting enabled in the extension settings (off by default), a Payment, Receipt or Contra can be posted from the assistant; otherwise, and for a batch holding more than one voucher, import the file. The file itself is unchanged and correct.",
             ),
             "import_post_numbered_journal_unsupported" => (
                 "Bridge cannot post a Journal file that specifies a voucher number.",

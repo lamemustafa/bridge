@@ -114,6 +114,10 @@ pub(crate) enum ApprovedImportAdmissionError {
     /// approved: a ledger or one of its groups moved (bridge#466 follow-up).
     #[error("import_bank_classification_changed")]
     BankClassificationChanged,
+    /// A bank voucher reached the queue without its group read, or a Journal
+    /// with one: a wiring fault, refused before any request is sent.
+    #[error("import_post_admission_inconsistent")]
+    AdmissionInconsistent,
 }
 
 /// The native approval every real post goes through. Outside this crate's own
