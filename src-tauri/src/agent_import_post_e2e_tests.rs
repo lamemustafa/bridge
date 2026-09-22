@@ -48,6 +48,23 @@ fn marks() -> String {
     )
 }
 
+/// Every loaded company's change marks, shaped as the high-water collection
+/// returns them (a `NAME` attribute per row; measured 2026-09-21). The target
+/// is the captured laboratory company; the other two are invented.
+fn company_marks(target_vouchers: u64, other_vouchers: u64, target_name: &str) -> String {
+    format!(
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+         <COMPANY NAME=\"{target_name}\" RESERVEDNAME=\"\"><GUID>{GUID}</GUID><ALTVCHID>{target_vouchers}</ALTVCHID><ALTMSTID>7</ALTMSTID></COMPANY>\
+         <COMPANY NAME=\"Synthetic Other Lab\" RESERVEDNAME=\"\"><GUID>22222222-2222-4222-8222-222222222222</GUID><ALTVCHID>{other_vouchers}</ALTVCHID><ALTMSTID>3</ALTMSTID></COMPANY>\
+         <COMPANY NAME=\"Synthetic Empty Lab\" RESERVEDNAME=\"\"><GUID>33333333-3333-4333-8333-333333333333</GUID><ALTMSTID>1</ALTMSTID></COMPANY>\
+         </COLLECTION></DATA></BODY></ENVELOPE>"
+    )
+}
+
+fn marks_before() -> ScenarioPlan {
+    xml(company_marks(10, 50, "WR2 Unicode Lab"))
+}
+
 fn xml(body: String) -> ScenarioPlan {
     ScenarioPlan::new(Fixture::SyntheticXml(body))
         .with_encoding(WireEncoding::Utf16Le)
@@ -122,6 +139,7 @@ fn after_approval(post: ScenarioPlan) -> Vec<ScenarioPlan> {
     plans.push(xml(companies()));
     plans.extend(paired(empty_collection()));
     plans.extend(paired(empty_collection()));
+    plans.push(marks_before());
     plans.push(post);
     plans
 }
@@ -493,6 +511,7 @@ fn bank_after_approval(catalogue: String, groups: String, post: ScenarioPlan) ->
     plans.push(xml(companies()));
     plans.extend(paired(empty_collection()));
     plans.extend(paired(empty_collection()));
+    plans.push(marks_before());
     plans.push(post);
     plans
 }
@@ -811,4 +830,124 @@ async fn the_desktop_scope_refuses_a_bank_voucher_before_any_request() {
         refused.payload
     );
     assert!(sent(simulator).is_empty());
+}
+
+// bridge#574: the aim is confirmed on the snapshot sent last before the POST,
+// and where the voucher went is read straight after it.
+
+/// The approved Journal post, with `marks` in place of the snapshot sent last
+/// before the POST. Returns the response, the requests observed, and the
+/// number of requests up to and including that snapshot.
+async fn post_with_marks_before(marks: String) -> (Value, usize, usize, Vec<u8>, Vec<u8>) {
+    let mut plans = before_approval();
+    let mut after = after_approval(xml(created_one()));
+    let marks_at = after.len() - 2;
+    after[marks_at] = xml(marks);
+    let through_marks = plans.len() + marks_at + 1;
+    plans.extend(after);
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let before = journal(directory.path());
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    let observed = sent(simulator).len();
+    (
+        response,
+        observed,
+        through_marks,
+        before,
+        journal(directory.path()),
+    )
+}
+
+#[tokio::test]
+async fn another_company_renamed_to_the_target_refuses_before_the_post() {
+    // The residual #574 case: another loaded company now carries the target's
+    // name, so a post named by SVCURRENTCOMPANY could land in it.
+    let namesake =
+        company_marks(10, 50, "WR2 Unicode Lab").replace("Synthetic Other Lab", "WR2 UNICODE LAB");
+    let (response, observed, through_marks, before, after) = post_with_marks_before(namesake).await;
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"], "post_company_scope_changed",
+        "{response}"
+    );
+    assert_eq!(
+        observed, through_marks,
+        "nothing after the snapshot: {response}"
+    );
+    assert_eq!(appended_kinds(&before, &after), ["verification_status"]);
+}
+
+#[tokio::test]
+async fn the_target_renamed_since_admission_refuses_before_the_post() {
+    let renamed = company_marks(10, 50, "WR2 Unicode Lab Renamed");
+    let (response, observed, through_marks, before, after) = post_with_marks_before(renamed).await;
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"], "post_company_scope_changed",
+        "{response}"
+    );
+    assert_eq!(observed, through_marks, "{response}");
+    assert_eq!(appended_kinds(&before, &after), ["verification_status"]);
+}
+
+#[tokio::test]
+async fn an_unreadable_snapshot_refuses_before_the_post() {
+    // T2's live answer to an unmatched SVCURRENTCOMPANY.
+    let refused = "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>0</STATUS></HEADER><BODY><DATA>\
+                   <LINEERROR>Could not set 'SVCurrentCompany' to 'WR2 Unicode Lab'</LINEERROR>\
+                   </DATA></BODY></ENVELOPE>"
+        .to_string();
+    let (response, observed, through_marks, before, after) = post_with_marks_before(refused).await;
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"], "post_company_scope_unconfirmed",
+        "{response}"
+    );
+    assert_eq!(observed, through_marks, "{response}");
+    assert_eq!(appended_kinds(&before, &after), ["verification_status"]);
+}
+
+/// After the POST, the snapshot says which companies' voucher marks moved,
+/// and the result carries it even when the readback that follows fails.
+async fn located_after(marks_after: String) -> Value {
+    let mut plans = before_approval();
+    plans.extend(after_approval(xml(created_one())));
+    plans.push(xml(marks_after));
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    let _ = sent(simulator);
+    assert_eq!(
+        dispatch_intent(directory.path())["record_type"],
+        "dispatch_intent"
+    );
+    response["structuredContent"]["result"]["post_location"].clone()
+}
+
+#[tokio::test]
+async fn only_the_target_moving_is_reported_as_the_landing() {
+    let located = located_after(company_marks(11, 50, "WR2 Unicode Lab")).await;
+    assert_eq!(located["state"], "target_only", "{located}");
+}
+
+#[tokio::test]
+async fn another_company_moving_instead_is_named_in_the_result() {
+    let located = located_after(company_marks(10, 51, "WR2 Unicode Lab")).await;
+    assert_eq!(located["state"], "suspected_other_company", "{located}");
+    assert_eq!(
+        located["other_companies_moved"][0]["name"],
+        "Synthetic Other Lab"
+    );
 }

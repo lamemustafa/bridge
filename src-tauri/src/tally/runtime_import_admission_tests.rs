@@ -1,5 +1,6 @@
 //! Captured source replies prove queued import admission without a Tally write.
 use super::*;
+use crate::tally::approved_import::QueuedAdmission;
 use crate::tally::{
     agent_read_request::AgentReadRequest,
     approved_import::{ApprovedImport, ApprovedImportAdmissionError},
@@ -105,11 +106,14 @@ fn approved_import(companies: &str, date: &str) -> ApprovedImport {
         ReadOnlyProfile::StandardLedgerCatalogV1 { company: &company }.render(),
     )
     .expect("static catalog read is admitted");
+    // The marks request's bytes are not under test here; the queue sends it
+    // once, last before the POST, and once after (#574).
     ApprovedImport::approved_for_test(
         "<ENVELOPE/>".into(),
         bridge_tally_core::TallyDate::parse(date).unwrap(),
-        ledger_catalogue_request,
+        ledger_catalogue_request.clone(),
         binding,
+        ledger_catalogue_request,
     )
 }
 
@@ -147,6 +151,8 @@ fn queued_plans(
     ]);
     plans.extend(paired(verification.clone(), &opening_companies));
     plans.extend(paired(verification, &opening_companies));
+    // The all-company marks, the last Tally request before the POST (#574).
+    plans.push(company_plan(opening_companies.clone()));
     if let Some(response) = post_response {
         plans.push(company_plan(response));
     }
@@ -234,7 +240,7 @@ async fn queued_education_change_refuses_before_final_absence_reads() {
             },
             &identity(&companies),
             approved_import(&companies, "20260915"),
-            |_, _, _, _, _| Ok(()),
+            |_: QueuedAdmission<'_>| Ok(()),
             move || {
                 guard.store(true, Ordering::Release);
                 Ok(())
@@ -296,7 +302,7 @@ async fn queued_company_refusal_retains_captured_source_and_final_identity_evide
             },
             &identity(&companies),
             approved_import(&companies, "20260901"),
-            |_, _, _, _, _| Ok(()),
+            |_: QueuedAdmission<'_>| Ok(()),
             move || {
                 guard.store(true, Ordering::Release);
                 Ok(())
@@ -367,9 +373,10 @@ async fn queued_catalogue_rename_refuses_before_intent_or_post() {
             },
             &identity(&companies),
             approved_import(&companies, "20260901"),
-            move |_, _, current, _, binding| {
-                assert!(!binding
-                    .matches(current, identity(&companies).display_name(), GUID)
+            move |queued: QueuedAdmission<'_>| {
+                assert!(!queued
+                    .ledger_binding
+                    .matches(queued.catalogue, identity(&companies).display_name(), GUID)
                     .expect("renamed captured catalog remains structurally valid"));
                 Err(ApprovedImportAdmissionError::LedgerIdentityChanged.into())
             },
@@ -389,15 +396,18 @@ async fn queued_catalogue_rename_refuses_before_intent_or_post() {
         "changed master binding precedes intent"
     );
     let observed = simulator.finish().unwrap();
+    // 24 admission requests and the marks snapshot (#574); the refusal
+    // comes after that last read and before the intent and the POST.
     assert_eq!(
         observed.len(),
-        24,
+        25,
         "catalogue refusal precedes intent and POST"
     );
     assert_eq!(
         error.downcast_ref::<RuntimeReadFailure>().unwrap().evidence,
-        expected_queued_evidence(&observed, &responses, true),
-        "captured queued absence and catalogue evidence survive the master-binding refusal"
+        expected_queued_evidence(&observed, &responses, true)
+            .combine(single_observation(&observed, &responses, 24)),
+        "captured queued absence and catalogue evidence survive the master-binding refusal, with the marks snapshot"
     );
 }
 
@@ -429,7 +439,7 @@ async fn queued_import_keeps_admission_separate_from_raw_import_wire() {
             },
             &identity(&companies),
             approved_import(&companies, "20260901"),
-            |_, _, _, _, _| Ok(()),
+            |_: QueuedAdmission<'_>| Ok(()),
             move || {
                 guard.store(true, Ordering::Release);
                 Ok(())
@@ -439,20 +449,25 @@ async fn queued_import_keeps_admission_separate_from_raw_import_wire() {
         .expect("captured admission permits a valid date");
     assert!(dispatched.load(Ordering::Acquire));
     let observed = simulator.finish().unwrap();
-    assert_eq!(observed.len(), 25);
+    // 24 admission requests, the marks snapshot, then the POST. The marks read
+    // after the POST finds no plan and is reported unavailable.
+    assert_eq!(observed.len(), 26);
     assert_eq!(
         dispatch.admission_evidence,
         expected_queued_evidence(&observed, &responses, true)
+            .combine(single_observation(&observed, &responses, 24))
     );
+    assert_eq!(dispatch.company_marks_before, companies);
+    assert_eq!(dispatch.company_marks_after, None);
     assert_eq!(
         dispatch.response_evidence.request_sha256,
-        observed[24].request_body_sha256
+        observed[25].request_body_sha256
     );
     assert_eq!(
         dispatch.response_evidence.response_sha256,
-        sha256_hex(&responses[24])
+        sha256_hex(&responses[25])
     );
-    assert_eq!(dispatch.response_evidence.bytes, responses[24].len());
+    assert_eq!(dispatch.response_evidence.bytes, responses[25].len());
     assert_ne!(
         dispatch.response_evidence.request_sha256,
         dispatch.admission_evidence.request_sha256
@@ -486,9 +501,9 @@ async fn queued_import_refuses_attribution_after_final_profile_and_catalogue_rea
             },
             &identity(&companies),
             approved_import(&companies, "20260901"),
-            move |first, second, _, _, _| {
-                assert_eq!(first, journal.as_str());
-                assert_eq!(second, journal.as_str());
+            move |queued: QueuedAdmission<'_>| {
+                assert_eq!(queued.first, journal.as_str());
+                assert_eq!(queued.second, journal.as_str());
                 Err(ApprovedImportAdmissionError::PreexistingIdentity.into())
             },
             move || {
@@ -507,14 +522,17 @@ async fn queued_import_refuses_attribution_after_final_profile_and_catalogue_rea
         "refusal precedes durable intent"
     );
     let observed = simulator.finish().unwrap();
+    // 24 admission requests and the marks snapshot (#574); the refusal
+    // comes after that last read and before the intent and the POST.
     assert_eq!(
         observed.len(),
-        24,
+        25,
         "final absence refusal precedes intent and import POST"
     );
     assert_eq!(
         error.downcast_ref::<RuntimeReadFailure>().unwrap().evidence,
-        expected_queued_evidence(&observed, &responses, true),
-        "initial mode/company and all three queued source reads survive refusal"
+        expected_queued_evidence(&observed, &responses, true)
+            .combine(single_observation(&observed, &responses, 24)),
+        "initial mode/company and all three queued source reads survive refusal, with the marks snapshot"
     );
 }

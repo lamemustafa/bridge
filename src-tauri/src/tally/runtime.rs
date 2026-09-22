@@ -687,6 +687,10 @@ pub(crate) struct ApprovedImportDispatch {
     pub(crate) body: String,
     pub(crate) response_evidence: RuntimeReadEvidence,
     pub(crate) admission_evidence: RuntimeReadEvidence,
+    /// Every loaded company's change marks just before and just after the
+    /// POST (#574). `None` after means that read failed.
+    pub(crate) company_marks_before: String,
+    pub(crate) company_marks_after: Option<String>,
 }
 
 /// Commitments to completed runtime source observations, using actual encoded
@@ -3172,13 +3176,7 @@ impl TallyRuntime {
         before_dispatch: F,
     ) -> anyhow::Result<ApprovedImportDispatch>
     where
-        A: Fn(
-            &str,
-            &str,
-            &str,
-            Option<&str>,
-            &bridge_tally_protocol::StandardLedgerCatalogBinding,
-        ) -> anyhow::Result<()>,
+        A: Fn(super::approved_import::QueuedAdmission<'_>) -> anyhow::Result<()>,
         F: Fn() -> Result<(), String>,
     {
         let _lease = self.begin_ordinary_read(&config)?;
@@ -3283,13 +3281,33 @@ impl TallyRuntime {
                     .await
                     .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
                     let admission_evidence = admission_evidence.combine(second_evidence);
-                    recheck_admission(
-                        &first_read.body,
-                        &second_read.body,
-                        &catalogue.body,
-                        groups.as_ref().map(|groups| groups.body.as_str()),
-                        request.ledger_binding(),
-                    )
+                    // The last Tally request before the POST (#574): every
+                    // loaded company's change marks, one unpaired read. The
+                    // import names its company only by name, so the aim is
+                    // confirmed on this snapshot, and only local work (the
+                    // recheck and the durable intent) follows it.
+                    let marks_xml = request.company_marks_request().into_xml();
+                    let before_marks = client.post_xml_raw(marks_xml.clone()).await.map_err(|error| {
+                        with_read_evidence(
+                            error.context(
+                                super::approved_import::ApprovedImportAdmissionError::CompanyScopeUnconfirmed,
+                            ),
+                            admission_evidence.clone(),
+                        )
+                    })?;
+                    let admission_evidence = admission_evidence.combine(RuntimeReadEvidence::single(
+                        &marks_xml,
+                        before_marks.encoded_sha256.clone(),
+                        before_marks.encoded_body.len(),
+                    ));
+                    recheck_admission(super::approved_import::QueuedAdmission {
+                        first: &first_read.body,
+                        second: &second_read.body,
+                        catalogue: &catalogue.body,
+                        groups: groups.as_ref().map(|groups| groups.body.as_str()),
+                        company_marks: &before_marks.text,
+                        ledger_binding: request.ledger_binding(),
+                    })
                     .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
                     before_dispatch().map_err(|error| {
                         with_read_evidence(anyhow::Error::msg(error), admission_evidence.clone())
@@ -3299,10 +3317,16 @@ impl TallyRuntime {
                         .post_probe_xml(xml, &mut response_evidence)
                         .await
                         .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
+                    // Where the voucher went, read straight after the response.
+                    // The POST has happened whatever this returns, so a failed
+                    // read is reported as unavailable, never as a failed post.
+                    let after_marks = client.post_xml_raw(marks_xml).await.ok();
                     Ok(ApprovedImportDispatch {
                         body,
                         response_evidence,
                         admission_evidence,
+                        company_marks_before: before_marks.text,
+                        company_marks_after: after_marks.map(|marks| marks.text),
                     })
                 }
             },

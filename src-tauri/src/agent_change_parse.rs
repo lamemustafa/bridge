@@ -4,7 +4,8 @@ use super::*;
 #[path = "agent_company_checkpoint.rs"]
 mod company_checkpoint;
 pub(super) use company_checkpoint::{
-    company_voucher_high_water, parse_company_high_water, parse_company_marks,
+    company_voucher_high_water, parse_all_company_marks, parse_company_high_water,
+    parse_company_marks, LoadedCompanyMarks,
 };
 
 pub(super) fn parse_master_domain_high_water(xml: &str) -> Result<u64, String> {

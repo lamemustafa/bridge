@@ -150,6 +150,8 @@ impl Server {
         let mut accumulated =
             evidence_from_runtime_read(crate::tally::runtime::RuntimeReadEvidence::empty());
         let mut received_response = None;
+        // Where the voucher went, once a POST has been sent (#574).
+        let mut post_location: Option<Value> = None;
         let operation: Result<ToolOutcome, ToolFailure> = async {
             let xml = admit_saved_voucher_integrity(&line, &self.settings.endpoint, scope)?;
             if snapshot.dispatched {
@@ -235,6 +237,10 @@ impl Server {
             };
             let mode = self.qualified_import_profile().await?;
             validate_post_profile_with_evidence(&payload, &mode, &mut accumulated)?;
+            let company_marks_request = crate::tally::agent_read_request::AgentReadRequest::parse(
+                super::super::read_profiles::render_agent_company_high_water(&company.name),
+            )
+            .map_err(|error| error.to_string())?;
             let request = ApprovedImport::confirm(
                 xml,
                 &preview,
@@ -243,6 +249,7 @@ impl Server {
                 ledger_catalogue_request,
                 ledger_binding,
                 group_collection_request,
+                company_marks_request,
             )
             .await?;
             // The cross-process lease starts only after the independent native
@@ -255,16 +262,21 @@ impl Server {
                     self.tally_config(),
                     &identity,
                     request,
-                    |first, second, catalogue, groups, ledger_binding| {
+                    |queued| {
                         recheck_import_admission(
                             &line,
                             identity.company_guid(),
                             &company.name,
-                            first,
-                            second,
-                            catalogue,
-                            groups,
-                            ledger_binding,
+                            queued.first,
+                            queued.second,
+                            queued.catalogue,
+                            queued.groups,
+                            queued.ledger_binding,
+                        )?;
+                        admit_queued_aim(
+                            queued.company_marks,
+                            identity.company_guid(),
+                            &company.name,
                         )
                     },
                     || {
@@ -328,6 +340,20 @@ impl Server {
                     )
                 }) {
                     "import_post_admission_inconsistent"
+                } else if error.chain().any(|cause| {
+                    matches!(
+                        cause.downcast_ref::<ApprovedImportAdmissionError>(),
+                        Some(ApprovedImportAdmissionError::CompanyScopeChanged)
+                    )
+                }) {
+                    "post_company_scope_changed"
+                } else if error.chain().any(|cause| {
+                    matches!(
+                        cause.downcast_ref::<ApprovedImportAdmissionError>(),
+                        Some(ApprovedImportAdmissionError::CompanyScopeUnconfirmed)
+                    )
+                }) {
+                    "post_company_scope_unconfirmed"
                 } else {
                     "import_dispatch_outcome_unknown"
                 };
@@ -341,6 +367,17 @@ impl Server {
                 accumulated.clone(),
                 evidence_from_runtime_read(posted.response_evidence.clone()),
             );
+            post_location = Some(location::classify_post_location(
+                &location::parse_all_company_marks(&posted.company_marks_before)
+                    .unwrap_or_default(),
+                posted
+                    .company_marks_after
+                    .as_deref()
+                    .and_then(|marks| location::parse_all_company_marks(marks).ok())
+                    .as_deref(),
+                identity.company_guid(),
+                &company.name,
+            ));
             let parsed_outcome = parse_import_outcome(&posted.body).ok();
             let response = ledger::DispatchResponse {
                 request_sha256: posted.response_evidence.request_sha256,
@@ -360,6 +397,9 @@ impl Server {
             let mut proof = self.verify_import_after_current_dispatch(args).await?;
             accumulated = combine_evidence(accumulated.clone(), proof.evidence.clone());
             proof.evidence = accumulated.clone();
+            if let Some(located) = post_location.clone() {
+                proof.payload["result"]["post_location"] = located;
+            }
             Ok(proof)
         }
         .await;
@@ -375,7 +415,7 @@ impl Server {
                     snapshot.as_ref(),
                     received_response.as_ref(),
                 );
-                Ok(post_failure_outcome(
+                let mut outcome = post_failure_outcome(
                     batch_id,
                     guid,
                     failure,
@@ -383,7 +423,11 @@ impl Server {
                     snapshot.as_ref(),
                     received_response.as_ref(),
                     attempted,
-                ))
+                );
+                if let Some(located) = post_location {
+                    outcome.payload["result"]["post_location"] = located;
+                }
+                Ok(outcome)
             }
         }
     }
@@ -576,6 +620,14 @@ fn require_absent_verification_result(result: &Value) -> Result<(), String> {
         return Err("import_preexisting_identity".into());
     }
     Ok(())
+}
+
+/// The aim check on the snapshot the queue read last before the POST (#574).
+fn admit_queued_aim(marks: &str, company_guid: &str, company_name: &str) -> anyhow::Result<()> {
+    let rows = location::parse_all_company_marks(marks)
+        .map_err(|_| ApprovedImportAdmissionError::CompanyScopeUnconfirmed)?;
+    location::admit_post_target(&rows, company_guid, company_name)
+        .map_err(|_| ApprovedImportAdmissionError::CompanyScopeChanged.into())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -831,6 +883,9 @@ fn has_unreviewable_format_character(value: &str) -> bool {
         ignorable.contains(character) || category.get(character) == GeneralCategory::Format
     })
 }
+
+#[path = "agent_import_post_location.rs"]
+mod location;
 
 #[cfg(test)]
 #[path = "agent_import_post_tests.rs"]

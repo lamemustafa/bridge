@@ -224,8 +224,19 @@ or an owner decision to amend the requirement instead:
 7. **Write capability in the Passport (row 1).** Decide whether a verified post
    should become observed write evidence, and under what rule.
 8. **Concurrent external changes:** #239 (accepted limitation).
-9. **Aiming by name (scope, "How the write is aimed"), #574.** Narrow or close the gap between the
-   in-queue identity recheck and the POST, or record it as accepted with #239.
+9. **Aiming by name (scope, "How the write is aimed"), #574. Narrowed.** Live on licensed 7.1
+   Silver (2026-09-21/22): a name matching no loaded company fails closed over the gateway
+   whichever company is selected; a rename between build and post is refused at admission; a
+   post into another company lacking one of the voucher's ledgers is rejected by Tally. What
+   remains is a rename, in the moments before the POST, to another loaded company's exact name
+   whose ledgers all overlap. The queue now reads every loaded company's change marks as its last
+   Tally request before the POST and refuses unless exactly one company has the target's GUID
+   and name and none shares its name (`post_company_scope_changed`, or
+   `post_company_scope_unconfirmed` if that read fails). It reads them again right after the
+   POST and reports which companies' voucher marks moved (`post_location` in the result). This
+   detects a misdirected post; it cannot prevent one, because Tally cannot bind an import to a
+   GUID. The interval between that snapshot and the POST, local work only, stays accepted with
+   #239. Locating the voucher inside another company, and removing it, are not built.
 10. **Batch record integrity (scope, "What it can send"), #575. Resolved by #578.** The post
     path now re-checks the saved file's bytes, as the desktop review already did, and both use one
     reader. Residual, by decision: the record and file are trusted local state against anyone who

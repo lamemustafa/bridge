@@ -39,7 +39,7 @@ reading. When writing is off, the write tools do not merely refuse — they are
 exist.
 
 - **The Claude Desktop extension turns voucher posting off by default.** Two
-  known limits in posting remain. The post names its company only by name, so if that company is renamed in the moment between Bridge's checks and the post, the voucher is still sent, and where Tally then puts it is not yet established
+  known limits in posting remain. The post names its company only by name, and Tally cannot bind an import to a company's GUID. Bridge confirms the company as its last request before the post, and afterwards reports which companies changed, but another loaded company renamed to the exact same name in that moment would still receive the voucher
   ([#574](https://github.com/lamemustafa/bridge/issues/574)). And Bridge cannot
   delete or roll back a voucher it has posted, so a wrong post must be
   corrected by hand in Tally
