@@ -302,6 +302,13 @@ mod tests {
     }
 
     #[test]
+    fn an_s36_1_va_table_without_its_due_day_is_refused() {
+        let text = VENDORED.replace("due_day = 15\n", "");
+        assert!(text.contains("[s36_1_va]"));
+        assert!(Rules::parse(&text).is_err());
+    }
+
+    #[test]
     fn vendored_rules_carry_the_statutory_dues_values() {
         let rules = Rules::vendored().unwrap();
         assert_eq!(rules.s36_1_va_due_day, Some(15));

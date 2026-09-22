@@ -8,7 +8,7 @@
   "figures": [
     {
       "id": "statutory_dues_43b.charged_esi_employee",
-      "value": 400,
+      "value": 650,
       "unit": "paise",
       "definition_sha256_16": "dfcbbebccd6de9c0",
       "definition_text": "Sum of population voucher CREDIT lines (amount added to the liability) on ledgers mapped to nature 'esi_employee'.",
@@ -21,7 +21,12 @@
         {
           "kind": "voucher",
           "id": "edge-sdb-002",
-          "label": "Journal edge-sdb-002 on 2025-12-31"
+          "label": "Journal edge-sdb-002 on 2025-12-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdb-003",
+          "label": "Journal edge-sdb-003 on 2025-11-20"
         }
       ]
     },
@@ -34,14 +39,14 @@
       "evidence": [
         {
           "kind": "voucher",
-          "id": "edge-sdb-003",
-          "label": "Journal edge-sdb-003 on 2025-06-30"
+          "id": "edge-sdb-004",
+          "label": "Journal edge-sdb-004 on 2025-06-30"
         }
       ]
     },
     {
       "id": "statutory_dues_43b.closing_liability_esi_employee",
-      "value": 400,
+      "value": 650,
       "unit": "paise",
       "definition_sha256_16": "df4c8553c907496d",
       "definition_text": "Trial Balance closing balance (Dr+/Cr- flipped to a liability-positive figure), summed across every ledger client config maps to nature 'esi_employee'.",
@@ -82,7 +87,12 @@
         {
           "kind": "voucher",
           "id": "edge-sdb-002",
-          "label": "Journal edge-sdb-002 on 2025-12-31"
+          "label": "Journal edge-sdb-002 on 2025-12-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdb-003",
+          "label": "Journal edge-sdb-003 on 2025-11-20"
         }
       ]
     },
@@ -101,7 +111,12 @@
         {
           "kind": "voucher",
           "id": "edge-sdb-002",
-          "label": "Journal edge-sdb-002 on 2025-12-31"
+          "label": "Journal edge-sdb-002 on 2025-12-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdb-003",
+          "label": "Journal edge-sdb-003 on 2025-11-20"
         }
       ]
     },
@@ -109,8 +124,8 @@
       "id": "statutory_dues_43b.not_visible_after_year_end_esi_employee",
       "value": 400,
       "unit": "paise",
-      "definition_sha256_16": "357f51aae011a953",
-      "definition_text": "Sum of 'esi_employee' deduction lots whose due date falls after 2025-12-31 (the FY's voucher population has no postings after this date, so on-time/late cannot be determined from this book at all).",
+      "definition_sha256_16": "a8cd2c852ec4d42f",
+      "definition_text": "Sum of 'esi_employee' deduction lots whose due date falls after 2025-12-15 (the FY's voucher population has no postings after this date, so on-time/late cannot be determined from this book at all).",
       "evidence": [
         {
           "kind": "voucher",
@@ -120,7 +135,12 @@
         {
           "kind": "voucher",
           "id": "edge-sdb-002",
-          "label": "Journal edge-sdb-002 on 2025-12-31"
+          "label": "Journal edge-sdb-002 on 2025-12-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdb-003",
+          "label": "Journal edge-sdb-003 on 2025-11-20"
         }
       ]
     },
@@ -153,7 +173,12 @@
         {
           "kind": "voucher",
           "id": "edge-sdb-002",
-          "label": "Journal edge-sdb-002 on 2025-12-31"
+          "label": "Journal edge-sdb-002 on 2025-12-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdb-003",
+          "label": "Journal edge-sdb-003 on 2025-11-20"
         }
       ]
     },
@@ -172,7 +197,12 @@
         {
           "kind": "voucher",
           "id": "edge-sdb-002",
-          "label": "Journal edge-sdb-002 on 2025-12-31"
+          "label": "Journal edge-sdb-002 on 2025-12-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdb-003",
+          "label": "Journal edge-sdb-003 on 2025-11-20"
         }
       ]
     },
@@ -191,7 +221,12 @@
         {
           "kind": "voucher",
           "id": "edge-sdb-002",
-          "label": "Journal edge-sdb-002 on 2025-12-31"
+          "label": "Journal edge-sdb-002 on 2025-12-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdb-003",
+          "label": "Journal edge-sdb-003 on 2025-11-20"
         }
       ]
     },
@@ -224,7 +259,12 @@
         {
           "kind": "voucher",
           "id": "edge-sdb-002",
-          "label": "Journal edge-sdb-002 on 2025-12-31"
+          "label": "Journal edge-sdb-002 on 2025-12-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdb-003",
+          "label": "Journal edge-sdb-003 on 2025-11-20"
         }
       ]
     },
@@ -243,7 +283,12 @@
         {
           "kind": "voucher",
           "id": "edge-sdb-002",
-          "label": "Journal edge-sdb-002 on 2025-12-31"
+          "label": "Journal edge-sdb-002 on 2025-12-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdb-003",
+          "label": "Journal edge-sdb-003 on 2025-11-20"
         }
       ]
     },
@@ -256,8 +301,8 @@
       "evidence": [
         {
           "kind": "voucher",
-          "id": "edge-sdb-003",
-          "label": "Journal edge-sdb-003 on 2025-06-30"
+          "id": "edge-sdb-004",
+          "label": "Journal edge-sdb-004 on 2025-06-30"
         }
       ]
     },
@@ -277,10 +322,10 @@
     },
     {
       "id": "statutory_dues_43b.unpaid_due_date_passed_esi_employee",
-      "value": 0,
+      "value": 250,
       "unit": "paise",
-      "definition_sha256_16": "4aa47619331f9f18",
-      "definition_text": "Sum of 'esi_employee' deduction lots whose due date fell on or before 2025-12-31 and still had no matching payment recorded in the books by then.",
+      "definition_sha256_16": "c5d13dad368c134c",
+      "definition_text": "Sum of 'esi_employee' deduction lots whose due date fell on or before 2025-12-15 and still had no matching payment recorded in the books by then.",
       "evidence": [
         {
           "kind": "voucher",
@@ -290,7 +335,12 @@
         {
           "kind": "voucher",
           "id": "edge-sdb-002",
-          "label": "Journal edge-sdb-002 on 2025-12-31"
+          "label": "Journal edge-sdb-002 on 2025-12-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdb-003",
+          "label": "Journal edge-sdb-003 on 2025-11-20"
         }
       ]
     }
@@ -321,7 +371,12 @@
         {
           "kind": "voucher",
           "id": "edge-sdb-002",
-          "label": "Journal edge-sdb-002 on 2025-12-31"
+          "label": "Journal edge-sdb-002 on 2025-12-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdb-003",
+          "label": "Journal edge-sdb-003 on 2025-11-20"
         }
       ],
       "title_sha256_16": "6cb95d6aa178444e",
@@ -356,7 +411,12 @@
         {
           "kind": "voucher",
           "id": "edge-sdb-002",
-          "label": "Journal edge-sdb-002 on 2025-12-31"
+          "label": "Journal edge-sdb-002 on 2025-12-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdb-003",
+          "label": "Journal edge-sdb-003 on 2025-11-20"
         }
       ],
       "title_sha256_16": "e27e98ff941c4af8",
@@ -367,6 +427,55 @@
       ],
       "ask_client_sha256_16": "e3b0c44298fc1c14",
       "ask_client_text": []
+    },
+    {
+      "id": "statutory_dues_43b/unpaid/esi_employee",
+      "clauses": [
+        "s.36(1)(va)",
+        "3CD-20(b)"
+      ],
+      "confidence": "computed",
+      "facts": [
+        {
+          "name": "charged",
+          "figure_id": "statutory_dues_43b.charged_esi_employee"
+        },
+        {
+          "name": "closing_liability",
+          "figure_id": "statutory_dues_43b.closing_liability_esi_employee"
+        },
+        {
+          "name": "unpaid_due_date_passed",
+          "figure_id": "statutory_dues_43b.unpaid_due_date_passed_esi_employee"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "edge-sdb-001",
+          "label": "Payment edge-sdb-001 on 2025-01-15"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdb-002",
+          "label": "Journal edge-sdb-002 on 2025-12-10"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-sdb-003",
+          "label": "Journal edge-sdb-003 on 2025-11-20"
+        }
+      ],
+      "title_sha256_16": "702e77204fd32e82",
+      "title_text": "Employees' contribution ('esi_employee') charged but no deposit recorded by its due date, which has already passed",
+      "limits_sha256_16": "25743d91d4949d99",
+      "limits_text": [
+        "Checkmate Services P Ltd v CIT (2022) (SC): not allowable for this year regardless of whether it is eventually deposited later."
+      ],
+      "ask_client_sha256_16": "f58de4765a1717c6",
+      "ask_client_text": [
+        "Confirm whether and when this amount was eventually deposited, for interest exposure under the PF/ESI Act (a separate question from income-tax allowability)."
+      ]
     },
     {
       "id": "statutory_dues_43b/unpaid/pf_employer",
@@ -427,12 +536,12 @@
     {
       "invariant": "POP-1",
       "subject": "Wages",
-      "detail": "vouchers 1300 vs TB movement 0 paise"
+      "detail": "vouchers 1550 vs TB movement 0 paise"
     },
     {
       "invariant": "POP-3",
       "subject": "closing_paise",
-      "detail": "TB closing_paise sums to -1300 paise"
+      "detail": "TB closing_paise sums to -1550 paise"
     },
     {
       "invariant": "POP-3",

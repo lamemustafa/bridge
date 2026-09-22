@@ -1163,6 +1163,93 @@ mod tests {
         assert_eq!(report.drifts[0].current_name, "Furniture (renamed)");
     }
 
+    // ---- [creditor_ageing_43bh], [statutory_dues], creditor groups and a legacy source ----
+
+    #[test]
+    fn creditor_ageing_and_statutory_dues_names_are_bound_by_identity() {
+        let e = engagement(&format!(
+            "\n[ledger_ids]\n\"Supplier A\" = {G_ROUNDOFF:?}\n\"PF Payable\" = {G_OTHER:?}\n\
+             \"Wages\" = {G_CASH:?}\n\
+             \n[creditor_ageing_43bh]\nmse_interest_ledgers = [\"MSME Interest\"]\n\
+             \n[creditor_ageing_43bh.supplier_classification]\n\"Supplier A\" = \"micro\"\n\
+             \n[statutory_dues]\nsalary_expense_ledgers = [\"Wages\"]\n\
+             \n[statutory_dues.nature_by_ledger]\n\"PF Payable\" = \"pf_employee\"\n"
+        ));
+        let mut b = book("Cash-in-Hand", "", None);
+        for (name, group, guid) in [
+            ("Supplier (renamed)", "Sundry Creditors", G_ROUNDOFF),
+            ("PF (renamed)", "Duties & Taxes", G_OTHER),
+            ("Salaries (renamed)", "Indirect Expenses", G_CASH),
+            ("MSME Interest", "Indirect Expenses", ""),
+        ] {
+            b.ledgers
+                .insert(name.to_string(), ledger(name, group, guid, None));
+        }
+        let (bound, report) = e.bind(&b).unwrap();
+        assert_eq!(
+            bound.creditor_ageing.supplier_classification,
+            BTreeMap::from([("Supplier (renamed)".to_string(), "micro".to_string())])
+        );
+        assert_eq!(
+            bound.creditor_ageing.mse_interest_ledgers,
+            vec!["MSME Interest"]
+        );
+        assert_eq!(
+            bound.statutory_nature_by_ledger,
+            BTreeMap::from([("PF (renamed)".to_string(), "pf_employee".to_string())])
+        );
+        assert_eq!(bound.salary_expense_ledgers, vec!["Salaries (renamed)"]);
+        assert_eq!(report.drifts.len(), 3);
+    }
+
+    #[test]
+    fn an_unknown_creditor_group_refuses_naming_its_location() {
+        let e = engagement("creditor_groups = [\"No Such Group\"]\n");
+        let err = e.bind(&book("Cash-in-Hand", "", None)).unwrap_err();
+        assert_eq!(err.code(), Some(BIND_GROUP_UNKNOWN));
+        assert!(format!("{err}").contains("roles.creditor_groups"));
+    }
+
+    #[test]
+    fn a_legacy_trade_creditor_source_is_read_bound_and_replaced() {
+        let dir =
+            std::env::temp_dir().join(format!("bridge-tax-audit-legacy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("legacy.json"),
+            r#"{"derived": {"fs": {"trade_creditors": [{"ledger": "Supplier A"}]}}}"#,
+        )
+        .unwrap();
+        let toml = base_toml(&format!(
+            "trade_creditors_source = {{ kind = \"legacy_json\", path = \"legacy.json\" }}\n\
+             \n[ledger_ids]\n\"Supplier A\" = {G_ROUNDOFF:?}\n"
+        ));
+        let e = Engagement::from_toml(&toml, &dir).unwrap();
+        let mut b = book("Cash-in-Hand", "", None);
+        b.ledgers.insert(
+            "Supplier (renamed)".to_string(),
+            ledger("Supplier (renamed)", "Sundry Creditors", G_ROUNDOFF, None),
+        );
+        let (bound, report) = e.bind(&b).unwrap();
+        assert_eq!(
+            crate::trade_creditors(&bound, &b).unwrap(),
+            BTreeSet::from(["Supplier (renamed)".to_string()])
+        );
+        assert_eq!(report.drifts[0].paths, vec![LEGACY_PATH_LABEL]);
+        // A legacy name that matches nothing refuses, naming the legacy location.
+        let bare = Engagement::from_toml(
+            &base_toml(
+                "trade_creditors_source = { kind = \"legacy_json\", path = \"legacy.json\" }\n",
+            ),
+            &dir,
+        )
+        .unwrap();
+        let err = bare.bind(&b).unwrap_err();
+        assert_eq!(err.code(), Some(BIND_NAME_UNKNOWN));
+        assert!(format!("{err}").contains(LEGACY_PATH_LABEL));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     // ---- [partners.*].interest_ledger (financial_statements) ----
 
     fn book_with_interest_ledger(name: &str, guid: &str, masterid: Option<i64>) -> book::Book {

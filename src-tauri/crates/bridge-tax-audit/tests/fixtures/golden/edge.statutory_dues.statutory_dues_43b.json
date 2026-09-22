@@ -245,7 +245,7 @@
     },
     {
       "id": "statutory_dues_43b.closing_liability_tds_payable",
-      "value": 0,
+      "value": 100,
       "unit": "paise",
       "definition_sha256_16": "2b9b1f46967cbd24",
       "definition_text": "Trial Balance closing balance (Dr+/Cr- flipped to a liability-positive figure), summed across every ledger client config maps to nature 'tds_payable'.",
@@ -838,7 +838,7 @@
     },
     {
       "id": "statutory_dues_43b.paid_tds_payable",
-      "value": 400,
+      "value": 300,
       "unit": "paise",
       "definition_sha256_16": "3f44f4f09e5d7b00",
       "definition_text": "Sum of population voucher DEBIT lines (amount paid against the liability) on ledgers mapped to nature 'tds_payable'.",
@@ -1564,7 +1564,7 @@
     {
       "invariant": "POP-1",
       "subject": "Bank",
-      "detail": "vouchers -3950 vs TB movement 0 paise"
+      "detail": "vouchers -3850 vs TB movement 0 paise"
     },
     {
       "invariant": "POP-1",
@@ -1584,7 +1584,7 @@
     {
       "invariant": "POP-3",
       "subject": "closing_paise",
-      "detail": "TB closing_paise sums to -6600 paise"
+      "detail": "TB closing_paise sums to -6700 paise"
     },
     {
       "invariant": "POP-3",

@@ -1,8 +1,8 @@
 {
- "comment": "statutory_dues_43b, a January-December period and the rules without [s43b] or [s36_1_va] (the reference's own defaults): the opening ESI lot due 15 January of the period and paid on it; December's deduction due after the period end; PF employer and ESI employee both mapped, so neither coverage question arises (a PF employer nature is enough for PF); salary ledgers listed out of order.",
+ "comment": "statutory_dues_43b, a period from 1 January to 15 December and the rules without [s43b] or [s36_1_va] (the reference's own defaults): the opening ESI lot due 15 January of the period and paid on it; November's deduction due on the period's last day, unpaid; December's due after the period end; PF employer and ESI employee both mapped, so neither coverage question arises (a PF employer nature is enough for PF); salary ledgers listed out of order.",
  "period": [
   "2025-01-01",
-  "2025-12-31"
+  "2025-12-15"
  ],
  "rules_without": [
   "s43b",
@@ -61,8 +61,8 @@
    "ledger": "ESI Employee Payable",
    "opening": -300,
    "debit": 300,
-   "credit": 400,
-   "closing": -400
+   "credit": 650,
+   "closing": -650
   },
   {
    "ledger": "PF Employer Payable",
@@ -90,7 +90,7 @@
   },
   {
    "guid": "edge-sdb-002",
-   "date": "2025-12-31",
+   "date": "2025-12-10",
    "base_type": "Journal",
    "lines": [
     [
@@ -105,6 +105,21 @@
   },
   {
    "guid": "edge-sdb-003",
+   "date": "2025-11-20",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "ESI Employee Payable",
+     -250
+    ],
+    [
+     "Wages",
+     250
+    ]
+   ]
+  },
+  {
+   "guid": "edge-sdb-004",
    "date": "2025-06-30",
    "base_type": "Journal",
    "lines": [

@@ -16,7 +16,7 @@
     },
     {
       "id": "creditor_ageing_43bh.bucket_0_15",
-      "value": 10501,
+      "value": 10601,
       "unit": "paise",
       "definition_sha256_16": "4a4df2d5da531085",
       "definition_text": "Sum of FIFO lots aged in this bucket as of 2026-03-31. Age is computed from bill date + acceptance_lag_days (1 day), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records. Books population (optional, cancelled and post-dated vouchers excluded).",
@@ -40,7 +40,7 @@
     },
     {
       "id": "creditor_ageing_43bh.bucket_over_90",
-      "value": 16012,
+      "value": 15912,
       "unit": "paise",
       "definition_sha256_16": "4a4df2d5da531085",
       "definition_text": "Sum of FIFO lots aged in this bucket as of 2026-03-31. Age is computed from bill date + acceptance_lag_days (1 day), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records. Books population (optional, cancelled and post-dated vouchers excluded).",
@@ -56,7 +56,7 @@
     },
     {
       "id": "creditor_ageing_43bh.clause22_ii_total",
-      "value": 12678,
+      "value": 12778,
       "unit": "paise",
       "definition_sha256_16": "b7426c55656e8d82",
       "definition_text": "3CD-22(ii): total amount required to be paid to micro/small (non-trader, non-medium, registered) enterprise suppliers during the year (GN 42.26(a)) -- every bill raised on a creditor classified micro/small in client config, whether paid during the year, outstanding at year end, or capitalised (a credit line to the creditor ledger either way). Suppliers classified 'unknown' are excluded (see the per-creditor NEEDS_DOCUMENT findings above), so this is a floor, not the true total, until every supplier is classified.",
@@ -142,6 +142,11 @@
           "kind": "ledger",
           "id": "Opening Only Small",
           "label": ""
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-ca-028",
+          "label": "Journal edge-ca-028 on 2026-03-25"
         }
       ]
     },
@@ -159,8 +164,8 @@
         },
         {
           "kind": "voucher",
-          "id": "edge-ca-028",
-          "label": "Purchase edge-ca-028 on 2026-03-26"
+          "id": "edge-ca-029",
+          "label": "Purchase edge-ca-029 on 2026-03-26"
         }
       ]
     },
@@ -313,8 +318,8 @@
         },
         {
           "kind": "voucher",
-          "id": "edge-ca-032",
-          "label": "Payment edge-ca-032 on 2026-03-29"
+          "id": "edge-ca-033",
+          "label": "Payment edge-ca-033 on 2026-03-29"
         }
       ]
     },
@@ -392,6 +397,11 @@
           "kind": "voucher",
           "id": "edge-ca-017",
           "label": "Purchase edge-ca-017 on 2026-03-28"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-ca-028",
+          "label": "Journal edge-ca-028 on 2026-03-25"
         }
       ]
     },
@@ -496,8 +506,8 @@
         },
         {
           "kind": "voucher",
-          "id": "edge-ca-032",
-          "label": "Payment edge-ca-032 on 2026-03-29"
+          "id": "edge-ca-033",
+          "label": "Payment edge-ca-033 on 2026-03-29"
         }
       ]
     },
@@ -556,6 +566,11 @@
           "kind": "voucher",
           "id": "edge-ca-017",
           "label": "Purchase edge-ca-017 on 2026-03-28"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-ca-028",
+          "label": "Journal edge-ca-028 on 2026-03-25"
         }
       ]
     },
@@ -660,8 +675,8 @@
         },
         {
           "kind": "voucher",
-          "id": "edge-ca-032",
-          "label": "Payment edge-ca-032 on 2026-03-29"
+          "id": "edge-ca-033",
+          "label": "Payment edge-ca-033 on 2026-03-29"
         }
       ]
     },
@@ -720,6 +735,11 @@
           "kind": "voucher",
           "id": "edge-ca-017",
           "label": "Purchase edge-ca-017 on 2026-03-28"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-ca-028",
+          "label": "Journal edge-ca-028 on 2026-03-25"
         }
       ]
     },
@@ -778,7 +798,7 @@
     },
     {
       "id": "creditor_ageing_43bh.creditor_reconstructed_162d67aa",
-      "value": 8000,
+      "value": 7900,
       "unit": "paise",
       "definition_sha256_16": "0a453b3e4c8662ed",
       "definition_text": "Sum of open FIFO lots for one creditor ledger (tag 162d67aa) at 2026-03-31.",
@@ -787,6 +807,11 @@
           "kind": "ledger",
           "id": "Opening Only Small",
           "label": ""
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-ca-028",
+          "label": "Journal edge-ca-028 on 2026-03-25"
         }
       ]
     },
@@ -804,8 +829,8 @@
         },
         {
           "kind": "voucher",
-          "id": "edge-ca-028",
-          "label": "Purchase edge-ca-028 on 2026-03-26"
+          "id": "edge-ca-029",
+          "label": "Purchase edge-ca-029 on 2026-03-26"
         }
       ]
     },
@@ -958,8 +983,8 @@
         },
         {
           "kind": "voucher",
-          "id": "edge-ca-032",
-          "label": "Payment edge-ca-032 on 2026-03-29"
+          "id": "edge-ca-033",
+          "label": "Payment edge-ca-033 on 2026-03-29"
         }
       ]
     },
@@ -1003,7 +1028,7 @@
     },
     {
       "id": "creditor_ageing_43bh.creditor_reconstructed_df4bd123",
-      "value": 2500,
+      "value": 2600,
       "unit": "paise",
       "definition_sha256_16": "83b63920d4a42ad2",
       "definition_text": "Sum of open FIFO lots for one creditor ledger (tag df4bd123) at 2026-03-31.",
@@ -1037,6 +1062,11 @@
           "kind": "voucher",
           "id": "edge-ca-017",
           "label": "Purchase edge-ca-017 on 2026-03-28"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-ca-028",
+          "label": "Journal edge-ca-028 on 2026-03-25"
         }
       ]
     },
@@ -1069,7 +1099,7 @@
     },
     {
       "id": "creditor_ageing_43bh.opening_dues_26a_candidate_total",
-      "value": 8900,
+      "value": 8800,
       "unit": "paise",
       "definition_sha256_16": "1f68bfed130a7140",
       "definition_text": "3CD-22-1 (GN 42.25): the still-unpaid remainder of each micro/small creditor's OPENING (pre-year) balance -- excluded from every clause 22 figure above because it relates to a period earlier than this PY, not to this year's own claimed dues. Reported here as a candidate for clause 26(i)(A)(b) instead (GN 46.5: only a sum NOT allowable in an earlier year belongs in 26(i)(A); that needs last year's own return/3CD, which this module does not have).",
@@ -1077,7 +1107,7 @@
     },
     {
       "id": "creditor_ageing_43bh.over_15_total",
-      "value": 23826,
+      "value": 23726,
       "unit": "paise",
       "definition_sha256_16": "64ccbd3792c1dc59",
       "definition_text": "Books-fact sum of FIFO lots older than 15 days (rules.s43b_h.msme_days_without_agreement), same scope as over_45_total, shown beside it, never instead of it. Age is computed from bill date + acceptance_lag_days (1 day), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records.",
@@ -1093,7 +1123,7 @@
     },
     {
       "id": "creditor_ageing_43bh.over_45_total",
-      "value": 17321,
+      "value": 17221,
       "unit": "paise",
       "definition_sha256_16": "706d37b1cb47c487",
       "definition_text": "Books-fact sum of FIFO lots older than 45 days (rules.s43b_h.msme_days_with_agreement), across every creditor in scope regardless of MSME classification -- a raw ageing fact, not a s.43B(h) applicability conclusion (see clause22_iii_b_45day_total for the classification-scoped candidate). Age is computed from bill date + acceptance_lag_days (1 day), an assumption that acceptance or deemed acceptance of the goods/services (MSMED s.2(b)) happened this long after the bill date; the true acceptance date is not in these books -- confirm against GRNs/delivery records.",
@@ -1109,7 +1139,7 @@
     },
     {
       "id": "creditor_ageing_43bh.post_year_pending_confirmation_total",
-      "value": 2301,
+      "value": 2401,
       "unit": "paise",
       "definition_sha256_16": "12ea1d3238603fe1",
       "definition_text": "Sum of lots not yet past the MSME window as of 31 March (micro/small creditors only) with no next-year payment data supplied at all -- whether the window was eventually met cannot be determined from these books; NEEDS_DOCUMENT, never assumed met or missed.",
@@ -1218,6 +1248,11 @@
           "kind": "voucher",
           "id": "edge-ca-017",
           "label": "Purchase edge-ca-017 on 2026-03-28"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-ca-028",
+          "label": "Journal edge-ca-028 on 2026-03-25"
         }
       ],
       "title_sha256_16": "bcfe973ad840f839",
@@ -1299,8 +1334,8 @@
         },
         {
           "kind": "voucher",
-          "id": "edge-ca-032",
-          "label": "Payment edge-ca-032 on 2026-03-29"
+          "id": "edge-ca-033",
+          "label": "Payment edge-ca-033 on 2026-03-29"
         }
       ],
       "title_sha256_16": "5af3e36a240dc2b4",
@@ -1375,6 +1410,11 @@
           "kind": "voucher",
           "id": "edge-ca-017",
           "label": "Purchase edge-ca-017 on 2026-03-28"
+        },
+        {
+          "kind": "voucher",
+          "id": "edge-ca-028",
+          "label": "Journal edge-ca-028 on 2026-03-25"
         }
       ],
       "title_sha256_16": "5af3e36a240dc2b4",
