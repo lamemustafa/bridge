@@ -29,7 +29,8 @@ pub use compute::{
 };
 pub use date::{parse_native_display_date, NativeDisplayDateRole};
 pub use ledger_currency::{
-    classify_ledger_currencies, ForeignCurrencyLedger, LedgerCurrencies, LedgerCurrencyRefusal,
+    classify_ledger_currencies, BaseCurrencyName, ForeignCurrencyLedger, LedgerCurrencies,
+    LedgerCurrencyRefusal,
 };
 pub use model::{
     AgeingAnchor, CompanyCurrency, LedgerSnapshotEntry, NativeBillRow, NativeOutstandingsError,

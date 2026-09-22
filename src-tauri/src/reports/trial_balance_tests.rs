@@ -12,7 +12,6 @@ fn empty_parent_row(parent: PartyLedgerMasterFieldObservation) -> NativeTrialBal
         debit: NativeTrialBalanceAmount::PresentEmpty,
         credit: NativeTrialBalanceAmount::PresentEmpty,
         closing: NativeTrialBalanceAmount::PresentEmpty,
-        currency_name: None,
     }
 }
 
@@ -275,7 +274,6 @@ fn parent_option_scan_keeps_only_101_borrowed_candidates_for_200k_rows() {
                 debit: NativeTrialBalanceAmount::PresentEmpty,
                 credit: NativeTrialBalanceAmount::PresentEmpty,
                 closing: NativeTrialBalanceAmount::PresentEmpty,
-                currency_name: None,
             })
             .collect(),
     };
@@ -313,7 +311,6 @@ fn late_exact_parent_replaces_a_bounded_substring_candidate_and_counts_duplicate
             debit: NativeTrialBalanceAmount::PresentEmpty,
             credit: NativeTrialBalanceAmount::PresentEmpty,
             closing: NativeTrialBalanceAmount::PresentEmpty,
-            currency_name: None,
         })
         .collect::<Vec<_>>();
     rows.extend((0..2).map(|_| NativeTrialBalanceRow {
@@ -324,7 +321,6 @@ fn late_exact_parent_replaces_a_bounded_substring_candidate_and_counts_duplicate
         debit: NativeTrialBalanceAmount::PresentEmpty,
         credit: NativeTrialBalanceAmount::PresentEmpty,
         closing: NativeTrialBalanceAmount::PresentEmpty,
-        currency_name: None,
     }));
     let report = NativeTrialBalance { rows };
 

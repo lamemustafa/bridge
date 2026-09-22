@@ -20,7 +20,7 @@ fn request_binds_both_admitted_snapshot_boundaries_and_escapes_company() {
     assert!(request.contains("<SVCURRENTCOMPANY>A &amp; B &lt;Co&gt;</SVCURRENTCOMPANY>"));
     assert!(request.contains("<SVFROMDATE TYPE=\"Date\">20260601</SVFROMDATE>"));
     assert!(request.contains("<SVTODATE TYPE=\"Date\">20260731</SVTODATE>"));
-    assert!(request.contains("TBALOPENING, DEBITTOTALS, CREDITTOTALS, TBALCLOSING, CURRENCYNAME"));
+    assert!(request.contains("TBALOPENING, DEBITTOTALS, CREDITTOTALS, TBALCLOSING"));
     assert!(!request.contains("CLOSINGBALANCE"));
 }
 
@@ -242,48 +242,4 @@ fn captured_trial_balance_mutations_fail_closed() {
             ))
         );
     }
-}
-
-/// bridge#551: each row's own `CURRENCYNAME`, verbatim, `None` when absent
-/// or empty. Read but not yet reported: the serialized row is unchanged.
-#[test]
-fn a_row_reads_its_currency_name_without_changing_the_serialized_row() {
-    let before = parse_native_trial_balance(KNOWN_LAB, COMPANY).unwrap();
-    // The capture predates the field: every row reads None.
-    assert!(before.rows.iter().all(|row| row.currency_name.is_none()));
-    let closing = "<TBALCLOSING TYPE=\"Amount\"></TBALCLOSING>";
-    assert!(KNOWN_LAB.contains(closing));
-    let with = |element: &str| KNOWN_LAB.replacen(closing, &format!("{closing}{element}"), 1);
-    let named = parse_native_trial_balance(
-        &with("<CURRENCYNAME TYPE=\"String\">I\u{20b9}</CURRENCYNAME>"),
-        COMPANY,
-    )
-    .unwrap();
-    assert_eq!(named.rows[0].currency_name.as_deref(), Some("I\u{20b9}"));
-    assert_eq!(
-        serde_json::to_value(&named.rows[0]).unwrap(),
-        serde_json::to_value(&before.rows[0]).unwrap()
-    );
-    for empty in [
-        "<CURRENCYNAME TYPE=\"String\"/>",
-        "<CURRENCYNAME TYPE=\"String\"></CURRENCYNAME>",
-    ] {
-        assert_eq!(
-            parse_native_trial_balance(&with(empty), COMPANY)
-                .unwrap()
-                .rows[0]
-                .currency_name,
-            None,
-            "{empty}"
-        );
-    }
-    assert_eq!(
-        parse_native_trial_balance(
-            &with("<CURRENCYNAME>$</CURRENCYNAME><CURRENCYNAME>$</CURRENCYNAME>"),
-            COMPANY
-        ),
-        Err(NativeTrialBalanceError::InvalidResponse(
-            "trial_balance_duplicate_currency_name"
-        ))
-    );
 }

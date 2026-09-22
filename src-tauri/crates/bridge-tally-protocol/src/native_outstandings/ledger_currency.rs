@@ -1,12 +1,53 @@
-//! A ledger's own currency against the book's base currency (bridge#551).
+//! A ledger's own currency against the book's base currency (bridge#551;
+//! TALLY_PROTOCOL_REFERENCE §8.2d).
 //!
 //! A foreign-currency ledger's bills arrive from Tally's Bills reports as plain
-//! amounts, and a zero foreign balance closes as a plain `0.00`
-//! (`LEDGER_CURRENCY_CAPTURE_PROVENANCE.md`, `FOREX_LEDGER_CAPTURE_PROVENANCE.md`).
-//! The shape of an amount therefore cannot tell a foreign ledger from a base
-//! one. Its `CURRENCYNAME` can: every row measured carries the NAME of the
-//! Currency master it is kept in (`I₹`, `Rs.`, `$`), and the base master's NAME
+//! amounts, and a zero foreign balance closes as a plain `0.00`. The shape of
+//! an amount therefore cannot tell a foreign ledger from a base one. Its
+//! `CURRENCYNAME` can: every row measured carries the NAME of the Currency
+//! master it is kept in (`I₹`, `₹`, `Rs.`, `$`), and the base master's NAME
 //! differs by book, so it is read from the same book, never assumed.
+
+use super::model::CompanyCurrency;
+
+/// The NAME of a book's base Currency master, held only where the base is
+/// known. With several masters, `CompanyCurrency::symbol` is merely the first
+/// master read (on the captured FOREX book, `$`), so this type is built only
+/// from a book with exactly one master. Identifying the base among several
+/// masters is bridge#601's, which adds that constructor: the company's own
+/// `CURRENCYNAME` is the base master's ORIGINALNAME (`₹` on the captured FOREX
+/// book), not the NAME its ledgers carry (`I₹`), so the base NAME is found
+/// through that master and never taken from the company field directly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BaseCurrencyName {
+    name: String,
+    single_master: bool,
+}
+
+impl BaseCurrencyName {
+    /// The one master of a book that defines exactly one; `None` otherwise, or
+    /// when its NAME is empty.
+    pub fn of_single_master(currency: &CompanyCurrency) -> Option<Self> {
+        (currency.currency_count == 1 && !currency.symbol.trim().is_empty()).then(|| Self {
+            name: currency.symbol.clone(),
+            single_master: true,
+        })
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// A base among several masters, for this module's tests only until
+    /// bridge#601 provides the identified constructor.
+    #[cfg(test)]
+    pub(crate) fn among_several_for_tests(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            single_master: false,
+        }
+    }
+}
 
 /// A ledger kept in a currency other than the base.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,8 +63,9 @@ pub struct LedgerCurrencies {
     /// Ledgers in a currency other than the base, in read order.
     pub foreign: Vec<ForeignCurrencyLedger>,
     /// With exactly one Currency master: ledgers whose `CURRENCYNAME` was
-    /// absent or empty, taken as the base because no other currency exists.
-    /// Always 0 with several masters, where such a ledger refuses.
+    /// absent or empty, taken as the base on the inference that a book with
+    /// one master can hold no ledger in another currency. Always 0 with several
+    /// masters, where such a ledger refuses.
     pub unobserved: usize,
 }
 
@@ -33,9 +75,11 @@ pub enum LedgerCurrencyRefusal {
     /// Several Currency masters, and this ledger's `CURRENCYNAME` was absent or
     /// empty: it could be kept in any of them.
     Unobserved { ledger: String },
-    /// No ledger is in the base currency, or, with one master, a ledger names a
-    /// currency that is not it. The base NAME read and the ledgers read do not
-    /// describe one book, so nothing is classified.
+    /// With one master, a ledger names a currency that is not it; with
+    /// several, no ledger is in the base. Either way the base NAME and the
+    /// ledgers read disagree, so nothing is classified. This does not detect a
+    /// wrong base that some ledgers happen to carry: that is why the base is a
+    /// [`BaseCurrencyName`], not a string.
     BaseUnmatched { ledger: Option<String> },
 }
 
@@ -53,41 +97,32 @@ impl LedgerCurrencyRefusal {
 /// any group or name filter: a filtered set made only of foreign ledgers would
 /// otherwise refuse as base-unmatched.
 ///
-/// - One Currency master: no ledger can be kept in another currency, since
-///   Tally assigns a ledger a currency from its masters (inferred, not
-///   measured: no single-master book with a foreign ledger has been
-///   attempted). An absent or empty `CURRENCYNAME` is taken as the base and
-///   counted in `unobserved`; a present value other than the base NAME
-///   refuses.
+/// - One Currency master: an absent or empty `CURRENCYNAME` is taken as the
+///   base and counted in `unobserved`. That rests on the inference, not a
+///   measurement, that a book with one master can hold no ledger in another
+///   currency, since Tally assigns a ledger its currency from the masters. A
+///   present value other than the base NAME refuses.
 /// - Several masters: an absent or empty `CURRENCYNAME` refuses; a value other
 ///   than the base NAME is foreign; and at least one ledger must be in the base.
-/// - No master, or an empty base NAME: refuses.
 ///
-/// The comparison is exact, codepoint for codepoint.
+/// The comparison is exact, codepoint for codepoint; emptiness is judged on the
+/// trimmed value.
 pub fn classify_ledger_currencies<'a>(
-    base_name: &str,
-    currency_count: usize,
+    base: &BaseCurrencyName,
     ledgers: impl IntoIterator<Item = (&'a str, Option<&'a str>)>,
 ) -> Result<LedgerCurrencies, LedgerCurrencyRefusal> {
-    if currency_count == 0 || base_name.is_empty() {
-        return Err(LedgerCurrencyRefusal::BaseUnmatched { ledger: None });
-    }
-    let single = currency_count == 1;
     let mut classified = LedgerCurrencies::default();
     let mut base_seen = false;
     for (ledger, currency) in ledgers {
-        match currency.filter(|currency| !currency.is_empty()) {
-            None if single => {
-                classified.unobserved += 1;
-                base_seen = true;
-            }
+        match currency.filter(|currency| !currency.trim().is_empty()) {
+            None if base.single_master => classified.unobserved += 1,
             None => {
                 return Err(LedgerCurrencyRefusal::Unobserved {
                     ledger: ledger.to_string(),
                 })
             }
-            Some(currency) if currency == base_name => base_seen = true,
-            Some(_) if single => {
+            Some(currency) if currency == base.name => base_seen = true,
+            Some(_) if base.single_master => {
                 return Err(LedgerCurrencyRefusal::BaseUnmatched {
                     ledger: Some(ledger.to_string()),
                 })
@@ -98,7 +133,7 @@ pub fn classify_ledger_currencies<'a>(
             }),
         }
     }
-    if !base_seen && !single {
+    if !base_seen && !base.single_master {
         return Err(LedgerCurrencyRefusal::BaseUnmatched { ledger: None });
     }
     Ok(classified)

@@ -879,7 +879,9 @@ fn parse_ledger_row(
                                 "ledger_duplicate_currency_name",
                             ));
                         }
-                        currency_name = Some((!text.is_empty()).then_some(text));
+                        // Emptiness is judged on the trimmed view, as for
+                        // PARENT; the retained value is verbatim.
+                        currency_name = Some((!text.trim().is_empty()).then_some(text));
                     }
                     b"BRIDGECOMPANYGUID" => {
                         let text = read_element_text(reader, child.name())?;

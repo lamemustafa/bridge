@@ -196,7 +196,6 @@ fn parse_row(
     let mut debit = None;
     let mut credit = None;
     let mut closing = None;
-    let mut currency_name: Option<String> = None;
     loop {
         match reader
             .read_event()
@@ -233,11 +232,6 @@ fn parse_row(
                     parse_amount(&child, read_element_text(reader, child.name())?)?,
                     "trial_balance_duplicate_closing",
                 )?,
-                b"CURRENCYNAME" => set_once(
-                    &mut currency_name,
-                    read_element_text(reader, child.name())?,
-                    "trial_balance_duplicate_currency_name",
-                )?,
                 _ => skip_subtree(reader)?,
             },
             Event::Empty(child) => match child.name().as_ref().to_ascii_uppercase().as_slice() {
@@ -263,11 +257,6 @@ fn parse_row(
                     &mut closing,
                     parse_amount(&child, String::new())?,
                     "trial_balance_duplicate_closing",
-                )?,
-                b"CURRENCYNAME" => set_once(
-                    &mut currency_name,
-                    String::new(),
-                    "trial_balance_duplicate_currency_name",
                 )?,
                 _ => {}
             },
@@ -306,7 +295,6 @@ fn parse_row(
         closing: closing.ok_or(NativeTrialBalanceError::InvalidResponse(
             "trial_balance_closing_missing",
         ))?,
-        currency_name: currency_name.filter(|name| !name.is_empty()),
     };
     validate_guid_suffix(&row.guid, expected_company_guid)?;
     validate_observed_movement_polarity(&row)?;

@@ -148,8 +148,9 @@ pub fn render_native_bills_request(
 /// currency (the Currency master's NAME, e.g. `I₹`, `Rs.` or `$`; bridge#551).
 /// A foreign-currency ledger's bills and a zero foreign balance arrive as
 /// plain amounts, so only this field tells such a ledger from a base one.
-/// Measured on 7.1: present on every row, and changing nothing else in the
-/// response (`LEDGER_CURRENCY_CAPTURE_PROVENANCE.md`).
+/// Measured on 7.1 (TALLY_PROTOCOL_REFERENCE §8.2d): present on every row of
+/// every book read; on the FOREX book, the response was otherwise
+/// byte-identical to the same request without the field.
 ///
 /// **`SVFROMDATE`/`SVTODATE` are load-bearing here and must match the bills
 /// request exactly.** `CLOSINGBALANCE` is as-of scoped; see

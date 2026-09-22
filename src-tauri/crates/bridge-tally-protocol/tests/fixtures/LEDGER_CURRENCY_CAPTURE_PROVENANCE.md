@@ -30,15 +30,17 @@ foreign ledger from a base one; its currency can.
   - `I₹` on the other seven, including `Cash`, `FX Sales` and `Profit & Loss A/c`.
 - **The field changes nothing else.** With the `CURRENCYNAME` elements removed, the response is
   byte-identical to the same request without the field.
-- **Two `$` ledgers close composite:** `-$ 1100.00 @ I₹ 86/$  = -I₹ 94600.00` and
-  `-$ 2000.00 @ I₹ 86/$  = -I₹ 172000.00`.
+- **Three balances are composite:** the closings `-$ 1100.00 @ I₹ 86/$  = -I₹ 94600.00` and
+  `-$ 2000.00 @ I₹ 86/$  = -I₹ 172000.00`, and `BRIDGE FX DEBTOR A`'s opening
+  `-$ 500.00 @ I₹ 84/$  = -I₹ 42000.00`.
 - **`FX USD Debtor 01` closes as a plain `0.00`.** It is a `$` ledger whose balance shape alone would
   pass for rupees.
 
 ### `ledgers_currency_single_live`
 
 - **Company:** `Bridge Billwise Lab` (synthetic; see `docs/tally/TEST_CORPUS.md`). One Currency
-  master: NAME `Rs.`, ORIGINALNAME `Rs.`, MAILINGNAME `Indian Rupees`. Period
+  master: NAME `Rs.`, ORIGINALNAME `Rs.`, MAILINGNAME `Indian Rupees`, as that book's own currency
+  read reported them in the same session. That read is not committed here. Period
   `20240401`–`20240930`.
 - **Rows:** 13 ledgers, `STATUS 1`. Every row, bill-wise debtors, `Cash` and non-party ledgers alike,
   carries `CURRENCYNAME` `Rs.`, the master's NAME. Every amount is a plain decimal.
