@@ -480,6 +480,11 @@ async fn queued_import_keeps_admission_separate_from_raw_import_wire() {
     // 31 admission requests, the marks snapshot, then the POST. The marks read
     // after the POST is the caller's, once the response is journaled.
     assert_eq!(observed.len(), 33);
+    // The binding-time snapshot is the aim snapshot's own request (#239).
+    assert_eq!(
+        observed[3].request_body_sha256,
+        observed[31].request_body_sha256
+    );
     assert_eq!(
         dispatch.admission_evidence,
         expected_queued_evidence(&observed, &responses, true)

@@ -15,7 +15,7 @@
     },
     {
       "path": "docs/adr/0004-tally-write-safety.md",
-      "sha256": "a490e14fe6b5dc15f2554278eaecbd94929d9515016c9dcb4ec89e3367722872"
+      "sha256": "a221114c4f308d48d61e9acfae4ac77666d5de648839c66cf37a554d47a39e87"
     },
     {
       "path": "docs/adr/0005-tally-snapshot-recovery.md",
@@ -427,7 +427,7 @@
     },
     {
       "path": "src-tauri/src/agent_catalog.rs",
-      "sha256": "cb6980cd4aa7563feab34cf0a20aa2cc2384ad2f82f7f07b774c43de0875c939"
+      "sha256": "a1959c2414b915f67cf941d7e16af95a777b0f83108d6b976dc19c231ce44c41"
     },
     {
       "path": "src-tauri/src/agent_change_parse.rs",
@@ -1106,5 +1106,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "40fbbdf32cd7f8759b18cacdf49fee8891c68aa9324238d26e46006758f93789"
+  "manifest_sha256": "0e32a709a21cf3dd5508884e4b4a4a639f2966056fd4f94508461fcbf496dc26"
 }

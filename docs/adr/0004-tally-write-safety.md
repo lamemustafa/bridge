@@ -228,11 +228,12 @@ or an owner decision to amend the requirement instead:
    change marks as its binding reads begin (just before the catalogue re-read) and compares the
    target's master mark (`ALTMSTID`) with the one in the aim snapshot sent last before the POST;
    any change refuses with `post_masters_moved` (`post_masters_unconfirmed` if the comparison
-   cannot be made), before the intent. A ledger rename is measured to move `ALTMSTID` by 1
-   (TALLY_PROTOCOL_REFERENCE §11c.5); whether a
-   regroup does is not yet measured (lab L9), and until it is, a regroup in that window is caught
-   only if it moves the mark. Any master change in the company refuses, including unrelated ones;
-   the operator re-runs. During the approval wait, a ledger renamed and a new one created under
+   cannot be made), before the intent. A ledger rename made through the gateway is measured to move
+   `ALTMSTID` by 1, and master creates move it too (TALLY_PROTOCOL_REFERENCE §11c.5, §10); only
+   gateway changes were measured (§11c.4). Not yet measured: a regroup, an edit made in Tally's own
+   screens (the likelier concurrent writer), and whether posting a voucher moves `ALTMSTID` (if it
+   does, a busy book refuses more often; it fails closed). A change that does not move the mark is
+   not caught. Any change that does refuses, including unrelated ones; the operator re-runs. During the approval wait, a ledger renamed and a new one created under
    its old name is refused by the catalogue binding's (name, GUID) check (`import_masters_changed`).
    Open: the same between build and post, since the saved batch records ledger names only (next
    item); the one round trip from the aim snapshot to the POST; and a check after the POST.
@@ -303,8 +304,8 @@ The queued re-read is not the last request before the POST: the mode and
 company re-admission and the two duplicate-absence reads follow it, because
 duplicate absence stays the final source check. A regroup in Tally during those
 few requests is refused by the master-mark comparison (follow-up 8) only if it moves
-the company's `ALTMSTID`, which is not yet measured for a regroup (lab L9); until
-then the quiet-company assumption (#239) covers it. The catalogue binding alone cannot see
+the company's `ALTMSTID`, which is not yet measured for a regroup; until then the
+quiet-company assumption (#239) covers it. The catalogue binding alone cannot see
 this: it compares each ledger's name and GUID, not its parent, so a ledger or a
 group re-parented after the build would otherwise go unnoticed. A bank voucher
 without its group read, or a Journal with one, is refused as a wiring fault

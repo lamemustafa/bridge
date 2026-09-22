@@ -115,6 +115,14 @@ fn the_aim_check_admits_one_target_and_refuses_a_rename_or_a_namesake() {
         admit_post_target(&split, TARGET, "Synthetic Target"),
         Ok(())
     );
+    // The target's name under another GUID, and no other company of that name:
+    // a different company, however the name reads (a restore issues new GUIDs).
+    let mut regenerated = book();
+    regenerated[0].guid = "44444444-4444-4444-8444-444444444444".into();
+    assert_eq!(
+        admit_post_target(&regenerated, TARGET, "Synthetic Target"),
+        Err("post_company_scope_changed")
+    );
 }
 
 #[test]
@@ -286,6 +294,21 @@ fn only_the_targets_master_mark_decides_whether_masters_moved() {
     // Another company's masters, and the target's own vouchers, are not ours.
     assert_eq!(unchanged(&with_masters(&book, OTHER, 99)), Some(true));
     assert_eq!(unchanged(&with_vouchers(&book, TARGET, 11)), Some(true));
+    // A mark that goes back (a company restored under the same identity) is a
+    // change too, never an unchanged book.
+    assert_eq!(
+        target_masters_unchanged(
+            &with_masters(&book, TARGET, 8),
+            &book,
+            TARGET,
+            "Synthetic Target"
+        ),
+        Some(false)
+    );
+    // The target's name under another GUID is not the target.
+    let mut regenerated = book.clone();
+    regenerated[0].guid = "44444444-4444-4444-8444-444444444444".into();
+    assert_eq!(unchanged(&regenerated), None);
     // A year-split sibling shares the GUID under another name; it is not the
     // target, whether or not its masters move.
     let mut split = book.clone();
