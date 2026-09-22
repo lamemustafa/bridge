@@ -1,0 +1,772 @@
+{
+ "comment": "creditor_ageing_43bh, acceptance lag 1 day: lots at each bucket edge and each side of the 15- and 45-day windows; micro, small, medium, not_registered and unknown creditors; an opening lot partly paid beside an in-year bill on the period start; an opening balance alone still open (26(i)(A) candidate); post-year payments settling one lot inside its window, one outside it, one partly, and a lot with none, and a negative next-year line; a small creditor with no post-year data; a creditor with no TB row and a configured name that is no ledger at all; same-day bill before payment, an overpayment carried as an advance and a zero-amount line; one voucher cited by two creditors' opening balances; AGE-1's three violations (a post-dated bill in the TB closing, a nil closing with an aged lot, a TB credit smaller than the aged amount); MSMED interest from positive population lines only; a voucher with no number.",
+ "groups": {
+  "Current Assets": null,
+  "Bank Accounts": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Purchase Accounts": null,
+  "Indirect Expenses": null
+ },
+ "ledgers": [
+  {
+   "name": "Buckets Micro",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-ca-buckets"
+  },
+  {
+   "name": "Window Small",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-ca-window"
+  },
+  {
+   "name": "Opening Unknown",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-ca-open-unknown"
+  },
+  {
+   "name": "Unregistered Aged",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-ca-unreg"
+  },
+  {
+   "name": "Opening And Lots Micro",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-ca-open-lots"
+  },
+  {
+   "name": "No TB Row",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-ca-no-tb"
+  },
+  {
+   "name": "Overpaid Medium",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-ca-overpaid"
+  },
+  {
+   "name": "Postdated Tie",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-ca-postdated"
+  },
+  {
+   "name": "Nil Close Aged",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-ca-nil-close"
+  },
+  {
+   "name": "Short Close",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-ca-short-close"
+  },
+  {
+   "name": "Opening Only Small",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-ca-open-only"
+  },
+  {
+   "name": "Pending No Data Micro",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-ca-pending"
+  },
+  {
+   "name": "Purchases",
+   "chain": [
+    "Purchase Accounts"
+   ],
+   "guid": "edge-ca-purch"
+  },
+  {
+   "name": "Bank",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-ca-bank"
+  },
+  {
+   "name": "MSME Interest",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-ca-mse"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Buckets Micro",
+   "opening": 0,
+   "debit": 1,
+   "credit": 728,
+   "closing": -727
+  },
+  {
+   "ledger": "Window Small",
+   "opening": 0,
+   "debit": 0,
+   "credit": 10000,
+   "closing": -10000
+  },
+  {
+   "ledger": "Opening Unknown",
+   "opening": -5000,
+   "debit": 0,
+   "credit": 0,
+   "closing": -5000
+  },
+  {
+   "ledger": "Unregistered Aged",
+   "opening": 0,
+   "debit": 0,
+   "credit": 700,
+   "closing": -700
+  },
+  {
+   "ledger": "Opening And Lots Micro",
+   "opening": -1200,
+   "debit": 300,
+   "credit": 1700,
+   "closing": -2600
+  },
+  {
+   "ledger": "Overpaid Medium",
+   "opening": 200,
+   "debit": 1300,
+   "credit": 800,
+   "closing": 700
+  },
+  {
+   "ledger": "Postdated Tie",
+   "opening": 0,
+   "debit": 0,
+   "credit": 3100,
+   "closing": -3100
+  },
+  {
+   "ledger": "Nil Close Aged",
+   "opening": 0,
+   "debit": 450,
+   "credit": 450,
+   "closing": 0
+  },
+  {
+   "ledger": "Short Close",
+   "opening": 0,
+   "debit": 0,
+   "credit": 4950,
+   "closing": -4950
+  },
+  {
+   "ledger": "Opening Only Small",
+   "opening": -8000,
+   "debit": 100,
+   "credit": 0,
+   "closing": -7900
+  },
+  {
+   "ledger": "Pending No Data Micro",
+   "opening": 0,
+   "debit": 0,
+   "credit": 350,
+   "closing": -350
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "edge-ca-001",
+   "date": "2026-03-15",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Buckets Micro",
+     -101
+    ],
+    [
+     "Purchases",
+     101
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-002",
+   "date": "2026-03-14",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Buckets Micro",
+     -102
+    ],
+    [
+     "Purchases",
+     102
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-003",
+   "date": "2026-02-13",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Buckets Micro",
+     -103
+    ],
+    [
+     "Purchases",
+     103
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-004",
+   "date": "2026-02-12",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Buckets Micro",
+     -104
+    ],
+    [
+     "Purchases",
+     104
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-005",
+   "date": "2025-12-30",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Buckets Micro",
+     -105
+    ],
+    [
+     "Purchases",
+     105
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-006",
+   "date": "2025-12-29",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Buckets Micro",
+     -106
+    ],
+    [
+     "Purchases",
+     106
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-007",
+   "date": "2025-09-11",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Buckets Micro",
+     -107
+    ],
+    [
+     "Purchases",
+     107
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-008",
+   "date": "2026-03-27",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Window Small",
+     -1000
+    ],
+    [
+     "Purchases",
+     1000
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-009",
+   "date": "2026-03-25",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Window Small",
+     -2000
+    ],
+    [
+     "Purchases",
+     2000
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-010",
+   "date": "2026-03-20",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Window Small",
+     -3000
+    ],
+    [
+     "Purchases",
+     3000
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-011",
+   "date": "2026-03-18",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Window Small",
+     -4000
+    ],
+    [
+     "Purchases",
+     4000
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-012",
+   "date": "2026-01-29",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Unregistered Aged",
+     -700
+    ],
+    [
+     "Purchases",
+     700
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-013",
+   "date": "2025-04-01",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Opening And Lots Micro",
+     -900
+    ],
+    [
+     "Purchases",
+     900
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-014",
+   "date": "2025-04-01",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Opening And Lots Micro",
+     300
+    ],
+    [
+     "Bank",
+     -300
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-015",
+   "date": "2026-02-08",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Opening And Lots Micro",
+     -400
+    ],
+    [
+     "Purchases",
+     400
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-016",
+   "date": "2026-03-10",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Opening And Lots Micro",
+     -250
+    ],
+    [
+     "Purchases",
+     250
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-017",
+   "date": "2026-03-28",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Opening And Lots Micro",
+     -50
+    ],
+    [
+     "Purchases",
+     50
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-018",
+   "date": "2026-02-28",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "No TB Row",
+     -600
+    ],
+    [
+     "Purchases",
+     600
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-019",
+   "date": "2026-01-19",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Overpaid Medium",
+     500
+    ],
+    [
+     "Bank",
+     -500
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-020",
+   "date": "2026-01-19",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Overpaid Medium",
+     -500
+    ],
+    [
+     "Purchases",
+     500
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-021",
+   "date": "2026-02-18",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Overpaid Medium",
+     800
+    ],
+    [
+     "Bank",
+     -800
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-022",
+   "date": "2026-02-28",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Overpaid Medium",
+     -300
+    ],
+    [
+     "Purchases",
+     300
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-023",
+   "date": "2026-03-05",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Overpaid Medium",
+     0
+    ],
+    [
+     "Bank",
+     0
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-024",
+   "date": "2025-12-20",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Postdated Tie",
+     -1000
+    ],
+    [
+     "Purchases",
+     1000
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-025",
+   "date": "2026-03-31",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Postdated Tie",
+     -2100
+    ],
+    [
+     "Purchases",
+     2100
+    ]
+   ],
+   "status": "postdated"
+  },
+  {
+   "guid": "edge-ca-026",
+   "date": "2026-02-28",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Nil Close Aged",
+     -450
+    ],
+    [
+     "Purchases",
+     450
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-027",
+   "date": "2026-02-28",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Short Close",
+     -5000
+    ],
+    [
+     "Purchases",
+     5000
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-028",
+   "date": "2026-03-25",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Opening Only Small",
+     100
+    ],
+    [
+     "Opening And Lots Micro",
+     -100
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-029",
+   "date": "2026-03-26",
+   "base_type": "Purchase",
+   "lines": [
+    [
+     "Pending No Data Micro",
+     -350
+    ],
+    [
+     "Purchases",
+     350
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-030",
+   "date": "2026-03-20",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "MSME Interest",
+     1234
+    ],
+    [
+     "Bank",
+     -1234
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-031",
+   "date": "2026-03-22",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "MSME Interest",
+     -34
+    ],
+    [
+     "Bank",
+     34
+    ]
+   ]
+  },
+  {
+   "guid": "edge-ca-032",
+   "date": "2026-03-31",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "MSME Interest",
+     999
+    ],
+    [
+     "Bank",
+     -999
+    ]
+   ],
+   "status": "postdated"
+  },
+  {
+   "guid": "edge-ca-033",
+   "date": "2026-03-29",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Buckets Micro",
+     1
+    ],
+    [
+     "Bank",
+     -1
+    ]
+   ],
+   "number": ""
+  }
+ ],
+ "cash": [],
+ "bank": [
+  "Bank"
+ ],
+ "creditors": [
+  "Buckets Micro",
+  "Window Small",
+  "Opening Unknown",
+  "Unregistered Aged",
+  "Opening And Lots Micro",
+  "No TB Row",
+  "Overpaid Medium",
+  "Postdated Tie",
+  "Nil Close Aged",
+  "Short Close",
+  "Opening Only Small",
+  "Pending No Data Micro",
+  "Ledger Not In Book"
+ ],
+ "creditor_ageing": {
+  "acceptance_lag_days": 1,
+  "supplier_classification": {
+   "Buckets Micro": "micro",
+   "Window Small": "small",
+   "Unregistered Aged": "not_registered",
+   "Opening And Lots Micro": "micro",
+   "Overpaid Medium": "medium",
+   "Opening Only Small": "small",
+   "Pending No Data Micro": "micro",
+   "Short Close": "trader"
+  },
+  "mse_interest_ledgers": [
+   "MSME Interest"
+  ],
+  "post_year_payments": {
+   "Window Small": [
+    [
+     "2026-04-20",
+     2500
+    ],
+    [
+     "2026-04-03",
+     4000
+    ],
+    [
+     "2026-04-12",
+     500
+    ],
+    [
+     "2026-04-25",
+     1200
+    ],
+    [
+     "2026-04-01",
+     -500
+    ]
+   ]
+  }
+ },
+ "tests": [
+  "creditor_ageing_43bh"
+ ]
+}

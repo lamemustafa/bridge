@@ -1,0 +1,170 @@
+{
+ "comment": "statutory_dues_43b: an employee-contribution nature with a debit opening (no opening lot); a deduction on the 1st of a month, grouped into that month; two vouchers sharing one GUID.",
+ "groups": {
+  "Current Assets": null,
+  "Bank Accounts": "Current Assets",
+  "Current Liabilities": null,
+  "Duties & Taxes": "Current Liabilities",
+  "Provisions": "Current Liabilities",
+  "Indirect Expenses": null
+ },
+ "ledgers": [
+  {
+   "name": "ESI Employee Payable",
+   "chain": [
+    "Duties & Taxes",
+    "Current Liabilities"
+   ],
+   "guid": "edge-sdd-esie"
+  },
+  {
+   "name": "PF Employee Payable",
+   "chain": [
+    "Duties & Taxes",
+    "Current Liabilities"
+   ],
+   "guid": "edge-sdd-pfe"
+  },
+  {
+   "name": "Wages",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-sdd-wages"
+  },
+  {
+   "name": "Bank",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-sdd-bank"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "ESI Employee Payable",
+   "opening": 500,
+   "debit": 300,
+   "credit": 300,
+   "closing": 500
+  },
+  {
+   "ledger": "PF Employee Payable",
+   "opening": 0,
+   "debit": 400,
+   "credit": 430,
+   "closing": -30
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "edge-sdd-001",
+   "date": "2025-05-31",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "ESI Employee Payable",
+     -300
+    ],
+    [
+     "Wages",
+     300
+    ]
+   ]
+  },
+  {
+   "guid": "edge-sdd-002",
+   "date": "2025-06-10",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "ESI Employee Payable",
+     300
+    ],
+    [
+     "Bank",
+     -300
+    ]
+   ]
+  },
+  {
+   "guid": "edge-sdd-003",
+   "date": "2025-06-01",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "PF Employee Payable",
+     -400
+    ],
+    [
+     "Wages",
+     400
+    ]
+   ]
+  },
+  {
+   "guid": "edge-sdd-004",
+   "date": "2025-07-01",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "PF Employee Payable",
+     400
+    ],
+    [
+     "Bank",
+     -400
+    ]
+   ]
+  },
+  {
+   "guid": "edge-sdd-dup",
+   "date": "2025-08-31",
+   "base_type": "Journal",
+   "number": "DUP-FIRST",
+   "lines": [
+    [
+     "PF Employee Payable",
+     -10
+    ],
+    [
+     "Wages",
+     10
+    ]
+   ]
+  },
+  {
+   "guid": "edge-sdd-dup",
+   "date": "2025-09-30",
+   "base_type": "Journal",
+   "number": "DUP-SECOND",
+   "lines": [
+    [
+     "PF Employee Payable",
+     -20
+    ],
+    [
+     "Wages",
+     20
+    ]
+   ]
+  }
+ ],
+ "cash": [],
+ "bank": [
+  "Bank"
+ ],
+ "statutory_dues": {
+  "nature_by_ledger": {
+   "ESI Employee Payable": "esi_employee",
+   "PF Employee Payable": "pf_employee"
+  },
+  "salary_expense_ledgers": [
+   "Wages"
+  ]
+ },
+ "tests": [
+  "statutory_dues_43b"
+ ]
+}

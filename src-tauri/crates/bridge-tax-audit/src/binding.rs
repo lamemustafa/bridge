@@ -3,8 +3,11 @@
 //! An engagement config names ledgers and groups by display text: `[roles].cash_groups`,
 //! `[roles].round_off_ledgers`, `[tds].nature_by_ledger`'s and `[tds].payee_aliases`' keys,
 //! `[tds_payees].s194j_category_by_ledger`'s keys, `[loans.loan_ledgers]`'s keys,
-//! `[depreciation].block_by_ledger`'s keys, `[depreciation].dep_expense_ledgers` and
-//! `[partners.*].interest_ledger` -- every location
+//! `[depreciation].block_by_ledger`'s keys, `[depreciation].dep_expense_ledgers`,
+//! `[partners.*].interest_ledger`,
+//! `[statutory_dues]`'s `salary_expense_ledgers` and `nature_by_ledger` keys,
+//! `[creditor_ageing_43bh]`'s `supplier_classification` keys and `mse_interest_ledgers`, the ledger
+//! names a legacy trade-creditor JSON source lists, and `[roles].creditor_groups` -- every location
 //! this crate's [`Engagement`] reads. Staff rename ledgers between reads, and a name that stops matching used to drop out of
 //! a role silently: the figures moved and nothing said why. [`bind`] is the one place a
 //! configured name meets the Book; every one of the locations above is bound once, before any
@@ -26,8 +29,7 @@
 //!   drift can judge.
 //!
 //! **Scope.** This port's registry above is a strict subset of the reference implementation's
-//! (which also binds names inside `gst_outward`, `related_parties`, `statutory_dues`, a legacy
-//! trade-creditor JSON source, and more): only the locations the ported tests actually read. A real client config's `[ledger_ids]`/
+//! (which also binds names inside `gst_outward`, `related_parties`, and more): only the locations the ported tests actually read. A real client config's `[ledger_ids]`/
 //! `[group_ids]` tables are written for the reference implementation's full pack and will
 //! typically carry many labels this port never looks at; [`BIND_ID_UNUSED`] is checked only
 //! against the locations this module reads, so this crate never refuses over a label some other,
@@ -52,6 +54,9 @@ pub const BIND_BOOK_DUPLICATE_ID: &str = "BIND-BOOK-DUPLICATE-ID";
 pub const BIND_ID_MALFORMED: &str = "BIND-ID-MALFORMED";
 pub const BIND_ID_UNUSED: &str = "BIND-ID-UNUSED";
 pub const BIND_COLLISION: &str = "BIND-COLLISION";
+
+/// The location a legacy trade-creditor source's names are reported under, as the reference names it.
+pub const LEGACY_PATH_LABEL: &str = "roles.trade_creditors_source(legacy_json)";
 
 /// A configured identity: a Tally GUID, a MASTERID, or both. Never both absent.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -439,6 +444,66 @@ implement",
     }
 }
 
+/// The value at a configuration location, or `None` when any level of it is absent or not a
+/// table -- the reference's `_expand`, which skips such a location rather than refusing it.
+fn raw_at<'a>(cfg: &'a toml::Table, path: &[&str]) -> Option<&'a toml::Value> {
+    let (first, rest) = path.split_first()?;
+    let mut node = cfg.get(*first)?;
+    for key in rest {
+        node = node.as_table()?.get(*key)?;
+    }
+    Some(node)
+}
+
+/// The names a list location holds (empty when absent), or `BIND-ID-MALFORMED` when it is not a
+/// list of names -- the reference's `names_at(..., "list", ...)`.
+fn list_at(cfg: &toml::Table, path: &[&str]) -> Result<Vec<String>> {
+    let Some(v) = raw_at(cfg, path) else {
+        return Ok(Vec::new());
+    };
+    v.as_array()
+        .and_then(|a| a.iter().map(|x| x.as_str().map(str::to_string)).collect())
+        .ok_or_else(|| {
+            AuditError::refused(
+                BIND_ID_MALFORMED,
+                format!("{}: expected a list of names, got {v}", path.join(".")),
+            )
+        })
+}
+
+/// The table a keys location holds (`None` when absent), or `BIND-ID-MALFORMED` when it is not a
+/// table -- the reference's `names_at(..., "keys", ...)`.
+fn table_at<'a>(cfg: &'a toml::Table, path: &[&str]) -> Result<Option<&'a toml::Table>> {
+    match raw_at(cfg, path) {
+        None => Ok(None),
+        Some(v) => v.as_table().map(Some).ok_or_else(|| {
+            AuditError::refused(
+                BIND_ID_MALFORMED,
+                format!(
+                    "{}: expected a table keyed by names, got {v}",
+                    path.join(".")
+                ),
+            )
+        }),
+    }
+}
+
+/// Bind every key of a table location, keeping each value as written.
+fn bind_table_keys(
+    binder: &mut Binder,
+    table: Option<&toml::Table>,
+    location: &str,
+) -> Result<BTreeMap<String, toml::Value>> {
+    let Some(table) = table else {
+        return Ok(BTreeMap::new());
+    };
+    let pairs = binder.bind_keys(table.keys().cloned(), location)?;
+    Ok(pairs
+        .into_iter()
+        .map(|(orig, bound)| (bound, table[&orig].clone()))
+        .collect())
+}
+
 fn check_collision(kind: &'static str, location: &str, pairs: &[(String, String)]) -> Result<()> {
     let mut seen: BTreeSet<&str> = BTreeSet::new();
     let mut dup: BTreeSet<String> = BTreeSet::new();
@@ -578,6 +643,59 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
         })
         .collect::<Result<BTreeMap<String, String>>>()?;
 
+    // The two tables `statutory_dues_43b` and `creditor_ageing_43bh` read, in the reference's
+    // LEDGER_PATHS order. Only the name locations' shapes are checked here; every value is kept as
+    // written and typed when its own test runs (see `CreditorAgeingConfig`).
+    let raw = &engagement.raw_cfg;
+    let salary_expense_ledgers = lbinder.bind_list(
+        &list_at(raw, &["statutory_dues", "salary_expense_ledgers"])?,
+        "statutory_dues.salary_expense_ledgers",
+    )?;
+    let nature_by_ledger = bind_table_keys(
+        &mut lbinder,
+        table_at(raw, &["statutory_dues", "nature_by_ledger"])?,
+        "statutory_dues.nature_by_ledger",
+    )?;
+    let statutory_dues = crate::StatutoryDuesConfig {
+        not_a_table: raw.get("statutory_dues").is_some_and(|v| !v.is_table()),
+        nature_by_ledger,
+        salary_expense_ledgers,
+    };
+    let supplier_classification = bind_table_keys(
+        &mut lbinder,
+        table_at(raw, &["creditor_ageing_43bh", "supplier_classification"])?,
+        "creditor_ageing_43bh.supplier_classification",
+    )?;
+    let mse_interest_ledgers = lbinder.bind_list(
+        &list_at(raw, &["creditor_ageing_43bh", "mse_interest_ledgers"])?,
+        "creditor_ageing_43bh.mse_interest_ledgers",
+    )?;
+    let creditor_ageing = crate::CreditorAgeingConfig {
+        not_a_table: raw
+            .get("creditor_ageing_43bh")
+            .is_some_and(|v| !v.is_table()),
+        acceptance_lag_days: raw_at(raw, &["creditor_ageing_43bh", "acceptance_lag_days"]).cloned(),
+        supplier_classification,
+        mse_interest_ledgers,
+    };
+
+    // As the reference does, after every other ledger location: a legacy trade-creditor source's
+    // names are configuration too, read once here and replaced by the bound list.
+    let mut trade_creditors_source = engagement.trade_creditors_source.clone();
+    if let Some(names) = crate::legacy_trade_creditor_names(
+        engagement.trade_creditors_source.as_ref(),
+        &engagement.base_dir,
+    )? {
+        let bound = lbinder.bind_list(&names, LEGACY_PATH_LABEL)?;
+        let mut t = toml::Table::new();
+        t.insert("kind".to_string(), toml::Value::from("ledgers"));
+        t.insert(
+            "ledgers".to_string(),
+            toml::Value::Array(bound.into_iter().map(toml::Value::from).collect()),
+        );
+        trade_creditors_source = Some(toml::Value::Table(t));
+    }
+
     lbinder.check_unused()?;
 
     let group_ids = parse_identity_table(&engagement.raw_cfg, "group_ids")?;
@@ -594,6 +712,13 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
 
     let cash_groups = gbinder.bind_list(&engagement.cash_groups, "roles.cash_groups")?;
     let bank_groups = gbinder.bind_list(&engagement.bank_groups, "roles.bank_groups")?;
+    let creditor_groups = match raw_at(raw, &["roles", "creditor_groups"]) {
+        Some(_) => Some(gbinder.bind_list(
+            &list_at(raw, &["roles", "creditor_groups"])?,
+            "roles.creditor_groups",
+        )?),
+        None => None,
+    };
 
     gbinder.check_unused()?;
 
@@ -624,6 +749,10 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
         loan_ledgers_configured,
         depreciation,
         partner_interest_ledgers,
+        creditor_groups,
+        trade_creditors_source,
+        creditor_ageing,
+        statutory_dues,
         tds,
         ..engagement.clone()
     };
@@ -1129,6 +1258,151 @@ mod tests {
         );
         assert!(dep.dep_expense_ledgers.contains("Depreciation A/c"));
         assert_eq!(report.drifts[0].current_name, "Furniture (renamed)");
+    }
+
+    // ---- [creditor_ageing_43bh], [statutory_dues], creditor groups and a legacy source ----
+
+    #[test]
+    fn creditor_ageing_and_statutory_dues_names_are_bound_by_identity() {
+        let e = engagement(&format!(
+            "\n[ledger_ids]\n\"Supplier A\" = {G_ROUNDOFF:?}\n\"PF Payable\" = {G_OTHER:?}\n\
+             \"Wages\" = {G_CASH:?}\n\
+             \n[creditor_ageing_43bh]\nmse_interest_ledgers = [\"MSME Interest\"]\n\
+             \n[creditor_ageing_43bh.supplier_classification]\n\"Supplier A\" = \"micro\"\n\
+             \n[statutory_dues]\nsalary_expense_ledgers = [\"Wages\"]\n\
+             \n[statutory_dues.nature_by_ledger]\n\"PF Payable\" = \"pf_employee\"\n"
+        ));
+        let mut b = book("Cash-in-Hand", "", None);
+        for (name, group, guid) in [
+            ("Supplier (renamed)", "Sundry Creditors", G_ROUNDOFF),
+            ("PF (renamed)", "Duties & Taxes", G_OTHER),
+            ("Salaries (renamed)", "Indirect Expenses", G_CASH),
+            ("MSME Interest", "Indirect Expenses", ""),
+        ] {
+            b.ledgers
+                .insert(name.to_string(), ledger(name, group, guid, None));
+        }
+        let (bound, report) = e.bind(&b).unwrap();
+        assert_eq!(
+            bound.creditor_ageing.supplier_classification,
+            BTreeMap::from([("Supplier (renamed)".to_string(), toml::Value::from("micro"))])
+        );
+        assert_eq!(
+            bound.creditor_ageing.mse_interest_ledgers,
+            vec!["MSME Interest"]
+        );
+        assert_eq!(
+            bound.statutory_dues.nature_by_ledger,
+            BTreeMap::from([("PF (renamed)".to_string(), toml::Value::from("pf_employee"))])
+        );
+        assert_eq!(
+            bound.statutory_dues.salary_expense_ledgers,
+            vec!["Salaries (renamed)"]
+        );
+        assert_eq!(report.drifts.len(), 3);
+    }
+
+    /// A malformed VALUE in a test's own table fails that test only: binding (every test) still
+    /// succeeds, as in the reference, where only the test that reads the value raises.
+    #[test]
+    fn a_malformed_value_in_a_tests_own_table_fails_only_that_test() {
+        let rules = crate::rules::Rules::vendored().unwrap();
+        let b = book("Cash-in-Hand", "", None);
+        for extra in [
+            "creditor_groups = [\"Cash-in-Hand\"]\ntrade_creditors_source = { kind = \"groups\" }\n\
+             \n[creditor_ageing_43bh]\nacceptance_lag_days = \"three\"\n",
+            "creditor_groups = [\"Cash-in-Hand\"]\ntrade_creditors_source = { kind = \"groups\" }\n\
+             \n[[creditor_ageing_43bh]]\nacceptance_lag_days = 1\n",
+        ] {
+            let e = engagement(extra);
+            assert!(e.bind(&b).is_ok(), "{extra}");
+            assert!(crate::cash_44ab_on(&e, &b, &rules).is_ok(), "{extra}");
+            assert!(crate::creditor_ageing_43bh_on(&e, &b, &rules).is_err(), "{extra}");
+            assert!(crate::statutory_dues_43b_on(&e, &b, &rules).is_ok(), "{extra}");
+        }
+        for extra in [
+            "\n[statutory_dues.nature_by_ledger]\n\"Cash\" = 5\n",
+            "\n[[statutory_dues]]\nnature_by_ledger = {}\n",
+        ] {
+            let e = engagement(extra);
+            assert!(crate::cash_44ab_on(&e, &b, &rules).is_ok(), "{extra}");
+            assert!(
+                crate::statutory_dues_43b_on(&e, &b, &rules).is_err(),
+                "{extra}"
+            );
+        }
+        // A value typed at run: a lag written as a float runs, truncated as `int()` truncates.
+        let e = engagement(
+            "creditor_groups = [\"Cash-in-Hand\"]\ntrade_creditors_source = { kind = \"groups\" }\n\
+             \n[creditor_ageing_43bh]\nacceptance_lag_days = 3.7\n",
+        );
+        assert!(crate::creditor_ageing_43bh_on(&e, &b, &rules).is_ok());
+    }
+
+    /// A malformed SHAPE at a name location is a binding refusal for every test, as the
+    /// reference's `names_at` refuses it.
+    #[test]
+    fn a_malformed_name_location_refuses_binding() {
+        for extra in [
+            "\n[creditor_ageing_43bh]\nmse_interest_ledgers = \"MSME Interest\"\n",
+            "\n[creditor_ageing_43bh]\nsupplier_classification = [\"Cash\"]\n",
+            "\n[statutory_dues]\nsalary_expense_ledgers = \"Wages\"\n",
+            "\n[statutory_dues]\nnature_by_ledger = 5\n",
+            "creditor_groups = \"Cash-in-Hand\"\n",
+        ] {
+            let err = engagement(extra)
+                .bind(&book("Cash-in-Hand", "", None))
+                .unwrap_err();
+            assert_eq!(err.code(), Some(BIND_ID_MALFORMED), "{extra}");
+        }
+    }
+
+    #[test]
+    fn an_unknown_creditor_group_refuses_naming_its_location() {
+        let e = engagement("creditor_groups = [\"No Such Group\"]\n");
+        let err = e.bind(&book("Cash-in-Hand", "", None)).unwrap_err();
+        assert_eq!(err.code(), Some(BIND_GROUP_UNKNOWN));
+        assert!(format!("{err}").contains("roles.creditor_groups"));
+    }
+
+    #[test]
+    fn a_legacy_trade_creditor_source_is_read_bound_and_replaced() {
+        let dir =
+            std::env::temp_dir().join(format!("bridge-tax-audit-legacy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("legacy.json"),
+            r#"{"derived": {"fs": {"trade_creditors": [{"ledger": "Supplier A"}]}}}"#,
+        )
+        .unwrap();
+        let toml = base_toml(&format!(
+            "trade_creditors_source = {{ kind = \"legacy_json\", path = \"legacy.json\" }}\n\
+             \n[ledger_ids]\n\"Supplier A\" = {G_ROUNDOFF:?}\n"
+        ));
+        let e = Engagement::from_toml(&toml, &dir).unwrap();
+        let mut b = book("Cash-in-Hand", "", None);
+        b.ledgers.insert(
+            "Supplier (renamed)".to_string(),
+            ledger("Supplier (renamed)", "Sundry Creditors", G_ROUNDOFF, None),
+        );
+        let (bound, report) = e.bind(&b).unwrap();
+        assert_eq!(
+            crate::trade_creditors(&bound, &b).unwrap(),
+            BTreeSet::from(["Supplier (renamed)".to_string()])
+        );
+        assert_eq!(report.drifts[0].paths, vec![LEGACY_PATH_LABEL]);
+        // A legacy name that matches nothing refuses, naming the legacy location.
+        let bare = Engagement::from_toml(
+            &base_toml(
+                "trade_creditors_source = { kind = \"legacy_json\", path = \"legacy.json\" }\n",
+            ),
+            &dir,
+        )
+        .unwrap();
+        let err = bare.bind(&b).unwrap_err();
+        assert_eq!(err.code(), Some(BIND_NAME_UNKNOWN));
+        assert!(format!("{err}").contains(LEGACY_PATH_LABEL));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     // ---- [tds] and [tds_payees] (tds_payees) ----

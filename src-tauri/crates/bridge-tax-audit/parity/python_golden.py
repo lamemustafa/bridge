@@ -38,7 +38,11 @@ reads {"gstr1": {"turnover_paise", "coverage"} | null, "gstr3b": ..., "ais": ...
 `--emit-turnover-inputs FILE` takes GSTR-1 from the reference's own full pack for an engagement
 that is one of the engine's own client configs (named by its file stem, as the pack names it),
 with the configured gstr1_coverage and no GSTR-3B/AIS, exactly as that pack passes them, and
-writes that JSON. With neither, no comparison source is supplied. With --read DIR, the [snapshot] table is replaced in memory by that read with
+writes that JSON. With neither, no comparison source is supplied. `creditor_ageing_43bh` reads
+`[roles].trade_creditors_source` (and `creditor_groups` for a `groups` source) and the optional
+`[creditor_ageing_43bh]` table, and passes no next-year payment data, as the reference's pack runs
+it. `statutory_dues_43b` reads the optional `[statutory_dues]` table (`nature_by_ledger`,
+`salary_expense_ledgers`). With --read DIR, the [snapshot] table is replaced in memory by that read with
 allow_unbracketed_read = true -- the same switch the engine's own read-format parity gate applies
 -- so a legacy client config can be run against its wrapped read without editing it.
 
@@ -166,6 +170,23 @@ def _depreciation(c):
                                           dep_expense_ledgers)
 
 
+def _creditor_ageing_43bh(c):
+    from tae.audit_tests import creditor_ageing_43bh
+    from tae.config import creditor_ageing_config, trade_creditors
+    # As the reference's pack calls it: no next-year payment data.
+    lag, classification, mse_interest_ledgers = creditor_ageing_config(c.cfg)
+    return creditor_ageing_43bh, creditor_ageing_43bh.run(
+        c.eng, c.rules, trade_creditors(c.eng.book, c.cfg, c.path.parent), acceptance_lag_days=lag,
+        supplier_classification=classification, mse_interest_ledgers=mse_interest_ledgers)
+
+
+def _statutory_dues_43b(c):
+    from tae.audit_tests import statutory_dues_43b
+    from tae.config import statutory_dues_config
+    nature_by_ledger, salary_expense_ledgers = statutory_dues_config(c.cfg)
+    return statutory_dues_43b, statutory_dues_43b.run(c.eng, c.rules, nature_by_ledger, salary_expense_ledgers)
+
+
 def _tds_payees(c):
     from tae.audit_tests import tds_payees
     from tae.config import tds_config
@@ -180,10 +201,12 @@ RUNNERS = {
     "cash_44ab": _cash_44ab,
     "cash_book_integrity": _cash_book_integrity,
     "cash_payments_40a3": _cash_payments_40a3,
+    "creditor_ageing_43bh": _creditor_ageing_43bh,
     "depreciation": _depreciation,
     "financial_statements": _financial_statements,
     "ledger_scrutiny": _ledger_scrutiny,
     "stale_balances_41_1": _stale_balances_41_1,
+    "statutory_dues_43b": _statutory_dues_43b,
     "tds_payees": _tds_payees,
     "trial_balance": _trial_balance,
 }
