@@ -551,7 +551,7 @@
     },
     {
       "path": "src-tauri/src/agent_voucher_window.rs",
-      "sha256": "3008350ef7b2a6aecb7b4e29dd24b57476a6eb2ed39a4d02fc5b8aca13898c6e"
+      "sha256": "d8165da58a50b1db912294dda6c030c2ed215c15f943f03c1864ffd16e80d89f"
     },
     {
       "path": "src-tauri/src/agent_vouchers.rs",
@@ -891,7 +891,7 @@
     },
     {
       "path": "src-tauri/src/tally/runtime.rs",
-      "sha256": "ae910472e01ecc66fa00d566899523a2fe1a1333dbe613b37a90358c1a6f842d"
+      "sha256": "8deb997d893bf9008f4c29d9a60d1bb7cf796ad9be3b62e25bf98878a1909aac"
     },
     {
       "path": "src-tauri/src/tally/runtime_control.rs",
@@ -1102,5 +1102,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "8768228c198096c705dd3fc1ff32a1bf3a392a991831a8d0854c350324691cda"
+  "manifest_sha256": "f43bd7cf5bbd8cc2d8362bc05b31d84e0a2530b11977283b9f91f0506e696e53"
 }
