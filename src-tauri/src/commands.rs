@@ -1964,6 +1964,18 @@ pub async fn fetch_tally_outstandings(
     runtime: State<'_, TallyRuntime>,
     working_paper_exports: State<'_, WorkingPaperExportStore>,
 ) -> Result<FetchOutstandingsResponse, TallyCommandError> {
+    read_screen_outstandings(request, &runtime, &working_paper_exports).await
+}
+
+/// The body of [`fetch_tally_outstandings`], over plain references so that a
+/// test can drive the command's own sequence against a scripted Tally
+/// (bridge#604: the command must not read outstandings without its own
+/// currency check).
+pub(crate) async fn read_screen_outstandings(
+    request: OutstandingsRequest,
+    runtime: &TallyRuntime,
+    working_paper_exports: &WorkingPaperExportStore,
+) -> Result<FetchOutstandingsResponse, TallyCommandError> {
     let as_of = requested_outstandings_as_of(request.as_of_yyyymmdd)?;
     let canonical_origin = EndpointKey::from_config(&request.config)
         .map(|endpoint| endpoint.as_str().to_string())
@@ -1976,7 +1988,7 @@ pub async fn fetch_tally_outstandings(
         &request.selected_company.books_from_yyyymmdd,
     );
     let identity =
-        verify_observed_company_tuple(&runtime, &request.config, &request.selected_company).await?;
+        verify_observed_company_tuple(runtime, &request.config, &request.selected_company).await?;
     let result = runtime
         .fetch_operator_outstandings(
             request.config,

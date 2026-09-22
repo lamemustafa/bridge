@@ -355,3 +355,52 @@ async fn operator_outstandings_refuse_a_book_changed_since_the_currency_read() {
     ));
     assert_eq!(requests, 21);
 }
+
+/// bridge#604, through the desktop command's own body: an operator's INR
+/// assertion for a book with several Currency masters comes back as a partial
+/// result, with no working paper, and no bill is read.
+#[tokio::test]
+async fn the_desktop_command_refuses_several_currency_masters_before_any_bill() {
+    let captured = currency_source();
+    let start = captured.find("<CURRENCY ").unwrap();
+    let end = start + captured[start..].find("</CURRENCY>").unwrap() + "</CURRENCY>".len();
+    let mut several = captured.clone();
+    several.insert_str(end, &captured[start..end]);
+    let mut plans = vec![xml(companies())];
+    plans.extend(currency_then_native_plans(several));
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let rows = parse_companies_from_collection(&companies()).unwrap();
+    let row = rows
+        .iter()
+        .find(|row| row.guid.as_deref() == Some("eebb9a9f-1679-4468-9e8f-814c729674cb"))
+        .unwrap();
+    let request: crate::commands::OutstandingsRequest = serde_json::from_value(serde_json::json!({
+        "config": {"host": simulator.address().ip().to_string(), "port": simulator.address().port()},
+        "selected_company": {
+            "display_name": row.name,
+            "company_guid": row.guid,
+            "company_number": row.company_number,
+            "books_from_yyyymmdd": row.books_from,
+        },
+        "currency_assertion": "INR",
+        "as_of_yyyymmdd": "20260801",
+    }))
+    .unwrap();
+    let response = crate::commands::read_screen_outstandings(
+        request,
+        &TallyRuntime::default(),
+        &crate::reports::outstandings_working_paper_store::WorkingPaperExportStore::default(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(&response.result, OutstandingsLoadResult::Partial { reason, .. }
+            if *reason == "company_base_currency_undetermined".into()),
+        "{:?}",
+        response.result
+    );
+    assert!(response.working_paper_export_id.is_none());
+    simulator.cancel();
+    // The company list, then the currency read's 14 requests, and no more.
+    assert_eq!(simulator.finish().unwrap().len(), 15);
+}
