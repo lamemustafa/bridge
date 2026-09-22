@@ -1,0 +1,510 @@
+{
+ "comment": "tds_payees 194C: single sum at exactly Rs 30,000 is not over and Rs 30,000.01 is; aggregate at exactly Rs 1,00,000 is not over; a transporter split over two aliased ledgers trips the aggregate only when merged; two credit lines to one payee in one voucher are summed for the per-voucher single-sum test; a Duties & Taxes credit is not a payee; a voucher whose only credit is on a mapped expense ledger has no payee; Contra, optional and unmapped vouchers are ignored.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Bank OD A/c": "Loans (Liability)",
+  "Sundry Debtors": "Current Assets",
+  "Loans & Advances (Asset)": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Duties & Taxes": "Current Liabilities",
+  "Loans (Liability)": null,
+  "Unsecured Loans": "Loans (Liability)",
+  "Secured Loans": "Loans (Liability)",
+  "Direct Expenses": null,
+  "Indirect Expenses": null,
+  "Purchase Accounts": null,
+  "Sales Accounts": null,
+  "Fixed Assets": null,
+  "Suspense A/c": null
+ },
+ "ledgers": [
+  {
+   "name": "Freight",
+   "chain": [
+    "Direct Expenses"
+   ],
+   "guid": "edge-tds_payees_194c-000"
+  },
+  {
+   "name": "Contract Labour",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-tds_payees_194c-001"
+  },
+  {
+   "name": "Rent",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-tds_payees_194c-002"
+  },
+  {
+   "name": "Transporter A One",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_194c-003"
+  },
+  {
+   "name": "Transporter A Two",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_194c-004"
+  },
+  {
+   "name": "Contractor B",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_194c-005"
+  },
+  {
+   "name": "Contractor C",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_194c-006"
+  },
+  {
+   "name": "Contractor D",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_194c-007"
+  },
+  {
+   "name": "Contractor E",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_194c-008"
+  },
+  {
+   "name": "Contractor F",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_194c-009"
+  },
+  {
+   "name": "Contractor G",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_194c-010"
+  },
+  {
+   "name": "Contractor H",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_194c-011"
+  },
+  {
+   "name": "Contractor I",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_194c-012"
+  },
+  {
+   "name": "TDS Payable 194C",
+   "chain": [
+    "Duties & Taxes",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_194c-013"
+  },
+  {
+   "name": "Suspense",
+   "chain": [
+    "Suspense A/c"
+   ],
+   "guid": "edge-tds_payees_194c-014"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Freight",
+   "opening": 0,
+   "debit": 36100001,
+   "credit": 500000,
+   "closing": 35600001
+  },
+  {
+   "ledger": "Contract Labour",
+   "opening": 0,
+   "debit": 3500001,
+   "credit": 0,
+   "closing": 3500001
+  },
+  {
+   "ledger": "Rent",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "Transporter A One",
+   "opening": 0,
+   "debit": 0,
+   "credit": 5800000,
+   "closing": -5800000
+  },
+  {
+   "ledger": "Transporter A Two",
+   "opening": 0,
+   "debit": 0,
+   "credit": 4200001,
+   "closing": -4200001
+  },
+  {
+   "ledger": "Contractor B",
+   "opening": 0,
+   "debit": 0,
+   "credit": 3000000,
+   "closing": -3000000
+  },
+  {
+   "ledger": "Contractor C",
+   "opening": 0,
+   "debit": 0,
+   "credit": 3000001,
+   "closing": -3000001
+  },
+  {
+   "ledger": "Contractor D",
+   "opening": 0,
+   "debit": 0,
+   "credit": 10000000,
+   "closing": -10000000
+  },
+  {
+   "ledger": "Contractor E",
+   "opening": 0,
+   "debit": 0,
+   "credit": 3100000,
+   "closing": -3100000
+  },
+  {
+   "ledger": "Contractor F",
+   "opening": 0,
+   "debit": 0,
+   "credit": 900000,
+   "closing": -900000
+  },
+  {
+   "ledger": "Contractor G",
+   "opening": 0,
+   "debit": 0,
+   "credit": 9000000,
+   "closing": -9000000
+  },
+  {
+   "ledger": "Contractor H",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "Contractor I",
+   "opening": 0,
+   "debit": 0,
+   "credit": 9000000,
+   "closing": -9000000
+  },
+  {
+   "ledger": "TDS Payable 194C",
+   "opening": 0,
+   "debit": 0,
+   "credit": 100000,
+   "closing": -100000
+  },
+  {
+   "ledger": "Suspense",
+   "opening": 0,
+   "debit": 9000000,
+   "credit": 0,
+   "closing": 9000000
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "c01",
+   "date": "2025-04-02",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Freight",
+     3000000
+    ],
+    [
+     "Contractor B",
+     -3000000
+    ]
+   ]
+  },
+  {
+   "guid": "c02",
+   "date": "2025-04-03",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Contract Labour",
+     3000001
+    ],
+    [
+     "Contractor C",
+     -3000001
+    ]
+   ]
+  },
+  {
+   "guid": "c03",
+   "date": "2025-04-04",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Freight",
+     2900000
+    ],
+    [
+     "Transporter A One",
+     -2900000
+    ]
+   ]
+  },
+  {
+   "guid": "c04",
+   "date": "2025-04-05",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Freight",
+     2900000
+    ],
+    [
+     "Transporter A One",
+     -2900000
+    ]
+   ]
+  },
+  {
+   "guid": "c05",
+   "date": "2025-04-06",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Freight",
+     2900000
+    ],
+    [
+     "Transporter A Two",
+     -2900000
+    ]
+   ]
+  },
+  {
+   "guid": "c06",
+   "date": "2025-04-07",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Freight",
+     1300001
+    ],
+    [
+     "Transporter A Two",
+     -1300001
+    ]
+   ]
+  },
+  {
+   "guid": "c10",
+   "date": "2025-05-01",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Freight",
+     2500000
+    ],
+    [
+     "Contractor D",
+     -2500000
+    ]
+   ]
+  },
+  {
+   "guid": "c11",
+   "date": "2025-05-02",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Freight",
+     2500000
+    ],
+    [
+     "Contractor D",
+     -2500000
+    ]
+   ]
+  },
+  {
+   "guid": "c12",
+   "date": "2025-05-03",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Freight",
+     2500000
+    ],
+    [
+     "Contractor D",
+     -2500000
+    ]
+   ]
+  },
+  {
+   "guid": "c13",
+   "date": "2025-05-04",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Freight",
+     2500000
+    ],
+    [
+     "Contractor D",
+     -2500000
+    ]
+   ]
+  },
+  {
+   "guid": "c20",
+   "date": "2025-06-02",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Freight",
+     3100000
+    ],
+    [
+     "Contractor E",
+     -1600000
+    ],
+    [
+     "Contractor E",
+     -1500000
+    ]
+   ]
+  },
+  {
+   "guid": "c21",
+   "date": "2025-06-03",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Freight",
+     1000000
+    ],
+    [
+     "Contractor F",
+     -900000
+    ],
+    [
+     "TDS Payable 194C",
+     -100000
+    ]
+   ]
+  },
+  {
+   "guid": "c22",
+   "date": "2025-06-04",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Contract Labour",
+     500000
+    ],
+    [
+     "Freight",
+     -500000
+    ]
+   ]
+  },
+  {
+   "guid": "c23",
+   "date": "2025-06-05",
+   "base_type": "Contra",
+   "lines": [
+    [
+     "Freight",
+     9000000
+    ],
+    [
+     "Contractor G",
+     -9000000
+    ]
+   ]
+  },
+  {
+   "guid": "c24",
+   "date": "2025-06-06",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Freight",
+     9000000
+    ],
+    [
+     "Contractor H",
+     -9000000
+    ]
+   ],
+   "status": "optional"
+  },
+  {
+   "guid": "c25",
+   "date": "2025-06-07",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Suspense",
+     9000000
+    ],
+    [
+     "Contractor I",
+     -9000000
+    ]
+   ]
+  }
+ ],
+ "tests": [
+  "tds_payees"
+ ],
+ "nature_by_ledger": {
+  "Freight": "194C",
+  "Contract Labour": "194C"
+ },
+ "payee_aliases": {
+  "Transporter A One": "Transporter A",
+  "Transporter A Two": "Transporter A"
+ }
+}

@@ -30,7 +30,9 @@ use bridge_tally_protocol::{
     },
     export_status, parse_companies_with_evidence, parse_ledger_source_records_with_evidence,
     verify_company_context,
-    xml_read_profiles::{ReadOnlyProfile, ValidatedCompanyName},
+    xml_read_profiles::{
+        ReadOnlyProfile, ValidatedCompanyName, EDUCATION_REPORT_FAMILY_UNSUPPORTED,
+    },
     ParsedSourceIdentityKind, TallyExportStatus,
 };
 use bridge_tally_read_transport::{
@@ -315,6 +317,7 @@ impl LoadedNativeOutstandingsProbe {
         let config: NativeProbeConfig = serde_json::from_slice(&config_bytes)
             .map_err(|_| error("native_probe_config_invalid"))?;
         validate_config(&config)?;
+        refuse_education_identity_reads(&config)?;
         let base = config_path.parent().unwrap_or_else(|| Path::new("."));
         let repository_root = canonical_join(
             base,
@@ -512,9 +515,7 @@ impl LoadedNativeOutstandingsProbe {
             &self.preflight_binding,
             self.preflight_expires_at,
         )?;
-        let transport =
-            ReadOnlyTransport::new(read_loopback(self.config.endpoint_family), self.config.port)
-                .map_err(|_| error("native_probe_endpoint_configuration_invalid"))?;
+        let transport = identity_transport(&self.config)?;
         let observation = observe_identity(&transport, &self.fixture).await?;
         require_registered_identity(&self.config, &observation)?;
         let initial_preflight = ProbeInitialPreflightV0 {
@@ -587,8 +588,7 @@ impl DispatchReadyNativeOutstandingsProbe {
             self.dispatch_expires_at,
         )?;
         let loopback = read_loopback(self.loaded.config.endpoint_family);
-        let identity_transport = ReadOnlyTransport::new(loopback, self.loaded.config.port)
-            .map_err(|_| error("native_probe_endpoint_configuration_invalid"))?;
+        let identity_transport = identity_transport(&self.loaded.config)?;
         let candidate_transport =
             QualificationOnlyNativeOutstandingsTransport::new(loopback, self.loaded.config.port)
                 .map_err(|_| error("native_probe_endpoint_configuration_invalid"))?;
@@ -924,7 +924,13 @@ async fn observe_identity(
             company: &company_name,
         })
         .await
-        .map_err(|_| error("native_probe_party_preflight_transport_failed"))?;
+        .map_err(|failure| {
+            if failure.safe_code() == EDUCATION_REPORT_FAMILY_UNSUPPORTED {
+                error(EDUCATION_REPORT_FAMILY_UNSUPPORTED)
+            } else {
+                error("native_probe_party_preflight_transport_failed")
+            }
+        })?;
     if !matches!(
         export_status(party_response.text()),
         Ok(TallyExportStatus::Success)
@@ -1105,6 +1111,36 @@ fn require_unchanged_identity(
         return Err(error("native_probe_identity_drift_observed"));
     }
     Ok(())
+}
+
+/// Every identity bracket reads the party through `ledgers_v1`, a custom report
+/// whose TDL raised a blocking dialog on an Education Tally's screen
+/// (bridge#45), and this qualification accepts only an Education configuration.
+/// It is therefore refused on load, before any consent or request, so the tool
+/// cannot run until the Collection-based reads (Phase 2 Unit A) replace that
+/// bracket.
+fn refuse_education_identity_reads(
+    config: &NativeProbeConfig,
+) -> Result<(), NativeOutstandingsQualificationError> {
+    if config.mode == TallyMode::Education {
+        return Err(error(EDUCATION_REPORT_FAMILY_UNSUPPORTED));
+    }
+    Ok(())
+}
+
+/// The identity-bracket transport. For an Education endpoint it refuses the
+/// report-formula profiles before sending, as the backstop to
+/// [`refuse_education_identity_reads`].
+fn identity_transport(
+    config: &NativeProbeConfig,
+) -> Result<ReadOnlyTransport, NativeOutstandingsQualificationError> {
+    let transport = ReadOnlyTransport::new(read_loopback(config.endpoint_family), config.port)
+        .map_err(|_| error("native_probe_endpoint_configuration_invalid"))?;
+    Ok(if config.mode == TallyMode::Education {
+        transport.education_restricted()
+    } else {
+        transport
+    })
 }
 
 fn validate_config(config: &NativeProbeConfig) -> Result<(), NativeOutstandingsQualificationError> {
@@ -1700,7 +1736,13 @@ mod tests {
         }
         assert_eq!(plans.len(), 13);
         let simulator = SequenceSimulator::spawn(plans).unwrap();
-        let loaded = loaded(simulator.address().port());
+        let mut loaded = loaded(simulator.address().port());
+        // The bracket-and-candidate sequence does not depend on the mode, but in
+        // Education every bracket's `ledgers_v1` is refused before sending
+        // (bridge#45; `an_education_preflight_refuses_its_ledger_bracket_...`),
+        // so the sequence is driven here with the transport a licensed
+        // endpoint gets.
+        loaded.config.mode = TallyMode::Licensed;
         let preflight = confirm_preflight_challenge(&loaded, "PREFLIGHT test").unwrap();
         let ready = match loaded.run_preflight(preflight).await {
             Ok(ready) => ready,
@@ -1771,7 +1813,13 @@ mod tests {
         plans.push(utf16_plan(Fixture::SyntheticXml(company_xml())));
         plans.push(utf16_plan(Fixture::SyntheticXml(ledger_xml())));
         let simulator = SequenceSimulator::spawn(plans).unwrap();
-        let loaded = loaded(simulator.address().port());
+        let mut loaded = loaded(simulator.address().port());
+        // The bracket-and-candidate sequence does not depend on the mode, but in
+        // Education every bracket's `ledgers_v1` is refused before sending
+        // (bridge#45; `an_education_preflight_refuses_its_ledger_bracket_...`),
+        // so the sequence is driven here with the transport a licensed
+        // endpoint gets.
+        loaded.config.mode = TallyMode::Licensed;
         let preflight = confirm_preflight_challenge(&loaded, "PREFLIGHT test").unwrap();
         let ready = match loaded.run_preflight(preflight).await {
             Ok(ready) => ready,
@@ -1848,6 +1896,60 @@ mod tests {
             }
         }
         panic!("failure sequence simulator remained unstable: {last_failure}");
+    }
+
+    #[test]
+    fn an_education_config_is_refused_on_load_although_it_is_otherwise_valid() {
+        let education = config(9000);
+        assert!(validate_config(&education).is_ok());
+        assert_eq!(
+            refuse_education_identity_reads(&education)
+                .unwrap_err()
+                .safe_code(),
+            "education_report_family_unsupported"
+        );
+        let mut licensed = education;
+        licensed.mode = TallyMode::Licensed;
+        assert!(refuse_education_identity_reads(&licensed).is_ok());
+    }
+
+    #[test]
+    fn load_refuses_an_education_config_before_anything_else_is_read() {
+        let path = std::env::temp_dir().join(format!(
+            "bridge-native-probe-education-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, serde_json::to_vec(&config(9000)).unwrap()).unwrap();
+        let refused = LoadedNativeOutstandingsProbe::load(&path)
+            .err()
+            .map(|e| e.safe_code());
+        std::fs::remove_file(&path).unwrap();
+        // Without the refusal, load would go on to resolve the repository and
+        // fixture paths and fail on those instead.
+        assert_eq!(refused, Some("education_report_family_unsupported"));
+    }
+
+    #[tokio::test]
+    async fn an_education_preflight_refuses_its_ledger_bracket_before_sending_it() {
+        let simulator = SequenceSimulator::spawn(vec![
+            utf16_plan(Fixture::SyntheticXml(company_xml())),
+            utf16_plan(Fixture::SyntheticXml(ledger_xml())),
+        ])
+        .unwrap();
+        let loaded = loaded(simulator.address().port());
+        assert_eq!(loaded.config.mode, TallyMode::Education);
+        let preflight = confirm_preflight_challenge(&loaded, "PREFLIGHT test").unwrap();
+        let refused = loaded
+            .run_preflight(preflight)
+            .await
+            .err()
+            .map(|e| e.safe_code());
+        // Only the company list went out; the ledgers_v1 bracket never did.
+        let received = simulator.received();
+        simulator.cancel();
+        let _ = simulator.finish();
+        assert_eq!(refused, Some("education_report_family_unsupported"));
+        assert_eq!(received, 1);
     }
 
     #[test]

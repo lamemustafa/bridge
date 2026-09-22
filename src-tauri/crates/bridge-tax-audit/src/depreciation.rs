@@ -1100,6 +1100,10 @@ mod tests {
             s43b_h_msme_days: None,
             s43b: None,
             s36_1_va_due_day: None,
+            s194c: None,
+            s194i_per_month_per_payee_paise: None,
+            deductor_individual_huf_prev_year_turnover_paise: None,
+            s194j_aggregate_paise: None,
         }
     }
 

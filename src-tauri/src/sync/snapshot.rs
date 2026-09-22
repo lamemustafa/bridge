@@ -15,6 +15,7 @@ use bridge_tally_core::{
     EvidenceConfidence, Freshness, PackBatch, PackSchemaVersion, ProofManifest, ReadResponseScope,
     ReadWindow, RequestContext, TallyConnector, TallyError, TransportId,
 };
+use bridge_tally_protocol::xml_read_profiles::EDUCATION_REPORT_FAMILY_UNSUPPORTED;
 use chrono::{Duration as ChronoDuration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -2601,6 +2602,7 @@ where
                     Ok(report) => {
                         state.gap_codes.remove("report_tie_out_unavailable");
                         state.gap_codes.remove("report_tie_out_evidence_invalid");
+                        state.gap_codes.remove(EDUCATION_REPORT_FAMILY_UNSUPPORTED);
                         let report_sha256 = sha256_json(&report)?;
                         match assess_core_period_report(
                             core,
@@ -2670,13 +2672,24 @@ where
                             }
                         }
                     }
-                    Err(_) => {
+                    Err(error) => {
                         // Leave evidence absent so a resumed run retries this
                         // corroborating read before commit. The durable gap
                         // keeps a one-shot failure truthful if the run proceeds.
                         state
                             .gap_codes
                             .insert("report_tie_out_unavailable".to_string());
+                        // Refused before sending in Education (bridge#45): say
+                        // why, so the gap is not read as a Tally failure.
+                        if matches!(
+                            &error,
+                            TallyError::Unsupported { code }
+                                if code == EDUCATION_REPORT_FAMILY_UNSUPPORTED
+                        ) {
+                            state
+                                .gap_codes
+                                .insert(EDUCATION_REPORT_FAMILY_UNSUPPORTED.to_string());
+                        }
                     }
                 }
             }

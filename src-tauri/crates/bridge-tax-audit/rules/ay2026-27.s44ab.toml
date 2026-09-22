@@ -19,6 +19,10 @@
 #      repository is public; the substring check still holds); and `status` alone. Excludes the
 #      header's comment lines, which cite a private research note.
 #   7. [ledger_scrutiny] in full (added for ledger_scrutiny): large_entry_paise, authority, status.
+#   8. [s194c], [s194i] and [deductor] in full (added for tds_payees), each its own block.
+#   9. [s194j] (added for tds_payees), as three blocks: the table header alone; its three value
+#      lines verbatim; and `status` cut at its value. Excludes the header's comment lines and the
+#      status line's trailing comment, which cite private research notes.
 #   10. [s43b_h] in full (added for creditor_ageing_43bh): both MSMED day limits, authority, status.
 #   11. [s43b] (added for statutory_dues_43b), as two blocks: the table header alone, then
 #       authority and status. Excludes the header's comment lines, which name the reference's own
@@ -91,6 +95,32 @@ status = "partial"
 large_entry_paise = 50_000_00  # Rs 50,000
 authority = "CA analytical materiality convention; not a statutory threshold"
 status = "confirm"
+
+[s194c]
+single_sum_paise = 30_000_00
+aggregate_paise = 1_00_000_00
+authority = "s.194C(5)"
+status = "verified"
+
+[s194i]
+per_month_per_payee_paise = 50_000_00             # from 1-4-2025
+authority = "s.194-I as amended by Finance Act 2025"
+status = "verified"
+
+[deductor]
+# Who must deduct under 194A/194C/194-I/194H/194J(part)
+individual_huf_prev_year_turnover_paise = 1_00_00_000_00
+firm = "always"
+authority = "provisos to s.194A/194C/194-I (Finance Act 2020)"
+status = "verified"
+
+[s194j]
+
+aggregate_paise = 50_000_00                         # per payee, per category (i)-(iv) separately; no single-payment limit
+technical_services_rate_bp = 200                    # also film royalty and call centre; 10% otherwise
+authority = "s.194J(1) first proviso, clause (B)(i)-(iv), as amended by Finance Act 2025; director fees under clause (ba) have no threshold"
+
+status = "VP"
 
 [s43b_h]
 msme_days_with_agreement = 45

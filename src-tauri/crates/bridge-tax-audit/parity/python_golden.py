@@ -187,6 +187,15 @@ def _statutory_dues_43b(c):
     return statutory_dues_43b, statutory_dues_43b.run(c.eng, c.rules, nature_by_ledger, salary_expense_ledgers)
 
 
+def _tds_payees(c):
+    from tae.audit_tests import tds_payees
+    from tae.config import tds_config
+    # As tae/pack.py calls it: the four values tds_config reads from [tds] and [tds_payees].
+    nature_by_ledger, payee_aliases, turnover, s194j_category_by_ledger = tds_config(c.cfg)
+    return tds_payees, tds_payees.run(c.eng, c.rules, nature_by_ledger, payee_aliases, turnover,
+                                      s194j_category_by_ledger)
+
+
 RUNNERS = {
     "applicability_44ab": _applicability_44ab,
     "cash_44ab": _cash_44ab,
@@ -198,6 +207,7 @@ RUNNERS = {
     "ledger_scrutiny": _ledger_scrutiny,
     "stale_balances_41_1": _stale_balances_41_1,
     "statutory_dues_43b": _statutory_dues_43b,
+    "tds_payees": _tds_payees,
     "trial_balance": _trial_balance,
 }
 

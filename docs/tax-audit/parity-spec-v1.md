@@ -316,6 +316,9 @@ figure or byte enters this repository or its CI.
    `CreditorAgeingConfig` and `StatutoryDuesConfig` in `src/lib.rs` are the pattern. A test in the
    crate's registry must have a unit test showing that a malformed value in its table fails that
    test and leaves the others running.
+   Known exception: `tds_payees` (batch C1) was written before this convention. It types `[tds]`
+   and `[tds_payees]` when the config loads, so a malformed value there refuses every test. It
+   stays that way until it is brought in line.
 
 ## 11. Ledger tags: figure/finding ids keyed by GUID, not by name
 

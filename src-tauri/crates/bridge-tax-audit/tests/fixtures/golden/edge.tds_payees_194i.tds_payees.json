@@ -1,0 +1,378 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "tds_payees",
+  "test_version": "1",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "99f767f57c072436",
+  "population_note_text": "Books population (optional, cancelled and post-dated vouchers excluded); Contra excluded throughout. A voucher whose mapped expense lines span more than one TDS nature (rare) attributes its full credit-line total to each nature present, not divided or netted.",
+  "figures": [
+    {
+      "id": "tds_payees.194C_credited_total",
+      "value": 200000,
+      "unit": "paise",
+      "definition_sha256_16": "2b254c8a440e0a7f",
+      "definition_text": "Sum credited to all 194C payee entities above (excludes the goods-invoice bucket). Never summed with any other category's total before a threshold test.",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194C_over_limit_payee_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "50a543710ca8232c",
+      "definition_text": "Payee entities above whose 194C test trips (single sum/aggregate for 194C, any month for 194-I, per-category aggregate for 194J; every nonzero-credit payee for category 'unmapped', which is never threshold-tested).",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194C_payee_entities_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "5eaae82dae583aee",
+      "definition_text": "Distinct payee entities (payee_aliases-merged; 'payee not named' counted as one entity, 'within supplier goods invoices' excluded) credited on a voucher with a 194C-mapped expense ledger line.",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194C_within_supplier_goods_invoices_total",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "d68d1c8b00b016ed",
+      "definition_text": "Sum of the 194C-mapped expense line(s) themselves (the charge -- e.g. freight -- not the supplier's full invoice credit) on vouchers that also carry a Purchase Accounts/Sales Accounts line: inside a goods invoice, not a separate contract with the payee; excluded from the per-payee tests below.",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194I_credited_total",
+      "value": 18200001,
+      "unit": "paise",
+      "definition_sha256_16": "5d18e88870b2d105",
+      "definition_text": "Sum credited to all 194I payee entities above (excludes the goods-invoice bucket). Never summed with any other category's total before a threshold test.",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194I_over_limit_payee_count",
+      "value": 1,
+      "unit": "count",
+      "definition_sha256_16": "1fc23902a335126b",
+      "definition_text": "Payee entities above whose 194I test trips (single sum/aggregate for 194C, any month for 194-I, per-category aggregate for 194J; every nonzero-credit payee for category 'unmapped', which is never threshold-tested).",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194I_payee_entities_count",
+      "value": 4,
+      "unit": "count",
+      "definition_sha256_16": "8b64ac5323adbe91",
+      "definition_text": "Distinct payee entities (payee_aliases-merged; 'payee not named' counted as one entity, 'within supplier goods invoices' excluded) credited on a voucher with a 194I-mapped expense ledger line.",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194I_row_credited_194I_ccf17ef3",
+      "value": 5000001,
+      "unit": "paise",
+      "definition_sha256_16": "6d1761ec22270b7a",
+      "definition_text": "Total credited to one payee entity (tag ccf17ef3) under 194I, summed across every population voucher touching a mapped expense ledger.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "i03",
+          "label": "Journal i03 on 2025-06-05"
+        },
+        {
+          "kind": "voucher",
+          "id": "i04",
+          "label": "Journal i04 on 2025-06-25"
+        }
+      ]
+    },
+    {
+      "id": "tds_payees.194I_row_max_month_194I_ccf17ef3",
+      "value": 5000001,
+      "unit": "paise",
+      "definition_sha256_16": "c3e51943b941d354",
+      "definition_text": "Highest single calendar-month credit total to this payee entity (tag ccf17ef3) under 194-I.",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194I_row_max_single_194I_ccf17ef3",
+      "value": 3000000,
+      "unit": "paise",
+      "definition_sha256_16": "b50aa18903f3c875",
+      "definition_text": "Largest total credited to this payee entity (tag ccf17ef3) within one voucher, under 194I.",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194I_within_supplier_goods_invoices_total",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "9c180f0995baab1e",
+      "definition_text": "Sum of the 194I-mapped expense line(s) themselves (the charge -- e.g. freight -- not the supplier's full invoice credit) on vouchers that also carry a Purchase Accounts/Sales Accounts line: inside a goods invoice, not a separate contract with the payee; excluded from the per-payee tests below.",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194J_28va_credited_total",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "cf7218ecfb16e60f",
+      "definition_text": "Sum credited to all 194J, category '28va' payee entities above (excludes the goods-invoice bucket). Never summed with any other category's total before a threshold test.",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194J_28va_over_limit_payee_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "7b85b92ba44ef391",
+      "definition_text": "Payee entities above whose 194J, category '28va' test trips (single sum/aggregate for 194C, any month for 194-I, per-category aggregate for 194J; every nonzero-credit payee for category 'unmapped', which is never threshold-tested).",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194J_28va_payee_entities_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "baf7842e64d52dd4",
+      "definition_text": "Distinct payee entities (payee_aliases-merged; 'payee not named' counted as one entity, 'within supplier goods invoices' excluded) credited on a voucher with a 194J-mapped expense ledger line, category '28va'.",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194J_28va_within_supplier_goods_invoices_total",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "10f1cc5edb232a84",
+      "definition_text": "Sum of the 194J-mapped expense line(s) themselves (the charge -- e.g. freight -- not the supplier's full invoice credit) on vouchers that also carry a Purchase Accounts/Sales Accounts line, category '28va': inside a goods invoice, not a separate contract with the payee; excluded from the per-payee tests below.",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194J_professional_credited_total",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "bd11ffa547b08b4b",
+      "definition_text": "Sum credited to all 194J, category 'professional' payee entities above (excludes the goods-invoice bucket). Never summed with any other category's total before a threshold test.",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194J_professional_over_limit_payee_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "1b6f109877f46781",
+      "definition_text": "Payee entities above whose 194J, category 'professional' test trips (single sum/aggregate for 194C, any month for 194-I, per-category aggregate for 194J; every nonzero-credit payee for category 'unmapped', which is never threshold-tested).",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194J_professional_payee_entities_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "73f1501157d1913a",
+      "definition_text": "Distinct payee entities (payee_aliases-merged; 'payee not named' counted as one entity, 'within supplier goods invoices' excluded) credited on a voucher with a 194J-mapped expense ledger line, category 'professional'.",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194J_professional_within_supplier_goods_invoices_total",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "3a4079f116cf503a",
+      "definition_text": "Sum of the 194J-mapped expense line(s) themselves (the charge -- e.g. freight -- not the supplier's full invoice credit) on vouchers that also carry a Purchase Accounts/Sales Accounts line, category 'professional': inside a goods invoice, not a separate contract with the payee; excluded from the per-payee tests below.",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194J_royalty_credited_total",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "a2bd0344908c3b37",
+      "definition_text": "Sum credited to all 194J, category 'royalty' payee entities above (excludes the goods-invoice bucket). Never summed with any other category's total before a threshold test.",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194J_royalty_over_limit_payee_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "cf535d744c6ab745",
+      "definition_text": "Payee entities above whose 194J, category 'royalty' test trips (single sum/aggregate for 194C, any month for 194-I, per-category aggregate for 194J; every nonzero-credit payee for category 'unmapped', which is never threshold-tested).",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194J_royalty_payee_entities_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "fa8a75b9f979c5d1",
+      "definition_text": "Distinct payee entities (payee_aliases-merged; 'payee not named' counted as one entity, 'within supplier goods invoices' excluded) credited on a voucher with a 194J-mapped expense ledger line, category 'royalty'.",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194J_royalty_within_supplier_goods_invoices_total",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "15e8b28b0eb4165d",
+      "definition_text": "Sum of the 194J-mapped expense line(s) themselves (the charge -- e.g. freight -- not the supplier's full invoice credit) on vouchers that also carry a Purchase Accounts/Sales Accounts line, category 'royalty': inside a goods invoice, not a separate contract with the payee; excluded from the per-payee tests below.",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194J_technical_credited_total",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "406d5abdcea5e1c6",
+      "definition_text": "Sum credited to all 194J, category 'technical' payee entities above (excludes the goods-invoice bucket). Never summed with any other category's total before a threshold test.",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194J_technical_over_limit_payee_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "1c419bbb5a293264",
+      "definition_text": "Payee entities above whose 194J, category 'technical' test trips (single sum/aggregate for 194C, any month for 194-I, per-category aggregate for 194J; every nonzero-credit payee for category 'unmapped', which is never threshold-tested).",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194J_technical_payee_entities_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "d45ff3665951b68d",
+      "definition_text": "Distinct payee entities (payee_aliases-merged; 'payee not named' counted as one entity, 'within supplier goods invoices' excluded) credited on a voucher with a 194J-mapped expense ledger line, category 'technical'.",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194J_technical_within_supplier_goods_invoices_total",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "0485607a42982243",
+      "definition_text": "Sum of the 194J-mapped expense line(s) themselves (the charge -- e.g. freight -- not the supplier's full invoice credit) on vouchers that also carry a Purchase Accounts/Sales Accounts line, category 'technical': inside a goods invoice, not a separate contract with the payee; excluded from the per-payee tests below.",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194J_unmapped_credited_total",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "3132b63223d29b96",
+      "definition_text": "Sum credited to all 194J, category 'unmapped' payee entities above (excludes the goods-invoice bucket). Never summed with any other category's total before a threshold test.",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194J_unmapped_over_limit_payee_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "8ed7e6bbc48ad5b9",
+      "definition_text": "Payee entities above whose 194J, category 'unmapped' test trips (single sum/aggregate for 194C, any month for 194-I, per-category aggregate for 194J; every nonzero-credit payee for category 'unmapped', which is never threshold-tested).",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194J_unmapped_payee_entities_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "ad47f9f0579f0177",
+      "definition_text": "Distinct payee entities (payee_aliases-merged; 'payee not named' counted as one entity, 'within supplier goods invoices' excluded) credited on a voucher with a 194J-mapped expense ledger line, category 'unmapped'.",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.194J_unmapped_within_supplier_goods_invoices_total",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "fc7d1ff3a84ed2f6",
+      "definition_text": "Sum of the 194J-mapped expense line(s) themselves (the charge -- e.g. freight -- not the supplier's full invoice credit) on vouchers that also carry a Purchase Accounts/Sales Accounts line, category 'unmapped': inside a goods invoice, not a separate contract with the payee; excluded from the per-payee tests below.",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.deductor_status",
+      "value": "unknown",
+      "unit": "text",
+      "definition_sha256_16": "a061571ca2a19416",
+      "definition_text": "Whether the assessee must deduct TDS under s.194A/194C/194-I/194J for the year: firm/LLP/company always (rules.deductor.firm); individual/HUF only if previous-year business turnover exceeded rules.deductor.individual_huf_prev_year_turnover_paise -- never assumed from the current year's books alone.",
+      "evidence": []
+    },
+    {
+      "id": "tds_payees.tds_ledger_under_duties_taxes_count",
+      "value": 0,
+      "unit": "count",
+      "definition_sha256_16": "642a041f3bc1b5f5",
+      "definition_text": "Ledgers under 'Duties & Taxes' whose name contains 'tds' (case-insensitive) -- a books figure only; existence or absence of such a ledger is not itself a conclusion about TDS compliance.",
+      "evidence": []
+    }
+  ],
+  "findings": [
+    {
+      "id": "tds_payees/194I_ccf17ef3",
+      "clauses": [
+        "s.194-I",
+        "3CD-21(b)",
+        "3CD-34(a)"
+      ],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "credited",
+          "figure_id": "tds_payees.194I_row_credited_194I_ccf17ef3"
+        },
+        {
+          "name": "max_month",
+          "figure_id": "tds_payees.194I_row_max_month_194I_ccf17ef3"
+        },
+        {
+          "name": "max_single",
+          "figure_id": "tds_payees.194I_row_max_single_194I_ccf17ef3"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "i03",
+          "label": "Journal i03 on 2025-06-05"
+        },
+        {
+          "kind": "voucher",
+          "id": "i04",
+          "label": "Journal i04 on 2025-06-25"
+        }
+      ],
+      "title_sha256_16": "f5a268f4e0a27356",
+      "title_text": "Payee over the 194I limit",
+      "limits_sha256_16": "2483d80b2ca773c5",
+      "limits_text": [
+        "Books only: the contract's nature, any lower/nil-deduction certificate (s.197) and, for 194C, a s.194C(6) declaration (own-account transporter, PAN furnished, ten or fewer goods carriages) are not visible from vouchers -- contract nature and any certificate/declaration are a CA judgement call, not a books fact.",
+        "s.40(a)(ia) disallows 30% of the sum on TDS default; the second proviso removes this if the payee's Form 26A (Rule 31ACB) shows the income was returned -- s.201(1A) interest still runs either way."
+      ],
+      "ask_client_sha256_16": "b53cfcd0738b684c",
+      "ask_client_text": [
+        "Confirm the nature of the contract/service and whether any lower/nil-deduction certificate or s.194C(6) declaration applies.",
+        "If no TDS was deducted, confirm whether Form 26A is available for this payee."
+      ]
+    },
+    {
+      "id": "tds_payees/deductor_status",
+      "clauses": [
+        "3CD-21(b)",
+        "3CD-34(a)"
+      ],
+      "confidence": "judgement_required",
+      "facts": [
+        {
+          "name": "deductor_status",
+          "figure_id": "tds_payees.deductor_status"
+        }
+      ],
+      "evidence": [],
+      "title_sha256_16": "06119560fefe9404",
+      "title_text": "Deductor status depends on previous-year turnover",
+      "limits_sha256_16": "e5850cc8f1e435fb",
+      "limits_text": [
+        "An individual/HUF is a s.194A/194C/194-I/194J deductor only if the immediately preceding year's business turnover exceeded ₹1 crore; the current year's books alone cannot establish this."
+      ],
+      "ask_client_sha256_16": "0f4f5d87be308771",
+      "ask_client_text": [
+        "Confirm previous-year business turnover."
+      ]
+    }
+  ],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-0",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3",
+    "POP-5"
+  ],
+  "book_invariant_violations": [],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [],
+  "module_invariants_evaluated": [],
+  "module_invariant_violations": []
+}

@@ -28,7 +28,9 @@ number), `cash`, `bank`, `own_account_terms`, `rules_without` (top-level rules t
 trade-creditor ledger names `creditor_ageing_43bh` ages), `creditor_ageing` ({acceptance_lag_days?,
 supplier_classification?, mse_interest_ledgers?, post_year_payments?: {ledger: [[ISO date, paise],
 ...]}}; each key defaults as the reference's `run()` defaults it), `statutory_dues` ({nature_by_ledger?,
-salary_expense_ledgers?}), `tests`.
+salary_expense_ledgers?}), `tests`, and for
+`tds_payees`: `entity_type` (default "individual"), `nature_by_ledger`, `payee_aliases`,
+`s194j_category_by_ledger` (each default {}) and `previous_year_turnover_paise` (default absent).
 """
 from __future__ import annotations
 
@@ -45,7 +47,7 @@ def main() -> int:
     engine, spec_path, out_dir = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
     sys.path.insert(0, str(Path(engine).resolve()))
     from tae.audit_tests import (cash_book_integrity, creditor_ageing_43bh, ledger_scrutiny, stale_balances_41_1,
-                                 statutory_dues_43b, trial_balance)
+                                 statutory_dues_43b, tds_payees, trial_balance)
     from tae.config import load_rules
     from tae.model import Book, Engagement, Group, Ledger, LedgerLine, Period, TBRow, Voucher, VoucherStatus
     from tae.parity import canonical
@@ -70,8 +72,9 @@ def main() -> int:
     book = Book(company_name="Invented edge book",
                 period=Period(date.fromisoformat(start), date.fromisoformat(end)), groups=groups,
                 ledgers=ledgers, vouchers=vouchers, tb=tb, company_guid="invented-edge-company")
-    eng = Engagement("individual", "2026-27", book)
-    rules = load_rules("2026-27", "individual")
+    entity_type = spec.get("entity_type", "individual")
+    eng = Engagement(entity_type, "2026-27", book)
+    rules = load_rules("2026-27", entity_type)
     for table in spec.get("rules_without", []):
         rules = copy.copy(rules)
         rules.pop(table)
@@ -94,6 +97,9 @@ def main() -> int:
         "stale_balances_41_1": lambda: (stale_balances_41_1, stale_balances_41_1.run(eng, rules)),
         "statutory_dues_43b": lambda: (statutory_dues_43b, statutory_dues_43b.run(
             eng, rules, dict(sd.get("nature_by_ledger", {})), frozenset(sd.get("salary_expense_ledgers", [])))),
+        "tds_payees": lambda: (tds_payees, tds_payees.run(
+            eng, rules, dict(spec.get("nature_by_ledger", {})), dict(spec.get("payee_aliases", {})),
+            spec.get("previous_year_turnover_paise"), dict(spec.get("s194j_category_by_ledger", {})))),
         "trial_balance": lambda: (trial_balance, trial_balance.run(eng, rules)),
     }
     for test in spec["tests"]:

@@ -1,13 +1,14 @@
 //! Rule values as data, read from the vendored excerpt of the reference Python implementation's
 //! rules table.
 //!
-//! Provenance: `rules/ay2026-27.s44ab.toml` holds five byte-for-byte verbatim blocks of the
+//! Provenance: `rules/ay2026-27.s44ab.toml` holds byte-for-byte verbatim blocks of the
 //! reference implementation's own AY 2026-27 rules file -- `[meta]` through the end of `[s44ab]`,
 //! then `[s40a3]` in full, then the first three lines each of `[s269st]` and `[s269ss_269t]`,
 //! then `[depreciation]` in full with its three `[depreciation.blocks.<key>]` sub-tables, then
 //! `[due_dates]` as three blocks (header, the three dates, `status`), then `[ledger_scrutiny]` in
-//! full, then `[s43b_h]` in full, then `[s43b]` and `[s36_1_va]` as blocks cut clear of their
-//! comments --
+//! full, then `[s194c]`, `[s194i]` and `[deductor]` in full and `[s194j]` as three blocks
+//! (header, its three value lines, `status`), then `[s43b_h]` in full, then `[s43b]` and
+//! `[s36_1_va]` as blocks cut clear of their comments --
 //! under a header explaining why each block stops where it does (see the file itself). The
 //! source file had sha256 [`SOURCE_SHA256`] when it was read at reference commit
 //! [`SOURCE_COMMIT`]. The local parity example re-checks, against a local copy of the reference
@@ -23,7 +24,7 @@ use crate::error::{AuditError, Result};
 
 pub const VENDORED: &str = include_str!("../rules/ay2026-27.s44ab.toml");
 pub const VENDORED_SHA256: &str =
-    "21869d9d3ce0f63dcef95c1c271f781f6bd7c4bf54c36364ce365e036f7bf9e3";
+    "82bafdc4815695b0ededaf384581c9592159130b848761b5e550731fef99e894";
 pub const SOURCE_PATH: &str = "the reference Python implementation's AY 2026-27 rules file";
 pub const SOURCE_SHA256: &str = "8a6ec80cd5d19da34392e93024dc9a43a98982b09fb457c662f627174acedf2d";
 pub const SOURCE_COMMIT: &str = "dd376ed014d922a1e2b12052763af36a565402ec";
@@ -74,6 +75,24 @@ pub struct Rules {
     /// `[s36_1_va].due_day`. `None` when the table is absent (the reference then defaults to 15);
     /// a table without the key is refused, as the reference's lookup raises.
     pub s36_1_va_due_day: Option<i64>,
+    /// `tds_payees`: `[s194c]`, `None` when the rules carry no such table (the test then refuses,
+    /// as the reference's `rules["s194c"]` raises).
+    pub s194c: Option<S194c>,
+    /// `tds_payees`: `[s194i].per_month_per_payee_paise`; `None` without `[s194i]`.
+    pub s194i_per_month_per_payee_paise: Option<i64>,
+    /// `tds_payees`: `[deductor].individual_huf_prev_year_turnover_paise`; `None` without
+    /// `[deductor]`.
+    pub deductor_individual_huf_prev_year_turnover_paise: Option<i64>,
+    /// `tds_payees`: `[s194j].aggregate_paise`. `None` without `[s194j]`, which the test does not
+    /// refuse: it falls back to its own default, as the reference does.
+    pub s194j_aggregate_paise: Option<i64>,
+}
+
+/// `[s194c]`: the single-sum and aggregate limits of s.194C(5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct S194c {
+    pub single_sum_paise: i64,
+    pub aggregate_paise: i64,
 }
 
 impl Rules {
@@ -106,6 +125,7 @@ impl Rules {
                 ))),
             }
         };
+        let optional = |name: &str| table.get(name).and_then(toml::Value::as_table);
         let int_in = |t: &toml::Table, table_name: &str, key: &str| {
             t.get(key).and_then(toml::Value::as_integer).ok_or_else(|| {
                 AuditError::Config(format!("rules: [{table_name}].{key} is not an integer"))
@@ -226,6 +246,22 @@ impl Rules {
                 Some(t) => Some(int_in(t, "s36_1_va", "due_day")?),
                 None => None,
             },
+            s194c: match optional("s194c") {
+                Some(t) => Some(S194c {
+                    single_sum_paise: int_in(t, "s194c", "single_sum_paise")?,
+                    aggregate_paise: int_in(t, "s194c", "aggregate_paise")?,
+                }),
+                None => None,
+            },
+            s194i_per_month_per_payee_paise: optional("s194i")
+                .map(|t| int_in(t, "s194i", "per_month_per_payee_paise"))
+                .transpose()?,
+            deductor_individual_huf_prev_year_turnover_paise: optional("deductor")
+                .map(|t| int_in(t, "deductor", "individual_huf_prev_year_turnover_paise"))
+                .transpose()?,
+            s194j_aggregate_paise: optional("s194j")
+                .map(|t| int_in(t, "s194j", "aggregate_paise"))
+                .transpose()?,
         })
     }
 
@@ -326,6 +362,24 @@ mod tests {
         assert_eq!(rules.due_dates_status, "partial");
     }
 
+    #[test]
+    fn vendored_rules_carry_the_tds_payees_values() {
+        let rules = Rules::vendored().unwrap();
+        assert_eq!(
+            rules.s194c,
+            Some(S194c {
+                single_sum_paise: 3_000_000,
+                aggregate_paise: 10_000_000,
+            })
+        );
+        assert_eq!(rules.s194i_per_month_per_payee_paise, Some(5_000_000));
+        assert_eq!(
+            rules.deductor_individual_huf_prev_year_turnover_paise,
+            Some(1_000_000_000)
+        );
+        assert_eq!(rules.s194j_aggregate_paise, Some(5_000_000));
+    }
+
     /// The vendored excerpt is public: the source's own comment beside `return_non_audit_firm`
     /// is private, so the excerpt stops at the value, and no private-note citation may appear.
     #[test]
@@ -333,7 +387,7 @@ mod tests {
         assert!(VENDORED
             .lines()
             .any(|l| l == "return_non_audit_firm = 2026-08-31"));
-        for word in ["note)", "research/", ".md"] {
+        for word in ["note)", "research/", ".md", "gap register"] {
             assert!(!VENDORED.contains(word), "{word:?} in the vendored rules");
         }
     }
