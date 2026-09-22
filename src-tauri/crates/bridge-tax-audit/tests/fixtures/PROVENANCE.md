@@ -344,12 +344,16 @@ modifier letters and combining diacriticals, Devanagari and the other Indic scri
 punctuation and currency symbols, plus NBSP, U+202F, U+FEFF, U+3000
 and the control whitespace. The probes cover lower-casing in final-sigma contexts, strip, split, and
 the reference's two literal regular expressions (the transport-name heuristic and the GST/TCS
-check, read from the reference modules with their flags and recorded in the file's header). It is written, together
+check, read from the reference modules with their flags and recorded in the file's header), and
+`repr()` and `str.isprintable()`: on the acceptance set, and on every code point either side of each
+range `isprintable()` rejects (surrogates left out, since a Rust `char` is never one). It is written, together
 with the generated `src/text_tables.rs`, by `parity/text_semantics.py`, which refuses to write
 unless the structural facts the tables rely on hold over every code point: Python's `\w` is
 `isalnum() or "_"`, Python's alphanumerics are a subset of Rust's, and Python's whitespace is Rust's
 plus U+001C..U+001F. The reference was the engine at `57f2619b` (its `cash_payments_40a3` and
-`depreciation` modules). The invocation is
+`depreciation` modules). The `repr()`/`isprintable()` probes and `PY_NOT_PRINTABLE` were added by a
+rerun against the engine at `105b6c37`; every earlier table and probe, and the header, came out
+byte-identical. The invocation is
 
 ```
 cargo run --locked --release -p bridge-tax-audit --example text_semantics_dump > DUMP
@@ -406,7 +410,7 @@ are the reference's own.
 | `edge.stale.stale_balances_41_1.json` | 9,852 | `3499a5b8d028f59a65f208bc3954e816e820d644397e02e23b595ff67bc81fb5` | `golden/edge.stale.stale_balances_41_1.json` |
 | `edge.tb_rows.trial_balance.json` | 14,796 | `0ac2909425b617fcb41023efc7c886ed868404e3ef1cbee7aa8a5dea889dd6fb` | `golden/edge.tb_rows.trial_balance.json` |
 | `edge.tb_rows.trial_balance.order.json` | 219 | `2ace3be45ee1cd6ae4757727e947e07fd2ca3600a83f480b279bdda181d5f43d` | `golden/edge.tb_rows.trial_balance.order.json` |
-| `text-probes.json` | 810,568 | `34569754fa1d8ec360e09d59684ccd8222309e9c3c02521e63cb412e4ce88555` | `text-probes.json` |
+| `text-probes.json` | 1,150,882 | `96ca23055262ee348a27ae2672664d9296c869d1ac95fb21f3a904b43631760c` | `text-probes.json` |
 | `synthetic-turnover-inputs.json` | 153 | `970500728d9d0447cb3fe1b6e870d5fea2c3a1bb919da05f1d601d4ba6f66929` | `synthetic-turnover-inputs.json` |
 | `synthetic-engagement.toml` | 4,736 | `5d57561c53ba45c6a779a76125a21939e35b19c97b67c30274cbb50e4f81c6f1` | `synthetic-engagement.toml` |
 | `manifest.json` | 9,711 | `d3948085c8466002c269133fd59c5f6361acab028ff6db74bd1fd6d23f7271a7` | `synthetic-read/manifest.json` |

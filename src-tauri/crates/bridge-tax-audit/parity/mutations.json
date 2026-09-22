@@ -2030,5 +2030,85 @@
   "file": "src/book.rs",
   "from": "                direction: Some(direction),\n                qty_field_present: ie.child(\"ACTUALQTY\").is_some(),",
   "to": "                direction: Some(direction),\n                qty_field_present: true,"
+ },
+ {
+  "id": "Q01",
+  "by": "author",
+  "what": "quote chosen as \" whenever the text holds a '",
+  "file": "src/support.rs",
+  "from": "    let quote = if text.contains('\\'') && !text.contains('\"') {",
+  "to": "    let quote = if text.contains('\\'') {"
+ },
+ {
+  "id": "Q02",
+  "by": "author",
+  "what": "the backslash left unescaped",
+  "file": "src/support.rs",
+  "from": "            _ if c == quote || c == '\\\\' => {",
+  "to": "            _ if c == quote => {"
+ },
+ {
+  "id": "Q03",
+  "by": "author",
+  "what": "a tab escaped as \\x09",
+  "file": "src/support.rs",
+  "from": "            '\\t' => out.push_str(\"\\\\t\"),\n",
+  "to": ""
+ },
+ {
+  "id": "Q04",
+  "by": "author",
+  "what": "U+001F kept (the control bound one short)",
+  "file": "src/support.rs",
+  "from": "            _ if cp < 0x20 || cp == 0x7f => {",
+  "to": "            _ if cp < 0x1f || cp == 0x7f => {"
+ },
+ {
+  "id": "Q05",
+  "by": "author",
+  "what": "every non-ASCII character kept",
+  "file": "src/support.rs",
+  "from": "            _ if cp < 0x7f || py_isprintable(c) => out.push(c),",
+  "to": "            _ if cp < 0x7f || cp > 0x7f => out.push(c),"
+ },
+ {
+  "id": "Q06",
+  "by": "author",
+  "what": "U+00A0..U+00FF escaped as \\u00hh (the \\x bound cut at U+009F)",
+  "file": "src/support.rs",
+  "from": "            _ if cp <= 0xff => {",
+  "to": "            _ if cp <= 0x9f => {"
+ },
+ {
+  "id": "Q07",
+  "by": "author",
+  "what": "U+FFFF escaped as \\U0000ffff",
+  "file": "src/support.rs",
+  "from": "            _ if cp <= 0xffff => {",
+  "to": "            _ if cp < 0xffff => {"
+ },
+ {
+  "id": "Q08",
+  "by": "author",
+  "what": "upper-case hex in \\u escapes",
+  "file": "src/support.rs",
+  "from": "                let _ = write!(out, \"\\\\u{cp:04x}\");",
+  "to": "                let _ = write!(out, \"\\\\u{cp:04X}\");"
+ },
+ {
+  "id": "Q09",
+  "by": "author",
+  "what": "isprintable ignores the table",
+  "file": "src/support.rs",
+  "from": "    !in_ranges(&text_tables::PY_NOT_PRINTABLE, c)",
+  "to": "    !c.is_control()"
+ },
+ {
+  "id": "Q10",
+  "by": "author",
+  "what": "isprintable treats the space separators as printable",
+  "file": "src/support.rs",
+  "from": "    !in_ranges(&text_tables::PY_NOT_PRINTABLE, c)",
+  "to": "    !in_ranges(&text_tables::PY_NOT_PRINTABLE, c) || c.is_whitespace()"
  }
 ]
