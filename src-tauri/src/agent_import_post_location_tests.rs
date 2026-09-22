@@ -115,6 +115,14 @@ fn the_aim_check_admits_one_target_and_refuses_a_rename_or_a_namesake() {
         admit_post_target(&split, TARGET, "Synthetic Target"),
         Ok(())
     );
+    // The target's name under another GUID, and no other company of that name:
+    // a different company, however the name reads (a restore issues new GUIDs).
+    let mut regenerated = book();
+    regenerated[0].guid = "44444444-4444-4444-8444-444444444444".into();
+    assert_eq!(
+        admit_post_target(&regenerated, TARGET, "Synthetic Target"),
+        Err("post_company_scope_changed")
+    );
 }
 
 #[test]
@@ -258,4 +266,76 @@ fn a_row_without_its_master_axis_is_refused_not_read_as_unchanged() {
         parse_all_company_marks(&without),
         Err("master_checkpoint_not_observed".into())
     );
+}
+
+// bridge#239: the target's master mark, between the snapshot taken as the
+// queue's binding reads begin and the aim snapshot.
+
+fn with_masters(rows: &[LoadedCompanyMarks], guid: &str, masters: u64) -> Vec<LoadedCompanyMarks> {
+    rows.iter()
+        .cloned()
+        .map(|mut row| {
+            if row.guid == guid {
+                row.masters = masters;
+            }
+            row
+        })
+        .collect()
+}
+
+#[test]
+fn only_the_targets_master_mark_decides_whether_masters_moved() {
+    let book = book();
+    let unchanged = |at_aim: &[LoadedCompanyMarks]| {
+        target_masters_unchanged(&book, at_aim, TARGET, "Synthetic Target")
+    };
+    assert_eq!(unchanged(&book), Some(true));
+    assert_eq!(unchanged(&with_masters(&book, TARGET, 8)), Some(false));
+    // Another company's masters, and the target's own vouchers, are not ours.
+    assert_eq!(unchanged(&with_masters(&book, OTHER, 99)), Some(true));
+    assert_eq!(unchanged(&with_vouchers(&book, TARGET, 11)), Some(true));
+    // A mark that goes back (a company restored under the same identity) is a
+    // change too, never an unchanged book.
+    assert_eq!(
+        target_masters_unchanged(
+            &with_masters(&book, TARGET, 8),
+            &book,
+            TARGET,
+            "Synthetic Target"
+        ),
+        Some(false)
+    );
+    // The target's name under another GUID is not the target.
+    let mut regenerated = book.clone();
+    regenerated[0].guid = "44444444-4444-4444-8444-444444444444".into();
+    assert_eq!(unchanged(&regenerated), None);
+    // A year-split sibling shares the GUID under another name; it is not the
+    // target, whether or not its masters move.
+    let mut split = book.clone();
+    split.push(marks("Synthetic Target (2024-25)", TARGET, 5));
+    let mut split_moved = split.clone();
+    split_moved[3].masters = 9;
+    assert_eq!(
+        target_masters_unchanged(&split, &split_moved, TARGET, "Synthetic Target"),
+        Some(true)
+    );
+}
+
+#[test]
+fn a_masters_comparison_without_exactly_one_target_row_says_nothing() {
+    let book = book();
+    let without_target = book[1..].to_vec();
+    let mut doubled = book.clone();
+    doubled.push(marks("synthetic target ", TARGET, 10));
+    for (at_binding, at_aim) in [
+        (without_target.as_slice(), book.as_slice()),
+        (book.as_slice(), without_target.as_slice()),
+        (doubled.as_slice(), book.as_slice()),
+        (book.as_slice(), doubled.as_slice()),
+    ] {
+        assert_eq!(
+            target_masters_unchanged(at_binding, at_aim, TARGET, "Synthetic Target"),
+            None
+        );
+    }
 }

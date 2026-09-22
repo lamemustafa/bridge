@@ -370,7 +370,14 @@ Bridge-built files of those types have been imported and verified.
    `import_multi_currency_unsupported` if the company defines more than one
    currency: Bridge does not post into multi-currency books yet. This is checked
    before approval and again inside the queue. A Currency read that names no
-   usable master refuses with `import_base_currency_undetermined`.
+   usable master refuses with `import_base_currency_undetermined`. Inside the
+   queue, a change to the company's masters from just before the catalogue
+   re-read to the last read before the post refuses with `post_masters_moved`
+   (`post_masters_unconfirmed` if it cannot be checked); re-run the post. This
+   sees only changes that move the company's master AlterID (`ALTMSTID`):
+   measured for ledger renames and creates made through the gateway. A regroup,
+   an edit made in Tally's own screens, and whether posting a voucher moves it
+   are not yet measured.
 2. Call `post_import` with the original `company_guid` and `batch_id`.
 3. Review the native dialog's company, endpoint, date, numbering, reference,
    narration, every debit/credit entry, and totals; for a bank voucher, also the

@@ -79,6 +79,12 @@ fn marks_before() -> ScenarioPlan {
     xml(company_marks(10, 50, "WR2 Unicode Lab"))
 }
 
+/// The same marks, read as the queue's binding reads begin (#239): the aim
+/// snapshot must show the target's master mark unchanged since.
+fn marks_at_binding() -> ScenarioPlan {
+    marks_before()
+}
+
 fn xml(body: String) -> ScenarioPlan {
     ScenarioPlan::new(Fixture::SyntheticXml(body))
         .with_encoding(WireEncoding::Utf16Le)
@@ -149,7 +155,8 @@ fn created_one() -> String {
 }
 
 /// What the dispatch sends after approval, up to and including the import:
-/// the opening mode and company admission, the ledger catalogue, the Currency
+/// the opening mode and company admission, the marks at binding, the ledger
+/// catalogue, the Currency
 /// masters, the closing mode and admission, the absence read twice, the aim
 /// snapshot, then the one POST. The index of the POST is
 /// `before_approval().len() + after_approval(..).len() - 1`.
@@ -160,6 +167,7 @@ fn after_approval(post: ScenarioPlan) -> Vec<ScenarioPlan> {
 fn after_approval_with_currencies(currencies: String, post: ScenarioPlan) -> Vec<ScenarioPlan> {
     let mut plans = probe();
     plans.push(xml(companies()));
+    plans.push(marks_at_binding());
     plans.extend(paired(catalogue()));
     plans.extend(paired(currencies));
     plans.extend(probe());
@@ -576,6 +584,7 @@ fn bank_after_approval_with_currencies(
 ) -> Vec<ScenarioPlan> {
     let mut plans = probe();
     plans.push(xml(companies()));
+    plans.push(marks_at_binding());
     plans.extend(paired(catalogue));
     plans.extend(paired(groups));
     plans.extend(paired(currencies));
@@ -1478,4 +1487,179 @@ async fn currency_masters_without_a_base_are_refused_in_the_queue_with_their_own
         expected,
         "the POST is never sent: {response}"
     );
+}
+
+// bridge#239: a master changed after the queue's catalogue re-read is refused
+// before the POST, from the target's ALTMSTID in the aim snapshot compared
+// with the one read as the binding reads began.
+
+/// The approved Journal, with the queue's binding-time snapshot answered by
+/// `at_binding` and its aim snapshot by `at_aim`. Returns the response, the
+/// requests observed, and the number up to and including the aim snapshot.
+async fn post_with_master_marks(at_binding: String, at_aim: String) -> (Value, usize, usize) {
+    let mut plans = before_approval();
+    let mut after = after_approval(xml(created_one()));
+    // The binding snapshot follows the opening mode probe and company read.
+    let binding_at = probe().len() + 1;
+    after[binding_at] = xml(at_binding);
+    let aim_at = after.len() - 2;
+    after[aim_at] = xml(at_aim);
+    let through_aim = plans.len() + aim_at + 1;
+    plans.extend(after);
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    let observed = sent(simulator).len();
+    (response, observed, through_aim)
+}
+
+fn marks_with_target_masters(masters: u64) -> String {
+    replaced_once(
+        &company_marks(10, 50, "WR2 Unicode Lab"),
+        "<ALTMSTID>7</ALTMSTID>",
+        &format!("<ALTMSTID>{masters}</ALTMSTID>"),
+    )
+}
+
+#[tokio::test]
+async fn a_master_changed_after_the_catalogue_re_read_is_refused_before_the_post() {
+    let (response, observed, through_aim) =
+        post_with_master_marks(marks_with_target_masters(7), marks_with_target_masters(8)).await;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(result["error"]["code"], "post_masters_moved", "{response}");
+    assert_eq!(result["attempt_recorded"], json!(false), "{response}");
+    assert_eq!(observed, through_aim, "the POST is never sent: {response}");
+}
+
+/// The control: another company's masters moving is not the target's, so the
+/// post goes ahead.
+#[tokio::test]
+async fn another_companys_master_change_does_not_refuse_the_post() {
+    let at_aim = replaced_once(
+        &company_marks(10, 50, "WR2 Unicode Lab"),
+        "<ALTMSTID>3</ALTMSTID>",
+        "<ALTMSTID>4</ALTMSTID>",
+    );
+    let (response, observed, through_aim) =
+        post_with_master_marks(marks_with_target_masters(7), at_aim).await;
+    assert!(observed > through_aim, "the POST is sent: {response}");
+}
+
+/// A binding-time snapshot without the target cannot be compared, so the post
+/// is refused as unconfirmed.
+#[tokio::test]
+async fn a_binding_snapshot_without_the_target_is_refused_as_unconfirmed() {
+    let (response, observed, through_aim) = post_with_master_marks(
+        company_marks(10, 50, "Synthetic Renamed Lab"),
+        marks_with_target_masters(7),
+    )
+    .await;
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["error"]["code"], "post_masters_unconfirmed",
+        "{response}"
+    );
+    assert_eq!(result["attempt_recorded"], json!(false), "{response}");
+    assert_eq!(observed, through_aim, "{response}");
+}
+
+/// During the approval wait, a ledger renamed and a new one created under its
+/// old name is caught by identity: the queue's catalogue holds the approved
+/// name with a different GUID, and the post is refused before the intent.
+#[tokio::test]
+async fn a_new_ledger_under_an_approved_name_during_approval_is_refused_by_identity() {
+    let replaced = replaced_once(
+        &catalogue(),
+        ">61c6de69-1748-461c-ad3f-162cb949df9f-0000001f</GUID>",
+        ">61c6de69-1748-461c-ad3f-162cb949df9f-000000ff</GUID>",
+    );
+    let mut plans = before_approval();
+    let mut after = after_approval(xml(created_one()));
+    // The queue's catalogue: its first report and its replay.
+    let catalogue_at = probe().len() + 2;
+    after[catalogue_at + 1] = xml(replaced.clone());
+    after[catalogue_at + 3] = xml(replaced);
+    // The binding is compared once every queue read is in, after the aim
+    // snapshot; only the POST is never sent.
+    after.pop();
+    let expected = plans.len() + after.len();
+    plans.extend(after);
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    let observed = sent(simulator);
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["error"]["code"], "import_masters_changed",
+        "{response}"
+    );
+    assert_eq!(result["attempt_recorded"], json!(false), "{response}");
+    assert_eq!(observed.len(), expected, "{response}");
+}
+
+/// The binding-time snapshot lost in transport, or answered with T2's live
+/// refusal: the masters cannot be compared, so the post is refused as
+/// `post_masters_unconfirmed`, never as an unknown outcome. A lost read stops
+/// the queue at once; an unreadable one is refused once the queue's reads are
+/// in, after the aim snapshot. Neither sends the POST or records an intent.
+#[tokio::test]
+async fn an_unreadable_binding_snapshot_refuses_as_unconfirmed() {
+    let refused = "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>0</STATUS></HEADER><BODY><DATA>\
+                   <LINEERROR>Could not set 'SVCurrentCompany' to 'WR2 Unicode Lab'</LINEERROR>\
+                   </DATA></BODY></ENVELOPE>"
+        .to_string();
+    let binding_at = probe().len() + 1;
+    for lost in [true, false] {
+        let mut plans = before_approval();
+        let mut after = after_approval(xml(created_one()));
+        after[binding_at] = if lost {
+            marks_at_binding().with_delivery(Delivery::ResetBeforeBody)
+        } else {
+            xml(refused.clone())
+        };
+        let expected = plans.len()
+            + if lost {
+                binding_at + 1
+            } else {
+                after.len() - 1
+            };
+        plans.extend(after);
+        let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let server = server_at(simulator.address(), directory.path());
+        let (_, args) = saved_batch(&server);
+        let before = journal(directory.path());
+        let response = SCRIPTED_APPROVAL
+            .scope(
+                ScriptedApproval::approving(),
+                server.call_tool("post_import", args),
+            )
+            .await;
+        let observed = sent(simulator).len();
+        let result = &response["structuredContent"]["result"];
+        assert_eq!(
+            result["error"]["code"], "post_masters_unconfirmed",
+            "{response}"
+        );
+        assert_eq!(result["attempt_recorded"], json!(false), "{response}");
+        assert_eq!(observed, expected, "{response}");
+        assert_eq!(
+            appended_kinds(&before, &journal(directory.path())),
+            ["verification_status"]
+        );
+    }
 }
