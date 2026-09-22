@@ -175,8 +175,9 @@ pub struct CompanyCurrency {
 pub struct CurrencyMaster {
     /// `NAME`: the symbol ledgers carry (for example `I₹` or `$`).
     pub name: String,
-    /// `ORIGINALNAME`: the symbol the company's `CURRENCYNAME` names when this
-    /// master is its base currency (for example `₹` for a master named `I₹`).
+    /// `ORIGINALNAME`: on the books measured, the value the company's
+    /// `CURRENCYNAME` carries when this master is its base currency (for
+    /// example `₹` for a master named `I₹`).
     pub original_name: Option<String>,
     pub mailing_name: String,
     pub decimal_places: u8,
@@ -218,12 +219,14 @@ impl CompanyCurrency {
         self.base_determined = true;
     }
 
-    /// Identifies the base currency among several masters. The company's
-    /// `CURRENCYNAME` names its base currency by the master's `ORIGINALNAME`,
-    /// not its `NAME` (measured 22 Sep 2026: company `₹`, masters `I₹`/`₹` and
-    /// `$`/`$`; bridge#551). The base is the unique master whose `ORIGINALNAME`
-    /// equals it character for character. If no master or several match, it
-    /// stays undetermined. A single-master read is unchanged.
+    /// Identifies the base currency among several masters. On the three books
+    /// measured (licensed TallyPrime 7.1, 22 Sep 2026; protocol reference
+    /// §9.10a.2), the company's `CURRENCYNAME` matched exactly one master's
+    /// `ORIGINALNAME` and never its `NAME`: company `₹`, masters `I₹`/`₹` and
+    /// `$`/`$`. That is a measured rule, not a documented contract. The base
+    /// is the unique master whose `ORIGINALNAME` equals it character for
+    /// character. With no match or several, it stays undetermined, which
+    /// refuses. A single-master read is unchanged.
     pub fn with_company_currency_name(mut self, company_currency_name: &str) -> Self {
         if self.currency_count < 2 {
             return self;

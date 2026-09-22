@@ -108,9 +108,16 @@ impl TallyRuntime {
                             hash,
                             bytes,
                         ));
-                        let currency = parse_company_currency(&currency_xml)?;
-                        // Reuse the observed single-INR admission used by existing
-                        // monetary reports. Multiple masters cannot establish base currency.
+                        let mut currency = parse_company_currency(&currency_xml)?;
+                        // The same INR admission as the other monetary reads:
+                        // with several masters, the company's own CURRENCYNAME
+                        // identifies the base (bridge#551).
+                        if currency.currency_count > 1 {
+                            let (name, base_evidence) =
+                                super::read_company_currency_name(&client, &identity).await?;
+                            evidence = evidence.clone().combine(base_evidence);
+                            currency = currency.with_company_currency_name(&name?);
+                        }
                         CompanyCurrencyRead {
                             currency: currency.clone(),
                             extent: extent.clone(),

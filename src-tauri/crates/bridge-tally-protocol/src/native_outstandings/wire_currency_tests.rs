@@ -485,3 +485,43 @@ fn the_company_currency_name_is_taken_from_the_row_with_the_company_guid() {
         Err(NativeOutstandingsError::TallyReportedFailure)
     );
 }
+
+#[test]
+fn a_company_row_repeating_its_guid_or_currency_name_or_a_response_without_status_is_refused() {
+    let guid = "77777777-aaaa-4000-8000-000000000007";
+    let row = company_collection(&[("A", guid, Some("₹"))]);
+    let repeated_guid = row.replace(
+        "</GUID>",
+        "</GUID><GUID TYPE=\"String\">88888888-bbbb-4000-8000-000000000008</GUID>",
+    );
+    let repeated_name = row.replace(
+        "</CURRENCYNAME>",
+        "</CURRENCYNAME><CURRENCYNAME TYPE=\"String\">$</CURRENCYNAME>",
+    );
+    let no_status = row.replace("<STATUS>1</STATUS>", "");
+    assert_eq!(
+        parse_company_currency_name(&repeated_guid, guid),
+        Err(NativeOutstandingsError::InvalidResponse(
+            "company_currency_duplicate_guid"
+        ))
+    );
+    assert_eq!(
+        parse_company_currency_name(&repeated_name, guid),
+        Err(NativeOutstandingsError::InvalidResponse(
+            "company_currency_duplicate_name"
+        ))
+    );
+    assert_eq!(
+        parse_company_currency_name(&no_status, guid),
+        Err(NativeOutstandingsError::TallyReportedFailure)
+    );
+    // A nested element under the row is skipped, not read as the row's field.
+    let nested = row.replace(
+        "</COMPANY>",
+        "<ADDRESS.LIST><CURRENCYNAME TYPE=\"String\">$</CURRENCYNAME></ADDRESS.LIST></COMPANY>",
+    );
+    assert_eq!(
+        parse_company_currency_name(&nested, guid),
+        Ok("₹".to_string())
+    );
+}

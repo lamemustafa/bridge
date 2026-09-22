@@ -987,6 +987,30 @@ impl PartyLedgerMasterCurrencyAssertion {
     }
 }
 
+/// Reads the company's own `CURRENCYNAME`, which names its base currency by
+/// that master's `ORIGINALNAME` (bridge#551). Sent only when the company defines
+/// several Currency masters, inside the caller's extent and identity bracket.
+/// The read is paired. A transport or stability failure is returned at once; a
+/// parse failure is returned inside `Ok`, so that the caller can report it after
+/// its closing bracket. The evidence covers this read.
+pub(crate) async fn read_company_currency_name(
+    client: &TallyClient,
+    identity: &VerifiedCompanyIdentity,
+) -> anyhow::Result<(
+    Result<String, bridge_tally_protocol::native_outstandings::NativeOutstandingsError>,
+    RuntimeReadEvidence,
+)> {
+    let request = render_company_base_currency_request(identity.display_name());
+    let (body, bytes, hash) = client
+        .fetch_native_report_paired(request.clone())
+        .await?
+        .require_stable(PairedReadValidationError::CompanyBaseCurrency)?;
+    Ok((
+        parse_company_currency_name(&body, identity.company_guid()),
+        RuntimeReadEvidence::paired(&request, hash, bytes),
+    ))
+}
+
 /// `CompanyCurrencyRead::admit_inr` refused to label this company's figures
 /// as INR. The code is one of that function's static reasons, never data.
 #[derive(Debug, thiserror::Error)]
@@ -3701,13 +3725,10 @@ impl TallyRuntime {
                             // master's ORIGINALNAME (bridge#551). Only this case
                             // costs the extra read, inside the same bracket.
                             Ok(currency) if currency.currency_count > 1 => {
-                                let request =
-                                    render_company_base_currency_request(identity.display_name());
-                                let body = client.fetch_native_report_paired(request).await?;
-                                let (body, _, _) = body.require_stable(
-                                    PairedReadValidationError::CompanyBaseCurrency,
-                                )?;
-                                Some(parse_company_currency_name(&body, identity.company_guid()))
+                                let (name, base_evidence) =
+                                    read_company_currency_name(&client, &identity).await?;
+                                evidence = evidence.clone().combine(base_evidence);
+                                Some(name)
                             }
                             _ => None,
                         };

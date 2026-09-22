@@ -242,9 +242,21 @@ async fn agent_outstandings_rejects_unadmitted_currency_before_native_read() {
         };
         let requests = simulator.finish().unwrap();
         assert_eq!(requests.len(), if fault == "multiple" { 18 } else { 14 });
-        assert_eq!(evidence.request_sha256, requests[5].request_body_sha256);
-        assert_eq!(evidence.response_sha256, sha256_hex(&response));
-        assert_eq!(evidence.bytes, response.len() * 2);
+        if fault == "multiple" {
+            // The evidence also covers the base-currency read that decided
+            // admission (requests 9 and 11 are its paired halves).
+            assert_eq!(
+                evidence.request_sha256,
+                join(
+                    &requests[5].request_body_sha256,
+                    &requests[9].request_body_sha256
+                )
+            );
+        } else {
+            assert_eq!(evidence.request_sha256, requests[5].request_body_sha256);
+            assert_eq!(evidence.response_sha256, sha256_hex(&response));
+            assert_eq!(evidence.bytes, response.len() * 2);
+        }
     }
 }
 

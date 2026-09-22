@@ -359,3 +359,79 @@ async fn trial_balance_rejects_report_or_book_drift_and_retains_completed_source
         );
     }
 }
+
+/// The captured two-currency book (INR base, `$` added) as the currency read
+/// now returns it, with each master's `ORIGINALNAME` (bridge#551).
+fn forex_currency() -> String {
+    let named = decode(include_bytes!(
+        "../../crates/bridge-tally-protocol/tests/fixtures/currency_multi_live.utf16le.xml"
+    ))
+    .replacen(
+        "<MAILINGNAME TYPE=\"String\">USD</MAILINGNAME>",
+        "<MAILINGNAME TYPE=\"String\">USD</MAILINGNAME><ORIGINALNAME TYPE=\"String\">$</ORIGINALNAME>",
+        1,
+    )
+    .replacen(
+        "<MAILINGNAME TYPE=\"String\">INR</MAILINGNAME>",
+        "<MAILINGNAME TYPE=\"String\">INR</MAILINGNAME><ORIGINALNAME TYPE=\"String\">₹</ORIGINALNAME>",
+        1,
+    );
+    assert_eq!(named.matches("<ORIGINALNAME").count(), 2);
+    named
+}
+
+/// A synthetic `Company` collection naming `currency_name` as this company's
+/// base currency; the other row is invented.
+fn base_currency(currency_name: &str) -> String {
+    format!(
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+<COMPANY NAME=\"Synthetic Other Book\" RESERVEDNAME=\"\"><GUID TYPE=\"String\">00000000-0000-4000-8000-00000000abcd</GUID><CURRENCYNAME TYPE=\"String\">Rs.</CURRENCYNAME></COMPANY>\
+<COMPANY NAME=\"Synthetic Book\" RESERVEDNAME=\"\"><GUID TYPE=\"String\">{GUID}</GUID><CURRENCYNAME TYPE=\"String\">{currency_name}</CURRENCYNAME></COMPANY>\
+</COLLECTION></DATA></BODY></ENVELOPE>"
+    )
+}
+
+/// Trial Balance admits currency by the same rule as the other monetary
+/// reads: an INR base identified among several masters is admitted, and an
+/// identified non-INR base is refused as such (bridge#551).
+#[tokio::test]
+async fn trial_balance_identifies_the_base_among_several_currency_masters() {
+    let mut plans = opening_plans(forex_currency());
+    pair(&mut plans, xml(base_currency("₹")));
+    let companies = xml(companies());
+    pair(&mut plans, xml(trial_balance()));
+    pair(&mut plans, xml(extents()));
+    plans.extend([companies.clone(), status(), companies]);
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let period = || {
+        TrialBalancePeriod::new(
+            TallyDate::parse("20260401").unwrap(),
+            TallyDate::parse("20260902").unwrap(),
+        )
+        .unwrap()
+    };
+    let read = TallyRuntime::default()
+        .fetch_trial_balance(config(&simulator), &identity(), period())
+        .await
+        .unwrap();
+    assert_eq!(read.currency.symbol, "I₹");
+    assert_eq!(read.currency.mailing_name, "INR");
+    assert_eq!(simulator.finish().unwrap().len(), 26);
+
+    let mut plans = opening_plans(forex_currency());
+    pair(&mut plans, xml(base_currency("$")));
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let error = TallyRuntime::default()
+        .fetch_trial_balance(config(&simulator), &identity(), period())
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<super::trial_balance::TrialBalanceReadError>()),
+        Some(super::trial_balance::TrialBalanceReadError::Currency(
+            "company_base_currency_not_inr"
+        ))
+    ));
+    assert_eq!(simulator.finish().unwrap().len(), 15);
+}

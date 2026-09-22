@@ -394,12 +394,17 @@ finds nothing on the INR books. Ledgers carry the master `NAME` (`I₹`, `$`).
 
 A single-master book keeps the §9.10a.1 rule and sends no extra read. The `Company` read is paired
 like the currency read, and a disagreement between the two reads refuses as
-`company_base_currency_changed`.
+`company_base_currency_changed`. The read evidence covers both reads. Trial Balance, the party and
+ledger masters, outstandings and the company sweep all apply this one rule.
 
 **What is not established:**
 - that `ORIGINALNAME` rather than `NAME` is the match on a book whose base master was never renamed
   (the two fields are then the same);
 - that row order, `RESERVEDNAME` or `MASTERID` mean anything. They are never used.
+- the rule on any release other than TallyPrime 7.1, and a base symbol changed by a later Company
+  Alteration. Either would fail closed unless another master happens to hold the new value;
+- how an INR book's foreign-currency ledgers and bills read on every monetary path. Such books are
+  now admitted, and only a composite forex `CLOSINGBALANCE` has been captured.
 
 These are exports. §9.10b's trap is `ORIGINALNAME` sent as a `COMPANY` child in an **import**.
 

@@ -108,7 +108,7 @@ fn read_error(error: anyhow::Error) -> TallyCommandError {
                 "This report currently requires observed Licensed TallyPrime. Education support needs further qualification.");
         }
         return local_error(reason.safe_code(), "Bridge could not admit this Trial Balance period or currency.",
-            "Choose dates on or after book start. This report currently requires one observed INR currency master.");
+            "Choose dates on or after book start. This report requires an observed INR base currency.");
     }
     if let Some(reason) = error.chain().find_map(|cause| {
         cause.downcast_ref::<bridge_tally_protocol::native_trial_balance::NativeTrialBalanceError>()
