@@ -119,6 +119,10 @@ pub fn ledgers_request(company: &str) -> String {
     bridge_tally_protocol::xml_read_profiles::compatibility::ledgers_request(company)
 }
 
+/// No production path sends this: core groups come from the native group
+/// collection. Its report TDL is one Education answers with a blocking dialog
+/// (bridge#45), so it compiles only for tests, and nothing can dispatch it.
+#[cfg(test)]
 pub fn groups_request(company: &str) -> String {
     format!(
         r#"
@@ -303,6 +307,69 @@ mod tests {
         company_list_request, groups_request, ledger_period_balances_request, ledgers_request,
         legacy_company_list_request,
     };
+
+    /// The builders the hazard gate records as passing a spaced identifier to
+    /// a `$$` function (Education answered one with a blocking dialog,
+    /// bridge#45) are exactly the ones listed here with their guards, so a new
+    /// such builder fails this test until it is listed. The guards themselves
+    /// are proven by their own tests (connector, runtime, transport, tools),
+    /// not here, and a new caller of a listed builder is not caught here.
+    #[test]
+    fn every_report_formula_hazard_is_kept_from_an_education_responder() {
+        use bridge_tally_protocol::xml_read_profiles::{
+            first_spaced_function_argument, ReadOnlyProfileId,
+        };
+        let script = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../scripts/check-tally-request-builder-hazards.mjs"),
+        )
+        .unwrap();
+        let listed: std::collections::BTreeSet<&str> = script
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("\"function-argument-with-space|"))
+            .map(|entry| {
+                let builder = entry.split('|').next().unwrap();
+                builder.rsplit("::").next().unwrap()
+            })
+            .collect();
+        let guarded = [
+            // `ReadOnlyProfileId::education_refuses_report_formula`: the tools'
+            // Education transport, and `qualify_selected_ledgers`' bracket.
+            "render_ledgers",
+            // The same flag, and `qualify_selected_vouchers`' bracket.
+            "render_vouchers",
+            // `RuntimeTallyConnector::read_core_period_balance_report`.
+            "ledger_period_balances_request",
+            // `#[cfg(test)]`: nothing outside tests can send it.
+            "groups_request",
+        ];
+        assert_eq!(listed, guarded.into_iter().collect());
+        for id in [
+            ReadOnlyProfileId::LedgersV1,
+            ReadOnlyProfileId::LedgerCanaryReadbackV1,
+            ReadOnlyProfileId::VouchersV2,
+            ReadOnlyProfileId::VouchersV3,
+        ] {
+            assert!(id.education_refuses_report_formula(), "{}", id.as_str());
+        }
+        for (builder, request) in [
+            ("ledgers_request", ledgers_request("Synthetic Company")),
+            (
+                "ledger_period_balances_request",
+                ledger_period_balances_request("Synthetic Company", "20260401", "20260430"),
+            ),
+            ("groups_request", groups_request("Synthetic Company")),
+        ] {
+            assert!(
+                first_spaced_function_argument(&request).is_some(),
+                "{builder}"
+            );
+        }
+        assert_eq!(
+            first_spaced_function_argument(&company_list_request()),
+            None
+        );
+    }
 
     #[test]
     fn portable_read_profiles_preserve_the_existing_production_bytes() {
