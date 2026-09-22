@@ -82,6 +82,9 @@ pub(crate) async fn selected_voucher_operation_for_verified(
             .read_entry_wildcard_window(&identity, &company.name, &from, &to, None)
             .await?;
         accumulate_evidence(&mut accumulated, read.all_evidence());
+        // What each request of the window read cost (#595); the empty-window
+        // corroboration below is a read of its own and is not counted here.
+        let window = serde_json::to_value(&read.timings).unwrap_or(Value::Null);
         let source_marks = read.witness.as_ref().map(|witness| witness.marks);
         let mut rows = validate_then_filter_voucher_rows(read.rows, &from, &to, None)?;
         let mut result_state = "complete";
@@ -135,7 +138,7 @@ pub(crate) async fn selected_voucher_operation_for_verified(
             .collect::<Vec<_>>();
         let truncated = offset.saturating_add(items.len()) < total;
         Ok(ToolOutcome {
-            payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"state": result_state, "reason": corroboration_reason, "items": items, "offset": offset, "total": total, "profile": "agent_vouchers_v1_filters"}}),
+            payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"state": result_state, "reason": corroboration_reason, "items": items, "offset": offset, "total": total, "profile": "agent_vouchers_v1_filters", "window": window}}),
             evidence: accumulated.clone().expect("voucher source evidence is present after admitted read"),
             company_guid: Some(guid),
             truncated,
