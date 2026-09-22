@@ -28,6 +28,12 @@ fn caller(id: &str) -> CallerData {
                 registry::turnover_inputs_from_json(&json("synthetic-turnover-inputs.json"))
                     .unwrap();
         }
+        "tds_tcs_26as" | "twentysixas_receipts" => {
+            c.traces = bridge_tax_audit::documents::traces_documents_from_json(&json(
+                "synthetic-traces-documents.json",
+            ))
+            .unwrap();
+        }
         _ => {}
     }
     c
@@ -73,4 +79,23 @@ fn an_unregistered_test_is_refused() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("itr_3cd_tally is not a ported test"), "{err}");
+}
+
+#[test]
+fn the_26as_floors_are_what_each_test_emits_with_no_documents() {
+    // The synthetic engagement configures no TDS/TCS ledger and two deductor aliases, so with no
+    // document rows `tds_tcs_26as` emits its structural figures plus one per alias, and
+    // `twentysixas_receipts` (every figure belongs to a party with a Part I row) emits none.
+    let e = common::engagement(&common::fixtures().join("synthetic-read"), false);
+    let rules = rules_for(&e).unwrap();
+    let figures = |id: &str| {
+        registry::run_canonical(id, &e, &rules, &CallerData::default()).unwrap()["figures"]
+            .as_array()
+            .unwrap()
+            .len()
+    };
+    let floor = |id: &str| registry::find(id).unwrap().min_figures;
+    assert_eq!(figures("tds_tcs_26as"), floor("tds_tcs_26as") + 2);
+    assert_eq!(figures("twentysixas_receipts"), 0);
+    assert_eq!(floor("twentysixas_receipts"), 1);
 }

@@ -3024,3 +3024,619 @@ async fn a_census_education_cannot_serve_is_refused_by_name() {
         1
     );
 }
+
+// --- Window readers (audit_read plan step 5b) ---
+
+/// The three legs of one audit part: identity bracket, one unpaired read,
+/// identity bracket.
+fn single(body: &ScenarioPlan) -> Vec<ScenarioPlan> {
+    vec![company_plan(), body.clone(), company_plan()]
+}
+
+/// The plans of `a_divided_read_is_bracketed_by_the_high_water_mark`, in the
+/// order its reads are sent, with `legs` shaping each read.
+fn divided_window_reads(closing: ScenarioPlan) -> Vec<ScenarioPlan> {
+    vec![
+        xml_plan(three_vouchers()),
+        xml_plan(relabelled(&vouchers_kept(1), &[(1, "20260801")])),
+        xml_plan(relabelled(
+            &vouchers_kept(2),
+            &[(2, "20260801"), (3, "20260801")],
+        )),
+        xml_plan(empty_collection()),
+        closing,
+    ]
+}
+
+fn divided_parts() -> Vec<WindowPart> {
+    vec![
+        part(
+            "20260801",
+            "20260801",
+            Some(AlterIdSpan {
+                after: 0,
+                through: 1,
+            }),
+        ),
+        part(
+            "20260801",
+            "20260801",
+            Some(AlterIdSpan {
+                after: 1,
+                through: 3,
+            }),
+        ),
+        part("20260802", "20260802", None),
+    ]
+}
+
+async fn read_audit_window(
+    plans: Vec<ScenarioPlan>,
+    runtime: TallyRuntime,
+) -> (
+    Result<WindowReadOutcome<Value>, ToolFailure>,
+    Option<Vec<RetainedWindowRead>>,
+    Option<AuditWindowFailure>,
+    Vec<tally_protocol_simulator::ObservedRequest>,
+    TallyConfig,
+) {
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let config = TallyConfig {
+        host: simulator.address().ip().to_string(),
+        port: simulator.address().port(),
+    };
+    let identity = identity();
+    // Through the owned entry point, as the orchestrator will read.
+    let read = AuditWindowReader::new(&runtime, config.clone())
+        .read_window(
+            &identity,
+            identity.display_name(),
+            "20260801",
+            "20260802",
+            VoucherReadShape::EntryWildcard,
+            three_a_read(),
+            |xml| parse_agent_rows(xml, GUID),
+        )
+        .await;
+    (
+        read.outcome,
+        read.retained,
+        read.failure,
+        simulator.finish().unwrap(),
+        config,
+    )
+}
+
+/// An undivided window for a sealed record is bracketed too: its record states
+/// the marks it read, so it reads them again after its one part and refuses
+/// if they moved, where an agent read of the same window would not look again.
+#[tokio::test]
+async fn an_undivided_audit_window_closes_its_bracket() {
+    let one = || xml_plan(relabelled(&vouchers_kept(1), &[(1, "20260801")]));
+    let (outcome, retained, failure, observed, _) = read_audit_window(
+        [marks_plan(1, 7), one(), marks_plan(1, 7)]
+            .iter()
+            .flat_map(single)
+            .collect(),
+        TallyRuntime::default(),
+    )
+    .await;
+    let read = outcome.expect("an unchanged undivided window reads");
+    assert!(failure.is_none());
+    assert_eq!(read.reads, [part("20260801", "20260802", None)]);
+    assert_eq!(observed.len(), 9);
+    assert_eq!(
+        retained
+            .expect("its reads")
+            .iter()
+            .map(|r| r.kind.clone())
+            .collect::<Vec<_>>(),
+        [
+            WindowReadKind::Marks,
+            WindowReadKind::Part(part("20260801", "20260802", None)),
+            WindowReadKind::Marks,
+        ]
+    );
+
+    let (moved, retained, failure, _, _) = read_audit_window(
+        [marks_plan(1, 7), one(), marks_plan(2, 7)]
+            .iter()
+            .flat_map(single)
+            .collect(),
+        TallyRuntime::default(),
+    )
+    .await;
+    assert_eq!(
+        moved.err().map(|f| f.code),
+        Some(WINDOW_CHANGED_DURING_READ.to_string())
+    );
+    assert_eq!(failure, Some(AuditWindowFailure::WindowChanged));
+    assert!(retained.is_none());
+}
+
+/// `Server::read_voucher_window` and an explicit [`AgentReader`] send the same
+/// requests in the same order, so the two entry points cannot drift apart.
+/// Both run the one executor, so this cannot show that the agent path is
+/// unchanged from before readers existed. The pre-existing window tests show
+/// that: they pass unmodified.
+#[tokio::test]
+async fn the_agent_reader_sends_exactly_the_requests_the_window_read_sent() {
+    let plans = || {
+        divided_window_reads(marks_plan(3, 7))
+            .iter()
+            .flat_map(paired)
+            .collect::<Vec<_>>()
+    };
+    let (through_server, server_observed) = read_window(
+        plans(),
+        ("20260801", "20260802"),
+        VoucherReadShape::EntryWildcard,
+        WindowPlanSource::Estimate {
+            known_marks: Some(marks_of(3)),
+        },
+        three_a_read(),
+    )
+    .await;
+    let simulator = SequenceSimulator::spawn(plans()).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let identity = identity();
+    let through_reader = read_voucher_window_with(
+        &AgentReader(&server),
+        &identity,
+        identity.display_name(),
+        "20260801",
+        "20260802",
+        VoucherReadShape::EntryWildcard,
+        WindowPlanSource::Estimate {
+            known_marks: Some(marks_of(3)),
+        },
+        three_a_read(),
+        |xml| parse_agent_rows(xml, GUID),
+    )
+    .await;
+    let reader_observed = simulator.finish().unwrap();
+    assert_eq!(through_server.unwrap().reads, through_reader.unwrap().reads);
+    let shas = |observed: &[tally_protocol_simulator::ObservedRequest]| {
+        observed
+            .iter()
+            .map(|request| request.request_body_sha256.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(shas(&server_observed), shas(&reader_observed));
+}
+
+/// A divided window through the audit reader: the same plan, admission and
+/// bracket as the agent path, each request one unpaired audit part, and every
+/// admitted response kept byte for byte, in order.
+#[tokio::test]
+async fn an_audit_window_keeps_every_read_it_admitted_as_it_arrived() {
+    // The audit window reads its own opening marks first.
+    let reads = [
+        vec![marks_plan(3, 7)],
+        divided_window_reads(marks_plan(3, 7)),
+    ]
+    .concat();
+    let wires = reads
+        .iter()
+        .map(|plan| tally_protocol_simulator::encode(&plan.fixture.body(), plan.encoding))
+        .collect::<Vec<_>>();
+    let (outcome, retained, failure, observed, _) = read_audit_window(
+        reads.iter().flat_map(single).collect(),
+        TallyRuntime::default(),
+    )
+    .await;
+    let read = outcome.expect("the window reads");
+    assert!(failure.is_none());
+    let retained = retained.expect("a completed window yields its reads");
+    assert_eq!(read.rows.len(), 3);
+    assert_eq!(read.reads, divided_parts());
+    // Opening marks, census, three parts, closing marks: six reads of three
+    // legs each.
+    assert_eq!(observed.len(), 18);
+    let kinds = retained.iter().map(|r| r.kind.clone()).collect::<Vec<_>>();
+    let mut expected = vec![WindowReadKind::Marks, WindowReadKind::Census];
+    expected.extend(divided_parts().into_iter().map(WindowReadKind::Part));
+    expected.push(WindowReadKind::Marks);
+    assert_eq!(kinds, expected);
+    for (index, (kept, wire)) in retained.iter().zip(&wires).enumerate() {
+        assert_eq!(&kept.part.encoded_body, wire, "read {index}");
+        assert_eq!(
+            kept.request_sha256,
+            observed[index * 3 + 1].request_body_sha256
+        );
+        assert_eq!(
+            kept.part.boundary_profile,
+            DateBoundaryProfile::ModeAgnostic
+        );
+    }
+}
+
+/// The reader never changes admission: a part that returns fewer vouchers than
+/// the census counted is refused through the audit reader exactly as through
+/// the agent path, and is not a transport failure of the part.
+#[tokio::test]
+async fn an_audit_window_refuses_a_part_the_census_disagrees_with() {
+    let mut reads = divided_window_reads(marks_plan(3, 7));
+    reads[1] = xml_plan(empty_collection());
+    let (agent, _) = read_window(
+        reads.iter().take(2).flat_map(paired).collect(),
+        ("20260801", "20260802"),
+        VoucherReadShape::EntryWildcard,
+        WindowPlanSource::Estimate {
+            known_marks: Some(marks_of(3)),
+        },
+        three_a_read(),
+    )
+    .await;
+    let agent = agent.err().expect("the agent path refuses");
+    let (audit, retained, failure, observed, _) = read_audit_window(
+        std::iter::once(marks_plan(3, 7))
+            .chain(reads.iter().take(2).cloned())
+            .flat_map(|plan| single(&plan))
+            .collect(),
+        TallyRuntime::default(),
+    )
+    .await;
+    let audit = audit.err().expect("the audit path refuses");
+    assert_eq!(audit.code, PART_NOT_ADMITTED);
+    assert_eq!(audit.code, agent.code);
+    assert_eq!(audit.cause, agent.cause);
+    assert_eq!(audit.counts, agent.counts);
+    assert_eq!(
+        failure,
+        Some(AuditWindowFailure::Refused(PART_NOT_ADMITTED.to_string()))
+    );
+    assert!(!failure.unwrap().retryable());
+    // The opening marks, the census and the refused part were read, nothing
+    // after, and a refused window yields no retained reads at all.
+    assert!(retained.is_none());
+    assert_eq!(observed.len(), 9);
+}
+
+/// Someone else writing is the normal case on a multi-user book: marks that
+/// move across a divided window refuse it, typed as retryable.
+#[tokio::test]
+async fn an_audit_window_the_book_changed_under_is_retryable() {
+    for closing in [marks_plan(4, 7), marks_plan(3, 8)] {
+        let (outcome, _, failure, _, _) = read_audit_window(
+            std::iter::once(marks_plan(3, 7))
+                .chain(divided_window_reads(closing))
+                .flat_map(|plan| single(&plan))
+                .collect(),
+            TallyRuntime::default(),
+        )
+        .await;
+        assert_eq!(
+            outcome.err().expect("changed").code,
+            WINDOW_CHANGED_DURING_READ
+        );
+        assert_eq!(failure, Some(AuditWindowFailure::WindowChanged));
+        assert!(failure.unwrap().retryable());
+    }
+}
+
+/// A part whose connection drops stops the window at that part, typed with the
+/// part's kind, and the endpoint then owes a drain: no later window reads.
+#[tokio::test]
+async fn an_audit_window_stops_at_a_dropped_part_and_owes_a_drain() {
+    let mut reads = divided_window_reads(marks_plan(3, 7));
+    reads[2] = reads[2].clone().with_delivery(
+        tally_protocol_simulator::Delivery::ResetAfterRequestProcessed {
+            delay: std::time::Duration::ZERO,
+        },
+    );
+    let runtime = TallyRuntime::default();
+    let (outcome, retained, failure, observed, config) = read_audit_window(
+        single(&marks_plan(3, 7))
+            .into_iter()
+            .chain(reads.iter().take(3).flat_map(single).take(8))
+            .collect(),
+        runtime.clone(),
+    )
+    .await;
+    assert!(outcome.is_err());
+    assert_eq!(
+        failure,
+        Some(AuditWindowFailure::Part(
+            crate::tally::runtime::AuditPartFailureKind::ConnectionDropped
+        ))
+    );
+    assert!(failure.unwrap().retryable());
+    // The marks, the census and the first part arrived before the drop, but a
+    // failed window yields no retained reads.
+    assert!(retained.is_none());
+    assert_eq!(observed.len(), 11);
+    // A second window to the same endpoint is refused before sending anything:
+    // the drain debt is keyed by endpoint, and the check precedes any request,
+    // so it holds even with nothing listening there any more.
+    let reader = AuditWindowReader::new(&runtime, config);
+    let identity = identity();
+    let again = read_voucher_window_with(
+        &reader,
+        &identity,
+        identity.display_name(),
+        "20260801",
+        "20260802",
+        VoucherReadShape::EntryWildcard,
+        WindowPlanSource::Estimate { known_marks: None },
+        three_a_read(),
+        |xml| parse_agent_rows(xml, GUID),
+    )
+    .await;
+    let again_failure = again
+        .as_ref()
+        .err()
+        .map(|failure| audit_window_failure(failure, &reader));
+    assert!(again.is_err());
+    assert!(reader.into_retained(&again).is_none());
+    assert_eq!(
+        again_failure,
+        Some(AuditWindowFailure::Part(
+            crate::tally::runtime::AuditPartFailureKind::DrainRequired
+        ))
+    );
+}
+
+/// A later part is planned at the cost the first part measured, and the audit
+/// reader measures it the same as the agent reader, although it reads each part
+/// once where the agent reads it twice. Day two's four vouchers must go in two
+/// parts through either reader: planned at half their real cost, the audit
+/// reader would ask for all four in one part, twice the budget.
+#[tokio::test]
+async fn the_audit_reader_plans_later_parts_at_the_cost_the_agent_reader_measures() {
+    let two = |ids: &[(u64, &str)]| xml_plan(relabelled(&vouchers_kept(2), ids));
+    let day_one = two(&[(1, "20260801"), (2, "20260801")]);
+    let first_half = two(&[(3, "20260802"), (4, "20260802")]);
+    let second_half = two(&[(5, "20260802"), (6, "20260802")]);
+    // One response of two vouchers is exactly the budget, so the measured cost
+    // allows two vouchers a part, and so does the default.
+    let per_voucher = wire_len(&day_one) / 2;
+    let limits = WindowReadLimits {
+        budget_bytes: 2 * per_voucher,
+        default_bytes_per_voucher: per_voucher,
+        max_reads: MAX_PLANNED_READS,
+    };
+    let census = || {
+        WindowCensus::from_rows([
+            (day("20260801"), 1),
+            (day("20260801"), 2),
+            (day("20260802"), 3),
+            (day("20260802"), 4),
+            (day("20260802"), 5),
+            (day("20260802"), 6),
+        ])
+    };
+    let bodies = [day_one, first_half, second_half];
+    let expected = [
+        part("20260801", "20260801", None),
+        part(
+            "20260802",
+            "20260802",
+            Some(AlterIdSpan {
+                after: 0,
+                through: 4,
+            }),
+        ),
+        part(
+            "20260802",
+            "20260802",
+            Some(AlterIdSpan {
+                after: 4,
+                through: 6,
+            }),
+        ),
+    ];
+
+    let (agent, _) = read_window(
+        bodies.iter().flat_map(paired).collect(),
+        ("20260801", "20260802"),
+        VoucherReadShape::EntryWildcard,
+        WindowPlanSource::Counted(census()),
+        limits,
+    )
+    .await;
+    assert_eq!(agent.unwrap().reads, expected);
+
+    // The audit reader reads its own marks and census, then the same parts.
+    let census_xml = {
+        let first = relabelled(
+            &three_vouchers(),
+            &[(1, "20260801"), (2, "20260801"), (3, "20260802")],
+        );
+        let second = relabelled(
+            &three_vouchers(),
+            &[(4, "20260802"), (5, "20260802"), (6, "20260802")],
+        );
+        let start = second.find("<VOUCHER ").unwrap();
+        let end = second.rfind("</VOUCHER>").unwrap() + "</VOUCHER>".len();
+        first.replacen(
+            "</COLLECTION>",
+            &format!("{}</COLLECTION>", &second[start..end]),
+            1,
+        )
+    };
+    assert_eq!(census_xml.matches("<VOUCHER ").count(), 6);
+    let audit_reads = [
+        vec![marks_plan(6, 7), xml_plan(census_xml)],
+        bodies.to_vec(),
+        vec![marks_plan(6, 7)],
+    ]
+    .concat();
+    let simulator =
+        SequenceSimulator::spawn(audit_reads.iter().flat_map(single).collect()).unwrap();
+    let runtime = TallyRuntime::default();
+    let reader = AuditWindowReader::new(
+        &runtime,
+        TallyConfig {
+            host: simulator.address().ip().to_string(),
+            port: simulator.address().port(),
+        },
+    );
+    let identity = identity();
+    let audit = read_voucher_window_with(
+        &reader,
+        &identity,
+        identity.display_name(),
+        "20260801",
+        "20260802",
+        VoucherReadShape::EntryWildcard,
+        WindowPlanSource::Estimate { known_marks: None },
+        limits,
+        |xml| parse_agent_rows(xml, GUID),
+    )
+    .await;
+    let _ = simulator.finish();
+    assert_eq!(audit.unwrap().reads, expected);
+}
+
+/// A reader reused after a failed window, as a retry after `WindowChanged`
+/// would, starts the next window empty: the reads it yields are that window's
+/// alone, never the rejected attempt's as well.
+#[tokio::test]
+async fn a_reused_audit_reader_yields_only_the_window_that_succeeded() {
+    let attempt = |closing| {
+        std::iter::once(marks_plan(3, 7))
+            .chain(divided_window_reads(closing))
+            .collect::<Vec<_>>()
+    };
+    let plans = [attempt(marks_plan(4, 7)), attempt(marks_plan(3, 7))]
+        .concat()
+        .iter()
+        .flat_map(single)
+        .collect();
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let runtime = TallyRuntime::default();
+    let reader = AuditWindowReader::new(
+        &runtime,
+        TallyConfig {
+            host: simulator.address().ip().to_string(),
+            port: simulator.address().port(),
+        },
+    );
+    let identity = identity();
+    let window = || {
+        read_voucher_window_with(
+            &reader,
+            &identity,
+            identity.display_name(),
+            "20260801",
+            "20260802",
+            VoucherReadShape::EntryWildcard,
+            WindowPlanSource::Estimate { known_marks: None },
+            three_a_read(),
+            |xml| parse_agent_rows(xml, GUID),
+        )
+    };
+    let first = window().await;
+    assert_eq!(
+        first.as_ref().err().unwrap().code,
+        WINDOW_CHANGED_DURING_READ
+    );
+    let second = window().await;
+    let _ = simulator.finish();
+    assert!(second.is_ok());
+    // Opening marks, census, three parts, closing marks: this window's six.
+    assert_eq!(
+        reader.into_retained(&second).map(|reads| reads.len()),
+        Some(6)
+    );
+}
+
+/// A window for a sealed record reads its own marks: a caller's count or
+/// marks, or a replay, is refused before any request is sent.
+#[tokio::test]
+async fn an_audit_window_that_would_not_read_its_own_marks_is_refused_unread() {
+    let runtime = TallyRuntime::default();
+    // Nothing listens here: any request sent would fail differently.
+    let reader = AuditWindowReader::new(
+        &runtime,
+        TallyConfig {
+            host: "127.0.0.1".to_string(),
+            port: 9,
+        },
+    );
+    let identity = identity();
+    for source in [
+        WindowPlanSource::Estimate {
+            known_marks: Some(marks_of(3)),
+        },
+        WindowPlanSource::Counted(census_of(&[("20260801", 1)])),
+        WindowPlanSource::replay_of(divided_parts(), None),
+    ] {
+        let refused = read_voucher_window_with(
+            &reader,
+            &identity,
+            identity.display_name(),
+            "20260801",
+            "20260802",
+            VoucherReadShape::EntryWildcard,
+            source,
+            three_a_read(),
+            |xml| parse_agent_rows(xml, GUID),
+        )
+        .await;
+        assert_eq!(
+            refused.err().map(|failure| failure.code),
+            Some(AUDIT_WINDOW_NEEDS_ITS_OWN_MARKS.to_string())
+        );
+    }
+}
+
+#[test]
+fn a_window_whose_part_ran_past_its_deadline_is_not_retried_as_it_is() {
+    use crate::tally::runtime::AuditPartFailureKind;
+    assert!(!AuditWindowFailure::Part(AuditPartFailureKind::Deadline).retryable());
+    assert!(
+        AuditPartFailureKind::Deadline.retryable(),
+        "a part may be; the window is not"
+    );
+    assert!(AuditWindowFailure::Part(AuditPartFailureKind::ConnectionDropped).retryable());
+    assert!(AuditWindowFailure::WindowChanged.retryable());
+    assert!(!AuditWindowFailure::Refused("x".to_string()).retryable());
+}
+
+/// When a census was read, a sealed window admits its data against it, even
+/// when the whole window fits one request: the census is sealed beside the
+/// data, so a part holding a voucher the census did not count is refused.
+#[tokio::test]
+async fn an_audit_window_admits_its_data_against_the_census_it_read() {
+    // A mark of 3 needs a census, which counts one voucher: the window fits.
+    let counted = xml_plan(relabelled(&vouchers_kept(1), &[(1, "20260801")]));
+    let (outcome, _, failure, _, _) = read_audit_window(
+        [
+            marks_plan(3, 7),
+            counted.clone(),
+            // The part returns a second voucher the census never counted.
+            xml_plan(relabelled(
+                &vouchers_kept(2),
+                &[(1, "20260801"), (2, "20260801")],
+            )),
+            // Refused before the closing marks are read.
+        ]
+        .iter()
+        .flat_map(single)
+        .collect(),
+        TallyRuntime::default(),
+    )
+    .await;
+    assert_eq!(
+        outcome.err().map(|f| f.code),
+        Some(PART_NOT_ADMITTED.to_string())
+    );
+    assert_eq!(
+        failure,
+        Some(AuditWindowFailure::Refused(PART_NOT_ADMITTED.to_string()))
+    );
+    // Control: the part that returns exactly the counted voucher is admitted.
+    let (outcome, retained, _, _, _) = read_audit_window(
+        [marks_plan(3, 7), counted.clone(), counted, marks_plan(3, 7)]
+            .iter()
+            .flat_map(single)
+            .collect(),
+        TallyRuntime::default(),
+    )
+    .await;
+    assert!(outcome.is_ok());
+    assert_eq!(retained.map(|reads| reads.len()), Some(4));
+}

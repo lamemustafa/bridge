@@ -977,7 +977,6 @@ pub(crate) const PY_DECIMAL_NON_ASCII: [(u32, u32); 63] = [
 
 /// Code points Python's `str.isprintable()` rejects (every code point measured; `repr()`
 /// escapes them). Surrogates are included, though a Rust `char` is never one.
-#[cfg_attr(not(test), allow(dead_code))] // first caller: batch C2 (#596)
 pub(crate) const PY_NOT_PRINTABLE: [(u32, u32); 713] = [
     (0x0000, 0x001F),
     (0x007F, 0x00A0),

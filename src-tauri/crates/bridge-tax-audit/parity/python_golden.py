@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import date
 import sys
 import tomllib
 from pathlib import Path
@@ -196,6 +197,66 @@ def _tds_payees(c):
                                       s194j_category_by_ledger)
 
 
+def _traces_documents(c):
+    """The Form 26AS/AIS/TIS rows both 26AS tests take as caller data: from --traces-documents
+    (the JSON --emit-traces-documents writes, or an invented fixture), from the reference's own
+    adapters with --emit-traces-documents (as tae/pack.py loads them; the written file holds client
+    data and stays on the machine that read it). One of the two is required: the reference's pack
+    refuses without a Form 26AS, and a run on no rows would compare two empty sides. Cached on the
+    context."""
+    if getattr(c, "traces", None) is not None:
+        return c.traces
+    from tae.adapters.traces_documents import (AisRow, TisRow, load_ais_json, load_form26as_json,
+                                               load_form26as_pdf, load_tis_json)
+    from tae.config import document_path, optional_document_path
+    from tae.model import Form26ASRow
+    a = c.args
+    if a.traces_documents and a.emit_traces_documents:
+        c.ap.error("--traces-documents and --emit-traces-documents are exclusive")
+    if not (a.traces_documents or a.emit_traces_documents):
+        c.ap.error(f"{a.test} needs --traces-documents or --emit-traces-documents")
+    form26as, ais, tis = [], [], []
+    if a.traces_documents:
+        doc = json.loads(Path(a.traces_documents).read_text(encoding="utf-8"))
+        day = lambda s: None if s is None else date.fromisoformat(s)
+        form26as = [Form26ASRow(**{**r, "txn_date": day(r["txn_date"])}) for r in doc.get("form26as", [])]
+        ais = [AisRow(**{**r, "txn_date": day(r["txn_date"])}) for r in doc.get("ais", [])]
+        tis = [TisRow(**r) for r in doc.get("tis", [])]
+    elif a.emit_traces_documents:
+        year = c.eng.assessment_year
+        p26 = document_path(c.cfg, c.path.parent, "form26as")
+        form26as = (load_form26as_pdf if p26.suffix == ".pdf" else load_form26as_json)(p26, f"form26as:{year}")
+        p_ais = optional_document_path(c.cfg, c.path.parent, "ais")
+        ais = load_ais_json(p_ais, f"ais:{year}") if p_ais is not None else []
+        p_tis = optional_document_path(c.cfg, c.path.parent, "tis")
+        tis = load_tis_json(p_tis, f"tis:{year}") if p_tis is not None else []
+        out = {k: [{f: (v.isoformat() if isinstance(v, date) else v) for f, v in vars(r).items()} for r in rows]
+               for k, rows in (("form26as", form26as), ("ais", ais), ("tis", tis))}
+        Path(a.emit_traces_documents).write_text(json.dumps(out, indent=1, ensure_ascii=False) + "\n",
+                                                 encoding="utf-8")
+    c.eng.form26as = form26as
+    c.traces = (form26as, ais, tis)
+    return c.traces
+
+
+def _twentysixas_receipts(c):
+    from tae.audit_tests import twentysixas_receipts
+    from tae.config import tds_tcs_26as_config
+    _tds, _tcs, deductor_aliases, _adv = tds_tcs_26as_config(c.cfg)
+    _traces_documents(c)
+    return twentysixas_receipts, twentysixas_receipts.run(c.eng, c.rules, deductor_aliases)
+
+
+def _tds_tcs_26as(c):
+    from tae.audit_tests import tds_tcs_26as
+    from tae.config import tds_tcs_26as_config
+    tds_ledgers, tcs_ledgers, deductor_aliases, advance_tax_ledgers = tds_tcs_26as_config(c.cfg)
+    form26as, ais, tis = _traces_documents(c)
+    return tds_tcs_26as, tds_tcs_26as.run(
+        c.eng, c.rules, form26as=form26as, ais_rows=ais, tis_rows=tis, tds_ledgers=tds_ledgers,
+        tcs_ledgers=tcs_ledgers, deductor_aliases=deductor_aliases, advance_tax_ledgers=advance_tax_ledgers)
+
+
 RUNNERS = {
     "applicability_44ab": _applicability_44ab,
     "cash_44ab": _cash_44ab,
@@ -208,7 +269,9 @@ RUNNERS = {
     "stale_balances_41_1": _stale_balances_41_1,
     "statutory_dues_43b": _statutory_dues_43b,
     "tds_payees": _tds_payees,
+    "tds_tcs_26as": _tds_tcs_26as,
     "trial_balance": _trial_balance,
+    "twentysixas_receipts": _twentysixas_receipts,
 }
 
 
@@ -223,6 +286,10 @@ def main() -> int:
     ap.add_argument("--emit-turnover-inputs",
                     help="applicability_44ab: take GSTR-1 turnover from the reference's own pack and write it here")
     ap.add_argument("--report-totals", help="financial_statements: report totals JSON to use")
+    ap.add_argument("--traces-documents", help="tds_tcs_26as/twentysixas_receipts: Form 26AS/AIS/TIS rows JSON to use")
+    ap.add_argument("--emit-traces-documents",
+                    help="tds_tcs_26as/twentysixas_receipts: read the rows with the reference's adapters and write them "
+                         "here (client data: never commit the file)")
     ap.add_argument("--emit-report-totals",
                     help="financial_statements: take report totals from the read and write them here")
     a = ap.parse_args()

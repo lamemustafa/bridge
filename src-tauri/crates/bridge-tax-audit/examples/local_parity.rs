@@ -13,6 +13,9 @@
 //! `TURNOVER_INPUTS_JSON` feeds the GSTR-1/GSTR-3B/AIS comparison turnover as caller data -- the
 //! file `parity/python_golden.py --emit-turnover-inputs` wrote -- so both sides compare against the
 //! same numbers; without it neither side has a comparison source. For
+//! `tds_tcs_26as` and `twentysixas_receipts`, a REQUIRED seventh argument `TRACES_DOCUMENTS_JSON`
+//! feeds the Form 26AS/AIS/TIS rows `parity/python_golden.py --emit-traces-documents` wrote from the
+//! reference's own adapters (client data: it stays on the machine that read it). For
 //! `financial_statements`, an optional seventh argument `REPORT_TOTALS_JSON` feeds Tally's own
 //! Profit & Loss report totals as caller data -- the file `parity/python_golden.py
 //! --emit-report-totals` wrote from the same read, so both sides tie against the same numbers;
@@ -80,11 +83,12 @@ fn vendored_blocks_are_verbatim(source: &str) -> bool {
         .all(|block| source.contains(block))
 }
 
-/// Narrows `[ledger_ids]`/`[group_ids]` to the labels the ten locations this port's `Engagement`
+/// Narrows `[ledger_ids]`/`[group_ids]` to the labels the locations this port's `Engagement`
 /// actually reads (`roles.cash_groups`, `roles.bank_groups`, `roles.round_off_ledgers`,
 /// `tds.nature_by_ledger`'s and `tds.payee_aliases`' keys, `tds_payees.s194j_category_by_ledger`'s
 /// keys, `loans.loan_ledgers`'s keys, `depreciation.block_by_ledger`'s keys,
-/// `depreciation.dep_expense_ledgers` and `partners.*.interest_ledger`) use, so
+/// `depreciation.dep_expense_ledgers`, `partners.*.interest_ledger`, `tds_tcs_26as`'s three ledger
+/// lists and its `deductor_aliases` values) use, so
 /// `Engagement::bind`'s `BIND-ID-UNUSED` check never refuses over a label a real client TOML
 /// binds only for a role this port does not implement (see this file's doc comment and `docs/tax-audit/config-identity-binding-v1.md` section 4).
 /// A label absent from `cfg` entirely is simply not collected; this never adds anything to `cfg`,
@@ -183,6 +187,20 @@ fn narrow_identity_tables(cfg: &mut toml::Table, base: &Path) -> Result<(), Stri
             }
         }
     }
+    if let Some(t) = cfg.get("tds_tcs_26as").and_then(toml::Value::as_table) {
+        for key in ["tds_ledgers", "tcs_ledgers", "advance_tax_ledgers"] {
+            if let Some(v) = t.get(key) {
+                ledger_labels.extend(strs(v));
+            }
+        }
+        if let Some(aliases) = t.get("deductor_aliases").and_then(toml::Value::as_table) {
+            ledger_labels.extend(
+                aliases
+                    .values()
+                    .filter_map(|v| v.as_str().map(String::from)),
+            );
+        }
+    }
     if let Some(toml::Value::Table(t)) = cfg.get_mut("ledger_ids") {
         t.retain(|k, _| ledger_labels.contains(k));
     }
@@ -212,11 +230,24 @@ fn main() -> ExitCode {
         ));
     };
     if report_json.is_some()
-        && !["financial_statements", "applicability_44ab"].contains(&test_id.as_str())
+        && ![
+            "financial_statements",
+            "applicability_44ab",
+            "tds_tcs_26as",
+            "twentysixas_receipts",
+        ]
+        .contains(&test_id.as_str())
     {
         return fail(
-            "a seventh argument applies to financial_statements or applicability_44ab only",
+            "a seventh argument applies to financial_statements, applicability_44ab, tds_tcs_26as \
+or twentysixas_receipts only",
         );
+    }
+    if report_json.is_none() && ["tds_tcs_26as", "twentysixas_receipts"].contains(&test_id.as_str())
+    {
+        return fail(format!(
+            "{test_id} needs a seventh argument, the TRACES_DOCUMENTS_JSON the Python side read"
+        ));
     }
     let mut caller = CallerData::default();
     if let Some(path) = report_json {
@@ -229,6 +260,9 @@ fn main() -> ExitCode {
         };
         let filled = if test_id == "financial_statements" {
             registry::report_totals_from_json(&parsed).map(|t| caller.report_totals = Some(t))
+        } else if test_id == "tds_tcs_26as" || test_id == "twentysixas_receipts" {
+            bridge_tax_audit::documents::traces_documents_from_json(&parsed)
+                .map(|t| caller.traces = t)
         } else {
             registry::turnover_inputs_from_json(&parsed).map(|t| caller.turnover_inputs = t)
         };
