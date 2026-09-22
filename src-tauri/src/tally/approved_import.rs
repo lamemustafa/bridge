@@ -166,7 +166,8 @@ pub(crate) enum ApprovedImportAdmissionError {
     /// (bridge#551). Carries every master's NAME, for the refusal to name.
     #[error("import_multi_currency_unsupported")]
     MultiCurrencyBook { currencies: Vec<String> },
-    /// The company's Currency masters read as none, or as one with no NAME.
+    /// The company's Currency masters read as none, or the response does not
+    /// parse (a master without a NAME does not).
     #[error("import_base_currency_undetermined")]
     BaseCurrencyUndetermined,
 }
