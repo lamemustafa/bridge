@@ -42,7 +42,7 @@ const ESI_NATURES: [&str; 2] = ["esi_employer", "esi_employee"];
 /// The reference's own fallbacks when the rules carry no `[s43b]` / `[s36_1_va]` table.
 const DEFAULT_S43B_AUTHORITY: &str = "s.43B and its proviso (payment on or before the s.139(1) \
 return due date); Explanation 5 (employees' contributions are governed by s.36(1)(va), not this \
-proviso) -- local prototype default, not yet in rules/ay2026-27.toml";
+proviso) -- local prototype default, not yet in the rules table";
 const DEFAULT_S43B_STATUS: &str = "confirm";
 const DEFAULT_S36_1_VA_DUE_DAY: i64 = 15;
 
@@ -280,8 +280,8 @@ pub fn run(
     let overflow = || support::overflow(TEST_ID);
     let pop = book.population()?;
     r.population_note = "Books population (optional, cancelled and post-dated vouchers excluded). \
-Each nature's opening/closing liability is the Trial Balance sum across every ledger client config \
-maps to it; charged/paid are population voucher-line sums on the same ledgers (TOT-1: never a \
+Each nature's opening/closing liability is the Trial Balance sum across every ledger the client's \
+setup maps to it; charged/paid are population voucher-line sums on the same ledgers (never a \
 filtered sub-table)."
         .to_string();
 
@@ -322,7 +322,7 @@ filtered sub-table)."
             Unit::Paise,
             &format!(
                 "Trial Balance opening balance (Dr+/Cr- flipped to a liability-positive figure), \
-summed across every ledger client config maps to nature '{nature}'."
+summed across every ledger the client's setup maps to nature '{nature}'."
             ),
             ledger_ev.clone(),
         );
@@ -332,7 +332,7 @@ summed across every ledger client config maps to nature '{nature}'."
             Unit::Paise,
             &format!(
                 "Trial Balance closing balance (Dr+/Cr- flipped to a liability-positive figure), \
-summed across every ledger client config maps to nature '{nature}'."
+summed across every ledger the client's setup maps to nature '{nature}'."
             ),
             ledger_ev.clone(),
         );
@@ -437,8 +437,7 @@ fn plain_s43b_nature(
     if this_year_closing > 0 {
         // The vendored rules always carry `[due_dates]`, and its return date is never empty.
         let due_text = format!(
-            "the return due date under s.139(1) (rules.due_dates.return_audit_case = {}, \
-status={})",
+            "the return due date under s.139(1) ({} per the rules table, status {})",
             rules.due_date_return_audit_case, rules.due_dates_status
         );
         let f_this_year_close = r.fig(
@@ -448,8 +447,8 @@ status={})",
             &format!(
                 "3CD-26(i)(B): THIS YEAR's own unpaid s.43B liability for nature '{nature}' -- the \
 Trial Balance closing balance LESS any still-unpaid remainder of the OPENING (pre-existing) \
-liability reported separately under clause 26(i)(A)(b) below, so the same rupee is never counted \
-under both clauses (26-7 fix, GN 46.4-46.7)."
+liability reported separately under clause 26(i)(A)(b), so the same rupee is never counted under \
+both clauses (GN 46.4-46.7)."
             ),
             ledger_ev.to_vec(),
         );
@@ -537,10 +536,10 @@ return/Form 3CD (not available to this module) -- treating the whole TB opening 
         &format!(
             "Clause 26(i)(A)(b) CANDIDATE: portion of nature '{nature}'s opening (pre-existing) \
 liability still unmatched to any payment in this year's population. Same GN 46.5 limitation as \
-the paid portion above: this is a candidate needing last year's return to confirm it was not \
+the portion of that liability paid this year: this is a candidate needing last year's return to \
+confirm it was not \
 already allowable in an earlier year, not a settled figure; it carries forward as next year's own \
-opening balance either way, and is EXCLUDED from clause 26(i)(B) above (26-7 fix) so it is never \
-counted twice."
+opening balance either way, and is EXCLUDED from clause 26(i)(B) so it is never counted twice."
         ),
         ledger_ev.to_vec(),
     );
@@ -643,8 +642,8 @@ fn employee_contribution(
         Unit::Paise,
         &format!(
             "Sum of '{nature}' deduction lots' payments dated on or before that month's own due \
-date (FIFO, oldest lot first; s.36(1)(va)). Excludes any opening (prior-year) liability lot -- see \
-opening_liability_paid_this_year_<nature> below."
+date (FIFO, oldest lot first; s.36(1)(va)). Excludes any opening (prior-year) liability lot, whose \
+payments are reported separately."
         ),
         lot_ev.clone(),
     );
@@ -704,9 +703,9 @@ a specific month's deduction)."
             &format!(
                 "Sum of this year's payments on '{nature}'-mapped ledgers FIFO-matched to the \
 OPENING (prior-year) liability lot, seeded so a payment early in the year settles last year's \
-carried-over deduction first rather than being misattributed to this year's own lots (Phase 1b, \
-relay item 8). Split by s.36(1)(va) due date below (on_time_paise/late_paise), not assumed \
-disallowed as a whole."
+carried-over deduction first rather than being misattributed to this year's own lots. Split by \
+s.36(1)(va) due date into the portion paid on time and the portion paid late, not assumed disallowed \
+as a whole."
             ),
             lot_ev.clone(),
         );
@@ -714,18 +713,23 @@ disallowed as a whole."
             &format!("opening_liability_paid_on_time_{nature}"),
             Value::Int(opening_paid_on_time),
             Unit::Paise,
-            "Of the opening-lot payment above, the portion paid on or before that deduction \
-month's OWN due date (s.36(1)(va)) -- allowable in the earlier year it was deducted, not \
-disallowed.",
+            &format!(
+                "Of this year's payments on '{nature}'-mapped ledgers FIFO-matched to the OPENING \
+(prior-year) liability lot, the portion paid on or before that deduction month's OWN due date \
+(s.36(1)(va)) -- allowable in the earlier year it was deducted, not disallowed."
+            ),
             lot_ev.clone(),
         );
         let f_open_paid_late = r.fig(
             &format!("opening_liability_paid_late_{nature}"),
             Value::Int(opening_paid_late),
             Unit::Paise,
-            "Of the opening-lot payment above, the portion paid AFTER that deduction month's own \
-due date (s.36(1)(va)) -- permanently disallowed for the earlier year it was deducted (Checkmate \
-Services P Ltd v CIT (2022) SC), not reassessed this year.",
+            &format!(
+                "Of this year's payments on '{nature}'-mapped ledgers FIFO-matched to the OPENING \
+(prior-year) liability lot, the portion paid AFTER that deduction month's own due date \
+(s.36(1)(va)) -- permanently disallowed for the earlier year it was deducted (Checkmate Services P \
+Ltd v CIT (2022) SC), not reassessed this year."
+            ),
             lot_ev.clone(),
         );
         let f_open_unpaid = r.fig(

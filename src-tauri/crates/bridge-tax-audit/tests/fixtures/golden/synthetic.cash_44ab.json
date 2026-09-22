@@ -100,16 +100,16 @@
       "id": "cash_44ab.cash_share_payments",
       "value": 9276,
       "unit": "bp",
-      "definition_sha256_16": "7e25b1384200d83c",
-      "definition_text": "cash_payments / (cash_payments + bank_payments)",
+      "definition_sha256_16": "def339ec35de2c5e",
+      "definition_text": "Cash payments as a share of cash and bank payments together.",
       "evidence": []
     },
     {
       "id": "cash_44ab.cash_share_receipts",
       "value": 8439,
       "unit": "bp",
-      "definition_sha256_16": "1bca1907d59fdbbd",
-      "definition_text": "cash_receipts / (cash_receipts + bank_receipts)",
+      "definition_sha256_16": "da53a08d0686262f",
+      "definition_text": "Cash receipts as a share of cash and bank receipts together.",
       "evidence": []
     }
   ],

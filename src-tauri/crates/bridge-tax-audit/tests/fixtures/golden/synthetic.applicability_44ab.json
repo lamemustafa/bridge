@@ -24,88 +24,88 @@
       "id": "applicability_44ab.audit_required_44ab_a",
       "value": "no",
       "unit": "text",
-      "definition_sha256_16": "67a2ecddfdba2d3d",
-      "definition_text": "s.44AB(a): 'yes' when turnover certainly exceeds the applicable threshold however cash_share resolves, 'no' when it certainly does not, else 'undetermined'. This call: turnover does not exceed ₹1 crore, the lowest threshold s.44AB(a) can ever apply, so the cash-share breakdown does not matter.",
+      "definition_sha256_16": "ae093ac656df6111",
+      "definition_text": "s.44AB(a): 'yes' when turnover certainly exceeds the applicable threshold however the cash share resolves, 'no' when it certainly does not, else 'undetermined'. This call: turnover does not exceed ₹1 crore, the lowest threshold s.44AB(a) can ever apply, so the cash-share breakdown does not matter.",
       "evidence": []
     },
     {
       "id": "applicability_44ab.due_date_audit_report",
       "value": "2026-09-30",
       "unit": "text",
-      "definition_sha256_16": "eb4db76f33301ac8",
-      "definition_text": "rules[due_dates].audit_report: s.44AB audit report due date, subject to CBDT extension, if audit is required.",
+      "definition_sha256_16": "4ba6ace16b5eacf5",
+      "definition_text": "From the rules table: the s.44AB audit report due date, subject to CBDT extension, if audit is required.",
       "evidence": []
     },
     {
       "id": "applicability_44ab.due_date_return_audit_case",
       "value": "2026-10-31",
       "unit": "text",
-      "definition_sha256_16": "3db1099431ab7220",
-      "definition_text": "rules[due_dates].return_audit_case: return due date if audit is required.",
+      "definition_sha256_16": "c284064cbd59aa82",
+      "definition_text": "From the rules table: the return due date if audit is required.",
       "evidence": []
     },
     {
       "id": "applicability_44ab.due_date_return_non_audit_case",
       "value": "2026-08-31",
       "unit": "text",
-      "definition_sha256_16": "6af48feef747c926",
-      "definition_text": "rules[due_dates].return_non_audit_firm: return due date if audit is NOT required (Explanation 2 to s.139(1)).",
+      "definition_sha256_16": "2a3935a4ca673743",
+      "definition_text": "From the rules table: the return due date if audit is NOT required (Explanation 2 to s.139(1)).",
       "evidence": []
     },
     {
       "id": "applicability_44ab.gstr1_turnover",
       "value": 29500000,
       "unit": "paise",
-      "definition_sha256_16": "4ff7f76870461d6b",
-      "definition_text": "Turnover per GSTR1, as supplied by the caller -- never recomputed by this test; may not use the same population or section coverage as the books definition above (see the source test's own report).",
+      "definition_sha256_16": "2efa1c66f280d398",
+      "definition_text": "Turnover per GSTR1, as supplied to this test -- never recomputed by this test; may not use the same population or section coverage as this test's books turnover definition (see the source test's own report).",
       "evidence": []
     },
     {
       "id": "applicability_44ab.gstr1_turnover_diff_from_books",
       "value": 250000,
       "unit": "paise",
-      "definition_sha256_16": "3acb5840cca77a5d",
-      "definition_text": "turnover - gstr1_turnover.",
+      "definition_sha256_16": "bc5effbf4510d81f",
+      "definition_text": "Books turnover less the turnover per GSTR1.",
       "evidence": []
     },
     {
       "id": "applicability_44ab.gstr3b_turnover",
       "value": 29750000,
       "unit": "paise",
-      "definition_sha256_16": "7c7dea5b312e78c4",
-      "definition_text": "Turnover per GSTR3B, as supplied by the caller -- never recomputed by this test; may not use the same population or section coverage as the books definition above (see the source test's own report).",
+      "definition_sha256_16": "2293a5afd765f754",
+      "definition_text": "Turnover per GSTR3B, as supplied to this test -- never recomputed by this test; may not use the same population or section coverage as this test's books turnover definition (see the source test's own report).",
       "evidence": []
     },
     {
       "id": "applicability_44ab.presumptive_history_status",
       "value": "supplied",
       "unit": "text",
-      "definition_sha256_16": "789917efb5fbfb25",
-      "definition_text": "presumptive_history supplied for AY 2024-25: opted_44ad=True (client config, verbatim; this test does not interpret it beyond restating it).",
+      "definition_sha256_16": "44c1881f2b9f043f",
+      "definition_text": "Presumptive-taxation history supplied for AY 2024-25: opted under s.44AD: True (the client's setup, verbatim; this test does not interpret it beyond restating it).",
       "evidence": []
     },
     {
       "id": "applicability_44ab.s44ada_professions_in_scope",
       "value": "no",
       "unit": "text",
-      "definition_sha256_16": "00ba079fd3e158d3",
-      "definition_text": "s.44ADA (presumptive taxation for professionals) and its correlated audit trigger are out of scope of this test for every entity; this figure only flags whether eng.entity_type text suggests a profession, in which case s.44ADA needs separate CA analysis this test does not provide.",
+      "definition_sha256_16": "a0da2ea045e6eae4",
+      "definition_text": "s.44ADA (presumptive taxation for professionals) and its correlated audit trigger are out of scope of this test for every entity; this figure only flags whether the engagement's entity type text suggests a profession, in which case s.44ADA needs separate CA analysis this test does not provide.",
       "evidence": []
     },
     {
       "id": "applicability_44ab.turnover",
       "value": 29750000,
       "unit": "paise",
-      "definition_sha256_16": "bc3c80310db1bceb",
-      "definition_text": "Books turnover, per the definition above, supplied by the caller from financial_statements.py's own 'sales' figure -- never recomputed here.",
+      "definition_sha256_16": "88fb14974e1ff6b1",
+      "definition_text": "Books turnover, per this test's turnover definition, supplied to this test from the sales figure of 'Financial statements' -- never recomputed here.",
       "evidence": []
     },
     {
       "id": "applicability_44ab.turnover_definition",
       "value": "Sales net of returns and trade discounts, excluding GST collected (ICAI Guidance Note on Tax Audit u/s 44AB; confirm). Taken from the books' Sales Accounts: GST excluded, with sales returns and credit notes already netted because they are posted to the same sales ledgers.",
       "unit": "text",
-      "definition_sha256_16": "821df58dcf3b1a22",
-      "definition_text": "This test's own turnover definition, stated once and cited by every turnover figure below.",
+      "definition_sha256_16": "5abcd4864a5f3fd0",
+      "definition_text": "This test's own turnover definition, stated once and cited by every turnover figure of this test.",
       "evidence": []
     }
   ],
@@ -215,9 +215,9 @@
       ],
       "title_sha256_16": "27c2661ab6bcb974",
       "title_text": "s.44AB(e)/s.44AD(4)/(5) presumptive-taxation history supplied for one year; full lookback needs CA judgement",
-      "limits_sha256_16": "3d794abe1b7a7024",
+      "limits_sha256_16": "7f7bdd6df6ed604f",
       "limits_text": [
-        "presumptive_history covers AY 2024-25 only, as supplied; s.44AD(4)/(5) looks at every year in the lookback window, not one data point, so this test never computes a yes/no s.44AB(e) conclusion from it."
+        "The presumptive-taxation history covers AY 2024-25 only, as supplied; s.44AD(4)/(5) looks at every year in the lookback window, not one data point, so this test never computes a yes/no s.44AB(e) conclusion from it."
       ],
       "ask_client_sha256_16": "4080c124baafff95",
       "ask_client_text": [

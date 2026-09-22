@@ -112,11 +112,11 @@ amount per voucher."
         Value::Int(large_entry_paise),
         Unit::Paise,
         if rules.ledger_scrutiny_large_entry_paise.is_some() {
-            "Threshold used for the large-single-entry indicator (rules/ay2026-27.toml \
-[ledger_scrutiny].large_entry_paise)."
+            "Threshold used for the large-single-entry indicator (the rules table's ledger \
+scrutiny entry)."
         } else {
             "Threshold used for the large-single-entry indicator (local prototype default, status \
-\"confirm\" -- rules/ay2026-27.toml has no [ledger_scrutiny] table yet)."
+\"confirm\" -- the rules table has no ledger scrutiny entry yet)."
         },
         Vec::new(),
     );
@@ -211,8 +211,8 @@ amount per voucher."
             count(d.large.len())?,
             Unit::Count,
             &format!(
-                "Entries on this ledger (tag {h}) with abs(net amount) over the large-entry \
-threshold."
+                "Entries on this ledger (tag {h}) whose net amount, taken without its sign, is \
+over the large-entry threshold."
             ),
             evidence(&d.large),
         );
@@ -220,7 +220,10 @@ threshold."
             &format!("large_entry_total_paise_{h}"),
             Value::Int(sum(&d.large)?),
             Unit::Paise,
-            &format!("Sum of net amounts across the large entries above (tag {h})."),
+            &format!(
+                "Sum of net amounts across the entries on this ledger (tag {h}) whose net amount, \
+taken without its sign, is over the large-entry threshold."
+            ),
             Vec::new(),
         );
         let f_round_count = r.fig(
@@ -237,7 +240,10 @@ of \u{20b9}1,000."
             &format!("round_sum_total_paise_{h}"),
             Value::Int(sum(&d.round_sum)?),
             Unit::Paise,
-            &format!("Sum of net amounts across the round-sum entries above (tag {h})."),
+            &format!(
+                "Sum of net amounts across the entries on this ledger (tag {h}) whose net amount \
+is an exact, nonzero multiple of \u{20b9}1,000."
+            ),
             Vec::new(),
         );
         let f_last_count = r.fig(
@@ -256,7 +262,12 @@ days of the period ({} to {}).",
             &format!("last_days_total_paise_{h}"),
             Value::Int(sum(&d.last_days)?),
             Unit::Paise,
-            &format!("Sum of net amounts across the last-days entries above (tag {h})."),
+            &format!(
+                "Sum of net amounts across the entries on this ledger (tag {h}) dated in the last \
+{LAST_DAYS_OF_YEAR_WINDOW} days of the period ({} to {}).",
+                iso(&start),
+                iso(&period.to)
+            ),
             Vec::new(),
         );
         let cash_paid = sum(&d.cash_paid)?;
@@ -283,8 +294,8 @@ carries a nonzero line on a configured cash ledger."
             Value::Int(cash_share_bp.unwrap_or(0)),
             Unit::BasisPoints,
             &format!(
-                "cash_paid_paise_{h} / total_debit_paise_{h} (0 when the ledger has no debit \
-entries at all)."
+                "Cash paid on this ledger (tag {h}) as a share of all its debits (0 when the \
+ledger has no debit entries at all)."
             ),
             Vec::new(),
         );
@@ -400,8 +411,8 @@ large/round-sum/last-days entries listed."
         "flagged_ledger_count",
         Value::Int(flagged),
         Unit::Count,
-        "Expense ledgers (of expense_ledger_count) with at least one scrutiny indicator triggered \
-above.",
+        "Expense ledgers (under Direct Expenses or Indirect Expenses) with at least one scrutiny \
+indicator triggered.",
         Vec::new(),
     );
     Ok(r)

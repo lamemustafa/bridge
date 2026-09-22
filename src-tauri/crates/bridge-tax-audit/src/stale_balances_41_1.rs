@@ -70,14 +70,22 @@ no voucher population walk is used to compute them."
             &format!("{role}_active_count"),
             support::count(TEST_ID, active.len())?,
             Unit::Count,
-            &format!("Of those, ledgers with abs(TB closing) over {ACTIVE_TOL_PAISE} paise."),
+            &format!(
+                "Ledgers under Tally's '{group}' group whose Trial Balance closing balance, taken \
+without its sign, is over ₹{}.",
+                ACTIVE_TOL_PAISE / 100
+            ),
             ledger_refs(active.keys().copied()),
         );
         r.fig(
             &format!("{role}_active_closing_total_paise"),
             Value::Int(sum(&active)?),
             Unit::Paise,
-            &format!("Sum of TB closing balances across the active {role} ledgers above."),
+            &format!(
+                "Sum of Trial Balance closing balances across the '{group}' ledgers whose closing \
+balance, taken without its sign, is over ₹{}.",
+                ACTIVE_TOL_PAISE / 100
+            ),
             Vec::new(),
         );
         let f_stale_count = r.fig(
@@ -85,8 +93,10 @@ no voucher population walk is used to compute them."
             support::count(TEST_ID, stale.len())?,
             Unit::Count,
             &format!(
-                "Of the active {role} ledgers, those with TB period debit and credit movement \
-both nil for the year (opening == closing; no voucher touched them)."
+                "'{group}' ledgers whose closing balance, taken without its sign, is over ₹{} and \
+whose Trial Balance period debit and credit movement are both nil for the year (opening equal to \
+closing; no voucher touched them).",
+                ACTIVE_TOL_PAISE / 100
             ),
             ledger_refs(stale.keys().copied()),
         );
@@ -94,7 +104,11 @@ both nil for the year (opening == closing; no voucher touched them)."
             &format!("{role}_stale_closing_total_paise"),
             Value::Int(sum(&stale)?),
             Unit::Paise,
-            &format!("Sum of TB closing balances across the stale {role} ledgers above."),
+            &format!(
+                "Sum of Trial Balance closing balances across the '{group}' ledgers whose closing \
+balance, taken without its sign, is over ₹{} and whose period debit and credit movement are both nil.",
+                ACTIVE_TOL_PAISE / 100
+            ),
             Vec::new(),
         );
         for (name, t) in &stale {

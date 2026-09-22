@@ -3,15 +3,15 @@
   "test_id": "loans_interest",
   "test_version": "1",
   "rules_version": "2026-09-17.1",
-  "population_note_sha256_16": "4bad7da9987a0bf4",
-  "population_note_text": "Books population (optional, cancelled and post-dated vouchers excluded); Contra excluded throughout. A loan ledger's interest journals are vouchers whose only other ledger line is its configured interest ledger (loan_config); every other voucher touching the loan ledger is a taken (credit) or repaid (debit) transaction, never classified by ledger name.",
+  "population_note_sha256_16": "129f841c372e99fc",
+  "population_note_text": "Books population (optional, cancelled and post-dated vouchers excluded); Contra excluded throughout. A loan ledger's interest journals are vouchers whose only other ledger line is its configured interest ledger (the client's list of loans); every other voucher touching the loan ledger is a taken (credit) or repaid (debit) transaction, never classified by ledger name.",
   "figures": [
     {
       "id": "loans_interest.clause31_repaid_reportable_total",
       "value": 2850000,
       "unit": "paise",
-      "definition_sha256_16": "d5981e94161dc675",
-      "definition_text": "Sum of clause31_repaid_total_<tag> across every non-exempt-lender loan ledger.",
+      "definition_sha256_16": "1ca28daf4d59e6dd",
+      "definition_text": "Sum of the repayments that Clause 31(c) reports: entries on a loan from a lender outside the form's reporting exemption, where the balance being repaid, with or without the interest credited and not yet paid, or the repayment itself reaches the s.269SS/269T limit.",
       "evidence": []
     },
     {
@@ -200,72 +200,72 @@
       "id": "loans_interest.clause31_row_mode_code_repaid_4bacde2a_0a021e14",
       "value": "I",
       "unit": "text",
-      "definition_sha256_16": "027af7891e35589f",
-      "definition_text": "Form 3CD utility Note 1 code for this repaid entry (module docstring's mode_code bullet): derived from mode+direction, not read off a specimen utility export -- confirm.",
+      "definition_sha256_16": "55e0f8e6dc02196b",
+      "definition_text": "Form 3CD utility Note 1 code for this repaid entry: derived from the mode and direction, not read off a specimen utility export -- confirm.",
       "evidence": []
     },
     {
       "id": "loans_interest.clause31_row_mode_code_repaid_4bacde2a_b17e7969",
       "value": "A",
       "unit": "text",
-      "definition_sha256_16": "027af7891e35589f",
-      "definition_text": "Form 3CD utility Note 1 code for this repaid entry (module docstring's mode_code bullet): derived from mode+direction, not read off a specimen utility export -- confirm.",
+      "definition_sha256_16": "55e0f8e6dc02196b",
+      "definition_text": "Form 3CD utility Note 1 code for this repaid entry: derived from the mode and direction, not read off a specimen utility export -- confirm.",
       "evidence": []
     },
     {
       "id": "loans_interest.clause31_row_mode_code_repaid_4bacde2a_b2d31627",
       "value": "K",
       "unit": "text",
-      "definition_sha256_16": "027af7891e35589f",
-      "definition_text": "Form 3CD utility Note 1 code for this repaid entry (module docstring's mode_code bullet): derived from mode+direction, not read off a specimen utility export -- confirm.",
+      "definition_sha256_16": "55e0f8e6dc02196b",
+      "definition_text": "Form 3CD utility Note 1 code for this repaid entry: derived from the mode and direction, not read off a specimen utility export -- confirm.",
       "evidence": []
     },
     {
       "id": "loans_interest.clause31_row_mode_code_repaid_7c8d406f_c655b770",
       "value": "",
       "unit": "text",
-      "definition_sha256_16": "027af7891e35589f",
-      "definition_text": "Form 3CD utility Note 1 code for this repaid entry (module docstring's mode_code bullet): derived from mode+direction, not read off a specimen utility export -- confirm.",
+      "definition_sha256_16": "55e0f8e6dc02196b",
+      "definition_text": "Form 3CD utility Note 1 code for this repaid entry: derived from the mode and direction, not read off a specimen utility export -- confirm.",
       "evidence": []
     },
     {
       "id": "loans_interest.clause31_row_mode_code_repaid_f1e8405e_c2762eb0",
       "value": "A",
       "unit": "text",
-      "definition_sha256_16": "027af7891e35589f",
-      "definition_text": "Form 3CD utility Note 1 code for this repaid entry (module docstring's mode_code bullet): derived from mode+direction, not read off a specimen utility export -- confirm.",
+      "definition_sha256_16": "55e0f8e6dc02196b",
+      "definition_text": "Form 3CD utility Note 1 code for this repaid entry: derived from the mode and direction, not read off a specimen utility export -- confirm.",
       "evidence": []
     },
     {
       "id": "loans_interest.clause31_row_mode_code_taken_4bacde2a_be2382cd",
       "value": "",
       "unit": "text",
-      "definition_sha256_16": "4d0be35c6c0b7844",
-      "definition_text": "Form 3CD utility Note 1 code for this taken entry (module docstring's mode_code bullet): derived from mode+direction, not read off a specimen utility export -- confirm.",
+      "definition_sha256_16": "82f495d52fd501a7",
+      "definition_text": "Form 3CD utility Note 1 code for this taken entry: derived from the mode and direction, not read off a specimen utility export -- confirm.",
       "evidence": []
     },
     {
       "id": "loans_interest.clause31_row_mode_code_taken_6d86a02d_42af2e8c",
       "value": "J",
       "unit": "text",
-      "definition_sha256_16": "4d0be35c6c0b7844",
-      "definition_text": "Form 3CD utility Note 1 code for this taken entry (module docstring's mode_code bullet): derived from mode+direction, not read off a specimen utility export -- confirm.",
+      "definition_sha256_16": "82f495d52fd501a7",
+      "definition_text": "Form 3CD utility Note 1 code for this taken entry: derived from the mode and direction, not read off a specimen utility export -- confirm.",
       "evidence": []
     },
     {
       "id": "loans_interest.clause31_row_mode_code_taken_7c8d406f_374b858f",
       "value": "B",
       "unit": "text",
-      "definition_sha256_16": "4d0be35c6c0b7844",
-      "definition_text": "Form 3CD utility Note 1 code for this taken entry (module docstring's mode_code bullet): derived from mode+direction, not read off a specimen utility export -- confirm.",
+      "definition_sha256_16": "82f495d52fd501a7",
+      "definition_text": "Form 3CD utility Note 1 code for this taken entry: derived from the mode and direction, not read off a specimen utility export -- confirm.",
       "evidence": []
     },
     {
       "id": "loans_interest.clause31_row_mode_code_taken_c7c26e2a_bf3744ea",
       "value": "B",
       "unit": "text",
-      "definition_sha256_16": "4d0be35c6c0b7844",
-      "definition_text": "Form 3CD utility Note 1 code for this taken entry (module docstring's mode_code bullet): derived from mode+direction, not read off a specimen utility export -- confirm.",
+      "definition_sha256_16": "82f495d52fd501a7",
+      "definition_text": "Form 3CD utility Note 1 code for this taken entry: derived from the mode and direction, not read off a specimen utility export -- confirm.",
       "evidence": []
     },
     {
@@ -416,8 +416,8 @@
       "id": "loans_interest.clause31_taken_reportable_total",
       "value": 7000000,
       "unit": "paise",
-      "definition_sha256_16": "e1925f9be2f33152",
-      "definition_text": "Sum of clause31_taken_total_<tag> across every non-exempt-lender loan ledger (bank/co-operative-bank lenders excluded entirely).",
+      "definition_sha256_16": "d7af3e78b067f203",
+      "definition_text": "Sum of the loans taken that Clause 31(a) reports: entries on a loan from a lender outside the form's reporting exemption, from where the running balance with that lender reaches the s.269SS/269T limit.",
       "evidence": []
     },
     {
@@ -480,64 +480,64 @@
       "id": "loans_interest.deductor_status",
       "value": "deductor",
       "unit": "text",
-      "definition_sha256_16": "41bc82cf20314021",
-      "definition_text": "Whether the assessee must deduct TDS under s.194A for the year -- same rule and figure as tds_payees.deductor_status, reused verbatim: firm/LLP/company always; individual/HUF only if previous-year business turnover exceeded rules.deductor.individual_huf_prev_year_turnover_paise.",
+      "definition_sha256_16": "a02e7d371de92a27",
+      "definition_text": "Whether the assessee must deduct TDS under s.194A for the year -- the same rule and figure as 'TDS on payments made': firm/LLP/company always; individual/HUF only if previous-year business turnover exceeded the rules' turnover limit for an individual or HUF.",
       "evidence": []
     },
     {
       "id": "loans_interest.interest_ledger_4bacde2a",
       "value": "Interest on NBFC Loan",
       "unit": "text",
-      "definition_sha256_16": "1511808523003729",
-      "definition_text": "The configured interest ledger name for loan ledger (tag 4bacde2a), or '' if the loan is interest-free -- the companion figure LOAN-2 and LOAN-3 read back to check each voucher on this loan and that ledger independently of this test's own bucketing.",
+      "definition_sha256_16": "2ab85eb6a5982759",
+      "definition_text": "The configured interest ledger name for loan ledger (tag 4bacde2a), or '' if the loan is interest-free -- this test's own consistency checks read it back to check each voucher on this loan and that ledger independently of the test's own bucketing.",
       "evidence": []
     },
     {
       "id": "loans_interest.interest_ledger_6d86a02d",
       "value": "",
       "unit": "text",
-      "definition_sha256_16": "7332c1e69f3056e2",
-      "definition_text": "The configured interest ledger name for loan ledger (tag 6d86a02d), or '' if the loan is interest-free -- the companion figure LOAN-2 and LOAN-3 read back to check each voucher on this loan and that ledger independently of this test's own bucketing.",
+      "definition_sha256_16": "46886281aadab902",
+      "definition_text": "The configured interest ledger name for loan ledger (tag 6d86a02d), or '' if the loan is interest-free -- this test's own consistency checks read it back to check each voucher on this loan and that ledger independently of the test's own bucketing.",
       "evidence": []
     },
     {
       "id": "loans_interest.interest_ledger_7c8d406f",
       "value": "",
       "unit": "text",
-      "definition_sha256_16": "43fa740ed4b9c02f",
-      "definition_text": "The configured interest ledger name for loan ledger (tag 7c8d406f), or '' if the loan is interest-free -- the companion figure LOAN-2 and LOAN-3 read back to check each voucher on this loan and that ledger independently of this test's own bucketing.",
+      "definition_sha256_16": "e5e774c7c69dd35d",
+      "definition_text": "The configured interest ledger name for loan ledger (tag 7c8d406f), or '' if the loan is interest-free -- this test's own consistency checks read it back to check each voucher on this loan and that ledger independently of the test's own bucketing.",
       "evidence": []
     },
     {
       "id": "loans_interest.interest_ledger_c7c26e2a",
       "value": "",
       "unit": "text",
-      "definition_sha256_16": "b36f461f7690631a",
-      "definition_text": "The configured interest ledger name for loan ledger (tag c7c26e2a), or '' if the loan is interest-free -- the companion figure LOAN-2 and LOAN-3 read back to check each voucher on this loan and that ledger independently of this test's own bucketing.",
+      "definition_sha256_16": "68a718a2b9b32ff1",
+      "definition_text": "The configured interest ledger name for loan ledger (tag c7c26e2a), or '' if the loan is interest-free -- this test's own consistency checks read it back to check each voucher on this loan and that ledger independently of the test's own bucketing.",
       "evidence": []
     },
     {
       "id": "loans_interest.interest_ledger_ec9764e6",
       "value": "",
       "unit": "text",
-      "definition_sha256_16": "7169ab41a29859e1",
-      "definition_text": "The configured interest ledger name for loan ledger (tag ec9764e6), or '' if the loan is interest-free -- the companion figure LOAN-2 and LOAN-3 read back to check each voucher on this loan and that ledger independently of this test's own bucketing.",
+      "definition_sha256_16": "c9bd1abd13bf0c8c",
+      "definition_text": "The configured interest ledger name for loan ledger (tag ec9764e6), or '' if the loan is interest-free -- this test's own consistency checks read it back to check each voucher on this loan and that ledger independently of the test's own bucketing.",
       "evidence": []
     },
     {
       "id": "loans_interest.interest_ledger_f1e8405e",
       "value": "Interest to Relative",
       "unit": "text",
-      "definition_sha256_16": "98b00afcc02de7e6",
-      "definition_text": "The configured interest ledger name for loan ledger (tag f1e8405e), or '' if the loan is interest-free -- the companion figure LOAN-2 and LOAN-3 read back to check each voucher on this loan and that ledger independently of this test's own bucketing.",
+      "definition_sha256_16": "9323263f16c39d59",
+      "definition_text": "The configured interest ledger name for loan ledger (tag f1e8405e), or '' if the loan is interest-free -- this test's own consistency checks read it back to check each voucher on this loan and that ledger independently of the test's own bucketing.",
       "evidence": []
     },
     {
       "id": "loans_interest.interest_ledger_f5878799",
       "value": "Bank Interest",
       "unit": "text",
-      "definition_sha256_16": "00249a00ebb41850",
-      "definition_text": "The configured interest ledger name for loan ledger (tag f5878799), or '' if the loan is interest-free -- the companion figure LOAN-2 and LOAN-3 read back to check each voucher on this loan and that ledger independently of this test's own bucketing.",
+      "definition_sha256_16": "7a8c9179f1d767ea",
+      "definition_text": "The configured interest ledger name for loan ledger (tag f5878799), or '' if the loan is interest-free -- this test's own consistency checks read it back to check each voucher on this loan and that ledger independently of the test's own bucketing.",
       "evidence": []
     },
     {
@@ -623,56 +623,56 @@
       "id": "loans_interest.lender_type_4bacde2a",
       "value": "nbfc",
       "unit": "text",
-      "definition_sha256_16": "9adcde35a9dd3be5",
-      "definition_text": "Lender type for loan ledger (tag 4bacde2a) from client config (loans.loan_ledgers), classified by the loan ledger this interest pairs with -- never by a word in the ledger name.",
+      "definition_sha256_16": "4ba5ef30f9e36cf4",
+      "definition_text": "Lender type for loan ledger (tag 4bacde2a) from the client's list of loans, classified by the loan ledger this interest pairs with -- never by a word in the ledger name.",
       "evidence": []
     },
     {
       "id": "loans_interest.lender_type_6d86a02d",
       "value": "insurer",
       "unit": "text",
-      "definition_sha256_16": "698a1d3f1d7b35ae",
-      "definition_text": "Lender type for loan ledger (tag 6d86a02d) from client config (loans.loan_ledgers), classified by the loan ledger this interest pairs with -- never by a word in the ledger name.",
+      "definition_sha256_16": "c3144aaaaa594597",
+      "definition_text": "Lender type for loan ledger (tag 6d86a02d) from the client's list of loans, classified by the loan ledger this interest pairs with -- never by a word in the ledger name.",
       "evidence": []
     },
     {
       "id": "loans_interest.lender_type_7c8d406f",
       "value": "person",
       "unit": "text",
-      "definition_sha256_16": "3f34a0fdf3ecc496",
-      "definition_text": "Lender type for loan ledger (tag 7c8d406f) from client config (loans.loan_ledgers), classified by the loan ledger this interest pairs with -- never by a word in the ledger name.",
+      "definition_sha256_16": "26cecd4cbaeba238",
+      "definition_text": "Lender type for loan ledger (tag 7c8d406f) from the client's list of loans, classified by the loan ledger this interest pairs with -- never by a word in the ledger name.",
       "evidence": []
     },
     {
       "id": "loans_interest.lender_type_c7c26e2a",
       "value": "cooperative_bank",
       "unit": "text",
-      "definition_sha256_16": "2883ed625ec296f4",
-      "definition_text": "Lender type for loan ledger (tag c7c26e2a) from client config (loans.loan_ledgers), classified by the loan ledger this interest pairs with -- never by a word in the ledger name.",
+      "definition_sha256_16": "c6dd0faf20568567",
+      "definition_text": "Lender type for loan ledger (tag c7c26e2a) from the client's list of loans, classified by the loan ledger this interest pairs with -- never by a word in the ledger name.",
       "evidence": []
     },
     {
       "id": "loans_interest.lender_type_ec9764e6",
       "value": "government",
       "unit": "text",
-      "definition_sha256_16": "f505e1f17e932a61",
-      "definition_text": "Lender type for loan ledger (tag ec9764e6) from client config (loans.loan_ledgers), classified by the loan ledger this interest pairs with -- never by a word in the ledger name.",
+      "definition_sha256_16": "ecfc486b64f68d83",
+      "definition_text": "Lender type for loan ledger (tag ec9764e6) from the client's list of loans, classified by the loan ledger this interest pairs with -- never by a word in the ledger name.",
       "evidence": []
     },
     {
       "id": "loans_interest.lender_type_f1e8405e",
       "value": "person",
       "unit": "text",
-      "definition_sha256_16": "a9496fdbf774396a",
-      "definition_text": "Lender type for loan ledger (tag f1e8405e) from client config (loans.loan_ledgers), classified by the loan ledger this interest pairs with -- never by a word in the ledger name.",
+      "definition_sha256_16": "bfa1cefabbaf0a3a",
+      "definition_text": "Lender type for loan ledger (tag f1e8405e) from the client's list of loans, classified by the loan ledger this interest pairs with -- never by a word in the ledger name.",
       "evidence": []
     },
     {
       "id": "loans_interest.lender_type_f5878799",
       "value": "bank",
       "unit": "text",
-      "definition_sha256_16": "3cb5099a91abb91b",
-      "definition_text": "Lender type for loan ledger (tag f5878799) from client config (loans.loan_ledgers), classified by the loan ledger this interest pairs with -- never by a word in the ledger name.",
+      "definition_sha256_16": "43528e9e13340f4c",
+      "definition_text": "Lender type for loan ledger (tag f5878799) from the client's list of loans, classified by the loan ledger this interest pairs with -- never by a word in the ledger name.",
       "evidence": []
     },
     {
@@ -780,9 +780,9 @@
       ],
       "title_sha256_16": "cf0cf2614900d1b2",
       "title_text": "Loan repaid against Invented Finance Ltd (journal mode, code I) -- at or over the s.269SS/269T running-balance limit",
-      "limits_sha256_16": "529ca5f19a3cae2e",
+      "limits_sha256_16": "289348c63dbcb66f",
       "limits_text": [
-        "Books only: confirm the lender's identity (name, address, PAN) for Form 3CD Clause 31, and whether this lender is excepted from s.269SS/269T beyond rules.s269ss_269t.exempt_lender_types (Government, a notified corporation, or another body notified under the Explanation).",
+        "Books only: confirm the lender's identity (name, address, PAN) for Form 3CD Clause 31, and whether this lender is excepted from s.269SS/269T beyond the lender types the rules already except (Government, a notified corporation, or another body notified under the Explanation).",
         "The mode-and-direction code follows the Form 3CD utility's own Note 1 list (A/B cash payment/receipt, I/J journal entry debit/credit, K/L any other mode debit/credit); this pack's own mapping from mode and direction to that code is a derivation from the GN's text, not verified against a specimen utility export -- confirm.",
         "This entry's own amount (100000p) is below the s.269SS/269T limit on its own; it is flagged only because the running balance with this lender (GN 55.8/57.2) is at or over the limit -- report every entry from where the running balance first reaches the limit until it falls back below, not only the large ones.",
         "s.273B reasonable cause (e.g. banking facilities not available in the area) is a CA judgement call on the facts, not a books fact.",
@@ -824,9 +824,9 @@
       ],
       "title_sha256_16": "18c4d05e96ecaf66",
       "title_text": "Loan repaid against Invented Finance Ltd (cash mode, code A) -- at or over the s.269SS/269T running-balance limit",
-      "limits_sha256_16": "06c28b038f9bcf7c",
+      "limits_sha256_16": "085fca54650aea62",
       "limits_text": [
-        "Books only: confirm the lender's identity (name, address, PAN) for Form 3CD Clause 31, and whether this lender is excepted from s.269SS/269T beyond rules.s269ss_269t.exempt_lender_types (Government, a notified corporation, or another body notified under the Explanation).",
+        "Books only: confirm the lender's identity (name, address, PAN) for Form 3CD Clause 31, and whether this lender is excepted from s.269SS/269T beyond the lender types the rules already except (Government, a notified corporation, or another body notified under the Explanation).",
         "The mode-and-direction code follows the Form 3CD utility's own Note 1 list (A/B cash payment/receipt, I/J journal entry debit/credit, K/L any other mode debit/credit); this pack's own mapping from mode and direction to that code is a derivation from the GN's text, not verified against a specimen utility export -- confirm.",
         "Mode is read from the counter-line ledger's group only (Cash-in-Hand), never from the narration: this voucher's narration is 'EMI paid \\'in cash\\' by \"staff\"'. A narration naming an electronic instrument (e.g. UPI/PhonePe) booked through a cash ledger takes this outside s.269SS/269T even though the ledger group says 'cash' -- confirm from the narration and the bank statement before treating this as a cash breach.",
         "This entry's own amount (300000p) is below the s.269SS/269T limit on its own; it is flagged only because the running balance with this lender (GN 55.8/57.2) is at or over the limit -- report every entry from where the running balance first reaches the limit until it falls back below, not only the large ones.",
@@ -869,9 +869,9 @@
       ],
       "title_sha256_16": "4f5365b6fc1090ca",
       "title_text": "Loan repaid against Invented Finance Ltd (other mode, code K) -- at or over the s.269SS/269T running-balance limit",
-      "limits_sha256_16": "3030d205d9d83c54",
+      "limits_sha256_16": "873645e56334f8e4",
       "limits_text": [
-        "Books only: confirm the lender's identity (name, address, PAN) for Form 3CD Clause 31, and whether this lender is excepted from s.269SS/269T beyond rules.s269ss_269t.exempt_lender_types (Government, a notified corporation, or another body notified under the Explanation).",
+        "Books only: confirm the lender's identity (name, address, PAN) for Form 3CD Clause 31, and whether this lender is excepted from s.269SS/269T beyond the lender types the rules already except (Government, a notified corporation, or another body notified under the Explanation).",
         "The mode-and-direction code follows the Form 3CD utility's own Note 1 list (A/B cash payment/receipt, I/J journal entry debit/credit, K/L any other mode debit/credit); this pack's own mapping from mode and direction to that code is a derivation from the GN's text, not verified against a specimen utility export -- confirm.",
         "This entry's own amount (50000p) is below the s.269SS/269T limit on its own; it is flagged only because the running balance with this lender (GN 55.8/57.2) is at or over the limit -- report every entry from where the running balance first reaches the limit until it falls back below, not only the large ones.",
         "s.273B reasonable cause (e.g. banking facilities not available in the area) is a CA judgement call on the facts, not a books fact.",
@@ -912,9 +912,9 @@
       ],
       "title_sha256_16": "e8a8b2fcc4fc5244",
       "title_text": "Loan repaid against Invented Friend (bank mode, code n/a)",
-      "limits_sha256_16": "193a4dd6409d30b8",
+      "limits_sha256_16": "c0ec8796e2fef130",
       "limits_text": [
-        "Books only: confirm the lender's identity (name, address, PAN) for Form 3CD Clause 31, and whether this lender is excepted from s.269SS/269T beyond rules.s269ss_269t.exempt_lender_types (Government, a notified corporation, or another body notified under the Explanation).",
+        "Books only: confirm the lender's identity (name, address, PAN) for Form 3CD Clause 31, and whether this lender is excepted from s.269SS/269T beyond the lender types the rules already except (Government, a notified corporation, or another body notified under the Explanation).",
         "The mode-and-direction code follows the Form 3CD utility's own Note 1 list (A/B cash payment/receipt, I/J journal entry debit/credit, K/L any other mode debit/credit); this pack's own mapping from mode and direction to that code is a derivation from the GN's text, not verified against a specimen utility export -- confirm."
       ],
       "ask_client_sha256_16": "8c22e5a927638b0c",
@@ -953,9 +953,9 @@
       ],
       "title_sha256_16": "96e41377be7eb680",
       "title_text": "Loan repaid against Invented Relative (cash mode, code A) -- at or over the s.269SS/269T running-balance limit",
-      "limits_sha256_16": "b0d49d597ae7fbc1",
+      "limits_sha256_16": "220ad31c56c7830f",
       "limits_text": [
-        "Books only: confirm the lender's identity (name, address, PAN) for Form 3CD Clause 31, and whether this lender is excepted from s.269SS/269T beyond rules.s269ss_269t.exempt_lender_types (Government, a notified corporation, or another body notified under the Explanation).",
+        "Books only: confirm the lender's identity (name, address, PAN) for Form 3CD Clause 31, and whether this lender is excepted from s.269SS/269T beyond the lender types the rules already except (Government, a notified corporation, or another body notified under the Explanation).",
         "The mode-and-direction code follows the Form 3CD utility's own Note 1 list (A/B cash payment/receipt, I/J journal entry debit/credit, K/L any other mode debit/credit); this pack's own mapping from mode and direction to that code is a derivation from the GN's text, not verified against a specimen utility export -- confirm.",
         "Mode is read from the counter-line ledger's group only (Cash-in-Hand), never from the narration: this voucher's narration is 'part repaid'. A narration naming an electronic instrument (e.g. UPI/PhonePe) booked through a cash ledger takes this outside s.269SS/269T even though the ledger group says 'cash' -- confirm from the narration and the bank statement before treating this as a cash breach.",
         "This entry's own amount (100000p) is below the s.269SS/269T limit on its own; it is flagged only because the running balance with this lender (GN 55.8/57.2) is at or over the limit -- report every entry from where the running balance first reaches the limit until it falls back below, not only the large ones.",
@@ -998,9 +998,9 @@
       ],
       "title_sha256_16": "52fc1bbcd022a7a1",
       "title_text": "Loan taken against Invented Finance Ltd (bank mode, code n/a)",
-      "limits_sha256_16": "193a4dd6409d30b8",
+      "limits_sha256_16": "c0ec8796e2fef130",
       "limits_text": [
-        "Books only: confirm the lender's identity (name, address, PAN) for Form 3CD Clause 31, and whether this lender is excepted from s.269SS/269T beyond rules.s269ss_269t.exempt_lender_types (Government, a notified corporation, or another body notified under the Explanation).",
+        "Books only: confirm the lender's identity (name, address, PAN) for Form 3CD Clause 31, and whether this lender is excepted from s.269SS/269T beyond the lender types the rules already except (Government, a notified corporation, or another body notified under the Explanation).",
         "The mode-and-direction code follows the Form 3CD utility's own Note 1 list (A/B cash payment/receipt, I/J journal entry debit/credit, K/L any other mode debit/credit); this pack's own mapping from mode and direction to that code is a derivation from the GN's text, not verified against a specimen utility export -- confirm."
       ],
       "ask_client_sha256_16": "8c22e5a927638b0c",
@@ -1039,11 +1039,11 @@
       ],
       "title_sha256_16": "a55e3a1813cc9e83",
       "title_text": "Loan taken against Invented Insurer (journal mode, code J) -- at or over the s.269SS/269T running-balance limit",
-      "limits_sha256_16": "c7e411601be76aee",
+      "limits_sha256_16": "7076bf95b4623c10",
       "limits_text": [
-        "Books only: confirm the lender's identity (name, address, PAN) for Form 3CD Clause 31, and whether this lender is excepted from s.269SS/269T beyond rules.s269ss_269t.exempt_lender_types (Government, a notified corporation, or another body notified under the Explanation).",
+        "Books only: confirm the lender's identity (name, address, PAN) for Form 3CD Clause 31, and whether this lender is excepted from s.269SS/269T beyond the lender types the rules already except (Government, a notified corporation, or another body notified under the Explanation).",
         "The mode-and-direction code follows the Form 3CD utility's own Note 1 list (A/B cash payment/receipt, I/J journal entry debit/credit, K/L any other mode debit/credit); this pack's own mapping from mode and direction to that code is a derivation from the GN's text, not verified against a specimen utility export -- confirm.",
-        "lender_type is 'insurer': exempt from TDS deduction under s.194A(3)(iii), but that is a different exemption from the one in the Explanation to s.269SS/269T -- this lender is NOT treated as exempt from Clause 31/s.269SS/s.269T here; confirm.",
+        "The lender type is 'insurer': exempt from TDS deduction under s.194A(3)(iii), but that is a different exemption from the one in the Explanation to s.269SS/269T -- this lender is NOT treated as exempt from Clause 31/s.269SS/s.269T here; confirm.",
         "s.273B reasonable cause (e.g. banking facilities not available in the area) is a CA judgement call on the facts, not a books fact."
       ],
       "ask_client_sha256_16": "8c22e5a927638b0c",
@@ -1082,9 +1082,9 @@
       ],
       "title_sha256_16": "65bc5f8e4ddc3d03",
       "title_text": "Loan taken against Invented Friend (cash mode, code B) -- at or over the s.269SS/269T running-balance limit",
-      "limits_sha256_16": "a0df3787a2bb0573",
+      "limits_sha256_16": "8b454805dcb61ad5",
       "limits_text": [
-        "Books only: confirm the lender's identity (name, address, PAN) for Form 3CD Clause 31, and whether this lender is excepted from s.269SS/269T beyond rules.s269ss_269t.exempt_lender_types (Government, a notified corporation, or another body notified under the Explanation).",
+        "Books only: confirm the lender's identity (name, address, PAN) for Form 3CD Clause 31, and whether this lender is excepted from s.269SS/269T beyond the lender types the rules already except (Government, a notified corporation, or another body notified under the Explanation).",
         "The mode-and-direction code follows the Form 3CD utility's own Note 1 list (A/B cash payment/receipt, I/J journal entry debit/credit, K/L any other mode debit/credit); this pack's own mapping from mode and direction to that code is a derivation from the GN's text, not verified against a specimen utility export -- confirm.",
         "Mode is read from the counter-line ledger's group only (Cash-in-Hand), never from the narration: this voucher's narration is ''. A narration naming an electronic instrument (e.g. UPI/PhonePe) booked through a cash ledger takes this outside s.269SS/269T even though the ledger group says 'cash' -- confirm from the narration and the bank statement before treating this as a cash breach.",
         "This entry's own amount (800000p) is below the s.269SS/269T limit on its own; it is flagged only because the running balance with this lender (GN 55.8/57.2) is at or over the limit -- report every entry from where the running balance first reaches the limit until it falls back below, not only the large ones.",
@@ -1126,9 +1126,9 @@
       ],
       "title_sha256_16": "816c7d8d19bb9c56",
       "title_text": "Loan taken against Invented Co-operative Bank (cash mode, code B)",
-      "limits_sha256_16": "71d377047281b8a5",
+      "limits_sha256_16": "ef6f7913cd06bf7e",
       "limits_text": [
-        "Books only: confirm the lender's identity (name, address, PAN) for Form 3CD Clause 31, and whether this lender is excepted from s.269SS/269T beyond rules.s269ss_269t.exempt_lender_types (Government, a notified corporation, or another body notified under the Explanation).",
+        "Books only: confirm the lender's identity (name, address, PAN) for Form 3CD Clause 31, and whether this lender is excepted from s.269SS/269T beyond the lender types the rules already except (Government, a notified corporation, or another body notified under the Explanation).",
         "The mode-and-direction code follows the Form 3CD utility's own Note 1 list (A/B cash payment/receipt, I/J journal entry debit/credit, K/L any other mode debit/credit); this pack's own mapping from mode and direction to that code is a derivation from the GN's text, not verified against a specimen utility export -- confirm.",
         "Mode is read from the counter-line ledger's group only (Cash-in-Hand), never from the narration: this voucher's narration is 'coop'. A narration naming an electronic instrument (e.g. UPI/PhonePe) booked through a cash ledger takes this outside s.269SS/269T even though the ledger group says 'cash' -- confirm from the narration and the bank statement before treating this as a cash breach."
       ],
@@ -1176,9 +1176,9 @@
       ],
       "title_sha256_16": "0b322ccb976c9523",
       "title_text": "Interest to a non-exempt lender over the s.194A threshold, no TDS ledger evidence",
-      "limits_sha256_16": "be5ce46503a38cd1",
+      "limits_sha256_16": "7b8e08bf048c724d",
       "limits_text": [
-        "Books only: lender type ('nbfc') comes from client config, not from a notification lookup; confirm the lender is not itself a body notified as exempt under s.194A(3)(iii) beyond the classes already in rules.s194a.exempt_lender_types.",
+        "Books only: lender type ('nbfc') comes from the client's setup, not from a notification lookup; confirm the lender is not itself a body notified as exempt under s.194A(3)(iii) beyond the lender types the rules already exempt.",
         "s.40(a)(ia) disallows 30% of the interest on TDS default; the second proviso removes this if the lender's Form 26A (Rule 31ACB) shows the interest was returned as income -- s.201(1A) interest still runs either way."
       ],
       "ask_client_sha256_16": "0ea73eedec7e5715",

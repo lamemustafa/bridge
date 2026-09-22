@@ -383,7 +383,8 @@ pub fn run_with(
     let pop = book.population()?;
     r.population_note = "Books population (optional, cancelled and post-dated vouchers excluded); \
 Contra excluded throughout. A loan ledger's interest journals are vouchers whose only other ledger \
-line is its configured interest ledger (loan_config); every other voucher touching the loan ledger \
+line is its configured interest ledger (the client's list of loans); every other voucher touching the \
+loan ledger \
 is a taken (credit) or repaid (debit) transaction, never classified by ledger name."
         .to_string();
 
@@ -420,9 +421,9 @@ is a taken (credit) or repaid (debit) transaction, never classified by ledger na
         "deductor_status",
         Value::Text(status.to_string()),
         Unit::Text,
-        "Whether the assessee must deduct TDS under s.194A for the year -- same rule and figure as \
-tds_payees.deductor_status, reused verbatim: firm/LLP/company always; individual/HUF only if \
-previous-year business turnover exceeded rules.deductor.individual_huf_prev_year_turnover_paise.",
+        "Whether the assessee must deduct TDS under s.194A for the year -- the same rule and figure as \
+'TDS on payments made': firm/LLP/company always; individual/HUF only if previous-year business \
+turnover exceeded the rules' turnover limit for an individual or HUF.",
         Vec::new(),
     );
     if status == "unknown" {
@@ -477,7 +478,7 @@ business turnover exceeded ₹{} crore; the current year's books alone cannot es
             Value::Text(lender_type.to_string()),
             Unit::Text,
             &format!(
-                "Lender type for loan ledger (tag {h}) from client config (loans.loan_ledgers), \
+                "Lender type for loan ledger (tag {h}) from the client's list of loans, \
 classified by the loan ledger this interest pairs with -- never by a word in the ledger name."
             ),
             Vec::new(),
@@ -499,8 +500,8 @@ other line is its configured interest ledger."
             Unit::Text,
             &format!(
                 "The configured interest ledger name for loan ledger (tag {h}), or '' if the loan \
-is interest-free -- the companion figure LOAN-2 and LOAN-3 read back to check each voucher on this \
-loan and that ledger independently of this test's own bucketing."
+is interest-free -- this test's own consistency checks read it back to check each voucher on this \
+loan and that ledger independently of the test's own bucketing."
             ),
             Vec::new(),
         );
@@ -583,9 +584,9 @@ evidence"
                 confidence: Confidence::NeedsDocument,
                 limits: vec![
                     format!(
-                        "Books only: lender type ({}) comes from client config, not from a \
+                        "Books only: lender type ({}) comes from the client's setup, not from a \
 notification lookup; confirm the lender is not itself a body notified as exempt under \
-s.194A(3)(iii) beyond the classes already in rules.s194a.exempt_lender_types.",
+s.194A(3)(iii) beyond the lender types the rules already exempt.",
                         py_repr_str(lender_type)
                     ),
                     "s.40(a)(ia) disallows 30% of the interest on TDS default; the second proviso \
@@ -670,8 +671,8 @@ is Journal, else other."
                 Value::Text(code.to_string()),
                 Unit::Text,
                 &format!(
-                    "Form 3CD utility Note 1 code for this {direction} entry (module docstring's \
-mode_code bullet): derived from mode+direction, not read off a specimen utility export -- confirm."
+                    "Form 3CD utility Note 1 code for this {direction} entry: derived from the mode \
+and direction, not read off a specimen utility export -- confirm."
                 ),
                 Vec::new(),
             );
@@ -706,7 +707,7 @@ walk.",
             let mut limits = vec![
                 "Books only: confirm the lender's identity (name, address, PAN) for Form 3CD \
 Clause 31, and whether this lender is excepted from s.269SS/269T beyond \
-rules.s269ss_269t.exempt_lender_types (Government, a notified corporation, or another body notified \
+the lender types the rules already except (Government, a notified corporation, or another body notified \
 under the Explanation)."
                     .to_string(),
                 "The mode-and-direction code follows the Form 3CD utility's own Note 1 list (A/B \
@@ -719,7 +720,7 @@ against a specimen utility export -- confirm."
                 vec!["Confirm lender identity (name, address, PAN) for Clause 31.".to_string()];
             if lender_type == "insurer" {
                 limits.push(
-                    "lender_type is 'insurer': exempt from TDS deduction under s.194A(3)(iii), but \
+                    "The lender type is 'insurer': exempt from TDS deduction under s.194A(3)(iii), but \
 that is a different exemption from the one in the Explanation to s.269SS/269T -- this lender is NOT \
 treated as exempt from Clause 31/s.269SS/s.269T here; confirm."
                         .to_string(),
@@ -790,15 +791,18 @@ repayments even below ₹20,000 where the loan plus interest is ₹20,000 or mor
         "clause31_taken_reportable_total",
         Value::Int(to_i64(taken_reportable_total)?),
         Unit::Paise,
-        "Sum of clause31_taken_total_<tag> across every non-exempt-lender loan ledger (bank/\
-co-operative-bank lenders excluded entirely).",
+        "Sum of the loans taken that Clause 31(a) reports: entries on a loan from a lender outside the \
+form's reporting exemption, from where the running balance with that lender reaches the s.269SS/269T \
+limit.",
         Vec::new(),
     );
     r.fig(
         "clause31_repaid_reportable_total",
         Value::Int(to_i64(repaid_reportable_total)?),
         Unit::Paise,
-        "Sum of clause31_repaid_total_<tag> across every non-exempt-lender loan ledger.",
+        "Sum of the repayments that Clause 31(c) reports: entries on a loan from a lender outside the \
+form's reporting exemption, where the balance being repaid, with or without the interest credited and \
+not yet paid, or the repayment itself reaches the s.269SS/269T limit.",
         Vec::new(),
     );
     r.fig(
@@ -924,7 +928,8 @@ excluded) that no paired loan's interest total counts."
             &if net_reversals {
                 format!(
                     "Credits to shared interest ledger (tag {lh}), on the same vouchers, each \
-matched as the reversal of a specific earlier debit on another voucher counted above (each pair \
+matched as the reversal of a specific earlier debit on another voucher counted among the unpaired \
+debits (each pair \
 cited); netted against the debits."
                 )
             } else {
