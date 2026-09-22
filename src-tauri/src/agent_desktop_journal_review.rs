@@ -77,7 +77,7 @@ impl DesktopJournalError {
             ),
             "import_post_requires_one_journal" => (
                 "Bridge's desktop review posts one unnumbered Journal, and this saved batch is a different shape.",
-                "Import this file in Tally (Gateway of Tally → Import → Vouchers), then verify it. Payment, Receipt and Contra batches, and batches holding more than one voucher, are import-only. The file itself is unchanged and correct.",
+                "Import this file in Tally (Gateway of Tally → Import → Vouchers), then verify it. The desktop app posts Journals only. With voucher posting enabled in the extension settings (off by default), a Payment, Receipt or Contra can be posted from the assistant; otherwise, and for a batch holding more than one voucher, import the file. The file itself is unchanged and correct.",
             ),
             "import_post_numbered_journal_unsupported" => (
                 "Bridge cannot post a Journal file that specifies a voucher number.",
@@ -208,6 +208,8 @@ mod tests {
         assert_ne!(refused.message, fallback.message);
         assert_ne!(refused.remediation, fallback.remediation);
         assert!(refused.message.contains("Journal"));
-        assert!(refused.remediation.contains("Payment, Receipt and Contra"));
+        assert!(refused.remediation.contains("Payment, Receipt or Contra"));
+        // Since ADR 0004's 2026-09-22 amendment the assistant can post them.
+        assert!(refused.remediation.contains("from the assistant"));
     }
 }

@@ -1,0 +1,486 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "statutory_dues_43b",
+  "test_version": "2",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "a716eb43187c386b",
+  "population_note_text": "Books population (optional, cancelled and post-dated vouchers excluded). Each nature's opening/closing liability is the Trial Balance sum across every ledger client config maps to it; charged/paid are population voucher-line sums on the same ledgers (TOT-1: never a filtered sub-table).",
+  "figures": [
+    {
+      "id": "statutory_dues_43b.charged_bonus",
+      "value": 9450000,
+      "unit": "paise",
+      "definition_sha256_16": "2c5949ed7ccde242",
+      "definition_text": "Sum of population voucher CREDIT lines (amount added to the liability) on ledgers mapped to nature 'bonus'.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000005",
+          "label": "Purchase PU/1 on 2025-06-03"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000006",
+          "label": "Payment P/3 on 2025-06-25"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000012",
+          "label": "Payment P/7 on 2026-02-14"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000022",
+          "label": "Payment P/19 on 2025-06-30"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000032",
+          "label": "Journal J/4 on 2025-08-15"
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.charged_gst_payable",
+      "value": 3500000,
+      "unit": "paise",
+      "definition_sha256_16": "68bc579b646bf6d9",
+      "definition_text": "Sum of population voucher CREDIT lines (amount added to the liability) on ledgers mapped to nature 'gst_payable'.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000001c",
+          "label": "Payment P/17 on 2025-06-20"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000001f",
+          "label": "Receipt R/7 on 2025-06-25"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000020",
+          "label": "Cash Sale CS/4 on 2025-06-26"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000024",
+          "label": "Purchase PU/2 on 2025-07-03"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002b",
+          "label": "Purchase PU/3 on 2025-04-01"
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.charged_other_statutory",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "b94624a0d6e2fd6f",
+      "definition_text": "Sum of population voucher CREDIT lines (amount added to the liability) on ledgers mapped to nature 'other_statutory'.",
+      "evidence": []
+    },
+    {
+      "id": "statutory_dues_43b.closing_liability_bonus",
+      "value": 3650000,
+      "unit": "paise",
+      "definition_sha256_16": "6eaa9076847eb75c",
+      "definition_text": "Trial Balance closing balance (Dr+/Cr- flipped to a liability-positive figure), summed across every ledger client config maps to nature 'bonus'.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Tidewater Fasteners",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.closing_liability_gst_payable",
+      "value": -2400000,
+      "unit": "paise",
+      "definition_sha256_16": "32fe1b355d1f0f7a",
+      "definition_text": "Trial Balance closing balance (Dr+/Cr- flipped to a liability-positive figure), summed across every ledger client config maps to nature 'gst_payable'.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "GST Payable",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.closing_liability_other_statutory",
+      "value": 1234500,
+      "unit": "paise",
+      "definition_sha256_16": "b0eff8f46279f16e",
+      "definition_text": "Trial Balance closing balance (Dr+/Cr- flipped to a liability-positive figure), summed across every ledger client config maps to nature 'other_statutory'.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Harbour Mill Supplies",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.opening_liability_bonus",
+      "value": 1500000,
+      "unit": "paise",
+      "definition_sha256_16": "2c5a541db9f13de4",
+      "definition_text": "Trial Balance opening balance (Dr+/Cr- flipped to a liability-positive figure), summed across every ledger client config maps to nature 'bonus'.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Tidewater Fasteners",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.opening_liability_gst_payable",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "3c33fd011452337d",
+      "definition_text": "Trial Balance opening balance (Dr+/Cr- flipped to a liability-positive figure), summed across every ledger client config maps to nature 'gst_payable'.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "GST Payable",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.opening_liability_other_statutory",
+      "value": 1234500,
+      "unit": "paise",
+      "definition_sha256_16": "b690f817cf7af5a0",
+      "definition_text": "Trial Balance opening balance (Dr+/Cr- flipped to a liability-positive figure), summed across every ledger client config maps to nature 'other_statutory'.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Harbour Mill Supplies",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.opening_s43b_paid_this_year_bonus",
+      "value": 1500000,
+      "unit": "paise",
+      "definition_sha256_16": "451a9d69be7dd9dc",
+      "definition_text": "Clause 26(i)(A)(a) CANDIDATE: portion of nature 'bonus's opening (pre-existing) Trial Balance liability matched, FIFO oldest-first, to this year's own payment vouchers on its mapped ledgers. NOT a settled 'allowable' fact: GN 46.5 limits 26(i)(A) to a sum that was NOT already allowable in an earlier year, which can only be verified from last year's own income-tax return/Form 3CD (not available to this module) -- treating the whole TB opening balance as 26(i)(A) risks double-deducting an amount already allowed last year.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000006",
+          "label": "Payment P/3 on 2025-06-25"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000012",
+          "label": "Payment P/7 on 2026-02-14"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000022",
+          "label": "Payment P/19 on 2025-06-30"
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.opening_s43b_paid_this_year_other_statutory",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "be72b1448a2da96f",
+      "definition_text": "Clause 26(i)(A)(a) CANDIDATE: portion of nature 'other_statutory's opening (pre-existing) Trial Balance liability matched, FIFO oldest-first, to this year's own payment vouchers on its mapped ledgers. NOT a settled 'allowable' fact: GN 46.5 limits 26(i)(A) to a sum that was NOT already allowable in an earlier year, which can only be verified from last year's own income-tax return/Form 3CD (not available to this module) -- treating the whole TB opening balance as 26(i)(A) risks double-deducting an amount already allowed last year.",
+      "evidence": []
+    },
+    {
+      "id": "statutory_dues_43b.opening_s43b_still_unpaid_bonus",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "c670e194d0520ee8",
+      "definition_text": "Clause 26(i)(A)(b) CANDIDATE: portion of nature 'bonus's opening (pre-existing) liability still unmatched to any payment in this year's population. Same GN 46.5 limitation as the paid portion above: this is a candidate needing last year's return to confirm it was not already allowable in an earlier year, not a settled figure; it carries forward as next year's own opening balance either way, and is EXCLUDED from clause 26(i)(B) above (26-7 fix) so it is never counted twice.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Tidewater Fasteners",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.opening_s43b_still_unpaid_other_statutory",
+      "value": 1234500,
+      "unit": "paise",
+      "definition_sha256_16": "1f5ce81ed5631d45",
+      "definition_text": "Clause 26(i)(A)(b) CANDIDATE: portion of nature 'other_statutory's opening (pre-existing) liability still unmatched to any payment in this year's population. Same GN 46.5 limitation as the paid portion above: this is a candidate needing last year's return to confirm it was not already allowable in an earlier year, not a settled figure; it carries forward as next year's own opening balance either way, and is EXCLUDED from clause 26(i)(B) above (26-7 fix) so it is never counted twice.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Harbour Mill Supplies",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.paid_bonus",
+      "value": 7300000,
+      "unit": "paise",
+      "definition_sha256_16": "0f84c5a497c98b81",
+      "definition_text": "Sum of population voucher DEBIT lines (amount paid against the liability) on ledgers mapped to nature 'bonus'.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000005",
+          "label": "Purchase PU/1 on 2025-06-03"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000006",
+          "label": "Payment P/3 on 2025-06-25"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000012",
+          "label": "Payment P/7 on 2026-02-14"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000022",
+          "label": "Payment P/19 on 2025-06-30"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000032",
+          "label": "Journal J/4 on 2025-08-15"
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.paid_gst_payable",
+      "value": 5900000,
+      "unit": "paise",
+      "definition_sha256_16": "4bcb25060331ecbe",
+      "definition_text": "Sum of population voucher DEBIT lines (amount paid against the liability) on ledgers mapped to nature 'gst_payable'.",
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000001c",
+          "label": "Payment P/17 on 2025-06-20"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000001f",
+          "label": "Receipt R/7 on 2025-06-25"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000020",
+          "label": "Cash Sale CS/4 on 2025-06-26"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000024",
+          "label": "Purchase PU/2 on 2025-07-03"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000002b",
+          "label": "Purchase PU/3 on 2025-04-01"
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.paid_other_statutory",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "8ffa193ad0b90b14",
+      "definition_text": "Sum of population voucher DEBIT lines (amount paid against the liability) on ledgers mapped to nature 'other_statutory'.",
+      "evidence": []
+    },
+    {
+      "id": "statutory_dues_43b.this_year_closing_liability_bonus",
+      "value": 3650000,
+      "unit": "paise",
+      "definition_sha256_16": "881aa37a3f75dfed",
+      "definition_text": "3CD-26(i)(B): THIS YEAR's own unpaid s.43B liability for nature 'bonus' -- the Trial Balance closing balance LESS any still-unpaid remainder of the OPENING (pre-existing) liability reported separately under clause 26(i)(A)(b) below, so the same rupee is never counted under both clauses (26-7 fix, GN 46.4-46.7).",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Tidewater Fasteners",
+          "label": ""
+        }
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "statutory_dues_43b/opening_paid/bonus",
+      "clauses": [
+        "s.43B",
+        "3CD-26(i)(A)(a)"
+      ],
+      "confidence": "indicative",
+      "facts": [
+        {
+          "name": "opening_liability",
+          "figure_id": "statutory_dues_43b.opening_liability_bonus"
+        },
+        {
+          "name": "opening_paid",
+          "figure_id": "statutory_dues_43b.opening_s43b_paid_this_year_bonus"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000006",
+          "label": "Payment P/3 on 2025-06-25"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000012",
+          "label": "Payment P/7 on 2026-02-14"
+        },
+        {
+          "kind": "voucher",
+          "id": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-00000022",
+          "label": "Payment P/19 on 2025-06-30"
+        }
+      ],
+      "title_sha256_16": "dccfbde6a838a41c",
+      "title_text": "Sum under s.43B for 'bonus' incurred in an earlier year, paid during this year: a clause 26(i)(A) candidate",
+      "limits_sha256_16": "7a78e3e4b904f2cd",
+      "limits_text": [
+        "FIFO order is an assumption about which specific bill or liability instalment a payment settled first -- the ledger itself does not say (the same assumption used for creditor ageing elsewhere in this pack); confirm against the challan/payment advice if the exact instalment paid matters.",
+        "Candidate only (GN 46.5): this is only a clause 26(i)(A)(a) amount if it was NOT already allowable in an earlier year -- that needs last year's own income-tax return/Form 3CD, which this module does not have."
+      ],
+      "ask_client_sha256_16": "3845655c27753c69",
+      "ask_client_text": [
+        "Challan(s)/payment proof identifying which specific prior-year dues these payments settled, to confirm the FIFO attribution.",
+        "Last year's income-tax return/Form 3CD, to confirm this amount was not already allowable in an earlier year."
+      ]
+    },
+    {
+      "id": "statutory_dues_43b/opening_unpaid/other_statutory",
+      "clauses": [
+        "s.43B",
+        "3CD-26(i)(A)(b)"
+      ],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "opening_liability",
+          "figure_id": "statutory_dues_43b.opening_liability_other_statutory"
+        },
+        {
+          "name": "opening_unpaid",
+          "figure_id": "statutory_dues_43b.opening_s43b_still_unpaid_other_statutory"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Harbour Mill Supplies",
+          "label": ""
+        }
+      ],
+      "title_sha256_16": "65d6e9475a45540d",
+      "title_text": "Sum under s.43B for 'other statutory' incurred in an earlier year, still unpaid at this year end: a clause 26(i)(A) candidate",
+      "limits_sha256_16": "6a4faba405ce1cb3",
+      "limits_text": [
+        "Candidate only (GN 46.5): this is only a clause 26(i)(A)(b) amount if it was NOT already allowable in an earlier year -- that needs last year's own income-tax return/Form 3CD, which this module does not have, so this is NOT a settled COMPUTED figure. If and when it is paid, it is allowed only in the year of actual payment (GN 46.4-46.5: no return-due-date relief for a pre-existing liability); it carries forward as next year's own opening balance either way."
+      ],
+      "ask_client_sha256_16": "65b4256fa8e918ee",
+      "ask_client_text": [
+        "Last year's income-tax return/Form 3CD, to confirm whether this amount was already allowable in an earlier year."
+      ]
+    },
+    {
+      "id": "statutory_dues_43b/unpaid/bonus",
+      "clauses": [
+        "s.43B",
+        "3CD-26(i)(B)"
+      ],
+      "confidence": "needs_document",
+      "facts": [
+        {
+          "name": "charged",
+          "figure_id": "statutory_dues_43b.charged_bonus"
+        },
+        {
+          "name": "closing_liability",
+          "figure_id": "statutory_dues_43b.this_year_closing_liability_bonus"
+        },
+        {
+          "name": "opening_liability",
+          "figure_id": "statutory_dues_43b.opening_liability_bonus"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Tidewater Fasteners",
+          "label": ""
+        }
+      ],
+      "title_sha256_16": "b655687b3abe9c47",
+      "title_text": "Closing balance under s.43B for bonus, incurred this year, as recorded in the books",
+      "limits_sha256_16": "cb07a6bbab4d5281",
+      "limits_text": [
+        "Allowability under s.43B turns on payment on or before the return due date under s.139(1) (rules.due_dates.return_audit_case = 2026-10-31, status=partial); a challan or payment proof dated after 31 March is needed and is not in this book. (s.43B and its proviso (payment on or before the s.139(1) return due date); Explanation 5 (employees' contributions are governed by s.36(1)(va), not this proviso), status=confirm)",
+        "Clause 26(i)(B) splits (a) paid on or before the s.139(1) due date from (b) not so paid; this closing balance alone cannot be placed in either without post-year payment evidence (a challan or bank statement dated after 31 March), so this finding stays tagged the bare 26(i)(B), not (a) or (b)."
+      ],
+      "ask_client_sha256_16": "0c8004ee66175df0",
+      "ask_client_text": [
+        "Challan(s) or payment proof for 'bonus' dated after 31 March, on or before the s.139(1) return due date."
+      ]
+    }
+  ],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-0",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3",
+    "POP-5"
+  ],
+  "book_invariant_violations": [
+    {
+      "invariant": "MAP-1",
+      "subject": "Unmapped Holding",
+      "detail": "chain incomplete: Legacy Holding"
+    },
+    {
+      "invariant": "POP-1",
+      "subject": "Electricity",
+      "detail": "vouchers 365050 vs TB movement 365550 paise"
+    },
+    {
+      "invariant": "POP-2",
+      "subject": "6f1c2a3e-8b4d-4c5e-9a7f-0d1e2f3a4b5c-0000000c",
+      "detail": "Journal J/1 2025-09-28 lines sum 200"
+    },
+    {
+      "invariant": "POP-3",
+      "subject": "closing_paise",
+      "detail": "TB closing_paise sums to 700 paise"
+    }
+  ],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [],
+  "module_invariants_evaluated": [
+    "statutory_dues_43b.check_invariants"
+  ],
+  "module_invariant_violations": []
+}

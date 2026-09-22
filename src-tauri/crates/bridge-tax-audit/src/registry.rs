@@ -54,6 +54,11 @@ pub const PORTED: &[PortedTest] = &[
         run_on: |e, b, r, _| crate::cash_payments_40a3_on(e, b, r),
     },
     PortedTest {
+        id: "creditor_ageing_43bh",
+        min_figures: 12,
+        run_on: |e, b, r, _| crate::creditor_ageing_43bh_on(e, b, r),
+    },
+    PortedTest {
         id: "depreciation",
         min_figures: 2,
         run_on: |e, b, r, _| crate::depreciation_on(e, b, r),
@@ -72,6 +77,11 @@ pub const PORTED: &[PortedTest] = &[
         id: "stale_balances_41_1",
         min_figures: 1,
         run_on: |e, b, r, _| crate::stale_balances_41_1_on(e, b, r),
+    },
+    PortedTest {
+        id: "statutory_dues_43b",
+        min_figures: 4,
+        run_on: |e, b, r, _| crate::statutory_dues_43b_on(e, b, r),
     },
     PortedTest {
         id: "tds_payees",
