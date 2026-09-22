@@ -515,7 +515,8 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
         lbinder.bind_list(&engagement.round_off_ledgers, "roles.round_off_ledgers")?;
 
     // `[tds_tcs_26as]` binds its three ledger lists and its alias VALUES (the keys are TANs), in
-    // the reference's order within the table; before `[loans]`, as in `LEDGER_PATHS`.
+    // the reference's key order within the table (each list sorted, as a set, not in config
+    // order); before `[loans]`, as in `LEDGER_PATHS`.
     let mut tds_tcs_26as = engagement.tds_tcs_26as.clone();
     if let Some(t) = tds_tcs_26as.as_mut() {
         for (set, location) in [
@@ -1200,18 +1201,39 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n")
         };
+        // A missing key reads the engagement (other tests run, as in the reference) and refuses
+        // only the 26AS tests, naming the first key missing in the reference's order.
+        for (key, extra) in [
+            ("tds_ledgers", without("tds_ledgers")),
+            ("tcs_ledgers", without("tcs_ledgers")),
+            ("advance_tax_ledgers", without("advance_tax_ledgers")),
+            (
+                "deductor_aliases",
+                "\n[tds_tcs_26as]\ntds_ledgers = []\ntcs_ledgers = []\nadvance_tax_ledgers = []\n"
+                    .to_string(),
+            ),
+            (
+                "tds_ledgers",
+                "\n[tds_tcs_26as]\ntcs_ledgers = []\n".to_string(),
+            ),
+        ] {
+            let e = engagement(&extra);
+            assert!(e.tds_tcs_26as.is_some(), "{extra}");
+            let err = crate::tds_26as_config(&e, "tds_tcs_26as").unwrap_err();
+            assert_eq!(
+                format!("{err}"),
+                format!(
+                    "config: tds_tcs_26as needs [tds_tcs_26as].{key}: the client config does not \
+set it"
+                ),
+                "{extra}"
+            );
+        }
+        assert!(crate::tds_26as_config(&engagement(T26_TABLE), "tds_tcs_26as").is_ok());
         for (extra, needle) in [
             (
-                without("tds_ledgers"),
+                T26_TABLE.replace("tds_ledgers = [\"TDS Receivable\"]", "tds_ledgers = \"x\""),
                 "[tds_tcs_26as].tds_ledgers is not a list",
-            ),
-            (
-                without("tcs_ledgers"),
-                "[tds_tcs_26as].tcs_ledgers is not a list",
-            ),
-            (
-                without("advance_tax_ledgers"),
-                "[tds_tcs_26as].advance_tax_ledgers is not a list",
             ),
             (
                 T26_TABLE.replace("tds_ledgers = [\"TDS Receivable\"]", "tds_ledgers = [1]"),
@@ -1222,7 +1244,8 @@ mod tests {
                 "[tds_tcs_26as].deductor_aliases.TAN-EDGE-A is not a string",
             ),
             (
-                "\n[tds_tcs_26as]\ntds_ledgers = []\ntcs_ledgers = []\nadvance_tax_ledgers = []\n"
+                "\n[tds_tcs_26as]\ntds_ledgers = []\ntcs_ledgers = []\nadvance_tax_ledgers = []\n\
+deductor_aliases = 5\n"
                     .to_string(),
                 "[tds_tcs_26as].deductor_aliases is not a table",
             ),

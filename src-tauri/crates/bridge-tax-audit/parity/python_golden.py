@@ -171,7 +171,9 @@ def _traces_documents(c):
     """The Form 26AS/AIS/TIS rows both 26AS tests take as caller data: from --traces-documents
     (the JSON --emit-traces-documents writes, or an invented fixture), from the reference's own
     adapters with --emit-traces-documents (as tae/pack.py loads them; the written file holds client
-    data and stays on the machine that read it), or none. Cached on the context."""
+    data and stays on the machine that read it). One of the two is required: the reference's pack
+    refuses without a Form 26AS, and a run on no rows would compare two empty sides. Cached on the
+    context."""
     if getattr(c, "traces", None) is not None:
         return c.traces
     from tae.adapters.traces_documents import (AisRow, TisRow, load_ais_json, load_form26as_json,
@@ -181,6 +183,8 @@ def _traces_documents(c):
     a = c.args
     if a.traces_documents and a.emit_traces_documents:
         c.ap.error("--traces-documents and --emit-traces-documents are exclusive")
+    if not (a.traces_documents or a.emit_traces_documents):
+        c.ap.error(f"{a.test} needs --traces-documents or --emit-traces-documents")
     form26as, ais, tis = [], [], []
     if a.traces_documents:
         doc = json.loads(Path(a.traces_documents).read_text(encoding="utf-8"))

@@ -12,9 +12,10 @@
 //! * AIS/TIS figures stand beside the books, never matched. The PAN-view scope limit is stated on
 //!   every run.
 //!
-//! Divergences, each a refusal where the reference would go on:
-//! * a `[tds_tcs_26as]` value that is not a string ([`crate::Tds26asConfig`]);
-//! * a total that overflows i64 paise.
+//! Divergences:
+//! * a total that overflows i64 paise is refused where the reference would go on;
+//! * the three ledger lists bind as sets, so when more than one name fails to bind, the refusal
+//!   may name a different one first than the reference (which binds in config order).
 //!
 //! Refused as the reference raises: a figure id repeated by a hash collision or a repeated key (two
 //! TANs under one section for one party, a TIS category twice, one voucher GUID twice).

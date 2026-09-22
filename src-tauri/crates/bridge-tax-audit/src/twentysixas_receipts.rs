@@ -13,12 +13,14 @@
 //!
 //! Divergences: a total that overflows i64 paise is refused, where Python's integers are
 //! unbounded.
+//!
+//! Refused as the reference raises: a figure id repeated by a ledger-tag collision.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::book::{Book, Voucher};
 use crate::documents::Form26asRow;
-use crate::error::Result;
+use crate::error::{AuditError, Result};
 use crate::findings::{Confidence, EvidenceRef, Finding, TestResult, Unit, Value};
 use crate::ledger_ids::stable_ledger_tag;
 use crate::read::iso;
@@ -26,6 +28,24 @@ use crate::rules::Rules;
 use crate::support::{overflow, py_upper};
 
 pub const TEST_ID: &str = "twentysixas_receipts";
+
+/// Add a figure, refusing a repeated id as the reference's `fig` raises on one.
+fn fig(
+    r: &mut TestResult,
+    name: &str,
+    value: Value,
+    unit: Unit,
+    definition: &str,
+    evidence: Vec<EvidenceRef>,
+) -> Result<String> {
+    let id = format!("{TEST_ID}.{name}");
+    if r.figures.iter().any(|f| f.id == id) {
+        return Err(AuditError::Config(format!(
+            "{TEST_ID}: figure id {id} would repeat"
+        )));
+    }
+    Ok(r.fig(name, value, unit, definition, evidence))
+}
 pub const VERSION: &str = "1";
 
 const SUPPLY_SECTIONS: [&str; 8] = [
@@ -178,15 +198,17 @@ to a books ledger; books population (optional, cancelled and post-dated vouchers
                 out.push(led_ref.clone());
                 out
             };
-            let f26 = r.fig(
+            let f26 = fig(
+                &mut r,
                 &format!("{cls}_26as_amount_{h}"),
                 Value::Int(amt26),
                 Unit::Paise,
                 &format!("Form 26AS amount paid/credited by this party under section(s) {secs}."),
                 with_ledger(&ev26),
-            );
+            )?;
             let vev = voucher_refs(books_ev);
-            let fb = r.fig(
+            let fb = fig(
+                &mut r,
                 &format!("{cls}_books_amount_{h}"),
                 Value::Int(books_amt),
                 Unit::Paise,
@@ -196,17 +218,18 @@ to a books ledger; books population (optional, cancelled and post-dated vouchers
                     format!("Books: {what} this party in the year (Direct/Indirect Incomes lines).")
                 },
                 with_ledger(&vev),
-            );
+            )?;
             let diff = amt26
                 .checked_sub(books_amt)
                 .ok_or_else(|| overflow(TEST_ID))?;
-            let fd = r.fig(
+            let fd = fig(
+                &mut r,
                 &format!("{cls}_difference_{h}"),
                 Value::Int(diff),
                 Unit::Paise,
                 "Form 26AS amount less the books amount.",
                 vec![led_ref.clone()],
-            );
+            )?;
             if diff.checked_abs().ok_or_else(|| overflow(TEST_ID))? > TOL_PAISE {
                 let mut evidence = ev26.clone();
                 evidence.extend(vev.iter().cloned());
@@ -251,13 +274,14 @@ books."
         }
         let other = &groups[2];
         if !other.is_empty() {
-            r.fig(
+            fig(
+                &mut r,
                 &format!("other_sections_26as_amount_{h}"),
                 Value::Int(sum_paise(other.iter().map(|a| a.amount_paise))?),
                 Unit::Paise,
                 "Form 26AS amount under sections that are not a supply or interest (not compared).",
                 vec![led_ref.clone()],
-            );
+            )?;
         }
     }
     Ok(r)

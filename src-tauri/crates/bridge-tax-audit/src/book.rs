@@ -112,8 +112,10 @@ pub struct Voucher {
     /// NARRATION, Python-stripped as the reference's adapter reads it; empty when absent.
     pub narration: String,
     /// PARTYLEDGERNAME, Python-stripped as the reference's adapter reads it; empty when absent.
-    /// Tally names only the first party here, so, as the reference's model says, it is never used
-    /// to attribute a voucher's lines: counterparties come from ledger lines.
+    /// Tally names only the first party here, so the reference's model does not attribute a
+    /// voucher's lines by it in general: counterparties come from ledger lines. `tds_tcs_26as` is
+    /// the stated exception, as in the reference: it attributes a TDS/TCS claim and a
+    /// capitalisation fact to this party.
     pub party_field: String,
 }
 

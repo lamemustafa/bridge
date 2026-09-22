@@ -457,3 +457,26 @@ pub(crate) fn py_repr_str(s: &str) -> String {
     out.push(quote);
     out
 }
+
+#[cfg(test)]
+mod py_repr_str_tests {
+    /// Each expected value is CPython's own `repr()` of the input (3.13 and 3.14 agree). Only the
+    /// ASCII branches the stand-in claims are pinned; non-ASCII non-printables are the declared gap
+    /// above.
+    #[test]
+    fn the_ascii_branches_match_python_repr() {
+        for (input, python) in [
+            ("Customer A", "'Customer A'"),
+            ("it's", "\"it's\""),
+            ("say \"hi\"", "'say \"hi\"'"),
+            ("both ' and \"", "'both \\' and \"'"),
+            ("back\\slash", "'back\\\\slash'"),
+            ("tab\there", "'tab\\there'"),
+            ("line\nbreak\r", "'line\\nbreak\\r'"),
+            ("bell\u{7}del\u{7f}", "'bell\\x07del\\x7f'"),
+            ("Café Traders", "'Café Traders'"),
+        ] {
+            assert_eq!(super::py_repr_str(input), python, "{input:?}");
+        }
+    }
+}

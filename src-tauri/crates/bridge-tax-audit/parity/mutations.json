@@ -1010,9 +1010,65 @@
  {
   "id": "C2-35",
   "by": "author (Lane C)",
-  "what": "tds_tcs_26as parity floor raised above its synthetic count (lowering a floor is not observable)",
+  "what": "tds_tcs_26as parity floor lowered below the 30 figures it always emits",
   "file": "src/registry.rs",
-  "from": "        id: \"tds_tcs_26as\",\n        min_figures: 40,",
-  "to": "        id: \"tds_tcs_26as\",\n        min_figures: 41,"
+  "from": "        id: \"tds_tcs_26as\",\n        min_figures: 30,",
+  "to": "        id: \"tds_tcs_26as\",\n        min_figures: 29,"
+ },
+ {
+  "id": "C2-36",
+  "by": "author (Lane C)",
+  "what": "TR-1 sum against its own rows not checked",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "        if int(&fig.value) != Some(total) {",
+  "to": "        if false && int(&fig.value) != Some(total) {"
+ },
+ {
+  "id": "C2-37",
+  "by": "author (Lane C)",
+  "what": "TR-1 unresolved evidence not reported",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "                out.push(format!(\n                    \"TR-1: {fid} evidence {} does not resolve to a Form 26AS row\",",
+  "to": "                drop(format!(\n                    \"TR-1: {fid} evidence {} does not resolve to a Form 26AS row\","
+ },
+ {
+  "id": "C2-38",
+  "by": "author (Lane C)",
+  "what": "TR-3 a row claimed twice not reported",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "                if *prior != fid {",
+  "to": "                if *prior == fid {"
+ },
+ {
+  "id": "C2-39",
+  "by": "author (Lane C)",
+  "what": "TR-4 recomputed books amount not compared",
+  "file": "src/twentysixas_receipts.rs",
+  "from": "        if int(&fig.value) != Some(recomputed) {",
+  "to": "        if false && int(&fig.value) != Some(recomputed) {"
+ },
+ {
+  "id": "C2-40",
+  "by": "author (Lane C)",
+  "what": "TT-1 books-side partition not checked",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "        let got = matched + differs + only_books;",
+  "to": "        let got = claim_total;"
+ },
+ {
+  "id": "C2-41",
+  "by": "author (Lane C)",
+  "what": "TT-2 unclassified counts not checked",
+  "file": "src/tds_tcs_26as.rs",
+  "from": "            if f.value != Value::Int(0) {",
+  "to": "            if f.value == Value::Undefined {"
+ },
+ {
+  "id": "C2-42",
+  "by": "author (Lane C)",
+  "what": "a missing [tds_tcs_26as] key not refused",
+  "file": "src/lib.rs",
+  "from": "    if let Some(key) = bound.tds_tcs_26as_missing {",
+  "to": "    if let Some(key) = bound.tds_tcs_26as_missing.filter(|_| false) {"
  }
 ]

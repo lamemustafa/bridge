@@ -13,7 +13,7 @@
 //! `TURNOVER_INPUTS_JSON` feeds the GSTR-1/GSTR-3B/AIS comparison turnover as caller data -- the
 //! file `parity/python_golden.py --emit-turnover-inputs` wrote -- so both sides compare against the
 //! same numbers; without it neither side has a comparison source. For
-//! `tds_tcs_26as` and `twentysixas_receipts`, an optional seventh argument `TRACES_DOCUMENTS_JSON`
+//! `tds_tcs_26as` and `twentysixas_receipts`, a REQUIRED seventh argument `TRACES_DOCUMENTS_JSON`
 //! feeds the Form 26AS/AIS/TIS rows `parity/python_golden.py --emit-traces-documents` wrote from the
 //! reference's own adapters (client data: it stays on the machine that read it). For
 //! `financial_statements`, an optional seventh argument `REPORT_TOTALS_JSON` feeds Tally's own
@@ -197,6 +197,12 @@ fn main() -> ExitCode {
             "a seventh argument applies to financial_statements, applicability_44ab, tds_tcs_26as \
 or twentysixas_receipts only",
         );
+    }
+    if report_json.is_none() && ["tds_tcs_26as", "twentysixas_receipts"].contains(&test_id.as_str())
+    {
+        return fail(format!(
+            "{test_id} needs a seventh argument, the TRACES_DOCUMENTS_JSON the Python side read"
+        ));
     }
     let mut caller = CallerData::default();
     if let Some(path) = report_json {

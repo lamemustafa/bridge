@@ -109,10 +109,14 @@ pub struct Engagement {
     /// confirmation of s.44AD history, never inferred from the books); `None` when absent.
     pub presumptive_history: Option<toml::Table>,
     /// `tds_tcs_26as`/`twentysixas_receipts`-only: `[tds_tcs_26as]` ([`Tds26asConfig`]). `None`
-    /// when the client config carries no such table; once present, all four keys are REQUIRED, as
-    /// the reference's own `tds_tcs_26as_config` requires them. A malformed table refuses reading
-    /// the engagement, and so every test on it.
+    /// when the client config carries no such table. A value of the wrong type refuses reading the
+    /// engagement, and so every test on it, as the reference's `bind_config` refuses it
+    /// (`BIND-ID-MALFORMED`) whatever test runs. A MISSING key refuses only the two 26AS tests, as
+    /// the reference's own `tds_tcs_26as_config` does when one of them asks for it: the key reads
+    /// as empty here and `tds_tcs_26as_missing` names it.
     pub tds_tcs_26as: Option<Tds26asConfig>,
+    /// The first of `[tds_tcs_26as]`'s four keys (in the reference's order) the table lacks.
+    tds_tcs_26as_missing: Option<&'static str>,
     /// The parsed config, kept only so [`Engagement::bind`] can read `[ledger_ids]`/
     /// `[group_ids]` (`binding::bind`) without re-parsing the source text. Not part of this
     /// struct's public contract: a field a caller should read directly (`cash_groups` and the
@@ -134,8 +138,8 @@ pub struct DepreciationConfig {
 }
 
 /// `[tds_tcs_26as]` from the client config: see [`Engagement::tds_tcs_26as`] and the reference
-/// engine's `tds_tcs_26as_config`. Every value must be a string: the reference would take any
-/// value into its sets and map (a divergence, stated in `tds_tcs_26as`).
+/// engine's `tds_tcs_26as_config`. Every value must be a string, as the reference's `bind_config`
+/// requires of each ledger it binds.
 #[derive(Debug, Clone, Default)]
 pub struct Tds26asConfig {
     pub tds_ledgers: BTreeSet<String>,
@@ -349,6 +353,19 @@ not YYYY-MM-DD"
                 })
             })
             .transpose()?;
+        let tds_tcs_26as_missing = cfg
+            .get("tds_tcs_26as")
+            .and_then(toml::Value::as_table)
+            .and_then(|t| {
+                [
+                    "tds_ledgers",
+                    "tcs_ledgers",
+                    "deductor_aliases",
+                    "advance_tax_ledgers",
+                ]
+                .into_iter()
+                .find(|key| !t.contains_key(*key))
+            });
         let tds_tcs_26as = cfg
             .get("tds_tcs_26as")
             .map(|t| -> Result<Tds26asConfig> {
@@ -356,8 +373,10 @@ not YYYY-MM-DD"
                     AuditError::Config("[tds_tcs_26as] is not a table".to_string())
                 })?;
                 let set = |key: &str| -> Result<BTreeSet<String>> {
-                    t.get(key)
-                        .and_then(toml::Value::as_array)
+                    let Some(v) = t.get(key) else {
+                        return Ok(BTreeSet::new());
+                    };
+                    v.as_array()
                         .ok_or_else(|| {
                             AuditError::Config(format!("[tds_tcs_26as].{key} is not a list"))
                         })?
@@ -371,9 +390,10 @@ not YYYY-MM-DD"
                         })
                         .collect()
                 };
+                let no_aliases = toml::Table::new();
                 let deductor_aliases = t
                     .get("deductor_aliases")
-                    .and_then(toml::Value::as_table)
+                    .map_or(Some(&no_aliases), toml::Value::as_table)
                     .ok_or_else(|| {
                         AuditError::Config(
                             "[tds_tcs_26as].deductor_aliases is not a table".to_string(),
@@ -453,6 +473,7 @@ not YYYY-MM-DD"
             depreciation,
             partner_interest_ledgers,
             tds_tcs_26as,
+            tds_tcs_26as_missing,
             entity_type: client
                 .get("entity_type")
                 .map(|v| {
@@ -763,8 +784,13 @@ pub fn applicability_44ab_on(
 }
 
 /// The `[tds_tcs_26as]` table both 26AS tests read, or the refusal the reference's own
-/// `tds_tcs_26as_config` raises without it.
+/// `tds_tcs_26as_config` raises without it or without one of its keys.
 fn tds_26as_config<'a>(bound: &'a Engagement, test: &str) -> Result<&'a Tds26asConfig> {
+    if let Some(key) = bound.tds_tcs_26as_missing {
+        return Err(AuditError::Config(format!(
+            "{test} needs [tds_tcs_26as].{key}: the client config does not set it"
+        )));
+    }
     bound
         .tds_tcs_26as
         .as_ref()
