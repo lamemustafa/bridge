@@ -19,8 +19,11 @@ clients (counts only):
 
 ## Reference commit
 
-Every golden here was written by the reference implementation at `57f2619b`, the same commit as
-batch 1's goldens, under `uv run --python 3.13`. The four reference modules these tests read
+Every golden here was written by the reference implementation at `105b6c37` (after the engine
+re-sync, #597), under `uv run --python 3.13`. They were first written at `57f2619b`; regenerating at
+`105b6c37` added `"POP-5"` to `book_invariants_evaluated` in all nine, and a POP-5 violation in the
+two edge books that deliberately share a voucher GUID (`creditor_ageing_short`,
+`statutory_dues_more`). Nothing else changed. The four reference modules these tests read
 (`creditor_ageing_43bh`, `statutory_dues_43b`, and the `config` and `binding` loaders they use)
 are unchanged between that commit and the engine branch's current tip.
 
@@ -82,19 +85,19 @@ uv run -q --python 3.13 --with openpyxl --with xlrd --with python-docx --with js
 
 | Fixture | Bytes | SHA-256 | Path |
 | --- | ---: | --- | --- |
-| `synthetic.creditor_ageing_43bh.json` | 41,671 | `03c3d982caa0418f72950ece3900c86c8646865c5f8f77493df4a6faffa8c981` | `golden/synthetic.creditor_ageing_43bh.json` |
-| `synthetic.statutory_dues_43b.json` | 19,485 | `c4f8c0cbbfe4e0ecc6d872bf6fb868b72a57e6377438217a621761edfe83f4c0` | `golden/synthetic.statutory_dues_43b.json` |
+| `synthetic.creditor_ageing_43bh.json` | 41,684 | `bc136de44d4d9d1f1e7863d48faa947f4a256068d3c8a46f73e06ae300ecba22` | `golden/synthetic.creditor_ageing_43bh.json` |
+| `synthetic.statutory_dues_43b.json` | 19,498 | `982c8798ffc3c09bea95392d3042b8ea165abe4a156619d5bafaafb62bf5ae5d` | `golden/synthetic.statutory_dues_43b.json` |
 | `creditor_ageing.json` | 11,878 | `44d4f8f8765095f1dcf25d3400eea68291dee2c90327c266c92a9b7eb2bfdd5a` | `edge-books/creditor_ageing.json` |
 | `creditor_ageing_plain.json` | 1,931 | `84d0c85bfccdbab58615e01da082267aaf260669c277a85449e383fe62a87aad` | `edge-books/creditor_ageing_plain.json` |
 | `statutory_dues.json` | 7,666 | `82911e6f7b84c2b2fedb49aa90f31792e228ab5d51930984308d721c5ad3f316` | `edge-books/statutory_dues.json` |
 | `statutory_dues_calendar.json` | 2,716 | `99fa812846c3acfb63d7e36e2d3f50ff52bcebe50d34e15dc3cbd5e211e6c47d` | `edge-books/statutory_dues_calendar.json` |
 | `statutory_dues_coverage.json` | 1,088 | `71ae90b48e4ffbf5872009ab6f35508aa647f7e2e8fe3edb695fe0f054f894c0` | `edge-books/statutory_dues_coverage.json` |
-| `edge.creditor_ageing.creditor_ageing_43bh.json` | 67,379 | `3fc38ac84e8ac0eb761253f2440cae486b10d2a75b7ef0883684369d996adf2c` | `golden/edge.creditor_ageing.creditor_ageing_43bh.json` |
-| `edge.creditor_ageing_plain.creditor_ageing_43bh.json` | 17,842 | `8ad24d8469e746196ec5e8976dffb338d1ef95538e8c95cf2f5f2bb88db93ab3` | `golden/edge.creditor_ageing_plain.creditor_ageing_43bh.json` |
-| `edge.statutory_dues.statutory_dues_43b.json` | 63,398 | `f0caffd8e4ed10b8ac370dcafc4be4d0e966745afe2fc67fe27cd9edd0a8f3b4` | `golden/edge.statutory_dues.statutory_dues_43b.json` |
-| `edge.statutory_dues_calendar.statutory_dues_43b.json` | 20,019 | `0333484a6172bf07a833e173a753a1d2b1dde569aeb3817b0fedeccd8b630cdf` | `golden/edge.statutory_dues_calendar.statutory_dues_43b.json` |
-| `edge.statutory_dues_coverage.statutory_dues_43b.json` | 4,517 | `f03a64cd832f55239eaba7ee24c40077c59ddf59d268e49ba7f056b41977bd46` | `golden/edge.statutory_dues_coverage.statutory_dues_43b.json` |
+| `edge.creditor_ageing.creditor_ageing_43bh.json` | 67,392 | `d89955293ef55f38835c5d77c40a172ea4b5874ea87a016305909e7937f5937c` | `golden/edge.creditor_ageing.creditor_ageing_43bh.json` |
+| `edge.creditor_ageing_plain.creditor_ageing_43bh.json` | 17,855 | `12eb33ca1310d7dd3dcfd167865dfadd994b09ebdaff79530a50aedb22b5f326` | `golden/edge.creditor_ageing_plain.creditor_ageing_43bh.json` |
+| `edge.statutory_dues.statutory_dues_43b.json` | 63,411 | `c984bc0d7e77f64922fee6c98e91dc501b49af0aff061431425ff5edc46a7073` | `golden/edge.statutory_dues.statutory_dues_43b.json` |
+| `edge.statutory_dues_calendar.statutory_dues_43b.json` | 20,032 | `477bfc8b2a36eb8508c7ee12ba7546e516f588661092346f089c28b8e4e96698` | `golden/edge.statutory_dues_calendar.statutory_dues_43b.json` |
+| `edge.statutory_dues_coverage.statutory_dues_43b.json` | 4,530 | `82c15550b563f282091f39ce2aaa48f16fb86bb8cfff813741e641613a8c0e4f` | `golden/edge.statutory_dues_coverage.statutory_dues_43b.json` |
 | `creditor_ageing_short.json` | 1,776 | `439f508c4d09ea3147b991f31293ee566b8e109e3a6178f3830ad48ba9deb902` | `edge-books/creditor_ageing_short.json` |
-| `edge.creditor_ageing_short.creditor_ageing_43bh.json` | 20,756 | `4c33ad9c1ce8c898c8d8304c4c6523b78aaccca8a4bd8f26b3667245a86ce2d9` | `golden/edge.creditor_ageing_short.creditor_ageing_43bh.json` |
+| `edge.creditor_ageing_short.creditor_ageing_43bh.json` | 20,896 | `417520ad35135cb2fe40c829422a65daa93067cab8a851d4de2389968cf4687f` | `golden/edge.creditor_ageing_short.creditor_ageing_43bh.json` |
 | `statutory_dues_more.json` | 2,660 | `f8b70c074525f01ee9f21d050a4df3312403e88dd3db07687d822c2785555f47` | `edge-books/statutory_dues_more.json` |
-| `edge.statutory_dues_more.statutory_dues_43b.json` | 13,790 | `8cf24d5799969c8358fc84dcb17a1f6a4f064a1ffd3d88f50acd6264f8d1c40d` | `golden/edge.statutory_dues_more.statutory_dues_43b.json` |
+| `edge.statutory_dues_more.statutory_dues_43b.json` | 13,931 | `15e5fb6842c5f34cd6127366a0caebd3657605d5881fa28e4e818e2080a0f16d` | `golden/edge.statutory_dues_more.statutory_dues_43b.json` |

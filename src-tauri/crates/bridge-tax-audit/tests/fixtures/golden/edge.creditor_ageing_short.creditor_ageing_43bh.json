@@ -376,7 +376,8 @@
     "POP-0",
     "POP-1",
     "POP-2",
-    "POP-3"
+    "POP-3",
+    "POP-5"
   ],
   "book_invariant_violations": [
     {
@@ -393,6 +394,11 @@
       "invariant": "POP-3",
       "subject": "opening_paise",
       "detail": "TB opening_paise sums to -1000 paise"
+    },
+    {
+      "invariant": "POP-5",
+      "subject": "edge-cc-dup",
+      "detail": "2 in-books vouchers share this GUID"
     }
   ],
   "result_invariants_evaluated": [
