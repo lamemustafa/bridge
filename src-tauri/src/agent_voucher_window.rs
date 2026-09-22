@@ -998,13 +998,56 @@ impl<'a> AuditWindowReader<'a> {
         }
     }
 
+    /// Read one window for a sealed record. The reader is consumed, so it can
+    /// serve neither a second window nor two windows at once, and the retained
+    /// reads come back only beside the outcome they belong to. The window
+    /// always reads its own marks ([`AUDIT_WINDOW_NEEDS_ITS_OWN_MARKS`]).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn read_window<T, P>(
+        self,
+        identity: &VerifiedCompanyIdentity,
+        company: &str,
+        from: &str,
+        to: &str,
+        shape: VoucherReadShape,
+        limits: WindowReadLimits,
+        parse: P,
+    ) -> AuditWindowRead<T>
+    where
+        T: WindowRow,
+        P: FnMut(&str) -> Result<Vec<T>, String>,
+    {
+        let outcome = read_voucher_window_with(
+            &self,
+            identity,
+            company,
+            from,
+            to,
+            shape,
+            WindowPlanSource::Estimate { known_marks: None },
+            limits,
+            parse,
+        )
+        .await;
+        let failure = outcome
+            .as_ref()
+            .err()
+            .map(|failure| audit_window_failure(failure, &self));
+        let retained = self.into_retained(&outcome);
+        AuditWindowRead {
+            outcome,
+            retained,
+            failure,
+        }
+    }
+
     /// Every read of the window, in the order sent, but only when `outcome`,
     /// the result of this reader's window read, succeeded. A read is retained
     /// when its response arrives, before the executor admits it, so a failed
     /// window can hold a refused part. Returning nothing on any failure is what
-    /// keeps part of a failed window from ever being sealed: the discard rule
-    /// is not left to the caller.
-    pub(super) fn into_retained<T>(
+    /// keeps part of a failed window from ever being sealed. Private: only
+    /// [`Self::read_window`] pairs it with its own window's outcome.
+    fn into_retained<T>(
         self,
         outcome: &Result<WindowReadOutcome<T>, ToolFailure>,
     ) -> Option<Vec<RetainedWindowRead>> {
@@ -1108,6 +1151,18 @@ impl WindowReader for AuditWindowReader<'_> {
     }
 }
 
+/// One audit window read: its outcome, and, only when that outcome succeeded,
+/// every read it made; on failure, why ([`AuditWindowReader::read_window`]).
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "read by the audit_read orchestrator, plan step 7")
+)]
+pub(super) struct AuditWindowRead<T> {
+    pub(super) outcome: Result<WindowReadOutcome<T>, ToolFailure>,
+    pub(super) retained: Option<Vec<RetainedWindowRead>>,
+    pub(super) failure: Option<AuditWindowFailure>,
+}
+
 /// Why an audit window read failed, typed for the audit_read orchestrator.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum AuditWindowFailure {
@@ -1146,11 +1201,7 @@ impl AuditWindowFailure {
 /// Classify a failed audit window read. A failed request is named by the
 /// reader's retained kind, since the window stops at the first one; otherwise
 /// the executor's own refusal code decides.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "read by the audit_read orchestrator, plan step 7")
-)]
-pub(super) fn audit_window_failure(
+fn audit_window_failure(
     failure: &ToolFailure,
     reader: &AuditWindowReader<'_>,
 ) -> AuditWindowFailure {
@@ -1498,9 +1549,11 @@ where
     }
     // Close the bracket on a divided read, whether it was planned divided,
     // divided after Tally could not serve a part, or replayed. One undivided
-    // request is one observation, exactly as before the bound.
+    // request is one observation, exactly as before the bound, except for a
+    // reader that seals its reads: its record states the marks it read, so an
+    // undivided window must also show they did not move.
     let mut closing = None;
-    if let (true, Some(opened)) = (is_divided(&reads), opening) {
+    if let (true, Some(opened)) = (is_divided(&reads) || reader.seals_its_reads(), opening) {
         let closed = read_marks(reader, identity, company, &mut closing, &mut boundary)
             .await
             .map_err(|failure| with_prior_closed(failure, &preflight, &evidence, &closing))?;
@@ -1587,6 +1640,14 @@ async fn estimate_window_volume<R: WindowReader>(
     .await?;
     let census = WindowCensus::from_census_rows(rows)
         .ok_or_else(|| ToolFailure::from(VOLUME_UNESTIMATED.to_string()))?;
+    // A sealed record admits its data against the census it seals beside it,
+    // even when the whole window would fit one request.
+    if reader.seals_its_reads() {
+        return Ok(Preflight::Counted {
+            census,
+            marks: Some(marks),
+        });
+    }
     Ok(whole_or_counted(census, Some(marks), limits))
 }
 
