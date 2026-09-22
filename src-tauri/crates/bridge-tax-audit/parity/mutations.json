@@ -1114,10 +1114,10 @@
  {
   "id": "Q04",
   "by": "author",
-  "what": "U+007F kept",
+  "what": "U+001F kept (the control bound one short)",
   "file": "src/support.rs",
   "from": "            _ if cp < 0x20 || cp == 0x7f => {",
-  "to": "            _ if cp < 0x20 => {"
+  "to": "            _ if cp < 0x1f || cp == 0x7f => {"
  },
  {
   "id": "Q05",
@@ -1130,10 +1130,10 @@
  {
   "id": "Q06",
   "by": "author",
-  "what": "U+00FF escaped as \\u00ff",
+  "what": "U+00A0..U+00FF escaped as \\u00hh (the \\x bound cut at U+009F)",
   "file": "src/support.rs",
   "from": "            _ if cp <= 0xff => {",
-  "to": "            _ if cp < 0xff => {"
+  "to": "            _ if cp <= 0x9f => {"
  },
  {
   "id": "Q07",
