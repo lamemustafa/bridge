@@ -766,5 +766,325 @@
   "file": "src/invariants.rs",
   "from": "            \"ID-1\", \"POP-0\", \"POP-1\", \"POP-2\", \"POP-3\", \"POP-5\", \"MAP-0\", \"MAP-1\",\n        ],",
   "to": "            \"ID-1\", \"POP-0\", \"POP-1\", \"POP-2\", \"POP-3\", \"MAP-0\", \"MAP-1\",\n        ],"
+ },
+ {
+  "id": "C1-01",
+  "by": "author (Lane C)",
+  "what": "Contra not skipped",
+  "file": "src/tds_payees.rs",
+  "from": "if v.base_type == \"Contra\" {",
+  "to": "if v.base_type == \"Contra-never\" {"
+ },
+ {
+  "id": "C1-02",
+  "by": "author (Lane C)",
+  "what": "an empty nature maps the ledger",
+  "file": "src/tds_payees.rs",
+  "from": ".filter(|n| !n.is_empty())",
+  "to": ".filter(|_| true)"
+ },
+ {
+  "id": "C1-03",
+  "by": "author (Lane C)",
+  "what": "a Sales Accounts line is not a goods invoice",
+  "file": "src/tds_payees.rs",
+  "from": "&[PURCHASE_ACCOUNTS_GROUP, SALES_ACCOUNTS_GROUP],",
+  "to": "&[PURCHASE_ACCOUNTS_GROUP],"
+ },
+ {
+  "id": "C1-04",
+  "by": "author (Lane C)",
+  "what": "goods bucket takes the absolute amount",
+  "file": "src/tds_payees.rs",
+  "from": ".push(l.amount_paise);",
+  "to": ".push(l.amount_paise.abs());"
+ },
+ {
+  "id": "C1-05",
+  "by": "author (Lane C)",
+  "what": "goods bucket only for the first nature",
+  "file": "src/tds_payees.rs",
+  "from": "for (key, amounts) in &expense_lines {",
+  "to": "for (key, amounts) in expense_lines.iter().take(1) {"
+ },
+ {
+  "id": "C1-06",
+  "by": "author (Lane C)",
+  "what": "a debit line is a payee",
+  "file": "src/tds_payees.rs",
+  "from": "                l.amount_paise < 0\n",
+  "to": "                l.amount_paise != 0\n"
+ },
+ {
+  "id": "C1-07",
+  "by": "author (Lane C)",
+  "what": "a mapped expense ledger's credit is a payee",
+  "file": "src/tds_payees.rs",
+  "from": "                    && !expense_ledgers_here.contains(l.ledger.as_str())\n",
+  "to": ""
+ },
+ {
+  "id": "C1-08",
+  "by": "author (Lane C)",
+  "what": "a Duties & Taxes credit is a payee",
+  "file": "src/tds_payees.rs",
+  "from": "                    && !under_any(book, &l.ledger, &[DUTIES_TAXES_GROUP])\n",
+  "to": ""
+ },
+ {
+  "id": "C1-09",
+  "by": "author (Lane C)",
+  "what": "multi-nature credit attributed to the first nature only",
+  "file": "src/tds_payees.rs",
+  "from": "for key in expense_lines.keys() {",
+  "to": "for key in expense_lines.keys().take(1) {"
+ },
+ {
+  "id": "C1-10",
+  "by": "author (Lane C)",
+  "what": "a cash credit is a named payee",
+  "file": "src/tds_payees.rs",
+  "from": "&[CASH_GROUP, BANK_GROUPS[0], BANK_GROUPS[1]],",
+  "to": "&[BANK_GROUPS[0], BANK_GROUPS[1]],"
+ },
+ {
+  "id": "C1-11",
+  "by": "author (Lane C)",
+  "what": "an overdraft credit is a named payee",
+  "file": "src/tds_payees.rs",
+  "from": "&[CASH_GROUP, BANK_GROUPS[0], BANK_GROUPS[1]],",
+  "to": "&[CASH_GROUP, BANK_GROUPS[0]],"
+ },
+ {
+  "id": "C1-12",
+  "by": "author (Lane C)",
+  "what": "payee_aliases ignored",
+  "file": "src/tds_payees.rs",
+  "from": "                        .get(&l.ledger)\n",
+  "to": "                        .get(\"\")\n"
+ },
+ {
+  "id": "C1-13",
+  "by": "author (Lane C)",
+  "what": "one voucher's credits not summed (last line wins)",
+  "file": "src/tds_payees.rs",
+  "from": "*slot = slot.checked_add(amount).ok_or_else(|| overflow(TEST_ID))?;",
+  "to": "*slot = amount;"
+ },
+ {
+  "id": "C1-14",
+  "by": "author (Lane C)",
+  "what": "max single is the aggregate",
+  "file": "src/tds_payees.rs",
+  "from": "let max_single = row.by_voucher.values().copied().max().unwrap_or(0);",
+  "to": "let max_single = credited;"
+ },
+ {
+  "id": "C1-15",
+  "by": "author (Lane C)",
+  "what": "months keyed by year",
+  "file": "src/tds_payees.rs",
+  "from": "format!(\"{}-{}\", &s[0..4], &s[4..6])",
+  "to": "format!(\"{}-01\", &s[0..4])"
+ },
+ {
+  "id": "C1-16",
+  "by": "author (Lane C)",
+  "what": "194C aggregate at the limit trips",
+  "file": "src/tds_payees.rs",
+  "from": "s.credited > s194c.aggregate_paise ||",
+  "to": "s.credited >= s194c.aggregate_paise ||"
+ },
+ {
+  "id": "C1-17",
+  "by": "author (Lane C)",
+  "what": "194C single sum at the limit trips",
+  "file": "src/tds_payees.rs",
+  "from": "|| s.max_single > s194c.single_sum_paise",
+  "to": "|| s.max_single >= s194c.single_sum_paise"
+ },
+ {
+  "id": "C1-18",
+  "by": "author (Lane C)",
+  "what": "194-I month at the limit trips",
+  "file": "src/tds_payees.rs",
+  "from": ".is_some_and(|m| *m > per_month_limit)",
+  "to": ".is_some_and(|m| *m >= per_month_limit)"
+ },
+ {
+  "id": "C1-19",
+  "by": "author (Lane C)",
+  "what": "194-I tests the year, not the month",
+  "file": "src/tds_payees.rs",
+  "from": "                    s.months\n                        .values()\n                        .max()\n                        .is_some_and(|m| *m > per_month_limit)",
+  "to": "                    s.credited > per_month_limit"
+ },
+ {
+  "id": "C1-20",
+  "by": "author (Lane C)",
+  "what": "194J at the limit trips",
+  "file": "src/tds_payees.rs",
+  "from": "s.credited > s194j_limit",
+  "to": "s.credited >= s194j_limit"
+ },
+ {
+  "id": "C1-21",
+  "by": "author (Lane C)",
+  "what": "unmapped 194J is threshold-tested",
+  "file": "src/tds_payees.rs",
+  "from": "                    s.credited > 0\n",
+  "to": "                    s.credited > s194j_limit\n"
+ },
+ {
+  "id": "C1-22",
+  "by": "author (Lane C)",
+  "what": "an unrecognised 194J category is used as written",
+  "file": "src/tds_payees.rs",
+  "from": "Some(Some(cat)) if CATEGORIES_194J.contains(&cat.as_str()) => cat.clone(),",
+  "to": "Some(Some(cat)) => cat.clone(),"
+ },
+ {
+  "id": "C1-23",
+  "by": "author (Lane C)",
+  "what": "the default-limit text is never added",
+  "file": "src/tds_payees.rs",
+  "from": "if nature == \"194J\" && !is_unmapped_194j && s194j_is_default {",
+  "to": "if false {"
+ },
+ {
+  "id": "C1-24",
+  "by": "author (Lane C)",
+  "what": "turnover at the threshold makes a deductor",
+  "file": "src/tds_payees.rs",
+  "from": "Some(t) if t > threshold => \"deductor\",",
+  "to": "Some(t) if t >= threshold => \"deductor\","
+ },
+ {
+  "id": "C1-25",
+  "by": "author (Lane C)",
+  "what": "entity type matched ignoring case",
+  "file": "src/tds_payees.rs",
+  "from": "if entity_type == \"individual\" || entity_type == \"huf\" {",
+  "to": "if entity_type.eq_ignore_ascii_case(\"individual\") || entity_type == \"huf\" {"
+ },
+ {
+  "id": "C1-26",
+  "by": "author (Lane C)",
+  "what": "a HUF is always a deductor",
+  "file": "src/tds_payees.rs",
+  "from": "if entity_type == \"individual\" || entity_type == \"huf\" {",
+  "to": "if entity_type == \"individual\" {"
+ },
+ {
+  "id": "C1-27",
+  "by": "author (Lane C)",
+  "what": "TDS ledgers matched case-sensitively",
+  "file": "src/tds_payees.rs",
+  "from": "py_lower(name).contains(\"tds\")",
+  "to": "name.contains(\"tds\")"
+ },
+ {
+  "id": "C1-28",
+  "by": "author (Lane C)",
+  "what": "TDS ledgers counted outside Duties & Taxes",
+  "file": "src/tds_payees.rs",
+  "from": "l.under(DUTIES_TAXES_GROUP) && py_lower(name)",
+  "to": "py_lower(name)"
+ },
+ {
+  "id": "C1-29",
+  "by": "author (Lane C)",
+  "what": "unmapped category uses the credited fact key",
+  "file": "src/tds_payees.rs",
+  "from": "\"unmapped_category_credited\"",
+  "to": "\"credited\""
+ },
+ {
+  "id": "C1-30",
+  "by": "author (Lane C)",
+  "what": "unmapped finding is needs_document",
+  "file": "src/tds_payees.rs",
+  "from": "                    Confidence::JudgementRequired\n                } else {\n                    Confidence::NeedsDocument",
+  "to": "                    Confidence::NeedsDocument\n                } else {\n                    Confidence::NeedsDocument"
+ },
+ {
+  "id": "C1-31",
+  "by": "author (Lane C)",
+  "what": "row id hashed without its prefix",
+  "file": "src/tds_payees.rs",
+  "from": "let h = hash8(&format!(\"{prefix}:{}\", stable_ledger_tag(book, entity)?));",
+  "to": "let h = hash8(&stable_ledger_tag(book, entity)?);"
+ },
+ {
+  "id": "C1-32",
+  "by": "author (Lane C)",
+  "what": ":g scientific notation from 1e7",
+  "file": "src/tds_payees.rs",
+  "from": "if (-4..6).contains(&exponent) {",
+  "to": "if (-4..7).contains(&exponent) {"
+ },
+ {
+  "id": "C1-33",
+  "by": "author (Lane C)",
+  "what": "[tds] turnover dropped",
+  "file": "src/lib.rs",
+  "from": "                    previous_year_turnover_paise,\n",
+  "to": "                    previous_year_turnover_paise: None,\n"
+ },
+ {
+  "id": "C1-34",
+  "by": "author (Lane C)",
+  "what": "payee_aliases keys not bound",
+  "file": "src/binding.rs",
+  "from": "        t.payee_aliases = lbinder.rebind_map(&t.payee_aliases, \"tds.payee_aliases\")?;\n",
+  "to": ""
+ },
+ {
+  "id": "C1-35",
+  "by": "author (Lane C)",
+  "what": "[s194j] never read",
+  "file": "src/rules.rs",
+  "from": "            s194j_aggregate_paise: optional(\"s194j\")",
+  "to": "            s194j_aggregate_paise: optional(\"s194j-absent\")"
+ },
+ {
+  "id": "C1-36",
+  "by": "author (Lane C)",
+  "what": "tds_payees parity floor raised above the synthetic dump's 30 figures (proves the registry enforces the floor; lowering it is not observable by design, a floor only refuses)",
+  "file": "src/registry.rs",
+  "from": "        id: \"tds_payees\",\n        min_figures: 30,",
+  "to": "        id: \"tds_payees\",\n        min_figures: 31,"
+ },
+ {
+  "id": "C1-37",
+  "by": "author (Lane C)",
+  "what": "payee_aliases bound but the old keys kept",
+  "file": "src/binding.rs",
+  "from": "        t.payee_aliases = lbinder.rebind_map(&t.payee_aliases, \"tds.payee_aliases\")?;",
+  "to": "        let _ = lbinder.rebind_map(&t.payee_aliases, \"tds.payee_aliases\")?;"
+ },
+ {
+  "id": "C1-38",
+  "by": "author (Lane C)",
+  "what": "194J categories bound but the old keys kept",
+  "file": "src/binding.rs",
+  "from": "        t.s194j_category_by_ledger = lbinder.rebind_map(",
+  "to": "        let _ = lbinder.rebind_map("
+ },
+ {
+  "id": "C1-39",
+  "by": "author (Lane C)",
+  "what": "duplicate figure id not refused",
+  "file": "src/tds_payees.rs",
+  "from": "            if r.figures.iter().any(|f| f.id == row_figure) {",
+  "to": "            if false {"
+ },
+ {
+  "id": "C1-40",
+  "by": "author (Lane C)",
+  "what": "[tds_payees] never read",
+  "file": "src/lib.rs",
+  "from": "                    .get(\"tds_payees\")\n",
+  "to": "                    .get(\"tds_payees-absent\")\n"
  }
 ]

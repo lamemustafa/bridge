@@ -24,7 +24,9 @@ parent or null}), `ledgers` ([{name, chain, guid}]), `tb` ([{ledger, opening, de
 closing}]), `vouchers` ([{guid, date, base_type, vtype?, number?, status?, narration?, lines:
 [[ledger, paise], ...]}]; `number` defaults to the GUID, so pass `""` to test a voucher with no
 number), `cash`, `bank`, `own_account_terms`, `rules_without` (top-level rules tables to drop, e.g.
-["ledger_scrutiny"]; the Rust side must map each one, see `tests/edge_books.rs`), `tests`.
+["ledger_scrutiny"]; the Rust side must map each one, see `tests/edge_books.rs`), `tests`, and for
+`tds_payees`: `entity_type` (default "individual"), `nature_by_ledger`, `payee_aliases`,
+`s194j_category_by_ledger` (each default {}) and `previous_year_turnover_paise` (default absent).
 """
 from __future__ import annotations
 
@@ -40,7 +42,8 @@ STATUS = ("regular", "optional", "cancelled", "postdated")
 def main() -> int:
     engine, spec_path, out_dir = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
     sys.path.insert(0, str(Path(engine).resolve()))
-    from tae.audit_tests import cash_book_integrity, ledger_scrutiny, stale_balances_41_1, trial_balance
+    from tae.audit_tests import (cash_book_integrity, ledger_scrutiny, stale_balances_41_1, tds_payees,
+                                 trial_balance)
     from tae.config import load_rules
     from tae.model import Book, Engagement, Group, Ledger, LedgerLine, Period, TBRow, Voucher, VoucherStatus
     from tae.parity import canonical
@@ -65,8 +68,9 @@ def main() -> int:
     book = Book(company_name="Invented edge book",
                 period=Period(date.fromisoformat(start), date.fromisoformat(end)), groups=groups,
                 ledgers=ledgers, vouchers=vouchers, tb=tb, company_guid="invented-edge-company")
-    eng = Engagement("individual", "2026-27", book)
-    rules = load_rules("2026-27", "individual")
+    entity_type = spec.get("entity_type", "individual")
+    eng = Engagement(entity_type, "2026-27", book)
+    rules = load_rules("2026-27", entity_type)
     for table in spec.get("rules_without", []):
         rules = copy.copy(rules)
         rules.pop(table)
@@ -80,6 +84,9 @@ def main() -> int:
                                         cash_book_integrity.run(eng, rules, cash, bank, terms)),
         "ledger_scrutiny": lambda: (ledger_scrutiny, ledger_scrutiny.run(eng, rules, cash)),
         "stale_balances_41_1": lambda: (stale_balances_41_1, stale_balances_41_1.run(eng, rules)),
+        "tds_payees": lambda: (tds_payees, tds_payees.run(
+            eng, rules, dict(spec.get("nature_by_ledger", {})), dict(spec.get("payee_aliases", {})),
+            spec.get("previous_year_turnover_paise"), dict(spec.get("s194j_category_by_ledger", {})))),
         "trial_balance": lambda: (trial_balance, trial_balance.run(eng, rules)),
     }
     for test in spec["tests"]:

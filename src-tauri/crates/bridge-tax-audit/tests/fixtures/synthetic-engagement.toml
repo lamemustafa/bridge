@@ -65,3 +65,15 @@ interest_ledger = "Interest to Partners"
 [presumptive_history]
 ay = "2024-25"
 opted_44ad = true
+
+# tds_payees only (invented): nature_by_ledger and payee_aliases are REQUIRED once [tds] exists,
+# as the reference engine's tds_config requires them. Freight is a s.194C contract, shop rent a
+# s.194-I one; the two carriers are one payee entity, merged by payee_aliases. No previous-year
+# turnover is given, so this individual's deductor status is "unknown".
+[tds.nature_by_ledger]
+"Freight Inward" = "194C"
+"Shop Rent" = "194I"
+
+[tds.payee_aliases]
+"Coastal Freight Carriers" = "Coastal-Bayside carrier group"
+"Bayside Cargo Logistics" = "Coastal-Bayside carrier group"

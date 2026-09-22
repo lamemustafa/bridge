@@ -1,0 +1,215 @@
+{
+ "comment": "tds_payees TDS-ledger figure and ids: ledgers under Duties & Taxes whose name contains 'tds' in any case are counted, one not under Duties & Taxes is not; a non-ASCII payee name is hashed over its UTF-8 bytes; a voucher with no number whose GUID's last 12 characters include a non-ASCII one is labelled by its last 12 characters.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Bank OD A/c": "Loans (Liability)",
+  "Sundry Debtors": "Current Assets",
+  "Loans & Advances (Asset)": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Duties & Taxes": "Current Liabilities",
+  "Loans (Liability)": null,
+  "Unsecured Loans": "Loans (Liability)",
+  "Secured Loans": "Loans (Liability)",
+  "Direct Expenses": null,
+  "Indirect Expenses": null,
+  "Purchase Accounts": null,
+  "Sales Accounts": null,
+  "Fixed Assets": null,
+  "Suspense A/c": null
+ },
+ "ledgers": [
+  {
+   "name": "TDS Payable",
+   "chain": [
+    "Duties & Taxes",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_ledgers_unicode-000"
+  },
+  {
+   "name": "tds on rent",
+   "chain": [
+    "Duties & Taxes",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_ledgers_unicode-001"
+  },
+  {
+   "name": "Output TdS",
+   "chain": [
+    "Duties & Taxes",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_ledgers_unicode-002"
+  },
+  {
+   "name": "GST Output",
+   "chain": [
+    "Duties & Taxes",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_ledgers_unicode-003"
+  },
+  {
+   "name": "TDS Receivable Loan",
+   "chain": [
+    "Loans & Advances (Asset)",
+    "Current Assets"
+   ],
+   "guid": "edge-tds_payees_ledgers_unicode-004"
+  },
+  {
+   "name": "Freight",
+   "chain": [
+    "Direct Expenses"
+   ],
+   "guid": "edge-tds_payees_ledgers_unicode-005"
+  },
+  {
+   "name": "Śrī Transport",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_ledgers_unicode-006"
+  },
+  {
+   "name": "Zeta Carriers",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_ledgers_unicode-007"
+  },
+  {
+   "name": "Ärger Logistik",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_ledgers_unicode-008"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "TDS Payable",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "tds on rent",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "Output TdS",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "GST Output",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "TDS Receivable Loan",
+   "opening": 0,
+   "debit": 0,
+   "credit": 0,
+   "closing": 0
+  },
+  {
+   "ledger": "Freight",
+   "opening": 0,
+   "debit": 12000000,
+   "credit": 0,
+   "closing": 12000000
+  },
+  {
+   "ledger": "Śrī Transport",
+   "opening": 0,
+   "debit": 0,
+   "credit": 4000000,
+   "closing": -4000000
+  },
+  {
+   "ledger": "Zeta Carriers",
+   "opening": 0,
+   "debit": 0,
+   "credit": 4000000,
+   "closing": -4000000
+  },
+  {
+   "ledger": "Ärger Logistik",
+   "opening": 0,
+   "debit": 0,
+   "credit": 4000000,
+   "closing": -4000000
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "u01",
+   "date": "2025-04-02",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Freight",
+     4000000
+    ],
+    [
+     "Śrī Transport",
+     -4000000
+    ]
+   ]
+  },
+  {
+   "guid": "vch-ñandú-transportés-0001",
+   "date": "2025-04-03",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Freight",
+     4000000
+    ],
+    [
+     "Zeta Carriers",
+     -4000000
+    ]
+   ],
+   "number": ""
+  },
+  {
+   "guid": "u03",
+   "date": "2025-04-04",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Freight",
+     4000000
+    ],
+    [
+     "Ärger Logistik",
+     -4000000
+    ]
+   ]
+  }
+ ],
+ "tests": [
+  "tds_payees"
+ ],
+ "nature_by_ledger": {
+  "Freight": "194C"
+ }
+}

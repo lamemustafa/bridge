@@ -47,6 +47,7 @@ pub mod registry;
 pub mod rules;
 pub mod stale_balances_41_1;
 mod support;
+pub mod tds_payees;
 mod text_tables;
 pub mod trial_balance;
 pub mod xml;
@@ -105,6 +106,14 @@ pub struct Engagement {
     /// `applicability_44ab`-only: the optional `[presumptive_history]` table, verbatim (client
     /// confirmation of s.44AD history, never inferred from the books); `None` when absent.
     pub presumptive_history: Option<toml::Table>,
+    /// `tds_payees`-only: `[tds]` and `[tds_payees]` ([`TdsConfig`]). `None` when the client
+    /// config carries no `[tds]` table (an engagement that never runs that test); once `[tds]` is
+    /// present, `nature_by_ledger` and `payee_aliases` are REQUIRED within it, as the reference's
+    /// own `tds_config` requires them. A malformed `[tds]` or `[tds_payees]` refuses reading the
+    /// engagement, and so every test on it, where the reference refuses only `tds_payees` (its pack
+    /// reads `[tds]` unconditionally, so a missing map refuses its whole pack too). `[tds_payees]`
+    /// without `[tds]` is not read.
+    pub tds: Option<TdsConfig>,
     /// The parsed config, kept only so [`Engagement::bind`] can read `[ledger_ids]`/
     /// `[group_ids]` (`binding::bind`) without re-parsing the source text. Not part of this
     /// struct's public contract: a field a caller should read directly (`cash_groups` and the
@@ -123,6 +132,26 @@ pub struct DepreciationConfig {
     /// passes it either -- but `depreciation.py`'s `run()` signature carries it, so this port
     /// does too).
     pub put_to_use_by_voucher: BTreeMap<String, TallyDate>,
+}
+
+/// `[tds]` and `[tds_payees]` from the client config: see [`Engagement::tds`] and the reference
+/// engine's `tds_config`.
+#[derive(Debug, Clone, Default)]
+pub struct TdsConfig {
+    /// `[tds].nature_by_ledger`: expense ledger -> "194C" | "194I" | "194J". Kept as written: an
+    /// empty value maps nothing and an unknown one maps the ledger without reporting it, as in the
+    /// reference. A non-string value is refused, where the reference would take a truthy one as
+    /// an unknown nature and a falsy one (`false`, `0`) as no mapping (a divergence, stated in
+    /// `tds_payees`).
+    pub nature_by_ledger: BTreeMap<String, String>,
+    /// `[tds].payee_aliases`: payee ledger -> payee entity label (not a ledger).
+    pub payee_aliases: BTreeMap<String, String>,
+    /// `[tds].previous_year_turnover_paise`, when supplied. An integer; any other type is refused
+    /// (the reference would compare a float too; a divergence, stated in `tds_payees`).
+    pub previous_year_turnover_paise: Option<i64>,
+    /// `[tds_payees].s194j_category_by_ledger`, optional, empty when absent. A value that is not a
+    /// string is kept as `None`: the reference finds it in no category, so the ledger is unmapped.
+    pub s194j_category_by_ledger: BTreeMap<String, Option<String>>,
 }
 
 /// `[snapshot]` keys of the reference engine's legacy raw-export layout. A config naming a read
@@ -328,6 +357,67 @@ not YYYY-MM-DD"
                 })
             })
             .transpose()?;
+        let tds = cfg
+            .get("tds")
+            .map(|tds| -> Result<TdsConfig> {
+                let tds = tds
+                    .as_table()
+                    .ok_or_else(|| AuditError::Config("[tds] is not a table".to_string()))?;
+                let string_map = |key: &str| -> Result<BTreeMap<String, String>> {
+                    tds.get(key)
+                        .and_then(toml::Value::as_table)
+                        .ok_or_else(|| AuditError::Config(format!("[tds].{key} is not a table")))?
+                        .iter()
+                        .map(|(k, v)| {
+                            v.as_str()
+                                .map(|s| (k.clone(), s.to_string()))
+                                .ok_or_else(|| {
+                                    AuditError::Config(format!("[tds].{key}.{k} is not a string"))
+                                })
+                        })
+                        .collect()
+                };
+                let previous_year_turnover_paise = tds
+                    .get("previous_year_turnover_paise")
+                    .map(|v| {
+                        v.as_integer().ok_or_else(|| {
+                            AuditError::Config(
+                                "[tds].previous_year_turnover_paise is not an integer".to_string(),
+                            )
+                        })
+                    })
+                    .transpose()?;
+                let tds_payees = cfg
+                    .get("tds_payees")
+                    .map(|t| {
+                        t.as_table().ok_or_else(|| {
+                            AuditError::Config("[tds_payees] is not a table".to_string())
+                        })
+                    })
+                    .transpose()?;
+                let s194j_category_by_ledger = match tds_payees
+                    .and_then(|t| t.get("s194j_category_by_ledger"))
+                {
+                    None => BTreeMap::new(),
+                    Some(v) => v
+                        .as_table()
+                        .ok_or_else(|| {
+                            AuditError::Config(
+                                "[tds_payees].s194j_category_by_ledger is not a table".to_string(),
+                            )
+                        })?
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.as_str().map(str::to_string)))
+                        .collect(),
+                };
+                Ok(TdsConfig {
+                    nature_by_ledger: string_map("nature_by_ledger")?,
+                    payee_aliases: string_map("payee_aliases")?,
+                    previous_year_turnover_paise,
+                    s194j_category_by_ledger,
+                })
+            })
+            .transpose()?;
         let mut partner_interest_ledgers = BTreeMap::new();
         if let Some(partners) = cfg.get("partners") {
             let partners = partners
@@ -382,6 +472,7 @@ not YYYY-MM-DD"
                 .unwrap_or_default(),
             depreciation,
             partner_interest_ledgers,
+            tds,
             entity_type: client
                 .get("entity_type")
                 .map(|v| {
@@ -689,6 +780,33 @@ pub fn applicability_44ab_on(
         bound.presumptive_history.as_ref(),
     )?;
     canonical::canonical_test_result(book, &result, None)
+}
+
+/// Run `tds_payees` on a book and return its canonical parity dump. Refuses with
+/// `AuditError::Config` without `[client].entity_type` (the deductor status needs it) or without a
+/// `[tds]` table, as the reference's own `tds_config` requires one. The reference module has no
+/// `check_invariants`, so the dump's module invariants are empty on both sides.
+pub fn tds_payees_on(
+    engagement: &Engagement,
+    book: &book::Book,
+    rules: &Rules,
+) -> Result<serde_json::Value> {
+    let entity_type = engagement
+        .entity_type
+        .clone()
+        .ok_or_else(|| AuditError::Config("tds_payees needs [client].entity_type".to_string()))?;
+    let (bound, _report) = engagement.bind(book)?;
+    let tds = bound
+        .tds
+        .as_ref()
+        .ok_or_else(|| AuditError::Config("tds_payees needs a [tds] table".to_string()))?;
+    let result = tds_payees::run(book, rules, &entity_type, tds)?;
+    canonical::canonical_test_result(book, &result, None)
+}
+
+/// Read, verify, build the book, run `tds_payees` and return its canonical parity dump.
+pub fn tds_payees_canonical(engagement: &Engagement, rules: &Rules) -> Result<serde_json::Value> {
+    tds_payees_on(engagement, &load_book(engagement)?, rules)
 }
 
 /// Read, verify, build the book, run `applicability_44ab` and return its canonical parity dump.

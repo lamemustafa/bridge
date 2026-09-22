@@ -21,7 +21,9 @@ use bridge_tax_audit::canonical::canonical_test_result;
 use bridge_tax_audit::compare::compare;
 use bridge_tax_audit::read::Window;
 use bridge_tax_audit::rules::Rules;
-use bridge_tax_audit::{cash_book_integrity, ledger_scrutiny, stale_balances_41_1, trial_balance};
+use bridge_tax_audit::{
+    cash_book_integrity, ledger_scrutiny, stale_balances_41_1, tds_payees, trial_balance, TdsConfig,
+};
 use serde_json::Value;
 
 fn spec(name: &str) -> Value {
@@ -135,6 +137,7 @@ fn rules(s: &Value) -> Rules {
     for table in strs(&s["rules_without"]) {
         match table.as_str() {
             "ledger_scrutiny" => rules.ledger_scrutiny_large_entry_paise = None,
+            "s194j" => rules.s194j_aggregate_paise = None,
             other => panic!("rules_without {other} is not wired here"),
         }
     }
@@ -151,6 +154,34 @@ fn period(s: &Value) -> Window {
     Window {
         from: date(from),
         to: date(to),
+    }
+}
+
+/// The `[tds]`/`[tds_payees]` values `parity/edge_golden.py` passes `tds_payees`: a
+/// `s194j_category_by_ledger` value that is not a string is kept as `None`, as `TdsConfig` keeps it.
+fn tds_config(s: &Value) -> TdsConfig {
+    let map = |key: &str| -> BTreeMap<String, String> {
+        s[key]
+            .as_object()
+            .map(|o| {
+                o.iter()
+                    .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_string()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    TdsConfig {
+        nature_by_ledger: map("nature_by_ledger"),
+        payee_aliases: map("payee_aliases"),
+        previous_year_turnover_paise: s["previous_year_turnover_paise"].as_i64(),
+        s194j_category_by_ledger: s["s194j_category_by_ledger"]
+            .as_object()
+            .map(|o| {
+                o.iter()
+                    .map(|(k, v)| (k.clone(), v.as_str().map(str::to_string)))
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 
@@ -195,6 +226,16 @@ fn check(name: &str) {
                 let c = cash_book_integrity::check_invariants(&book, &r).unwrap();
                 (r, c)
             }
+            "tds_payees" => {
+                let entity_type = s["entity_type"].as_str().unwrap_or("individual");
+                let r = tds_payees::run(&book, &rules, entity_type, &tds_config(&s)).unwrap();
+                // The reference module has no check_invariants: an empty evaluated list.
+                let rust = canonical_test_result(&book, &r, None).unwrap();
+                let golden = common::golden_named(&format!("edge.{name}.{test}"));
+                let diffs = compare(&golden, &rust, None).unwrap();
+                assert!(diffs.is_empty(), "{name} {test}:\n{}", diffs.join("\n"));
+                continue;
+            }
             other => panic!("{name}: no edge dispatch for {other} (EDGE_TESTS: {EDGE_TESTS:?})"),
         };
         let rust = canonical_test_result(&book, &result, Some(module_check)).unwrap();
@@ -206,10 +247,11 @@ fn check(name: &str) {
 
 /// The tests an edge book may name: the arms of `check` above, and exactly the keys of
 /// `parity/edge_golden.py`'s `runners` (`edge_runners_agree_across_the_two_sides`).
-const EDGE_TESTS: [&str; 4] = [
+const EDGE_TESTS: [&str; 5] = [
     "cash_book_integrity",
     "ledger_scrutiny",
     "stale_balances_41_1",
+    "tds_payees",
     "trial_balance",
 ];
 

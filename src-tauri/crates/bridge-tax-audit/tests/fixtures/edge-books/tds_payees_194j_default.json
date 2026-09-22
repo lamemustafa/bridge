@@ -1,0 +1,115 @@
+{
+ "comment": "tds_payees 194J with no [s194j] rules table: the module's own Rs 50,000 default applies and its finding carries the prototype-default limit text; exactly Rs 50,000 is not over.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Bank OD A/c": "Loans (Liability)",
+  "Sundry Debtors": "Current Assets",
+  "Loans & Advances (Asset)": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Duties & Taxes": "Current Liabilities",
+  "Loans (Liability)": null,
+  "Unsecured Loans": "Loans (Liability)",
+  "Secured Loans": "Loans (Liability)",
+  "Direct Expenses": null,
+  "Indirect Expenses": null,
+  "Purchase Accounts": null,
+  "Sales Accounts": null,
+  "Fixed Assets": null,
+  "Suspense A/c": null
+ },
+ "ledgers": [
+  {
+   "name": "Audit Fees",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-tds_payees_194j_default-000"
+  },
+  {
+   "name": "Consultant J",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_194j_default-001"
+  },
+  {
+   "name": "Consultant N",
+   "chain": [
+    "Sundry Creditors",
+    "Current Liabilities"
+   ],
+   "guid": "edge-tds_payees_194j_default-002"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Audit Fees",
+   "opening": 0,
+   "debit": 10000001,
+   "credit": 0,
+   "closing": 10000001
+  },
+  {
+   "ledger": "Consultant J",
+   "opening": 0,
+   "debit": 0,
+   "credit": 5000001,
+   "closing": -5000001
+  },
+  {
+   "ledger": "Consultant N",
+   "opening": 0,
+   "debit": 0,
+   "credit": 5000000,
+   "closing": -5000000
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "d01",
+   "date": "2025-04-02",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Audit Fees",
+     5000001
+    ],
+    [
+     "Consultant J",
+     -5000001
+    ]
+   ]
+  },
+  {
+   "guid": "d02",
+   "date": "2025-04-03",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Audit Fees",
+     5000000
+    ],
+    [
+     "Consultant N",
+     -5000000
+    ]
+   ]
+  }
+ ],
+ "tests": [
+  "tds_payees"
+ ],
+ "nature_by_ledger": {
+  "Audit Fees": "194J"
+ },
+ "s194j_category_by_ledger": {
+  "Audit Fees": "professional"
+ },
+ "rules_without": [
+  "s194j"
+ ]
+}
