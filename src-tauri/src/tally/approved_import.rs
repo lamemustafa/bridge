@@ -9,7 +9,7 @@ use tokio::io::AsyncWriteExt;
 
 const MAX_PREVIEW_BYTES: usize = 8_000;
 #[cfg(not(windows))]
-const POST_LABEL: &str = "Post Journal";
+const POST_LABEL: &str = "Post voucher";
 
 #[derive(Clone)]
 pub(crate) struct ApprovedImport {
@@ -18,6 +18,10 @@ pub(crate) struct ApprovedImport {
     verification_request: AgentReadRequest,
     ledger_catalogue_request: AgentReadRequest,
     ledger_binding: StandardLedgerCatalogBinding,
+    /// The group collection, for a Payment, Receipt or Contra: its legs'
+    /// classification is re-derived from it inside the queue. A Journal has
+    /// none and its queued request sequence is unchanged.
+    group_collection_request: Option<AgentReadRequest>,
 }
 
 impl ApprovedImport {
@@ -28,6 +32,7 @@ impl ApprovedImport {
         verification_request: AgentReadRequest,
         ledger_catalogue_request: AgentReadRequest,
         ledger_binding: StandardLedgerCatalogBinding,
+        group_collection_request: Option<AgentReadRequest>,
     ) -> Result<Self, String> {
         approve(preview).await?;
         Ok(Self {
@@ -36,6 +41,7 @@ impl ApprovedImport {
             verification_request,
             ledger_catalogue_request,
             ledger_binding,
+            group_collection_request,
         })
     }
 
@@ -53,6 +59,10 @@ impl ApprovedImport {
 
     pub(super) fn ledger_binding(&self) -> &StandardLedgerCatalogBinding {
         &self.ledger_binding
+    }
+
+    pub(super) fn group_collection_request(&self) -> Option<AgentReadRequest> {
+        self.group_collection_request.clone()
     }
 
     /// Recheck the operator-approved dates after the endpoint queue admits this
@@ -87,6 +97,7 @@ impl ApprovedImport {
             .expect("static read profile is admitted"),
             ledger_catalogue_request,
             ledger_binding,
+            group_collection_request: None,
         }
     }
 }
@@ -99,6 +110,14 @@ pub(crate) enum ApprovedImportAdmissionError {
     PreexistingIdentity,
     #[error("import_masters_changed")]
     LedgerIdentityChanged,
+    /// A Payment, Receipt or Contra leg no longer classifies as it did when
+    /// approved: a ledger or one of its groups moved (bridge#466 follow-up).
+    #[error("import_bank_classification_changed")]
+    BankClassificationChanged,
+    /// A bank voucher reached the queue without its group read, or a Journal
+    /// with one: a wiring fault, refused before any request is sent.
+    #[error("import_post_admission_inconsistent")]
+    AdmissionInconsistent,
 }
 
 /// The native approval every real post goes through. Outside this crate's own
@@ -256,7 +275,7 @@ pub fn run_confirmation() -> bool {
 #[cfg(not(windows))]
 fn show_review(preview: &str) -> bool {
     rfd::MessageDialog::new()
-        .set_title("Bridge — approve one Journal")
+        .set_title("Bridge — approve one voucher")
         .set_description(preview)
         .set_level(rfd::MessageLevel::Warning)
         // The Cancel label supplies the native Escape action. Posting requires
@@ -277,7 +296,7 @@ fn show_review(preview: &str) -> bool {
     // rfd without common-controls-v6 discards custom labels. Use the existing
     // Win32 dependency so No is the default and Escape/close remain Cancel.
     let text: Vec<u16> = preview.encode_utf16().chain(Some(0)).collect();
-    let title: Vec<u16> = "Bridge — post this Journal?"
+    let title: Vec<u16> = "Bridge — post this voucher?"
         .encode_utf16()
         .chain(Some(0))
         .collect();
