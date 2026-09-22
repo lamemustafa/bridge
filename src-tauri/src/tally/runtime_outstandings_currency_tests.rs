@@ -229,3 +229,129 @@ async fn agent_outstandings_rejects_unadmitted_currency_before_native_read() {
         assert_eq!(evidence.bytes, response.len() * 2);
     }
 }
+
+/// The currency read, then a complete native outstandings read on one
+/// unchanged extent, as `agent_outstandings_currency_witness_brackets_native_source`
+/// scripts it with no fault.
+fn currency_then_native_plans(currency: String) -> Vec<ScenarioPlan> {
+    let extent = extents();
+    let mut plans = currency_plans(currency);
+    plans.extend([status(), xml(companies()), xml(companies())]);
+    pair(&mut plans, xml(extent.clone()));
+    for bytes in [
+        include_bytes!("../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ageing-receivable.utf16le.xml").as_slice(),
+        include_bytes!("../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ageing-groups.utf16le.xml").as_slice(),
+        include_bytes!("../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ageing-payable.utf16le.xml").as_slice(),
+        include_bytes!("../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ageing-ledgers.utf16le.xml").as_slice(),
+    ] {
+        pair(&mut plans, xml(decode(bytes)));
+    }
+    pair(&mut plans, xml(extent));
+    plans.extend([xml(companies()), status(), xml(companies())]);
+    plans
+}
+
+async fn operator_outstandings(
+    plans: Vec<ScenarioPlan>,
+) -> (anyhow::Result<OutstandingsLoadResult>, usize) {
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let result = TallyRuntime::default()
+        .fetch_operator_outstandings(
+            TallyConfig {
+                host: simulator.address().ip().to_string(),
+                port: simulator.address().port(),
+            },
+            &identity_for_guid(&companies(), "eebb9a9f-1679-4468-9e8f-814c729674cb"),
+            TallyDate::parse("20260801").unwrap(),
+            OutstandingsCurrencyAssertion::Inr,
+            OutstandingsAgeingAnchor::DueDate,
+        )
+        .await;
+    simulator.cancel();
+    (result, simulator.finish().unwrap().len())
+}
+
+/// bridge#604: the desktop read of an operator's INR assertion reads the
+/// currency masters itself, and refuses a book with several (which can hold a
+/// foreign-currency ledger whose bills Tally returns as plain amounts) or with
+/// none (several not ruled out) before any bill is read. Spare native
+/// responses are queued so that a read past the refusal would be served and
+/// counted.
+#[tokio::test]
+async fn operator_outstandings_refuse_several_or_no_currency_masters_before_any_bill() {
+    let captured = currency_source();
+    let start = captured.find("<CURRENCY ").unwrap();
+    let end = start + captured[start..].find("</CURRENCY>").unwrap() + "</CURRENCY>".len();
+    for (fault, reason) in [
+        ("multiple", "company_base_currency_undetermined"),
+        ("empty", "company_currency_probe_failed"),
+    ] {
+        let mut changed = captured.clone();
+        if fault == "multiple" {
+            changed.insert_str(end, &captured[start..end]);
+        } else {
+            changed.replace_range(start..end, "");
+        }
+        let (result, requests) = operator_outstandings(currency_then_native_plans(changed)).await;
+        let result = result.unwrap();
+        assert!(
+            matches!(&result, OutstandingsLoadResult::Partial { reason: got, .. } if *got == reason.into()),
+            "{fault}: {result:?}"
+        );
+        // The currency read's 14 requests, and not one more.
+        assert_eq!(requests, 14, "{fault}");
+    }
+}
+
+/// bridge#604: with one Currency master the operator's assertion stands, as
+/// before: a master Tally names INR, and one it does not (the case the
+/// screen's confirmation exists for), both read through to a complete report.
+#[tokio::test]
+async fn operator_outstandings_with_one_currency_master_read_through() {
+    let captured = currency_source();
+    let foreign = captured.replace(
+        "<MAILINGNAME TYPE=\"String\">INR</MAILINGNAME>",
+        "<MAILINGNAME TYPE=\"String\">USD</MAILINGNAME>",
+    );
+    assert_ne!(foreign, captured);
+    for currency in [captured, foreign] {
+        let (result, requests) = operator_outstandings(currency_then_native_plans(currency)).await;
+        assert!(matches!(
+            result.unwrap(),
+            OutstandingsLoadResult::Complete {
+                currency_assertion: OutstandingsCurrencyAssertion::Inr,
+                ..
+            }
+        ),);
+        assert_eq!(requests, 44);
+    }
+}
+
+/// bridge#604: the operator's assertion is bound to the extent the currency
+/// read observed, as the agent read's witness is. A book that changed between
+/// the two reads is refused before any bill is read.
+#[tokio::test]
+async fn operator_outstandings_refuse_a_book_changed_since_the_currency_read() {
+    let extent = extents();
+    let changed = extent.replace(
+        "<ALTMSTID TYPE=\"Number\"> 224</ALTMSTID>",
+        "<ALTMSTID TYPE=\"Number\"> 225</ALTMSTID>",
+    );
+    assert_ne!(changed, extent);
+    let mut plans = currency_plans(currency_source());
+    plans.extend([status(), xml(companies()), xml(companies())]);
+    pair(&mut plans, xml(changed));
+    // Served only if the read went on past the changed extent.
+    pair(&mut plans, xml(decode(include_bytes!(
+        "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-ageing-receivable.utf16le.xml"
+    ))));
+    let (result, requests) = operator_outstandings(plans).await;
+    let error = result.unwrap_err();
+    assert!(matches!(
+        error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<PairedReadValidationError>()),
+        Some(PairedReadValidationError::CurrencyToMasterExtent)
+    ));
+    assert_eq!(requests, 21);
+}

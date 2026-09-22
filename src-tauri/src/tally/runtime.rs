@@ -1303,6 +1303,16 @@ pub struct UnallocatedParty {
     pub direction: ExposureDirection,
 }
 
+/// Why an operator's currency assertion may not be read for a book with
+/// `currency_count` Currency masters ([`TallyRuntime::fetch_operator_outstandings`]).
+fn operator_currency_refusal(currency_count: usize) -> Option<&'static str> {
+    match currency_count {
+        0 => Some("company_currency_probe_failed"),
+        1 => None,
+        _ => Some("company_base_currency_undetermined"),
+    }
+}
+
 fn partial_result(reason: impl Into<OutstandingsPartialReason>) -> OutstandingsLoadResult {
     OutstandingsLoadResult::Partial {
         reason: reason.into(),
@@ -3379,6 +3389,45 @@ impl TallyRuntime {
             ageing_anchor,
         )
         .await
+    }
+
+    /// The desktop single-company read of an operator's currency assertion
+    /// (bridge#604). The operator may confirm INR only for a book with exactly
+    /// one Currency master, which Tally could not identify as INR by its
+    /// mailing name. So this reads the masters itself, whatever the screen
+    /// read before, and refuses without reading any bill:
+    /// - several masters: the book can hold a foreign-currency ledger, whose
+    ///   bills the Bills reports return as plain amounts, indistinguishable
+    ///   from rupees;
+    /// - none (the probe read no master): several cannot be ruled out.
+    ///
+    /// With one master the assertion stands, bound to the extent the currency
+    /// read observed, as the agent read binds its witness.
+    pub(crate) async fn fetch_operator_outstandings(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+        as_of: TallyDate,
+        currency_assertion: OutstandingsCurrencyAssertion,
+        ageing_anchor: OutstandingsAgeingAnchor,
+    ) -> anyhow::Result<OutstandingsLoadResult> {
+        let currency = self
+            .detect_base_currency_with_extent(config.clone(), identity)
+            .await?;
+        if let Some(reason) = operator_currency_refusal(currency.currency_count()) {
+            return Ok(partial_result(reason));
+        }
+        self.fetch_outstandings_native_with_currency(
+            config,
+            identity,
+            as_of,
+            NativeOutstandingsCurrency::Observed(
+                currency.bind_party_ledger_master_assertion(currency_assertion),
+            ),
+            ageing_anchor,
+        )
+        .await
+        .map(|(result, _)| result)
     }
 
     /// MCP monetary reads require the observed currency's company extent;

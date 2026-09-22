@@ -1978,7 +1978,7 @@ pub async fn fetch_tally_outstandings(
     let identity =
         verify_observed_company_tuple(&runtime, &request.config, &request.selected_company).await?;
     let result = runtime
-        .fetch_outstandings(
+        .fetch_operator_outstandings(
             request.config,
             &identity,
             as_of,

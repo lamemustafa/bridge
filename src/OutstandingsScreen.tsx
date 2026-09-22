@@ -238,7 +238,7 @@ export function OutstandingsScreen({
   const [consumedWorkingPaperId, setConsumedWorkingPaperId] = React.useState<string | null>(null);
   const exportLock = React.useRef(false);
   const [partySort, setPartySort] = React.useState<PartySort | null>(null);
-  const [currencyCheck, setCurrencyCheck] = React.useState<"idle" | "checking" | "inr" | "undetermined">("idle");
+  const [currencyCheck, setCurrencyCheck] = React.useState<CurrencyCheck>({ state: "idle" });
   const [, refreshClock] = React.useReducer((value) => value + 1, 0);
   const requestVersion = React.useRef(0);
   const initialReadKey = React.useRef<string | null>(null);
@@ -390,9 +390,9 @@ export function OutstandingsScreen({
   React.useEffect(() => {
     if (liveReadSuppressed || !company || inrAssertedCompanyIdentity === companyIdentityFor(company)) return;
     let cancelled = false;
-    setCurrencyCheck("checking");
+    setCurrencyCheck({ state: "checking" });
     onTallyReadActivityChange(1);
-    void invoke<{ is_inr: boolean; mailing_name: string; currency_count: number }>(
+    void invoke<{ is_inr: boolean; symbol: string; mailing_name: string; currency_count: number }>(
       "detect_tally_base_currency",
       { request: {
         config,
@@ -407,10 +407,10 @@ export function OutstandingsScreen({
       .then((currency) => {
         if (cancelled) return;
         if (currency.is_inr) setInrAssertedCompanyIdentity(companyIdentityFor(company));
-        setCurrencyCheck(currency.is_inr ? "inr" : "undetermined");
+        setCurrencyCheck(currencyCheckOf(currency));
       })
       .catch(() => {
-        if (!cancelled) setCurrencyCheck("undetermined");
+        if (!cancelled) setCurrencyCheck({ state: "unread" });
       })
       .finally(() => {
         onTallyReadActivityChange(-1);
@@ -464,7 +464,9 @@ export function OutstandingsScreen({
   }
 
   if (!currencyReadPermitted) {
-    if (currencyCheck === "checking" || currencyCheck === "idle") {
+    // "inr" lands here only for the render before the confirmed identity
+    // catches up with the selected company.
+    if (currencyCheck.state === "checking" || currencyCheck.state === "idle" || currencyCheck.state === "inr") {
       return (
         <section className="panel wide outstandings-empty">
           <h2>Opening {company.name}</h2>
@@ -472,10 +474,30 @@ export function OutstandingsScreen({
         </section>
       );
     }
+    // bridge#604: only a book with one Currency master may be confirmed by
+    // hand, and the backend re-reads the masters and refuses the rest. With
+    // several, the Bills reports return a foreign-currency party's bills as
+    // plain amounts that would be shown as rupees.
+    if (currencyCheck.state === "several") {
+      return (
+        <section className="panel wide outstandings-empty">
+          <h2>Multi-currency books are not supported yet</h2>
+          <p>Tally reports more than one currency in this company. Bridge cannot yet tell which of its outstanding amounts are in a foreign currency, so it does not read outstandings for this company.</p>
+        </section>
+      );
+    }
+    if (currencyCheck.state !== "single") {
+      return (
+        <section className="panel wide outstandings-empty">
+          <h2>Bridge could not read this company&rsquo;s currency</h2>
+          <p>Without it Bridge cannot tell whether this company&rsquo;s amounts are in rupees, so it does not read outstandings. Reopen the company to try again.</p>
+        </section>
+      );
+    }
     return (
       <section className="panel wide outstandings-empty">
         <h2>Confirm the base currency</h2>
-        <p>Tally did not settle this company&rsquo;s base currency — it defines more than one currency, or one that is not the Indian rupee. Bridge shows totals in rupees, so confirm before continuing.</p>
+        <p>Tally reports this company&rsquo;s currency as {currencyCheck.mailingName} ({currencyCheck.name}). Confirm only if this company&rsquo;s books are in Indian rupees.</p>
         <button type="button" onClick={() => setInrAssertedCompanyIdentity(companyIdentityFor(company))}>This company uses INR</button>
       </section>
     );
@@ -1292,6 +1314,19 @@ function exposureComposition(report: Report, unallocatedTotal: string | undefine
     const share = percent < 1 ? "<1%" : `${Math.round(percent)}%`;
     return { ...slice, share };
   });
+}
+
+/// What Tally's own currency read settled for the selected company.
+type CurrencyCheck =
+  | { state: "idle" | "checking" | "inr" | "several" | "unread" }
+  | { state: "single"; name: string; mailingName: string };
+
+function currencyCheckOf(currency: { is_inr: boolean; symbol: string; mailing_name: string; currency_count: number }): CurrencyCheck {
+  if (currency.is_inr) return { state: "inr" };
+  if (currency.currency_count === 1) {
+    return { state: "single", name: currency.symbol, mailingName: currency.mailing_name };
+  }
+  return { state: currency.currency_count > 1 ? "several" : "unread" };
 }
 
 function formatMoney(value: string, currencyAssertion: "INR") {
