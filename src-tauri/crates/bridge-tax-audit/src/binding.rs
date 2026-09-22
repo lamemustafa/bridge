@@ -1130,6 +1130,117 @@ mod tests {
         assert_eq!(report.drifts[0].current_name, "Furniture (renamed)");
     }
 
+    // ---- [tds] and [tds_payees] (tds_payees) ----
+
+    const TDS_TABLES: &str =
+        "\n[tds.nature_by_ledger]\n\"Freight\" = \"194C\"\n\"Fees\" = \"194J\"\n\
+         \n[tds.payee_aliases]\n\"Carrier One\" = \"Carrier group\"\n\
+         \n[tds_payees.s194j_category_by_ledger]\n\"Fees\" = \"professional\"\n\"Royalty\" = \"royalty\"\n";
+
+    fn book_with_tds_ledgers(freight: &str, freight_guid: &str) -> book::Book {
+        let mut b = book("Cash-in-Hand", "", None);
+        for (name, group, guid) in [
+            (freight, "Direct Expenses", freight_guid),
+            ("Fees", "Indirect Expenses", ""),
+            ("Royalty", "Indirect Expenses", ""),
+            ("Carrier One", "Sundry Creditors", ""),
+        ] {
+            b.ledgers
+                .insert(name.to_string(), ledger(name, group, guid, None));
+        }
+        b
+    }
+
+    /// Every `[tds]`/`[tds_payees]` key is bound, as the reference binds them: a key bound by
+    /// identity follows a rename, and a payee alias's value -- an entity label, not a ledger -- is
+    /// kept as written.
+    #[test]
+    fn tds_keys_are_bound_and_alias_values_are_left_alone() {
+        let e = engagement(&format!(
+            "\n[ledger_ids]\n\"Freight\" = {G_ROUNDOFF:?}\n{TDS_TABLES}"
+        ));
+        let (bound, report) = e
+            .bind(&book_with_tds_ledgers("Freight (renamed)", G_ROUNDOFF))
+            .unwrap();
+        let tds = bound.tds.unwrap();
+        assert_eq!(
+            tds.nature_by_ledger.keys().collect::<Vec<_>>(),
+            ["Fees", "Freight (renamed)"]
+        );
+        assert_eq!(tds.nature_by_ledger["Freight (renamed)"], "194C");
+        assert_eq!(tds.payee_aliases["Carrier One"], "Carrier group");
+        assert_eq!(
+            tds.s194j_category_by_ledger["Fees"].as_deref(),
+            Some("professional")
+        );
+        assert_eq!(report.drifts[0].current_name, "Freight (renamed)");
+    }
+
+    #[test]
+    fn each_tds_location_refuses_a_name_that_matches_nothing() {
+        for (missing, location) in [
+            ("Freight", "tds.nature_by_ledger"),
+            ("Carrier One", "tds.payee_aliases"),
+            ("Royalty", "tds_payees.s194j_category_by_ledger"),
+        ] {
+            let e = engagement(TDS_TABLES);
+            let mut b = book_with_tds_ledgers("Freight", "");
+            b.ledgers.remove(missing);
+            let err = e.bind(&b).unwrap_err();
+            assert_eq!(err.code(), Some(BIND_NAME_UNKNOWN), "{missing}");
+            assert!(format!("{err}").contains(location), "{err}");
+        }
+    }
+
+    /// `[tds]` is read as the reference's `tds_config` reads it: both maps required once the table
+    /// exists, the turnover optional, and a `s194j_category_by_ledger` value that is not a string
+    /// kept as no category. The refusals are this port's stated divergences.
+    #[test]
+    fn the_tds_tables_are_read_strictly() {
+        assert!(engagement("").tds.is_none());
+        let full = engagement(&format!(
+            "\n[tds]\nprevious_year_turnover_paise = 1_000_000_001\n{TDS_TABLES}\
+             \"Other\" = 7\n"
+        ))
+        .tds
+        .unwrap();
+        assert_eq!(full.previous_year_turnover_paise, Some(1_000_000_001));
+        assert_eq!(full.s194j_category_by_ledger["Other"], None);
+        assert_eq!(
+            engagement(TDS_TABLES)
+                .tds
+                .unwrap()
+                .previous_year_turnover_paise,
+            None
+        );
+        for (extra, needle) in [
+            (
+                "\n[tds.nature_by_ledger]\n\"Freight\" = \"194C\"\n",
+                "[tds].payee_aliases",
+            ),
+            (
+                "\n[tds.payee_aliases]\n\"A\" = \"B\"\n",
+                "[tds].nature_by_ledger",
+            ),
+            (
+                "\n[tds.nature_by_ledger]\n\"Freight\" = 1\n[tds.payee_aliases]\n",
+                "[tds].nature_by_ledger.Freight is not a string",
+            ),
+            (
+                "\n[tds.nature_by_ledger]\n[tds.payee_aliases]\n\"A\" = true\n",
+                "[tds].payee_aliases.A is not a string",
+            ),
+            (
+                "\n[tds]\nprevious_year_turnover_paise = 1.5e9\n[tds.nature_by_ledger]\n\
+                 [tds.payee_aliases]\n",
+                "previous_year_turnover_paise is not an integer",
+            ),
+        ] {
+            let err = engagement_err(extra);
+            assert!(format!("{err}").contains(needle), "{extra}: {err}");
+        }
+    }
+
     // ---- [partners.*].interest_ledger (financial_statements) ----
 
     fn book_with_interest_ledger(name: &str, guid: &str, masterid: Option<i64>) -> book::Book {
