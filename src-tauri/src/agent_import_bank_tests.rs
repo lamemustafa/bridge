@@ -627,9 +627,9 @@ async fn a_payment_and_receipt_batch_builds_against_the_captured_masters() {
 
 /// bridge#466 through the tool call, not the builder: a three-entry Receipt
 /// passes argument validation, admission and both group reads, writes a file,
-/// and says in its own result that the shape is owner-pending and rests only on
-/// §9.3's hand-built gateway readback — it must not borrow §9.13's two-entry
-/// evidence.
+/// and says in its own result that the shape rests on narrower evidence,
+/// labelled as §9.3's hand-built gateway readback — it must not borrow §9.13's
+/// two-entry evidence.
 #[tokio::test]
 async fn a_multi_entry_receipt_builds_through_tools_call_and_says_it_is_unqualified() {
     let payload: ImportPayload = serde_json::from_value(json!({"company_guid":CAPTURED_GUID,"vouchers":[
@@ -658,7 +658,7 @@ async fn a_multi_entry_receipt_builds_through_tools_call_and_says_it_is_unqualif
         warnings.iter().any(|warning| warning
             .as_str()
             .unwrap()
-            .contains("no Bridge-built file of it has been imported and verified")),
+            .contains("no multi-entry Payment or Contra has been, and none through Tally's Import menu")),
         "multi-entry warning missing: {warnings:?}"
     );
     let xml = std::fs::read_to_string(
@@ -1707,7 +1707,7 @@ fn multi_entry_batch(voucher_type: &str, entries: &[(&str, &str, &str)]) -> Impo
     .expect("multi-entry batch")
 }
 
-/// bridge#466, decision (2), OWNER-PENDING default: every leg of a
+/// bridge#466, owner decision 2026-09-22: every leg of a
 /// multi-entry Payment, Receipt or Contra is classified, not only the first on
 /// each side. A money ledger at any counterparty position is a disguised
 /// Contra and is refused; the money side may carry several money ledgers.
@@ -1829,7 +1829,7 @@ fn every_leg_of_a_multi_entry_bank_voucher_is_classified() {
     }
 }
 
-/// bridge#466, decision (3), OWNER-PENDING default: PARTYLEDGERNAME is the
+/// bridge#466, owner decision 2026-09-22: PARTYLEDGERNAME is the
 /// first counterparty entry in the voucher's own order.
 #[test]
 fn a_shared_voucher_names_its_first_counterparty_as_the_party() {

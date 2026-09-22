@@ -234,10 +234,11 @@ The four rest on different observations, and each build reports its own in
   import observed 2026-09-10; see
   [reference §9.13](../tally/TALLY_PROTOCOL_REFERENCE.md). These three are
   admitted with two or more entries (at least one debit and one credit, no
-  ledger on both sides; more than two is bridge#466, owner-pending and not yet
-  qualified live: hand-built files of that shape were imported and read back
+  ledger on both sides; more than two is bridge#466 and rests on narrower
+  evidence: hand-built files of that shape were imported and read back
   over the gateway ([reference §9.3](../tally/TALLY_PROTOCOL_REFERENCE_WRITE_RESPONSES_AND_MASTERS.md);
-  a Contra only with a repeated ledger), but no Bridge-built one has been imported and verified,
+  a Contra only with a repeated ledger), and one Bridge-built three-entry Receipt was imported
+  over the gateway and verified, but no multi-entry Payment or Contra has been, and none through Tally's Import menu,
   so such a voucher reports `live_evidence` as `hand_built_gateway_readback` and
   its build result warns so) with no voucher number and no reference, and every leg on
   their money side must be a ledger whose live group
