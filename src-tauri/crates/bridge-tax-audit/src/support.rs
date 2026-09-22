@@ -254,6 +254,13 @@ pub(crate) fn py_re_search(text: &str, alternatives: &[&[ReTok]]) -> bool {
     (0..=chars.len()).any(|at| alternatives.iter().any(|alt| matches_at(&chars, at, alt)))
 }
 
+/// Python's `\d` on one character: an ASCII digit, or one of the non-ASCII decimal digits
+/// Python 3.13 reads (`text_tables::PY_DECIMAL_NON_ASCII`). Superscripts, fractions and Roman
+/// numerals are numeric but not decimal, so `\d` does not match them and neither does this.
+pub(crate) fn py_is_decimal(c: char) -> bool {
+    c.is_ascii_digit() || in_ranges(&text_tables::PY_DECIMAL_NON_ASCII, c)
+}
+
 #[cfg(test)]
 pub(crate) mod text_probe_tests {
     //! Replays `tests/fixtures/text-probes.json` -- Python 3.13's own results on the acceptance set,

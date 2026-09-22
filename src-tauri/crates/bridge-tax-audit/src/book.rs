@@ -100,6 +100,28 @@ pub struct LedgerLine {
     pub amount_paise: i64,
 }
 
+/// One stock-item line on a voucher, as the reference model's `InventoryLine` holds it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InventoryLine {
+    /// STOCKITEMNAME, Python-stripped.
+    pub item: String,
+    /// The first number in the quantity text (`"12.5 Nos"` is 12.5), or `None` when the text
+    /// carries none. Quantities are not money, so a float, as in the reference model.
+    pub qty: Option<f64>,
+    /// RATE's leading number (`"100.00/Nos"`) in paise; always `None` on a stock journal's
+    /// IN/OUT line, which the reference reads without a rate.
+    pub rate_paise: Option<i64>,
+    /// AMOUNT in paise, debit positive; `None` when the text is empty.
+    pub amount_paise: Option<i64>,
+    /// A stock journal's direction: `Some(1)` from INVENTORYENTRIESIN, `Some(-1)` from
+    /// INVENTORYENTRIESOUT, `None` otherwise.
+    pub direction: Option<i8>,
+    /// Whether the export carried a quantity element at all, empty or not: an empty one is
+    /// Tally's value-only line (`qty` `None` is then a fact about the voucher); an absent one
+    /// means the read did not ask for the field, and `qty` `None` says nothing.
+    pub qty_field_present: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct Voucher {
     pub guid: String,
@@ -111,6 +133,32 @@ pub struct Voucher {
     pub lines: Vec<LedgerLine>,
     /// NARRATION, Python-stripped as the reference's adapter reads it; empty when absent.
     pub narration: String,
+    /// MASTERID as text, Python-stripped, `None` when absent or empty -- the reference model's
+    /// `str | None`. Never parsed here: a test that needs a number parses it by its own rule.
+    pub masterid: Option<String>,
+    /// Stock-item lines, chosen as the reference adapter chooses them (see `inventory_lines`).
+    pub inventory: Vec<InventoryLine>,
+}
+
+/// Exists so a test or edge-book constructor can name only the fields it sets
+/// (`..Voucher::default()`), and a new field does not touch every constructor. The status is
+/// `Unknown`, so a voucher that never set one makes [`Book::population`] refuse rather than
+/// count; the date is a fixed placeholder, 1 January 1900.
+impl Default for Voucher {
+    fn default() -> Self {
+        Self {
+            guid: String::new(),
+            date: TallyDate::parse("19000101").expect("a valid fixed date"),
+            vtype: String::new(),
+            base_type: String::new(),
+            number: String::new(),
+            status: VoucherStatus::Unknown,
+            lines: Vec::new(),
+            narration: String::new(),
+            masterid: None,
+            inventory: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -210,6 +258,159 @@ pub fn paise(text: &str, part: &str) -> Result<Option<i64>> {
 /// Tally amount text (debit negative) to canonical paise (debit positive).
 fn flip(text: &str, part: &str) -> Result<Option<i64>> {
     Ok(paise(text, part)?.map(|p| -p))
+}
+
+/// Where the pattern `-?[\d,]*\.?\d+` matches at char index `at`, the end of the match Python's
+/// backtracking `re` returns there: the optional sign taken first, then the longest run of
+/// digits and commas, shortened one char at a time, and at each length the optional dot tried
+/// before its absence; the first way that leaves at least one digit wins, and `\d+` takes every
+/// digit that follows. ASCII digits only; callers refuse text a Unicode `\d` could read
+/// differently.
+fn number_match_end(chars: &[char], at: usize) -> Option<usize> {
+    let run = |from: usize, class: fn(&char) -> bool| {
+        chars
+            .get(from..)
+            .map_or(0, |rest| rest.iter().take_while(|c| class(c)).count())
+    };
+    for sign in [true, false] {
+        if sign && chars.get(at) != Some(&'-') {
+            continue;
+        }
+        let body = at + usize::from(sign);
+        let longest = run(body, |c| c.is_ascii_digit() || *c == ',');
+        for len in (0..=longest).rev() {
+            for dot in [true, false] {
+                if dot && chars.get(body + len) != Some(&'.') {
+                    continue;
+                }
+                let digits_from = body + len + usize::from(dot);
+                let digits = run(digits_from, char::is_ascii_digit);
+                if digits > 0 {
+                    return Some(digits_from + digits);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The refusal both number readers share: a non-ASCII decimal digit anywhere in the text. Python's
+/// `\d` and `float()` read those digits as numbers; this port reads ASCII only, so such text is
+/// refused rather than read as a different number. The set is exactly the one Python's `\d`
+/// matches ([`crate::support::py_is_decimal`]), so numeric characters `\d` skips -- `²` in a unit
+/// like `m²`, `½` -- are read by both sides the same way and never refused. A refusal fails the
+/// whole read, as a malformed amount does.
+fn refuse_non_ascii_digits(text: &str, field: &str, part: &str) -> Result<()> {
+    if text
+        .chars()
+        .any(|c| !c.is_ascii() && crate::support::py_is_decimal(c))
+    {
+        return Err(AuditError::parse(
+            part,
+            format!("{field} has a non-ASCII digit: {text:?}"),
+        ));
+    }
+    Ok(())
+}
+
+/// The reference adapter's `_qty`: the first match of `-?[\d,]*\.?\d+` anywhere in the text,
+/// commas removed, read by `float()`; `None` when nothing matches.
+fn quantity(text: &str, part: &str) -> Result<Option<f64>> {
+    refuse_non_ascii_digits(text, "a quantity", part)?;
+    let chars: Vec<char> = text.chars().collect();
+    let Some((start, end)) =
+        (0..chars.len()).find_map(|at| number_match_end(&chars, at).map(|end| (at, end)))
+    else {
+        return Ok(None);
+    };
+    let lexeme: String = chars[start..end].iter().filter(|c| **c != ',').collect();
+    // Every lexeme the pattern admits is one Rust's `f64` parser reads, correctly rounded as
+    // Python's `float()` is (a leading dot included).
+    lexeme
+        .parse::<f64>()
+        .map(Some)
+        .map_err(|_| AuditError::parse(part, format!("not a quantity: {text:?}")))
+}
+
+/// The reference adapter's `_rate_paise`: the same pattern, anchored after leading whitespace
+/// (`re.match(r"\s*(...)")`), read by `paise`. `paise` here refuses a lexeme starting with a dot
+/// where the reference reads it as `0.`, so a `0` is put in front first.
+fn rate_paise(text: &str, part: &str) -> Result<Option<i64>> {
+    refuse_non_ascii_digits(text, "a rate", part)?;
+    let chars: Vec<char> = text.chars().collect();
+    let start = chars
+        .iter()
+        .take_while(|c| crate::support::py_isspace(**c))
+        .count();
+    let Some(end) = number_match_end(&chars, start) else {
+        return Ok(None);
+    };
+    let lexeme: String = chars[start..end].iter().filter(|c| **c != ',').collect();
+    let (sign, body) = lexeme
+        .strip_prefix('-')
+        .map_or(("", lexeme.as_str()), |rest| ("-", rest));
+    let zero = if body.starts_with('.') { "0" } else { "" };
+    paise(&format!("{sign}{zero}{body}"), part)
+}
+
+/// A voucher's stock-item lines, chosen as the reference adapter chooses them. Inventory can sit
+/// at the top level (ALLINVENTORYENTRIES) and also nested under a ledger line
+/// (INVENTORYALLOCATIONS), often identically, so reading both would double every line: the
+/// top-level entries are taken when any names an item, else the nested ones. A stock journal can
+/// list its items there and again in the IN/OUT lists, which carry the direction; when an IN/OUT
+/// list names an item, those lists replace both. An entry naming no item is skipped throughout.
+fn inventory_lines(v: &Element, part: &str) -> Result<Vec<InventoryLine>> {
+    let names_item = |ie: &&Element| !ie.child_text("STOCKITEMNAME").is_empty();
+    let io_tags = [
+        ("INVENTORYENTRIESIN.LIST", 1),
+        ("INVENTORYENTRIESOUT.LIST", -1),
+    ];
+    let io_present = io_tags
+        .iter()
+        .any(|(tag, _)| v.children_named(tag).any(|ie| names_item(&ie)));
+    let mut out = Vec::new();
+    if !io_present {
+        let top: Vec<&Element> = v
+            .children_named("ALLINVENTORYENTRIES.LIST")
+            .filter(names_item)
+            .collect();
+        let chosen = if top.is_empty() {
+            v.children_named("ALLLEDGERENTRIES.LIST")
+                .flat_map(|le| le.children_named("INVENTORYALLOCATIONS.LIST"))
+                .filter(names_item)
+                .collect()
+        } else {
+            top
+        };
+        for ie in chosen {
+            let qty_text = match ie.child_text("BILLEDQTY") {
+                "" => ie.child_text("ACTUALQTY"),
+                billed => billed,
+            };
+            out.push(InventoryLine {
+                item: ie.child_text("STOCKITEMNAME").to_string(),
+                qty: quantity(qty_text, part)?,
+                rate_paise: rate_paise(ie.child_text("RATE"), part)?,
+                amount_paise: flip(ie.child_text("AMOUNT"), part)?,
+                direction: None,
+                qty_field_present: ie.child("BILLEDQTY").is_some()
+                    || ie.child("ACTUALQTY").is_some(),
+            });
+        }
+    }
+    for (tag, direction) in io_tags {
+        for ie in v.children_named(tag).filter(names_item) {
+            out.push(InventoryLine {
+                item: ie.child_text("STOCKITEMNAME").to_string(),
+                qty: quantity(ie.child_text("ACTUALQTY"), part)?,
+                rate_paise: None,
+                amount_paise: flip(ie.child_text("AMOUNT"), part)?,
+                direction: Some(direction),
+                qty_field_present: ie.child("ACTUALQTY").is_some(),
+            });
+        }
+    }
+    Ok(out)
 }
 
 fn tally_date(text: &str, part: &str) -> Result<TallyDate> {
@@ -473,6 +674,7 @@ fn load_vouchers(
                 });
             }
         }
+        let inventory = inventory_lines(v, part)?;
         let alterid = v.child_text("ALTERID");
         if !alterid.is_empty() {
             let n: u64 = alterid.parse().map_err(|_| {
@@ -506,6 +708,8 @@ fn load_vouchers(
             status,
             lines,
             narration: v.child_text("NARRATION").to_string(),
+            masterid: (!masterid.is_empty()).then(|| masterid.to_string()),
+            inventory,
         });
     }
     Ok(PartVouchers {
@@ -651,4 +855,238 @@ pub fn load_book(read: &Read, company_name: &str) -> Result<Book> {
         vouchers,
         tb,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Nine vouchers reaching every branch of the inventory choice and both number readers.
+    /// The expected lines are the reference adapter's own output on the same text
+    /// (`tally_xml.load_vouchers`), copied verbatim.
+    const PROBE: &str = r"<ENVELOPE><BODY><DATA><COLLECTION>
+<VOUCHER><GUID>g-top</GUID><MASTERID> 42 </MASTERID><DATE>20250601</DATE><VOUCHERTYPENAME>Sales</VOUCHERTYPENAME><ISOPTIONAL>No</ISOPTIONAL><ISPOSTDATED>No</ISPOSTDATED>
+ <ALLLEDGERENTRIES.LIST><LEDGERNAME>Cust</LEDGERNAME><AMOUNT>-1250.00</AMOUNT>
+  <INVENTORYALLOCATIONS.LIST><STOCKITEMNAME>Nested Only</STOCKITEMNAME><ACTUALQTY>9 Nos</ACTUALQTY><AMOUNT>900</AMOUNT></INVENTORYALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST>
+ <ALLINVENTORYENTRIES.LIST><STOCKITEMNAME> Widget </STOCKITEMNAME><BILLEDQTY>12.5 Nos</BILLEDQTY><ACTUALQTY>13 Nos</ACTUALQTY><RATE>100.00/Nos</RATE><AMOUNT>1250.00</AMOUNT></ALLINVENTORYENTRIES.LIST>
+ <ALLINVENTORYENTRIES.LIST><STOCKITEMNAME></STOCKITEMNAME><BILLEDQTY>1 Nos</BILLEDQTY></ALLINVENTORYENTRIES.LIST>
+ <ALLINVENTORYENTRIES.LIST><STOCKITEMNAME>Loose</STOCKITEMNAME><BILLEDQTY></BILLEDQTY><ACTUALQTY>5</ACTUALQTY><RATE>  .50/Nos</RATE><AMOUNT>-2.50</AMOUNT></ALLINVENTORYENTRIES.LIST>
+ <ALLINVENTORYENTRIES.LIST><STOCKITEMNAME>Valueonly</STOCKITEMNAME><BILLEDQTY></BILLEDQTY><RATE>/Nos 5</RATE><AMOUNT></AMOUNT></ALLINVENTORYENTRIES.LIST>
+ <ALLINVENTORYENTRIES.LIST><STOCKITEMNAME>Unasked</STOCKITEMNAME><RATE>-1,000.005/Nos</RATE><AMOUNT>10</AMOUNT></ALLINVENTORYENTRIES.LIST>
+</VOUCHER>
+<VOUCHER><GUID>g-nested</GUID><MASTERID></MASTERID><DATE>20250602</DATE><VOUCHERTYPENAME>Purchase</VOUCHERTYPENAME><ISOPTIONAL>No</ISOPTIONAL><ISPOSTDATED>No</ISPOSTDATED>
+ <ALLINVENTORYENTRIES.LIST><STOCKITEMNAME></STOCKITEMNAME></ALLINVENTORYENTRIES.LIST>
+ <ALLLEDGERENTRIES.LIST><LEDGERNAME>Supp</LEDGERNAME><AMOUNT>300</AMOUNT>
+  <INVENTORYALLOCATIONS.LIST><STOCKITEMNAME>A</STOCKITEMNAME><ACTUALQTY>1,234.5 kg</ACTUALQTY><AMOUNT>-200</AMOUNT></INVENTORYALLOCATIONS.LIST>
+  <INVENTORYALLOCATIONS.LIST><STOCKITEMNAME>B</STOCKITEMNAME><BILLEDQTY>12,</BILLEDQTY><AMOUNT>-100</AMOUNT></INVENTORYALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST>
+ <ALLLEDGERENTRIES.LIST><LEDGERNAME>Stock</LEDGERNAME><AMOUNT>-300</AMOUNT>
+  <INVENTORYALLOCATIONS.LIST><STOCKITEMNAME>C</STOCKITEMNAME><BILLEDQTY>x-.5 y</BILLEDQTY><AMOUNT>-1</AMOUNT></INVENTORYALLOCATIONS.LIST>
+  <INVENTORYALLOCATIONS.LIST><STOCKITEMNAME>D</STOCKITEMNAME><BILLEDQTY>1.5.3</BILLEDQTY><AMOUNT>-1</AMOUNT></INVENTORYALLOCATIONS.LIST>
+  <INVENTORYALLOCATIONS.LIST><STOCKITEMNAME>E</STOCKITEMNAME><BILLEDQTY>--3 5.</BILLEDQTY><AMOUNT>-1</AMOUNT></INVENTORYALLOCATIONS.LIST>
+  <INVENTORYALLOCATIONS.LIST><STOCKITEMNAME> </STOCKITEMNAME><BILLEDQTY>3</BILLEDQTY><AMOUNT>-1</AMOUNT></INVENTORYALLOCATIONS.LIST>
+  <INVENTORYALLOCATIONS.LIST><STOCKITEMNAME>F</STOCKITEMNAME><BILLEDQTY> Nos</BILLEDQTY><AMOUNT>-1</AMOUNT></INVENTORYALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST>
+</VOUCHER>
+<VOUCHER><GUID>g-journal</GUID><DATE>20250603</DATE><VOUCHERTYPENAME>Stock Journal</VOUCHERTYPENAME><ISOPTIONAL>No</ISOPTIONAL><ISPOSTDATED>No</ISPOSTDATED>
+ <ALLINVENTORYENTRIES.LIST><STOCKITEMNAME>Raw</STOCKITEMNAME><BILLEDQTY>4</BILLEDQTY><RATE>1/Nos</RATE><AMOUNT>4</AMOUNT></ALLINVENTORYENTRIES.LIST>
+ <INVENTORYENTRIESOUT.LIST><STOCKITEMNAME>Raw</STOCKITEMNAME><ACTUALQTY>4 Nos</ACTUALQTY><RATE>1/Nos</RATE><AMOUNT>4</AMOUNT></INVENTORYENTRIESOUT.LIST>
+ <INVENTORYENTRIESIN.LIST><STOCKITEMNAME>Made</STOCKITEMNAME><BILLEDQTY>2</BILLEDQTY><AMOUNT>-4</AMOUNT></INVENTORYENTRIESIN.LIST>
+ <INVENTORYENTRIESIN.LIST><STOCKITEMNAME></STOCKITEMNAME><ACTUALQTY>1</ACTUALQTY></INVENTORYENTRIESIN.LIST>
+</VOUCHER>
+<VOUCHER><GUID>g-emptyio</GUID><DATE>20250604</DATE><VOUCHERTYPENAME>Stock Journal</VOUCHERTYPENAME><ISOPTIONAL>No</ISOPTIONAL><ISPOSTDATED>No</ISPOSTDATED>
+ <INVENTORYENTRIESIN.LIST><STOCKITEMNAME></STOCKITEMNAME><ACTUALQTY>1</ACTUALQTY></INVENTORYENTRIESIN.LIST>
+ <ALLINVENTORYENTRIES.LIST><STOCKITEMNAME>Kept</STOCKITEMNAME><ACTUALQTY>7</ACTUALQTY><AMOUNT>-7</AMOUNT></ALLINVENTORYENTRIES.LIST>
+</VOUCHER>
+<VOUCHER><GUID>g-cancel</GUID><DATE>20250605</DATE><VOUCHERTYPENAME>Sales</VOUCHERTYPENAME><ISCANCELLED>Yes</ISCANCELLED>
+ <ALLINVENTORYENTRIES.LIST><STOCKITEMNAME>Void</STOCKITEMNAME><BILLEDQTY>0.1 Nos</BILLEDQTY><RATE>-.5/Nos</RATE><AMOUNT>1</AMOUNT></ALLINVENTORYENTRIES.LIST>
+</VOUCHER>
+<VOUCHER><GUID>g-outonly</GUID><DATE>20250606</DATE><VOUCHERTYPENAME>Stock Journal</VOUCHERTYPENAME><ISOPTIONAL>No</ISOPTIONAL><ISPOSTDATED>No</ISPOSTDATED>
+ <ALLINVENTORYENTRIES.LIST><STOCKITEMNAME>Both</STOCKITEMNAME><BILLEDQTY>3</BILLEDQTY><AMOUNT>3</AMOUNT></ALLINVENTORYENTRIES.LIST>
+ <INVENTORYENTRIESOUT.LIST><STOCKITEMNAME>Gone</STOCKITEMNAME><ACTUALQTY>2</ACTUALQTY><AMOUNT>2</AMOUNT></INVENTORYENTRIESOUT.LIST>
+</VOUCHER>
+<VOUCHER><GUID>g-inonly</GUID><DATE>20250607</DATE><VOUCHERTYPENAME>Stock Journal</VOUCHERTYPENAME><ISOPTIONAL>No</ISOPTIONAL><ISPOSTDATED>No</ISPOSTDATED>
+ <ALLINVENTORYENTRIES.LIST><STOCKITEMNAME>Both</STOCKITEMNAME><BILLEDQTY>3</BILLEDQTY><AMOUNT>3</AMOUNT></ALLINVENTORYENTRIES.LIST>
+ <INVENTORYENTRIESIN.LIST><STOCKITEMNAME>Come</STOCKITEMNAME><ACTUALQTY>1</ACTUALQTY><AMOUNT>-1</AMOUNT></INVENTORYENTRIESIN.LIST>
+</VOUCHER>
+<VOUCHER><GUID>g-deep</GUID><DATE>20250608</DATE><VOUCHERTYPENAME>Purchase</VOUCHERTYPENAME><ISOPTIONAL>No</ISOPTIONAL><ISPOSTDATED>No</ISPOSTDATED>
+ <WRAP><ALLLEDGERENTRIES.LIST><LEDGERNAME>Hidden</LEDGERNAME><AMOUNT>5</AMOUNT>
+  <INVENTORYALLOCATIONS.LIST><STOCKITEMNAME>Deep</STOCKITEMNAME><ACTUALQTY>1</ACTUALQTY><AMOUNT>-5</AMOUNT></INVENTORYALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST></WRAP>
+ <ALLLEDGERENTRIES.LIST><LEDGERNAME>Stock</LEDGERNAME><AMOUNT>-5</AMOUNT>
+  <INVENTORYALLOCATIONS.LIST><STOCKITEMNAME>Direct</STOCKITEMNAME><ACTUALQTY>1</ACTUALQTY><AMOUNT>-5</AMOUNT></INVENTORYALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST>
+</VOUCHER>
+<VOUCHER><GUID>g-units</GUID><DATE>20250609</DATE><VOUCHERTYPENAME>Sales</VOUCHERTYPENAME><ISOPTIONAL>No</ISOPTIONAL><ISPOSTDATED>No</ISPOSTDATED>
+ <ALLINVENTORYENTRIES.LIST><STOCKITEMNAME>Cloth</STOCKITEMNAME><BILLEDQTY>5 m²</BILLEDQTY><RATE>2/m²</RATE><AMOUNT>10</AMOUNT></ALLINVENTORYENTRIES.LIST>
+ <ALLINVENTORYENTRIES.LIST><STOCKITEMNAME>Half</STOCKITEMNAME><BILLEDQTY>1½ kg</BILLEDQTY><AMOUNT>1</AMOUNT></ALLINVENTORYENTRIES.LIST>
+</VOUCHER>
+</COLLECTION></DATA></BODY></ENVELOPE>";
+
+    type Row<'a> = (
+        &'a str,
+        Option<f64>,
+        Option<i64>,
+        Option<i64>,
+        Option<i8>,
+        bool,
+    );
+
+    fn load(text: &str) -> Result<Vec<Voucher>> {
+        let root = xml::parse(text, "probe")?;
+        let base = ["Sales", "Purchase", "Stock Journal"]
+            .into_iter()
+            .map(|t| (t.to_string(), t.to_string()))
+            .collect();
+        Ok(load_vouchers(&root, "probe", &base, None)?.vouchers)
+    }
+
+    fn rows(v: &Voucher) -> Vec<Row<'_>> {
+        v.inventory
+            .iter()
+            .map(|i| {
+                let InventoryLine {
+                    item,
+                    qty,
+                    rate_paise,
+                    amount_paise,
+                    direction,
+                    qty_field_present,
+                } = i;
+                (
+                    item.as_str(),
+                    *qty,
+                    *rate_paise,
+                    *amount_paise,
+                    *direction,
+                    *qty_field_present,
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn inventory_lines_match_the_reference_adapter() {
+        let vs = load(PROBE).unwrap();
+        let masterids: Vec<(&str, Option<&str>)> = vs
+            .iter()
+            .map(|v| (v.guid.as_str(), v.masterid.as_deref()))
+            .collect();
+        assert_eq!(
+            masterids,
+            [
+                ("g-top", Some("42")),
+                ("g-nested", None),
+                ("g-journal", None),
+                ("g-emptyio", None),
+                ("g-cancel", None),
+                ("g-outonly", None),
+                ("g-inonly", None),
+                ("g-deep", None),
+                ("g-units", None)
+            ]
+        );
+        // Top-level entries win over the nested allocation; an entry naming no item is skipped.
+        assert_eq!(
+            rows(&vs[0]),
+            [
+                (
+                    "Widget",
+                    Some(12.5),
+                    Some(10_000),
+                    Some(-125_000),
+                    None,
+                    true
+                ),
+                ("Loose", Some(5.0), Some(50), Some(250), None, true),
+                ("Valueonly", None, None, None, None, true),
+                ("Unasked", None, Some(-100_001), Some(-1_000), None, false),
+            ]
+        );
+        // No top-level entry names an item, so the nested allocations are read.
+        assert_eq!(
+            rows(&vs[1]),
+            [
+                ("A", Some(1234.5), None, Some(20_000), None, true),
+                ("B", Some(12.0), None, Some(10_000), None, true),
+                ("C", Some(-0.5), None, Some(100), None, true),
+                ("D", Some(1.5), None, Some(100), None, true),
+                ("E", Some(-3.0), None, Some(100), None, true),
+                ("F", None, None, Some(100), None, true),
+            ]
+        );
+        // IN/OUT lists replace the others: every IN, then every OUT, with no rate.
+        assert_eq!(
+            rows(&vs[2]),
+            [
+                ("Made", None, None, Some(400), Some(1), false),
+                ("Raw", Some(4.0), None, Some(-400), Some(-1), true),
+            ]
+        );
+        // An IN/OUT list naming no item does not displace the top-level entries.
+        assert_eq!(
+            rows(&vs[3]),
+            [("Kept", Some(7.0), None, Some(700), None, true)]
+        );
+        // A cancelled voucher's lines are read too; 0.1 is not exact in f32; a negative
+        // leading-dot rate.
+        assert_eq!(
+            rows(&vs[4]),
+            [("Void", Some(0.1), Some(-50), Some(-100), None, true)]
+        );
+        // An OUT list alone, or an IN list alone, replaces the top-level entries.
+        assert_eq!(
+            rows(&vs[5]),
+            [("Gone", Some(2.0), None, Some(-200), Some(-1), true)]
+        );
+        assert_eq!(
+            rows(&vs[6]),
+            [("Come", Some(1.0), None, Some(100), Some(1), true)]
+        );
+        // Only the voucher's own ledger entries carry nested allocations; a deeper one is not read.
+        assert_eq!(
+            rows(&vs[7]),
+            [("Direct", Some(1.0), None, Some(500), None, true)]
+        );
+        // Numeric characters Python's `\d` does not match (a superscript, a fraction) are read as
+        // the reference reads them, not refused.
+        assert_eq!(
+            rows(&vs[8]),
+            [
+                ("Cloth", Some(5.0), Some(200), Some(-1000), None, true),
+                ("Half", Some(1.0), None, Some(-100), None, true),
+            ]
+        );
+    }
+
+    /// Python's `\d` reads non-ASCII decimal digits; this port refuses the text instead of
+    /// reading it as a different number (the reference reads `"١٢ Nos"` as 12 and a fullwidth
+    /// `"５ Nos"` as 5).
+    #[test]
+    fn a_non_ascii_digit_is_refused_not_read() {
+        for (qty, rate) in [
+            ("\u{0661}\u{0662} Nos", "1/Nos"),
+            ("1 Nos", "\u{0661}/Nos"),
+            ("\u{FF15} Nos", "1/Nos"),
+            ("1 Nos", "\u{FF11}/Nos"),
+        ] {
+            let text = PROBE
+                .replacen("12.5 Nos", qty, 1)
+                .replacen("100.00/Nos", rate, 1);
+            let err = load(&text).unwrap_err();
+            assert!(err.to_string().contains("non-ASCII digit"), "{err}");
+        }
+    }
+
+    /// A voucher built from `Default` and never given a status keeps the population closed.
+    #[test]
+    fn a_default_voucher_makes_the_population_refuse() {
+        let book = Book {
+            company_name: String::new(),
+            company_guid: String::new(),
+            read_at: String::new(),
+            groups: BTreeMap::new(),
+            group_masters: BTreeMap::new(),
+            ledgers: BTreeMap::new(),
+            vouchers: vec![Voucher::default()],
+            tb: BTreeMap::new(),
+        };
+        assert!(book.population().is_err());
+    }
 }

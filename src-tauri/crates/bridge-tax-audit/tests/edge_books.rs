@@ -16,7 +16,9 @@ mod common;
 use std::collections::{BTreeMap, BTreeSet};
 
 use bridge_tally_primitives::TallyDate;
-use bridge_tax_audit::book::{Book, Ledger, LedgerLine, TbRow, Voucher, VoucherStatus};
+use bridge_tax_audit::book::{
+    Book, InventoryLine, Ledger, LedgerLine, TbRow, Voucher, VoucherStatus,
+};
 use bridge_tax_audit::canonical::canonical_test_result;
 use bridge_tax_audit::compare::compare;
 use bridge_tax_audit::read::Window;
@@ -44,6 +46,52 @@ fn date(iso: &str) -> TallyDate {
 
 fn int(v: &Value) -> i64 {
     v.as_i64().unwrap()
+}
+
+/// `key` of `obj`: `None` when absent, or when null and `nullable`; otherwise `read` must accept
+/// the value, or the test panics -- a mistyped key fails here as it does in `parity/edge_golden.py`,
+/// rather than the two sides building different books.
+fn typed<T>(
+    obj: &Value,
+    key: &str,
+    nullable: bool,
+    what: &str,
+    read: impl Fn(&Value) -> Option<T>,
+) -> Option<T> {
+    match obj.get(key) {
+        None => None,
+        Some(Value::Null) if nullable => None,
+        Some(v) => Some(read(v).unwrap_or_else(|| panic!("{key} must be {what}, got {v}"))),
+    }
+}
+
+/// One `inventory` entry: `{item, qty?, rate?, amount?, direction?, qty_field_present?}`, the
+/// numbers as the reference model holds them (`qty` a number, read as a float; `rate`/`amount`
+/// integer paise, debit positive; `direction` 1 or -1), absent or null meaning `None`;
+/// `qty_field_present` a boolean, true when absent. Any other type is refused.
+fn inventory_line(i: &Value) -> InventoryLine {
+    InventoryLine {
+        item: typed(i, "item", false, "text", |v| v.as_str().map(str::to_string))
+            .expect("item is required"),
+        qty: typed(i, "qty", true, "a number or null", Value::as_f64),
+        rate_paise: typed(i, "rate", true, "an integer or null", Value::as_i64),
+        amount_paise: typed(i, "amount", true, "an integer or null", Value::as_i64),
+        direction: typed(i, "direction", true, "1, -1 or null", |v| {
+            match v.as_i64() {
+                Some(1) => Some(1),
+                Some(-1) => Some(-1),
+                _ => None,
+            }
+        }),
+        qty_field_present: typed(
+            i,
+            "qty_field_present",
+            false,
+            "true or false",
+            Value::as_bool,
+        )
+        .unwrap_or(true),
+    }
 }
 
 /// The book `parity/edge_golden.py` builds from the same spec.
@@ -102,6 +150,13 @@ fn build(s: &Value) -> Book {
                     })
                     .collect(),
                 narration: text("narration", ""),
+                masterid: typed(v, "masterid", false, "text", |m| {
+                    m.as_str().map(str::to_string)
+                }),
+                inventory: v["inventory"]
+                    .as_array()
+                    .map(|a| a.iter().map(inventory_line).collect())
+                    .unwrap_or_default(),
                 guid,
                 base_type,
             }
@@ -451,5 +506,40 @@ fn edge_runners_agree_across_the_two_sides() {
             bridge_tax_audit::registry::find(t).is_some(),
             "{t} is not registered"
         );
+    }
+}
+
+/// The edge-book builder refuses a mistyped `masterid` or inventory key rather than reading it
+/// differently from `parity/edge_golden.py`, which refuses the same specs.
+#[test]
+fn mistyped_voucher_keys_are_refused() {
+    let cases = [
+        serde_json::json!({"item": "x", "qty_field_present": null}),
+        serde_json::json!({"item": "x", "qty": "5"}),
+        serde_json::json!({"item": "x", "rate": 1.5}),
+        serde_json::json!({"item": "x", "direction": 2}),
+        serde_json::json!({"qty": 1}),
+    ];
+    for case in cases {
+        let refused = std::panic::catch_unwind(|| inventory_line(&case)).is_err();
+        assert!(refused, "{case} was not refused");
+    }
+    let accepted = inventory_line(&serde_json::json!({"item": "x", "qty": null, "direction": -1}));
+    assert_eq!(
+        (accepted.qty, accepted.direction, accepted.qty_field_present),
+        (None, Some(-1), true)
+    );
+    for masterid in [serde_json::json!(42), Value::Null] {
+        let refused = std::panic::catch_unwind(|| {
+            typed(
+                &serde_json::json!({ "masterid": masterid }),
+                "masterid",
+                false,
+                "text",
+                |m| m.as_str().map(str::to_string),
+            )
+        })
+        .is_err();
+        assert!(refused, "masterid {masterid} was not refused");
     }
 }
