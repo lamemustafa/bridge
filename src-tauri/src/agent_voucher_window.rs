@@ -939,8 +939,9 @@ pub(super) struct RetainedWindowRead {
 /// admitted response is retained byte for byte, in order. A failed read keeps
 /// its typed kind for [`audit_window_failure`].
 ///
-/// Nothing retained is meaningful unless the whole window read succeeds: a
-/// caller must discard it on any failure, and never seal part of a window.
+/// Nothing retained is meaningful unless the whole window read succeeds, so
+/// [`AuditWindowReader::into_retained`] yields it only then: part of a window
+/// is never sealed.
 ///
 /// [`fetch_audit_part`]: crate::tally::runtime::TallyRuntime::fetch_audit_part
 pub(super) struct AuditWindowReader<'a> {
@@ -967,12 +968,24 @@ impl<'a> AuditWindowReader<'a> {
         }
     }
 
-    /// Every admitted read, in the order sent.
-    pub(super) fn retained(&self) -> Vec<RetainedWindowRead> {
-        self.retained
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+    /// Every read of the window, in the order sent, but only when `outcome`,
+    /// the result of this reader's window read, succeeded. A read is retained
+    /// when its response arrives, before the executor admits it, so a failed
+    /// window can hold a refused part. Returning nothing on any failure is what
+    /// keeps part of a failed window from ever being sealed: the discard rule
+    /// is not left to the caller.
+    pub(super) fn into_retained<T>(
+        self,
+        outcome: &Result<WindowReadOutcome<T>, ToolFailure>,
+    ) -> Option<Vec<RetainedWindowRead>> {
+        if outcome.is_err() || self.failure_kind().is_some() {
+            return None;
+        }
+        Some(
+            self.retained
+                .into_inner()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
     }
 
     fn failure_kind(&self) -> Option<crate::tally::runtime::AuditPartFailureKind> {

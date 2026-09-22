@@ -3075,7 +3075,7 @@ async fn read_audit_window(
     runtime: TallyRuntime,
 ) -> (
     Result<WindowReadOutcome<Value>, ToolFailure>,
-    Vec<RetainedWindowRead>,
+    Option<Vec<RetainedWindowRead>>,
     Option<AuditWindowFailure>,
     Vec<tally_protocol_simulator::ObservedRequest>,
     TallyConfig,
@@ -3105,17 +3105,21 @@ async fn read_audit_window(
         .as_ref()
         .err()
         .map(|failure| audit_window_failure(failure, &reader));
+    let retained = reader.into_retained(&outcome);
     (
         outcome,
-        reader.retained(),
+        retained,
         failure,
         simulator.finish().unwrap(),
         config,
     )
 }
 
-/// The agent tools read exactly as before: through the explicit agent reader,
-/// the same requests go out in the same order as through `Server`.
+/// `Server::read_voucher_window` and an explicit [`AgentReader`] send the same
+/// requests in the same order, so the two entry points cannot drift apart.
+/// Both run the one executor, so this cannot show that the agent path is
+/// unchanged from before readers existed. The pre-existing window tests show
+/// that: they pass unmodified.
 #[tokio::test]
 async fn the_agent_reader_sends_exactly_the_requests_the_window_read_sent() {
     let plans = || {
@@ -3180,6 +3184,7 @@ async fn an_audit_window_keeps_every_read_it_admitted_as_it_arrived() {
     .await;
     let read = outcome.expect("the window reads");
     assert!(failure.is_none());
+    let retained = retained.expect("a completed window yields its reads");
     assert_eq!(read.rows.len(), 3);
     assert_eq!(read.reads, divided_parts());
     // Census, three parts, closing marks: five reads of three legs each.
@@ -3235,8 +3240,9 @@ async fn an_audit_window_refuses_a_part_the_census_disagrees_with() {
         Some(AuditWindowFailure::Refused(PART_NOT_ADMITTED.to_string()))
     );
     assert!(!failure.unwrap().retryable());
-    // The census and the refused part were both read; nothing after.
-    assert_eq!(retained.len(), 2);
+    // The census and the refused part were both read, nothing after, and a
+    // refused window yields no retained reads at all.
+    assert!(retained.is_none());
     assert_eq!(observed.len(), 6);
 }
 
@@ -3286,8 +3292,9 @@ async fn an_audit_window_stops_at_a_dropped_part_and_owes_a_drain() {
         ))
     );
     assert!(failure.unwrap().retryable());
-    // The census and the first part were admitted; the dropped one was not.
-    assert_eq!(retained.len(), 2);
+    // The census and the first part arrived before the drop, but a failed
+    // window yields no retained reads.
+    assert!(retained.is_none());
     assert_eq!(observed.len(), 8);
     // A second window to the same endpoint is refused before sending anything:
     // the drain debt is keyed by endpoint, and the check precedes any request,
@@ -3313,7 +3320,7 @@ async fn an_audit_window_stops_at_a_dropped_part_and_owes_a_drain() {
         .err()
         .map(|failure| audit_window_failure(failure, &reader));
     assert!(again.is_err());
-    assert!(reader.retained().is_empty());
+    assert!(reader.into_retained(&again).is_none());
     assert_eq!(
         again_failure,
         Some(AuditWindowFailure::Part(
