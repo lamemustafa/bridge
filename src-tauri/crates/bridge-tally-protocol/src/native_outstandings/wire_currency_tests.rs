@@ -525,3 +525,20 @@ fn a_company_row_repeating_its_guid_or_currency_name_or_a_response_without_statu
         Ok("₹".to_string())
     );
 }
+
+#[test]
+fn an_empty_company_currency_does_not_match_an_empty_original_name() {
+    let xml = multi_with_original_names().replacen(
+        "<ORIGINALNAME TYPE=\"String\">₹</ORIGINALNAME>",
+        "<ORIGINALNAME TYPE=\"String\"></ORIGINALNAME>",
+        1,
+    );
+    let currency = parse_company_currency(&xml)
+        .expect("parses")
+        .with_company_currency_name("");
+    assert!(!currency.base_determined);
+    assert_eq!(
+        currency.inr_admission(),
+        Err("company_base_currency_undetermined")
+    );
+}

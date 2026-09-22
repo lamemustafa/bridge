@@ -228,7 +228,9 @@ impl CompanyCurrency {
     /// character. With no match or several, it stays undetermined, which
     /// refuses. A single-master read is unchanged.
     pub fn with_company_currency_name(mut self, company_currency_name: &str) -> Self {
-        if self.currency_count < 2 {
+        // An empty value names nothing, even if some master's ORIGINALNAME is
+        // also empty.
+        if self.currency_count < 2 || company_currency_name.is_empty() {
             return self;
         }
         let matching: Vec<CurrencyMaster> = self
