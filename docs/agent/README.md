@@ -6,9 +6,10 @@ The developer configuration below remains for supported client integrations.
 
 `bridge_mcp` is Bridge's newline-delimited JSON-RPC 2.0 MCP server. It uses
 Bridge's loopback-only Tally XML transport. Reads are enabled by default.
-The MCPB extension also exposes Journal file preparation and bank-statement
-parsing by default. Journal posting is off by default while bridge#574 and
-bridge#579 are open; the **Allow Journal posting** setting adds it, with
+The MCPB extension also exposes voucher file preparation and bank-statement
+parsing by default. Voucher posting (one Journal, Payment, Receipt or Contra) is
+off by default while bridge#574 and bridge#579 are open; the **Allow voucher
+posting (Journal, Payment, Receipt, Contra)** setting adds it, with
 separate native approval for each new attempt. Command-line installations
 retain explicit environment switches.
 
@@ -73,8 +74,8 @@ installation, `BRIDGE_AGENT_ENABLE_IMPORT=true` also exposes
 `build_import_xml` and `parse_bank_statement`, which prepares local
 bank-statement voucher proposals. `BRIDGE_AGENT_ENABLE_WRITES=true` enables
 that import workflow and exposes `post_import`. The MCPB extension always
-sets `BRIDGE_AGENT_ENABLE_IMPORT=true` and maps its **Allow Journal posting**
-setting, off by default, to `BRIDGE_AGENT_ENABLE_WRITES`.
+sets `BRIDGE_AGENT_ENABLE_IMPORT=true` and maps its **Allow voucher posting
+(Journal, Payment, Receipt, Contra)** setting, off by default, to `BRIDGE_AGENT_ENABLE_WRITES`.
 This is a source-configuration inventory, not a claim that an installed client
 uses a particular setting or that a tool is qualified for every runtime. Each
 call returns compact JSON with the
@@ -294,8 +295,8 @@ licence mode, or manually imported file, and only an unnumbered single-voucher
    live read.
 4. In Tally, with the intended company open, use **Gateway of Tally → Import →
    Vouchers** to import the file. Bridge does not dispatch this manual step.
-   Alternatively, use the separately approved MCP or desktop Journal posting
-   flow below instead of importing the file manually.
+   Alternatively, use the separately approved MCP voucher posting (or, for a
+   Journal, the desktop posting) flow below instead of importing the file manually.
 5. Call `verify_import` with the company GUID and batch ID. It reads the date
    window back, compares the exact signed ledger entries, reports missing or
    divergent rows and duplicates, writes `.proof.json` and `.proof.md`, and
@@ -329,16 +330,17 @@ Tally Cloud Access, every non-loopback Tally host, and change enumeration. A
 not live-Tally qualification or a claim that every Tally configuration or
 licence mode has been qualified.
 
-## Approved Journal posting
+## Approved voucher posting
 
-**Journal posting is off by default in the MCPB extension** while two known
+**Voucher posting is off by default in the MCPB extension** while two known
 limits remain. The post names its company only by name, so if that company is renamed in the moment between Bridge's checks and the post, the voucher is still sent, and where Tally then puts it is not yet established
 ([#574](https://github.com/lamemustafa/bridge/issues/574)). And Bridge cannot
 delete or roll back a voucher it has posted, so a wrong post must be corrected
 by hand in Tally ([#579](https://github.com/lamemustafa/bridge/issues/579)).
 The saved batch file is now checked byte for byte against the approved record
 before posting ([#575](https://github.com/lamemustafa/bridge/issues/575), fixed).
-**Allow Journal posting** turns it on for users who accept those risks. Existing
+**Allow voucher posting (Journal, Payment, Receipt, Contra)** turns it on for
+users who accept those risks. Existing
 saved settings are respected, so an installation that saved the earlier default
 may still have posting on; check the setting.
 For command-line installation, set `BRIDGE_AGENT_ENABLE_WRITES=true`.
@@ -354,13 +356,21 @@ for the user. That client permission does not approve an accounting entry.
 One native-approved Journal and restart reconciliation have been observed on
 macOS against a synthetic Silver 7.1 instance. This remains a preview: Windows
 interactive approval and Gold/Education live posting have not been established.
+Native posting of a Payment, Receipt or Contra is admitted under the same
+safeguards (ADR 0004, amended 2026-09-22) but has not yet been observed live;
+Bridge-built files of those types have been imported and verified.
 
-1. Validate the exact existing ledger names and build **one Journal** using the
-   file workflow above. A Journal is a voucher; Payment, Receipt, Contra,
-   sales, purchases, tax, inventory and master creation remain unavailable.
+1. Validate the exact existing ledger names and build **one Journal, Payment,
+   Receipt or Contra** using the file workflow above. Sales, purchases, tax,
+   inventory and master creation remain unavailable. For a Payment, Receipt or
+   Contra, `post_import` classifies every leg again from the ledgers' current
+   parents and the group tree, before approval and inside the queue immediately
+   before posting, and refuses with `import_bank_classification_changed` if any
+   leg changed; nothing is sent.
 2. Call `post_import` with the original `company_guid` and `batch_id`.
 3. Review the native dialog's company, endpoint, date, numbering, reference,
-   narration, every debit/credit entry, and totals. Choose **Post Journal** on
+   narration, every debit/credit entry, and totals; for a bank voucher, also the
+   side that must be bank or cash. Choose **Post voucher** on
    macOS or **Yes** on Windows to permit this attempt. **Cancel** or Escape
    declines on macOS; Return may leave the dialog open. Windows defaults to
    **No**. Long or directionally ambiguous previews are refused; use the
