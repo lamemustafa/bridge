@@ -3,15 +3,15 @@
   "test_id": "loans_interest",
   "test_version": "1",
   "rules_version": "2026-09-17.1",
-  "population_note_sha256_16": "4bad7da9987a0bf4",
-  "population_note_text": "Books population (optional, cancelled and post-dated vouchers excluded); Contra excluded throughout. A loan ledger's interest journals are vouchers whose only other ledger line is its configured interest ledger (loan_config); every other voucher touching the loan ledger is a taken (credit) or repaid (debit) transaction, never classified by ledger name.",
+  "population_note_sha256_16": "129f841c372e99fc",
+  "population_note_text": "Books population (optional, cancelled and post-dated vouchers excluded); Contra excluded throughout. A loan ledger's interest journals are vouchers whose only other ledger line is its configured interest ledger (the client's list of loans); every other voucher touching the loan ledger is a taken (credit) or repaid (debit) transaction, never classified by ledger name.",
   "figures": [
     {
       "id": "loans_interest.clause31_repaid_reportable_total",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "d5981e94161dc675",
-      "definition_text": "Sum of clause31_repaid_total_<tag> across every non-exempt-lender loan ledger.",
+      "definition_sha256_16": "1ca28daf4d59e6dd",
+      "definition_text": "Sum of the repayments that Clause 31(c) reports: entries on a loan from a lender outside the form's reporting exemption, where the balance being repaid, with or without the interest credited and not yet paid, or the repayment itself reaches the s.269SS/269T limit.",
       "evidence": []
     },
     {
@@ -40,8 +40,8 @@
       "id": "loans_interest.clause31_row_mode_code_taken_83f666a6_4685dccf",
       "value": "",
       "unit": "text",
-      "definition_sha256_16": "4d0be35c6c0b7844",
-      "definition_text": "Form 3CD utility Note 1 code for this taken entry (module docstring's mode_code bullet): derived from mode+direction, not read off a specimen utility export -- confirm.",
+      "definition_sha256_16": "82f495d52fd501a7",
+      "definition_text": "Form 3CD utility Note 1 code for this taken entry: derived from the mode and direction, not read off a specimen utility export -- confirm.",
       "evidence": []
     },
     {
@@ -64,8 +64,8 @@
       "id": "loans_interest.clause31_taken_reportable_total",
       "value": 3000000,
       "unit": "paise",
-      "definition_sha256_16": "e1925f9be2f33152",
-      "definition_text": "Sum of clause31_taken_total_<tag> across every non-exempt-lender loan ledger (bank/co-operative-bank lenders excluded entirely).",
+      "definition_sha256_16": "d7af3e78b067f203",
+      "definition_text": "Sum of the loans taken that Clause 31(a) reports: entries on a loan from a lender outside the form's reporting exemption, from where the running balance with that lender reaches the s.269SS/269T limit.",
       "evidence": []
     },
     {
@@ -80,16 +80,16 @@
       "id": "loans_interest.deductor_status",
       "value": "deductor",
       "unit": "text",
-      "definition_sha256_16": "41bc82cf20314021",
-      "definition_text": "Whether the assessee must deduct TDS under s.194A for the year -- same rule and figure as tds_payees.deductor_status, reused verbatim: firm/LLP/company always; individual/HUF only if previous-year business turnover exceeded rules.deductor.individual_huf_prev_year_turnover_paise.",
+      "definition_sha256_16": "a02e7d371de92a27",
+      "definition_text": "Whether the assessee must deduct TDS under s.194A for the year -- the same rule and figure as 'TDS on payments made': firm/LLP/company always; individual/HUF only if previous-year business turnover exceeded the rules' turnover limit for an individual or HUF.",
       "evidence": []
     },
     {
       "id": "loans_interest.interest_ledger_83f666a6",
       "value": "Interest on NBFC Loan",
       "unit": "text",
-      "definition_sha256_16": "7dcf8cbb9ac123d5",
-      "definition_text": "The configured interest ledger name for loan ledger (tag 83f666a6), or '' if the loan is interest-free -- the companion figure LOAN-2 and LOAN-3 read back to check each voucher on this loan and that ledger independently of this test's own bucketing.",
+      "definition_sha256_16": "06842c0e9e33ff8f",
+      "definition_text": "The configured interest ledger name for loan ledger (tag 83f666a6), or '' if the loan is interest-free -- this test's own consistency checks read it back to check each voucher on this loan and that ledger independently of the test's own bucketing.",
       "evidence": []
     },
     {
@@ -110,8 +110,8 @@
       "id": "loans_interest.lender_type_83f666a6",
       "value": "nbfc",
       "unit": "text",
-      "definition_sha256_16": "7b29001821318ca1",
-      "definition_text": "Lender type for loan ledger (tag 83f666a6) from client config (loans.loan_ledgers), classified by the loan ledger this interest pairs with -- never by a word in the ledger name.",
+      "definition_sha256_16": "67ff6c4a37e5c9db",
+      "definition_text": "Lender type for loan ledger (tag 83f666a6) from the client's list of loans, classified by the loan ledger this interest pairs with -- never by a word in the ledger name.",
       "evidence": []
     },
     {
@@ -170,9 +170,9 @@
       ],
       "title_sha256_16": "52fc1bbcd022a7a1",
       "title_text": "Loan taken against Invented Finance Ltd (bank mode, code n/a)",
-      "limits_sha256_16": "193a4dd6409d30b8",
+      "limits_sha256_16": "c0ec8796e2fef130",
       "limits_text": [
-        "Books only: confirm the lender's identity (name, address, PAN) for Form 3CD Clause 31, and whether this lender is excepted from s.269SS/269T beyond rules.s269ss_269t.exempt_lender_types (Government, a notified corporation, or another body notified under the Explanation).",
+        "Books only: confirm the lender's identity (name, address, PAN) for Form 3CD Clause 31, and whether this lender is excepted from s.269SS/269T beyond the lender types the rules already except (Government, a notified corporation, or another body notified under the Explanation).",
         "The mode-and-direction code follows the Form 3CD utility's own Note 1 list (A/B cash payment/receipt, I/J journal entry debit/credit, K/L any other mode debit/credit); this pack's own mapping from mode and direction to that code is a derivation from the GN's text, not verified against a specimen utility export -- confirm."
       ],
       "ask_client_sha256_16": "8c22e5a927638b0c",
@@ -213,9 +213,9 @@
       ],
       "title_sha256_16": "0b322ccb976c9523",
       "title_text": "Interest to a non-exempt lender over the s.194A threshold, no TDS ledger evidence",
-      "limits_sha256_16": "be5ce46503a38cd1",
+      "limits_sha256_16": "7b8e08bf048c724d",
       "limits_text": [
-        "Books only: lender type ('nbfc') comes from client config, not from a notification lookup; confirm the lender is not itself a body notified as exempt under s.194A(3)(iii) beyond the classes already in rules.s194a.exempt_lender_types.",
+        "Books only: lender type ('nbfc') comes from the client's setup, not from a notification lookup; confirm the lender is not itself a body notified as exempt under s.194A(3)(iii) beyond the lender types the rules already exempt.",
         "s.40(a)(ia) disallows 30% of the interest on TDS default; the second proviso removes this if the lender's Form 26A (Rule 31ACB) shows the interest was returned as income -- s.201(1A) interest still runs either way."
       ],
       "ask_client_sha256_16": "0ea73eedec7e5715",

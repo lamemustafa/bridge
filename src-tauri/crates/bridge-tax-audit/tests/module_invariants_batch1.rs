@@ -493,7 +493,7 @@ fn edge_ledger_scrutiny_without_its_rules_table_uses_the_default() {
     assert_eq!(
         f.definition,
         "Threshold used for the large-single-entry indicator (local prototype default, status \
-\"confirm\" -- rules/ay2026-27.toml has no [ledger_scrutiny] table yet)."
+\"confirm\" -- the rules table has no ledger scrutiny entry yet)."
     );
     assert_eq!(
         r.findings[0].title,

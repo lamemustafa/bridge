@@ -72,10 +72,10 @@ and regenerating all seven goldens there gives byte-identical files.
 | `loans_interest_invariants.json` | 6,570 | `5ddaf6edd94c6fc0dfe087c7eba3f35fe54c7139e1dc5d2092837e1c7b346e87` | `edge-books/loans_interest_invariants.json` |
 | `loans_interest_shared.json` | 3,883 | `f714219e6bf0aa29a66e109cc1be1523b6549e686c5bf4521a60b871b238b90b` | `edge-books/loans_interest_shared.json` |
 | `loans_interest_shared_reversals.json` | 3,907 | `3e58ab5517e605380cbf4a2f502e700f62fd87ee9ecac4441149286790f88208` | `edge-books/loans_interest_shared_reversals.json` |
-| `edge.loans_interest_core.loans_interest.json` | 59,187 | `dcc38578d9bd1f1b1a8c978c671d8374ef242675fa532c65b8d49a3196304c47` | `golden/edge.loans_interest_core.loans_interest.json` |
-| `edge.loans_interest_individual_at.loans_interest.json` | 8,714 | `5479456132db6242f916dbc9ebe05bc4273f6137dedeb0202f7403da36f3dcee` | `golden/edge.loans_interest_individual_at.loans_interest.json` |
-| `edge.loans_interest_individual_over.loans_interest.json` | 10,382 | `6187cf4f297dbc84989a3e79f5d09d1acfbf43c2599ae12932e9123cc75010d2` | `golden/edge.loans_interest_individual_over.loans_interest.json` |
-| `edge.loans_interest_invariants.loans_interest.json` | 24,925 | `7aacdc696373b9a353b12f86a592fd4d39fb876217deeea2e3ee61c8e8d38087` | `golden/edge.loans_interest_invariants.loans_interest.json` |
-| `edge.loans_interest_shared.loans_interest.json` | 11,304 | `e7c61a390cb8cf798aa34c38085d8eba72b0c953f2cf094d1af585d919cadd6b` | `golden/edge.loans_interest_shared.loans_interest.json` |
-| `edge.loans_interest_shared_reversals.loans_interest.json` | 12,273 | `3b6b73a91655acc333a3f22f01d0ddce9d71aad91e13d9da7cbc6f2b45ab6956` | `golden/edge.loans_interest_shared_reversals.loans_interest.json` |
-| `synthetic.loans_interest.json` | 15,063 | `8a167f23d85ee1253d1066024069ae53be56e9e63e634702a4456730b35bb69a` | `golden/synthetic.loans_interest.json` |
+| `edge.loans_interest_core.loans_interest.json` | 59,132 | `67491ec6be7db312a1af52885daed4fab7be7008ad0f7ac46626593dfd243aea` | `golden/edge.loans_interest_core.loans_interest.json` |
+| `edge.loans_interest_individual_at.loans_interest.json` | 8,931 | `51063638d289b69461391785eb43e7a6d89586f382fd08c3f436e6f9573b0743` | `golden/edge.loans_interest_individual_at.loans_interest.json` |
+| `edge.loans_interest_individual_over.loans_interest.json` | 10,591 | `96e619adc40aa0caca6567bd8417e4cd557694bb946166ca2715ddfa7dc8f57d` | `golden/edge.loans_interest_individual_over.loans_interest.json` |
+| `edge.loans_interest_invariants.loans_interest.json` | 25,096 | `8e00c88b76f811c59aca89352f9e83d8ff3321b0f85594c7bba788e6a515651a` | `golden/edge.loans_interest_invariants.loans_interest.json` |
+| `edge.loans_interest_shared.loans_interest.json` | 11,547 | `3347c094619f1c355dfe6a9dcfa8e7b70425981ff60eb8f086f013ef945b8bca` | `golden/edge.loans_interest_shared.loans_interest.json` |
+| `edge.loans_interest_shared_reversals.loans_interest.json` | 12,536 | `bfae3f31fced42cd3653d02cbebf160b85057c29d9c26101d19a1978ff142734` | `golden/edge.loans_interest_shared_reversals.loans_interest.json` |
+| `synthetic.loans_interest.json` | 15,254 | `462ad5b40fa8742899489d8f70e7122cd040123277ccae0a085ed97d82016657` | `golden/synthetic.loans_interest.json` |

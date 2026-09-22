@@ -384,21 +384,29 @@ every edge golden was regenerated at `3fa9d5d4` from an archive of that commit. 
 `synthetic.cash_payments_40a3.json`: two evidence refs become `row` refs, and its two EVID-1
 violations are gone. Every other golden is byte-identical.
 
+Then at `250eaedf7430fda005327530fcd7f14212c4e33c` (the second phase of the CA-facing wording, engine
+`6c24523b` to `250eaedf`), every golden in this file and in every batch file under `provenance/`
+(`loans_interest`'s included) and every edge golden was regenerated from an archive of that commit.
+50 of 56 change, in text only: 877 figure definitions, 39 finding limit lists, 4 ask-client lists and
+13 population notes are reworded. No figure or finding id, value, unit or evidence ref moves, and no
+invariant report changes. (Against Bridge master the regenerated `synthetic.cash_payments_40a3.json`
+also carries `3fa9d5d4`'s two `row` refs above; that golden already had them here.)
+
 ## Bytes
 
 | Fixture | Bytes | SHA-256 | Path |
 | --- | ---: | --- | --- |
-| `synthetic.cash_44ab.json` | 5,854 | `becbc7c673937f5accd8871a394ffb4e5af0c7cca2a324926684f42d28b0e9bf` | `golden/synthetic.cash_44ab.json` |
-| `synthetic.cash_payments_40a3.json` | 72,062 | `d637fe3e2a79dba108c306b1b186848a80c82988c62ad491cab6db54f103b1e6` | `golden/synthetic.cash_payments_40a3.json` |
-| `synthetic.depreciation.json` | 27,639 | `533bab261ac0c02d8687f6df6b915a5764cead1609abbea0c504926dcba64cd2` | `golden/synthetic.depreciation.json` |
-| `synthetic.financial_statements.json` | 16,718 | `0f4d5895cd3b6e5dadc04bf60514ed33357fa4c0734bad2d72176f8c2c354a3f` | `golden/synthetic.financial_statements.json` |
-| `synthetic.financial_statements.noreport.json` | 15,695 | `2025d1fcdcef63acdef082021b6cded6eea2d54959575f401e6c4798f09c9d3d` | `golden/synthetic.financial_statements.noreport.json` |
+| `synthetic.cash_44ab.json` | 5,880 | `94d58bcf9a18413ef024eed4537c18e41aed5eeb7fb6ddc964d193ea6e1abe5a` | `golden/synthetic.cash_44ab.json` |
+| `synthetic.cash_payments_40a3.json` | 72,122 | `4011beda7534f560a26e9821089a0a52aa9063dbc2041fb9fd948e56e806f902` | `golden/synthetic.cash_payments_40a3.json` |
+| `synthetic.depreciation.json` | 28,224 | `6c1e91fe421e101f5698743306fabaf3b48933227ca2faa2277b0111185e1d66` | `golden/synthetic.depreciation.json` |
+| `synthetic.financial_statements.json` | 16,955 | `90f3f13974b2699f8c19dc172d697cc9ed4c77adddf0d9d59f4305d8081fa5e4` | `golden/synthetic.financial_statements.json` |
+| `synthetic.financial_statements.noreport.json` | 15,888 | `2134a63248e05f06f7755fd7588dba8acaccebc471dfba383f4171806b637a69` | `golden/synthetic.financial_statements.noreport.json` |
 | `synthetic-report-totals.json` | 134 | `e772509bd6ebc52afc23ef9742b6b1f2a090737533abe3761a7448124411b7e3` | `synthetic-report-totals.json` |
-| `synthetic.applicability_44ab.json` | 10,692 | `c550529a6d6fe14700ea587219788ae86867d28d477959140814cf639ecd458e` | `golden/synthetic.applicability_44ab.json` |
+| `synthetic.applicability_44ab.json` | 10,768 | `fe59182afe17fc8b5ddb0d06cbc565bd851423b02af3bdbf3185b86dfc552b2e` | `golden/synthetic.applicability_44ab.json` |
 | `synthetic.trial_balance.json` | 92,621 | `249306799598823277ac59bb68dcd83c4af9d693b68d648b0d2f79852e3fd69f` | `golden/synthetic.trial_balance.json` |
-| `synthetic.stale_balances_41_1.json` | 9,833 | `2b0dc18aef54ece37d83003cda66e5b97d0949e901f706f26ca5559bd6ca53bb` | `golden/synthetic.stale_balances_41_1.json` |
-| `synthetic.ledger_scrutiny.json` | 51,355 | `fb043fb1fab5064a326d8adaf33cc8ed8228c7f595345b9c978a72a56ac10ae8` | `golden/synthetic.ledger_scrutiny.json` |
-| `synthetic.cash_book_integrity.json` | 15,234 | `856b97610a61ce03ab33ef7a4bc530a42feb07e412bf3bdcb6bd878b240a0fd1` | `golden/synthetic.cash_book_integrity.json` |
+| `synthetic.stale_balances_41_1.json` | 10,501 | `8962228b7ab6a9c8cf95f8dcd467bcba91acac09e5b37a622518843775d31e40` | `golden/synthetic.stale_balances_41_1.json` |
+| `synthetic.ledger_scrutiny.json` | 53,038 | `f3f1505aa17b7d4b4bae46b340c439a089a3cc2e91bedad55066a7bd9cd8a628` | `golden/synthetic.ledger_scrutiny.json` |
+| `synthetic.cash_book_integrity.json` | 15,481 | `f8066f87d7f8d38d64855cfdc3bc17af684c1d7dd5069e4fe79d76058b76e06e` | `golden/synthetic.cash_book_integrity.json` |
 | `cash_book.json` | 8,499 | `1ae602f22368e3b549ce1430770f097758f13efb716025bcb2bab2a2e4a34f11` | `edge-books/cash_book.json` |
 | `cash_book_misc.json` | 5,333 | `23bd18a9b41d3768ce4cba9c9b5243b0822316e5fa7ab0308b83226c581c93f0` | `edge-books/cash_book_misc.json` |
 | `cash_book_unicode.json` | 2,262 | `ec61a34edc11214da0c5cac2b7b7d40abe148c0fbcfec1582379c57a21ff3bc3` | `edge-books/cash_book_unicode.json` |
@@ -408,14 +416,14 @@ violations are gone. Every other golden is byte-identical.
 | `scrutiny_short.json` | 1,212 | `e60f643456d1b812bb82c24ad581a030c4ae0dcc1c9701560ef1ace44d54b46e` | `edge-books/scrutiny_short.json` |
 | `stale.json` | 3,134 | `3e896344abf36b0469d289d69dabfdc5206ee4998c2df505bed449fb79255059` | `edge-books/stale.json` |
 | `tb_rows.json` | 2,362 | `5e3df2c81094e5ea7577309b48597bc03067a4f9ba09175a610b627b62fc31cd` | `edge-books/tb_rows.json` |
-| `edge.cash_book.cash_book_integrity.json` | 32,696 | `41637ad43091a24607bdb128a30becde21d2a5b5e9d83f84b0147d592cd76e02` | `golden/edge.cash_book.cash_book_integrity.json` |
-| `edge.cash_book_misc.cash_book_integrity.json` | 21,467 | `a2f1c6c4bb3b70734a9680fd332399ed94c3e73d4bd81e2fa9eba9f6291f4b65` | `golden/edge.cash_book_misc.cash_book_integrity.json` |
-| `edge.cash_book_unicode.cash_book_integrity.json` | 8,877 | `fe04de6278df5ba65388c87dcb1bd927fcac36851f0995695a85372303b9c325` | `golden/edge.cash_book_unicode.cash_book_integrity.json` |
-| `edge.scrutiny.ledger_scrutiny.json` | 69,440 | `83a07d66c7030a6fa335b37586740c862b7e7b0e433ea5159833efc3ef1e5288` | `golden/edge.scrutiny.ledger_scrutiny.json` |
-| `edge.scrutiny_default.ledger_scrutiny.json` | 8,420 | `b24defb40fac1c15d8f24c195fa2c8b132ee984639a01cf6a4c3909d239fe50c` | `golden/edge.scrutiny_default.ledger_scrutiny.json` |
-| `edge.scrutiny_misc.ledger_scrutiny.json` | 44,622 | `bd992b810b75df10c74831474272c5e85783723577ba11b555f2040234e9c300` | `golden/edge.scrutiny_misc.ledger_scrutiny.json` |
-| `edge.scrutiny_short.ledger_scrutiny.json` | 8,651 | `3f854537a8d7929c3369e2e52db243fa79814bc9ef7d0ad79f7fbdc040385c65` | `golden/edge.scrutiny_short.ledger_scrutiny.json` |
-| `edge.stale.stale_balances_41_1.json` | 9,852 | `3499a5b8d028f59a65f208bc3954e816e820d644397e02e23b595ff67bc81fb5` | `golden/edge.stale.stale_balances_41_1.json` |
+| `edge.cash_book.cash_book_integrity.json` | 33,255 | `f8e65cf027926f5087f097a3f82096f2d5f55c878f2aab5dfbb8c1b85bbaed90` | `golden/edge.cash_book.cash_book_integrity.json` |
+| `edge.cash_book_misc.cash_book_integrity.json` | 22,026 | `3442d7fc42add394bd7b17f556afb0dbffd827e34b9ec5d789776ce32836cada` | `golden/edge.cash_book_misc.cash_book_integrity.json` |
+| `edge.cash_book_unicode.cash_book_integrity.json` | 9,280 | `53a8400a84fbc39277f373baf0bd7e33ebd7f10f2954ad9b7082a58244490879` | `golden/edge.cash_book_unicode.cash_book_integrity.json` |
+| `edge.scrutiny.ledger_scrutiny.json` | 72,087 | `b11c20aebf61c6deac46355eee55a1fb23ed6b5529ae0a05b28b689ec24ff01c` | `golden/edge.scrutiny.ledger_scrutiny.json` |
+| `edge.scrutiny_default.ledger_scrutiny.json` | 8,667 | `37298baef97e8c1c5dd44f0b5b925539e54a22e098e50f75fe2a9590fbc6f319` | `golden/edge.scrutiny_default.ledger_scrutiny.json` |
+| `edge.scrutiny_misc.ledger_scrutiny.json` | 46,305 | `015a13c75d359104fe507af79d529a562370ddf9c9df7e98b4f420920e1cefc2` | `golden/edge.scrutiny_misc.ledger_scrutiny.json` |
+| `edge.scrutiny_short.ledger_scrutiny.json` | 8,888 | `49fc16bd304aa7bdd600e1140d5914e57fefac768762c1a36a0d7b145fd9eb88` | `golden/edge.scrutiny_short.ledger_scrutiny.json` |
+| `edge.stale.stale_balances_41_1.json` | 10,520 | `c195571c72ad51ef1815dacd71328c9a40cb2a4745b27ad7528a53f96f597b51` | `golden/edge.stale.stale_balances_41_1.json` |
 | `edge.tb_rows.trial_balance.json` | 14,796 | `0ac2909425b617fcb41023efc7c886ed868404e3ef1cbee7aa8a5dea889dd6fb` | `golden/edge.tb_rows.trial_balance.json` |
 | `edge.tb_rows.trial_balance.order.json` | 219 | `2ace3be45ee1cd6ae4757727e947e07fd2ca3600a83f480b279bdda181d5f43d` | `golden/edge.tb_rows.trial_balance.order.json` |
 | `text-probes.json` | 1,150,882 | `96ca23055262ee348a27ae2672664d9296c869d1ac95fb21f3a904b43631760c` | `text-probes.json` |

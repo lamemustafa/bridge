@@ -89,56 +89,56 @@
       "id": "ledger_scrutiny.cash_share_bp_005964f1",
       "value": 0,
       "unit": "bp",
-      "definition_sha256_16": "db85cd71a426fe63",
-      "definition_text": "cash_paid_paise_005964f1 / total_debit_paise_005964f1 (0 when the ledger has no debit entries at all).",
+      "definition_sha256_16": "880811fa57f3a209",
+      "definition_text": "Cash paid on this ledger (tag 005964f1) as a share of all its debits (0 when the ledger has no debit entries at all).",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.cash_share_bp_0e92aeee",
       "value": 0,
       "unit": "bp",
-      "definition_sha256_16": "be31cdb2c8c2aeec",
-      "definition_text": "cash_paid_paise_0e92aeee / total_debit_paise_0e92aeee (0 when the ledger has no debit entries at all).",
+      "definition_sha256_16": "2e30b6cf55b1b5c7",
+      "definition_text": "Cash paid on this ledger (tag 0e92aeee) as a share of all its debits (0 when the ledger has no debit entries at all).",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.cash_share_bp_2d3194aa",
       "value": 10000,
       "unit": "bp",
-      "definition_sha256_16": "e13ba76350027ed4",
-      "definition_text": "cash_paid_paise_2d3194aa / total_debit_paise_2d3194aa (0 when the ledger has no debit entries at all).",
+      "definition_sha256_16": "7165e0c8c3e31611",
+      "definition_text": "Cash paid on this ledger (tag 2d3194aa) as a share of all its debits (0 when the ledger has no debit entries at all).",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.cash_share_bp_690d194d",
       "value": 8630,
       "unit": "bp",
-      "definition_sha256_16": "9dd28197fb15eddf",
-      "definition_text": "cash_paid_paise_690d194d / total_debit_paise_690d194d (0 when the ledger has no debit entries at all).",
+      "definition_sha256_16": "5723dac2e01a30eb",
+      "definition_text": "Cash paid on this ledger (tag 690d194d) as a share of all its debits (0 when the ledger has no debit entries at all).",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.cash_share_bp_7eb35440",
       "value": 0,
       "unit": "bp",
-      "definition_sha256_16": "634929ace07d1483",
-      "definition_text": "cash_paid_paise_7eb35440 / total_debit_paise_7eb35440 (0 when the ledger has no debit entries at all).",
+      "definition_sha256_16": "f35682fdbb64354b",
+      "definition_text": "Cash paid on this ledger (tag 7eb35440) as a share of all its debits (0 when the ledger has no debit entries at all).",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.cash_share_bp_c74bb59c",
       "value": 0,
       "unit": "bp",
-      "definition_sha256_16": "844398e35ff262eb",
-      "definition_text": "cash_paid_paise_c74bb59c / total_debit_paise_c74bb59c (0 when the ledger has no debit entries at all).",
+      "definition_sha256_16": "5c8a9d331d320421",
+      "definition_text": "Cash paid on this ledger (tag c74bb59c) as a share of all its debits (0 when the ledger has no debit entries at all).",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.cash_share_bp_d8ef1e6c",
       "value": 10000,
       "unit": "bp",
-      "definition_sha256_16": "1ae0647f90492e8e",
-      "definition_text": "cash_paid_paise_d8ef1e6c / total_debit_paise_d8ef1e6c (0 when the ledger has no debit entries at all).",
+      "definition_sha256_16": "d34fb956fcc589a0",
+      "definition_text": "Cash paid on this ledger (tag d8ef1e6c) as a share of all its debits (0 when the ledger has no debit entries at all).",
       "evidence": []
     },
     {
@@ -307,8 +307,8 @@
       "id": "ledger_scrutiny.flagged_ledger_count",
       "value": 7,
       "unit": "count",
-      "definition_sha256_16": "3f2ae887318416d9",
-      "definition_text": "Expense ledgers (of expense_ledger_count) with at least one scrutiny indicator triggered above.",
+      "definition_sha256_16": "c15b58f08ebab9f7",
+      "definition_text": "Expense ledgers (under Direct Expenses or Indirect Expenses) with at least one scrutiny indicator triggered.",
       "evidence": []
     },
     {
@@ -371,120 +371,120 @@
       "id": "ledger_scrutiny.large_entry_count_005964f1",
       "value": 0,
       "unit": "count",
-      "definition_sha256_16": "202c14857f8d0bc6",
-      "definition_text": "Entries on this ledger (tag 005964f1) with abs(net amount) over the large-entry threshold.",
+      "definition_sha256_16": "be8106280f4c4bb9",
+      "definition_text": "Entries on this ledger (tag 005964f1) whose net amount, taken without its sign, is over the large-entry threshold.",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.large_entry_count_0e92aeee",
       "value": 0,
       "unit": "count",
-      "definition_sha256_16": "d3dcefd3d4e11039",
-      "definition_text": "Entries on this ledger (tag 0e92aeee) with abs(net amount) over the large-entry threshold.",
+      "definition_sha256_16": "40f953db9446946f",
+      "definition_text": "Entries on this ledger (tag 0e92aeee) whose net amount, taken without its sign, is over the large-entry threshold.",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.large_entry_count_2d3194aa",
       "value": 0,
       "unit": "count",
-      "definition_sha256_16": "db2c9b09e8a2d603",
-      "definition_text": "Entries on this ledger (tag 2d3194aa) with abs(net amount) over the large-entry threshold.",
+      "definition_sha256_16": "5dbbb99b76989b5f",
+      "definition_text": "Entries on this ledger (tag 2d3194aa) whose net amount, taken without its sign, is over the large-entry threshold.",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.large_entry_count_690d194d",
       "value": 0,
       "unit": "count",
-      "definition_sha256_16": "9a4fac6512bca7ca",
-      "definition_text": "Entries on this ledger (tag 690d194d) with abs(net amount) over the large-entry threshold.",
+      "definition_sha256_16": "be91eb721d8d0f62",
+      "definition_text": "Entries on this ledger (tag 690d194d) whose net amount, taken without its sign, is over the large-entry threshold.",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.large_entry_count_7eb35440",
       "value": 0,
       "unit": "count",
-      "definition_sha256_16": "89cc4ed139089e62",
-      "definition_text": "Entries on this ledger (tag 7eb35440) with abs(net amount) over the large-entry threshold.",
+      "definition_sha256_16": "9d6b6a29336b2573",
+      "definition_text": "Entries on this ledger (tag 7eb35440) whose net amount, taken without its sign, is over the large-entry threshold.",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.large_entry_count_c74bb59c",
       "value": 0,
       "unit": "count",
-      "definition_sha256_16": "fba32b55f83e4107",
-      "definition_text": "Entries on this ledger (tag c74bb59c) with abs(net amount) over the large-entry threshold.",
+      "definition_sha256_16": "a9d15709a1b09600",
+      "definition_text": "Entries on this ledger (tag c74bb59c) whose net amount, taken without its sign, is over the large-entry threshold.",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.large_entry_count_d8ef1e6c",
       "value": 0,
       "unit": "count",
-      "definition_sha256_16": "e34d63a469b8a626",
-      "definition_text": "Entries on this ledger (tag d8ef1e6c) with abs(net amount) over the large-entry threshold.",
+      "definition_sha256_16": "ce73547a334e7fa3",
+      "definition_text": "Entries on this ledger (tag d8ef1e6c) whose net amount, taken without its sign, is over the large-entry threshold.",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.large_entry_threshold_paise",
       "value": 5000000,
       "unit": "paise",
-      "definition_sha256_16": "1216a9fc2ee28784",
-      "definition_text": "Threshold used for the large-single-entry indicator (rules/ay2026-27.toml [ledger_scrutiny].large_entry_paise).",
+      "definition_sha256_16": "1e3ebb001048f352",
+      "definition_text": "Threshold used for the large-single-entry indicator (the rules table's ledger scrutiny entry).",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.large_entry_total_paise_005964f1",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "15ea10a758dacc02",
-      "definition_text": "Sum of net amounts across the large entries above (tag 005964f1).",
+      "definition_sha256_16": "cacec918149a800c",
+      "definition_text": "Sum of net amounts across the entries on this ledger (tag 005964f1) whose net amount, taken without its sign, is over the large-entry threshold.",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.large_entry_total_paise_0e92aeee",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "9c80a12d44ac11e0",
-      "definition_text": "Sum of net amounts across the large entries above (tag 0e92aeee).",
+      "definition_sha256_16": "e4e0e6f3c29bfa6c",
+      "definition_text": "Sum of net amounts across the entries on this ledger (tag 0e92aeee) whose net amount, taken without its sign, is over the large-entry threshold.",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.large_entry_total_paise_2d3194aa",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "48a5b86ca751c372",
-      "definition_text": "Sum of net amounts across the large entries above (tag 2d3194aa).",
+      "definition_sha256_16": "109b4e8ec3f96b55",
+      "definition_text": "Sum of net amounts across the entries on this ledger (tag 2d3194aa) whose net amount, taken without its sign, is over the large-entry threshold.",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.large_entry_total_paise_690d194d",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "76f9e43f4f381c7b",
-      "definition_text": "Sum of net amounts across the large entries above (tag 690d194d).",
+      "definition_sha256_16": "e8fcfd3211f4192a",
+      "definition_text": "Sum of net amounts across the entries on this ledger (tag 690d194d) whose net amount, taken without its sign, is over the large-entry threshold.",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.large_entry_total_paise_7eb35440",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "863068adc0858a12",
-      "definition_text": "Sum of net amounts across the large entries above (tag 7eb35440).",
+      "definition_sha256_16": "fdb1fe31eea078a3",
+      "definition_text": "Sum of net amounts across the entries on this ledger (tag 7eb35440) whose net amount, taken without its sign, is over the large-entry threshold.",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.large_entry_total_paise_c74bb59c",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "07003f93b5067e37",
-      "definition_text": "Sum of net amounts across the large entries above (tag c74bb59c).",
+      "definition_sha256_16": "533c0ed2113ff40a",
+      "definition_text": "Sum of net amounts across the entries on this ledger (tag c74bb59c) whose net amount, taken without its sign, is over the large-entry threshold.",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.large_entry_total_paise_d8ef1e6c",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "4cd282597d58df87",
-      "definition_text": "Sum of net amounts across the large entries above (tag d8ef1e6c).",
+      "definition_sha256_16": "14dcec6e385d0d9e",
+      "definition_text": "Sum of net amounts across the entries on this ledger (tag d8ef1e6c) whose net amount, taken without its sign, is over the large-entry threshold.",
       "evidence": []
     },
     {
@@ -553,56 +553,56 @@
       "id": "ledger_scrutiny.last_days_total_paise_005964f1",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "ff344a107c166044",
-      "definition_text": "Sum of net amounts across the last-days entries above (tag 005964f1).",
+      "definition_sha256_16": "a8eeb18549e6408b",
+      "definition_text": "Sum of net amounts across the entries on this ledger (tag 005964f1) dated in the last 7 days of the period (2026-03-25 to 2026-03-31).",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.last_days_total_paise_0e92aeee",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "d152ec204d0e8421",
-      "definition_text": "Sum of net amounts across the last-days entries above (tag 0e92aeee).",
+      "definition_sha256_16": "f9920f0067374109",
+      "definition_text": "Sum of net amounts across the entries on this ledger (tag 0e92aeee) dated in the last 7 days of the period (2026-03-25 to 2026-03-31).",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.last_days_total_paise_2d3194aa",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "07dc90477a1d9970",
-      "definition_text": "Sum of net amounts across the last-days entries above (tag 2d3194aa).",
+      "definition_sha256_16": "1699fa5e3cabf73f",
+      "definition_text": "Sum of net amounts across the entries on this ledger (tag 2d3194aa) dated in the last 7 days of the period (2026-03-25 to 2026-03-31).",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.last_days_total_paise_690d194d",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "fecf771a59d0b9cd",
-      "definition_text": "Sum of net amounts across the last-days entries above (tag 690d194d).",
+      "definition_sha256_16": "92cc409627202d3f",
+      "definition_text": "Sum of net amounts across the entries on this ledger (tag 690d194d) dated in the last 7 days of the period (2026-03-25 to 2026-03-31).",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.last_days_total_paise_7eb35440",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "28cfb971a63c7900",
-      "definition_text": "Sum of net amounts across the last-days entries above (tag 7eb35440).",
+      "definition_sha256_16": "146c34ba8c0f7885",
+      "definition_text": "Sum of net amounts across the entries on this ledger (tag 7eb35440) dated in the last 7 days of the period (2026-03-25 to 2026-03-31).",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.last_days_total_paise_c74bb59c",
       "value": 4500000,
       "unit": "paise",
-      "definition_sha256_16": "f29bf33bd1701bb2",
-      "definition_text": "Sum of net amounts across the last-days entries above (tag c74bb59c).",
+      "definition_sha256_16": "2962ecf4a29d1fe5",
+      "definition_text": "Sum of net amounts across the entries on this ledger (tag c74bb59c) dated in the last 7 days of the period (2026-03-25 to 2026-03-31).",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.last_days_total_paise_d8ef1e6c",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "9ece7d8ca2578347",
-      "definition_text": "Sum of net amounts across the last-days entries above (tag d8ef1e6c).",
+      "definition_sha256_16": "26dae242a82de3b5",
+      "definition_text": "Sum of net amounts across the entries on this ledger (tag d8ef1e6c) dated in the last 7 days of the period (2026-03-25 to 2026-03-31).",
       "evidence": []
     },
     {
@@ -694,56 +694,56 @@
       "id": "ledger_scrutiny.round_sum_total_paise_005964f1",
       "value": 2500000,
       "unit": "paise",
-      "definition_sha256_16": "5f3e062933aa60b7",
-      "definition_text": "Sum of net amounts across the round-sum entries above (tag 005964f1).",
+      "definition_sha256_16": "fbbe568a78e7f1c5",
+      "definition_text": "Sum of net amounts across the entries on this ledger (tag 005964f1) whose net amount is an exact, nonzero multiple of ₹1,000.",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.round_sum_total_paise_0e92aeee",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "0de226c540ee3ecf",
-      "definition_text": "Sum of net amounts across the round-sum entries above (tag 0e92aeee).",
+      "definition_sha256_16": "93547aab6b6d83da",
+      "definition_text": "Sum of net amounts across the entries on this ledger (tag 0e92aeee) whose net amount is an exact, nonzero multiple of ₹1,000.",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.round_sum_total_paise_2d3194aa",
       "value": 2000000,
       "unit": "paise",
-      "definition_sha256_16": "d545199938542b67",
-      "definition_text": "Sum of net amounts across the round-sum entries above (tag 2d3194aa).",
+      "definition_sha256_16": "361097d72202d741",
+      "definition_text": "Sum of net amounts across the entries on this ledger (tag 2d3194aa) whose net amount is an exact, nonzero multiple of ₹1,000.",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.round_sum_total_paise_690d194d",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "7b1b0b8e429f4c57",
-      "definition_text": "Sum of net amounts across the round-sum entries above (tag 690d194d).",
+      "definition_sha256_16": "ed51834c4d406e20",
+      "definition_text": "Sum of net amounts across the entries on this ledger (tag 690d194d) whose net amount is an exact, nonzero multiple of ₹1,000.",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.round_sum_total_paise_7eb35440",
       "value": 0,
       "unit": "paise",
-      "definition_sha256_16": "a0c8d7a38af1677a",
-      "definition_text": "Sum of net amounts across the round-sum entries above (tag 7eb35440).",
+      "definition_sha256_16": "8ebd4c80380e0792",
+      "definition_text": "Sum of net amounts across the entries on this ledger (tag 7eb35440) whose net amount is an exact, nonzero multiple of ₹1,000.",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.round_sum_total_paise_c74bb59c",
       "value": 4500000,
       "unit": "paise",
-      "definition_sha256_16": "817f0a14e0260bd6",
-      "definition_text": "Sum of net amounts across the round-sum entries above (tag c74bb59c).",
+      "definition_sha256_16": "635ec39f194b5e9f",
+      "definition_text": "Sum of net amounts across the entries on this ledger (tag c74bb59c) whose net amount is an exact, nonzero multiple of ₹1,000.",
       "evidence": []
     },
     {
       "id": "ledger_scrutiny.round_sum_total_paise_d8ef1e6c",
       "value": 1400000,
       "unit": "paise",
-      "definition_sha256_16": "49ea3c8a417ef0b5",
-      "definition_text": "Sum of net amounts across the round-sum entries above (tag d8ef1e6c).",
+      "definition_sha256_16": "ed0a65da99525e35",
+      "definition_text": "Sum of net amounts across the entries on this ledger (tag d8ef1e6c) whose net amount is an exact, nonzero multiple of ₹1,000.",
       "evidence": []
     },
     {
