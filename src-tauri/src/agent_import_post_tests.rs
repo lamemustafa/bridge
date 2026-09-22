@@ -689,13 +689,13 @@ fn native_request_uses_a_private_remote_identity_but_preserves_batch_attribution
     let (line, _) = batch();
     let voucher = &line.vouchers[0];
     let public = render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id);
-    let first = render_native_journal_xml(
+    let first = render_native_voucher_xml(
         "Synthetic Accounts",
         voucher,
         &line.batch_id,
         Uuid::new_v4(),
     );
-    let second = render_native_journal_xml(
+    let second = render_native_voucher_xml(
         "Synthetic Accounts",
         voucher,
         &line.batch_id,
@@ -813,6 +813,7 @@ fn queued_absence_recheck_distinguishes_an_attributed_journal_from_a_new_candida
         &captured,
         &captured,
         &catalogue,
+        None,
         &ledger_binding,
     )
     .expect_err("captured attributed Journal must block the queued native attempt");
@@ -835,9 +836,47 @@ fn queued_absence_recheck_distinguishes_an_attributed_journal_from_a_new_candida
         &captured,
         &captured,
         &catalogue,
+        None,
         &ledger_binding,
     )
     .expect("paired captured source establishes absence of the new candidate");
+
+    // A bank voucher is classified from the group collection read beside the
+    // catalogue. Without that read the queue refuses rather than post on half
+    // a check, and a Journal that somehow carries one is a wiring fault too.
+    let groups_bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-party-groups.utf16le.xml"
+    );
+    let groups = String::from_utf16(
+        &groups_bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let mut payment = absent.clone();
+    payment.vouchers[0].voucher_type = VoucherType::Payment;
+    payment.vouchers[0].reference = None;
+    let recheck = |line: &ImportLedgerLine, groups: Option<&str>| {
+        recheck_import_admission(
+            line,
+            company_guid,
+            "WR2 Unicode Lab",
+            &captured,
+            &captured,
+            &catalogue,
+            groups,
+            &ledger_binding,
+        )
+    };
+    recheck(&payment, Some(&groups)).expect("the captured masters classify this Payment");
+    for (line, groups) in [(&payment, None), (&absent, Some(groups.as_str()))] {
+        let error = recheck(line, groups).expect_err("a missing or stray group read must refuse");
+        assert!(matches!(
+            error.downcast_ref::<ApprovedImportAdmissionError>(),
+            Some(ApprovedImportAdmissionError::AdmissionInconsistent)
+        ));
+    }
 }
 
 #[test]
@@ -995,4 +1034,52 @@ fn the_dispatch_intent_records_the_remoteid_the_native_request_carries() {
     let other = native_post_request(&line, Uuid::new_v4()).unwrap();
     assert_ne!(other.remote_id, request.remote_id);
     assert_ne!(other.request_sha256, request.request_sha256);
+}
+
+/// A Payment with one bank credit and `parties` debits named by `name`.
+fn payment_with(parties: usize, name: impl Fn(usize) -> String) -> ImportLedgerLine {
+    let (mut line, _) = batch();
+    let voucher = &mut line.vouchers[0];
+    voucher.voucher_type = VoucherType::Payment;
+    voucher.reference = None;
+    voucher.entries = (0..parties)
+        .map(|index| ImportEntry {
+            ledger: name(index),
+            amount: "1.00".into(),
+            side: EntrySide::Dr,
+        })
+        .chain(std::iter::once(ImportEntry {
+            ledger: "Cash".into(),
+            amount: format!("{parties}.00"),
+            side: EntrySide::Cr,
+        }))
+        .collect();
+    line
+}
+
+/// The native dialog cannot scroll, so a preview past its caps is refused,
+/// never truncated. Multi-entry bank vouchers reach the caps: seventeen fixed
+/// lines plus one per entry, so seven entries fit 24 lines and eight do not.
+#[test]
+fn a_bank_preview_is_refused_at_each_cap_rather_than_truncated() {
+    let (_, endpoint) = batch();
+    let seven = admit_fresh_saved_voucher(&payment_with(6, |i| format!("Party {i}")), &endpoint)
+        .expect("seven entries fit");
+    assert_eq!(seven.lines().count(), 24, "{seven}");
+    assert_eq!(
+        admit_fresh_saved_voucher(&payment_with(7, |i| format!("Party {i}")), &endpoint)
+            .unwrap_err(),
+        "import_review_too_large"
+    );
+    // One entry line is `Dr 1.00  "<name>"`: 11 characters around the name.
+    let fits = admit_fresh_saved_voucher(&payment_with(1, |_| "N".repeat(89)), &endpoint)
+        .expect("a 100-character line fits");
+    assert!(
+        fits.lines().any(|line| line.chars().count() == 100),
+        "{fits}"
+    );
+    assert_eq!(
+        admit_fresh_saved_voucher(&payment_with(1, |_| "N".repeat(90)), &endpoint).unwrap_err(),
+        "import_review_too_large"
+    );
 }

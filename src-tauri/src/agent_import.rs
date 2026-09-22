@@ -391,7 +391,7 @@ impl Server {
                 "dates must be within the selected company's BOOKSFROM through today",
                 "ledger names must exactly match the live catalogue; validate_masters before build_import_xml",
                 "a batch may contain at most 100 distinct ledger names of at most 1024 characters each"
-            ], "limits": {"import_mode_qualification": "New files require freshly observed supported TallyPrime product and licence mode before and after the build reads. Release and licence tier are reported as observed facts. Journal, Payment, Receipt and Contra are the voucher types with recorded import/readback evidence, each only in the exact file shape this schema admits, except that a Payment, Receipt or Contra with more than two entries (bridge#466) rests on narrower evidence: hand-built files of that shape were imported and read back over the gateway (a Contra only with a repeated ledger) and one Bridge-built three-entry Receipt was imported over the gateway and verified, but no multi-entry Payment or Contra has been, and none of the three, including that Receipt, through Tally's Import menu, and its build reports live_evidence hand_built_gateway_readback; every other voucher type is refused. Only an unnumbered single-voucher Journal batch is eligible for post_import; the other types are import-only."}}}),
+            ], "limits": {"import_mode_qualification": "New files require freshly observed supported TallyPrime product and licence mode before and after the build reads. Release and licence tier are reported as observed facts. Journal, Payment, Receipt and Contra are the voucher types with recorded import/readback evidence, each only in the exact file shape this schema admits, except that a Payment, Receipt or Contra with more than two entries (bridge#466) rests on narrower evidence: hand-built files of that shape were imported and read back over the gateway (a Contra only with a repeated ledger) and one Bridge-built three-entry Receipt was imported over the gateway and verified, but no multi-entry Payment or Contra has been, and none of the three, including that Receipt, through Tally's Import menu, and its build reports live_evidence hand_built_gateway_readback; every other voucher type is refused. Only a single-voucher batch is eligible for post_import: an unnumbered Journal, or a Payment, Receipt or Contra, whose legs post_import classifies again before approval and after approval inside the endpoint queue, before the final duplicate check and the post."}}}),
             evidence: local_evidence("voucher_schema"),
             company_guid: None,
             truncated: false,
@@ -729,7 +729,12 @@ impl Server {
             // this exact saved batch can take. A manual-only batch is still a
             // successful build.
             let native_post_eligible = self.settings.writes_enabled
-                && post::admit_saved_journal(&line, &self.settings.endpoint).is_ok();
+                && post::admit_saved_voucher(
+                    &line,
+                    &self.settings.endpoint,
+                    post::PostScope::Vouchers,
+                )
+                .is_ok();
             let (mut warnings, next_step) = build_import_guidance(
                 self.settings.writes_enabled,
                 native_post_eligible,
@@ -1416,8 +1421,12 @@ fn build_import_guidance(
     // proves master stability across the build only, and says nothing about
     // afterwards, so a regroup between build and hand import is invisible to
     // verify_import.
+    // post_import closes the gap for its own path: it classifies every leg
+    // again before approval and again after approval inside the endpoint
+    // queue, before the final duplicate check and the post. A hand import of
+    // the file has no such check, so the warning keeps saying so.
     let stale_classification_warning = bank_types.then_some(
-        "This file's Payment, Receipt and Contra split came from the group collection read during this build. Regrouping a ledger afterwards is an ordinary Tally operation and would silently make the voucher type wrong — a counterparty moved under a cash or bank group should have become a Contra. verify_import compares the entries as built, not current ancestry, so nothing catches it later. If any master changed since this batch was built, discard it and build again.",
+        "This file's Payment, Receipt and Contra split came from the group collection read during this build. Regrouping a ledger afterwards is an ordinary Tally operation and would silently make the voucher type wrong — a counterparty moved under a cash or bank group should have become a Contra. post_import classifies every leg again before approval and after approval inside the endpoint queue, before the final duplicate check and the post, and refuses a changed one, but a manual import of this file is not checked, and verify_import compares the entries as built, not current ancestry. If any master changed since this batch was built, discard it and build again.",
     );
     // The qualified slice is §9.13's, measured on one licensed instance. This
     // repo's settled position — see `observe_import_profile`'s own comment —
@@ -1458,7 +1467,7 @@ fn build_import_guidance(
     } else if writes_enabled {
         (
             warnings(
-                "No import XML was sent to Tally. This saved batch is not eligible for native posting because native posting requires one unnumbered Journal with a reviewable preview. Import the written file manually, then use verify_import; do not call post_import for this batch.",
+                "No import XML was sent to Tally. This saved batch is not eligible for native posting because native posting requires one unnumbered Journal, Payment, Receipt or Contra with a reviewable preview. Import the written file manually, then use verify_import; do not call post_import for this batch.",
             ),
             manual_import_next_step,
         )
@@ -2233,7 +2242,7 @@ fn render_import_xml(company: &str, vouchers: &[ImportVoucher], batch_id: &str) 
 /// The caller records `remote_id` with the dispatch intent before sending,
 /// because Tally deletes only by it and never exports it (bridge#579). The
 /// stable narration tag remains the batch attribution used by readback.
-fn render_native_journal_xml(
+fn render_native_voucher_xml(
     company: &str,
     voucher: &ImportVoucher,
     batch_id: &str,

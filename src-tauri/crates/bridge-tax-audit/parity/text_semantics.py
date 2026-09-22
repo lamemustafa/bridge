@@ -18,9 +18,11 @@ It writes:
   `str.lower()` itself;
 - the non-ASCII code points Python's `\\d` matches, measured over every code point, for the
   quantity and rate readers in `src/book.rs`;
+- the code points `str.isprintable()` rejects, over every code point (for `repr()`);
 - the probe file: Python's own results on the acceptance set (Latin, Latin-1/Ext-A/B, modifier
   letters and combining diacriticals, currency symbols, Devanagari
-  and the other Indic scripts, general punctuation, NBSP and the whitespace Tally emits), which
+  and the other Indic scripts, general punctuation, NBSP and the whitespace Tally emits), plus, for
+  `repr()` and `isprintable()`, every code point on either side of each non-printable range, which
   `src/support.rs`'s `text_probe_tests` replay in CI. After writing, run
 `cargo fmt -p bridge-tax-audit`: the tables are emitted unwrapped.
 """
@@ -85,6 +87,7 @@ def main() -> int:
     for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
         pat = re.compile(letter, re.I)
         ci[letter] = [int(r[0], 16) for r in rows if int(r[0], 16) >= 0x80 and pat.fullmatch(chr(int(r[0], 16)))]
+    not_printable = ranges([cp for cp in range(0x110000) if not chr(cp).isprintable()])
     cased, ignorable = [], []
     for r in rows:
         c = chr(int(r[0], 16))
@@ -118,11 +121,16 @@ def main() -> int:
         "/// read as numbers where this crate's readers take ASCII only (`book.rs` refuses text holding\n"
         "/// one).\n"
         + rust_ranges("PY_DECIMAL_NON_ASCII", ranges(decimals))
+        + "\n/// Code points Python's `str.isprintable()` rejects (every code point measured; `repr()`\n"
+        "/// escapes them). Surrogates are included, though a Rust `char` is never one.\n"
+        + "#[cfg_attr(not(test), allow(dead_code))] // first caller: batch C2 (#596)\n"
+        + rust_ranges("PY_NOT_PRINTABLE", not_printable)
     )
     (ROOT / "src" / "text_tables.rs").write_text(out, encoding="utf-8")
 
     acc = acceptance()
-    probes = {"lower": [], "strip": [], "split": [], "transport": [], "gst_tcs": []}
+    probes = {"lower": [], "strip": [], "split": [], "transport": [], "gst_tcs": [], "repr": [],
+              "isprintable": []}
     for cp in acc:
         c = chr(cp)
         for s in ("Α" + c + SIGMA, "Α" + SIGMA + c, c + SIGMA, "Α" + SIGMA + c + "Β",
@@ -135,6 +143,17 @@ def main() -> int:
             probes["gst_tcs"].append([s, bool(gst_tcs.search(s))])
         for s in ("ROAD" + c + "LINES", "LOG" + c + "STIC", c + "Cargo", "FRE" + c + "GHT", "RO" + c + "DWAYS"):
             probes["transport"].append([s, bool(transport.search(s))])
+        for s in (c, "a" + c + "'", '"' + c, "'" + c + '"', "\\" + c):
+            probes["repr"].append([s, repr(s)])
+    edges = sorted({cp for lo, hi in not_printable for cp in (lo - 1, lo, hi, hi + 1)
+                    if 0 <= cp < 0x110000 and not 0xD800 <= cp <= 0xDFFF})
+    for cp in edges:
+        c = chr(cp)
+        probes["isprintable"].append([c, c.isprintable()])
+        probes["repr"].append([c + "'", repr(c + "'")])
+    for s in ("", "'", '"', "'\"", "\\", "a\x00b\x7f\x80\xa0\xad", "\u2028\u2029\ufeff\U000e0001",
+              "\ue000\U0010ffff\U0001f600", "Invented Traders's \"Shop\"\r\n\t"):
+        probes["repr"].append([s, repr(s)])
     for s in ("İLOG", "LOGİSTIC", "CARRıER", "LOﬆIC", "STRAßE CARGO", "ROAD\x1cLINES",
               "roadlines", "Invented Road Lines", "invented logistic", "ABC LOGISTICS"):
         probes["transport"].append([s, bool(transport.search(s))])
@@ -147,6 +166,7 @@ def main() -> int:
     (ROOT / "tests" / "fixtures" / "text-probes.json").write_text(
         json.dumps({"header": header, "probes": probes}, ensure_ascii=False, indent=0) + "\n", encoding="utf-8")
     print(f"NOT_PY_ALNUM {len(ranges(not_alnum))} ranges; PY_CASED {len(ranges(cased))}; "
+          f"PY_NOT_PRINTABLE {len(not_printable)}; "
           f"PY_CASE_IGNORABLE {len(ranges(ignorable))}; ci extras {{{', '.join(f'{l}: {len(cs)}' for l, cs in ci.items() if cs)}}}; "
           f"probes {', '.join(f'{k}={len(v)}' for k, v in probes.items())}")
     return 0
