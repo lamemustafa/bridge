@@ -915,8 +915,12 @@ async fn an_unreadable_snapshot_refuses_before_the_post() {
 /// After the POST, the snapshot says which companies' voucher marks moved,
 /// and the result carries it even when the readback that follows fails.
 async fn located_after(marks_after: String) -> Value {
+    located_after_response(created_one(), marks_after).await
+}
+
+async fn located_after_response(post_response: String, marks_after: String) -> Value {
     let mut plans = before_approval();
-    plans.extend(after_approval(xml(created_one())));
+    plans.extend(after_approval(xml(post_response)));
     plans.push(xml(marks_after));
     let simulator = SequenceSimulator::spawn(plans).unwrap();
     let directory = tempfile::tempdir().unwrap();
@@ -950,4 +954,100 @@ async fn another_company_moving_instead_is_named_in_the_result() {
         located["other_companies_moved"][0]["name"],
         "Synthetic Other Lab"
     );
+}
+
+#[tokio::test]
+async fn a_snapshot_lost_in_transport_refuses_as_unconfirmed_not_as_an_unknown_outcome() {
+    // The read that aims the post fails before any body arrives: nothing was
+    // sent, so the code must say so rather than "outcome unknown".
+    let mut plans = before_approval();
+    let mut after = after_approval(xml(created_one()));
+    let marks_at = after.len() - 2;
+    after[marks_at] = marks_before().with_delivery(Delivery::ResetBeforeBody);
+    let through_marks = plans.len() + marks_at + 1;
+    plans.extend(after);
+    let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let before = journal(directory.path());
+    let response = SCRIPTED_APPROVAL
+        .scope(
+            ScriptedApproval::approving(),
+            server.call_tool("post_import", args),
+        )
+        .await;
+    let observed = sent(simulator).len();
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["error"]["code"], "post_company_scope_unconfirmed",
+        "{response}"
+    );
+    assert_eq!(result["attempt_recorded"], json!(false), "{response}");
+    assert_eq!(observed, through_marks, "{response}");
+    assert_eq!(
+        appended_kinds(&before, &journal(directory.path())),
+        ["verification_status"]
+    );
+}
+
+#[tokio::test]
+async fn the_response_is_journaled_before_the_location_snapshot_is_answered() {
+    // The snapshot after the POST is held for three seconds. While it is held
+    // the journal already carries the dispatch response, so a slow or lost
+    // location read cannot cost the record of the post.
+    let mut plans = before_approval();
+    let after = after_approval(xml(created_one()));
+    let post_at = plans.len() + after.len() - 1;
+    plans.extend(after);
+    plans.push(
+        xml(company_marks(11, 50, "WR2 Unicode Lab"))
+            .with_delivery(Delivery::SlowHeaders(Duration::from_secs(3))),
+    );
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let before = journal(directory.path());
+    let post = SCRIPTED_APPROVAL.scope(
+        ScriptedApproval::approving(),
+        server.call_tool("post_import", args),
+    );
+    let watch = async {
+        let started = std::time::Instant::now();
+        while simulator.received() <= post_at + 1 {
+            assert!(
+                started.elapsed() < Duration::from_secs(20),
+                "the location snapshot never arrived"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        appended_kinds(&before, &journal(directory.path()))
+    };
+    let (response, while_held) = tokio::join!(post, watch);
+    assert!(
+        while_held.iter().any(|kind| kind == "dispatch_response"),
+        "{while_held:?} {response}"
+    );
+    let _ = sent(simulator);
+    assert_eq!(
+        response["structuredContent"]["result"]["post_location"]["state"], "target_only",
+        "{response}"
+    );
+}
+
+#[tokio::test]
+async fn another_company_moving_while_tally_created_nothing_is_not_blamed() {
+    // Tally rejected the post while a colleague's voucher moved another
+    // company's mark: that company must not be named as where this post went.
+    // The rejection is a captured live response (CREATED 0, EXCEPTIONS 1, one
+    // LINEERROR), the shape T7 measured for a post into a company lacking a
+    // ledger.
+    let rejected = include_str!(
+        "../crates/bridge-tally-protocol/tests/fixtures/live_education_w7_baddate_sanitized.xml"
+    )
+    .to_string();
+    assert!(parse_import_outcome(&rejected).is_ok_and(|outcome| outcome.counters().created == 0));
+    let located = located_after_response(rejected, company_marks(10, 51, "WR2 Unicode Lab")).await;
+    assert_eq!(located["state"], "no_creation_reported", "{located}");
 }

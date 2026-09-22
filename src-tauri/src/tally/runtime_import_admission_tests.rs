@@ -450,7 +450,7 @@ async fn queued_import_keeps_admission_separate_from_raw_import_wire() {
     assert!(dispatched.load(Ordering::Acquire));
     let observed = simulator.finish().unwrap();
     // 24 admission requests, the marks snapshot, then the POST. The marks read
-    // after the POST finds no plan and is reported unavailable.
+    // after the POST is the caller's, once the response is journaled.
     assert_eq!(observed.len(), 26);
     assert_eq!(
         dispatch.admission_evidence,
@@ -458,7 +458,6 @@ async fn queued_import_keeps_admission_separate_from_raw_import_wire() {
             .combine(single_observation(&observed, &responses, 24))
     );
     assert_eq!(dispatch.company_marks_before, companies);
-    assert_eq!(dispatch.company_marks_after, None);
     assert_eq!(
         dispatch.response_evidence.request_sha256,
         observed[25].request_body_sha256

@@ -39,6 +39,11 @@ pub(in crate::agent) fn parse_company_marks(
     Ok((vouchers, masters))
 }
 
+/// The one row whose GUID is `expected_guid`. The whole response is parsed
+/// before identity is checked, so a malformed row anywhere refuses as
+/// `agent_read_protocol_invalid` even when the target also appears twice;
+/// before bridge#574 an earlier duplicate reported the ambiguity first. Both
+/// refuse, and no caller acts differently on the two codes.
 fn company_high_water_row(
     xml: &str,
     expected_guid: &str,
@@ -275,6 +280,17 @@ mod tests {
         assert_eq!(
             parse_company_high_water(&altered, guid),
             Err("company_high_water_identity_ambiguous".into())
+        );
+        // A malformed later row takes precedence over the ambiguity: the whole
+        // response is parsed before identity is checked. Both refuse.
+        let malformed = altered.replacen(
+            "</COLLECTION>",
+            "<COMPANY NAME=\"Synthetic Broken\"><GUID>a</GUID><GUID>b</GUID></COMPANY></COLLECTION>",
+            1,
+        );
+        assert_eq!(
+            parse_company_high_water(&malformed, guid),
+            Err("agent_read_protocol_invalid".into())
         );
     }
 

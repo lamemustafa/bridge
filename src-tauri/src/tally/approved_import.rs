@@ -20,7 +20,7 @@ pub(crate) struct ApprovedImport {
     ledger_binding: StandardLedgerCatalogBinding,
     /// The group collection, for a Payment, Receipt or Contra: its legs'
     /// classification is re-derived from it inside the queue. A Journal has
-    /// none and its queued request sequence is unchanged.
+    /// none, so it adds no group read to the queue.
     group_collection_request: Option<AgentReadRequest>,
     /// The all-company change marks, read last before the POST to confirm the
     /// aim and again right after it to see where the voucher went (#574).

@@ -15,7 +15,7 @@
     },
     {
       "path": "docs/adr/0004-tally-write-safety.md",
-      "sha256": "4cc241ca339e34a4d75785fc86af7724dac35602d02971dae1e07d38b994719f"
+      "sha256": "8f1177b073d1140acc91642d37ecc0ddaec032845a0cf61ed23bb0c669bd834b"
     },
     {
       "path": "docs/adr/0005-tally-snapshot-recovery.md",
@@ -427,7 +427,7 @@
     },
     {
       "path": "src-tauri/src/agent_catalog.rs",
-      "sha256": "a532558b2bed1a88fb2828d9f8b4b9a620bfd7b1ae05173dda37f3619800f70f"
+      "sha256": "0eba31170c2b103e5b62f501593b84b8bb3de06aa3cdc37458dee5dfe8631f24"
     },
     {
       "path": "src-tauri/src/agent_change_parse.rs",
@@ -479,11 +479,11 @@
     },
     {
       "path": "src-tauri/src/agent_import_post.rs",
-      "sha256": "73928191a3a8aad31a1e123db0fd2e695d870d6f2809879311d661a69db3da70"
+      "sha256": "acff6584711fce80d080c4f836b1b8a1bc2cd569b305df1cfee2ebd38ea14122"
     },
     {
       "path": "src-tauri/src/agent_import_post_location.rs",
-      "sha256": "733701729600ab0415c1432ef836a04b939278e4bd80f523b1f56b493e5a2e7a"
+      "sha256": "0ee50ae8018fd7db51d85f8faff9e4ea828e6a7995dab4f02559b2a3f777a4c6"
     },
     {
       "path": "src-tauri/src/agent_import_verification.rs",
@@ -867,7 +867,7 @@
     },
     {
       "path": "src-tauri/src/tally/approved_import.rs",
-      "sha256": "305d55c3c17b784b6bc867cc9c52ee2f9aee7d8d3305c00e74543dd85a3e9c57"
+      "sha256": "9dd5c515548468f3b0a3be3255f9c2431e2460c51adfa8bcacbdc6ec461929a9"
     },
     {
       "path": "src-tauri/src/tally/canonical_window.rs",
@@ -895,7 +895,7 @@
     },
     {
       "path": "src-tauri/src/tally/runtime.rs",
-      "sha256": "e7acbef77251838fc31588ac7bb4fdfd44d07d34ffc62b0bf356ab5cc50a7ad8"
+      "sha256": "a14d5216aa1edc8c1d7564eb817bbae9c0c8276fbcfaa73675490d630a5caf3b"
     },
     {
       "path": "src-tauri/src/tally/runtime_control.rs",
@@ -1106,5 +1106,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "37ecbdea476b13d3400e6af231d9c7bfb92632a2becfcade9cac46c350683758"
+  "manifest_sha256": "f05221d808cb64209b3deb5e7fe696885c5f082e971723b9f13130cef1d9bef6"
 }

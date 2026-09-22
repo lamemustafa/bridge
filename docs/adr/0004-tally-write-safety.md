@@ -233,9 +233,10 @@ or an owner decision to amend the requirement instead:
    Tally request before the POST and refuses unless exactly one company has the target's GUID
    and name and none shares its name (`post_company_scope_changed`, or
    `post_company_scope_unconfirmed` if that read fails). It reads them again right after the
-   POST and reports which companies' voucher marks moved (`post_location` in the result). This
-   detects a misdirected post; it cannot prevent one, because Tally cannot bind an import to a
-   GUID. The interval between that snapshot and the POST, local work only, stays accepted with
+   POST, once its response is journaled, and reports which companies' voucher marks moved
+   (`post_location` in the result). This flags a possibly misdirected post; concurrent writers on
+   a shared book can make it ambiguous, and it cannot prevent one, because Tally cannot bind an
+   import to a GUID. The interval between that snapshot and the POST, local work only, stays accepted with
    #239. Locating the voucher inside another company, and removing it, are not built.
 10. **Batch record integrity (scope, "What it can send"), #575. Resolved by #578.** The post
     path now re-checks the saved file's bytes, as the desktop review already did, and both use one
@@ -281,8 +282,9 @@ without its group read, or a Journal with one, is refused as a wiring fault
 
 The approval names the type in its first line ("Create ONE Payment in …") and
 states which side had to be bank or cash; the dialog title and button are
-type-neutral ("approve one voucher", "Post voucher"). A Journal's queued request
-sequence is unchanged: it carries no group request. Known limits of the preview:
+type-neutral ("approve one voucher", "Post voucher"). A Journal carries no group
+request. (Since #574 every post, a Journal included, also reads the all-company
+marks last before the POST and once after it.) Known limits of the preview:
 it lists entries in the saved order while the posted XML puts debits first, and
 it does not say which ledger becomes the voucher's party (Tally 7.1 Silver read
 the bank ledger back as the party on Payments and Receipts). A preview over the

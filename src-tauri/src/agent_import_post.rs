@@ -249,7 +249,7 @@ impl Server {
                 ledger_catalogue_request,
                 ledger_binding,
                 group_collection_request,
-                company_marks_request,
+                company_marks_request.clone(),
             )
             .await?;
             // The cross-process lease starts only after the independent native
@@ -367,18 +367,10 @@ impl Server {
                 accumulated.clone(),
                 evidence_from_runtime_read(posted.response_evidence.clone()),
             );
-            post_location = Some(location::classify_post_location(
-                &location::parse_all_company_marks(&posted.company_marks_before)
-                    .unwrap_or_default(),
-                posted
-                    .company_marks_after
-                    .as_deref()
-                    .and_then(|marks| location::parse_all_company_marks(marks).ok())
-                    .as_deref(),
-                identity.company_guid(),
-                &company.name,
-            ));
             let parsed_outcome = parse_import_outcome(&posted.body).ok();
+            let reported_created = parsed_outcome
+                .as_ref()
+                .map(|outcome| outcome.counters().created);
             let response = ledger::DispatchResponse {
                 request_sha256: posted.response_evidence.request_sha256,
                 response_sha256: posted.response_evidence.response_sha256,
@@ -392,6 +384,23 @@ impl Server {
                     &line, response,
                 ))?;
             }
+            // Where the voucher went (#574), read only now that the response is
+            // journaled, so a slow or failed read delays nothing that records
+            // the post. A failed read is reported, never guessed.
+            let marks_after = self
+                .runtime
+                .read_company_marks_once(self.tally_config(), company_marks_request.clone())
+                .await
+                .ok()
+                .and_then(|marks| location::parse_all_company_marks(&marks).ok());
+            post_location = Some(location::classify_post_location(
+                &location::parse_all_company_marks(&posted.company_marks_before)
+                    .unwrap_or_default(),
+                marks_after.as_deref(),
+                identity.company_guid(),
+                &company.name,
+                reported_created,
+            ));
             // A valid counter response is evidence, never proof that Tally preserved
             // the requested ledger/amount/date semantics. Readback is mandatory.
             let mut proof = self.verify_import_after_current_dispatch(args).await?;

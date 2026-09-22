@@ -39,7 +39,7 @@ fn with_vouchers(
 }
 
 fn state(before: &[LoadedCompanyMarks], after: &[LoadedCompanyMarks]) -> Value {
-    classify_post_location(before, Some(after), TARGET, "Synthetic Target")
+    classify_post_location(before, Some(after), TARGET, "Synthetic Target", Some(1))
 }
 
 #[test]
@@ -188,7 +188,74 @@ fn a_changed_company_set_is_never_a_clean_landing() {
 #[test]
 fn an_unreadable_after_snapshot_is_said_not_guessed() {
     assert_eq!(
-        classify_post_location(&book(), None, TARGET, "Synthetic Target")["state"],
+        classify_post_location(&book(), None, TARGET, "Synthetic Target", Some(1))["state"],
         "after_snapshot_unavailable"
+    );
+}
+
+#[test]
+fn a_move_elsewhere_while_tally_created_nothing_is_not_called_a_misdirected_post() {
+    let after = with_vouchers(&book(), OTHER, 21);
+    let created_nothing =
+        classify_post_location(&book(), Some(&after), TARGET, "Synthetic Target", Some(0));
+    assert_eq!(
+        created_nothing["state"], "no_creation_reported",
+        "{created_nothing}"
+    );
+    // A lost or unreadable response cannot rule the other company out.
+    let unknown = classify_post_location(&book(), Some(&after), TARGET, "Synthetic Target", None);
+    assert_eq!(unknown["state"], "suspected_other_company", "{unknown}");
+}
+
+#[test]
+fn two_rows_with_one_identity_are_ambiguous_not_merged() {
+    let mut doubled = book();
+    doubled.push(marks("Synthetic Other", OTHER, 99));
+    assert_eq!(
+        state(&book(), &doubled)["state"],
+        "location_ambiguous_duplicate_rows"
+    );
+    assert_eq!(
+        state(&doubled, &book())["state"],
+        "location_ambiguous_duplicate_rows"
+    );
+}
+
+#[test]
+fn a_namesake_beyond_ascii_case_or_inner_spacing_still_refuses() {
+    for lookalike in ["Synthetic  Target", "SYNTHETIC\tTARGET", "synthetic target"] {
+        let mut namesake = book();
+        namesake[1].name = lookalike.into();
+        assert_eq!(
+            admit_post_target(&namesake, TARGET, "Synthetic Target"),
+            Err("post_company_scope_changed"),
+            "{lookalike:?}"
+        );
+    }
+    let mut accented = book();
+    accented[0].name = "Café Target".into();
+    accented[1].name = "CAFÉ TARGET".into();
+    assert_eq!(
+        admit_post_target(&accented, TARGET, "Café Target"),
+        Err("post_company_scope_changed")
+    );
+}
+
+#[test]
+fn a_row_without_its_master_axis_is_refused_not_read_as_unchanged() {
+    let bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents.utf16le.xml"
+    );
+    let words = bytes
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect::<Vec<_>>();
+    let xml = String::from_utf16(&words).unwrap();
+    let start = xml.find("<ALTMSTID").unwrap();
+    let end = start + xml[start..].find("</ALTMSTID>").unwrap() + "</ALTMSTID>".len();
+    let without = format!("{}{}", &xml[..start], &xml[end..]);
+    assert_eq!(
+        parse_all_company_marks(&without),
+        Err("master_checkpoint_not_observed".into())
     );
 }

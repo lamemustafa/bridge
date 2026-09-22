@@ -23,6 +23,21 @@ fn same_name(left: &str, right: &str) -> bool {
     left.trim().eq_ignore_ascii_case(right.trim())
 }
 
+/// A broader fold for counting namesakes only: Unicode lower case and runs of
+/// whitespace collapsed. How Tally resolves `SVCURRENTCOMPANY` beyond ASCII
+/// case is unmeasured, so a name this fold makes equal is treated as a possible
+/// landing. It can only refuse more, never admit a post the narrow match would
+/// refuse.
+fn possibly_same_name(left: &str, right: &str) -> bool {
+    let fold = |name: &str| {
+        name.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
+    fold(left) == fold(right)
+}
+
 fn is_target(row: &LoadedCompanyMarks, guid: &str, name: &str) -> bool {
     row.guid.eq_ignore_ascii_case(guid) && same_name(&row.name, name)
 }
@@ -41,7 +56,7 @@ pub(super) fn admit_post_target(
         .count();
     let namesakes = before
         .iter()
-        .filter(|row| same_name(&row.name, name))
+        .filter(|row| possibly_same_name(&row.name, name))
         .count();
     if targets == 1 && namesakes == 1 {
         Ok(())
@@ -65,17 +80,26 @@ fn described(row: &LoadedCompanyMarks) -> Value {
 /// the voucher itself stays with the marker readback; this only says which
 /// companies' voucher marks moved. `after` is `None` when the snapshot after
 /// the POST could not be read, and that is said, never guessed.
+/// `reported_created` is Tally's CREATED counter, `None` when the response was
+/// lost or unreadable. A mark that moved elsewhere while Tally reported
+/// creating nothing is someone else's voucher, not a misdirected post.
 pub(super) fn classify_post_location(
     before: &[LoadedCompanyMarks],
     after: Option<&[LoadedCompanyMarks]>,
     guid: &str,
     name: &str,
+    reported_created: Option<u64>,
 ) -> Value {
     let Some(after) = after else {
         return json!({"state": "after_snapshot_unavailable"});
     };
     let before_by_key: BTreeMap<_, _> = before.iter().map(|row| (key(row), row)).collect();
     let after_by_key: BTreeMap<_, _> = after.iter().map(|row| (key(row), row)).collect();
+    if before_by_key.len() != before.len() || after_by_key.len() != after.len() {
+        // Two rows with one identity cannot be told apart, so neither can
+        // be said to have moved or stayed.
+        return json!({"state": "location_ambiguous_duplicate_rows"});
+    }
     let added: Vec<Value> = after
         .iter()
         .filter(|row| !before_by_key.contains_key(&key(row)))
@@ -117,6 +141,8 @@ pub(super) fn classify_post_location(
         "target_only"
     } else if target_moved {
         "target_and_others_moved"
+    } else if reported_created == Some(0) {
+        "no_creation_reported"
     } else if others.len() == 1 {
         "suspected_other_company"
     } else if others.is_empty() {
