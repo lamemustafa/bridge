@@ -257,6 +257,43 @@ mod tests {
         }
     }
 
+    /// POP-5 (reference `inv_voucher_guids_unique`): one violation for all blank GUIDs, then one
+    /// per repeated GUID in GUID order; an excluded voucher is outside it. The texts are the
+    /// reference's own.
+    #[test]
+    fn pop5_names_blank_and_repeated_voucher_guids_in_the_population() {
+        let mut b = book();
+        b.vouchers = vec![
+            voucher("g-2", VoucherStatus::Regular),
+            voucher("", VoucherStatus::Regular),
+            voucher("g-1", VoucherStatus::Regular),
+            voucher("g-2", VoucherStatus::Regular),
+            voucher("", VoucherStatus::Regular),
+            voucher("g-1", VoucherStatus::Regular),
+            voucher("g-1", VoucherStatus::Optional),
+            voucher("g-3", VoucherStatus::Regular),
+            voucher("g-3", VoucherStatus::Cancelled),
+        ];
+        let (evaluated, found) = book_invariants(&b).unwrap();
+        assert_eq!(
+            evaluated,
+            vec!["ID-1", "POP-0", "POP-1", "POP-2", "POP-3", "POP-5", "MAP-0", "MAP-1"]
+        );
+        let pop5: Vec<(String, String)> = found
+            .into_iter()
+            .filter(|v| v.invariant == "POP-5")
+            .map(|v| (v.subject, v.detail))
+            .collect();
+        assert_eq!(
+            pop5,
+            vec![
+                ("(blank)".to_string(), "2 in-books voucher(s) have no GUID".to_string()),
+                ("g-1".to_string(), "2 in-books vouchers share this GUID".to_string()),
+                ("g-2".to_string(), "2 in-books vouchers share this GUID".to_string()),
+            ]
+        );
+    }
+
     fn violations(kind: &str, guid: &str, code: &str) -> Vec<String> {
         let mut r = TestResult::new("t", "1", "r");
         r.fig(
