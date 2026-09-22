@@ -221,6 +221,13 @@ pub(super) const WINDOW_CHANGED_DURING_READ: &str = "voucher_window_changed_duri
 /// only the window's vouchers if every part holds exactly its own.
 pub(super) const PART_NOT_ADMITTED: &str = "voucher_window_part_not_admitted";
 
+/// A window read for a sealed record was refused unread: it must read the
+/// company's marks itself, so the opening and closing marks it proves one
+/// state of the book with are both among its own retained reads. A caller's
+/// count or marks, or a replay against another read's witness, would leave the
+/// record resting on a read it does not hold.
+pub(super) const AUDIT_WINDOW_NEEDS_ITS_OWN_MARKS: &str = "audit_window_needs_its_own_marks";
+
 /// Why a part was not admitted, as the `cause` beside [`PART_NOT_ADMITTED`].
 /// A row whose date, or (for a counted window) AlterID, could not be read.
 pub(super) const PART_ROW_UNREADABLE: &str = "part_row_unreadable";
@@ -903,6 +910,16 @@ pub(super) trait WindowReader {
     /// half its real cost (and so at twice a safe part size).
     fn evidence_copies(&self) -> u64;
 
+    /// Whether this reader's reads become a sealed record. Such a window must
+    /// read its own marks ([`AUDIT_WINDOW_NEEDS_ITS_OWN_MARKS`]).
+    fn seals_its_reads(&self) -> bool {
+        false
+    }
+
+    /// Called once at the start of every window read, before any request: a
+    /// reader that retains reads starts each window empty.
+    fn begin_window(&self) {}
+
     async fn read(
         &self,
         identity: &VerifiedCompanyIdentity,
@@ -1017,6 +1034,24 @@ impl WindowReader for AuditWindowReader<'_> {
         1
     }
 
+    fn seals_its_reads(&self) -> bool {
+        true
+    }
+
+    /// A reader reused for another window, say a retry after
+    /// [`AuditWindowFailure::WindowChanged`], must not carry the earlier
+    /// attempt's reads or failure into it.
+    fn begin_window(&self) {
+        self.retained
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        *self
+            .failure
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
+
     async fn read(
         &self,
         identity: &VerifiedCompanyIdentity,
@@ -1093,8 +1128,14 @@ impl AuditWindowFailure {
     /// Whether the orchestrator may read the same window again later. Someone
     /// else writing is the normal case on a multi-user book, so a window that
     /// changed under the read is retryable; a refused plan or admission is not.
+    ///
+    /// A part that ran past its deadline is not retryable as the same window:
+    /// the executor never divides an audit part, so the same plan would send
+    /// the same request and owe another drain. Such a window needs smaller
+    /// parts, not another attempt.
     pub(super) fn retryable(&self) -> bool {
         match self {
+            Self::Part(crate::tally::runtime::AuditPartFailureKind::Deadline) => false,
             Self::Part(kind) => kind.retryable(),
             Self::WindowChanged => true,
             Self::Refused(_) => false,
@@ -1195,6 +1236,12 @@ where
     T: WindowRow,
     P: FnMut(&str) -> Result<Vec<T>, String>,
 {
+    reader.begin_window();
+    if reader.seals_its_reads()
+        && !matches!(source, WindowPlanSource::Estimate { known_marks: None })
+    {
+        return Err(AUDIT_WINDOW_NEEDS_ITS_OWN_MARKS.to_string().into());
+    }
     let first = parse_day(from)?;
     let last = parse_day(to)?;
     if first > last {
