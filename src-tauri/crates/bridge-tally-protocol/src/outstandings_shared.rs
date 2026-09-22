@@ -97,6 +97,13 @@ impl std::error::Error for OutstandingsError {}
 /// This lives in the ungated shared module because master reads also send
 /// `SVFROMDATE`/`SVTODATE`; a master opening balance is no safer than a
 /// voucher window when Tally silently refuses a boundary.
+///
+/// `EducationRestricted` is also how a caller knows that Education was
+/// observed at all, and it gates a second, independent Education hazard: a
+/// custom report whose TDL Education answers with a blocking dialog is refused
+/// before it is sent (bridge#45). Both rules key on the same observation today.
+/// If one is ever lifted for a release and not the other, they need separate
+/// signals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DateBoundaryProfile {
     EducationRestricted,

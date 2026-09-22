@@ -236,7 +236,10 @@ async fn a_deadline_owes_a_drain_that_only_two_quick_probes_clear() {
     ])
     .unwrap();
     let runtime = TallyRuntime::with_transport_policy(policy(timeout))
-        .with_audit_drain_probe_interval(Duration::ZERO);
+        .with_audit_drain_probe_interval(Duration::ZERO)
+        // Quickness is not this test's subject: count any answered probe, so a
+        // loaded host cannot turn an answer into a "slow" one.
+        .with_audit_drain_probe_slow(AUDIT_DRAIN_PROBE_DEADLINE);
     let failure = part(&runtime, &simulator, &lab, AuditPartShape::Single)
         .await
         .expect_err("the part outlives its deadline");
@@ -293,22 +296,22 @@ async fn a_deadline_owes_a_drain_that_only_two_quick_probes_clear() {
 #[tokio::test]
 async fn a_slow_probe_answer_does_not_count_towards_the_drain() {
     let lab = lab();
-    let timeout = Duration::from_millis(3_000);
-    let slow = Duration::from_millis(2_300);
+    let timeout = Duration::from_millis(6_000);
+    let slow = Duration::from_millis(4_000);
     let simulator = SequenceSimulator::spawn(vec![
         utf16(&lab.companies_xml),
-        utf16(&lab.report_xml).with_delivery(Delivery::SlowHeaders(Duration::from_millis(3_500))),
+        utf16(&lab.report_xml).with_delivery(Delivery::SlowHeaders(Duration::from_millis(6_500))),
         status(),
         status().with_delivery(Delivery::SlowHeaders(slow)),
         status(),
         status(),
     ])
     .unwrap();
-    // A 1 s threshold leaves room either side: quick answers are
-    // milliseconds, the slow one takes 2.3 s.
+    // A 2 s threshold with room either side under CPU load: quick answers
+    // are milliseconds, the slow one takes 4 s, the session deadline is 6 s.
     let runtime = TallyRuntime::with_transport_policy(policy(timeout))
         .with_audit_drain_probe_interval(Duration::ZERO)
-        .with_audit_drain_probe_slow(Duration::from_millis(1_000));
+        .with_audit_drain_probe_slow(Duration::from_millis(2_000));
     assert_eq!(
         part(&runtime, &simulator, &lab, AuditPartShape::Single)
             .await
@@ -420,6 +423,7 @@ fn every_failure_kind_has_a_distinct_stable_code() {
         AuditPartFailureKind::Unreachable,
         AuditPartFailureKind::PairDrift,
         AuditPartFailureKind::IdentityChanged,
+        AuditPartFailureKind::EducationBoundary,
     ];
     let codes = kinds
         .iter()
@@ -671,7 +675,10 @@ async fn probes_are_spaced_and_a_premature_one_sends_nothing() {
     let mut plans = dropped(&lab);
     plans.push(status());
     let simulator = SequenceSimulator::spawn(plans).unwrap();
-    let runtime = TallyRuntime::default();
+    let runtime = TallyRuntime::default()
+        // Quickness is not this test's subject: count any answered probe, so a
+        // loaded host cannot turn an answer into a "slow" one.
+        .with_audit_drain_probe_slow(AUDIT_DRAIN_PROBE_DEADLINE);
     owe_a_drain(&runtime, &simulator, &lab).await;
     assert_eq!(
         runtime.drain_probe(config(&simulator)).await,
@@ -753,7 +760,11 @@ async fn concurrent_probes_cannot_count_twice() {
     let mut plans = dropped(&lab);
     plans.push(status().with_delivery(Delivery::SlowHeaders(Duration::from_millis(200))));
     let simulator = SequenceSimulator::spawn(plans).unwrap();
-    let runtime = TallyRuntime::default().with_audit_drain_probe_interval(Duration::ZERO);
+    let runtime = TallyRuntime::default()
+        .with_audit_drain_probe_interval(Duration::ZERO)
+        // Quickness is not this test's subject: count any answered probe, so a
+        // loaded host cannot turn an answer into a "slow" one.
+        .with_audit_drain_probe_slow(AUDIT_DRAIN_PROBE_DEADLINE);
     owe_a_drain(&runtime, &simulator, &lab).await;
     let (a, b) = tokio::join!(
         runtime.drain_probe(config(&simulator)),
@@ -872,7 +883,10 @@ async fn a_dropped_probe_counts_as_abandoned_once_stale() {
     let stale = Duration::from_millis(1_500);
     let runtime = TallyRuntime::default()
         .with_audit_drain_probe_interval(Duration::ZERO)
-        .with_audit_drain_probe_stale(stale);
+        .with_audit_drain_probe_stale(stale)
+        // Quickness is not this test's subject: count any answered probe, so a
+        // loaded host cannot turn an answer into a "slow" one.
+        .with_audit_drain_probe_slow(AUDIT_DRAIN_PROBE_DEADLINE);
     owe_a_drain(&runtime, &simulator, &lab).await;
     assert!(tokio::time::timeout(
         Duration::from_millis(300),
@@ -920,31 +934,61 @@ async fn a_running_part_is_never_drained_from_under_it() {
 
 /// A part's future dropped mid-request leaves a settled, owed debt, so the
 /// next part is refused before it is queued and probes can drain it.
+///
+/// Deterministic by construction: the part is aborted only once the registry
+/// shows it armed, not after a guessed delay, and draining is asserted as
+/// "clears within a bounded number of probes", with every answered probe
+/// counting, so it does not depend on how long the simulated responder stays
+/// busy with the abandoned request.
 #[tokio::test]
 async fn a_dropped_part_is_owed_and_drainable() {
     let lab = lab();
-    let simulator = SequenceSimulator::spawn(vec![
+    let mut plans = vec![
         utf16(&lab.companies_xml),
-        utf16(&lab.report_xml).with_delivery(Delivery::SlowHeaders(Duration::from_millis(800))),
-        status(),
-        status(),
-    ])
-    .unwrap();
-    // Only "answered at all" matters here; a loaded host can take seconds.
+        // Long enough that the part is always still running when aborted.
+        utf16(&lab.report_xml).with_delivery(Delivery::SlowHeaders(Duration::from_millis(1_500))),
+    ];
+    plans.extend([status(), status()]);
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
     let runtime = TallyRuntime::default()
         .with_audit_drain_probe_interval(Duration::ZERO)
-        .with_audit_drain_probe_slow(Duration::from_millis(4_500));
-    assert!(tokio::time::timeout(
-        Duration::from_millis(300),
-        part(&runtime, &simulator, &lab, AuditPartShape::Single)
-    )
-    .await
-    .is_err());
+        .with_audit_drain_probe_slow(AUDIT_DRAIN_PROBE_DEADLINE);
     let endpoint = EndpointKey::from_config(&config(&simulator)).unwrap();
+    let running = {
+        let runtime = runtime.clone();
+        let config = config(&simulator);
+        let identity = lab.identity.clone();
+        let request =
+            super::super::agent_read_request::AgentReadRequest::parse(lab.request.clone()).unwrap();
+        tokio::spawn(async move {
+            runtime
+                .fetch_audit_part(config, &identity, request, AuditPartShape::Single)
+                .await
+        })
+    };
+    // Abort only once the data request itself has reached the responder
+    // (the opening bracket plus the part), while its response is held.
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while simulator.received() < 2 {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    })
+    .await
+    .expect("the part's data request is received");
+    assert!(runtime.audit_drain.lock().unwrap()[&endpoint].in_flight);
+    running.abort();
+    assert!(running.await.unwrap_err().is_cancelled());
+    // Dropped unsettled: owed, and no longer marked as a running part.
     assert!(!runtime.audit_drain.lock().unwrap()[&endpoint].in_flight);
-    // The responder is busy for 800 ms after accepting the part; leave a wide
-    // margin under CPU load before the probe that must be answered quickly.
-    tokio::time::sleep(Duration::from_millis(2_000)).await;
+    assert_eq!(
+        part(&runtime, &simulator, &lab, AuditPartShape::Single)
+            .await
+            .expect_err("owed")
+            .kind,
+        AuditPartFailureKind::DrainRequired
+    );
+    // The responder finishes the abandoned part (1.5 s) and then answers each
+    // probe; every answered probe counts, within the probe's own 5 s deadline.
     assert_eq!(
         runtime.drain_probe(config(&simulator)).await,
         AuditDrainStatus::Owed {
@@ -956,7 +1000,7 @@ async fn a_dropped_part_is_owed_and_drainable() {
         runtime.drain_probe(config(&simulator)).await,
         AuditDrainStatus::Clear
     );
-    assert_eq!(simulator.finish().unwrap().len(), 4);
+    drop(simulator);
 }
 
 /// A tool call withdrawn before the part is queued (#584) sends nothing and
@@ -985,4 +1029,170 @@ async fn a_withdrawn_call_sends_no_part_and_owes_nothing() {
         AuditDrainStatus::Clear
     );
     drop(simulator);
+}
+
+fn education(companies_xml: &str) -> String {
+    let flipped = companies_xml.replace(
+        "<EDUMODE TYPE=\"Logical\">No</EDUMODE>",
+        "<EDUMODE TYPE=\"Logical\">Yes</EDUMODE>",
+    );
+    assert_ne!(flipped, companies_xml, "the fixture carries EDUMODE");
+    flipped
+}
+
+fn dated(request: &str, day: &str) -> String {
+    let dated = request.replacen(
+        "</STATICVARIABLES>",
+        &format!(
+            "<SVFROMDATE TYPE=\"Date\">{day}</SVFROMDATE><SVTODATE TYPE=\"Date\">{day}</SVTODATE></STATICVARIABLES>"
+        ),
+        1,
+    );
+    assert_ne!(dated, request, "the request carries STATICVARIABLES");
+    dated
+}
+
+async fn dated_part(
+    runtime: &TallyRuntime,
+    simulator: &SequenceSimulator,
+    lab: &Lab,
+    day: &str,
+) -> Result<AuditPart, AuditPartFailure> {
+    runtime
+        .fetch_audit_part(
+            config(simulator),
+            &lab.identity,
+            super::super::agent_read_request::AgentReadRequest::parse(dated(&lab.request, day))
+                .unwrap(),
+            AuditPartShape::Single,
+        )
+        .await
+}
+
+/// bridge#581 for audit parts: Education answers a window starting on another
+/// day with a well-formed empty collection, so the part is refused before it
+/// is sent, and nothing is owed.
+#[tokio::test]
+async fn an_education_endpoint_refuses_a_part_it_would_serve_empty() {
+    let lab = lab();
+    let simulator = SequenceSimulator::spawn(vec![utf16(&education(&lab.companies_xml))]).unwrap();
+    let runtime = TallyRuntime::default();
+    let failure = dated_part(&runtime, &simulator, &lab, "20250403")
+        .await
+        .expect_err("Education does not honour the 3rd");
+    assert_eq!(failure.kind, AuditPartFailureKind::EducationBoundary);
+    assert_eq!(
+        failure.kind.code(),
+        "audit_part_window_unsupported_in_education"
+    );
+    assert!(!failure.kind.retryable() && !failure.kind.owes_drain());
+    let endpoint = config(&simulator);
+    // Only the opening bracket was sent.
+    assert_eq!(simulator.finish().unwrap().len(), 1);
+    assert_eq!(runtime.drain_probe(endpoint).await, AuditDrainStatus::Clear);
+}
+
+#[tokio::test]
+async fn an_education_endpoint_serves_a_part_on_a_day_it_honours() {
+    let lab = lab();
+    let companies = education(&lab.companies_xml);
+    let simulator = SequenceSimulator::spawn(vec![
+        utf16(&companies),
+        utf16(&lab.report_xml),
+        utf16(&companies),
+    ])
+    .unwrap();
+    let admitted = dated_part(&TallyRuntime::default(), &simulator, &lab, "20250401")
+        .await
+        .expect("the 1st is honoured");
+    assert_eq!(
+        admitted.boundary_profile,
+        DateBoundaryProfile::EducationRestricted
+    );
+    assert_eq!(simulator.finish().unwrap().len(), 3);
+}
+
+/// A licence dropping to Education during the part: which mode answered is
+/// unknown, so the part is refused as if it had been sent in Education, with
+/// what was read accounted for. The body was read to the end: nothing owed.
+#[tokio::test]
+async fn education_first_seen_at_the_closing_bracket_refuses_the_part() {
+    let lab = lab();
+    let simulator = SequenceSimulator::spawn(vec![
+        utf16(&lab.companies_xml),
+        utf16(&lab.report_xml),
+        utf16(&education(&lab.companies_xml)),
+    ])
+    .unwrap();
+    let runtime = TallyRuntime::default();
+    let failure = dated_part(&runtime, &simulator, &lab, "20250403")
+        .await
+        .expect_err("closing bracket reports Education");
+    assert_eq!(failure.kind, AuditPartFailureKind::EducationBoundary);
+    assert!(
+        failure.evidence.is_some(),
+        "the part that was read is accounted"
+    );
+    let endpoint = config(&simulator);
+    assert_eq!(simulator.finish().unwrap().len(), 3);
+    assert_eq!(runtime.drain_probe(endpoint).await, AuditDrainStatus::Clear);
+}
+
+#[tokio::test]
+async fn a_licensed_part_reports_the_ordinary_profile() {
+    let lab = lab();
+    let simulator = SequenceSimulator::spawn(vec![
+        utf16(&lab.companies_xml),
+        utf16(&lab.report_xml),
+        utf16(&lab.companies_xml),
+    ])
+    .unwrap();
+    let admitted = dated_part(&TallyRuntime::default(), &simulator, &lab, "20250403")
+        .await
+        .expect("licensed");
+    assert_eq!(admitted.boundary_profile, DateBoundaryProfile::ModeAgnostic);
+    assert_eq!(simulator.finish().unwrap().len(), 3);
+}
+
+/// Education first reported at the closing bracket on a day it honours: the
+/// part is admitted and reports Education, the stricter of the two profiles,
+/// so a caller keeps Education in force for the rest of the window.
+#[tokio::test]
+async fn a_part_reports_education_when_only_the_closing_bracket_saw_it() {
+    let lab = lab();
+    let simulator = SequenceSimulator::spawn(vec![
+        utf16(&lab.companies_xml),
+        utf16(&lab.report_xml),
+        utf16(&education(&lab.companies_xml)),
+    ])
+    .unwrap();
+    let admitted = dated_part(&TallyRuntime::default(), &simulator, &lab, "20250401")
+        .await
+        .expect("the 1st is honoured in either mode");
+    assert_eq!(
+        admitted.boundary_profile,
+        DateBoundaryProfile::EducationRestricted
+    );
+    assert_eq!(simulator.finish().unwrap().len(), 3);
+}
+
+/// The other asymmetric case: Education at the opening bracket, licensed at the
+/// closing one, on a day Education honours. Still Education.
+#[tokio::test]
+async fn a_part_keeps_education_seen_only_at_the_opening_bracket() {
+    let lab = lab();
+    let simulator = SequenceSimulator::spawn(vec![
+        utf16(&education(&lab.companies_xml)),
+        utf16(&lab.report_xml),
+        utf16(&lab.companies_xml),
+    ])
+    .unwrap();
+    let admitted = dated_part(&TallyRuntime::default(), &simulator, &lab, "20250401")
+        .await
+        .expect("the 1st is honoured in either mode");
+    assert_eq!(
+        admitted.boundary_profile,
+        DateBoundaryProfile::EducationRestricted
+    );
+    assert_eq!(simulator.finish().unwrap().len(), 3);
 }

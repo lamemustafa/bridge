@@ -408,9 +408,10 @@ impl GatewayProductModeEvidence {
     fn from_observation(
         observation: bridge_tally_protocol::CompanyGatewayCapabilityObservation,
     ) -> Self {
-        // `IsEducationalMode=Yes` has not been captured from a live Education
-        // instance: that inference is the complement of the observed licensed
-        // response (`No`, `IsSilver=Yes`), not a second live observation.
+        // Observed live on 22 Sep 2026 (a TallyPrime 7.1 lab instance in
+        // Education): `EDUMODE=Yes` with `SILVER=Yes` and `GOLD=No`. Education
+        // still reports Silver, so the mode is read from `EDUMODE` first, and
+        // no licence tier is inferred when it is set (bridge#581).
         let mode = if observation.educational_mode {
             Some("Education".to_string())
         } else if observation.silver || observation.gold {

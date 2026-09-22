@@ -210,7 +210,8 @@ openings still sum as before (POP-3). Only `parts/ledgers.xml`, `parts/tb_fy.xml
 `57f2619b686b9fea7a8f1f39f8c547012e66757e`, from an archive of that commit, by the invocations
 above (with `--test trial_balance`, `--test stale_balances_41_1`, `--test ledger_scrutiny` and
 `--test cash_book_integrity` for the four new ones, each with no further arguments). The six
-existing goldens came out byte-identical. `ledger_scrutiny` and `cash_book_integrity` already
+existing goldens came out byte-identical. (Every golden was regenerated again at `105b6c37`; see
+"Engine re-sync" below.) `ledger_scrutiny` and `cash_book_integrity` already
 reach their finding paths on the unchanged vouchers (7 and 2 findings).
 
 What the synthetic read reaches for batch 1, and what it does not. `cash_book_integrity` has five
@@ -265,7 +266,7 @@ uv run -q --with openpyxl --with xlrd --with python-docx --with jsonschema --wit
     tests/fixtures/golden
 ```
 
-once per book. `tests/edge_books.rs` builds each book in Rust, runs each named test with its module
+once per book (and again at `105b6c37`; see "Engine re-sync" below). `tests/edge_books.rs` builds each book in Rust, runs each named test with its module
 check, compares the whole dump with `compare` -- every field of it, the spec and test versions
 included -- and compares the row order. Every mutation written for this crate is recorded in
 `parity/mutations.json` with its author, and `parity/mutations.py` re-runs them. Of 52 hand-written
@@ -357,21 +358,35 @@ uv run -q --python 3.13 python parity/text_semantics.py ENGINE DUMP
 
 `src/support.rs`'s `text_probe_tests` replay every probe in CI.
 
+## Engine re-sync (2026-09-22)
+
+The reference implementation's engine landed on brain main at
+`105b6c3784f8ec09ef9d233d47ad97ccb1ea7832`. Between `57f2619b` and that commit, the only change that
+reaches a ported test's canonical dump is a new book invariant, POP-5: every in-books voucher has a
+GUID of its own. The other engine changes in that range (the wrap tool, the Word renderers,
+clause44, stock, the scans) are outside the dump. `src/invariants.rs` ports POP-5, evaluated after
+POP-3 as in the reference's `BOOK_INVARIANTS`. Every golden in this file was regenerated at
+`105b6c37` from an archive of that commit, by the invocations above. The only change in any golden
+is `"POP-5"` added to `book_invariants_evaluated`; no fixture has a blank or repeated voucher GUID,
+so no POP-5 violation appears. A unit test (`invariants::tests::
+pop5_names_blank_and_repeated_voucher_guids_in_the_population`) reaches the violation texts, which
+are the reference's own.
+
 ## Bytes
 
 | Fixture | Bytes | SHA-256 | Path |
 | --- | ---: | --- | --- |
-| `synthetic.cash_44ab.json` | 5,841 | `cf1a9f74e3622fdd969cb4250a9c5ac46c1b42737fe51460c9dffc286d408cc7` | `golden/synthetic.cash_44ab.json` |
-| `synthetic.cash_payments_40a3.json` | 72,297 | `f12b0ac35ccd09fc406037579442afeb47d3a2e26ee540acc4bd114b023a3364` | `golden/synthetic.cash_payments_40a3.json` |
-| `synthetic.depreciation.json` | 27,626 | `0ccb72fb5c4c65f046bd6358878a717b1fd57ec46d33c4f7ffed06cd4296ea36` | `golden/synthetic.depreciation.json` |
-| `synthetic.financial_statements.json` | 16,705 | `b40e6fac2ee98cb37528ecc2fe0f42c6afacf31974eec7ba5be30f74201a324f` | `golden/synthetic.financial_statements.json` |
-| `synthetic.financial_statements.noreport.json` | 15,682 | `d407d2e72b09ad9348e8cfb19dbeff90a3617742ef8a348eb9e29018d1fa0c93` | `golden/synthetic.financial_statements.noreport.json` |
+| `synthetic.cash_44ab.json` | 5,854 | `becbc7c673937f5accd8871a394ffb4e5af0c7cca2a324926684f42d28b0e9bf` | `golden/synthetic.cash_44ab.json` |
+| `synthetic.cash_payments_40a3.json` | 72,310 | `1fe6547f9348bf32b33459f2a6a9af27e221d9e3e48e769383adafd8076b7bbe` | `golden/synthetic.cash_payments_40a3.json` |
+| `synthetic.depreciation.json` | 27,639 | `533bab261ac0c02d8687f6df6b915a5764cead1609abbea0c504926dcba64cd2` | `golden/synthetic.depreciation.json` |
+| `synthetic.financial_statements.json` | 16,718 | `0f4d5895cd3b6e5dadc04bf60514ed33357fa4c0734bad2d72176f8c2c354a3f` | `golden/synthetic.financial_statements.json` |
+| `synthetic.financial_statements.noreport.json` | 15,695 | `2025d1fcdcef63acdef082021b6cded6eea2d54959575f401e6c4798f09c9d3d` | `golden/synthetic.financial_statements.noreport.json` |
 | `synthetic-report-totals.json` | 134 | `e772509bd6ebc52afc23ef9742b6b1f2a090737533abe3761a7448124411b7e3` | `synthetic-report-totals.json` |
-| `synthetic.applicability_44ab.json` | 10,679 | `b90cf74038dcb1b26e4a9e8236861447e4b10d303027fbeb2e7359ead81778f5` | `golden/synthetic.applicability_44ab.json` |
-| `synthetic.trial_balance.json` | 92,608 | `6236b033586f46684545d189b9e98cf93872775250f296fa60b5adf9bf5fd305` | `golden/synthetic.trial_balance.json` |
-| `synthetic.stale_balances_41_1.json` | 9,820 | `0e58840903da8234858a209606305d1a1d1aa7a33f89ea7441ab98fd633c0e48` | `golden/synthetic.stale_balances_41_1.json` |
-| `synthetic.ledger_scrutiny.json` | 51,342 | `6b0358464627bc7e7d4cc9fd206cc2f4564ed7a35a1b769d303e5d0986d1470e` | `golden/synthetic.ledger_scrutiny.json` |
-| `synthetic.cash_book_integrity.json` | 15,221 | `2ee1cbc0de9d5087956c4115610c74a8cdd15cc361296dd09b685363bdf74289` | `golden/synthetic.cash_book_integrity.json` |
+| `synthetic.applicability_44ab.json` | 10,692 | `c550529a6d6fe14700ea587219788ae86867d28d477959140814cf639ecd458e` | `golden/synthetic.applicability_44ab.json` |
+| `synthetic.trial_balance.json` | 92,621 | `249306799598823277ac59bb68dcd83c4af9d693b68d648b0d2f79852e3fd69f` | `golden/synthetic.trial_balance.json` |
+| `synthetic.stale_balances_41_1.json` | 9,833 | `2b0dc18aef54ece37d83003cda66e5b97d0949e901f706f26ca5559bd6ca53bb` | `golden/synthetic.stale_balances_41_1.json` |
+| `synthetic.ledger_scrutiny.json` | 51,355 | `fb043fb1fab5064a326d8adaf33cc8ed8228c7f595345b9c978a72a56ac10ae8` | `golden/synthetic.ledger_scrutiny.json` |
+| `synthetic.cash_book_integrity.json` | 15,234 | `856b97610a61ce03ab33ef7a4bc530a42feb07e412bf3bdcb6bd878b240a0fd1` | `golden/synthetic.cash_book_integrity.json` |
 | `cash_book.json` | 8,499 | `1ae602f22368e3b549ce1430770f097758f13efb716025bcb2bab2a2e4a34f11` | `edge-books/cash_book.json` |
 | `cash_book_misc.json` | 5,333 | `23bd18a9b41d3768ce4cba9c9b5243b0822316e5fa7ab0308b83226c581c93f0` | `edge-books/cash_book_misc.json` |
 | `cash_book_unicode.json` | 2,262 | `ec61a34edc11214da0c5cac2b7b7d40abe148c0fbcfec1582379c57a21ff3bc3` | `edge-books/cash_book_unicode.json` |
@@ -381,15 +396,15 @@ uv run -q --python 3.13 python parity/text_semantics.py ENGINE DUMP
 | `scrutiny_short.json` | 1,212 | `e60f643456d1b812bb82c24ad581a030c4ae0dcc1c9701560ef1ace44d54b46e` | `edge-books/scrutiny_short.json` |
 | `stale.json` | 3,134 | `3e896344abf36b0469d289d69dabfdc5206ee4998c2df505bed449fb79255059` | `edge-books/stale.json` |
 | `tb_rows.json` | 2,362 | `5e3df2c81094e5ea7577309b48597bc03067a4f9ba09175a610b627b62fc31cd` | `edge-books/tb_rows.json` |
-| `edge.cash_book.cash_book_integrity.json` | 32,683 | `510282f185b850cec19cacb06ec08a82c4d8d9bf3b88fd12e8aae37247584078` | `golden/edge.cash_book.cash_book_integrity.json` |
-| `edge.cash_book_misc.cash_book_integrity.json` | 21,454 | `c955eeca88f6880d43ffb93c5642a37c625c55a334323a6e15f0981097de747c` | `golden/edge.cash_book_misc.cash_book_integrity.json` |
-| `edge.cash_book_unicode.cash_book_integrity.json` | 8,864 | `6c65cd4aafc2ed0a4935ade0d222dbbbe013cd6bfc917cd6832b04b7df101bd7` | `golden/edge.cash_book_unicode.cash_book_integrity.json` |
-| `edge.scrutiny.ledger_scrutiny.json` | 69,427 | `52ba969e677ef12c09cf26fb118b6ebca4aace4a4ed5a76f0063e2409475f666` | `golden/edge.scrutiny.ledger_scrutiny.json` |
-| `edge.scrutiny_default.ledger_scrutiny.json` | 8,407 | `03c41d14a83cd4da0bb94e026f93dc36438270b9a430d84f67967ed7339e58b7` | `golden/edge.scrutiny_default.ledger_scrutiny.json` |
-| `edge.scrutiny_misc.ledger_scrutiny.json` | 44,609 | `920f462e1642ea33f8249f3bece1fded847ee83886bc678a26f46678628dcf45` | `golden/edge.scrutiny_misc.ledger_scrutiny.json` |
-| `edge.scrutiny_short.ledger_scrutiny.json` | 8,638 | `9cd03cab0d2c3daebf60368faf9130366d19726963b0815dc72758fa62ef1112` | `golden/edge.scrutiny_short.ledger_scrutiny.json` |
-| `edge.stale.stale_balances_41_1.json` | 9,839 | `39a7bef9ed505d7ec78806d1b6ab524eeaaccc23aac95721a1f65a6b6bc37319` | `golden/edge.stale.stale_balances_41_1.json` |
-| `edge.tb_rows.trial_balance.json` | 14,783 | `870dd45e33e6350394c42d3e4c0ed5ec5be3f875b5a131e4e812682d88c8f9b6` | `golden/edge.tb_rows.trial_balance.json` |
+| `edge.cash_book.cash_book_integrity.json` | 32,696 | `41637ad43091a24607bdb128a30becde21d2a5b5e9d83f84b0147d592cd76e02` | `golden/edge.cash_book.cash_book_integrity.json` |
+| `edge.cash_book_misc.cash_book_integrity.json` | 21,467 | `a2f1c6c4bb3b70734a9680fd332399ed94c3e73d4bd81e2fa9eba9f6291f4b65` | `golden/edge.cash_book_misc.cash_book_integrity.json` |
+| `edge.cash_book_unicode.cash_book_integrity.json` | 8,877 | `fe04de6278df5ba65388c87dcb1bd927fcac36851f0995695a85372303b9c325` | `golden/edge.cash_book_unicode.cash_book_integrity.json` |
+| `edge.scrutiny.ledger_scrutiny.json` | 69,440 | `83a07d66c7030a6fa335b37586740c862b7e7b0e433ea5159833efc3ef1e5288` | `golden/edge.scrutiny.ledger_scrutiny.json` |
+| `edge.scrutiny_default.ledger_scrutiny.json` | 8,420 | `b24defb40fac1c15d8f24c195fa2c8b132ee984639a01cf6a4c3909d239fe50c` | `golden/edge.scrutiny_default.ledger_scrutiny.json` |
+| `edge.scrutiny_misc.ledger_scrutiny.json` | 44,622 | `bd992b810b75df10c74831474272c5e85783723577ba11b555f2040234e9c300` | `golden/edge.scrutiny_misc.ledger_scrutiny.json` |
+| `edge.scrutiny_short.ledger_scrutiny.json` | 8,651 | `3f854537a8d7929c3369e2e52db243fa79814bc9ef7d0ad79f7fbdc040385c65` | `golden/edge.scrutiny_short.ledger_scrutiny.json` |
+| `edge.stale.stale_balances_41_1.json` | 9,852 | `3499a5b8d028f59a65f208bc3954e816e820d644397e02e23b595ff67bc81fb5` | `golden/edge.stale.stale_balances_41_1.json` |
+| `edge.tb_rows.trial_balance.json` | 14,796 | `0ac2909425b617fcb41023efc7c886ed868404e3ef1cbee7aa8a5dea889dd6fb` | `golden/edge.tb_rows.trial_balance.json` |
 | `edge.tb_rows.trial_balance.order.json` | 219 | `2ace3be45ee1cd6ae4757727e947e07fd2ca3600a83f480b279bdda181d5f43d` | `golden/edge.tb_rows.trial_balance.order.json` |
 | `text-probes.json` | 810,568 | `34569754fa1d8ec360e09d59684ccd8222309e9c3c02521e63cb412e4ce88555` | `text-probes.json` |
 | `synthetic-turnover-inputs.json` | 153 | `970500728d9d0447cb3fe1b6e870d5fea2c3a1bb919da05f1d601d4ba6f66929` | `synthetic-turnover-inputs.json` |

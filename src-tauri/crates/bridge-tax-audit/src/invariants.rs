@@ -111,6 +111,30 @@ pub fn book_invariants(book: &Book) -> Result<(Vec<&'static str>, Vec<Violation>
         }
     }
 
+    // POP-5: every in-books voucher has a GUID of its own. Evidence names a voucher by its GUID,
+    // so a blank or repeated GUID makes a citation ambiguous: one violation for all blank GUIDs,
+    // then one per repeated GUID, in GUID order.
+    let mut guid_counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for v in &population {
+        *guid_counts.entry(v.guid.as_str()).or_insert(0) += 1;
+    }
+    if let Some(blank) = guid_counts.get("") {
+        out.push(violation(
+            "POP-5",
+            "(blank)",
+            format!("{blank} in-books voucher(s) have no GUID"),
+        ));
+    }
+    for (guid, count) in &guid_counts {
+        if !guid.is_empty() && *count > 1 {
+            out.push(violation(
+                "POP-5",
+                guid,
+                format!("{count} in-books vouchers share this GUID"),
+            ));
+        }
+    }
+
     // MAP-0: every in-books voucher line posts to a ledger the book's masters carry. MAP-1 and
     // every role lookup skip a ledger with no master, and POP-1 is silent when its lines net to
     // zero; one violation per such ledger, with its line count.
@@ -150,7 +174,9 @@ pub fn book_invariants(book: &Book) -> Result<(Vec<&'static str>, Vec<Violation>
     }
 
     Ok((
-        vec!["ID-1", "POP-0", "POP-1", "POP-2", "POP-3", "MAP-0", "MAP-1"],
+        vec![
+            "ID-1", "POP-0", "POP-1", "POP-2", "POP-3", "POP-5", "MAP-0", "MAP-1",
+        ],
         out,
     ))
 }
@@ -256,6 +282,52 @@ mod tests {
             ],
             tb: BTreeMap::new(),
         }
+    }
+
+    /// POP-5 (reference `inv_voucher_guids_unique`): one violation for all blank GUIDs, then one
+    /// per repeated GUID in GUID order; an excluded voucher is outside it. The texts are the
+    /// reference's own.
+    #[test]
+    fn pop5_names_blank_and_repeated_voucher_guids_in_the_population() {
+        let mut b = book();
+        b.vouchers = vec![
+            voucher("g-2", VoucherStatus::Regular),
+            voucher("", VoucherStatus::Regular),
+            voucher("g-1", VoucherStatus::Regular),
+            voucher("g-2", VoucherStatus::Regular),
+            voucher("", VoucherStatus::Regular),
+            voucher("g-1", VoucherStatus::Regular),
+            voucher("g-1", VoucherStatus::Optional),
+            voucher("g-3", VoucherStatus::Regular),
+            voucher("g-3", VoucherStatus::Cancelled),
+        ];
+        let (evaluated, found) = book_invariants(&b).unwrap();
+        assert_eq!(
+            evaluated,
+            vec!["ID-1", "POP-0", "POP-1", "POP-2", "POP-3", "POP-5", "MAP-0", "MAP-1"]
+        );
+        let pop5: Vec<(String, String)> = found
+            .into_iter()
+            .filter(|v| v.invariant == "POP-5")
+            .map(|v| (v.subject, v.detail))
+            .collect();
+        assert_eq!(
+            pop5,
+            vec![
+                (
+                    "(blank)".to_string(),
+                    "2 in-books voucher(s) have no GUID".to_string()
+                ),
+                (
+                    "g-1".to_string(),
+                    "2 in-books vouchers share this GUID".to_string()
+                ),
+                (
+                    "g-2".to_string(),
+                    "2 in-books vouchers share this GUID".to_string()
+                ),
+            ]
+        );
     }
 
     fn violations(kind: &str, guid: &str, code: &str) -> Vec<String> {

@@ -134,6 +134,11 @@ const GAP_GUIDANCE: Record<string, GapGuidance> = {
     action: "Use a connector path that binds each canonical record to a source-fragment hash, then run a new evidence read.",
     retry: "after_change",
   },
+  education_report_family_unsupported: {
+    title: "Ledger-balance cross-view needs a licensed Tally",
+    action: "Tally is in Education mode, which cannot run this read-only report, so Bridge did not send it. Run a new evidence read against a licensed Tally.",
+    retry: "after_change",
+  },
   report_tie_out_unavailable: {
     title: "Ledger-balance cross-view did not complete",
     action: "Check that Tally is responsive and the custom read-only report is supported, then run a new evidence read.",
