@@ -31,6 +31,16 @@ Lane C, 2026-09-22. Every book here is invented; none is a Tally read and none h
   `payee_aliases` value and a non-integer `previous_year_turnover_paise` where the reference would go
   on (see `src/tds_payees.rs`).
 
+## Real books (local only; nothing from them is in this repository)
+
+`examples/local_parity` compared the port with the reference on three real client reads, each with
+that client's own reference-engine config: 0 differences on all three. The test does real work on
+two of them: over-limit s.194C rows (including the goods-invoice bucket) and unmapped-s.194J
+judgement findings on both, and s.194-I and s.194J professional credits below their limits. The
+third configures no nature at all, so only its deductor status (`unknown`) is reached. No real book
+reaches a s.194J technical, royalty or s.28(va) credit, a payee-not-named finding, or a TDS ledger
+under `Duties & Taxes`; the edge books above carry those.
+
 ## Reference commit and invocations
 
 The goldens were produced at the reference engine commit `4632491210c6383d46d9203c61716d191fd7fd6c`

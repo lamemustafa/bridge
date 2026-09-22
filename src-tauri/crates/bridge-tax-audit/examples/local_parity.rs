@@ -38,12 +38,12 @@
 //! `tae/run.py`'s own `load()`, so a renamed ledger's identity entry (or a bare name that still
 //! matches) resolves on both sides of the comparison, not just this one. Those two tables are
 //! written for the reference implementation's FULL pack, though, and a real client TOML typically
-//! binds many labels this port never reads (`tds`, `gst_outward`, `related_parties`, ...);
+//! binds many labels this port never reads (`gst_outward`, `related_parties`, ...);
 //! `narrow_identity_tables` below strips `[ledger_ids]`/`[group_ids]` down to just the labels the
-//! seven locations this port's `Engagement` reads actually use, before `Engagement::from_toml` ever
+//! ten locations this port's `Engagement` reads actually use, before `Engagement::from_toml` ever
 //! sees them, so `BIND-ID-UNUSED` never fires on a label this port simply does not consume.
 //! `python_golden.py`'s own `bind_config` call sees the FULL, unnarrowed tables (it binds every
-//! location the reference implementation reads, not just the six this port ports), so its
+//! location the reference implementation reads, not just the ones this port reads), so its
 //! `BIND-ID-UNUSED` check never trips over a label only this side narrowed away.
 //!
 //! Prints one summary line, and every difference if there are any; exits non-zero on any
