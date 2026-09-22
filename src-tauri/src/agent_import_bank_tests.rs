@@ -658,7 +658,7 @@ async fn a_multi_entry_receipt_builds_through_tools_call_and_says_it_is_unqualif
         warnings.iter().any(|warning| warning
             .as_str()
             .unwrap()
-            .contains("no multi-entry Payment or Contra has been, and none through Tally's Import menu")),
+            .contains("no multi-entry Payment or Contra has been, and none of the three, including that Receipt, through Tally's Import menu")),
         "multi-entry warning missing: {warnings:?}"
     );
     let xml = std::fs::read_to_string(

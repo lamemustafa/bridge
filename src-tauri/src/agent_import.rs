@@ -383,7 +383,7 @@ impl Server {
                 "bridge_txn_id is client-supplied, unique within this batch, 1-64 ASCII characters from [A-Za-z0-9_-]",
                 "new files accept Journal, Payment, Receipt and Contra, the voucher types with recorded live import/readback evidence",
                 "a Journal takes any balanced set of entries and may carry a voucher_number",
-                "Payment, Receipt and Contra take two or more entries with at least one debit and one credit, no ledger on both sides (for more than two entries, one Bridge-built three-entry Receipt has been imported over the gateway and verified; no multi-entry Payment or Contra has, and none through Tally's Import menu), and neither voucher_number nor reference: neither element's fate on these types has been observed, and the bank's own reference belongs in the narration, which survives",
+                "Payment, Receipt and Contra take two or more entries with at least one debit and one credit, no ledger on both sides (for more than two entries, one Bridge-built three-entry Receipt has been imported over the gateway and verified; no multi-entry Payment or Contra has been, and none of the three, including that Receipt, through Tally's Import menu), and neither voucher_number nor reference: neither element's fate on these types has been observed, and the bank's own reference belongs in the narration, which survives",
                 "a Payment credits, and a Receipt debits, a ledger whose live group ancestry reaches Bank Accounts or Cash-in-Hand; both Contra legs must name one, and a leg that cannot be established is refused",
                 "the other leg of a Payment or Receipt must be established as holding no money: a ledger under any money group is refused there, because money on both sides is a Contra whatever the type says, and so is one whose group ancestry cannot be resolved at all",
                 "each voucher has at least two entries and exact debit total equals credit total",
@@ -391,7 +391,7 @@ impl Server {
                 "dates must be within the selected company's BOOKSFROM through today",
                 "ledger names must exactly match the live catalogue; validate_masters before build_import_xml",
                 "a batch may contain at most 100 distinct ledger names of at most 1024 characters each"
-            ], "limits": {"import_mode_qualification": "New files require freshly observed supported TallyPrime product and licence mode before and after the build reads. Release and licence tier are reported as observed facts. Journal, Payment, Receipt and Contra are the voucher types with recorded import/readback evidence, each only in the exact file shape this schema admits, except that a Payment, Receipt or Contra with more than two entries (bridge#466) rests on narrower evidence: hand-built files of that shape were imported and read back over the gateway (a Contra only with a repeated ledger) and one Bridge-built three-entry Receipt was imported over the gateway and verified, but no multi-entry Payment or Contra has been and none through Tally's Import menu, and its build reports live_evidence hand_built_gateway_readback; every other voucher type is refused. Only an unnumbered single-voucher Journal batch is eligible for post_import; the other types are import-only."}}}),
+            ], "limits": {"import_mode_qualification": "New files require freshly observed supported TallyPrime product and licence mode before and after the build reads. Release and licence tier are reported as observed facts. Journal, Payment, Receipt and Contra are the voucher types with recorded import/readback evidence, each only in the exact file shape this schema admits, except that a Payment, Receipt or Contra with more than two entries (bridge#466) rests on narrower evidence: hand-built files of that shape were imported and read back over the gateway (a Contra only with a repeated ledger) and one Bridge-built three-entry Receipt was imported over the gateway and verified, but no multi-entry Payment or Contra has been, and none of the three, including that Receipt, through Tally's Import menu, and its build reports live_evidence hand_built_gateway_readback; every other voucher type is refused. Only an unnumbered single-voucher Journal batch is eligible for post_import; the other types are import-only."}}}),
             evidence: local_evidence("voucher_schema"),
             company_guid: None,
             truncated: false,
@@ -1434,7 +1434,7 @@ fn build_import_guidance(
     // Comments and docs are not what an operator reads, so the result says so
     // itself, beside the party choice it made.
     let multi_entry_warning = multi_entry_bank.then_some(
-        "A Payment, Receipt or Contra with more than two entries rests on narrower evidence than a two-entry one (bridge#466). Hand-built files of this shape were imported and read back with every entry over the gateway on licensed TallyPrime 7.1 Silver (for a Contra, only with a ledger repeated; three distinct ledgers not observed), and one Bridge-built three-entry Receipt was imported over the gateway and verified, but no multi-entry Payment or Contra has been, and none through Tally's Import menu. Where such a voucher names several counterparties, the file names the first as the voucher's party; on two-entry Payments and Receipts and on that three-entry Receipt, Tally 7.1 Silver read back the bank ledger as the party rather than the counterparty written, and verify_import does not compare the party. verify_import still compares every entry.",
+        "A Payment, Receipt or Contra with more than two entries rests on narrower evidence than a two-entry one (bridge#466). Hand-built files of this shape were imported and read back with every entry over the gateway on licensed TallyPrime 7.1 Silver (for a Contra, only with a ledger repeated; three distinct ledgers not observed), and one Bridge-built three-entry Receipt was imported over the gateway and verified, but no multi-entry Payment or Contra has been, and none of the three, including that Receipt, through Tally's Import menu. Where such a voucher names several counterparties, the file names the first as the voucher's party; on two-entry Payments and Receipts and on that three-entry Receipt, Tally 7.1 Silver read back the bank ledger as the party rather than the counterparty written, and verify_import does not compare the party. verify_import still compares every entry.",
     );
     let warnings = |first: &str| {
         json!(std::iter::once(first)
@@ -1667,7 +1667,8 @@ fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
 /// side. The every-leg rule and the party choice (`render_voucher_xml`) are
 /// the owner's decisions of 2026-09-22. One Bridge-built three-entry Receipt
 /// has been imported over the gateway and verified live; no multi-entry
-/// Payment or Contra has, and none through Tally's Import menu.
+/// Payment or Contra has been, and none of the three, including that Receipt,
+/// through Tally's Import menu.
 ///
 /// One ledger on both sides would net inside the voucher, so it is refused.
 fn validate_bank_voucher_shape(voucher: &ImportVoucher) -> Result<(), String> {
