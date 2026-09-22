@@ -1610,3 +1610,56 @@ async fn a_new_ledger_under_an_approved_name_during_approval_is_refused_by_ident
     assert_eq!(result["attempt_recorded"], json!(false), "{response}");
     assert_eq!(observed.len(), expected, "{response}");
 }
+
+/// The binding-time snapshot lost in transport, or answered with T2's live
+/// refusal: the masters cannot be compared, so the post is refused as
+/// `post_masters_unconfirmed`, never as an unknown outcome. A lost read stops
+/// the queue at once; an unreadable one is refused once the queue's reads are
+/// in, after the aim snapshot. Neither sends the POST or records an intent.
+#[tokio::test]
+async fn an_unreadable_binding_snapshot_refuses_as_unconfirmed() {
+    let refused = "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>0</STATUS></HEADER><BODY><DATA>\
+                   <LINEERROR>Could not set 'SVCurrentCompany' to 'WR2 Unicode Lab'</LINEERROR>\
+                   </DATA></BODY></ENVELOPE>"
+        .to_string();
+    let binding_at = probe().len() + 1;
+    for lost in [true, false] {
+        let mut plans = before_approval();
+        let mut after = after_approval(xml(created_one()));
+        after[binding_at] = if lost {
+            marks_at_binding().with_delivery(Delivery::ResetBeforeBody)
+        } else {
+            xml(refused.clone())
+        };
+        let expected = plans.len()
+            + if lost {
+                binding_at + 1
+            } else {
+                after.len() - 1
+            };
+        plans.extend(after);
+        let simulator = SequenceSimulator::spawn(with_sentinel(plans)).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let server = server_at(simulator.address(), directory.path());
+        let (_, args) = saved_batch(&server);
+        let before = journal(directory.path());
+        let response = SCRIPTED_APPROVAL
+            .scope(
+                ScriptedApproval::approving(),
+                server.call_tool("post_import", args),
+            )
+            .await;
+        let observed = sent(simulator).len();
+        let result = &response["structuredContent"]["result"];
+        assert_eq!(
+            result["error"]["code"], "post_masters_unconfirmed",
+            "{response}"
+        );
+        assert_eq!(result["attempt_recorded"], json!(false), "{response}");
+        assert_eq!(observed, expected, "{response}");
+        assert_eq!(
+            appended_kinds(&before, &journal(directory.path())),
+            ["verification_status"]
+        );
+    }
+}
