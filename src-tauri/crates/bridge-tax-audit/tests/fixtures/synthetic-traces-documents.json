@@ -1,0 +1,20 @@
+{
+ "form26as": [
+  {"doc": "form26as:synthetic", "row": 1, "part": "I", "deductor_tan": "TAN-INVENTED-A", "section": "194C", "txn_date": "2025-06-30", "amount_paise": 25000000, "tax_paise": 250000},
+  {"doc": "form26as:synthetic", "row": 2, "part": "I", "deductor_tan": "TAN-INVENTED-A", "section": "194 A", "txn_date": "2025-09-30", "amount_paise": 1200000, "tax_paise": 120000},
+  {"doc": "form26as:synthetic", "row": 3, "part": "I", "deductor_tan": "TAN-INVENTED-B", "section": "194Q", "txn_date": "2025-12-31", "amount_paise": 9000000, "tax_paise": 9000},
+  {"doc": "form26as:synthetic", "row": 4, "part": "I", "deductor_tan": "TAN-INVENTED-B", "section": "194N", "txn_date": "2026-01-15", "amount_paise": 500000000, "tax_paise": 1000000},
+  {"doc": "form26as:synthetic", "row": 5, "part": "I", "deductor_tan": "TAN-INVENTED-C", "section": "194J", "txn_date": "2025-11-20", "amount_paise": 3000000, "tax_paise": 300000},
+  {"doc": "form26as:synthetic", "row": 6, "part": "VI", "deductor_tan": "TAN-INVENTED-D", "section": "206C(1H)", "txn_date": "2025-08-10", "amount_paise": 60000000, "tax_paise": 60000},
+  {"doc": "form26as:synthetic", "row": 7, "part": "I", "deductor_tan": "TAN-INVENTED-A", "section": "194C", "txn_date": "2025-03-31", "amount_paise": 400000, "tax_paise": 4000}
+ ],
+ "ais": [
+  {"doc": "ais:synthetic", "row": 1, "category": "gst_turnover", "source_name": "Invented source", "source_id": "SRC-1", "txn_date": null, "amount_paise": 150000000},
+  {"doc": "ais:synthetic", "row": 2, "category": "gst_purchases", "source_name": "Invented source", "source_id": "SRC-2", "txn_date": null, "amount_paise": 80000000},
+  {"doc": "ais:synthetic", "row": 3, "category": "advance_tax", "source_name": "Invented challan", "source_id": "SRC-3", "txn_date": "2025-12-15", "amount_paise": 2500000}
+ ],
+ "tis": [
+  {"doc": "tis:synthetic", "row": 1, "category": "GST turnover", "reported_paise": 150000000, "processed_paise": 150000000, "accepted_paise": 150000000},
+  {"doc": "tis:synthetic", "row": 2, "category": "Interest from deposit", "reported_paise": 1200000, "processed_paise": 1200000, "accepted_paise": 1200000}
+ ]
+}

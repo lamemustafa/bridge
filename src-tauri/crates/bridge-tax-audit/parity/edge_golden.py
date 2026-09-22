@@ -32,9 +32,13 @@ to drop, e.g. ["ledger_scrutiny"]; the Rust side must map each one, see `tests/e
 `creditors` (the trade-creditor ledger names `creditor_ageing_43bh` ages), `creditor_ageing`
 ({acceptance_lag_days?, supplier_classification?, mse_interest_ledgers?, post_year_payments?: {ledger:
 [[ISO date, paise], ...]}}; each key defaults as the reference's `run()` defaults it),
-`statutory_dues` ({nature_by_ledger?, salary_expense_ledgers?}), `tests`, and for `tds_payees`:
-`entity_type` (default "individual"), `nature_by_ledger`, `payee_aliases`, `s194j_category_by_ledger`
-(each default {}) and `previous_year_turnover_paise` (default absent).
+`statutory_dues` ({nature_by_ledger?, salary_expense_ledgers?}), `tests`; per voucher `party`
+(PARTYLEDGERNAME, default ""); for `tds_payees`: `entity_type` (default "individual"),
+`nature_by_ledger`, `payee_aliases`, `s194j_category_by_ledger` (each default {}) and
+`previous_year_turnover_paise` (default absent); and for `tds_tcs_26as`/`twentysixas_receipts`:
+`form26as`, `ais`, `tis` (invented document rows in the shape `parity/python_golden.py
+--emit-traces-documents` writes; default []) and `tds_ledgers`, `tcs_ledgers`,
+`advance_tax_ledgers`, `deductor_aliases` (default empty).
 """
 from __future__ import annotations
 
@@ -50,8 +54,11 @@ STATUS = ("regular", "optional", "cancelled", "postdated")
 def main() -> int:
     engine, spec_path, out_dir = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
     sys.path.insert(0, str(Path(engine).resolve()))
+    from tae.adapters.traces_documents import AisRow, TisRow
     from tae.audit_tests import (cash_book_integrity, creditor_ageing_43bh, ledger_scrutiny, stale_balances_41_1,
-                                 statutory_dues_43b, tds_payees, trial_balance)
+                                 statutory_dues_43b, tds_payees, tds_tcs_26as, trial_balance,
+                                 twentysixas_receipts)
+    from tae.model import Form26ASRow
     from tae.config import load_rules
     from tae.model import (Book, Engagement, Group, InventoryLine, Ledger, LedgerLine, Period, TBRow, Voucher,
                            VoucherStatus)
@@ -91,7 +98,7 @@ def main() -> int:
 
     vouchers = [Voucher(guid=v["guid"], masterid=typed(v, "masterid", lambda x: isinstance(x, str), "text", nullable=False), alterid=None, date=date.fromisoformat(v["date"]),
                         vtype=v.get("vtype", v["base_type"]), base_type=v["base_type"],
-                        number=v.get("number", v["guid"]), reference="", party_field="", party_gstin="",
+                        number=v.get("number", v["guid"]), reference="", party_field=v.get("party", ""), party_gstin="",
                         narration=v.get("narration", ""), status=status[v.get("status", "regular")],
                         status_source="edge-book",
                         lines=tuple(LedgerLine(ledger=l, amount_paise=a) for l, a in v["lines"]),
@@ -109,6 +116,12 @@ def main() -> int:
         rules = copy.copy(rules)
         rules.pop(table)
     cash, bank = set(spec.get("cash", [])), set(spec.get("bank", []))
+    day = lambda s: None if s is None else date.fromisoformat(s)
+    form26as = [Form26ASRow(**{**r, "txn_date": day(r["txn_date"])}) for r in spec.get("form26as", [])]
+    ais = [AisRow(**{**r, "txn_date": day(r["txn_date"])}) for r in spec.get("ais", [])]
+    tis = [TisRow(**r) for r in spec.get("tis", [])]
+    eng.form26as = form26as
+    aliases = dict(spec.get("deductor_aliases", {}))
     terms = frozenset(spec.get("own_account_terms", []))
     ca = spec.get("creditor_ageing", {})
     sd = spec.get("statutory_dues", {})
@@ -130,7 +143,12 @@ def main() -> int:
         "tds_payees": lambda: (tds_payees, tds_payees.run(
             eng, rules, dict(spec.get("nature_by_ledger", {})), dict(spec.get("payee_aliases", {})),
             spec.get("previous_year_turnover_paise"), dict(spec.get("s194j_category_by_ledger", {})))),
+        "tds_tcs_26as": lambda: (tds_tcs_26as, tds_tcs_26as.run(
+            eng, rules, form26as=form26as, ais_rows=ais, tis_rows=tis,
+            tds_ledgers=set(spec.get("tds_ledgers", [])), tcs_ledgers=set(spec.get("tcs_ledgers", [])),
+            deductor_aliases=aliases, advance_tax_ledgers=set(spec.get("advance_tax_ledgers", [])))),
         "trial_balance": lambda: (trial_balance, trial_balance.run(eng, rules)),
+        "twentysixas_receipts": lambda: (twentysixas_receipts, twentysixas_receipts.run(eng, rules, aliases)),
     }
     for test in spec["tests"]:
         if test not in runners:

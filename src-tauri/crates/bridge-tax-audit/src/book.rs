@@ -133,6 +133,12 @@ pub struct Voucher {
     pub lines: Vec<LedgerLine>,
     /// NARRATION, Python-stripped as the reference's adapter reads it; empty when absent.
     pub narration: String,
+    /// PARTYLEDGERNAME, Python-stripped as the reference's adapter reads it; empty when absent.
+    /// Tally names only the first party here, so the reference's model does not attribute a
+    /// voucher's lines by it in general: counterparties come from ledger lines. `tds_tcs_26as` is
+    /// the stated exception, as in the reference: it attributes a TDS/TCS claim and a
+    /// capitalisation fact to this party.
+    pub party_field: String,
     /// MASTERID as text, Python-stripped, `None` when absent or empty -- the reference model's
     /// `str | None`. Never parsed here: a test that needs a number parses it by its own rule.
     pub masterid: Option<String>,
@@ -155,6 +161,7 @@ impl Default for Voucher {
             status: VoucherStatus::Unknown,
             lines: Vec::new(),
             narration: String::new(),
+            party_field: String::new(),
             masterid: None,
             inventory: Vec::new(),
         }
@@ -708,6 +715,7 @@ fn load_vouchers(
             status,
             lines,
             narration: v.child_text("NARRATION").to_string(),
+            party_field: v.child_text("PARTYLEDGERNAME").to_string(),
             masterid: (!masterid.is_empty()).then(|| masterid.to_string()),
             inventory,
         });
