@@ -1,0 +1,131 @@
+{
+  "spec_version": "1.0.0",
+  "test_id": "statutory_dues_43b",
+  "test_version": "2",
+  "rules_version": "2026-09-17.1",
+  "population_note_sha256_16": "a716eb43187c386b",
+  "population_note_text": "Books population (optional, cancelled and post-dated vouchers excluded). Each nature's opening/closing liability is the Trial Balance sum across every ledger client config maps to it; charged/paid are population voucher-line sums on the same ledgers (TOT-1: never a filtered sub-table).",
+  "figures": [
+    {
+      "id": "statutory_dues_43b.charged_gst_payable",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "68bc579b646bf6d9",
+      "definition_text": "Sum of population voucher CREDIT lines (amount added to the liability) on ledgers mapped to nature 'gst_payable'.",
+      "evidence": []
+    },
+    {
+      "id": "statutory_dues_43b.closing_liability_gst_payable",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "32fe1b355d1f0f7a",
+      "definition_text": "Trial Balance closing balance (Dr+/Cr- flipped to a liability-positive figure), summed across every ledger client config maps to nature 'gst_payable'.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "GST Payable",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.opening_liability_gst_payable",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "3c33fd011452337d",
+      "definition_text": "Trial Balance opening balance (Dr+/Cr- flipped to a liability-positive figure), summed across every ledger client config maps to nature 'gst_payable'.",
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "GST Payable",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "statutory_dues_43b.paid_gst_payable",
+      "value": 0,
+      "unit": "paise",
+      "definition_sha256_16": "4bcb25060331ecbe",
+      "definition_text": "Sum of population voucher DEBIT lines (amount paid against the liability) on ledgers mapped to nature 'gst_payable'.",
+      "evidence": []
+    }
+  ],
+  "findings": [
+    {
+      "id": "statutory_dues_43b/coverage/esi",
+      "clauses": [
+        "s.36(1)(va)",
+        "s.43B",
+        "3CD-20(b)"
+      ],
+      "confidence": "judgement_required",
+      "facts": [],
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Wages",
+          "label": ""
+        }
+      ],
+      "title_sha256_16": "6828ad44b56e527d",
+      "title_text": "Salary expense exists but no ledger is mapped to a ESI nature",
+      "limits_sha256_16": "b7b432a27598943f",
+      "limits_text": [
+        "Whether the establishment is covered under the ESI Act depends on employee-count thresholds measured monthly; headcount per month from salary vouchers is out of scope for this test and is not computed here."
+      ],
+      "ask_client_sha256_16": "45d30955dc267ea2",
+      "ask_client_text": [
+        "Confirm whether the establishment is registered/covered under the ESI Act, and if not, the basis (e.g. headcount below the threshold every month)."
+      ]
+    },
+    {
+      "id": "statutory_dues_43b/coverage/pf",
+      "clauses": [
+        "s.36(1)(va)",
+        "s.43B",
+        "3CD-20(b)"
+      ],
+      "confidence": "judgement_required",
+      "facts": [],
+      "evidence": [
+        {
+          "kind": "ledger",
+          "id": "Wages",
+          "label": ""
+        }
+      ],
+      "title_sha256_16": "00b2825e14d88563",
+      "title_text": "Salary expense exists but no ledger is mapped to a PF nature",
+      "limits_sha256_16": "01f1c2c8faa35543",
+      "limits_text": [
+        "Whether the establishment is covered under the PF Act depends on employee-count thresholds measured monthly; headcount per month from salary vouchers is out of scope for this test and is not computed here."
+      ],
+      "ask_client_sha256_16": "749eabc86263d97f",
+      "ask_client_text": [
+        "Confirm whether the establishment is registered/covered under the PF Act, and if not, the basis (e.g. headcount below the threshold every month)."
+      ]
+    }
+  ],
+  "book_invariants_evaluated": [
+    "ID-1",
+    "MAP-0",
+    "MAP-1",
+    "POP-0",
+    "POP-1",
+    "POP-2",
+    "POP-3",
+    "POP-5"
+  ],
+  "book_invariant_violations": [],
+  "result_invariants_evaluated": [
+    "EVID-1",
+    "POP-4",
+    "REND-0"
+  ],
+  "result_invariant_violations": [],
+  "module_invariants_evaluated": [
+    "statutory_dues_43b.check_invariants"
+  ],
+  "module_invariant_violations": []
+}
