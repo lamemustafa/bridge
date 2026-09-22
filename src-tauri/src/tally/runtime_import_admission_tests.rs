@@ -234,7 +234,7 @@ async fn queued_education_change_refuses_before_final_absence_reads() {
             },
             &identity(&companies),
             approved_import(&companies, "20260915"),
-            |_, _, _, _| Ok(()),
+            |_, _, _, _, _| Ok(()),
             move || {
                 guard.store(true, Ordering::Release);
                 Ok(())
@@ -296,7 +296,7 @@ async fn queued_company_refusal_retains_captured_source_and_final_identity_evide
             },
             &identity(&companies),
             approved_import(&companies, "20260901"),
-            |_, _, _, _| Ok(()),
+            |_, _, _, _, _| Ok(()),
             move || {
                 guard.store(true, Ordering::Release);
                 Ok(())
@@ -367,7 +367,7 @@ async fn queued_catalogue_rename_refuses_before_intent_or_post() {
             },
             &identity(&companies),
             approved_import(&companies, "20260901"),
-            move |_, _, current, binding| {
+            move |_, _, current, _, binding| {
                 assert!(!binding
                     .matches(current, identity(&companies).display_name(), GUID)
                     .expect("renamed captured catalog remains structurally valid"));
@@ -429,7 +429,7 @@ async fn queued_import_keeps_admission_separate_from_raw_import_wire() {
             },
             &identity(&companies),
             approved_import(&companies, "20260901"),
-            |_, _, _, _| Ok(()),
+            |_, _, _, _, _| Ok(()),
             move || {
                 guard.store(true, Ordering::Release);
                 Ok(())
@@ -486,7 +486,7 @@ async fn queued_import_refuses_attribution_after_final_profile_and_catalogue_rea
             },
             &identity(&companies),
             approved_import(&companies, "20260901"),
-            move |first, second, _, _| {
+            move |first, second, _, _, _| {
                 assert_eq!(first, journal.as_str());
                 assert_eq!(second, journal.as_str());
                 Err(ApprovedImportAdmissionError::PreexistingIdentity.into())

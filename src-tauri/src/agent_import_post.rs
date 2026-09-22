@@ -1,4 +1,5 @@
-//! One user-approved Journal attempt; subsequent calls only reconcile its identity.
+//! One user-approved voucher attempt (a Journal, Payment, Receipt or Contra);
+//! subsequent calls only reconcile its identity.
 use super::*;
 use crate::agent::evidence_from_runtime_read;
 use crate::tally::approved_import::{ApprovedImport, ApprovedImportAdmissionError};
@@ -14,6 +15,41 @@ pub(super) const IMPORT_POST_WINDOW_NOT_BOUNDED: &str = "import_post_window_not_
 /// the same window measured: an undivided read was that request, and a divided
 /// read's parts together are its size. A verification that reported nothing is
 /// refused, not assumed small.
+/// Which saved batches a caller may post. The agent's `post_import` posts one
+/// Journal, Payment, Receipt or Contra (ADR 0004, amended 2026-09-22); the
+/// desktop's review and approval were built for one Journal and stay so.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::agent) enum PostScope {
+    JournalOnly,
+    Vouchers,
+}
+
+impl PostScope {
+    fn admits(self, voucher_type: &VoucherType) -> bool {
+        match self {
+            Self::JournalOnly => *voucher_type == VoucherType::Journal,
+            Self::Vouchers => matches!(
+                voucher_type,
+                VoucherType::Journal
+                    | VoucherType::Payment
+                    | VoucherType::Receipt
+                    | VoucherType::Contra
+            ),
+        }
+    }
+
+    fn refusal(self) -> &'static str {
+        match self {
+            Self::JournalOnly => "import_post_requires_one_journal",
+            Self::Vouchers => "import_post_requires_one_voucher",
+        }
+    }
+}
+
+/// How many bytes the in-queue classification recheck may spend describing a
+/// refusal it never returns: only whether a leg failed is used.
+const RECHECK_REFUSAL_BUDGET: usize = 4_096;
+
 pub(super) fn admit_post_window(served: Option<crate::agent::WindowServed>) -> Result<(), String> {
     match served {
         Some(served) if served.fits_one_request() => Ok(()),
@@ -89,13 +125,15 @@ impl Server {
         &self,
         args: &Value,
     ) -> Result<ToolOutcome, ToolFailure> {
-        self.post_import_checked(args, None).await
+        self.post_import_checked(args, None, PostScope::Vouchers)
+            .await
     }
 
     pub(in crate::agent) async fn post_import_checked(
         &self,
         args: &Value,
         expected_sha256: Option<&str>,
+        scope: PostScope,
     ) -> Result<ToolOutcome, ToolFailure> {
         let guid = required_string(args, "company_guid")?;
         let batch_id = required_string(args, "batch_id")?;
@@ -113,7 +151,7 @@ impl Server {
             evidence_from_runtime_read(crate::tally::runtime::RuntimeReadEvidence::empty());
         let mut received_response = None;
         let operation: Result<ToolOutcome, ToolFailure> = async {
-            let xml = admit_saved_journal_integrity(&line, &self.settings.endpoint)?;
+            let xml = admit_saved_voucher_integrity(&line, &self.settings.endpoint, scope)?;
             if snapshot.dispatched {
                 return self.verify_import(args).await;
             }
@@ -125,7 +163,7 @@ impl Server {
             if self.read_persisted_import_xml(batch_id)? != xml.as_bytes() {
                 return Err("import_batch_changed".to_string().into());
             }
-            let preview = admit_fresh_saved_journal(&line, &self.settings.endpoint)?;
+            let preview = admit_fresh_saved_voucher(&line, &self.settings.endpoint)?;
             // Number matching precedence is not qualified for native Create.
             // Previously dispatched numbered batches remain reconcilable above.
             // Also admits, on this read's measurement, the whole-window request
@@ -173,6 +211,28 @@ impl Server {
             let ledger_binding = catalogue_identities
                 .bind_selected(requested_ledger_names(&payload))
                 .map_err(|_| "import_masters_changed".to_string())?;
+            // A Payment, Receipt or Contra is only the right type while every
+            // leg classifies as its build found it. The build's own check is
+            // stale by now, so classify again before approval from this
+            // catalogue's parents and a fresh group collection, and send the
+            // group request with the approval so the queue re-reads both.
+            let group_collection_request = if renders_bank_shape(&payload.vouchers) {
+                let (groups, evidence) =
+                    self.read_group_collection(&identity, &company.name).await?;
+                accumulated = combine_evidence(accumulated.clone(), evidence);
+                let observed = ObservedMasters::new(catalogue_identities.parents(), groups);
+                if cash_bank_refusals(&payload, &observed, RECHECK_REFUSAL_BUDGET).is_refused() {
+                    return Err("import_bank_classification_changed".to_string().into());
+                }
+                Some(
+                    crate::tally::agent_read_request::AgentReadRequest::parse(
+                        native_group_snapshot_read(&company.name).into_xml(),
+                    )
+                    .map_err(|error| error.to_string())?,
+                )
+            } else {
+                None
+            };
             let mode = self.qualified_import_profile().await?;
             validate_post_profile_with_evidence(&payload, &mode, &mut accumulated)?;
             let request = ApprovedImport::confirm(
@@ -182,6 +242,7 @@ impl Server {
                 verification_request,
                 ledger_catalogue_request,
                 ledger_binding,
+                group_collection_request,
             )
             .await?;
             // The cross-process lease starts only after the independent native
@@ -194,7 +255,7 @@ impl Server {
                     self.tally_config(),
                     &identity,
                     request,
-                    |first, second, catalogue, ledger_binding| {
+                    |first, second, catalogue, groups, ledger_binding| {
                         recheck_import_admission(
                             &line,
                             identity.company_guid(),
@@ -202,6 +263,7 @@ impl Server {
                             first,
                             second,
                             catalogue,
+                            groups,
                             ledger_binding,
                         )
                     },
@@ -252,6 +314,20 @@ impl Server {
                     )
                 }) {
                     "import_masters_changed"
+                } else if error.chain().any(|cause| {
+                    matches!(
+                        cause.downcast_ref::<ApprovedImportAdmissionError>(),
+                        Some(ApprovedImportAdmissionError::BankClassificationChanged)
+                    )
+                }) {
+                    "import_bank_classification_changed"
+                } else if error.chain().any(|cause| {
+                    matches!(
+                        cause.downcast_ref::<ApprovedImportAdmissionError>(),
+                        Some(ApprovedImportAdmissionError::AdmissionInconsistent)
+                    )
+                }) {
+                    "import_post_admission_inconsistent"
                 } else {
                     "import_dispatch_outcome_unknown"
                 };
@@ -425,7 +501,7 @@ fn reconciliation_failure_payload(
 }
 
 fn mark_reconciliation_required(payload: &mut Value) {
-    payload["result"]["error"] = json!({"code":"import_reconciliation_required", "message":"The saved attempt has not been confirmed as the intended new Journal. Reconcile this original batch without resending it."});
+    payload["result"]["error"] = json!({"code":"import_reconciliation_required", "message":"The saved attempt has not been confirmed as the intended new voucher. Reconcile this original batch without resending it."});
 }
 
 fn import_outcome_is_clean(outcome: Option<&bridge_tally_protocol::TallyImportOutcome>) -> bool {
@@ -502,6 +578,7 @@ fn require_absent_verification_result(result: &Value) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn recheck_import_admission(
     line: &ImportLedgerLine,
     company_guid: &str,
@@ -509,6 +586,7 @@ fn recheck_import_admission(
     first: &str,
     second: &str,
     catalogue: &str,
+    groups: Option<&str>,
     ledger_binding: &bridge_tally_protocol::StandardLedgerCatalogBinding,
 ) -> anyhow::Result<()> {
     let observed = parse_import_vouchers(first, company_guid).map_err(anyhow::Error::msg)?;
@@ -525,6 +603,33 @@ fn recheck_import_admission(
         .map_err(|_| anyhow::Error::msg("ledger_export_invalid"))?
     {
         return Err(ApprovedImportAdmissionError::LedgerIdentityChanged.into());
+    }
+    // The binding above compares each ledger's name and GUID, not its parent,
+    // so it cannot see a ledger or a group re-parented since approval. A bank
+    // voucher's type rests on exactly that, so classify every leg again from
+    // this catalogue's parents and the group collection read beside it.
+    let bank = renders_bank_shape(&line.vouchers);
+    match (bank, groups) {
+        (false, None) => {}
+        (true, Some(groups)) => {
+            let parents =
+                parse_standard_ledger_catalog_response(catalogue, company_name, company_guid)
+                    .map_err(|_| anyhow::Error::msg("ledger_export_invalid"))?;
+            let groups = parse_native_group_snapshot(groups, company_guid)
+                .map_err(|_| anyhow::Error::msg("group_export_invalid"))?;
+            let payload = ImportPayload {
+                company_guid: line.company_guid.clone(),
+                vouchers: line.vouchers.clone(),
+                amends_batch_id: None,
+            };
+            let observed = ObservedMasters::new(parents.parents(), groups);
+            if cash_bank_refusals(&payload, &observed, RECHECK_REFUSAL_BUDGET).is_refused() {
+                return Err(ApprovedImportAdmissionError::BankClassificationChanged.into());
+            }
+        }
+        // A bank voucher without its group read, or a Journal with one, is a
+        // wiring fault; refuse rather than post on half a check.
+        _ => return Err(ApprovedImportAdmissionError::AdmissionInconsistent.into()),
     }
     Ok(())
 }
@@ -546,7 +651,7 @@ pub(super) fn native_post_request(
         .company
         .as_ref()
         .ok_or_else(|| "import_post_company_missing".to_string())?;
-    let xml = render_native_journal_xml(
+    let xml = render_native_voucher_xml(
         &company.name,
         &line.vouchers[0],
         line.identity_batch_id(),
@@ -573,11 +678,19 @@ pub(super) fn admit_saved_journal_integrity(
     line: &ImportLedgerLine,
     endpoint: &super::super::TallyEndpointConfig,
 ) -> Result<String, String> {
+    admit_saved_voucher_integrity(line, endpoint, PostScope::JournalOnly)
+}
+
+pub(super) fn admit_saved_voucher_integrity(
+    line: &ImportLedgerLine,
+    endpoint: &super::super::TallyEndpointConfig,
+    scope: PostScope,
+) -> Result<String, String> {
     if line.vouchers.len() != 1
-        || line.vouchers[0].voucher_type != VoucherType::Journal
+        || !scope.admits(&line.vouchers[0].voucher_type)
         || line.identity_scheme != Some(ImportIdentityScheme::BatchV1)
     {
-        return Err("import_post_requires_one_journal".into());
+        return Err(scope.refusal().into());
     }
     // A native post uses a fresh private REMOTEID, so it can only create. An
     // amendment exists to alter a voucher already in the book in place.
@@ -608,12 +721,35 @@ pub(super) fn admit_saved_journal(
     line: &ImportLedgerLine,
     endpoint: &super::super::TallyEndpointConfig,
 ) -> Result<(String, String), String> {
-    let xml = admit_saved_journal_integrity(line, endpoint)?;
-    let preview = admit_fresh_saved_journal(line, endpoint)?;
+    admit_saved_voucher(line, endpoint, PostScope::JournalOnly)
+}
+
+pub(super) fn admit_saved_voucher(
+    line: &ImportLedgerLine,
+    endpoint: &super::super::TallyEndpointConfig,
+    scope: PostScope,
+) -> Result<(String, String), String> {
+    let xml = admit_saved_voucher_integrity(line, endpoint, scope)?;
+    let preview = admit_fresh_saved_voucher(line, endpoint)?;
     Ok((xml, preview))
 }
 
-fn admit_fresh_saved_journal(
+/// What the approval must show about a bank voucher's legs: which side had to
+/// be bank or cash, and that Bridge checks it again just before posting.
+fn classification_review_line(voucher_type: &VoucherType) -> Option<&'static str> {
+    match voucher_type {
+        VoucherType::Journal => None,
+        VoucherType::Payment => {
+            Some("Checked in Tally: every Cr ledger is bank/cash; every Dr ledger holds no money.")
+        }
+        VoucherType::Receipt => {
+            Some("Checked in Tally: every Dr ledger is bank/cash; every Cr ledger holds no money.")
+        }
+        VoucherType::Contra => Some("Checked in Tally: every ledger is bank/cash."),
+    }
+}
+
+fn admit_fresh_saved_voucher(
     line: &ImportLedgerLine,
     endpoint: &super::super::TallyEndpointConfig,
 ) -> Result<String, String> {
@@ -658,8 +794,11 @@ fn admit_fresh_saved_journal(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let preview = format!("Create ONE Journal in {}\nCompany GUID: {}\nCompany number: {}  Books from: {}\nTally: {origin}\nDate: {}  Voucher number: {}\nReference: {}\nNarration: {}\n\n{}\n\nTotal debit: {}  Total credit: {}\nBatch: {}\n\nBridge adds its batch reference for readback.\nDo not post a file already imported manually.\nPause other edits/imports; keep this company and Tally mode unchanged until Bridge finishes.\nAfter a timeout, reconcile this batch; do not rebuild or resend it.",
-        quoted(&company.name), company.guid, company.company_number, company.books_from,
+    let classification = classification_review_line(&voucher.voucher_type)
+        .map(|line| format!("\n{line}"))
+        .unwrap_or_default();
+    let preview = format!("Create ONE {} in {}\nCompany GUID: {}\nCompany number: {}  Books from: {}\nTally: {origin}\nDate: {}  Voucher number: {}\nReference: {}\nNarration: {}\n\n{}\n\nTotal debit: {}  Total credit: {}{classification}\nBatch: {}\n\nBridge adds its batch reference for readback.\nDo not post a file already imported manually.\nPause other edits/imports; keep this company and Tally mode unchanged until Bridge finishes.\nAfter a timeout, reconcile this batch; do not rebuild or resend it.",
+        voucher.voucher_type.as_str(), quoted(&company.name), company.guid, company.company_number, company.books_from,
         voucher.date, voucher.voucher_number.as_deref().map(quoted).unwrap_or_else(|| "Tally assigns it".into()),
         optional(&voucher.reference), optional(&voucher.narration), entries, debit.as_str(), credit.as_str(), line.batch_id);
     // Native message boxes have no portable scrollable review surface. Keep this
