@@ -378,14 +378,16 @@ impl Server {
                 outcome: parsed_outcome,
             };
             received_response = Some(response.clone());
-            {
-                let _lock = self.lock_import_admission()?;
+            // The journal write is attempted first; its result is held, not
+            // returned yet, so a local failure to journal still leaves the
+            // location of a post that was sent (#574).
+            let journaled = self.lock_import_admission().and_then(|_lock| {
                 self.append_import_record_while_admitted(&ledger::StatusRecord::response(
                     &line, response,
-                ))?;
-            }
-            // Where the voucher went (#574), read only now that the response is
-            // journaled, so a slow or failed read delays nothing that records
+                ))
+            });
+            // Where the voucher went (#574), read only once the journal write has
+            // been attempted, so a slow or failed read delays nothing that records
             // the post. A failed read is reported, never guessed.
             let marks_after = self
                 .runtime
@@ -401,6 +403,7 @@ impl Server {
                 &company.name,
                 reported_created,
             ));
+            journaled?;
             // A valid counter response is evidence, never proof that Tally preserved
             // the requested ledger/amount/date semantics. Readback is mandatory.
             let mut proof = self.verify_import_after_current_dispatch(args).await?;

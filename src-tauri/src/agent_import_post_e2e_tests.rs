@@ -1051,3 +1051,53 @@ async fn another_company_moving_while_tally_created_nothing_is_not_blamed() {
     let located = located_after_response(rejected, company_marks(10, 51, "WR2 Unicode Lab")).await;
     assert_eq!(located["state"], "no_creation_reported", "{located}");
 }
+
+#[tokio::test]
+async fn a_post_whose_response_cannot_be_journaled_still_reports_where_it_landed() {
+    // The POST is sent and answered, but another process holds the admission
+    // lock when the response is journaled, so that local write fails. The
+    // location of a post that was sent must survive that failure.
+    let held = xml(created_one()).with_delivery(Delivery::SlowHeaders(Duration::from_secs(2)));
+    let mut plans = before_approval();
+    let after = after_approval(held);
+    let post_at = plans.len() + after.len() - 1;
+    plans.extend(after);
+    plans.push(xml(company_marks(11, 50, "WR2 Unicode Lab")));
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_at(simulator.address(), directory.path());
+    let (_, args) = saved_batch(&server);
+    let other = server_at(simulator.address(), directory.path());
+    let post = SCRIPTED_APPROVAL.scope(
+        ScriptedApproval::approving(),
+        server.call_tool("post_import", args),
+    );
+    let hold_lock = async {
+        let started = std::time::Instant::now();
+        // Wait until the POST has been received, so the intent's own use of
+        // the lock is over, then hold the lock while the response is written.
+        while simulator.received() <= post_at {
+            assert!(
+                started.elapsed() < Duration::from_secs(20),
+                "the POST never arrived"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let lock = other
+            .lock_import_admission()
+            .expect("lock is free while the POST is held");
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        drop(lock);
+    };
+    let (response, ()) = tokio::join!(post, hold_lock);
+    let _ = sent(simulator);
+    let result = &response["structuredContent"]["result"];
+    assert_eq!(
+        result["error"]["code"], "import_admission_busy",
+        "the journal write must have failed: {response}"
+    );
+    assert_eq!(
+        result["post_location"]["state"], "target_only",
+        "{response}"
+    );
+}
