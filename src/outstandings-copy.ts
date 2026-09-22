@@ -34,7 +34,7 @@ export function outstandingsPartialReason(
     return "this company's verified base currency is not INR";
   }
   if (value === "company_base_currency_undetermined") {
-    return "Tally defines multiple Currency masters, so Bridge cannot identify this company's base currency. Open the company and confirm INR manually; the single-company read can then name any foreign-currency ledger that blocks the report";
+    return "Tally defines more than one currency for this company. Multi-currency books are not supported yet, so Bridge does not read outstandings for it";
   }
   if (value === "company_outstandings_read_failed") {
     return "this company read failed while the remaining companies continued";
