@@ -1,0 +1,248 @@
+{
+ "comment": "loans_interest: a declared-shared interest ledger; the dormant reversal rule switched on: one credit nets.",
+ "groups": {
+  "Current Assets": null,
+  "Cash-in-Hand": "Current Assets",
+  "Bank Accounts": "Current Assets",
+  "Bank OD A/c": "Loans (Liability)",
+  "Sundry Debtors": "Current Assets",
+  "Loans & Advances (Asset)": "Current Assets",
+  "Current Liabilities": null,
+  "Sundry Creditors": "Current Liabilities",
+  "Duties & Taxes": "Current Liabilities",
+  "Loans (Liability)": null,
+  "Unsecured Loans": "Loans (Liability)",
+  "Secured Loans": "Loans (Liability)",
+  "Direct Expenses": null,
+  "Indirect Expenses": null,
+  "Purchase Accounts": null,
+  "Sales Accounts": null,
+  "Fixed Assets": null,
+  "Suspense A/c": null
+ },
+ "ledgers": [
+  {
+   "name": "Bank A",
+   "chain": [
+    "Bank Accounts",
+    "Current Assets"
+   ],
+   "guid": "edge-loans_interest_shared_reversals-000"
+  },
+  {
+   "name": "Bank Interest",
+   "chain": [
+    "Indirect Expenses"
+   ],
+   "guid": "edge-loans_interest_shared_reversals-001"
+  },
+  {
+   "name": "Bank Term Loan",
+   "chain": [
+    "Secured Loans",
+    "Loans (Liability)"
+   ],
+   "guid": "edge-loans_interest_shared_reversals-002"
+  },
+  {
+   "name": "Cash",
+   "chain": [
+    "Cash-in-Hand",
+    "Current Assets"
+   ],
+   "guid": "edge-loans_interest_shared_reversals-003"
+  }
+ ],
+ "tb": [
+  {
+   "ledger": "Bank A",
+   "opening": 0,
+   "debit": 5350000,
+   "credit": 890000,
+   "closing": 4460000
+  },
+  {
+   "ledger": "Bank Interest",
+   "opening": 0,
+   "debit": 1180000,
+   "credit": 370000,
+   "closing": 810000
+  },
+  {
+   "ledger": "Bank Term Loan",
+   "opening": 0,
+   "debit": 200000,
+   "credit": 5400000,
+   "closing": -5200000
+  },
+  {
+   "ledger": "Cash",
+   "opening": 0,
+   "debit": 0,
+   "credit": 70000,
+   "closing": -70000
+  }
+ ],
+ "vouchers": [
+  {
+   "guid": "li-201",
+   "date": "2025-04-05",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Bank Term Loan",
+     -5000000
+    ],
+    [
+     "Bank A",
+     5000000
+    ]
+   ]
+  },
+  {
+   "guid": "li-202",
+   "date": "2025-05-31",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Bank Interest",
+     400000
+    ],
+    [
+     "Bank Term Loan",
+     -400000
+    ]
+   ]
+  },
+  {
+   "guid": "li-203",
+   "date": "2025-06-30",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Bank Interest",
+     300000
+    ],
+    [
+     "Bank A",
+     -300000
+    ]
+   ]
+  },
+  {
+   "guid": "li-204",
+   "date": "2025-07-15",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Bank A",
+     300000
+    ],
+    [
+     "Bank Interest",
+     -300000
+    ]
+   ]
+  },
+  {
+   "guid": "li-205",
+   "date": "2025-08-15",
+   "base_type": "Receipt",
+   "lines": [
+    [
+     "Bank A",
+     50000
+    ],
+    [
+     "Bank Interest",
+     -50000
+    ]
+   ]
+  },
+  {
+   "guid": "li-206",
+   "date": "2025-09-15",
+   "base_type": "Journal",
+   "lines": [
+    [
+     "Bank Interest",
+     20000
+    ],
+    [
+     "Bank Interest",
+     -20000
+    ]
+   ]
+  },
+  {
+   "guid": "li-207",
+   "date": "2025-10-15",
+   "base_type": "Contra",
+   "lines": [
+    [
+     "Bank Interest",
+     70000
+    ],
+    [
+     "Cash",
+     -70000
+    ]
+   ]
+  },
+  {
+   "guid": "li-208",
+   "date": "2025-11-15",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Bank Term Loan",
+     200000
+    ],
+    [
+     "Bank Interest",
+     90000
+    ],
+    [
+     "Bank A",
+     -290000
+    ]
+   ]
+  },
+  {
+   "guid": "li-209",
+   "date": "2025-06-30",
+   "base_type": "Payment",
+   "lines": [
+    [
+     "Bank Interest",
+     300000
+    ],
+    [
+     "Bank A",
+     -300000
+    ]
+   ]
+  }
+ ],
+ "tests": [
+  "loans_interest"
+ ],
+ "cash": [
+  "Cash"
+ ],
+ "bank": [
+  "Bank A"
+ ],
+ "entity_type": "firm",
+ "loans": {
+  "Bank Term Loan": {
+   "lender": "Invented Bank",
+   "lender_type": "bank",
+   "interest_ledger": "Bank Interest"
+  }
+ },
+ "shared_interest_ledgers": [
+  "Bank Interest"
+ ],
+ "net_reversals": true
+}

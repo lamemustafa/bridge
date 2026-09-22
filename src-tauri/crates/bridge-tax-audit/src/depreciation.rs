@@ -1105,6 +1105,9 @@ mod tests {
             s194i_per_month_per_payee_paise: None,
             deductor_individual_huf_prev_year_turnover_paise: None,
             s194j_aggregate_paise: None,
+            s194a: None,
+            s269ss_269t_exempt_lender_types: None,
+            s269ss_269t_reporting_exempt_lender_types: None,
         }
     }
 

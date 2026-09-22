@@ -79,6 +79,12 @@ pub const PORTED: &[PortedTest] = &[
         run_on: |e, b, r, _| crate::ledger_scrutiny_on(e, b, r),
     },
     PortedTest {
+        id: "loans_interest",
+        // Five figures on any book, six more per configured loan: fewer than eleven is a vacuous run.
+        min_figures: 11,
+        run_on: |e, b, r, _| crate::loans_interest_on(e, b, r),
+    },
+    PortedTest {
         id: "stale_balances_41_1",
         min_figures: 1,
         run_on: |e, b, r, _| crate::stale_balances_41_1_on(e, b, r),

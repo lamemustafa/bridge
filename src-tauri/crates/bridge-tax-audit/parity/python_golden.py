@@ -209,6 +209,16 @@ def _tds_payees(c):
                                       s194j_category_by_ledger)
 
 
+def _loans_interest(c):
+    from tae.audit_tests import loans_interest
+    from tae.config import loan_ledgers_config
+    # As tae/pack.py calls it: the loan table, [tds].previous_year_turnover_paise (tds_config's
+    # optional key) and the declared-shared interest ledgers.
+    return loans_interest, loans_interest.run(
+        c.eng, c.rules, loan_ledgers_config(c.cfg), c.cfg.get("tds", {}).get("previous_year_turnover_paise"),
+        c.cash, c.bank, frozenset(c.cfg.get("loans", {}).get("shared_interest_ledgers", [])))
+
+
 def _traces_documents(c):
     """The Form 26AS/AIS/TIS rows both 26AS tests take as caller data: from --traces-documents
     (the JSON --emit-traces-documents writes, or an invented fixture), from the reference's own
@@ -279,6 +289,7 @@ RUNNERS = {
     "depreciation": _depreciation,
     "financial_statements": _financial_statements,
     "ledger_scrutiny": _ledger_scrutiny,
+    "loans_interest": _loans_interest,
     "stale_balances_41_1": _stale_balances_41_1,
     "statutory_dues_43b": _statutory_dues_43b,
     "tds_payees": _tds_payees,

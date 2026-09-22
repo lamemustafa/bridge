@@ -7,10 +7,10 @@
 #   3. [s269st]'s first three lines only (limit_per_person_per_day_paise, authority, status) --
 #      excludes the table's Circular 22/2017 discussion further down, which cites a private
 #      research note and is not read by any ported test.
-#   4. [s269ss_269t]'s first three lines only (limit_paise, authority, status) --
-#      excludes the table's exempt-lender-type discussion further down, which cites private
-#      research notes and is not read by any ported test (that discussion is for loans_interest.py,
-#      not yet ported).
+#   4. [s269ss_269t] as three blocks: its first three lines (limit_paise, authority, status);
+#      exempt_lender_types with its status line; and reporting_exempt_lender_types with its status
+#      line (the last two added for loans_interest). Excludes the comment lines between them,
+#      which cite private research notes.
 #   5. [depreciation] in full, plus its three [depreciation.blocks.<key>] sub-tables
 #      (furniture_10, plant_machinery_15, computers_40) -- depreciation.rs reads every key in all
 #      four; excludes [s43b]/[s36_1_va] immediately after it in the source, unrelated to this test.
@@ -31,6 +31,8 @@
 #       cut at its value (its trailing comment cites a private research note, and this repository
 #       is public; the substring check still holds); and authority and status. Excludes the
 #       header's comment lines.
+#   13. [s194a] in full (added for loans_interest), `status` cut at its value, clear of its trailing
+#       comment, which cites private research.
 # The source file's sha256 and the reference commit are recorded in src/rules.rs. This file's own
 # name predates the [s40a3]/[s269st]/[s269ss_269t]/[depreciation] additions; kept as-is rather than
 # renamed.
@@ -64,6 +66,13 @@ status = "verified"
 limit_paise = 20_000_00
 authority = "s.269SS, s.269T"
 status = "verified"
+
+exempt_lender_types = ["bank", "cooperative_bank", "government", "government_company",
+                        "statutory_corporation", "post_office_savings_bank", "notified_institution"]
+exempt_lender_types_status = "confirm"   # the table's own status above covers limit_paise and authority only
+
+reporting_exempt_lender_types = ["government", "government_company", "bank", "statutory_corporation"]
+reporting_exempt_lender_types_status = "confirm"
 
 [depreciation]
 half_rate_days_threshold = 180                      # put to use for less than 180 days: half the rate
@@ -139,3 +148,10 @@ due_day = 15
 
 authority = "s.36(1)(va); Explanations 1 and 2 (Finance Act 2021, from AY 2021-22); Checkmate Services P Ltd v CIT (2022) (SC)"
 status = "confirm"
+
+[s194a]
+exempt_lender_types = ["bank", "cooperative_bank", "insurer"]
+threshold_other_than_securities_paise = 10_000_00  # payers other than bank, co-operative bank, post office
+threshold_bank_paise = 50_000_00                    # bank, co-operative bank, post office (₹1,00,000 for senior citizens)
+authority = "s.194A(1), (3)(i), (3)(iii)"
+status = "VP"

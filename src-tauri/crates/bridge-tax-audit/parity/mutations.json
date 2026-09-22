@@ -2990,5 +2990,173 @@
   "file": "src/binding.rs",
   "from": "    let raw_loan_ledgers = table_at(&engagement.raw_cfg, &[\"loans\", \"loan_ledgers\"])?;",
   "to": "    let raw_loan_ledgers = table_at(&engagement.raw_cfg, &[\"loans\", \"loan_ledgers\"]).unwrap_or(None);"
+ },
+ {
+  "id": "D1-01",
+  "by": "author (Lane B)",
+  "what": "cash counter-line not read as cash",
+  "file": "src/loans_interest.rs",
+  "from": "    if counter.iter().any(|l| cash.contains(*l)) {",
+  "to": "    if counter.iter().any(|l| cash.contains(*l) && false) {"
+ },
+ {
+  "id": "D1-02",
+  "by": "author (Lane B)",
+  "what": "Journal mode not recognised",
+  "file": "src/loans_interest.rs",
+  "from": "    } else if base_type == \"Journal\" {",
+  "to": "    } else if base_type == \"journal\" {"
+ },
+ {
+  "id": "D1-03",
+  "by": "author (Lane B)",
+  "what": "a repaid journal coded J instead of I",
+  "file": "src/loans_interest.rs",
+  "from": "        (\"journal\", \"repaid\") => \"I\",",
+  "to": "        (\"journal\", \"repaid\") => \"J\","
+ },
+ {
+  "id": "D1-04",
+  "by": "author (Lane B)",
+  "what": "an interest journal needs only to include the interest ledger",
+  "file": "src/loans_interest.rs",
+  "from": "        if interest_ledger.is_some_and(|il| only(&others, il)) {",
+  "to": "        if interest_ledger.is_some_and(|il| others.contains(il)) {"
+ },
+ {
+  "id": "D1-05",
+  "by": "author (Lane B)",
+  "what": "Contra vouchers bucketed on a loan",
+  "file": "src/loans_interest.rs",
+  "from": "        if v.base_type == \"Contra\" || !v.lines.iter().any(|l| l.ledger == loan_ledger) {",
+  "to": "        if !v.lines.iter().any(|l| l.ledger == loan_ledger) {"
+ },
+ {
+  "id": "D1-06",
+  "by": "author (Lane B)",
+  "what": "a debit opening walked as a negative outstanding",
+  "file": "src/loans_interest.rs",
+  "from": "    let mut principal = opening_outstanding.max(0);",
+  "to": "    let mut principal = opening_outstanding;"
+ },
+ {
+  "id": "D1-07",
+  "by": "author (Lane B)",
+  "what": "interest credited leaves the breach balance unmoved",
+  "file": "src/loans_interest.rs",
+  "from": "        breach = breach_prior + sign * amount;",
+  "to": "        breach = breach_prior;"
+ },
+ {
+  "id": "D1-08",
+  "by": "author (Lane B)",
+  "what": "a repayment's reporting window read from its own amount only",
+  "file": "src/loans_interest.rs",
+  "from": "                prior.max(amt) >= limit_269\n",
+  "to": "                amt >= limit_269\n"
+ },
+ {
+  "id": "D1-09",
+  "by": "author (Lane B)",
+  "what": "a repayment's breach test ignores interest credited",
+  "file": "src/loans_interest.rs",
+  "from": "                row.prior_breach.max(amt) >= limit_269",
+  "to": "                prior.max(amt) >= limit_269"
+ },
+ {
+  "id": "D1-10",
+  "by": "author (Lane B)",
+  "what": "the s.269SS/269T flag ignores the breach-exempt lenders",
+  "file": "src/loans_interest.rs",
+  "from": "                && !exempt_269.contains(lender_type);",
+  "to": "                ;"
+ },
+ {
+  "id": "D1-11",
+  "by": "author (Lane B)",
+  "what": "reporting-exempt lenders reported in Clause 31",
+  "file": "src/loans_interest.rs",
+  "from": "        if reporting_exempt_269.contains(lender_type) {",
+  "to": "        if reporting_exempt_269.contains(lender_type) && false {"
+ },
+ {
+  "id": "D1-12",
+  "by": "author (Lane B)",
+  "what": "s.194A fires for a non-deductor",
+  "file": "src/loans_interest.rs",
+  "from": "            && status == \"deductor\"",
+  "to": "            && status != \"unknown\""
+ },
+ {
+  "id": "D1-13",
+  "by": "author (Lane B)",
+  "what": "the reversal rule switched on by default",
+  "file": "src/loans_interest.rs",
+  "from": "pub const NET_REVERSALS: bool = false;",
+  "to": "pub const NET_REVERSALS: bool = true;"
+ },
+ {
+  "id": "D1-14",
+  "by": "author (Lane B)",
+  "what": "a paired loan's interest journals counted on the shared ledger",
+  "file": "src/loans_interest.rs",
+  "from": "            if cited.contains(&at) || v.base_type == \"Contra\" {",
+  "to": "            if v.base_type == \"Contra\" {"
+ },
+ {
+  "id": "D1-15",
+  "by": "author (Lane B)",
+  "what": "a credit may reverse a debit on its own voucher",
+  "file": "src/loans_interest.rs",
+  "from": "                    && dat != cat\n",
+  "to": "                    && true\n"
+ },
+ {
+  "id": "D1-16",
+  "by": "author (Lane B)",
+  "what": "LOAN-1 tolerance widened a thousandfold",
+  "file": "src/loans_interest.rs",
+  "from": "        if diff.abs() > tol {",
+  "to": "        if diff.abs() > tol * 1000 {"
+ },
+ {
+  "id": "D1-17",
+  "by": "author (Lane B)",
+  "what": "LOAN-2 (A) blind to small interest lines",
+  "file": "src/loans_interest.rs",
+  "from": "            if on_interest != 0 {",
+  "to": "            if on_interest.abs() > 1_000_000 {"
+ },
+ {
+  "id": "D1-18",
+  "by": "author (Lane B)",
+  "what": "LOAN-3 never marks a longer list",
+  "file": "src/loans_interest.rs",
+  "from": "                if debits.len() > 5 { \" ...\" } else { \"\" }",
+  "to": "                if debits.len() > 6 { \" ...\" } else { \"\" }"
+ },
+ {
+  "id": "D1-19",
+  "by": "author (Lane B)",
+  "what": "a repeated row figure id not refused",
+  "file": "src/loans_interest.rs",
+  "from": "            if r.figures\n                .iter()\n",
+  "to": "            if false && r.figures\n                .iter()\n"
+ },
+ {
+  "id": "D1-20",
+  "by": "author (Lane B)",
+  "what": "a [loans] that is not a table not refused",
+  "file": "src/lib.rs",
+  "from": "    if bound.loans.not_a_table {",
+  "to": "    if bound.loans.not_a_table && false {"
+ },
+ {
+  "id": "D1-21",
+  "by": "author (Lane B)",
+  "what": "LOAN-3 recomputation ignores the switch",
+  "file": "src/loans_interest.rs",
+  "from": "!net_reversals || is_receipt(&pop[*n].base_type)",
+  "to": "is_receipt(&pop[*n].base_type)"
  }
 ]
