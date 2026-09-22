@@ -109,7 +109,10 @@ pub struct Engagement {
     /// `tds_payees`-only: `[tds]` and `[tds_payees]` ([`TdsConfig`]). `None` when the client
     /// config carries no `[tds]` table (an engagement that never runs that test); once `[tds]` is
     /// present, `nature_by_ledger` and `payee_aliases` are REQUIRED within it, as the reference's
-    /// own `tds_config` requires them.
+    /// own `tds_config` requires them. A malformed `[tds]` or `[tds_payees]` refuses reading the
+    /// engagement, and so every test on it, where the reference refuses only `tds_payees` (its pack
+    /// reads `[tds]` unconditionally, so a missing map refuses its whole pack too). `[tds_payees]`
+    /// without `[tds]` is not read.
     pub tds: Option<TdsConfig>,
     /// The parsed config, kept only so [`Engagement::bind`] can read `[ledger_ids]`/
     /// `[group_ids]` (`binding::bind`) without re-parsing the source text. Not part of this
@@ -137,8 +140,9 @@ pub struct DepreciationConfig {
 pub struct TdsConfig {
     /// `[tds].nature_by_ledger`: expense ledger -> "194C" | "194I" | "194J". Kept as written: an
     /// empty value maps nothing and an unknown one maps the ledger without reporting it, as in the
-    /// reference. A non-string value is refused, where the reference would take any truthy value
-    /// as an unknown nature (a divergence, stated in `tds_payees`).
+    /// reference. A non-string value is refused, where the reference would take a truthy one as
+    /// an unknown nature and a falsy one (`false`, `0`) as no mapping (a divergence, stated in
+    /// `tds_payees`).
     pub nature_by_ledger: BTreeMap<String, String>,
     /// `[tds].payee_aliases`: payee ledger -> payee entity label (not a ledger).
     pub payee_aliases: BTreeMap<String, String>,
@@ -383,9 +387,15 @@ not YYYY-MM-DD"
                         })
                     })
                     .transpose()?;
-                let s194j_category_by_ledger = match cfg
+                let tds_payees = cfg
                     .get("tds_payees")
-                    .and_then(toml::Value::as_table)
+                    .map(|t| {
+                        t.as_table().ok_or_else(|| {
+                            AuditError::Config("[tds_payees] is not a table".to_string())
+                        })
+                    })
+                    .transpose()?;
+                let s194j_category_by_ledger = match tds_payees
                     .and_then(|t| t.get("s194j_category_by_ledger"))
                 {
                     None => BTreeMap::new(),

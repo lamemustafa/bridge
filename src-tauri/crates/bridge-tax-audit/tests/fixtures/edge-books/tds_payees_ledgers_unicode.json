@@ -1,5 +1,5 @@
 {
- "comment": "tds_payees TDS-ledger figure and ids: ledgers under Duties & Taxes whose name contains 'tds' in any case are counted, one not under Duties & Taxes is not; a non-ASCII payee name is hashed over its UTF-8 bytes and ordered by that hash; a voucher with no number whose GUID ends in non-ASCII characters is labelled by its last 12 characters.",
+ "comment": "tds_payees TDS-ledger figure and ids: ledgers under Duties & Taxes whose name contains 'tds' in any case are counted, one not under Duties & Taxes is not; a non-ASCII payee name is hashed over its UTF-8 bytes; a voucher with no number whose GUID's last 12 characters include a non-ASCII one is labelled by its last 12 characters.",
  "groups": {
   "Current Assets": null,
   "Cash-in-Hand": "Current Assets",

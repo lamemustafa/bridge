@@ -529,9 +529,9 @@ pub fn bind(engagement: &Engagement, book: &Book) -> Result<(Engagement, Binding
     let round_off_ledgers =
         lbinder.bind_list(&engagement.round_off_ledgers, "roles.round_off_ledgers")?;
 
-    // `[tds]` and `[tds_payees]` bind before `[depreciation]`, in the reference's order
-    // (`LEDGER_PATHS`). A payee alias's VALUE is a payee entity label, not a ledger, and is left
-    // as written.
+    // `[tds]` and `[tds_payees]` bind before `[loans]` and `[depreciation]`, as they come before
+    // both in the reference's `LEDGER_PATHS` (only which refusal is reported first depends on it).
+    // A payee alias's VALUE is a payee entity label, not a ledger, and is left as written.
     let mut tds = engagement.tds.clone();
     if let Some(t) = tds.as_mut() {
         t.nature_by_ledger = lbinder.rebind_map(&t.nature_by_ledger, "tds.nature_by_ledger")?;
@@ -1176,6 +1176,46 @@ mod tests {
         assert_eq!(report.drifts[0].current_name, "Freight (renamed)");
     }
 
+    /// A payee ledger and a 194J category ledger renamed in Tally but bound by identity keep their
+    /// alias and category under the new names: without this a renamed 194J ledger would keep its
+    /// nature and lose its category, turning computed findings into unmapped ones.
+    #[test]
+    fn tds_alias_and_category_keys_follow_a_rename_by_identity() {
+        const G_CARRIER: &str = "11111111-1111-1111-1111-000000000004";
+        const G_ROYALTY: &str = "11111111-1111-1111-1111-000000000005";
+        let e = engagement(&format!(
+            "\n[ledger_ids]\n\"Carrier One\" = {G_CARRIER:?}\n\"Royalty\" = {G_ROYALTY:?}\n{TDS_TABLES}"
+        ));
+        let mut b = book_with_tds_ledgers("Freight", "");
+        for (old, new, guid) in [
+            ("Carrier One", "Carrier One (renamed)", G_CARRIER),
+            ("Royalty", "Royalty (renamed)", G_ROYALTY),
+        ] {
+            let mut l = b.ledgers.remove(old).unwrap();
+            l.name = new.to_string();
+            l.guid = guid.to_string();
+            b.ledgers.insert(new.to_string(), l);
+        }
+        let (bound, _report) = e.bind(&b).unwrap();
+        let tds = bound.tds.unwrap();
+        assert_eq!(
+            tds.payee_aliases
+                .get("Carrier One (renamed)")
+                .map(String::as_str),
+            Some("Carrier group")
+        );
+        assert!(!tds.payee_aliases.contains_key("Carrier One"));
+        assert_eq!(
+            tds.s194j_category_by_ledger
+                .get("Royalty (renamed)")
+                .cloned()
+                .flatten()
+                .as_deref(),
+            Some("royalty")
+        );
+        assert!(!tds.s194j_category_by_ledger.contains_key("Royalty"));
+    }
+
     #[test]
     fn each_tds_location_refuses_a_name_that_matches_nothing() {
         for (missing, location) in [
@@ -1212,6 +1252,16 @@ mod tests {
                 .unwrap()
                 .previous_year_turnover_paise,
             None
+        );
+        // A top-level `[tds_payees]` that is not a table: the reference raises in this test.
+        let not_a_table = format!(
+            "tds_payees = \"x\"\n{}",
+            base_toml("\n[tds.nature_by_ledger]\n[tds.payee_aliases]\n")
+        );
+        let err = Engagement::from_toml(&not_a_table, Path::new(".")).unwrap_err();
+        assert!(
+            format!("{err}").contains("[tds_payees] is not a table"),
+            "{err}"
         );
         for (extra, needle) in [
             (

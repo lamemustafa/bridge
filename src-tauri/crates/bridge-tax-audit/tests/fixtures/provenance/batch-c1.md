@@ -19,8 +19,8 @@ Lane C, 2026-09-22. Every book here is invented; none is a Tally read and none h
   individual without one, at the threshold and one paisa over it, and for an entity type written
   with a capital letter (matched exactly, as the reference does, so a deductor); and ledgers under
   `Duties & Taxes` named with "TDS" in upper, lower and mixed case (one outside that group not
-  counted), non-ASCII payee names, and a voucher without a number whose GUID ends in non-ASCII
-  characters. Each `golden/edge.tds_payees_*.tds_payees.json` is the reference's dump of that book.
+  counted), non-ASCII payee names (hashed over their UTF-8 bytes), and a voucher without a number whose
+  GUID's last 12 characters include a non-ASCII one. Each `golden/edge.tds_payees_*.tds_payees.json` is the reference's dump of that book.
 - `edge-books/tds_payees_mapping.json` pins how a mapping is read: an empty nature maps nothing (so
   that ledger's credit is a payee), an unknown nature (`194X`) maps the ledger without reporting it
   (so its credit is not a payee), and a debit line on an unmapped ledger is not a payee.
@@ -80,7 +80,7 @@ rules file, whose SHA-256 is unchanged (`src/rules.rs`).
 | `tds_payees_deductor_individual_over.json` | 1,607 | `5845ece1f90e88770ceeb122149731af71f5b537a14b0ed5818a8ca2ceba5949` | `edge-books/tds_payees_deductor_individual_over.json` |
 | `tds_payees_deductor_individual_unknown.json` | 1,603 | `c7bf6bf712b75a5db11f4299197e7cc4815d5c796912c3dcc661b5e212c17b6d` | `edge-books/tds_payees_deductor_individual_unknown.json` |
 | `tds_payees_goods_and_cash.json` | 4,594 | `6b46e256f74547810dd22c9e0bfd12650bc298792a930556144d6bf3370bc1b5` | `edge-books/tds_payees_goods_and_cash.json` |
-| `tds_payees_ledgers_unicode.json` | 4,060 | `ced54ebcf28c3571f6eeac0f15a044da0502f86b9a81e4f9d1f6200c6bea4f61` | `edge-books/tds_payees_ledgers_unicode.json` |
+| `tds_payees_ledgers_unicode.json` | 4,051 | `e112bf6a4d9a47dd4ff0c14aad255fca89a06da80c49fb6e1bc6009537b7b313` | `edge-books/tds_payees_ledgers_unicode.json` |
 | `edge.tds_payees_194c.tds_payees.json` | 23,066 | `209ea847a06e146ae8b14e3464288c1897efcc8b2b83843aceb69e5fddc7629f` | `golden/edge.tds_payees_194c.tds_payees.json` |
 | `edge.tds_payees_194i.tds_payees.json` | 18,098 | `8a3e036eb8794e93cd6182a6b68ad506c570698542a049c58ab64d9f54f6bc5c` | `golden/edge.tds_payees_194i.tds_payees.json` |
 | `edge.tds_payees_194j.tds_payees.json` | 20,536 | `2873ea733d6866e48e9ffd1f45a219115346d9e955b5127c65a52464de265b42` | `golden/edge.tds_payees_194j.tds_payees.json` |

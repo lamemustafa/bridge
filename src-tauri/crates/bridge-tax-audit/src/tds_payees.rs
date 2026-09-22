@@ -19,12 +19,19 @@
 //! * An individual/HUF is a deductor only on a supplied previous-year turnover over the limit;
 //!   without one, the status is `unknown` and a judgement finding says so. Never assumed.
 //!
-//! Divergences from the reference, each a refusal where it would have gone on:
-//! * a `[tds].nature_by_ledger` or `[tds].payee_aliases` value that is not a string, and a
-//!   `[tds].previous_year_turnover_paise` that is not an integer, are refused when the engagement
-//!   is read ([`crate::TdsConfig`]). The reference takes any truthy nature as an unknown one and
-//!   compares a float turnover; a non-string alias makes it raise;
+//! Divergences from the reference:
+//! * a `[tds].nature_by_ledger` or `[tds].payee_aliases` value that is not a string, a
+//!   `[tds].previous_year_turnover_paise` that is not an integer, and a `[tds_payees]` or
+//!   `[tds_payees].s194j_category_by_ledger` that is not a table are refused when the engagement is
+//!   read ([`crate::TdsConfig`]), which refuses every test on that engagement. The reference takes
+//!   a truthy non-string nature as an unknown one and a falsy one (`false`, `0`) as no mapping,
+//!   compares a float turnover, raises on a non-string alias
+//!   only once that payee is over a limit, and raises on a non-table `[tds_payees]` in this test;
+//! * `[tds_payees]` without `[tds]` is neither read nor bound here, where the reference binds its
+//!   keys for every test: an unknown ledger named only there refuses the reference's whole pack and
+//!   none of this port's tests;
 //! * a missing `[client].entity_type` is refused here; the reference's engagement always has one;
+//! * two over-limit entities sharing a figure id are refused, as the reference raises;
 //! * a total that overflows i64 paise is refused, where Python's integers are unbounded.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -479,6 +486,15 @@ goods-invoice bucket). Never summed with any other category's total before a thr
                 .collect();
             evidence.sort_by(|a, b| a.id.cmp(&b.id));
             evidence.dedup();
+            // Two over-limit entities with one tag (an alias spelled as another ledger's GUID, say)
+            // would repeat a figure id: the reference raises there, so this refuses rather than
+            // letting `TestResult::fig` panic.
+            let row_figure = format!("{TEST_ID}.{prefix}_row_credited_{rid}");
+            if r.figures.iter().any(|f| f.id == row_figure) {
+                return Err(AuditError::Config(format!(
+                    "{TEST_ID}: two payee entities share the figure id {row_figure}"
+                )));
+            }
             let f_credited = r.fig(
                 &format!("{prefix}_row_credited_{rid}"),
                 Value::Int(s.credited),
@@ -647,6 +663,75 @@ mod tests {
         ] {
             assert_eq!(py_format_g(x), want, "{x}");
         }
+    }
+
+    /// An alias spelled as another over-limit payee's GUID gives both entities one tag, so one
+    /// figure id twice: the reference raises, and this refuses instead of panicking.
+    #[test]
+    fn two_payees_sharing_a_figure_id_are_refused() {
+        use crate::book::{Ledger, LedgerLine, VoucherStatus};
+        use bridge_tally_primitives::TallyDate;
+        const GUID_C: &str = "aaaaaaaa-0000-4000-8000-000000000001";
+        let ledger = |name: &str, group: &str, guid: &str| Ledger {
+            name: name.to_string(),
+            parent: group.to_string(),
+            chain: vec![group.to_string()],
+            chain_complete: true,
+            master_opening_paise: 0,
+            guid: guid.to_string(),
+            masterid: None,
+        };
+        let voucher = |guid: &str, payee: &str| Voucher {
+            guid: guid.to_string(),
+            date: TallyDate::parse("20250610".to_string()).unwrap(),
+            vtype: "Journal".to_string(),
+            base_type: "Journal".to_string(),
+            number: guid.to_string(),
+            status: VoucherStatus::Regular,
+            lines: vec![
+                LedgerLine {
+                    ledger: "Freight".to_string(),
+                    amount_paise: 20_000_000,
+                },
+                LedgerLine {
+                    ledger: payee.to_string(),
+                    amount_paise: -20_000_000,
+                },
+            ],
+            narration: String::new(),
+        };
+        let book = Book {
+            company_name: "Invented".to_string(),
+            company_guid: "invented".to_string(),
+            read_at: String::new(),
+            groups: BTreeMap::new(),
+            group_masters: BTreeMap::new(),
+            ledgers: [
+                ledger("Freight", "Direct Expenses", ""),
+                ledger("Contractor C", "Sundry Creditors", GUID_C),
+                ledger("Contractor E", "Sundry Creditors", ""),
+            ]
+            .into_iter()
+            .map(|l| (l.name.clone(), l))
+            .collect(),
+            vouchers: vec![voucher("v1", "Contractor C"), voucher("v2", "Contractor E")],
+            tb: BTreeMap::new(),
+        };
+        let mut cfg = TdsConfig::default();
+        cfg.nature_by_ledger
+            .insert("Freight".to_string(), "194C".to_string());
+        cfg.payee_aliases
+            .insert("Contractor E".to_string(), GUID_C.to_string());
+        let rules = Rules::vendored().unwrap();
+        let err = run(&book, &rules, "firm", &cfg).unwrap_err();
+        assert!(
+            format!("{err}").contains("two payee entities share the figure id"),
+            "{err}"
+        );
+        // The control: without the colliding alias both payees are reported.
+        cfg.payee_aliases.clear();
+        let r = run(&book, &rules, "firm", &cfg).unwrap();
+        assert_eq!(r.findings.len(), 2);
     }
 
     #[test]

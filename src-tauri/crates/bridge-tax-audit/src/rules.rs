@@ -1,12 +1,13 @@
 //! Rule values as data, read from the vendored excerpt of the reference Python implementation's
 //! rules table.
 //!
-//! Provenance: `rules/ay2026-27.s44ab.toml` holds five byte-for-byte verbatim blocks of the
+//! Provenance: `rules/ay2026-27.s44ab.toml` holds byte-for-byte verbatim blocks of the
 //! reference implementation's own AY 2026-27 rules file -- `[meta]` through the end of `[s44ab]`,
 //! then `[s40a3]` in full, then the first three lines each of `[s269st]` and `[s269ss_269t]`,
 //! then `[depreciation]` in full with its three `[depreciation.blocks.<key>]` sub-tables, then
 //! `[due_dates]` as three blocks (header, the three dates, `status`), then `[ledger_scrutiny]` in
-//! full --
+//! full, then `[s194c]`, `[s194i]` and `[deductor]` in full and `[s194j]` as three blocks
+//! (header, its three value lines, `status`) --
 //! under a header explaining why each block stops where it does (see the file itself). The
 //! source file had sha256 [`SOURCE_SHA256`] when it was read at reference commit
 //! [`SOURCE_COMMIT`]. The local parity example re-checks, against a local copy of the reference
