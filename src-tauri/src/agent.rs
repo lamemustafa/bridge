@@ -790,9 +790,13 @@ impl Server {
                 }
                 // Same budget rule again, and the per-part list, which grows
                 // with the window, is given up first: it is kept only while it
-                // takes at most a quarter of the response budget.
+                // takes at most a quarter of the response budget. Only the
+                // `vouchers` tool reports it (#595); the other tools that read a
+                // window keep their refusal shape.
                 if let Some(timings) = window_timings {
-                    if self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET {
+                    if name == "vouchers"
+                        && self.settings.max_bytes >= REMEDIATION_MIN_RESPONSE_BUDGET
+                    {
                         error["window"] =
                             window_timings_within(&timings, self.settings.max_bytes / 4);
                     }

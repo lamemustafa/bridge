@@ -350,3 +350,125 @@ async fn the_vouchers_tool_reports_its_window_timings_on_success_and_refusal() {
     assert_eq!(window["failed"]["kind"], "census");
     assert!(window["failed"]["ms"].is_u64());
 }
+
+/// #595: the window timings are the `vouchers` tool's alone. Another tool
+/// whose window read is refused the same way keeps its refusal shape.
+#[tokio::test]
+async fn only_the_vouchers_tool_reports_window_timings_on_a_refusal() {
+    let heavy = format!(
+        "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY>\
+         <GUID>{CAPTURED_GUID}</GUID><ALTVCHID>5000</ALTVCHID><ALTMSTID>7</ALTMSTID>\
+         </COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"
+    );
+    let heavy = ScenarioPlan::new(Fixture::SyntheticXml(heavy))
+        .with_encoding(WireEncoding::Utf16Le)
+        .with_framing(ResponseFraming::ContentLength);
+    let cycle = import_cycle_plans();
+    // The company, the ledger catalogue, the heavy mark, then a census Tally
+    // declares over the transport cap.
+    let mut plans = cycle[..10].to_vec();
+    plans.extend(cycle[10..16].iter().cloned());
+    plans[11] = heavy.clone();
+    plans[13] = heavy;
+    plans.extend([
+        cycle[0].clone(),
+        cycle[11]
+            .clone()
+            .with_framing(ResponseFraming::DeclaredContentLength {
+                bytes: bridge_tally_transport::XML_RESPONSE_MAX_BYTES + 1,
+            }),
+    ]);
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let response = server_for(simulator.address(), directory.path())
+        .call_tool(
+            "voucher_presence",
+            json!({
+                "company_guid": CAPTURED_GUID,
+                "from": "20260801",
+                "to": "20260802",
+                "numbering": [{"voucher_type": "Journal", "numbering_method": "manual"}],
+                "vouchers": [{
+                    "date": "20260801", "voucher_type": "Journal", "voucher_number": "JV-1",
+                    "party": "Cash",
+                    "entries": [{"ledger": "Cash", "amount": "-12.50"},
+                                {"ledger": "WR2 Sales", "amount": "12.50"}],
+                }],
+            }),
+        )
+        .await;
+    simulator.cancel();
+    simulator.finish().unwrap();
+    let error = &response["structuredContent"]["result"]["error"];
+    // The same refusal the `vouchers` test reaches, so the window read ran.
+    assert_eq!(
+        error["code"],
+        crate::agent::VOLUME_UNESTIMATED,
+        "{response}"
+    );
+    assert!(error.get("window").is_none(), "{error}");
+}
+
+/// #595: an empty requested window is corroborated by a wider read of its
+/// own. When that read is refused, the timings reported are the requested
+/// window's, which was read in full, not the wider window's.
+#[tokio::test]
+async fn a_refused_corroboration_reports_the_requested_windows_timings() {
+    let decode = |bytes: &[u8]| {
+        String::from_utf16(
+            &bytes
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
+    };
+    let plan = |xml: String| {
+        ScenarioPlan::new(Fixture::SyntheticXml(xml))
+            .with_encoding(WireEncoding::Utf16Le)
+            .with_framing(ResponseFraming::ContentLength)
+    };
+    let empty = plan(decode(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-empty-collection.utf16le.xml"
+    )));
+    // Dated outside the wider window too, so the corroboration is refused.
+    let outside = plan(
+        decode(include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-three-vouchers.utf16le.xml"
+        ))
+        .replace("20260801", "20261001"),
+    );
+    let cycle = import_cycle_plans();
+    let mut plans = cycle[..4].to_vec();
+    plans.extend(cycle[10..16].iter().cloned());
+    for body in [&empty, &outside] {
+        plans.extend([
+            cycle[0].clone(),
+            body.clone(),
+            cycle[1].clone(),
+            body.clone(),
+            cycle[1].clone(),
+            cycle[0].clone(),
+        ]);
+    }
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let response = server_for(simulator.address(), directory.path())
+        .call_tool(
+            "vouchers",
+            json!({"company_guid":CAPTURED_GUID, "from":"20260801","to":"20260802"}),
+        )
+        .await;
+    simulator.cancel();
+    simulator.finish().unwrap();
+    assert_eq!(response["isError"], true, "{response}");
+    let window = &response["structuredContent"]["result"]["error"]["window"];
+    let parts = window["parts"]
+        .as_array()
+        .expect("the requested window's parts");
+    assert_eq!(parts.len(), 1, "{window}");
+    assert_eq!(parts[0]["from"], "20260801");
+    assert_eq!(parts[0]["to"], "20260802");
+    assert_eq!(parts[0]["rows"], 0);
+    assert!(window.get("failed").is_none(), "{window}");
+}

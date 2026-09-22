@@ -419,7 +419,7 @@
     },
     {
       "path": "src-tauri/src/agent.rs",
-      "sha256": "7d054887910ba4e24aa8b74549584c2cb69e06b1d5f98993663b4075db066e70"
+      "sha256": "9ae9eaf2fa9c02864441e711d0f7993bb518fca9112f46c793f5b9e000848fcf"
     },
     {
       "path": "src-tauri/src/agent_bank_statement.rs",
@@ -551,11 +551,11 @@
     },
     {
       "path": "src-tauri/src/agent_voucher_window.rs",
-      "sha256": "c9713888baedf27f1a844f7cc539f2579eb0ef50de4e80e2bd822072aa980e14"
+      "sha256": "3abf790b460abea67306e854e7618d230f1d0ebeeac635796668de8d2fa06b94"
     },
     {
       "path": "src-tauri/src/agent_vouchers.rs",
-      "sha256": "2094cae557ed111f1e2c754447aa644e707328872779bb46b9254e1ab9681713"
+      "sha256": "b7e622ca43c731fe4c1a6df9ac16c4a5b9a91aa3117faca15cbe28fd65027816"
     },
     {
       "path": "src-tauri/src/axal.rs",
@@ -1102,5 +1102,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "823674802db37b5e0a845ed4f49fa087ad7cda6e69487a3157f41fe5aa42f879"
+  "manifest_sha256": "1d28cd9044e0ff1ff7ecee27c616d555473da2f14bb808440c6fb8d976ce4e7b"
 }
