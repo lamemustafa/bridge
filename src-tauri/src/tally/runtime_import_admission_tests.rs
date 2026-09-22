@@ -126,15 +126,22 @@ fn approved_import(companies: &str, date: &str) -> ApprovedImport {
         ),
     )
     .expect("currency read is admitted");
-    // The marks request's bytes are not under test here; the queue sends it
-    // once, last before the POST, and once after (#574).
+    // The all-company marks, in the agent's high-water collection shape: a
+    // request no other queue read sends, so a test can tell where it went. The
+    // queue sends it as the binding reads begin (#239), last before the POST,
+    // and once after (#574).
+    let company_marks_request = AgentReadRequest::parse(format!(
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Company High Water</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME=\"Bridge Agent Company High Water\" ISMODIFY=\"No\"><TYPE>Company</TYPE><FETCH>GUID,ALTVCHID,ALTMSTID</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>",
+        identity.display_name()
+    ))
+    .expect("marks read is admitted");
     ApprovedImport::approved_for_test(
         "<ENVELOPE/>".into(),
         bridge_tally_core::TallyDate::parse(date).unwrap(),
-        ledger_catalogue_request.clone(),
+        ledger_catalogue_request,
         binding,
         currency_request,
-        ledger_catalogue_request,
+        company_marks_request,
     )
 }
 
@@ -480,11 +487,15 @@ async fn queued_import_keeps_admission_separate_from_raw_import_wire() {
     // 31 admission requests, the marks snapshot, then the POST. The marks read
     // after the POST is the caller's, once the response is journaled.
     assert_eq!(observed.len(), 33);
-    // The binding-time snapshot is the aim snapshot's own request (#239).
-    assert_eq!(
-        observed[3].request_body_sha256,
-        observed[31].request_body_sha256
-    );
+    // The binding-time snapshot and the aim snapshot are the marks request,
+    // and no other request the queue sends is (#239).
+    let marks_at = observed
+        .iter()
+        .enumerate()
+        .filter(|(_, request)| request.request_body_sha256 == observed[3].request_body_sha256)
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    assert_eq!(marks_at, [3, 31]);
     assert_eq!(
         dispatch.admission_evidence,
         expected_queued_evidence(&observed, &responses, true)
