@@ -46,7 +46,8 @@ foreign ledger from a base one; its currency can.
     `BRIDGE FX DEBTOR A`, `FXU-INV-001` `-83500.00`, `FXU-INV-002` `-172000.00`;
   - 14 on the rupee ledgers.
 - **Opening bills:** `FX-OPEN-1` and the rupee `INR-OPEN-1` are dated and due `31-Mar-25`, the day
-  before the book's `BOOKSFROM` (20250401), so the date parser must admit bills dated before
+  before the book's `BOOKSFROM` (20250401, as reported by the capturing session; `BOOKSFROM` is not
+  in these bytes), so the date parser must admit bills dated before
   `BOOKSFROM` (bridge#612; `TALLY_PROTOCOL_REFERENCE` §12a.10).
 - **Why it is committed:** none of the four dollar bills carries a currency marker, so only the
   ledger snapshot's `CURRENCYNAME` identifies them. With the snapshot above, this is the pair a

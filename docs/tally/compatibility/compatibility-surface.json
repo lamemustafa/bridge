@@ -51,7 +51,7 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_MEASUREMENTS_AND_OPEN_QUESTIONS.md",
-      "sha256": "5e57be6b4b054486f7caa6eb21f015c4232782a64f264b775fa6e01847a7d425"
+      "sha256": "0d068acf87796ed5010477e3982d74f0ba7d6d8861c1b0dbe092f407c825578a"
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE_READS_AND_DATES.md",
@@ -283,11 +283,11 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/date.rs",
-      "sha256": "9e7dc25634d5a7887e9d08552298a518e8213debc76f866c21c3939d1d948ee7"
+      "sha256": "0899274676c0cb0d98f0034e3886af630eb3d615c97281465e5af4b2bedc9961"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/mod.rs",
-      "sha256": "e8e101d7a095f403d8adeec89934108da53b057163a59d1a2697ef60eca26ffc"
+      "sha256": "7bdb6ed0cff24b62b8ca14cb2c50e0e6055b241574a642dc013d0e4642f5d32b"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/model.rs",
@@ -1106,5 +1106,5 @@
       "sha256": "f0c872513c0513e00a78c08dfffab13a154f4542cd9a175c3e36cf70df49f7e6"
     }
   ],
-  "manifest_sha256": "ecfba49bb593d615335ba3251e845864e784ce2083c435ae58cb810b93e09693"
+  "manifest_sha256": "ab59c1aad65927702729048f2c3a4b48832a884d6eeb07b9143c2c5e0f02ff50"
 }

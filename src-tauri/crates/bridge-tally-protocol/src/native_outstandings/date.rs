@@ -17,9 +17,9 @@ const MONTH_ABBREVIATIONS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
-/// The longest a bill's own date may precede `BooksFrom` (bridge#612). A
-/// chosen bound, not a measured one: it admits an opening bill carried in from
-/// decades before the books. Bounding it, rather than always looking back a
+/// A bill's own date must fall less than this many years before `BooksFrom`
+/// (TALLY_PROTOCOL_REFERENCE §12a.10). A chosen bound, not a measured one: it
+/// admits an opening bill carried in from decades before the books. Bounding it, rather than always looking back a
 /// full century from `as_of`, keeps a year that fits only further back (such
 /// as a bill dated after `as_of`) refusing instead of being read into the
 /// previous century.
@@ -30,7 +30,10 @@ pub const OPENING_BILL_LOOKBACK_YEARS: u32 = 50;
 /// a modestly earlier one readable. The other ninety years of the due date's
 /// century lie after the bill date and cover the longest credit period
 /// measured to persist, `1000 Months`, about 83 years
-/// (TALLY_PROTOCOL_REFERENCE §12a.3).
+/// (TALLY_PROTOCOL_REFERENCE §12a.3). What Tally prints as the due date for
+/// such a period was not observed. A due date more than ninety years after its
+/// bill is read a century early; only the overdue crosscheck in `compute`
+/// can catch that, by leaving the read partial.
 pub const DUE_DATE_LOOKBACK_YEARS: u32 = 10;
 
 const CENTURY_YEARS: u32 = 100;
@@ -43,8 +46,8 @@ const CENTURY_YEARS: u32 = 100;
 /// The window ends at `as_of`: an as-of Bills report is taken to list only
 /// bills dated on or before it (inferred, not measured). It begins
 /// [`OPENING_BILL_LOOKBACK_YEARS`] before `books_from`, because `BooksFrom` is
-/// not a lower bound on a bill's date (bridge#612: two opening bills dated
-/// `31-Mar-25` were captured against `BOOKSFROM` 20250401), or a hundred years
+/// not a lower bound on a bill's date (TALLY_PROTOCOL_REFERENCE §12a.10), or a
+/// hundred years
 /// before `as_of` if that is later, so the window never spans more than a
 /// hundred years. A book whose own window (`books_from` to `as_of`) spans a
 /// hundred years or more refuses as ambiguous rather than choose a century.
@@ -81,7 +84,8 @@ pub fn parse_native_bill_date(
 
 /// Parses a native bill's due date against that bill's own resolved date,
 /// never the book window: a due date follows its bill by the credit period,
-/// which can run far past `as_of` (bridge#612). The window starts
+/// which can run far past `as_of` (TALLY_PROTOCOL_REFERENCE §12a.3). The
+/// window starts
 /// [`DUE_DATE_LOOKBACK_YEARS`] before `bill_date` and spans exactly a hundred
 /// years, so it holds at most one candidate.
 pub fn parse_native_due_date(

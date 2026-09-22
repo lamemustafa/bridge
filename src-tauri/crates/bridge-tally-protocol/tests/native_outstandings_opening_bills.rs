@@ -32,9 +32,12 @@ fn a_captured_bills_report_with_opening_bills_before_books_from_parses() {
     let opening = rows
         .iter()
         .filter(|row| row.bill_date.as_str() == "20250331")
-        .map(|row| row.reference.as_str())
+        .map(|row| (row.reference.as_str(), row.due_date.as_str()))
         .collect::<Vec<_>>();
-    assert_eq!(opening, ["FX-OPEN-1", "INR-OPEN-1"]);
+    assert_eq!(
+        opening,
+        [("FX-OPEN-1", "20250331"), ("INR-OPEN-1", "20250331")]
+    );
 }
 
 /// Each due date is read against its own bill date, never the as-of date: read

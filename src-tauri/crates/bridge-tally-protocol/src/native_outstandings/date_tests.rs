@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn resolves_two_digit_year_against_the_books_from_century() {
+fn resolves_a_bill_dates_two_digit_year_inside_the_book_window() {
     let books_from = TallyDate::parse("20240401").unwrap();
     let as_of = TallyDate::parse("20260731").unwrap();
     assert_eq!(
@@ -75,7 +75,7 @@ fn fails_closed_on_malformed_or_impossible_dates() {
 }
 
 #[test]
-fn due_date_can_fall_after_as_of_without_widening_the_bill_date_window() {
+fn a_due_date_can_follow_as_of_where_its_bill_date_cannot() {
     let books_from = TallyDate::parse("20260401").unwrap();
     let as_of = TallyDate::parse("20260731").unwrap();
     let bill_date = TallyDate::parse("20260701").unwrap();
@@ -102,12 +102,13 @@ fn due_date_can_fall_after_as_of_without_widening_the_bill_date_window() {
 fn a_due_date_resolves_to_the_one_century_around_its_bill_date() {
     let bill_date = TallyDate::parse("20250601").unwrap();
     for (raw, expected) in [
-        // A day before the bill, and inside the ten-year lookback.
+        // A day before the bill, and the last day of the ten-year lookback.
         ("31-May-25", "20250531"),
         ("2-Jun-15", "20150602"),
-        // Exactly ten years before is outside the lookback: read forward.
+        // Exactly ten years before is outside the lookback, so it is read
+        // ninety years after the bill instead.
         ("1-Jun-15", "21150601"),
-        // 700 and 1000 months of credit, past the as-of date's century.
+        // 704 and 1000 months of credit.
         ("1-Feb-84", "20840201"),
         ("1-Oct-08", "21081001"),
     ] {
@@ -162,8 +163,8 @@ fn an_opening_bill_dated_before_books_from_parses() {
 }
 
 /// The lookback is bounded: a bill date fifty years or more before the books,
-/// or after the as-of date, is not read into another century. A bill dated on
-/// the as-of date or one day inside the lookback parses.
+/// or shortly after the as-of date, refuses. A bill dated on the as-of date or
+/// one day inside the lookback parses.
 #[test]
 fn a_bill_date_beyond_the_lookback_or_after_as_of_refuses() {
     let books_from = TallyDate::parse("20250401").unwrap();

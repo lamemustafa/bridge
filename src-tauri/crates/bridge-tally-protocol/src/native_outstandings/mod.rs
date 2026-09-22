@@ -27,10 +27,7 @@ mod wire;
 pub use compute::{
     age_in_days, compute_native_outstandings, NativeGroupSnapshot, NativeMasterSnapshot,
 };
-pub use date::{
-    parse_native_bill_date, parse_native_due_date, DUE_DATE_LOOKBACK_YEARS,
-    OPENING_BILL_LOOKBACK_YEARS,
-};
+pub use date::{parse_native_bill_date, parse_native_due_date};
 pub use ledger_currency::{
     classify_ledger_currencies, BaseCurrencyName, ForeignCurrencyLedger, LedgerCurrencies,
     LedgerCurrencyRefusal,
