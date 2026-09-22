@@ -37,6 +37,8 @@ pub(crate) struct QueuedAdmission<'a> {
     pub(crate) catalogue: &'a str,
     pub(crate) groups: Option<&'a str>,
     pub(crate) currencies: &'a str,
+    /// The all-company marks read as the binding reads began (#239).
+    pub(crate) company_marks_at_binding: &'a str,
     pub(crate) company_marks: &'a str,
     pub(crate) ledger_binding: &'a StandardLedgerCatalogBinding,
 }
@@ -170,6 +172,15 @@ pub(crate) enum ApprovedImportAdmissionError {
     /// parse (a master without a NAME does not).
     #[error("import_base_currency_undetermined")]
     BaseCurrencyUndetermined,
+    /// The target's master mark (ALTMSTID) moved between the snapshot taken as
+    /// the queue's binding reads began and the aim snapshot read last before
+    /// the POST: a master changed after the catalogue re-read (bridge#239).
+    #[error("post_masters_moved")]
+    MastersMoved,
+    /// That comparison could not be made: the first snapshot could not be
+    /// read, or either did not hold exactly one row for the target.
+    #[error("post_masters_unconfirmed")]
+    MastersUnconfirmed,
 }
 
 /// The native approval every real post goes through. Outside this crate's own

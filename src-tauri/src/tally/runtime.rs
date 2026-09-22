@@ -3217,6 +3217,29 @@ impl TallyRuntime {
                         .map_err(|error| {
                             with_read_evidence(error.into(), admission_evidence.clone())
                         })?;
+                    // Every loaded company's marks as the binding reads begin
+                    // (#239). The aim snapshot sent last before the POST must
+                    // show the target's master mark unchanged, or a master moved
+                    // after the catalogue re-read below. As for the aim read, a
+                    // failure is the typed refusal itself: nothing was sent.
+                    let binding_marks_xml = request.company_marks_request().into_xml();
+                    let binding_marks = client
+                        .post_xml_raw(binding_marks_xml.clone())
+                        .await
+                        .map_err(|error| {
+                            with_read_evidence(
+                                anyhow::Error::new(
+                                    super::approved_import::ApprovedImportAdmissionError::MastersUnconfirmed,
+                                )
+                                .context(format!("{error:#}")),
+                                admission_evidence.clone(),
+                            )
+                        })?;
+                    let admission_evidence = admission_evidence.combine(RuntimeReadEvidence::single(
+                        &binding_marks_xml,
+                        binding_marks.encoded_sha256.clone(),
+                        binding_marks.encoded_body.len(),
+                    ));
                     let (catalogue, catalogue_evidence) = fetch_admitted_agent_read(
                         &client,
                         &identity,
@@ -3317,6 +3340,7 @@ impl TallyRuntime {
                         catalogue: &catalogue.body,
                         groups: groups.as_ref().map(|groups| groups.body.as_str()),
                         currencies: &currencies.body,
+                        company_marks_at_binding: &binding_marks.text,
                         company_marks: &before_marks.text,
                         ledger_binding: request.ledger_binding(),
                     })

@@ -295,6 +295,7 @@ impl Server {
                             queued.ledger_binding,
                         )?;
                         admit_queued_aim(
+                            queued.company_marks_at_binding,
                             queued.company_marks,
                             identity.company_guid(),
                             &company.name,
@@ -393,6 +394,20 @@ impl Server {
                     )
                 }) {
                     "import_base_currency_undetermined"
+                } else if error.chain().any(|cause| {
+                    matches!(
+                        cause.downcast_ref::<ApprovedImportAdmissionError>(),
+                        Some(ApprovedImportAdmissionError::MastersMoved)
+                    )
+                }) {
+                    "post_masters_moved"
+                } else if error.chain().any(|cause| {
+                    matches!(
+                        cause.downcast_ref::<ApprovedImportAdmissionError>(),
+                        Some(ApprovedImportAdmissionError::MastersUnconfirmed)
+                    )
+                }) {
+                    "post_masters_unconfirmed"
                 } else {
                     "import_dispatch_outcome_unknown"
                 };
@@ -677,11 +692,25 @@ fn require_absent_verification_result(result: &Value) -> Result<(), String> {
 }
 
 /// The aim check on the snapshot the queue read last before the POST (#574).
-fn admit_queued_aim(marks: &str, company_guid: &str, company_name: &str) -> anyhow::Result<()> {
+/// The aim check (#574), then the master mark (#239): the target's ALTMSTID in
+/// the aim snapshot must equal the one read as the queue's binding reads began.
+fn admit_queued_aim(
+    marks_at_binding: &str,
+    marks: &str,
+    company_guid: &str,
+    company_name: &str,
+) -> anyhow::Result<()> {
     let rows = location::parse_all_company_marks(marks)
         .map_err(|_| ApprovedImportAdmissionError::CompanyScopeUnconfirmed)?;
     location::admit_post_target(&rows, company_guid, company_name)
-        .map_err(|_| ApprovedImportAdmissionError::CompanyScopeChanged.into())
+        .map_err(|_| ApprovedImportAdmissionError::CompanyScopeChanged)?;
+    let at_binding = location::parse_all_company_marks(marks_at_binding)
+        .map_err(|_| ApprovedImportAdmissionError::MastersUnconfirmed)?;
+    match location::target_masters_unchanged(&at_binding, &rows, company_guid, company_name) {
+        Some(true) => Ok(()),
+        Some(false) => Err(ApprovedImportAdmissionError::MastersMoved.into()),
+        None => Err(ApprovedImportAdmissionError::MastersUnconfirmed.into()),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

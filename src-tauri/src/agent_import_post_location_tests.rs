@@ -259,3 +259,50 @@ fn a_row_without_its_master_axis_is_refused_not_read_as_unchanged() {
         Err("master_checkpoint_not_observed".into())
     );
 }
+
+// bridge#239: the target's master mark, between the snapshot taken as the
+// queue's binding reads begin and the aim snapshot.
+
+fn with_masters(rows: &[LoadedCompanyMarks], guid: &str, masters: u64) -> Vec<LoadedCompanyMarks> {
+    rows.iter()
+        .cloned()
+        .map(|mut row| {
+            if row.guid == guid {
+                row.masters = masters;
+            }
+            row
+        })
+        .collect()
+}
+
+#[test]
+fn only_the_targets_master_mark_decides_whether_masters_moved() {
+    let book = book();
+    let unchanged = |at_aim: &[LoadedCompanyMarks]| {
+        target_masters_unchanged(&book, at_aim, TARGET, "Synthetic Target")
+    };
+    assert_eq!(unchanged(&book), Some(true));
+    assert_eq!(unchanged(&with_masters(&book, TARGET, 8)), Some(false));
+    // Another company's masters, and the target's own vouchers, are not ours.
+    assert_eq!(unchanged(&with_masters(&book, OTHER, 99)), Some(true));
+    assert_eq!(unchanged(&with_vouchers(&book, TARGET, 11)), Some(true));
+}
+
+#[test]
+fn a_masters_comparison_without_exactly_one_target_row_says_nothing() {
+    let book = book();
+    let without_target = book[1..].to_vec();
+    let mut doubled = book.clone();
+    doubled.push(marks("synthetic target ", TARGET, 10));
+    for (at_binding, at_aim) in [
+        (without_target.as_slice(), book.as_slice()),
+        (book.as_slice(), without_target.as_slice()),
+        (doubled.as_slice(), book.as_slice()),
+        (book.as_slice(), doubled.as_slice()),
+    ] {
+        assert_eq!(
+            target_masters_unchanged(at_binding, at_aim, TARGET, "Synthetic Target"),
+            None
+        );
+    }
+}

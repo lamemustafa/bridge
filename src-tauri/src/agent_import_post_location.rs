@@ -65,6 +65,28 @@ pub(super) fn admit_post_target(
     }
 }
 
+/// The target's master mark, compared between the snapshot taken as the
+/// queue's binding reads begin and the aim snapshot sent last before the POST
+/// (bridge#239). Tally offers no conditional import, so a master renamed,
+/// regrouped or created after the catalogue re-read would otherwise go unseen.
+/// `None` when either snapshot does not hold exactly one target row: nothing
+/// can be said then, and the caller refuses.
+pub(super) fn target_masters_unchanged(
+    at_binding: &[LoadedCompanyMarks],
+    at_aim: &[LoadedCompanyMarks],
+    guid: &str,
+    name: &str,
+) -> Option<bool> {
+    let target = |rows: &[LoadedCompanyMarks]| {
+        let mut targets = rows.iter().filter(|row| is_target(row, guid, name));
+        match (targets.next(), targets.next()) {
+            (Some(row), None) => Some(row.masters),
+            _ => None,
+        }
+    };
+    Some(target(at_binding)? == target(at_aim)?)
+}
+
 fn key(row: &LoadedCompanyMarks) -> (String, String) {
     (
         row.guid.to_ascii_lowercase(),

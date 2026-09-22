@@ -163,6 +163,8 @@ fn queued_plans(
         status_plan(),
         company_plan(opening_companies.clone()),
         company_plan(opening_companies.clone()),
+        // The all-company marks as the binding reads begin (#239).
+        company_plan(opening_companies.clone()),
     ];
     plans.extend(paired(catalogue, &opening_companies));
     // The Currency masters, re-read in the same brackets (bridge#551).
@@ -213,17 +215,18 @@ fn expected_queued_evidence(
 ) -> RuntimeReadEvidence {
     let mut evidence = single_observation(observed, responses, 0)
         .combine(single_observation(observed, responses, 1))
-        .combine(single_observation(observed, responses, 2));
+        .combine(single_observation(observed, responses, 2))
+        .combine(single_observation(observed, responses, 3));
     evidence = evidence
-        .combine(paired_observation(observed, responses, 4))
-        .combine(paired_observation(observed, responses, 10));
-    let closing = single_observation(observed, responses, 15)
-        .combine(single_observation(observed, responses, 16));
+        .combine(paired_observation(observed, responses, 5))
+        .combine(paired_observation(observed, responses, 11));
+    let closing = single_observation(observed, responses, 16)
+        .combine(single_observation(observed, responses, 17));
     evidence = evidence
         .combine(closing)
-        .combine(single_observation(observed, responses, 17));
+        .combine(single_observation(observed, responses, 18));
     if include_absence_reads {
-        for index in [19, 25] {
+        for index in [20, 26] {
             evidence = evidence.combine(paired_observation(observed, responses, index));
         }
     }
@@ -248,7 +251,7 @@ async fn queued_education_change_refuses_before_final_absence_reads() {
         education,
         None,
     );
-    plans.truncate(18);
+    plans.truncate(19);
     let responses = plans
         .iter()
         .map(ScenarioPlan::response_bytes)
@@ -284,7 +287,7 @@ async fn queued_education_change_refuses_before_final_absence_reads() {
     let observed = simulator.finish().unwrap();
     assert_eq!(
         observed.len(),
-        18,
+        19,
         "final mode refusal precedes absence reads"
     );
     assert_eq!(
@@ -310,7 +313,7 @@ async fn queued_company_refusal_retains_captured_source_and_final_identity_evide
         replaced,
         None,
     );
-    plans.truncate(18);
+    plans.truncate(19);
     let responses = plans
         .iter()
         .map(ScenarioPlan::response_bytes)
@@ -346,7 +349,7 @@ async fn queued_company_refusal_retains_captured_source_and_final_identity_evide
     let observed = simulator.finish().unwrap();
     assert_eq!(
         observed.len(),
-        18,
+        19,
         "final identity refusal precedes absence reads"
     );
     assert_eq!(
@@ -421,17 +424,17 @@ async fn queued_catalogue_rename_refuses_before_intent_or_post() {
         "changed master binding precedes intent"
     );
     let observed = simulator.finish().unwrap();
-    // 30 admission requests and the marks snapshot (#574); the refusal
+    // 31 admission requests and the marks snapshot (#574); the refusal
     // comes after that last read and before the intent and the POST.
     assert_eq!(
         observed.len(),
-        31,
+        32,
         "catalogue refusal precedes intent and POST"
     );
     assert_eq!(
         error.downcast_ref::<RuntimeReadFailure>().unwrap().evidence,
         expected_queued_evidence(&observed, &responses, true)
-            .combine(single_observation(&observed, &responses, 30)),
+            .combine(single_observation(&observed, &responses, 31)),
         "captured queued absence and catalogue evidence survive the master-binding refusal, with the marks snapshot"
     );
 }
@@ -474,24 +477,24 @@ async fn queued_import_keeps_admission_separate_from_raw_import_wire() {
         .expect("captured admission permits a valid date");
     assert!(dispatched.load(Ordering::Acquire));
     let observed = simulator.finish().unwrap();
-    // 30 admission requests, the marks snapshot, then the POST. The marks read
+    // 31 admission requests, the marks snapshot, then the POST. The marks read
     // after the POST is the caller's, once the response is journaled.
-    assert_eq!(observed.len(), 32);
+    assert_eq!(observed.len(), 33);
     assert_eq!(
         dispatch.admission_evidence,
         expected_queued_evidence(&observed, &responses, true)
-            .combine(single_observation(&observed, &responses, 30))
+            .combine(single_observation(&observed, &responses, 31))
     );
     assert_eq!(dispatch.company_marks_before, companies);
     assert_eq!(
         dispatch.response_evidence.request_sha256,
-        observed[31].request_body_sha256
+        observed[32].request_body_sha256
     );
     assert_eq!(
         dispatch.response_evidence.response_sha256,
-        sha256_hex(&responses[31])
+        sha256_hex(&responses[32])
     );
-    assert_eq!(dispatch.response_evidence.bytes, responses[31].len());
+    assert_eq!(dispatch.response_evidence.bytes, responses[32].len());
     assert_ne!(
         dispatch.response_evidence.request_sha256,
         dispatch.admission_evidence.request_sha256
@@ -546,17 +549,17 @@ async fn queued_import_refuses_attribution_after_final_profile_and_catalogue_rea
         "refusal precedes durable intent"
     );
     let observed = simulator.finish().unwrap();
-    // 30 admission requests and the marks snapshot (#574); the refusal
+    // 31 admission requests and the marks snapshot (#574); the refusal
     // comes after that last read and before the intent and the POST.
     assert_eq!(
         observed.len(),
-        31,
+        32,
         "final absence refusal precedes intent and import POST"
     );
     assert_eq!(
         error.downcast_ref::<RuntimeReadFailure>().unwrap().evidence,
         expected_queued_evidence(&observed, &responses, true)
-            .combine(single_observation(&observed, &responses, 30)),
+            .combine(single_observation(&observed, &responses, 31)),
         "initial mode/company and all three queued source reads survive refusal, with the marks snapshot"
     );
 }
